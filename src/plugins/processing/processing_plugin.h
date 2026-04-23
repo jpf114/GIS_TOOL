@@ -8,7 +8,7 @@ public:
     std::string name() const override { return "processing"; }
     std::string displayName() const override { return "影像处理与分析"; }
     std::string version() const override { return "1.1.0"; }
-    std::string description() const override { return "阈值分割、空间滤波、影像增强、波段运算、统计信息、边缘检测、轮廓提取、模板匹配"; }
+    std::string description() const override { return "阈值分割、空间滤波、影像增强、波段运算、统计信息、边缘检测、轮廓提取、模板匹配、全色锐化"; }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
 
@@ -46,6 +46,10 @@ private:
         gis::core::ProgressReporter& progress);
 
     gis::framework::Result doTemplateMatch(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
+
+    gis::framework::Result doPansharpen(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
 };

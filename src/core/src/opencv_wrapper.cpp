@@ -118,4 +118,27 @@ int gdalTypeToCvType(int gdalType) {
     }
 }
 
+cv::Mat readBandAsMat(const std::string& path, int bandIndex) {
+    auto ds = openRaster(path, true);
+    if (!ds) {
+        throw GisError("Cannot open raster: " + path);
+    }
+    return gdalBandToMat(ds.get(), bandIndex);
+}
+
+cv::Mat toUint8(const cv::Mat& mat) {
+    if (mat.type() == CV_8U) return mat.clone();
+
+    double minVal, maxVal;
+    cv::minMaxLoc(mat, &minVal, &maxVal);
+
+    cv::Mat u8;
+    if (maxVal - minVal < 1e-10) {
+        u8 = cv::Mat::zeros(mat.size(), CV_8U);
+    } else {
+        cv::normalize(mat, u8, 0, 255, cv::NORM_MINMAX, CV_8U);
+    }
+    return u8;
+}
+
 } // namespace gis::core

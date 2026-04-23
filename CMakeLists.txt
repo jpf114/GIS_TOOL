@@ -28,6 +28,7 @@ add_subdirectory(src/plugins/cutting)
 add_subdirectory(src/plugins/matching)
 add_subdirectory(src/plugins/processing)
 add_subdirectory(src/plugins/vector)
+add_subdirectory(src/plugins/utility)
 add_subdirectory(src/cli)
 
 if(GIS_BUILD_GUI)

@@ -12,7 +12,7 @@
 namespace fs = std::filesystem;
 
 static std::string getTestDir() {
-    return "D:/Develop/GIS/GIS_TOOL/build2/test_output";
+    return "D:/Develop/GIS/GIS_TOOL/build/test_core_output";
 }
 
 class CoreTest : public ::testing::Test {
@@ -204,4 +204,58 @@ TEST_F(CoreTest, MatsToGdalTiff) {
     auto dstDS = gis::core::openRaster(dstPath, true);
     ASSERT_NE(dstDS, nullptr);
     EXPECT_EQ(dstDS->GetRasterCount(), 3);
+}
+
+TEST_F(CoreTest, BuildOverviews) {
+    std::string path = getTestDir() + "/ovr_test.tif";
+    {
+        auto ds = gis::core::createRaster(path, 512, 512, 1, GDT_Byte);
+        auto* band = ds->GetRasterBand(1);
+        std::vector<uint8_t> data(512 * 512, 128);
+        band->RasterIO(GF_Write, 0, 0, 512, 512, data.data(), 512, 512, GDT_Byte, 0, 0);
+        band->FlushCache();
+    }
+
+    auto ds = gis::core::openRaster(path, false);
+    bool ok = gis::core::buildOverviews(ds.get(), {2, 4}, "NEAREST");
+    EXPECT_TRUE(ok);
+}
+
+TEST_F(CoreTest, RasterInfoStructure) {
+    std::string path = getTestDir() + "/raster_info_struct.tif";
+    {
+        auto ds = gis::core::createRaster(path, 100, 80, 2, GDT_Float32);
+        double adfGT[6] = {120.0, 0.01, 0.0, 30.0, 0.0, -0.01};
+        ds->SetGeoTransform(adfGT);
+        ds->GetRasterBand(1)->SetNoDataValue(-9999.0);
+        ds->GetRasterBand(1)->FlushCache();
+        ds->GetRasterBand(2)->FlushCache();
+    }
+
+    auto ds = gis::core::openRaster(path, true);
+    auto info = gis::core::getRasterInfo(ds.get(), path);
+    EXPECT_EQ(info.width, 100);
+    EXPECT_EQ(info.height, 80);
+    EXPECT_EQ(info.bandCount, 2);
+    EXPECT_DOUBLE_EQ(info.geoTransform[0], 120.0);
+    EXPECT_EQ(info.bands.size(), 2u);
+    EXPECT_TRUE(info.bands[0].hasNoData);
+    EXPECT_DOUBLE_EQ(info.bands[0].noDataValue, -9999.0);
+}
+
+TEST_F(CoreTest, HistogramBins) {
+    std::string path = getTestDir() + "/hist_bins.tif";
+    {
+        auto ds = gis::core::createRaster(path, 50, 50, 1, GDT_Byte);
+        auto* band = ds->GetRasterBand(1);
+        std::vector<uint8_t> data(50 * 50);
+        for (int i = 0; i < 50 * 50; ++i) data[i] = static_cast<uint8_t>(i % 50);
+        band->RasterIO(GF_Write, 0, 0, 50, 50, data.data(), 50, 50, GDT_Byte, 0, 0);
+        band->FlushCache();
+    }
+
+    auto ds = gis::core::openRaster(path, true);
+    auto hist = gis::core::computeHistogram(ds.get(), 1, 10);
+    EXPECT_EQ(hist.size(), 10u);
+    EXPECT_GT(hist[0].count, 0u);
 }

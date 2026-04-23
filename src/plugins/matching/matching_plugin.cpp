@@ -60,7 +60,7 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
             {"affine", "projective", "similarity", "translation"}
         },
         gis::framework::ParamSpec{
-            "resample", "重采样方法", "配准重采样方法",
+            "resample", "重采样方式", "配准重采样方式",
             gis::framework::ParamType::Enum, false, std::string{"bilinear"},
             int{0}, int{0},
             {"nearest", "bilinear", "cubic"}
@@ -96,8 +96,6 @@ gis::framework::Result MatchingPlugin::execute(
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
-// ── helpers ──
-
 static cv::Ptr<cv::Feature2D> createDetector(const std::string& method, int maxPoints) {
     if (method == "orb")   return cv::ORB::create(maxPoints);
     if (method == "akaze") return cv::AKAZE::create();
@@ -120,19 +118,8 @@ static cv::Ptr<cv::DescriptorMatcher> createMatcher(const std::string& method,
 
 static cv::Mat readBandAsMat(const std::string& path, int band,
                               gis::core::ProgressReporter& progress) {
-    auto ds = gis::core::openRaster(path, true);
     progress.onMessage("Reading band " + std::to_string(band) + " from " + path);
-    return gis::core::gdalBandToMat(ds.get(), band);
-}
-
-static cv::Mat toUint8(const cv::Mat& mat) {
-    if (mat.type() == CV_8U) return mat.clone();
-    cv::Mat u8;
-    double minVal, maxVal;
-    cv::minMaxLoc(mat, &minVal, &maxVal);
-    if (maxVal - minVal < 1e-10) return cv::Mat::zeros(mat.size(), CV_8U);
-    mat.convertTo(u8, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
-    return u8;
+    return gis::core::readBandAsMat(path, band);
 }
 
 static bool writeKeyPointsJSON(const std::string& path,
@@ -176,8 +163,6 @@ static bool writeMatchesJSON(const std::string& path,
     return true;
 }
 
-// ── detect ──
-
 gis::framework::Result MatchingPlugin::doDetect(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -192,7 +177,7 @@ gis::framework::Result MatchingPlugin::doDetect(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    cv::Mat gray = toUint8(mat);
+    cv::Mat gray = gis::core::toUint8(mat);
     progress.onProgress(0.3);
 
     auto detector = createDetector(method, maxPoints);
@@ -225,8 +210,6 @@ gis::framework::Result MatchingPlugin::doDetect(
     return result;
 }
 
-// ── match ──
-
 gis::framework::Result MatchingPlugin::doMatch(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -247,8 +230,8 @@ gis::framework::Result MatchingPlugin::doMatch(
     cv::Mat refMat = readBandAsMat(reference, band, progress);
     cv::Mat srcMat = readBandAsMat(input, band, progress);
 
-    cv::Mat refGray = toUint8(refMat);
-    cv::Mat srcGray = toUint8(srcMat);
+    cv::Mat refGray = gis::core::toUint8(refMat);
+    cv::Mat srcGray = gis::core::toUint8(srcMat);
     progress.onProgress(0.2);
 
     auto detector = createDetector(method, maxPoints);
@@ -302,8 +285,6 @@ gis::framework::Result MatchingPlugin::doMatch(
     return result;
 }
 
-// ── register ──
-
 gis::framework::Result MatchingPlugin::doRegister(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -327,8 +308,8 @@ gis::framework::Result MatchingPlugin::doRegister(
 
     cv::Mat refMat = readBandAsMat(reference, band, progress);
     cv::Mat srcMat = readBandAsMat(input, band, progress);
-    cv::Mat refGray = toUint8(refMat);
-    cv::Mat srcGray = toUint8(srcMat);
+    cv::Mat refGray = gis::core::toUint8(refMat);
+    cv::Mat srcGray = gis::core::toUint8(srcMat);
     progress.onProgress(0.15);
 
     auto detector = createDetector(method, maxPoints);
@@ -411,8 +392,6 @@ gis::framework::Result MatchingPlugin::doRegister(
     result.metadata["transform"] = transformType;
     return result;
 }
-
-// ── change detection ──
 
 gis::framework::Result MatchingPlugin::doChange(
     const std::map<std::string, gis::framework::ParamValue>& params,

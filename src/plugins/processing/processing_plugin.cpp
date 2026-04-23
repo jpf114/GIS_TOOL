@@ -20,7 +20,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"threshold", "filter", "enhance", "band_math", "stats", "edge", "contour", "template_match"}
+            {"threshold", "filter", "enhance", "band_math", "stats", "edge", "contour", "template_match", "pansharpen"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -77,11 +77,11 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             gis::framework::ParamType::Double, false, double{1.0}
         },
         gis::framework::ParamSpec{
-            "expression", "表达式", "波段运算表达式(如 B1+B2, B1*0.5+B2*0.5)",
+            "expression", "表达式", "波段运算表达式(如B1+B2, B1*0.5+B2*0.5)",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "edge_method", "边缘检测方法", "边缘检测算法",
+            "edge_method", "边缘检测方法", "边缘检测算子",
             gis::framework::ParamType::Enum, false, std::string{"canny"},
             int{0}, int{0},
             {"canny", "sobel", "laplacian", "scharr"}
@@ -116,6 +116,16 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             int{0}, int{0},
             {"sqdiff", "sqdiff_normed", "ccorr", "ccorr_normed", "ccoeff", "ccoeff_normed"}
         },
+        gis::framework::ParamSpec{
+            "pan_file", "全色影像", "全色锐化用的高分辨率全色影像路径",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "pan_method", "融合方法", "全色锐化融合算法",
+            gis::framework::ParamType::Enum, false, std::string{"brovey"},
+            int{0}, int{0},
+            {"brovey", "simple_mean", "ihs"}
+        },
     };
 }
 
@@ -133,16 +143,15 @@ gis::framework::Result ProcessingPlugin::execute(
     if (action == "edge")            return doEdge(params, progress);
     if (action == "contour")         return doContour(params, progress);
     if (action == "template_match")  return doTemplateMatch(params, progress);
+    if (action == "pansharpen")      return doPansharpen(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
 static cv::Mat readBandAsMat(const std::string& path, int bandIndex,
                               gis::core::ProgressReporter& progress) {
-    auto ds = gis::core::openRaster(path, true);
     progress.onMessage("Reading band " + std::to_string(bandIndex) + " from " + path);
-    auto mat = gis::core::gdalBandToMat(ds.get(), bandIndex);
-    return mat;
+    return gis::core::readBandAsMat(path, bandIndex);
 }
 
 static gis::framework::Result writeMatOutput(
@@ -157,18 +166,6 @@ static gis::framework::Result writeMatOutput(
     gis::core::matToGdalTiff(mat, inputPath, outputPath, bandIndex);
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Processing completed successfully", outputPath);
-}
-
-static cv::Mat toUint8(const cv::Mat& mat) {
-    if (mat.type() == CV_8U) return mat.clone();
-    cv::Mat u8;
-    double minVal, maxVal;
-    cv::minMaxLoc(mat, &minVal, &maxVal);
-    if (maxVal - minVal < 1e-10) {
-        return cv::Mat::zeros(mat.size(), CV_8U);
-    }
-    mat.convertTo(u8, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
-    return u8;
 }
 
 gis::framework::Result ProcessingPlugin::doThreshold(
@@ -189,7 +186,7 @@ gis::framework::Result ProcessingPlugin::doThreshold(
     cv::Mat mat = readBandAsMat(input, band, progress);
     progress.onProgress(0.3);
 
-    cv::Mat gray = toUint8(mat);
+    cv::Mat gray = gis::core::toUint8(mat);
     progress.onProgress(0.4);
 
     cv::Mat result;
@@ -246,18 +243,18 @@ gis::framework::Result ProcessingPlugin::doFilter(
     if (filterType == "gaussian") {
         cv::GaussianBlur(mat, result, cv::Size(kernelSize, kernelSize), sigma);
     } else if (filterType == "median") {
-        cv::Mat u8 = toUint8(mat);
+        cv::Mat u8 = gis::core::toUint8(mat);
         cv::medianBlur(u8, result, kernelSize);
         result.convertTo(result, CV_32F, 1.0 / 255.0);
     } else if (filterType == "bilateral") {
-        cv::Mat u8 = toUint8(mat);
+        cv::Mat u8 = gis::core::toUint8(mat);
         cv::bilateralFilter(u8, result, kernelSize, 75, 75);
         result.convertTo(result, CV_32F, 1.0 / 255.0);
     } else if (filterType == "morph_open" ||
                filterType == "morph_close" ||
                filterType == "morph_dilate" ||
                filterType == "morph_erode") {
-        cv::Mat u8 = toUint8(mat);
+        cv::Mat u8 = gis::core::toUint8(mat);
         cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT,
             cv::Size(kernelSize, kernelSize));
         int morphType;
@@ -297,11 +294,11 @@ gis::framework::Result ProcessingPlugin::doEnhance(
     cv::Mat result;
 
     if (enhanceType == "equalize") {
-        cv::Mat u8 = toUint8(mat);
+        cv::Mat u8 = gis::core::toUint8(mat);
         cv::equalizeHist(u8, result);
         result.convertTo(result, CV_32F, 1.0 / 255.0);
     } else if (enhanceType == "clahe") {
-        cv::Mat u8 = toUint8(mat);
+        cv::Mat u8 = gis::core::toUint8(mat);
         auto clahe = cv::createCLAHE(clipLimit, cv::Size(8, 8));
         clahe->apply(u8, result);
         result.convertTo(result, CV_32F, 1.0 / 255.0);
@@ -543,7 +540,7 @@ gis::framework::Result ProcessingPlugin::doEdge(
     cv::Mat mat = readBandAsMat(input, band, progress);
     progress.onProgress(0.3);
 
-    cv::Mat gray = toUint8(mat);
+    cv::Mat gray = gis::core::toUint8(mat);
     progress.onProgress(0.4);
 
     cv::Mat result;
@@ -589,7 +586,7 @@ gis::framework::Result ProcessingPlugin::doContour(
     cv::Mat mat = readBandAsMat(input, band, progress);
     progress.onProgress(0.3);
 
-    cv::Mat gray = toUint8(mat);
+    cv::Mat gray = gis::core::toUint8(mat);
 
     cv::Mat binary;
     cv::threshold(gray, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
@@ -646,8 +643,8 @@ gis::framework::Result ProcessingPlugin::doTemplateMatch(
     cv::Mat tplMat = readBandAsMat(templateFile, band, progress);
     progress.onProgress(0.3);
 
-    cv::Mat srcGray = toUint8(srcMat);
-    cv::Mat tplGray = toUint8(tplMat);
+    cv::Mat srcGray = gis::core::toUint8(srcMat);
+    cv::Mat tplGray = gis::core::toUint8(tplMat);
 
     if (tplGray.cols > srcGray.cols || tplGray.rows > srcGray.rows) {
         return gis::framework::Result::fail("Template is larger than source image");
@@ -694,6 +691,146 @@ gis::framework::Result ProcessingPlugin::doTemplateMatch(
     result.metadata["match_score"] = std::to_string(matchVal);
     result.metadata["template_width"] = std::to_string(tplGray.cols);
     result.metadata["template_height"] = std::to_string(tplGray.rows);
+    return result;
+}
+
+gis::framework::Result ProcessingPlugin::doPansharpen(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    std::string panFile = gis::framework::getParam<std::string>(params, "pan_file", "");
+    std::string panMethod = gis::framework::getParam<std::string>(params, "pan_method", "brovey");
+
+    if (input.empty())   return gis::framework::Result::fail("input is required (multispectral image)");
+    if (output.empty())  return gis::framework::Result::fail("output is required");
+    if (panFile.empty()) return gis::framework::Result::fail("pan_file is required (panchromatic image)");
+
+    progress.onProgress(0.05);
+
+    auto msDS = gis::core::openRaster(input, true);
+    auto panDS = gis::core::openRaster(panFile, true);
+
+    int msBands = msDS->GetRasterCount();
+    if (msBands < 2) {
+        return gis::framework::Result::fail("Input must have at least 2 bands for pansharpening");
+    }
+
+    int panWidth  = panDS->GetRasterXSize();
+    int panHeight = panDS->GetRasterYSize();
+    int msWidth   = msDS->GetRasterXSize();
+    int msHeight  = msDS->GetRasterYSize();
+
+    progress.onMessage("MS: " + std::to_string(msWidth) + "x" + std::to_string(msHeight) +
+                       " PAN: " + std::to_string(panWidth) + "x" + std::to_string(panHeight));
+
+    progress.onProgress(0.1);
+
+    cv::Mat panMat = gis::core::gdalBandToMat(panDS.get(), 1);
+    if (panMat.type() != CV_32F) panMat.convertTo(panMat, CV_32F);
+    progress.onProgress(0.2);
+
+    std::vector<cv::Mat> msBandsMat;
+    for (int b = 1; b <= msBands; ++b) {
+        cv::Mat band = gis::core::gdalBandToMat(msDS.get(), b);
+        if (band.type() != CV_32F) band.convertTo(band, CV_32F);
+        msBandsMat.push_back(band);
+    }
+    progress.onProgress(0.35);
+
+    if (panWidth != msWidth || panHeight != msHeight) {
+        progress.onMessage("Resampling MS bands to PAN resolution...");
+        for (auto& band : msBandsMat) {
+            cv::resize(band, band, cv::Size(panWidth, panHeight), 0, 0, cv::INTER_CUBIC);
+        }
+    }
+    progress.onProgress(0.5);
+
+    std::vector<cv::Mat> sharpenedBands;
+
+    if (panMethod == "brovey") {
+        cv::Mat intensity = msBandsMat[0].clone();
+        for (int b = 1; b < msBands; ++b) {
+            intensity += msBandsMat[b];
+        }
+        intensity = intensity / static_cast<double>(msBands);
+
+        for (int b = 0; b < msBands; ++b) {
+            cv::Mat ratio;
+            cv::divide(msBandsMat[b], intensity + 1e-10f, ratio);
+            cv::Mat sharp;
+            cv::multiply(ratio, panMat, sharp);
+            sharpenedBands.push_back(sharp);
+        }
+    } else if (panMethod == "simple_mean") {
+        for (int b = 0; b < msBands; ++b) {
+            cv::Mat sharp;
+            cv::add(msBandsMat[b], panMat, sharp);
+            sharp = sharp * 0.5;
+            sharpenedBands.push_back(sharp);
+        }
+    } else if (panMethod == "ihs") {
+        if (msBands < 3) {
+            return gis::framework::Result::fail("IHS method requires at least 3 bands (RGB)");
+        }
+
+        cv::Mat r = msBandsMat[0];
+        cv::Mat g = msBandsMat[1];
+        cv::Mat b = msBandsMat[2];
+
+        std::vector<cv::Mat> rgbChannels = {b, g, r};
+        cv::Mat rgbImage;
+        cv::merge(rgbChannels, rgbImage);
+
+        cv::Mat hsvImage;
+        cv::cvtColor(rgbImage, hsvImage, cv::COLOR_BGR2HSV);
+
+        std::vector<cv::Mat> hsvChannels;
+        cv::split(hsvImage, hsvChannels);
+
+        cv::Mat panNorm;
+        double panMin, panMax;
+        cv::minMaxLoc(panMat, &panMin, &panMax);
+        if (panMax - panMin > 1e-10) {
+            panNorm = (panMat - panMin) / (panMax - panMin) * 255.0;
+        } else {
+            panNorm = cv::Mat::zeros(panMat.size(), CV_32F);
+        }
+        panNorm.convertTo(hsvChannels[2], CV_32F);
+
+        cv::merge(hsvChannels, hsvImage);
+        cv::Mat bgrResult;
+        cv::cvtColor(hsvImage, bgrResult, cv::COLOR_HSV2BGR);
+
+        std::vector<cv::Mat> resultChannels;
+        cv::split(bgrResult, resultChannels);
+
+        sharpenedBands.push_back(resultChannels[2]);
+        sharpenedBands.push_back(resultChannels[1]);
+        sharpenedBands.push_back(resultChannels[0]);
+
+        for (int i = 3; i < msBands; ++i) {
+            sharpenedBands.push_back(msBandsMat[i]);
+        }
+    } else {
+        return gis::framework::Result::fail("Unknown pansharpen method: " + panMethod);
+    }
+
+    progress.onProgress(0.8);
+
+    gis::core::matsToGdalTiff(sharpenedBands, msDS.get(), output);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok(
+        "Pansharpen completed: " + panMethod + " method, " +
+        std::to_string(msBands) + " bands at " +
+        std::to_string(panWidth) + "x" + std::to_string(panHeight),
+        output);
+    result.metadata["method"] = panMethod;
+    result.metadata["bands"] = std::to_string(msBands);
+    result.metadata["pan_width"] = std::to_string(panWidth);
+    result.metadata["pan_height"] = std::to_string(panHeight);
     return result;
 }
 

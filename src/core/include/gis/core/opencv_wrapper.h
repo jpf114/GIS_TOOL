@@ -22,4 +22,8 @@ void matsToGdalTiff(const std::vector<cv::Mat>& mats, GDALDataset* srcDS,
 
 int gdalTypeToCvType(int gdalType);
 
+cv::Mat readBandAsMat(const std::string& path, int bandIndex = 1);
+
+cv::Mat toUint8(const cv::Mat& mat);
+
 } // namespace gis::core

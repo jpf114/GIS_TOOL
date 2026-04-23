@@ -3,6 +3,7 @@ find_package(GTest REQUIRED)
 add_executable(gis_tests
     test_core.cpp
     test_framework.cpp
+    test_plugins.cpp
 )
 
 target_link_libraries(gis_tests PRIVATE
