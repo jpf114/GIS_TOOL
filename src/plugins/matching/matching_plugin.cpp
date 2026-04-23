@@ -13,13 +13,25 @@
 
 namespace gis::plugins {
 
+static std::vector<std::string> splitString(const std::string& s, char delim) {
+    std::vector<std::string> tokens;
+    std::istringstream iss(s);
+    std::string token;
+    while (std::getline(iss, token, delim)) {
+        while (!token.empty() && token.front() == ' ') token.erase(token.begin());
+        while (!token.empty() && token.back() == ' ') token.pop_back();
+        if (!token.empty()) tokens.push_back(token);
+    }
+    return tokens;
+}
+
 std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"detect", "match", "register", "change", "ecc_register", "corner"}
+            {"detect", "match", "register", "change", "ecc_register", "corner", "stitch"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -111,6 +123,10 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
             "min_distance", "最小间距", "角点之间的最小欧氏距离",
             gis::framework::ParamType::Double, false, double{10.0}
         },
+        gis::framework::ParamSpec{
+            "stitch_confidence", "拼接置信度", "图像拼接的置信度阈值",
+            gis::framework::ParamType::Double, false, double{0.5}
+        },
     };
 }
 
@@ -126,6 +142,7 @@ gis::framework::Result MatchingPlugin::execute(
     if (action == "change")       return doChange(params, progress);
     if (action == "ecc_register") return doEccRegister(params, progress);
     if (action == "corner")       return doCornerDetect(params, progress);
+    if (action == "stitch")       return doStitch(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -710,6 +727,73 @@ gis::framework::Result MatchingPlugin::doCornerDetect(
         "Detected " + std::to_string(corners.size()) + " " + cornerMethod + " corners", output);
     result.metadata["corner_count"] = std::to_string(corners.size());
     result.metadata["method"] = cornerMethod;
+    return result;
+}
+
+gis::framework::Result MatchingPlugin::doStitch(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    double confidence  = gis::framework::getParam<double>(params, "stitch_confidence", 0.5);
+
+    if (input.empty())  return gis::framework::Result::fail("input is required (comma-separated image paths)");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    auto inputFiles = splitString(input, ',');
+    if (inputFiles.size() < 2) {
+        return gis::framework::Result::fail("At least 2 input images required for stitching (comma-separated)");
+    }
+
+    progress.onProgress(0.1);
+    progress.onMessage("Loading " + std::to_string(inputFiles.size()) + " images...");
+
+    std::vector<cv::Mat> images;
+    for (auto& f : inputFiles) {
+        cv::Mat mat = gis::core::readBandAsMat(f, 1);
+        cv::Mat gray = gis::core::toUint8(mat);
+        cv::Mat bgr;
+        cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
+        images.push_back(bgr);
+    }
+    progress.onProgress(0.3);
+
+    progress.onMessage("Running image stitching...");
+    cv::Ptr<cv::Stitcher> stitcher = cv::Stitcher::create(cv::Stitcher::SCANS);
+    stitcher->setPanoConfidenceThresh(confidence);
+
+    cv::Mat pano;
+    cv::Stitcher::Status status = stitcher->stitch(images, pano);
+    progress.onProgress(0.8);
+
+    if (status != cv::Stitcher::OK) {
+        std::string errMsg;
+        switch (status) {
+            case cv::Stitcher::ERR_NEED_MORE_IMGS: errMsg = "Need more images"; break;
+            case cv::Stitcher::ERR_HOMOGRAPHY_EST_FAIL: errMsg = "Homography estimation failed"; break;
+            case cv::Stitcher::ERR_CAMERA_PARAMS_ADJUST_FAIL: errMsg = "Camera parameters adjustment failed"; break;
+            default: errMsg = "Unknown error (" + std::to_string(static_cast<int>(status)) + ")"; break;
+        }
+        return gis::framework::Result::fail("Stitching failed: " + errMsg);
+    }
+
+    cv::Mat grayPano;
+    cv::cvtColor(pano, grayPano, cv::COLOR_BGR2GRAY);
+    cv::Mat outFloat;
+    grayPano.convertTo(outFloat, CV_32F, 1.0 / 255.0);
+
+    progress.onMessage("Writing output: " + output);
+    gis::core::matToGdalTiff(outFloat, inputFiles[0], output, 1);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok(
+        "Stitching completed: " + std::to_string(inputFiles.size()) +
+        " images -> " + std::to_string(pano.cols) + "x" + std::to_string(pano.rows),
+        output);
+    result.metadata["input_count"] = std::to_string(inputFiles.size());
+    result.metadata["output_width"] = std::to_string(pano.cols);
+    result.metadata["output_height"] = std::to_string(pano.rows);
     return result;
 }
 

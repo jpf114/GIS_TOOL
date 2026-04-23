@@ -1,4 +1,4 @@
-﻿#include "vector_plugin.h"
+#include "vector_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
 #include <gdal_priv.h>
@@ -18,7 +18,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -66,6 +66,14 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             int{0}, int{0},
             {"GeoJSON", "ESRI Shapefile", "GPKG", "KML", "CSV"}
         },
+        gis::framework::ParamSpec{
+            "overlay_vector", "叠加矢量", "并集/差集操作的第二矢量文件路径",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "dissolve_field", "融合字段", "融合操作按此字段值合并相邻多边形(不指定则全部合并)",
+            gis::framework::ParamType::String, false, std::string{}
+        },
     };
 }
 
@@ -82,6 +90,9 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "rasterize")  return doRasterize(params, progress);
     if (action == "polygonize") return doPolygonize(params, progress);
     if (action == "convert")    return doConvert(params, progress);
+    if (action == "union")      return doUnion(params, progress);
+    if (action == "difference") return doDifference(params, progress);
+    if (action == "dissolve")   return doDissolve(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -779,6 +790,368 @@ gis::framework::Result VectorPlugin::doConvert(
 
     return gis::framework::Result::ok(
         "Convert completed: " + std::to_string(count) + " features converted to " + format, output);
+}
+
+gis::framework::Result VectorPlugin::doUnion(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    std::string layerName = gis::framework::getParam<std::string>(params, "layer", "");
+    std::string overlayVector = gis::framework::getParam<std::string>(params, "overlay_vector", "");
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (overlayVector.empty()) return gis::framework::Result::fail("overlay_vector is required for union");
+
+    progress.onProgress(0.1);
+
+    GDALDataset* srcDS = openVector(input, true);
+    if (!srcDS) return gis::framework::Result::fail("Cannot open input: " + input);
+
+    GDALDataset* overlayDS = openVector(overlayVector, true);
+    if (!overlayDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot open overlay: " + overlayVector); }
+
+    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* overlayLayer = overlayDS->GetLayer(0);
+    if (!srcLayer || !overlayLayer) {
+        GDALClose(overlayDS); GDALClose(srcDS);
+        return gis::framework::Result::fail("Cannot find required layers");
+    }
+
+    std::vector<OGRGeometry*> overlayGeoms;
+    overlayLayer->ResetReading();
+    OGRFeature* feat;
+    while ((feat = overlayLayer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (geom) overlayGeoms.push_back(geom->clone());
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(overlayDS);
+
+    if (overlayGeoms.empty()) {
+        GDALClose(srcDS);
+        return gis::framework::Result::fail("No geometries in overlay vector");
+    }
+
+    OGRGeometry* overlayUnion = overlayGeoms[0];
+    for (size_t i = 1; i < overlayGeoms.size(); ++i) {
+        OGRGeometry* newUnion = overlayUnion->Union(overlayGeoms[i]);
+        delete overlayUnion;
+        overlayUnion = newUnion;
+        delete overlayGeoms[i];
+    }
+
+    progress.onProgress(0.3);
+
+    namespace fs = std::filesystem;
+    std::string outFormat = "GeoJSON";
+    std::string ext = fs::path(output).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext == ".shp") outFormat = "ESRI Shapefile";
+    else if (ext == ".gpkg") outFormat = "GPKG";
+
+    GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
+    if (!drv) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+
+    if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
+        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
+            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
+        }
+    }
+
+    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!dstDS) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+
+    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    OGRLayer* dstLayer = dstDS->CreateLayer("union", srcSRS, wkbPolygon, nullptr);
+    if (!dstLayer) {
+        GDALClose(dstDS); delete overlayUnion; GDALClose(srcDS); delete srcSRS;
+        return gis::framework::Result::fail("Cannot create output layer");
+    }
+
+    OGRFieldDefn fieldDefn("source", OFTString);
+    dstLayer->CreateField(&fieldDefn);
+
+    progress.onProgress(0.4);
+
+    srcLayer->ResetReading();
+    int count = 0;
+    while ((feat = srcLayer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (geom && geom->Intersects(overlayUnion)) {
+            OGRGeometry* unionGeom = geom->Union(overlayUnion);
+            if (unionGeom && !unionGeom->IsEmpty()) {
+                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
+                dstFeat->SetGeometry(unionGeom);
+                dstFeat->SetField("source", "union");
+                dstLayer->CreateFeature(dstFeat);
+                OGRFeature::DestroyFeature(dstFeat);
+                count++;
+            }
+            delete unionGeom;
+        } else if (geom) {
+            OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
+            dstFeat->SetGeometry(geom->clone());
+            dstFeat->SetField("source", "input");
+            dstLayer->CreateFeature(dstFeat);
+            OGRFeature::DestroyFeature(dstFeat);
+            count++;
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    delete overlayUnion; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.onProgress(1.0);
+
+    return gis::framework::Result::ok(
+        "Union completed: " + std::to_string(count) + " features", output);
+}
+
+gis::framework::Result VectorPlugin::doDifference(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    std::string layerName = gis::framework::getParam<std::string>(params, "layer", "");
+    std::string overlayVector = gis::framework::getParam<std::string>(params, "overlay_vector", "");
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (overlayVector.empty()) return gis::framework::Result::fail("overlay_vector is required for difference");
+
+    progress.onProgress(0.1);
+
+    GDALDataset* srcDS = openVector(input, true);
+    if (!srcDS) return gis::framework::Result::fail("Cannot open input: " + input);
+
+    GDALDataset* overlayDS = openVector(overlayVector, true);
+    if (!overlayDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot open overlay: " + overlayVector); }
+
+    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* overlayLayer = overlayDS->GetLayer(0);
+    if (!srcLayer || !overlayLayer) {
+        GDALClose(overlayDS); GDALClose(srcDS);
+        return gis::framework::Result::fail("Cannot find required layers");
+    }
+
+    std::vector<OGRGeometry*> overlayGeoms;
+    overlayLayer->ResetReading();
+    OGRFeature* feat;
+    while ((feat = overlayLayer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (geom) overlayGeoms.push_back(geom->clone());
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(overlayDS);
+
+    if (overlayGeoms.empty()) {
+        GDALClose(srcDS);
+        return gis::framework::Result::fail("No geometries in overlay vector");
+    }
+
+    OGRGeometry* overlayUnion = overlayGeoms[0];
+    for (size_t i = 1; i < overlayGeoms.size(); ++i) {
+        OGRGeometry* newUnion = overlayUnion->Union(overlayGeoms[i]);
+        delete overlayUnion;
+        overlayUnion = newUnion;
+        delete overlayGeoms[i];
+    }
+
+    progress.onProgress(0.3);
+
+    namespace fs = std::filesystem;
+    std::string outFormat = "GeoJSON";
+    std::string ext = fs::path(output).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext == ".shp") outFormat = "ESRI Shapefile";
+    else if (ext == ".gpkg") outFormat = "GPKG";
+
+    GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
+    if (!drv) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+
+    if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
+        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
+            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
+        }
+    }
+
+    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!dstDS) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+
+    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    OGRLayer* dstLayer = dstDS->CreateLayer("difference", srcSRS, wkbPolygon, nullptr);
+    if (!dstLayer) {
+        GDALClose(dstDS); delete overlayUnion; GDALClose(srcDS); delete srcSRS;
+        return gis::framework::Result::fail("Cannot create output layer");
+    }
+
+    auto* srcLayerDefn = srcLayer->GetLayerDefn();
+    for (int i = 0; i < srcLayerDefn->GetFieldCount(); ++i) {
+        OGRFieldDefn fieldDefn(srcLayerDefn->GetFieldDefn(i));
+        dstLayer->CreateField(&fieldDefn);
+    }
+
+    progress.onProgress(0.4);
+
+    srcLayer->ResetReading();
+    int count = 0;
+    while ((feat = srcLayer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (geom) {
+            OGRGeometry* diffGeom = geom->Difference(overlayUnion);
+            if (diffGeom && !diffGeom->IsEmpty()) {
+                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
+                dstFeat->SetFrom(feat);
+                dstFeat->SetGeometry(diffGeom);
+                dstLayer->CreateFeature(dstFeat);
+                OGRFeature::DestroyFeature(dstFeat);
+                count++;
+            }
+            delete diffGeom;
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    delete overlayUnion; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.onProgress(1.0);
+
+    return gis::framework::Result::ok(
+        "Difference completed: " + std::to_string(count) + " features", output);
+}
+
+gis::framework::Result VectorPlugin::doDissolve(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    std::string layerName = gis::framework::getParam<std::string>(params, "layer", "");
+    std::string dissolveField = gis::framework::getParam<std::string>(params, "dissolve_field", "");
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.onProgress(0.1);
+
+    GDALDataset* srcDS = openVector(input, true);
+    if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
+
+    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    if (!srcLayer) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot find layer"); }
+
+    progress.onProgress(0.2);
+
+    std::map<std::string, std::vector<OGRGeometry*>> groups;
+    std::vector<OGRGeometry*> allGeoms;
+
+    srcLayer->ResetReading();
+    OGRFeature* feat;
+    while ((feat = srcLayer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (!geom) { OGRFeature::DestroyFeature(feat); continue; }
+
+        if (!dissolveField.empty()) {
+            int fieldIdx = srcLayer->GetLayerDefn()->GetFieldIndex(dissolveField.c_str());
+            if (fieldIdx >= 0) {
+                std::string val = feat->GetFieldAsString(fieldIdx);
+                groups[val].push_back(geom->clone());
+            } else {
+                allGeoms.push_back(geom->clone());
+            }
+        } else {
+            allGeoms.push_back(geom->clone());
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    progress.onProgress(0.4);
+
+    namespace fs = std::filesystem;
+    std::string outFormat = "GeoJSON";
+    std::string ext = fs::path(output).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext == ".shp") outFormat = "ESRI Shapefile";
+    else if (ext == ".gpkg") outFormat = "GPKG";
+
+    GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
+    if (!drv) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+
+    if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
+        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
+            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
+        }
+    }
+
+    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+
+    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    OGRLayer* dstLayer = dstDS->CreateLayer("dissolved", srcSRS, wkbPolygon, nullptr);
+    if (!dstLayer) {
+        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+        return gis::framework::Result::fail("Cannot create output layer");
+    }
+
+    if (!dissolveField.empty()) {
+        OGRFieldDefn fieldDefn(dissolveField.c_str(), OFTString);
+        dstLayer->CreateField(&fieldDefn);
+    }
+
+    progress.onProgress(0.5);
+
+    int count = 0;
+
+    if (!dissolveField.empty()) {
+        for (auto& [key, geoms] : groups) {
+            if (geoms.empty()) continue;
+
+            OGRGeometry* result = geoms[0];
+            for (size_t i = 1; i < geoms.size(); ++i) {
+                OGRGeometry* newResult = result->Union(geoms[i]);
+                delete result;
+                result = newResult;
+                delete geoms[i];
+            }
+
+            if (result && !result->IsEmpty()) {
+                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
+                dstFeat->SetGeometry(result);
+                dstFeat->SetField(dissolveField.c_str(), key.c_str());
+                dstLayer->CreateFeature(dstFeat);
+                OGRFeature::DestroyFeature(dstFeat);
+                count++;
+            }
+            delete result;
+        }
+    } else {
+        if (!allGeoms.empty()) {
+            OGRGeometry* result = allGeoms[0];
+            for (size_t i = 1; i < allGeoms.size(); ++i) {
+                OGRGeometry* newResult = result->Union(allGeoms[i]);
+                delete result;
+                result = newResult;
+                delete allGeoms[i];
+            }
+
+            if (result && !result->IsEmpty()) {
+                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
+                dstFeat->SetGeometry(result);
+                dstLayer->CreateFeature(dstFeat);
+                OGRFeature::DestroyFeature(dstFeat);
+                count++;
+            }
+            delete result;
+        }
+    }
+
+    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.onProgress(1.0);
+
+    return gis::framework::Result::ok(
+        "Dissolve completed: " + std::to_string(count) + " features", output);
 }
 
 } // namespace gis::plugins

@@ -7,7 +7,10 @@
       "mcp__plugin_everything-claude-code_sequential-thinking__sequentialthinking",
       "Bash(git init *)",
       "Bash(rm -rf build)",
-      "Bash(mkdir build *)"
+      "Bash(mkdir build *)",
+      "Bash(curl -s --connect-timeout 5 https://github.com -o /dev/null -w \"%{http_code}\")",
+      "Bash(D:/Develop/vcpkg/vcpkg install *)",
+      "Bash(cmake -B build -S . -G \"Visual Studio 17 2022\" -A x64 -DCMAKE_TOOLCHAIN_FILE=D:/Develop/vcpkg/scripts/buildsystems/vcpkg.cmake -DGIS_BUILD_TESTS=ON)"
     ]
   }
 }

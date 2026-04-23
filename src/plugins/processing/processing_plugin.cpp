@@ -20,7 +20,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"threshold", "filter", "enhance", "band_math", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed"}
+            {"threshold", "filter", "enhance", "band_math", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "kmeans"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -160,6 +160,18 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "marker_input", "标记输入", "分水岭分割的种子标记文件(不指定则自动生成)",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
+        gis::framework::ParamSpec{
+            "k", "聚类数", "K-Means聚类的类别数",
+            gis::framework::ParamType::Int, false, int{5}
+        },
+        gis::framework::ParamSpec{
+            "max_iter", "最大迭代", "K-Means最大迭代次数",
+            gis::framework::ParamType::Int, false, int{100}
+        },
+        gis::framework::ParamSpec{
+            "epsilon_kmeans", "收敛阈值", "K-Means收敛阈值",
+            gis::framework::ParamType::Double, false, double{0.001}
+        },
     };
 }
 
@@ -180,6 +192,7 @@ gis::framework::Result ProcessingPlugin::execute(
     if (action == "pansharpen")      return doPansharpen(params, progress);
     if (action == "hough")           return doHough(params, progress);
     if (action == "watershed")       return doWatershed(params, progress);
+    if (action == "kmeans")          return doKMeans(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -1025,6 +1038,75 @@ gis::framework::Result ProcessingPlugin::doWatershed(
 
     auto result = writeMatOutput(resultImg, input, output, band, progress);
     result.metadata["segment_count"] = std::to_string(segmentCount);
+    return result;
+}
+
+gis::framework::Result ProcessingPlugin::doKMeans(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+    int k = gis::framework::getParam<int>(params, "k", 5);
+    int maxIter = gis::framework::getParam<int>(params, "max_iter", 100);
+    double epsilon = gis::framework::getParam<double>(params, "epsilon_kmeans", 0.001);
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (k <= 0) return gis::framework::Result::fail("k must be positive");
+
+    progress.onProgress(0.1);
+
+    auto ds = gis::core::openRaster(input, true);
+    if (!ds) return gis::framework::Result::fail("Cannot open raster file: " + input);
+
+    int width = ds->GetRasterXSize();
+    int height = ds->GetRasterYSize();
+    int bands = ds->GetRasterCount();
+
+    progress.onMessage("Reading " + std::to_string(bands) + " bands for K-Means...");
+
+    std::vector<cv::Mat> bandMats;
+    for (int b = 1; b <= bands; ++b) {
+        bandMats.push_back(gis::core::gdalBandToMat(ds.get(), b));
+    }
+    progress.onProgress(0.3);
+
+    cv::Mat samples(width * height, bands, CV_32F);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            for (int b = 0; b < bands; ++b) {
+                samples.at<float>(y * width + x, b) = bandMats[b].at<float>(y, x);
+            }
+        }
+    }
+
+    progress.onMessage("Running K-Means with k=" + std::to_string(k) + "...");
+
+    cv::Mat labels, centers;
+    cv::TermCriteria criteria(cv::TermCriteria::MAX_ITER + cv::TermCriteria::EPS,
+                               maxIter, epsilon);
+    double compactness = cv::kmeans(samples, k, labels, criteria,
+                                     3, cv::KMEANS_PP_CENTERS, centers);
+
+    progress.onProgress(0.8);
+
+    cv::Mat resultImg(height, width, CV_32F);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int label = labels.at<int>(y * width + x);
+            resultImg.at<float>(y, x) = static_cast<float>(label);
+        }
+    }
+
+    progress.onMessage("K-Means completed: " + std::to_string(k) +
+                        " clusters, compactness=" + std::to_string(compactness));
+
+    auto result = writeMatOutput(resultImg, input, output, 1, progress);
+    result.metadata["k"] = std::to_string(k);
+    result.metadata["compactness"] = std::to_string(compactness);
+    result.metadata["bands"] = std::to_string(bands);
     return result;
 }
 

@@ -16,6 +16,7 @@ target_link_libraries(plugin_matching PRIVATE
     opencv_flann
     opencv_calib3d
     opencv_video
+    opencv_stitching
 )
 
 set_target_properties(plugin_matching PROPERTIES
