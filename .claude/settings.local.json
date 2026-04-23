@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/afei/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/**)",
+      "Bash(bash scripts/start-server.sh --project-dir \"d:/Develop/GIS/GIS_TOOL\")",
+      "Bash(bash \"C:\\\\Users\\\\afei\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\superpowers\\\\5.0.7\\\\skills\\\\brainstorming\\\\scripts\\\\start-server.sh\" --project-dir \"d:/Develop/GIS/GIS_TOOL\")",
+      "mcp__plugin_everything-claude-code_sequential-thinking__sequentialthinking",
+      "Bash(git init *)",
+      "Bash(rm -rf build)",
+      "Bash(mkdir build *)"
+    ]
+  }
+}

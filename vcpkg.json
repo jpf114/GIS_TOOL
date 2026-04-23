@@ -1,0 +1,17 @@
+{
+  "name": "gis-tool",
+  "version": "0.1.0",
+  "description": "GIS toolset based on GDAL and OpenCV with plugin architecture",
+  "dependencies": [
+    {
+      "name": "gdal",
+      "default-features": true
+    },
+    {
+      "name": "opencv4",
+      "default-features": true
+    },
+    "proj"
+  ],
+  "overrides": []
+}

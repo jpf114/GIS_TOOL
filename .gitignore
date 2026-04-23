@@ -1,0 +1,25 @@
+# Build
+build/
+out/
+cmake-build-*/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+.idea/
+CMakeSettings.json
+
+# OS
+Thumbs.db
+.DS_Store
+
+# vcpkg
+vcpkg_installed/
+
+# Superpowers brainstorm
+.superpowers/
+build2
