@@ -1,9 +1,11 @@
-#include "vector_plugin.h"
+﻿#include "vector_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
+#include <gdal_alg.h>
+#include <gdal_utils.h>
 #include <sstream>
 #include <algorithm>
 #include <filesystem>
@@ -169,7 +171,7 @@ gis::framework::Result VectorPlugin::doInfo(
                 << " - " << extent.MaxX << ", " << extent.MaxY << "\n";
         }
 
-        OGRSpatialReference* srs = layer->GetSpatialRef();
+        const OGRSpatialReference* srs = layer->GetSpatialRef();
         if (srs) {
             const char* authName = srs->GetAuthorityName(nullptr);
             const char* authCode = srs->GetAuthorityCode(nullptr);
@@ -208,7 +210,6 @@ gis::framework::Result VectorPlugin::doInfo(
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(oss.str());
-    result.metadata["driver"] = ds->GetDriver()->GetDescription();
     return result;
 }
 
@@ -282,12 +283,13 @@ gis::framework::Result VectorPlugin::doFilter(
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef();
+    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(
         srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
         GDALClose(dstDS);
         GDALClose(srcDS);
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -310,6 +312,7 @@ gis::framework::Result VectorPlugin::doFilter(
             OGRFeature::DestroyFeature(feat);
             GDALClose(dstDS);
             GDALClose(srcDS);
+            delete srcSRS;
             return gis::framework::Result::fail("Failed to write feature");
         }
         OGRFeature::DestroyFeature(dstFeat);
@@ -319,6 +322,7 @@ gis::framework::Result VectorPlugin::doFilter(
 
     GDALClose(dstDS);
     GDALClose(srcDS);
+    delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -378,13 +382,14 @@ gis::framework::Result VectorPlugin::doBuffer(
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef();
+    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(
         (std::string(srcLayer->GetName()) + "_buffer").c_str(),
         srcSRS, wkbPolygon, nullptr);
     if (!dstLayer) {
         GDALClose(dstDS);
         GDALClose(srcDS);
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -416,6 +421,7 @@ gis::framework::Result VectorPlugin::doBuffer(
                     delete bufferGeom;
                     GDALClose(dstDS);
                     GDALClose(srcDS);
+                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write buffer feature");
                 }
                 OGRFeature::DestroyFeature(dstFeat);
@@ -431,6 +437,7 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     GDALClose(dstDS);
     GDALClose(srcDS);
+    delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -528,13 +535,14 @@ gis::framework::Result VectorPlugin::doClip(
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef();
+    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(
         srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
         GDALClose(dstDS);
         delete clipUnion;
         GDALClose(srcDS);
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -569,6 +577,7 @@ gis::framework::Result VectorPlugin::doClip(
     delete clipUnion;
     GDALClose(dstDS);
     GDALClose(srcDS);
+    delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -633,7 +642,7 @@ gis::framework::Result VectorPlugin::doRasterize(
     adfGT[5] = -resolution;
     dstDS->SetGeoTransform(adfGT);
 
-    OGRSpatialReference* srs = layer->GetSpatialRef();
+    const OGRSpatialReference* srs = layer->GetSpatialRef();
     if (srs) {
         char* wkt = nullptr;
         srs->exportToWkt(&wkt);
@@ -761,13 +770,14 @@ gis::framework::Result VectorPlugin::doPolygonize(
     progress.onProgress(0.3);
 
     GDALPolygonize(static_cast<GDALRasterBandH>(rasterBand),
-        nullptr, static_cast<OGRLayerH>(dstLayer), 0, nullptr, nullptr);
+        nullptr, static_cast<OGRLayerH>(dstLayer), 0, nullptr, nullptr, nullptr);
+
+    GIntBig featureCount = dstLayer->GetFeatureCount(FALSE);
 
     if (srs) delete srs;
     GDALClose(dstDS);
     progress.onProgress(1.0);
 
-    GIntBig featureCount = dstLayer->GetFeatureCount(FALSE);
     return gis::framework::Result::ok(
         "Polygonize completed: " + std::to_string(featureCount) + " polygons", output);
 }
@@ -818,12 +828,13 @@ gis::framework::Result VectorPlugin::doConvert(
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef();
+    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(
         srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
         GDALClose(dstDS);
         GDALClose(srcDS);
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -846,6 +857,7 @@ gis::framework::Result VectorPlugin::doConvert(
             OGRFeature::DestroyFeature(feat);
             GDALClose(dstDS);
             GDALClose(srcDS);
+            delete srcSRS;
             return gis::framework::Result::fail("Failed to write feature");
         }
         OGRFeature::DestroyFeature(dstFeat);
@@ -855,6 +867,7 @@ gis::framework::Result VectorPlugin::doConvert(
 
     GDALClose(dstDS);
     GDALClose(srcDS);
+    delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(

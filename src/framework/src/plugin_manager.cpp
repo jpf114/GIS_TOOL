@@ -1,4 +1,4 @@
-#include <gis/framework/plugin_manager.h>
+﻿#include <gis/framework/plugin_manager.h>
 #include <gis/core/error.h>
 #include <filesystem>
 #include <iostream>

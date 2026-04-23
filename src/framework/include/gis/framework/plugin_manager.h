@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <gis/framework/plugin.h>
 #include <memory>
 #include <string>

@@ -20,7 +20,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"threshold", "filter", "enhance", "band_math", "stats"}
+            {"threshold", "filter", "enhance", "band_math", "stats", "edge", "contour", "template_match"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -80,6 +80,42 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "expression", "表达式", "波段运算表达式(如 B1+B2, B1*0.5+B2*0.5)",
             gis::framework::ParamType::String, false, std::string{}
         },
+        gis::framework::ParamSpec{
+            "edge_method", "边缘检测方法", "边缘检测算法",
+            gis::framework::ParamType::Enum, false, std::string{"canny"},
+            int{0}, int{0},
+            {"canny", "sobel", "laplacian", "scharr"}
+        },
+        gis::framework::ParamSpec{
+            "low_threshold", "低阈值", "Canny边缘检测低阈值",
+            gis::framework::ParamType::Double, false, double{50.0}
+        },
+        gis::framework::ParamSpec{
+            "high_threshold", "高阈值", "Canny边缘检测高阈值",
+            gis::framework::ParamType::Double, false, double{150.0}
+        },
+        gis::framework::ParamSpec{
+            "sobel_dx", "Sobel dx", "Sobel x方向导数阶数",
+            gis::framework::ParamType::Int, false, int{1}
+        },
+        gis::framework::ParamSpec{
+            "sobel_dy", "Sobel dy", "Sobel y方向导数阶数",
+            gis::framework::ParamType::Int, false, int{1}
+        },
+        gis::framework::ParamSpec{
+            "min_area", "最小面积", "轮廓过滤的最小面积(像素)",
+            gis::framework::ParamType::Double, false, double{100.0}
+        },
+        gis::framework::ParamSpec{
+            "template_file", "模板文件", "模板匹配的模板影像路径",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "match_method", "匹配方法", "模板匹配算法",
+            gis::framework::ParamType::Enum, false, std::string{"ccoeff_normed"},
+            int{0}, int{0},
+            {"sqdiff", "sqdiff_normed", "ccorr", "ccorr_normed", "ccoeff", "ccoeff_normed"}
+        },
     };
 }
 
@@ -89,11 +125,14 @@ gis::framework::Result ProcessingPlugin::execute(
 
     std::string action = gis::framework::getParam<std::string>(params, "action", "");
 
-    if (action == "threshold")  return doThreshold(params, progress);
-    if (action == "filter")     return doFilter(params, progress);
-    if (action == "enhance")    return doEnhance(params, progress);
-    if (action == "band_math")  return doBandMath(params, progress);
-    if (action == "stats")      return doStats(params, progress);
+    if (action == "threshold")       return doThreshold(params, progress);
+    if (action == "filter")          return doFilter(params, progress);
+    if (action == "enhance")         return doEnhance(params, progress);
+    if (action == "band_math")       return doBandMath(params, progress);
+    if (action == "stats")           return doStats(params, progress);
+    if (action == "edge")            return doEdge(params, progress);
+    if (action == "contour")         return doContour(params, progress);
+    if (action == "template_match")  return doTemplateMatch(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -481,6 +520,180 @@ gis::framework::Result ProcessingPlugin::doStats(
     if (noDataOk) {
         result.metadata["nodata"] = std::to_string(noDataVal);
     }
+    return result;
+}
+
+gis::framework::Result ProcessingPlugin::doEdge(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+    std::string edgeMethod = gis::framework::getParam<std::string>(params, "edge_method", "canny");
+    double lowThresh  = gis::framework::getParam<double>(params, "low_threshold", 50.0);
+    double highThresh = gis::framework::getParam<double>(params, "high_threshold", 150.0);
+    int sobelDx = gis::framework::getParam<int>(params, "sobel_dx", 1);
+    int sobelDy = gis::framework::getParam<int>(params, "sobel_dy", 1);
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.onProgress(0.1);
+    cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.onProgress(0.3);
+
+    cv::Mat gray = toUint8(mat);
+    progress.onProgress(0.4);
+
+    cv::Mat result;
+
+    if (edgeMethod == "canny") {
+        cv::Canny(gray, result, lowThresh, highThresh);
+    } else if (edgeMethod == "sobel") {
+        if (sobelDx < 0 || sobelDx > 2) sobelDx = 1;
+        if (sobelDy < 0 || sobelDy > 2) sobelDy = 1;
+        if (sobelDx == 0 && sobelDy == 0) sobelDx = 1;
+        cv::Sobel(gray, result, CV_16S, sobelDx, sobelDy, 3);
+        cv::convertScaleAbs(result, result);
+    } else if (edgeMethod == "laplacian") {
+        cv::Laplacian(gray, result, CV_16S, 3);
+        cv::convertScaleAbs(result, result);
+    } else if (edgeMethod == "scharr") {
+        cv::Scharr(gray, result, CV_16S, sobelDx > 0 ? 1 : 0, sobelDy > 0 ? 1 : 0);
+        cv::convertScaleAbs(result, result);
+    } else {
+        return gis::framework::Result::fail("Unknown edge method: " + edgeMethod);
+    }
+
+    progress.onProgress(0.7);
+
+    cv::Mat outFloat;
+    result.convertTo(outFloat, CV_32F, 1.0 / 255.0);
+    return writeMatOutput(outFloat, input, output, band, progress);
+}
+
+gis::framework::Result ProcessingPlugin::doContour(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+    double minArea = gis::framework::getParam<double>(params, "min_area", 100.0);
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.onProgress(0.1);
+    cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.onProgress(0.3);
+
+    cv::Mat gray = toUint8(mat);
+
+    cv::Mat binary;
+    cv::threshold(gray, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+    progress.onProgress(0.4);
+
+    std::vector<std::vector<cv::Point>> contours;
+    std::vector<cv::Vec4i> hierarchy;
+    cv::findContours(binary, contours, hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    progress.onProgress(0.6);
+
+    cv::Mat resultImg = cv::Mat::zeros(mat.size(), CV_8U);
+    int keptCount = 0;
+    for (size_t i = 0; i < contours.size(); ++i) {
+        double area = cv::contourArea(contours[i]);
+        if (area >= minArea) {
+            cv::drawContours(resultImg, contours, static_cast<int>(i), cv::Scalar(255), cv::FILLED);
+            keptCount++;
+        }
+    }
+
+    progress.onProgress(0.8);
+
+    std::ostringstream oss;
+    oss << "Contour extraction: " << contours.size() << " total, "
+        << keptCount << " kept (area >= " << minArea << ")";
+    progress.onMessage(oss.str());
+
+    cv::Mat outFloat;
+    resultImg.convertTo(outFloat, CV_32F, 1.0 / 255.0);
+
+    auto result = writeMatOutput(outFloat, input, output, band, progress);
+    result.metadata["total_contours"] = std::to_string(contours.size());
+    result.metadata["kept_contours"] = std::to_string(keptCount);
+    return result;
+}
+
+gis::framework::Result ProcessingPlugin::doTemplateMatch(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    std::string templateFile = gis::framework::getParam<std::string>(params, "template_file", "");
+    std::string matchMethod = gis::framework::getParam<std::string>(params, "match_method", "ccoeff_normed");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+
+    if (input.empty())         return gis::framework::Result::fail("input is required");
+    if (output.empty())        return gis::framework::Result::fail("output is required");
+    if (templateFile.empty())  return gis::framework::Result::fail("template_file is required");
+
+    progress.onProgress(0.1);
+    cv::Mat srcMat = readBandAsMat(input, band, progress);
+    progress.onProgress(0.2);
+    cv::Mat tplMat = readBandAsMat(templateFile, band, progress);
+    progress.onProgress(0.3);
+
+    cv::Mat srcGray = toUint8(srcMat);
+    cv::Mat tplGray = toUint8(tplMat);
+
+    if (tplGray.cols > srcGray.cols || tplGray.rows > srcGray.rows) {
+        return gis::framework::Result::fail("Template is larger than source image");
+    }
+
+    int method;
+    if (matchMethod == "sqdiff")          method = cv::TM_SQDIFF;
+    else if (matchMethod == "sqdiff_normed")   method = cv::TM_SQDIFF_NORMED;
+    else if (matchMethod == "ccorr")           method = cv::TM_CCORR;
+    else if (matchMethod == "ccorr_normed")    method = cv::TM_CCORR_NORMED;
+    else if (matchMethod == "ccoeff")          method = cv::TM_CCOEFF;
+    else                                       method = cv::TM_CCOEFF_NORMED;
+
+    progress.onMessage("Running template matching...");
+    cv::Mat matchResult;
+    cv::matchTemplate(srcGray, tplGray, matchResult, method);
+    progress.onProgress(0.7);
+
+    double minVal, maxVal;
+    cv::Point minLoc, maxLoc;
+    cv::minMaxLoc(matchResult, &minVal, &maxVal, &minLoc, &maxLoc);
+
+    cv::Point matchLoc;
+    double matchVal;
+    if (method == cv::TM_SQDIFF || method == cv::TM_SQDIFF_NORMED) {
+        matchLoc = minLoc;
+        matchVal = minVal;
+    } else {
+        matchLoc = maxLoc;
+        matchVal = maxVal;
+    }
+
+    std::ostringstream oss;
+    oss << "Template match found at (" << matchLoc.x << ", " << matchLoc.y << ") "
+        << "with score " << matchVal;
+    progress.onMessage(oss.str());
+
+    cv::Mat outFloat;
+    matchResult.convertTo(outFloat, CV_32F);
+
+    auto result = writeMatOutput(outFloat, input, output, band, progress);
+    result.metadata["match_x"] = std::to_string(matchLoc.x);
+    result.metadata["match_y"] = std::to_string(matchLoc.y);
+    result.metadata["match_score"] = std::to_string(matchVal);
+    result.metadata["template_width"] = std::to_string(tplGray.cols);
+    result.metadata["template_height"] = std::to_string(tplGray.rows);
     return result;
 }
 

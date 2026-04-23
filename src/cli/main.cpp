@@ -1,4 +1,4 @@
-#include <gis/framework/plugin_manager.h>
+﻿#include <gis/framework/plugin_manager.h>
 #include <gis/core/progress.h>
 #include <gis/core/gdal_wrapper.h>
 #include "cli_parser.h"

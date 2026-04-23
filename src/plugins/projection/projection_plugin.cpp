@@ -4,9 +4,11 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
+#include <gdal_utils.h>
 #include <sstream>
 #include <cmath>
 #include <iomanip>
+#include <memory>
 
 namespace gis::plugins {
 
@@ -208,7 +210,8 @@ gis::framework::Result ProjectionPlugin::doTransform(
     auto* srcSRS = gis::core::parseSRS(srcSrs);
     auto* dstSRS = gis::core::parseSRS(dstSrs);
 
-    auto* ct = OGRCoordinateTransformation::CreateCoordinateTransformation(srcSRS, dstSRS);
+    auto ct = std::unique_ptr<OGRCoordinateTransformation>(
+        OGRCreateCoordinateTransformation(srcSRS, dstSRS));
     delete srcSRS;
     delete dstSRS;
 
@@ -218,11 +221,9 @@ gis::framework::Result ProjectionPlugin::doTransform(
 
     double tx = x, ty = y;
     if (!ct->Transform(1, &tx, &ty)) {
-        OGRCoordinateTransformation::DestroyCT(ct);
         return gis::framework::Result::fail("Coordinate transformation failed");
     }
 
-    OGRCoordinateTransformation::DestroyCT(ct);
     progress.onProgress(1.0);
 
     std::ostringstream oss;

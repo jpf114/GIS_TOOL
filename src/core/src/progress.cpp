@@ -1,4 +1,4 @@
-#include <gis/core/progress.h>
+﻿#include <gis/core/progress.h>
 #include <iostream>
 #include <iomanip>
 

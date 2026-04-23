@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
 #include <gis/core/progress.h>

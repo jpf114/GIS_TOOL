@@ -4,6 +4,7 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
+#include <gdal_utils.h>
 #include <sstream>
 #include <algorithm>
 #include <filesystem>
@@ -333,20 +334,36 @@ gis::framework::Result CuttingPlugin::doMergeBands(
     progress.onMessage("Building VRT from " + std::to_string(bandFiles.size()) + " files...");
     progress.onProgress(0.1);
 
-    std::vector<const char*> vrtInputPaths;
-    for (auto& f : bandFiles) vrtInputPaths.push_back(f.c_str());
-    vrtInputPaths.push_back(nullptr);
+    std::vector<GDALDatasetH> srcDSVec;
+    std::vector<std::string> srcPaths = bandFiles;
+    for (auto& f : srcPaths) {
+        GDALDatasetH ds = GDALOpen(f.c_str(), GA_ReadOnly);
+        if (!ds) {
+            for (auto& d : srcDSVec) GDALClose(d);
+            return gis::framework::Result::fail("Cannot open file: " + f);
+        }
+        srcDSVec.push_back(ds);
+    }
+
+    std::vector<const char*> srcNamePtrs;
+    for (auto& f : srcPaths) srcNamePtrs.push_back(f.c_str());
+    srcNamePtrs.push_back(nullptr);
 
     GDALBuildVRTOptions* vrtOpts = GDALBuildVRTOptionsNew(nullptr, nullptr);
     if (!vrtOpts) {
+        for (auto& d : srcDSVec) GDALClose(d);
         return gis::framework::Result::fail("Failed to create VRT options");
     }
 
+    int usageError = 0;
     GDALDatasetH vrtDS = GDALBuildVRT("/vsimem/band_merge.vrt",
-        static_cast<int>(bandFiles.size()),
-        const_cast<char**>(vrtInputPaths.data()),
-        nullptr, vrtOpts, nullptr);
+        static_cast<int>(srcDSVec.size()),
+        srcDSVec.data(),
+        srcNamePtrs.data(),
+        vrtOpts, &usageError);
     GDALBuildVRTOptionsFree(vrtOpts);
+
+    for (auto& d : srcDSVec) GDALClose(d);
 
     if (!vrtDS) {
         return gis::framework::Result::fail("Failed to build VRT: " + std::string(CPLGetLastErrorMsg()));

@@ -452,7 +452,7 @@ gis::framework::Result MatchingPlugin::doChange(
         cv::divide(after + 1e-10, before + 1e-10, ratio);
         cv::Mat logRatio;
         cv::log(ratio, logRatio);
-        cv::abs(logRatio, changeMap);
+        changeMap = cv::abs(logRatio);
     } else if (changeMethod == "pcd") {
         std::vector<cv::Mat> channels = {before, after};
         cv::Mat stacked;
@@ -470,9 +470,9 @@ gis::framework::Result MatchingPlugin::doChange(
     progress.onProgress(0.7);
 
     if (threshVal <= 0) {
-        double meanVal = 0, stdDev = 0;
+        cv::Scalar meanVal, stdDev;
         cv::meanStdDev(changeMap, meanVal, stdDev);
-        threshVal = meanVal + stdDev;
+        threshVal = meanVal[0] + stdDev[0];
         progress.onMessage("Auto threshold: " + std::to_string(threshVal) +
                            " (mean + stddev)");
     }

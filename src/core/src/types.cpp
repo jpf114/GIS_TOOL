@@ -1,4 +1,4 @@
-#include <gis/core/types.h>
+﻿#include <gis/core/types.h>
 
 namespace gis::core {
 

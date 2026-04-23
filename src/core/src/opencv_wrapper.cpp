@@ -23,10 +23,14 @@ cv::Mat gdalBandToMat(GDALDataset* ds, int bandIndex) {
 void matToGdalTiff(const cv::Mat& mat, const std::string& srcPath,
                    const std::string& dstPath, int bandIndex) {
     auto srcDS = openRaster(srcPath, true);
+    matToGdalTiff(mat, srcDS.get(), dstPath, bandIndex);
+}
 
+void matToGdalTiff(const cv::Mat& mat, GDALDataset* srcDS,
+                   const std::string& dstPath, int bandIndex) {
     double adfGT[6];
     srcDS->GetGeoTransform(adfGT);
-    std::string proj = getSRSWKT(srcDS.get());
+    std::string proj = getSRSWKT(srcDS);
 
     auto dstDS = createRaster(dstPath, mat.cols, mat.rows, 1, GDT_Float32);
     dstDS->SetGeoTransform(adfGT);
@@ -35,27 +39,70 @@ void matToGdalTiff(const cv::Mat& mat, const std::string& srcPath,
     }
 
     auto* band = dstDS->GetRasterBand(1);
+
+    int srcHasNoData = 0;
+    if (bandIndex >= 1 && bandIndex <= srcDS->GetRasterCount()) {
+        double srcNoData = srcDS->GetRasterBand(bandIndex)->GetNoDataValue(&srcHasNoData);
+        if (srcHasNoData) {
+            band->SetNoDataValue(srcNoData);
+        }
+    }
+
     int cvType = mat.type();
-    GDALDataType gdt;
 
     if (cvType == CV_32F) {
-        gdt = GDT_Float32;
         band->RasterIO(GF_Write, 0, 0, mat.cols, mat.rows,
-                       const_cast<float*>(mat.ptr<float>()), mat.cols, mat.rows, gdt, 0, 0);
+                       const_cast<float*>(mat.ptr<float>()), mat.cols, mat.rows, GDT_Float32, 0, 0);
     } else if (cvType == CV_8U) {
-        gdt = GDT_Byte;
         band->RasterIO(GF_Write, 0, 0, mat.cols, mat.rows,
-                       const_cast<uint8_t*>(mat.ptr<uint8_t>()), mat.cols, mat.rows, gdt, 0, 0);
+                       const_cast<uint8_t*>(mat.ptr<uint8_t>()), mat.cols, mat.rows, GDT_Byte, 0, 0);
     } else if (cvType == CV_16U) {
-        gdt = GDT_UInt16;
         band->RasterIO(GF_Write, 0, 0, mat.cols, mat.rows,
-                       const_cast<uint16_t*>(mat.ptr<uint16_t>()), mat.cols, mat.rows, gdt, 0, 0);
+                       const_cast<uint16_t*>(mat.ptr<uint16_t>()), mat.cols, mat.rows, GDT_UInt16, 0, 0);
     } else {
-        // Fallback: convert to float32
         cv::Mat fmat;
         mat.convertTo(fmat, CV_32F);
         band->RasterIO(GF_Write, 0, 0, fmat.cols, fmat.rows,
                        fmat.ptr<float>(), fmat.cols, fmat.rows, GDT_Float32, 0, 0);
+    }
+}
+
+void matsToGdalTiff(const std::vector<cv::Mat>& mats, GDALDataset* srcDS,
+                    const std::string& dstPath) {
+    if (mats.empty()) return;
+
+    int width = mats[0].cols;
+    int height = mats[0].rows;
+    int numBands = static_cast<int>(mats.size());
+
+    double adfGT[6];
+    srcDS->GetGeoTransform(adfGT);
+    std::string proj = getSRSWKT(srcDS);
+
+    auto dstDS = createRaster(dstPath, width, height, numBands, GDT_Float32);
+    dstDS->SetGeoTransform(adfGT);
+    if (!proj.empty()) {
+        dstDS->SetProjection(proj.c_str());
+    }
+
+    for (int i = 0; i < numBands; ++i) {
+        auto* band = dstDS->GetRasterBand(i + 1);
+
+        int srcBandIdx = (i < srcDS->GetRasterCount()) ? (i + 1) : 1;
+        int srcHasNoData = 0;
+        double srcNoData = srcDS->GetRasterBand(srcBandIdx)->GetNoDataValue(&srcHasNoData);
+        if (srcHasNoData) {
+            band->SetNoDataValue(srcNoData);
+        }
+
+        cv::Mat fmat;
+        if (mats[i].type() != CV_32F) {
+            mats[i].convertTo(fmat, CV_32F);
+        } else {
+            fmat = mats[i];
+        }
+        band->RasterIO(GF_Write, 0, 0, width, height,
+                       fmat.ptr<float>(), width, height, GDT_Float32, 0, 0);
     }
 }
 

@@ -10,10 +10,11 @@ target_link_libraries(plugin_matching PRIVATE
     gis_core
     gis_framework
     GDAL::GDAL
-    OpenCV::Core
-    OpenCV::Features2D
-    OpenCV::ImgProc
-    OpenCV::Flann
+    opencv_core
+    opencv_features2d
+    opencv_imgproc
+    opencv_flann
+    opencv_calib3d
 )
 
 set_target_properties(plugin_matching PROPERTIES

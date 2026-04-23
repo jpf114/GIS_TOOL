@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 option(GIS_BUILD_GUI "Build Qt GUI" OFF)
 option(GIS_BUILD_TESTS "Build tests" ON)
 
@@ -14,7 +18,7 @@ if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
 endif()
 
 find_package(GDAL REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d flann calib3d highgui)
 find_package(PROJ REQUIRED)
 
 add_subdirectory(src/core)

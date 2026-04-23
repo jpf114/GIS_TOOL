@@ -12,8 +12,8 @@ target_include_directories(gis_core PUBLIC
 
 target_link_libraries(gis_core PUBLIC
     GDAL::GDAL
-    OpenCV::Core
-    OpenCV::ImgProc
+    opencv_core
+    opencv_imgproc
 )
 
 set_target_properties(gis_core PROPERTIES

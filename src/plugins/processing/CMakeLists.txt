@@ -10,8 +10,8 @@ target_link_libraries(plugin_processing PRIVATE
     gis_core
     gis_framework
     GDAL::GDAL
-    OpenCV::Core
-    OpenCV::ImgProc
+    opencv_core
+    opencv_imgproc
 )
 
 set_target_properties(plugin_processing PROPERTIES
