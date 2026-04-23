@@ -95,8 +95,7 @@ static GDALDataset* openVector(const std::string& path, bool readOnly = true) {
 
 static OGRLayer* getLayer(GDALDataset* ds, const std::string& layerName) {
     if (!layerName.empty()) {
-        OGRLayer* layer = ds->GetLayerByName(layerName.c_str());
-        return layer;
+        return ds->GetLayerByName(layerName.c_str());
     }
     return ds->GetLayer(0);
 }
@@ -121,15 +120,6 @@ static GDALDriver* getDriverForFormat(const std::string& format) {
     if (format == "KML")             return GetGDALDriverManager()->GetDriverByName("KML");
     if (format == "CSV")             return GetGDALDriverManager()->GetDriverByName("CSV");
     return nullptr;
-}
-
-static std::string getDriverExtension(const std::string& format) {
-    if (format == "GeoJSON")        return ".geojson";
-    if (format == "ESRI Shapefile") return ".shp";
-    if (format == "GPKG")           return ".gpkg";
-    if (format == "KML")            return ".kml";
-    if (format == "CSV")            return ".csv";
-    return "";
 }
 
 gis::framework::Result VectorPlugin::doInfo(
@@ -209,8 +199,7 @@ gis::framework::Result VectorPlugin::doInfo(
     GDALClose(ds);
     progress.onProgress(1.0);
 
-    auto result = gis::framework::Result::ok(oss.str());
-    return result;
+    return gis::framework::Result::ok(oss.str());
 }
 
 gis::framework::Result VectorPlugin::doFilter(
@@ -233,9 +222,7 @@ gis::framework::Result VectorPlugin::doFilter(
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
-    if (!srcDS) {
-        return gis::framework::Result::fail("Cannot open vector file: " + input);
-    }
+    if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
     OGRLayer* srcLayer = getLayer(srcDS, layerName);
     if (!srcLayer) {
@@ -243,9 +230,7 @@ gis::framework::Result VectorPlugin::doFilter(
         return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
-    if (!where.empty()) {
-        srcLayer->SetAttributeFilter(where.c_str());
-    }
+    if (!where.empty()) srcLayer->SetAttributeFilter(where.c_str());
 
     bool hasExtent = extentArr[0] != 0 || extentArr[1] != 0 ||
                      extentArr[2] != 0 || extentArr[3] != 0;
@@ -271,9 +256,7 @@ gis::framework::Result VectorPlugin::doFilter(
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) {
-                fs::remove(entry.path());
-            }
+            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
         }
     }
 
@@ -284,12 +267,9 @@ gis::framework::Result VectorPlugin::doFilter(
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer(
-        srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
+    OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
-        delete srcSRS;
+        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -308,21 +288,15 @@ gis::framework::Result VectorPlugin::doFilter(
         OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
         dstFeat->SetFrom(feat);
         if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
-            OGRFeature::DestroyFeature(dstFeat);
-            OGRFeature::DestroyFeature(feat);
-            GDALClose(dstDS);
-            GDALClose(srcDS);
-            delete srcSRS;
+            OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
+            GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
             return gis::framework::Result::fail("Failed to write feature");
         }
-        OGRFeature::DestroyFeature(dstFeat);
-        OGRFeature::DestroyFeature(feat);
+        OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
         count++;
     }
 
-    GDALClose(dstDS);
-    GDALClose(srcDS);
-    delete srcSRS;
+    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -344,9 +318,7 @@ gis::framework::Result VectorPlugin::doBuffer(
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
-    if (!srcDS) {
-        return gis::framework::Result::fail("Cannot open vector file: " + input);
-    }
+    if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
     OGRLayer* srcLayer = getLayer(srcDS, layerName);
     if (!srcLayer) {
@@ -370,9 +342,7 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) {
-                fs::remove(entry.path());
-            }
+            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
         }
     }
 
@@ -384,12 +354,9 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(
-        (std::string(srcLayer->GetName()) + "_buffer").c_str(),
-        srcSRS, wkbPolygon, nullptr);
+        (std::string(srcLayer->GetName()) + "_buffer").c_str(), srcSRS, wkbPolygon, nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
-        delete srcSRS;
+        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -416,12 +383,8 @@ gis::framework::Result VectorPlugin::doBuffer(
                 dstFeat->SetFrom(feat);
                 dstFeat->SetGeometry(bufferGeom);
                 if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
-                    OGRFeature::DestroyFeature(dstFeat);
-                    OGRFeature::DestroyFeature(feat);
-                    delete bufferGeom;
-                    GDALClose(dstDS);
-                    GDALClose(srcDS);
-                    delete srcSRS;
+                    OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
+                    delete bufferGeom; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
                     return gis::framework::Result::fail("Failed to write buffer feature");
                 }
                 OGRFeature::DestroyFeature(dstFeat);
@@ -430,14 +393,10 @@ gis::framework::Result VectorPlugin::doBuffer(
         }
         OGRFeature::DestroyFeature(feat);
         count++;
-        if (count % 100 == 0) {
-            progress.onProgress(0.3 + 0.6 * static_cast<double>(count) / total);
-        }
+        if (count % 100 == 0) progress.onProgress(0.3 + 0.6 * static_cast<double>(count) / total);
     }
 
-    GDALClose(dstDS);
-    GDALClose(srcDS);
-    delete srcSRS;
+    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -460,9 +419,7 @@ gis::framework::Result VectorPlugin::doClip(
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
-    if (!srcDS) {
-        return gis::framework::Result::fail("Cannot open input vector: " + input);
-    }
+    if (!srcDS) return gis::framework::Result::fail("Cannot open input vector: " + input);
 
     GDALDataset* clipDS = openVector(clipVector, true);
     if (!clipDS) {
@@ -473,8 +430,7 @@ gis::framework::Result VectorPlugin::doClip(
     OGRLayer* srcLayer = getLayer(srcDS, layerName);
     OGRLayer* clipLayer = clipDS->GetLayer(0);
     if (!srcLayer || !clipLayer) {
-        GDALClose(clipDS);
-        GDALClose(srcDS);
+        GDALClose(clipDS); GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find required layers");
     }
 
@@ -483,9 +439,7 @@ gis::framework::Result VectorPlugin::doClip(
     OGRFeature* clipFeat;
     while ((clipFeat = clipLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = clipFeat->GetGeometryRef();
-        if (geom) {
-            clipGeoms.push_back(geom->clone());
-        }
+        if (geom) clipGeoms.push_back(geom->clone());
         OGRFeature::DestroyFeature(clipFeat);
     }
     GDALClose(clipDS);
@@ -515,34 +469,26 @@ gis::framework::Result VectorPlugin::doClip(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        delete clipUnion;
-        GDALClose(srcDS);
+        delete clipUnion; GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) {
-                fs::remove(entry.path());
-            }
+            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
         }
     }
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
     if (!dstDS) {
-        delete clipUnion;
-        GDALClose(srcDS);
+        delete clipUnion; GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer(
-        srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
+    OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS);
-        delete clipUnion;
-        GDALClose(srcDS);
-        delete srcSRS;
+        GDALClose(dstDS); delete clipUnion; GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -574,10 +520,7 @@ gis::framework::Result VectorPlugin::doClip(
         OGRFeature::DestroyFeature(feat);
     }
 
-    delete clipUnion;
-    GDALClose(dstDS);
-    GDALClose(srcDS);
-    delete srcSRS;
+    delete clipUnion; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -601,9 +544,7 @@ gis::framework::Result VectorPlugin::doRasterize(
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
-    if (!srcDS) {
-        return gis::framework::Result::fail("Cannot open vector file: " + input);
-    }
+    if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
     OGRLayer* layer = getLayer(srcDS, layerName);
     if (!layer) {
@@ -634,22 +575,15 @@ gis::framework::Result VectorPlugin::doRasterize(
     }
 
     double adfGT[6];
-    adfGT[0] = extent.MinX;
-    adfGT[1] = resolution;
-    adfGT[2] = 0;
-    adfGT[3] = extent.MaxY;
-    adfGT[4] = 0;
-    adfGT[5] = -resolution;
+    adfGT[0] = extent.MinX; adfGT[1] = resolution; adfGT[2] = 0;
+    adfGT[3] = extent.MaxY; adfGT[4] = 0;          adfGT[5] = -resolution;
     dstDS->SetGeoTransform(adfGT);
 
     const OGRSpatialReference* srs = layer->GetSpatialRef();
     if (srs) {
         char* wkt = nullptr;
         srs->exportToWkt(&wkt);
-        if (wkt) {
-            dstDS->SetProjection(wkt);
-            CPLFree(wkt);
-        }
+        if (wkt) { dstDS->SetProjection(wkt); CPLFree(wkt); }
     }
 
     GDALRasterBand* band = dstDS->GetRasterBand(1);
@@ -674,8 +608,7 @@ gis::framework::Result VectorPlugin::doRasterize(
     GDALRasterizeOptions* rasterizeOpts = GDALRasterizeOptionsNew(
         const_cast<char**>(rasterizeArgs.data()), nullptr);
     if (!rasterizeOpts) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
+        GDALClose(dstDS); GDALClose(srcDS);
         return gis::framework::Result::fail("Failed to create rasterize options");
     }
 
@@ -687,13 +620,11 @@ gis::framework::Result VectorPlugin::doRasterize(
     GDALRasterizeOptionsFree(rasterizeOpts);
 
     if (!dstHandle || errCode) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
+        GDALClose(dstDS); GDALClose(srcDS);
         return gis::framework::Result::fail("Rasterize failed: " + std::string(CPLGetLastErrorMsg()));
     }
 
-    GDALClose(dstHandle);
-    GDALClose(srcDS);
+    GDALClose(dstHandle); GDALClose(srcDS);
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -714,14 +645,10 @@ gis::framework::Result VectorPlugin::doPolygonize(
     progress.onProgress(0.1);
 
     auto srcDS = gis::core::openRaster(input, true);
-    if (!srcDS) {
-        return gis::framework::Result::fail("Cannot open raster file: " + input);
-    }
+    if (!srcDS) return gis::framework::Result::fail("Cannot open raster file: " + input);
 
     GDALRasterBand* rasterBand = srcDS->GetRasterBand(band);
-    if (!rasterBand) {
-        return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
-    }
+    if (!rasterBand) return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
 
     progress.onProgress(0.2);
 
@@ -733,22 +660,16 @@ gis::framework::Result VectorPlugin::doPolygonize(
     else if (ext == ".gpkg") outFormat = "GPKG";
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
-    if (!drv) {
-        return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
-    }
+    if (!drv) return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) {
-                fs::remove(entry.path());
-            }
+            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
         }
     }
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) {
-        return gis::framework::Result::fail("Cannot create output file: " + output);
-    }
+    if (!dstDS) return gis::framework::Result::fail("Cannot create output file: " + output);
 
     OGRSpatialReference* srs = nullptr;
     const char* pszWKT = srcDS->GetProjectionRef();
@@ -759,8 +680,7 @@ gis::framework::Result VectorPlugin::doPolygonize(
 
     OGRLayer* dstLayer = dstDS->CreateLayer("polygonized", srs, wkbPolygon, nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS);
-        if (srs) delete srs;
+        GDALClose(dstDS); if (srs) delete srs;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -797,9 +717,7 @@ gis::framework::Result VectorPlugin::doConvert(
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
-    if (!srcDS) {
-        return gis::framework::Result::fail("Cannot open vector file: " + input);
-    }
+    if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
     OGRLayer* srcLayer = getLayer(srcDS, layerName);
     if (!srcLayer) {
@@ -816,9 +734,7 @@ gis::framework::Result VectorPlugin::doConvert(
     namespace fs = std::filesystem;
     if (format == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) {
-                fs::remove(entry.path());
-            }
+            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
         }
     }
 
@@ -829,12 +745,9 @@ gis::framework::Result VectorPlugin::doConvert(
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer(
-        srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
+    OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
-        delete srcSRS;
+        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -853,21 +766,15 @@ gis::framework::Result VectorPlugin::doConvert(
         OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
         dstFeat->SetFrom(feat);
         if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
-            OGRFeature::DestroyFeature(dstFeat);
-            OGRFeature::DestroyFeature(feat);
-            GDALClose(dstDS);
-            GDALClose(srcDS);
-            delete srcSRS;
+            OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
+            GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
             return gis::framework::Result::fail("Failed to write feature");
         }
-        OGRFeature::DestroyFeature(dstFeat);
-        OGRFeature::DestroyFeature(feat);
+        OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
         count++;
     }
 
-    GDALClose(dstDS);
-    GDALClose(srcDS);
-    delete srcSRS;
+    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(

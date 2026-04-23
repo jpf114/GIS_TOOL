@@ -20,7 +20,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"threshold", "filter", "enhance", "band_math", "stats", "edge", "contour", "template_match", "pansharpen"}
+            {"threshold", "filter", "enhance", "band_math", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -126,6 +126,40 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             int{0}, int{0},
             {"brovey", "simple_mean", "ihs"}
         },
+        gis::framework::ParamSpec{
+            "hough_type", "霍夫类型", "霍夫变换检测类型",
+            gis::framework::ParamType::Enum, false, std::string{"lines"},
+            int{0}, int{0},
+            {"lines", "circles"}
+        },
+        gis::framework::ParamSpec{
+            "hough_threshold", "霍夫阈值", "霍夫变换累加器阈值",
+            gis::framework::ParamType::Double, false, double{50.0}
+        },
+        gis::framework::ParamSpec{
+            "min_line_length", "最小线长", "霍夫直线检测的最小线段长度",
+            gis::framework::ParamType::Double, false, double{50.0}
+        },
+        gis::framework::ParamSpec{
+            "max_line_gap", "最大线间隙", "霍夫直线检测的最大间隙",
+            gis::framework::ParamType::Double, false, double{10.0}
+        },
+        gis::framework::ParamSpec{
+            "min_radius", "最小半径", "霍夫圆检测的最小半径",
+            gis::framework::ParamType::Int, false, int{1}
+        },
+        gis::framework::ParamSpec{
+            "max_radius", "最大半径", "霍夫圆检测的最大半径(0=自动)",
+            gis::framework::ParamType::Int, false, int{0}
+        },
+        gis::framework::ParamSpec{
+            "circle_param2", "圆检测参数", "霍夫圆检测的累加器阈值",
+            gis::framework::ParamType::Double, false, double{30.0}
+        },
+        gis::framework::ParamSpec{
+            "marker_input", "标记输入", "分水岭分割的种子标记文件(不指定则自动生成)",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
     };
 }
 
@@ -144,6 +178,8 @@ gis::framework::Result ProcessingPlugin::execute(
     if (action == "contour")         return doContour(params, progress);
     if (action == "template_match")  return doTemplateMatch(params, progress);
     if (action == "pansharpen")      return doPansharpen(params, progress);
+    if (action == "hough")           return doHough(params, progress);
+    if (action == "watershed")       return doWatershed(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -831,6 +867,164 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
     result.metadata["bands"] = std::to_string(msBands);
     result.metadata["pan_width"] = std::to_string(panWidth);
     result.metadata["pan_height"] = std::to_string(panHeight);
+    return result;
+}
+
+gis::framework::Result ProcessingPlugin::doHough(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+    std::string houghType = gis::framework::getParam<std::string>(params, "hough_type", "lines");
+    double houghThresh = gis::framework::getParam<double>(params, "hough_threshold", 50.0);
+    double minLineLen  = gis::framework::getParam<double>(params, "min_line_length", 50.0);
+    double maxLineGap  = gis::framework::getParam<double>(params, "max_line_gap", 10.0);
+    int minRadius      = gis::framework::getParam<int>(params, "min_radius", 1);
+    int maxRadius      = gis::framework::getParam<int>(params, "max_radius", 0);
+    double circleParam2 = gis::framework::getParam<double>(params, "circle_param2", 30.0);
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.onProgress(0.1);
+    cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.onProgress(0.3);
+
+    cv::Mat gray = gis::core::toUint8(mat);
+
+    cv::Mat edges;
+    cv::Canny(gray, edges, 50, 150);
+    progress.onProgress(0.5);
+
+    cv::Mat resultImg = cv::Mat::zeros(gray.size(), CV_8U);
+    int detectCount = 0;
+
+    if (houghType == "lines") {
+        std::vector<cv::Vec4i> lines;
+        cv::HoughLinesP(edges, lines, 1, CV_PI / 180, houghThresh, minLineLen, maxLineGap);
+        detectCount = static_cast<int>(lines.size());
+
+        for (auto& l : lines) {
+            cv::line(resultImg, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]),
+                     cv::Scalar(255), 2);
+        }
+    } else if (houghType == "circles") {
+        std::vector<cv::Vec3f> circles;
+        cv::HoughCircles(gray, circles, cv::HOUGH_GRADIENT, 1,
+                         20, 100, circleParam2, minRadius, maxRadius > 0 ? maxRadius : INT_MAX);
+        detectCount = static_cast<int>(circles.size());
+
+        for (auto& c : circles) {
+            cv::Point center(cvRound(c[0]), cvRound(c[1]));
+            int radius = cvRound(c[2]);
+            cv::circle(resultImg, center, radius, cv::Scalar(255), 2);
+            cv::circle(resultImg, center, 2, cv::Scalar(255), -1);
+        }
+    } else {
+        return gis::framework::Result::fail("Unknown hough type: " + houghType);
+    }
+
+    progress.onProgress(0.8);
+
+    std::ostringstream oss;
+    oss << "Hough " << houghType << " detection: " << detectCount << " detected";
+    progress.onMessage(oss.str());
+
+    cv::Mat outFloat;
+    resultImg.convertTo(outFloat, CV_32F, 1.0 / 255.0);
+
+    auto result = writeMatOutput(outFloat, input, output, band, progress);
+    result.metadata["hough_type"] = houghType;
+    result.metadata["detect_count"] = std::to_string(detectCount);
+    return result;
+}
+
+gis::framework::Result ProcessingPlugin::doWatershed(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+    std::string markerInput = gis::framework::getParam<std::string>(params, "marker_input", "");
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.onProgress(0.1);
+    cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.onProgress(0.3);
+
+    cv::Mat gray = gis::core::toUint8(mat);
+
+    cv::Mat markers;
+    if (!markerInput.empty()) {
+        cv::Mat markerMat = readBandAsMat(markerInput, 1, progress);
+        markerMat.convertTo(markers, CV_32S);
+    } else {
+        cv::Mat binary;
+        cv::threshold(gray, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+
+        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+        cv::Mat sureBg;
+        cv::dilate(binary, sureBg, kernel, cv::Point(-1, -1), 3);
+
+        cv::Mat distTransform;
+        cv::distanceTransform(binary, distTransform, cv::DIST_L2, 5);
+
+        double maxDist;
+        cv::minMaxLoc(distTransform, nullptr, &maxDist);
+        cv::Mat sureFg;
+        cv::threshold(distTransform, sureFg, 0.5 * maxDist, 255, cv::THRESH_BINARY);
+        sureFg.convertTo(sureFg, CV_8U);
+
+        cv::Mat unknown;
+        cv::subtract(sureBg, sureFg, unknown);
+
+        cv::connectedComponents(sureFg, markers);
+        for (int y = 0; y < markers.rows; ++y) {
+            for (int x = 0; x < markers.cols; ++x) {
+                if (unknown.at<uint8_t>(y, x) == 255) {
+                    markers.at<int32_t>(y, x) = 0;
+                }
+            }
+        }
+    }
+    progress.onProgress(0.5);
+
+    cv::Mat bgr;
+    if (mat.channels() == 1) {
+        cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
+    } else {
+        bgr = gray.clone();
+    }
+
+    cv::watershed(bgr, markers);
+    progress.onProgress(0.8);
+
+    cv::Mat resultImg = cv::Mat::zeros(markers.size(), CV_32F);
+    int segmentCount = 0;
+    double minLabel, maxLabel;
+    cv::minMaxLoc(markers, &minLabel, &maxLabel);
+    segmentCount = static_cast<int>(maxLabel);
+
+    for (int y = 0; y < markers.rows; ++y) {
+        for (int x = 0; x < markers.cols; ++x) {
+            int label = markers.at<int32_t>(y, x);
+            if (label == -1) {
+                resultImg.at<float>(y, x) = -1.0f;
+            } else if (label > 0) {
+                resultImg.at<float>(y, x) = static_cast<float>(label);
+            }
+        }
+    }
+
+    progress.onMessage("Watershed segmentation: " + std::to_string(segmentCount) + " segments");
+
+    auto result = writeMatOutput(resultImg, input, output, band, progress);
+    result.metadata["segment_count"] = std::to_string(segmentCount);
     return result;
 }
 

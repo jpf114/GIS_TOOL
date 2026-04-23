@@ -19,7 +19,7 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"detect", "match", "register", "change"}
+            {"detect", "match", "register", "change", "ecc_register", "corner"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -79,6 +79,38 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
             "band", "波段序号", "处理的波段序号(从1开始)",
             gis::framework::ParamType::Int, false, int{1}
         },
+        gis::framework::ParamSpec{
+            "ecc_motion", "ECC运动模型", "ECC配准的运动模型",
+            gis::framework::ParamType::Enum, false, std::string{"affine"},
+            int{0}, int{0},
+            {"translation", "euclidean", "affine", "homography"}
+        },
+        gis::framework::ParamSpec{
+            "ecc_iterations", "ECC迭代次数", "ECC配准最大迭代次数",
+            gis::framework::ParamType::Int, false, int{200}
+        },
+        gis::framework::ParamSpec{
+            "ecc_epsilon", "ECC收敛阈值", "ECC配准收敛阈值",
+            gis::framework::ParamType::Double, false, double{1e-6}
+        },
+        gis::framework::ParamSpec{
+            "corner_method", "角点方法", "角点检测方法",
+            gis::framework::ParamType::Enum, false, std::string{"harris"},
+            int{0}, int{0},
+            {"harris", "shi_tomasi"}
+        },
+        gis::framework::ParamSpec{
+            "max_corners", "最大角点数", "检测的最大角点数量",
+            gis::framework::ParamType::Int, false, int{5000}
+        },
+        gis::framework::ParamSpec{
+            "quality_level", "质量水平", "角点检测质量水平(0-1)",
+            gis::framework::ParamType::Double, false, double{0.01}
+        },
+        gis::framework::ParamSpec{
+            "min_distance", "最小间距", "角点之间的最小欧氏距离",
+            gis::framework::ParamType::Double, false, double{10.0}
+        },
     };
 }
 
@@ -91,7 +123,9 @@ gis::framework::Result MatchingPlugin::execute(
     if (action == "detect")   return doDetect(params, progress);
     if (action == "match")    return doMatch(params, progress);
     if (action == "register") return doRegister(params, progress);
-    if (action == "change")   return doChange(params, progress);
+    if (action == "change")       return doChange(params, progress);
+    if (action == "ecc_register") return doEccRegister(params, progress);
+    if (action == "corner")       return doCornerDetect(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -485,6 +519,197 @@ gis::framework::Result MatchingPlugin::doChange(
     result.metadata["change_ratio"] = std::to_string(changeRatio);
     result.metadata["threshold"] = std::to_string(threshVal);
     result.metadata["method"] = changeMethod;
+    return result;
+}
+
+gis::framework::Result MatchingPlugin::doEccRegister(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string reference  = gis::framework::getParam<std::string>(params, "reference", "");
+    std::string input      = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output     = gis::framework::getParam<std::string>(params, "output", "");
+    std::string eccMotion  = gis::framework::getParam<std::string>(params, "ecc_motion", "affine");
+    int eccIterations      = gis::framework::getParam<int>(params, "ecc_iterations", 200);
+    double eccEpsilon      = gis::framework::getParam<double>(params, "ecc_epsilon", 1e-6);
+    std::string resample   = gis::framework::getParam<std::string>(params, "resample", "bilinear");
+    int band               = gis::framework::getParam<int>(params, "band", 1);
+
+    if (reference.empty()) return gis::framework::Result::fail("reference is required");
+    if (input.empty())     return gis::framework::Result::fail("input is required");
+    if (output.empty())    return gis::framework::Result::fail("output is required");
+
+    progress.onProgress(0.05);
+
+    cv::Mat refMat = readBandAsMat(reference, band, progress);
+    cv::Mat srcMat = readBandAsMat(input, band, progress);
+    cv::Mat refGray = gis::core::toUint8(refMat);
+    cv::Mat srcGray = gis::core::toUint8(srcMat);
+    progress.onProgress(0.2);
+
+    if (refGray.size() != srcGray.size()) {
+        cv::resize(srcGray, srcGray, refGray.size(), 0, 0, cv::INTER_LINEAR);
+        cv::resize(srcMat, srcMat, refMat.size(), 0, 0, cv::INTER_LINEAR);
+        progress.onMessage("Resized input to match reference dimensions");
+    }
+
+    int motionType;
+    cv::Mat warpMat;
+    if (eccMotion == "translation") {
+        motionType = cv::MOTION_TRANSLATION;
+        warpMat = cv::Mat::eye(2, 3, CV_32F);
+    } else if (eccMotion == "euclidean") {
+        motionType = cv::MOTION_EUCLIDEAN;
+        warpMat = cv::Mat::eye(2, 3, CV_32F);
+    } else if (eccMotion == "homography") {
+        motionType = cv::MOTION_HOMOGRAPHY;
+        warpMat = cv::Mat::eye(3, 3, CV_32F);
+    } else {
+        motionType = cv::MOTION_AFFINE;
+        warpMat = cv::Mat::eye(2, 3, CV_32F);
+    }
+
+    progress.onMessage("Running ECC registration (" + eccMotion + ")...");
+
+    cv::TermCriteria criteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS,
+                               eccIterations, eccEpsilon);
+
+    try {
+        double cc = cv::findTransformECC(refGray, srcGray, warpMat, motionType, criteria);
+        progress.onMessage("ECC correlation coefficient: " + std::to_string(cc));
+    } catch (const cv::Exception& e) {
+        return gis::framework::Result::fail(
+            "ECC registration failed: " + std::string(e.what()));
+    }
+
+    progress.onProgress(0.7);
+
+    progress.onMessage("Warping image...");
+    int interpFlag = cv::INTER_NEAREST;
+    if (resample == "bilinear") interpFlag = cv::INTER_LINEAR;
+    else if (resample == "cubic") interpFlag = cv::INTER_CUBIC;
+
+    cv::Mat warped;
+    if (motionType == cv::MOTION_HOMOGRAPHY) {
+        cv::warpPerspective(srcMat, warped, warpMat, refMat.size(), interpFlag);
+    } else {
+        cv::warpAffine(srcMat, warped, warpMat, refMat.size(), interpFlag);
+    }
+    progress.onProgress(0.85);
+
+    progress.onMessage("Writing output: " + output);
+    gis::core::matToGdalTiff(warped, reference, output, band);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok(
+        "ECC registration completed, motion=" + eccMotion, output);
+    result.metadata["motion_type"] = eccMotion;
+
+    std::ostringstream warpOss;
+    warpOss << warpMat;
+    result.metadata["warp_matrix"] = warpOss.str();
+    return result;
+}
+
+gis::framework::Result MatchingPlugin::doCornerDetect(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    std::string cornerMethod = gis::framework::getParam<std::string>(params, "corner_method", "harris");
+    int maxCorners    = gis::framework::getParam<int>(params, "max_corners", 5000);
+    double qualityLevel = gis::framework::getParam<double>(params, "quality_level", 0.01);
+    double minDistance = gis::framework::getParam<double>(params, "min_distance", 10.0);
+    int band          = gis::framework::getParam<int>(params, "band", 1);
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+
+    progress.onProgress(0.1);
+    cv::Mat mat = readBandAsMat(input, band, progress);
+    cv::Mat gray = gis::core::toUint8(mat);
+    progress.onProgress(0.3);
+
+    std::vector<cv::Point2f> corners;
+
+    if (cornerMethod == "shi_tomasi") {
+        cv::goodFeaturesToTrack(gray, corners, maxCorners, qualityLevel, minDistance);
+    } else {
+        cv::Mat harrisResp;
+        cv::cornerHarris(gray, harrisResp, 2, 3, 0.04);
+
+        cv::Mat harrisNorm;
+        cv::normalize(harrisResp, harrisNorm, 0, 255, cv::NORM_MINMAX, CV_32F);
+        cv::Mat harrisU8;
+        harrisNorm.convertTo(harrisU8, CV_8U);
+
+        double maxVal;
+        cv::minMaxLoc(harrisResp, nullptr, &maxVal);
+        double thresh = maxVal * qualityLevel;
+
+        std::vector<cv::Point> candidates;
+        for (int y = 1; y < harrisResp.rows - 1; ++y) {
+            for (int x = 1; x < harrisResp.cols - 1; ++x) {
+                if (harrisResp.at<float>(y, x) > thresh) {
+                    bool isMax = true;
+                    for (int dy = -1; dy <= 1 && isMax; ++dy) {
+                        for (int dx = -1; dx <= 1 && isMax; ++dx) {
+                            if (dx == 0 && dy == 0) continue;
+                            if (harrisResp.at<float>(y + dy, x + dx) > harrisResp.at<float>(y, x)) {
+                                isMax = false;
+                            }
+                        }
+                    }
+                    if (isMax) candidates.emplace_back(x, y);
+                }
+            }
+        }
+
+        std::sort(candidates.begin(), candidates.end(), [&](const cv::Point& a, const cv::Point& b) {
+            return harrisResp.at<float>(a.y, a.x) > harrisResp.at<float>(b.y, b.x);
+        });
+
+        std::vector<bool> suppressed(gray.rows * gray.cols, false);
+        int minDist = static_cast<int>(minDistance);
+        for (auto& pt : candidates) {
+            if (suppressed[pt.y * gray.cols + pt.x]) continue;
+            corners.push_back(cv::Point2f(pt.x, pt.y));
+            if (static_cast<int>(corners.size()) >= maxCorners) break;
+
+            int yStart = std::max(0, pt.y - minDist);
+            int yEnd = std::min(gray.rows - 1, pt.y + minDist);
+            int xStart = std::max(0, pt.x - minDist);
+            int xEnd = std::min(gray.cols - 1, pt.x + minDist);
+            for (int yy = yStart; yy <= yEnd; ++yy) {
+                for (int xx = xStart; xx <= xEnd; ++xx) {
+                    suppressed[yy * gray.cols + xx] = true;
+                }
+            }
+        }
+    }
+
+    progress.onProgress(0.8);
+
+    progress.onMessage("Detected " + std::to_string(corners.size()) + " " + cornerMethod + " corners");
+
+    if (!output.empty()) {
+        if (!writeKeyPointsJSON(output,
+                [&]() {
+                    std::vector<cv::KeyPoint> kps;
+                    for (auto& c : corners) {
+                        kps.emplace_back(c.x, c.y, 3.0f, -1, 0.0f);
+                    }
+                    return kps;
+                }())) {
+            return gis::framework::Result::fail("Failed to write output: " + output);
+        }
+    }
+
+    progress.onProgress(1.0);
+    auto result = gis::framework::Result::ok(
+        "Detected " + std::to_string(corners.size()) + " " + cornerMethod + " corners", output);
+    result.metadata["corner_count"] = std::to_string(corners.size());
+    result.metadata["method"] = cornerMethod;
     return result;
 }
 

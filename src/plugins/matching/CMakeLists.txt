@@ -15,6 +15,7 @@ target_link_libraries(plugin_matching PRIVATE
     opencv_imgproc
     opencv_flann
     opencv_calib3d
+    opencv_video
 )
 
 set_target_properties(plugin_matching PROPERTIES
