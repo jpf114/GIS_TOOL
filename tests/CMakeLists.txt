@@ -1,6 +1,7 @@
 find_package(GTest REQUIRED)
 
 add_executable(gis_tests
+    test_main.cpp
     test_core.cpp
     test_framework.cpp
     test_plugins.cpp
@@ -14,7 +15,6 @@ target_link_libraries(gis_tests PRIVATE
     opencv_core
     opencv_imgproc
     GTest::gtest
-    GTest::gtest_main
 )
 
 if(MSVC)

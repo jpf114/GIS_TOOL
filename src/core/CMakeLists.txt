@@ -3,6 +3,7 @@ add_library(gis_core
     src/progress.cpp
     src/gdal_wrapper.cpp
     src/opencv_wrapper.cpp
+    src/runtime_env.cpp
 )
 
 target_include_directories(gis_core PUBLIC

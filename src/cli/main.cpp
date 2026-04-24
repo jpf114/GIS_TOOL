@@ -1,6 +1,7 @@
 #include <gis/framework/plugin_manager.h>
 #include <gis/core/progress.h>
 #include <gis/core/gdal_wrapper.h>
+#include <gis/core/runtime_env.h>
 #include "cli_parser.h"
 #include <iostream>
 #include <filesystem>
@@ -95,6 +96,7 @@ static gis::framework::ParamValue convertParam(
 }
 
 int main(int argc, char* argv[]) {
+    gis::core::initRuntimeEnvironment();
     gis::core::initGDAL();
 
     auto args = gis::cli::parseArgs(argc, argv);

@@ -35,6 +35,9 @@ set(GIS_VCPKG_TRIPLET "x64-windows" CACHE STRING "全局 vcpkg triplet")
 set(GIS_VCPKG_INSTALLED_DIR "${GIS_VCPKG_ROOT}/installed/${GIS_VCPKG_TRIPLET}")
 set(GIS_VCPKG_RELEASE_BIN_DIR "${GIS_VCPKG_INSTALLED_DIR}/bin")
 set(GIS_VCPKG_DEBUG_BIN_DIR "${GIS_VCPKG_INSTALLED_DIR}/debug/bin")
+set(GIS_VCPKG_SHARE_DIR "${GIS_VCPKG_INSTALLED_DIR}/share")
+set(GIS_VCPKG_PROJ_DATA_DIR "${GIS_VCPKG_SHARE_DIR}/proj")
+set(GIS_VCPKG_GDAL_DATA_DIR "${GIS_VCPKG_SHARE_DIR}/gdal")
 set(GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR "${GIS_VCPKG_INSTALLED_DIR}/Qt6/plugins/platforms")
 set(GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR "${GIS_VCPKG_INSTALLED_DIR}/debug/Qt6/plugins/platforms")
 set(GIS_VCPKG_RUNTIME_BIN_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_BIN_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_BIN_DIR}>")
@@ -42,6 +45,14 @@ set(GIS_VCPKG_QT_PLATFORMS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_PLATFORMS
 
 if(NOT EXISTS "${GIS_VCPKG_INSTALLED_DIR}")
     message(FATAL_ERROR "未找到全局 vcpkg 安装目录: ${GIS_VCPKG_INSTALLED_DIR}")
+endif()
+
+if(NOT EXISTS "${GIS_VCPKG_PROJ_DATA_DIR}")
+    message(FATAL_ERROR "未找到 PROJ 数据目录: ${GIS_VCPKG_PROJ_DATA_DIR}")
+endif()
+
+if(NOT EXISTS "${GIS_VCPKG_GDAL_DATA_DIR}")
+    message(FATAL_ERROR "未找到 GDAL 数据目录: ${GIS_VCPKG_GDAL_DATA_DIR}")
 endif()
 
 find_package(GDAL REQUIRED)
@@ -61,9 +72,17 @@ add_subdirectory(src/cli)
 # Copy vcpkg runtime DLLs to plugins directory so plugin DLLs can find their dependencies
 add_custom_target(copy_runtime_dlls ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/plugins
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/share/proj
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/share/gdal
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${GIS_VCPKG_RUNTIME_BIN_DIR}
         ${CMAKE_BINARY_DIR}/plugins
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${GIS_VCPKG_PROJ_DATA_DIR}
+        ${CMAKE_BINARY_DIR}/share/proj
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${GIS_VCPKG_GDAL_DATA_DIR}
+        ${CMAKE_BINARY_DIR}/share/gdal
     COMMENT "Copying runtime DLLs to plugins directory"
 )
 
