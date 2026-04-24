@@ -28,6 +28,9 @@ set_target_properties(gis-gui PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
 )
 
+set(GIS_QT_PLATFORM_DLL "$<$<CONFIG:Debug>:qwindowsd.dll>$<$<NOT:$<CONFIG:Debug>>:qwindows.dll>")
+set(GIS_QT_PLATFORM_PDB "$<$<CONFIG:Debug>:qwindowsd.pdb>$<$<NOT:$<CONFIG:Debug>>:qwindows.pdb>")
+
 # Copy plugins directory next to executable (same as CLI)
 add_custom_command(TARGET gis-gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -41,10 +44,10 @@ add_custom_command(TARGET gis-gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:gis-gui>/platforms
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${GIS_VCPKG_QT_PLATFORMS_DIR}/qwindows.dll
-        $<TARGET_FILE_DIR:gis-gui>/platforms/qwindows.dll
+        ${GIS_VCPKG_QT_PLATFORMS_DIR}/${GIS_QT_PLATFORM_DLL}
+        $<TARGET_FILE_DIR:gis-gui>/platforms/${GIS_QT_PLATFORM_DLL}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${GIS_VCPKG_QT_PLATFORMS_DIR}/qwindows.pdb
-        $<TARGET_FILE_DIR:gis-gui>/platforms/qwindows.pdb
+        ${GIS_VCPKG_QT_PLATFORMS_DIR}/${GIS_QT_PLATFORM_PDB}
+        $<TARGET_FILE_DIR:gis-gui>/platforms/${GIS_QT_PLATFORM_PDB}
     COMMAND_EXPAND_LISTS
 )
