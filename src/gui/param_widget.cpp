@@ -1,16 +1,18 @@
 #include "param_widget.h"
+
 #include "crs_dialog.h"
-#include <QFormLayout>
-#include <QLineEdit>
-#include <QSpinBox>
-#include <QDoubleSpinBox>
+
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QGroupBox>
+#include <QLineEdit>
 #include <QPushButton>
+#include <QSpinBox>
+
 #include <array>
 
 ParamWidget::ParamWidget(QWidget* parent)
@@ -23,7 +25,7 @@ void ParamWidget::setParamSpecs(const std::vector<gis::framework::ParamSpec>& sp
 
 std::map<std::string, gis::framework::ParamValue> ParamWidget::collectParams() const {
     std::map<std::string, gis::framework::ParamValue> params;
-    for (auto& row : rows_) {
+    for (const auto& row : rows_) {
         params[row.spec.key] = collectValue(row);
     }
     return params;
@@ -32,14 +34,53 @@ std::map<std::string, gis::framework::ParamValue> ParamWidget::collectParams() c
 void ParamWidget::clear() {
     rows_.clear();
     specs_.clear();
-    QLayout* layout = this->layout();
-    if (layout) {
-        QLayoutItem* item;
+    if (QLayout* layout = this->layout()) {
+        QLayoutItem* item = nullptr;
         while ((item = layout->takeAt(0)) != nullptr) {
             delete item->widget();
             delete item;
         }
         delete layout;
+    }
+}
+
+bool ParamWidget::hasParam(const std::string& key) const {
+    for (const auto& row : rows_) {
+        if (row.spec.key == key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ParamWidget::setStringValue(const std::string& key, const std::string& value) {
+    for (auto& row : rows_) {
+        if (row.spec.key != key) {
+            continue;
+        }
+
+        switch (row.spec.type) {
+            case gis::framework::ParamType::String:
+            case gis::framework::ParamType::FilePath:
+            case gis::framework::ParamType::DirPath:
+            case gis::framework::ParamType::CRS: {
+                if (auto* edit = qobject_cast<QLineEdit*>(row.editor)) {
+                    edit->setText(QString::fromUtf8(value));
+                }
+                return;
+            }
+            case gis::framework::ParamType::Enum: {
+                if (auto* combo = qobject_cast<QComboBox*>(row.editor)) {
+                    const int index = combo->findText(QString::fromUtf8(value));
+                    if (index >= 0) {
+                        combo->setCurrentIndex(index);
+                    }
+                }
+                return;
+            }
+            default:
+                return;
+        }
     }
 }
 
@@ -50,7 +91,7 @@ void ParamWidget::buildForm() {
     formLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     formLayout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-    for (auto& spec : specs_) {
+    for (const auto& spec : specs_) {
         WidgetRow row;
         row.spec = spec;
 
@@ -77,14 +118,14 @@ void ParamWidget::buildForm() {
 
             if (spec.type == gis::framework::ParamType::FilePath) {
                 connect(browseBtn, &QPushButton::clicked, this, [this, editor]() {
-                    QString path = QFileDialog::getOpenFileName(this, QStringLiteral("选择文件"));
+                    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("选择文件"));
                     if (!path.isEmpty()) {
                         qobject_cast<QLineEdit*>(editor)->setText(path);
                     }
                 });
             } else if (spec.type == gis::framework::ParamType::DirPath) {
                 connect(browseBtn, &QPushButton::clicked, this, [this, editor]() {
-                    QString path = QFileDialog::getExistingDirectory(this, QStringLiteral("选择目录"));
+                    const QString path = QFileDialog::getExistingDirectory(this, QStringLiteral("选择目录"));
                     if (!path.isEmpty()) {
                         qobject_cast<QLineEdit*>(editor)->setText(path);
                     }
@@ -131,8 +172,7 @@ void ParamWidget::buildForm() {
             ymaxSpin->setPrefix("Ymax: ");
             gridLayout->addWidget(ymaxSpin);
 
-            auto* defaultExt = std::get_if<std::array<double, 4>>(&spec.defaultValue);
-            if (defaultExt) {
+            if (auto* defaultExt = std::get_if<std::array<double, 4>>(&spec.defaultValue)) {
                 xminSpin->setValue((*defaultExt)[0]);
                 yminSpin->setValue((*defaultExt)[1]);
                 xmaxSpin->setValue((*defaultExt)[2]);
@@ -165,8 +205,7 @@ QWidget* ParamWidget::createEditor(const gis::framework::ParamSpec& spec) {
         case gis::framework::ParamType::DirPath:
         case gis::framework::ParamType::CRS: {
             auto* edit = new QLineEdit;
-            auto* defStr = std::get_if<std::string>(&spec.defaultValue);
-            if (defStr && !defStr->empty()) {
+            if (auto* defStr = std::get_if<std::string>(&spec.defaultValue); defStr && !defStr->empty()) {
                 edit->setText(QString::fromUtf8(*defStr));
             }
             return edit;
@@ -174,8 +213,9 @@ QWidget* ParamWidget::createEditor(const gis::framework::ParamSpec& spec) {
         case gis::framework::ParamType::Int: {
             auto* spin = new QSpinBox;
             spin->setRange(-2147483647, 2147483647);
-            auto* defInt = std::get_if<int>(&spec.defaultValue);
-            if (defInt) spin->setValue(*defInt);
+            if (auto* defInt = std::get_if<int>(&spec.defaultValue)) {
+                spin->setValue(*defInt);
+            }
             auto* minInt = std::get_if<int>(&spec.minValue);
             auto* maxInt = std::get_if<int>(&spec.maxValue);
             if (minInt && maxInt && *maxInt > *minInt) {
@@ -187,39 +227,40 @@ QWidget* ParamWidget::createEditor(const gis::framework::ParamSpec& spec) {
             auto* spin = new QDoubleSpinBox;
             spin->setRange(-1e15, 1e15);
             spin->setDecimals(6);
-            auto* defDouble = std::get_if<double>(&spec.defaultValue);
-            if (defDouble) spin->setValue(*defDouble);
+            if (auto* defDouble = std::get_if<double>(&spec.defaultValue)) {
+                spin->setValue(*defDouble);
+            }
             return spin;
         }
         case gis::framework::ParamType::Bool: {
             auto* check = new QCheckBox(QStringLiteral("启用"));
-            auto* defBool = std::get_if<bool>(&spec.defaultValue);
-            if (defBool) check->setChecked(*defBool);
+            if (auto* defBool = std::get_if<bool>(&spec.defaultValue)) {
+                check->setChecked(*defBool);
+            }
             return check;
         }
         case gis::framework::ParamType::Enum: {
             auto* combo = new QComboBox;
-            for (auto& val : spec.enumValues) {
+            for (const auto& val : spec.enumValues) {
                 combo->addItem(QString::fromUtf8(val));
             }
-            auto* defStr = std::get_if<std::string>(&spec.defaultValue);
-            if (defStr) {
-                int idx = combo->findText(QString::fromUtf8(*defStr));
-                if (idx >= 0) combo->setCurrentIndex(idx);
+            if (auto* defStr = std::get_if<std::string>(&spec.defaultValue)) {
+                const int index = combo->findText(QString::fromUtf8(*defStr));
+                if (index >= 0) {
+                    combo->setCurrentIndex(index);
+                }
             }
             return combo;
         }
-        case gis::framework::ParamType::Extent: {
+        case gis::framework::ParamType::Extent:
             return new QWidget;
-        }
     }
+
     return new QWidget;
 }
 
 gis::framework::ParamValue ParamWidget::collectValue(const WidgetRow& row) const {
-    const auto& spec = row.spec;
-
-    switch (spec.type) {
+    switch (row.spec.type) {
         case gis::framework::ParamType::String:
         case gis::framework::ParamType::FilePath:
         case gis::framework::ParamType::DirPath:
@@ -245,7 +286,7 @@ gis::framework::ParamValue ParamWidget::collectValue(const WidgetRow& row) const
         }
         case gis::framework::ParamType::Extent: {
             auto* extentWidget = row.editor;
-            auto spins = extentWidget->findChildren<QDoubleSpinBox*>();
+            const auto spins = extentWidget->findChildren<QDoubleSpinBox*>();
             std::array<double, 4> arr{0, 0, 0, 0};
             if (spins.size() >= 4) {
                 arr[0] = spins[0]->value();
@@ -256,5 +297,6 @@ gis::framework::ParamValue ParamWidget::collectValue(const WidgetRow& row) const
             return arr;
         }
     }
+
     return std::string{};
 }

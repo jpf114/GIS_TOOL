@@ -1,14 +1,15 @@
 #pragma once
+
 #include <QWidget>
 #include <gis/framework/param_spec.h>
 #include <map>
 #include <vector>
 
-class QLineEdit;
-class QSpinBox;
-class QDoubleSpinBox;
 class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
+class QLineEdit;
+class QSpinBox;
 
 class ParamWidget : public QWidget {
     Q_OBJECT
@@ -18,6 +19,8 @@ public:
     void setParamSpecs(const std::vector<gis::framework::ParamSpec>& specs);
     std::map<std::string, gis::framework::ParamValue> collectParams() const;
     void clear();
+    bool hasParam(const std::string& key) const;
+    void setStringValue(const std::string& key, const std::string& value);
 
 private:
     struct WidgetRow {

@@ -3,8 +3,10 @@ cmake_minimum_required(VERSION 3.20)
 # gis-gui executable target
 add_executable(gis-gui
     main.cpp
+    gui_data_support.cpp
     mainwindow.cpp
     param_widget.cpp
+    preview_panel.cpp
     progress_dialog.cpp
     crs_dialog.cpp
     execute_worker.cpp

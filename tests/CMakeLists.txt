@@ -5,7 +5,9 @@ add_executable(gis_tests
     test_core.cpp
     test_framework.cpp
     test_plugins.cpp
+    test_gui_support.cpp
     test_support.cpp
+    ../src/gui/gui_data_support.cpp
 )
 
 target_link_libraries(gis_tests PRIVATE
