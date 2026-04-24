@@ -102,7 +102,7 @@ TEST(FrameworkTest, PluginManagerUnloadCallsDestroy) {
 
     {
         gis::framework::PluginManager mgr;
-        mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+        mgr.loadFromDirectory(gis::tests::testExecutableDir().string());
         auto* plugin = mgr.find("lifecycle_test");
         ASSERT_NE(plugin, nullptr);
     }

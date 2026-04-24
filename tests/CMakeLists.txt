@@ -21,10 +21,6 @@ if(MSVC)
     target_compile_options(gis_tests PRIVATE /utf-8)
 endif()
 
-target_compile_definitions(gis_tests PRIVATE
-    GIS_TEST_PLUGIN_DIR="$<SHELL_PATH:$<TARGET_FILE_DIR:plugin_test_lifecycle>>"
-)
-
 add_library(plugin_test_lifecycle SHARED
     plugins/test_lifecycle_plugin.cpp
 )
@@ -45,9 +41,9 @@ endif()
 # Copy vcpkg runtime DLLs next to test executable so plugin DLLs can find dependencies
 add_custom_command(TARGET gis_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin
+        ${GIS_VCPKG_RUNTIME_BIN_DIR}
         $<TARGET_FILE_DIR:gis_tests>
 )
 
 include(GoogleTest)
-gtest_discover_tests(gis_tests)
+gtest_discover_tests(gis_tests DISCOVERY_MODE PRE_TEST)

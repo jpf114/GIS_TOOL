@@ -3,9 +3,20 @@
 #include <cstdlib>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace gis::tests {
 
 std::filesystem::path testExecutableDir() {
+#ifdef _WIN32
+    char path[MAX_PATH] = {};
+    const DWORD length = GetModuleFileNameA(nullptr, path, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) {
+        return std::filesystem::path(path).parent_path();
+    }
+#endif
     return std::filesystem::current_path();
 }
 
@@ -14,16 +25,7 @@ std::filesystem::path defaultTestOutputDir(const std::string& suiteName) {
 }
 
 std::filesystem::path testPluginDir() {
-    const char* configuredDir = std::getenv("GIS_TEST_PLUGIN_DIR");
-    if (configuredDir && *configuredDir) {
-        return std::filesystem::path(configuredDir);
-    }
-
-#ifdef GIS_TEST_PLUGIN_DIR
-    return std::filesystem::path(GIS_TEST_PLUGIN_DIR);
-#else
-    throw std::runtime_error("未配置测试插件目录");
-#endif
+    return testExecutableDir().parent_path().parent_path() / "plugins";
 }
 
 void ensureDirectory(const std::filesystem::path& dir) {

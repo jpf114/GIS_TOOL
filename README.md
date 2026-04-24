@@ -56,7 +56,13 @@
 3. 安装并配置 `vcpkg`
 4. 设置环境变量 `VCPKG_ROOT`
 
-项目依赖由 `vcpkg.json` 管理，默认依赖包括：
+项目依赖清单记录在 `vcpkg.json` 中，但本项目默认**不在构建目录内自动安装依赖**，而是直接复用全局 `vcpkg` 已安装目录中的包。
+
+全局依赖建议统一安装到：
+
+- `VCPKG_ROOT/installed/x64-windows`
+
+默认依赖包括：
 
 - `gdal`
 - `opencv4`
@@ -66,7 +72,13 @@
 
 ## 推荐构建方式
 
-### 1. 配置
+### 1. 先在全局 vcpkg 安装依赖
+
+```powershell
+vcpkg install gdal opencv4 proj gtest qtbase --triplet x64-windows
+```
+
+### 2. 配置
 
 ```powershell
 cmake -S . -B build -DGIS_BUILD_GUI=OFF -DGIS_BUILD_TESTS=ON
@@ -78,13 +90,13 @@ cmake -S . -B build -DGIS_BUILD_GUI=OFF -DGIS_BUILD_TESTS=ON
 cmake -S . -B build -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
 ```
 
-### 2. 编译
+### 3. 编译
 
 ```powershell
 cmake --build build --config Debug
 ```
 
-### 3. 运行测试
+### 4. 运行测试
 
 ```powershell
 ctest --test-dir build -C Debug --output-on-failure
@@ -132,3 +144,12 @@ ctest --test-dir build -C Debug --output-on-failure
 ## 说明
 
 仓库内新增和维护的文档统一使用中文。
+
+## 依赖策略
+
+项目遵循以下依赖策略：
+
+- 所有第三方依赖统一安装到全局 `vcpkg` 目录
+- 项目构建时直接使用全局 `vcpkg` 已安装包
+- 运行时 DLL 与 Qt 平台插件从全局 `vcpkg` 目录拷贝
+- 不在项目构建目录里重复下载和重复安装依赖

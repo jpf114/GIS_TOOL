@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.20)
 if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
 endif()
+set(VCPKG_MANIFEST_MODE OFF CACHE BOOL "Use shared global vcpkg installation" FORCE)
 
 project(gis-tool VERSION 0.1.0 LANGUAGES CXX)
 
@@ -17,6 +18,24 @@ endif()
 
 option(GIS_BUILD_GUI "Build Qt GUI" OFF)
 option(GIS_BUILD_TESTS "Build tests" ON)
+
+if(NOT DEFINED ENV{VCPKG_ROOT})
+    message(FATAL_ERROR "未设置环境变量 VCPKG_ROOT，无法定位全局 vcpkg 目录。")
+endif()
+
+set(GIS_VCPKG_ROOT "$ENV{VCPKG_ROOT}")
+set(GIS_VCPKG_TRIPLET "x64-windows" CACHE STRING "全局 vcpkg triplet")
+set(GIS_VCPKG_INSTALLED_DIR "${GIS_VCPKG_ROOT}/installed/${GIS_VCPKG_TRIPLET}")
+set(GIS_VCPKG_RELEASE_BIN_DIR "${GIS_VCPKG_INSTALLED_DIR}/bin")
+set(GIS_VCPKG_DEBUG_BIN_DIR "${GIS_VCPKG_INSTALLED_DIR}/debug/bin")
+set(GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR "${GIS_VCPKG_INSTALLED_DIR}/Qt6/plugins/platforms")
+set(GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR "${GIS_VCPKG_INSTALLED_DIR}/debug/Qt6/plugins/platforms")
+set(GIS_VCPKG_RUNTIME_BIN_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_BIN_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_BIN_DIR}>")
+set(GIS_VCPKG_QT_PLATFORMS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}>")
+
+if(NOT EXISTS "${GIS_VCPKG_INSTALLED_DIR}")
+    message(FATAL_ERROR "未找到全局 vcpkg 安装目录: ${GIS_VCPKG_INSTALLED_DIR}")
+endif()
 
 find_package(GDAL REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d flann calib3d highgui)
@@ -36,7 +55,7 @@ add_subdirectory(src/cli)
 add_custom_target(copy_runtime_dlls ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/plugins
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin
+        ${GIS_VCPKG_RUNTIME_BIN_DIR}
         ${CMAKE_BINARY_DIR}/plugins
     COMMENT "Copying runtime DLLs to plugins directory"
 )

@@ -33,7 +33,7 @@ add_custom_command(TARGET gis-gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         ${CMAKE_BINARY_DIR}/plugins
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin
+        ${GIS_VCPKG_RUNTIME_BIN_DIR}
         $<TARGET_FILE_DIR:gis-gui>
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_BINARY_DIR}/plugins
@@ -41,10 +41,10 @@ add_custom_command(TARGET gis-gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:gis-gui>/platforms
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/Qt6/plugins/platforms/qwindows.dll
+        ${GIS_VCPKG_QT_PLATFORMS_DIR}/qwindows.dll
         $<TARGET_FILE_DIR:gis-gui>/platforms/qwindows.dll
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/Qt6/plugins/platforms/qwindows.pdb
+        ${GIS_VCPKG_QT_PLATFORMS_DIR}/qwindows.pdb
         $<TARGET_FILE_DIR:gis-gui>/platforms/qwindows.pdb
     COMMAND_EXPAND_LISTS
 )

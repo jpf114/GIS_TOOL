@@ -700,8 +700,8 @@ gis::framework::Result VectorPlugin::doPolygonize(
 
     progress.onProgress(0.3);
 
-    GDALPolygonize(static_cast<GDALRasterBandH>(rasterBand),
-        nullptr, static_cast<OGRLayerH>(dstLayer), 0, nullptr, nullptr, nullptr);
+    GDALPolygonize(GDALRasterBand::ToHandle(rasterBand),
+        nullptr, OGRLayer::ToHandle(dstLayer), 0, nullptr, nullptr, nullptr);
 
     GIntBig featureCount = dstLayer->GetFeatureCount(FALSE);
 
