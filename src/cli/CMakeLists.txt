@@ -9,6 +9,11 @@ target_link_libraries(gis-cli PRIVATE
 )
 
 add_custom_command(TARGET gis-cli POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        ${CMAKE_BINARY_DIR}/plugins
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin
+        $<TARGET_FILE_DIR:gis-cli>
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_BINARY_DIR}/plugins
         $<TARGET_FILE_DIR:gis-cli>/plugins

@@ -10,7 +10,14 @@
       "Bash(mkdir build *)",
       "Bash(curl -s --connect-timeout 5 https://github.com -o /dev/null -w \"%{http_code}\")",
       "Bash(D:/Develop/vcpkg/vcpkg install *)",
-      "Bash(cmake -B build -S . -G \"Visual Studio 17 2022\" -A x64 -DCMAKE_TOOLCHAIN_FILE=D:/Develop/vcpkg/scripts/buildsystems/vcpkg.cmake -DGIS_BUILD_TESTS=ON)"
+      "Bash(cmake -B build -S . -G \"Visual Studio 17 2022\" -A x64 -DCMAKE_TOOLCHAIN_FILE=D:/Develop/vcpkg/scripts/buildsystems/vcpkg.cmake -DGIS_BUILD_TESTS=ON)",
+      "Bash(cmake --build build --config Release)",
+      "Bash(D:/Develop/GIS/GIS_TOOL/build/tests/Release/gis_tests.exe)",
+      "Bash(cmd //c \"dumpbin /dependents plugin_matching.dll\")",
+      "Bash(D:/Develop/GIS/GIS_TOOL/build/tests/Release/gis_tests.exe --gtest_filter=PluginTest.PluginManagerScan)",
+      "Bash(D:/Develop/GIS/GIS_TOOL/build/src/cli/Release/gis-cli.exe --help)",
+      "Bash(D:/Develop/GIS/GIS_TOOL/build/src/cli/Release/gis-cli.exe --list)",
+      "Bash(D:/Develop/GIS/GIS_TOOL/build/src/cli/Release/gis-cli.exe processing *)"
     ]
   }
 }

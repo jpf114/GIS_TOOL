@@ -12,7 +12,12 @@
       "default-features": true
     },
     "proj",
-    "gtest"
+    "gtest",
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": ["widgets"]
+    }
   ],
   "overrides": []
 }

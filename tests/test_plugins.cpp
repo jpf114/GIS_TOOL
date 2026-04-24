@@ -312,3 +312,171 @@ TEST_F(PluginTest, VectorInfoExecution) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Vector info failed: " << result.message;
 }
+
+TEST_F(PluginTest, ProcessingHoughExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::string input = createTestRaster("e2e_hough_input.tif", 50, 50);
+    std::string output = getTestDir() + "/e2e_hough_output.tif";
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("hough");
+    params["input"] = input;
+    params["output"] = output;
+    params["hough_type"] = std::string("lines");
+    params["band"] = 1;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Hough failed: " << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_TRUE(result.metadata.count("detect_count") > 0);
+}
+
+TEST_F(PluginTest, ProcessingWatershedExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::string input = createTestRaster("e2e_watershed_input.tif", 50, 50);
+    std::string output = getTestDir() + "/e2e_watershed_output.tif";
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("watershed");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Watershed failed: " << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_TRUE(result.metadata.count("segment_count") > 0);
+}
+
+TEST_F(PluginTest, ProcessingKMeansExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::string input = createTestRaster("e2e_kmeans_input.tif", 30, 30, 3);
+    std::string output = getTestDir() + "/e2e_kmeans_output.tif";
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("kmeans");
+    params["input"] = input;
+    params["output"] = output;
+    params["k"] = 3;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "KMeans failed: " << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_TRUE(result.metadata.count("compactness") > 0);
+}
+
+TEST_F(PluginTest, VectorDissolveExecution) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string shpPath = getTestDir() + "/e2e_dissolve_input.shp";
+    std::string output = getTestDir() + "/e2e_dissolve_output.geojson";
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(4326);
+        auto* layer = ds->CreateLayer("test", srs.get(), wkbPolygon);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn fieldDefn("type", OFTString);
+        layer->CreateField(&fieldDefn);
+
+        auto* featDefn = layer->GetLayerDefn();
+        auto* feat1 = OGRFeature::CreateFeature(featDefn);
+        OGRPolygon poly1;
+        OGRLinearRing ring1;
+        ring1.addPoint(116.0, 40.0); ring1.addPoint(116.01, 40.0);
+        ring1.addPoint(116.01, 40.01); ring1.addPoint(116.0, 40.01);
+        ring1.addPoint(116.0, 40.0);
+        poly1.addRing(&ring1);
+        feat1->SetGeometry(&poly1);
+        feat1->SetField("type", "A");
+        layer->CreateFeature(feat1);
+        OGRFeature::DestroyFeature(feat1);
+
+        auto* feat2 = OGRFeature::CreateFeature(featDefn);
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(116.01, 40.0); ring2.addPoint(116.02, 40.0);
+        ring2.addPoint(116.02, 40.01); ring2.addPoint(116.01, 40.01);
+        ring2.addPoint(116.01, 40.0);
+        poly2.addRing(&ring2);
+        feat2->SetGeometry(&poly2);
+        feat2->SetField("type", "A");
+        layer->CreateFeature(feat2);
+        OGRFeature::DestroyFeature(feat2);
+
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("dissolve");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["dissolve_field"] = std::string("type");
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Dissolve failed: " << result.message;
+}
+
+TEST_F(PluginTest, VectorConvertExecution) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string shpPath = getTestDir() + "/e2e_convert_input.shp";
+    std::string output = getTestDir() + "/e2e_convert_output.geojson";
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(4326);
+        auto* layer = ds->CreateLayer("test", srs.get(), wkbPoint);
+        ASSERT_NE(layer, nullptr);
+        auto* featDefn = layer->GetLayerDefn();
+        for (int i = 0; i < 3; ++i) {
+            auto* feat = OGRFeature::CreateFeature(featDefn);
+            OGRPoint pt(116.0 + i * 0.01, 40.0 + i * 0.01);
+            feat->SetGeometry(&pt);
+            layer->CreateFeature(feat);
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("convert");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["format"] = std::string("GeoJSON");
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Convert failed: " << result.message;
+}
+
+TEST_F(PluginTest, ProcessingBandMathExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::string input = createTestRaster("e2e_bandmath_input.tif", 30, 30, 2);
+    std::string output = getTestDir() + "/e2e_bandmath_output.tif";
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("band_math");
+    params["input"] = input;
+    params["output"] = output;
+    params["expression"] = std::string("B1+B2");
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Band math failed: " << result.message;
+    EXPECT_TRUE(fs::exists(output));
+}

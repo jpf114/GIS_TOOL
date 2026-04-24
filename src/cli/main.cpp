@@ -1,4 +1,4 @@
-﻿#include <gis/framework/plugin_manager.h>
+#include <gis/framework/plugin_manager.h>
 #include <gis/core/progress.h>
 #include <gis/core/gdal_wrapper.h>
 #include "cli_parser.h"
@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <cstdlib>
 #include <sstream>
+#include <variant>
 
 static void listPlugins(gis::framework::PluginManager& mgr) {
     if (mgr.plugins().empty()) {
@@ -37,6 +38,20 @@ static void printPluginHelp(gis::framework::IGisPlugin* plugin) {
                 std::cout << spec.enumValues[i];
             }
             std::cout << std::endl;
+        }
+        if (!spec.required) {
+            std::visit([&](auto&& val) {
+                using T = std::decay_t<decltype(val)>;
+                if constexpr (std::is_same_v<T, std::string>) {
+                    if (!val.empty()) std::cout << "    Default: " << val << std::endl;
+                } else if constexpr (std::is_same_v<T, int>) {
+                    std::cout << "    Default: " << val << std::endl;
+                } else if constexpr (std::is_same_v<T, double>) {
+                    std::cout << "    Default: " << val << std::endl;
+                } else if constexpr (std::is_same_v<T, bool>) {
+                    std::cout << "    Default: " << (val ? "true" : "false") << std::endl;
+                }
+            }, spec.defaultValue);
         }
     }
 }
@@ -136,6 +151,12 @@ int main(int argc, char* argv[]) {
         std::cout << "Success: " << result.message << std::endl;
         if (!result.outputPath.empty()) {
             std::cout << "Output: " << result.outputPath << std::endl;
+        }
+        if (!result.metadata.empty()) {
+            std::cout << "Metadata:" << std::endl;
+            for (auto& [key, val] : result.metadata) {
+                std::cout << "  " << key << ": " << val << std::endl;
+            }
         }
         return 0;
     } else {

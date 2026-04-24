@@ -31,6 +31,15 @@ add_subdirectory(src/plugins/vector)
 add_subdirectory(src/plugins/utility)
 add_subdirectory(src/cli)
 
+# Copy vcpkg runtime DLLs to plugins directory so plugin DLLs can find their dependencies
+add_custom_target(copy_runtime_dlls ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/plugins
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin
+        ${CMAKE_BINARY_DIR}/plugins
+    COMMENT "Copying runtime DLLs to plugins directory"
+)
+
 if(GIS_BUILD_GUI)
     find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
     add_subdirectory(src/gui)
