@@ -3,9 +3,12 @@
 #include "gui_data_support.h"
 
 #include <QFrame>
+#include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
 #include <QPixmap>
+#include <QPushButton>
+#include <QResizeEvent>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -48,7 +51,7 @@ QString geometryTypeName(OGRwkbGeometryType type) {
 }
 
 QImage buildRasterPreviewImage(GDALDataset* ds) {
-    constexpr int kMaxPreviewSize = 640;
+    constexpr int kMaxPreviewSize = 960;
 
     const int srcWidth = ds->GetRasterXSize();
     const int srcHeight = ds->GetRasterYSize();
@@ -173,9 +176,35 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     summaryLabel_->setWordWrap(true);
     summaryLabel_->setStyleSheet("color: #2f3a46;");
 
+    auto* toolbarLayout = new QHBoxLayout;
+    toolbarLayout->setContentsMargins(0, 4, 0, 0);
+
+    zoomOutButton_ = new QPushButton(QStringLiteral("缩小"));
+    fitButton_ = new QPushButton(QStringLiteral("适配"));
+    zoomInButton_ = new QPushButton(QStringLiteral("放大"));
+    scaleLabel_ = new QLabel(QStringLiteral("100%"));
+    scaleLabel_->setStyleSheet("color: #4b5c6f; font-weight: 600;");
+
+    connect(zoomOutButton_, &QPushButton::clicked, this, [this]() {
+        setScale(gis::gui::zoomOutScale(currentScale_), false);
+    });
+    connect(zoomInButton_, &QPushButton::clicked, this, [this]() {
+        setScale(gis::gui::zoomInScale(currentScale_), false);
+    });
+    connect(fitButton_, &QPushButton::clicked, this, [this]() {
+        fitCurrentImage();
+    });
+
+    toolbarLayout->addWidget(zoomOutButton_);
+    toolbarLayout->addWidget(fitButton_);
+    toolbarLayout->addWidget(zoomInButton_);
+    toolbarLayout->addStretch(1);
+    toolbarLayout->addWidget(scaleLabel_);
+
     headerLayout->addWidget(titleLabel_);
     headerLayout->addWidget(pathLabel_);
     headerLayout->addWidget(summaryLabel_);
+    headerLayout->addLayout(toolbarLayout);
 
     stackedWidget_ = new QStackedWidget;
 
@@ -191,13 +220,13 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     imageLabel_->setMinimumSize(480, 360);
     imageLabel_->setStyleSheet("background: #111827; border-radius: 10px;");
 
-    auto* imageScrollArea = new QScrollArea;
-    imageScrollArea->setWidgetResizable(true);
-    imageScrollArea->setAlignment(Qt::AlignCenter);
-    imageScrollArea->setWidget(imageLabel_);
+    imageScrollArea_ = new QScrollArea;
+    imageScrollArea_->setWidgetResizable(true);
+    imageScrollArea_->setAlignment(Qt::AlignCenter);
+    imageScrollArea_->setWidget(imageLabel_);
 
     stackedWidget_->addWidget(placeholderLabel_);
-    stackedWidget_->addWidget(imageScrollArea);
+    stackedWidget_->addWidget(imageScrollArea_);
 
     rootLayout->addWidget(headerFrame);
     rootLayout->addWidget(stackedWidget_, 1);
@@ -213,6 +242,10 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 }
 
 void PreviewPanel::clearPreview() {
+    currentImage_ = QImage();
+    currentScale_ = 1.0;
+    fitMode_ = true;
+    setZoomControlsEnabled(false);
     setPlaceholder(QStringLiteral("预览区"),
                    QStringLiteral("请选择左侧数据，或执行算法后查看输出预览"));
 }
@@ -231,12 +264,20 @@ void PreviewPanel::showPath(const std::string& path) {
     }
 }
 
+void PreviewPanel::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    if (fitMode_ && !currentImage_.isNull() && stackedWidget_->currentIndex() == 1) {
+        fitCurrentImage();
+    }
+}
+
 void PreviewPanel::setPlaceholder(const QString& title, const QString& message) {
     titleLabel_->setText(title);
     pathLabel_->setText(QStringLiteral("暂无可展示文件"));
     summaryLabel_->setText(message);
     placeholderLabel_->setText(message);
     stackedWidget_->setCurrentIndex(0);
+    updateScaleLabel();
 }
 
 void PreviewPanel::setSummary(const QString& title, const QString& summary, const QString& pathText) {
@@ -249,13 +290,16 @@ void PreviewPanel::showRasterPreview(const std::string& path) {
     std::unique_ptr<GDALDataset, DatasetCloser> ds(
         static_cast<GDALDataset*>(GDALOpen(path.c_str(), GA_ReadOnly)));
     if (!ds) {
+        currentImage_ = QImage();
+        setZoomControlsEnabled(false);
         setPlaceholder(QStringLiteral("栅格预览"),
                        QStringLiteral("无法打开栅格数据"));
         return;
     }
 
-    QImage image = buildRasterPreviewImage(ds.get());
-    if (image.isNull()) {
+    currentImage_ = buildRasterPreviewImage(ds.get());
+    if (currentImage_.isNull()) {
+        setZoomControlsEnabled(false);
         setPlaceholder(QStringLiteral("栅格预览"),
                        QStringLiteral("栅格已加载，但暂时无法生成预览图"));
         return;
@@ -264,11 +308,15 @@ void PreviewPanel::showRasterPreview(const std::string& path) {
     setSummary(QStringLiteral("栅格预览"),
                rasterSummary(ds.get()),
                toQString(path));
-    imageLabel_->setPixmap(QPixmap::fromImage(image));
+    setZoomControlsEnabled(true);
     stackedWidget_->setCurrentIndex(1);
+    fitCurrentImage();
 }
 
 void PreviewPanel::showVectorPreview(const std::string& path) {
+    currentImage_ = QImage();
+    setZoomControlsEnabled(false);
+
     std::unique_ptr<GDALDataset, DatasetCloser> ds(
         static_cast<GDALDataset*>(GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                                              nullptr, nullptr, nullptr)));
@@ -281,14 +329,73 @@ void PreviewPanel::showVectorPreview(const std::string& path) {
     setSummary(QStringLiteral("矢量预览"),
                vectorSummary(ds.get()),
                toQString(path));
-    placeholderLabel_->setText(QStringLiteral("当前为轻量预览模式\n\n矢量数据先展示摘要信息，后续可升级为真实地图浏览。"));
+    placeholderLabel_->setText(QStringLiteral(
+        "当前为轻量预览模式\n\n矢量数据先展示摘要信息，后续可升级为真实地图浏览。"));
     stackedWidget_->setCurrentIndex(0);
+    updateScaleLabel();
 }
 
 void PreviewPanel::showUnsupportedPreview(const std::string& path) {
+    currentImage_ = QImage();
+    setZoomControlsEnabled(false);
     setSummary(QStringLiteral("预览区"),
                QStringLiteral("该文件类型暂不支持预览，但仍可作为输入或输出结果保存在数据区。"),
                toQString(path));
     placeholderLabel_->setText(QStringLiteral("暂不支持该类型的预览"));
     stackedWidget_->setCurrentIndex(0);
+    updateScaleLabel();
+}
+
+void PreviewPanel::updateImageDisplay() {
+    if (currentImage_.isNull()) {
+        imageLabel_->clear();
+        updateScaleLabel();
+        return;
+    }
+
+    const QSize scaledSize(
+        std::max(1, static_cast<int>(std::round(currentImage_.width() * currentScale_))),
+        std::max(1, static_cast<int>(std::round(currentImage_.height() * currentScale_))));
+
+    const QPixmap pixmap = QPixmap::fromImage(currentImage_).scaled(
+        scaledSize,
+        Qt::IgnoreAspectRatio,
+        Qt::SmoothTransformation);
+    imageLabel_->setPixmap(pixmap);
+    imageLabel_->resize(pixmap.size());
+    updateScaleLabel();
+}
+
+void PreviewPanel::updateScaleLabel() {
+    scaleLabel_->setText(QStringLiteral("%1%").arg(static_cast<int>(std::round(currentScale_ * 100.0))));
+}
+
+void PreviewPanel::setScale(double scale, bool keepFitMode) {
+    if (currentImage_.isNull()) {
+        currentScale_ = 1.0;
+        updateScaleLabel();
+        return;
+    }
+
+    currentScale_ = std::clamp(scale, 0.1, 8.0);
+    fitMode_ = keepFitMode;
+    updateImageDisplay();
+}
+
+void PreviewPanel::fitCurrentImage() {
+    if (currentImage_.isNull() || !imageScrollArea_) {
+        return;
+    }
+
+    const QSize viewportSize = imageScrollArea_->viewport()->size();
+    const double fitScale = gis::gui::fitScaleForSize(
+        currentImage_.width(), currentImage_.height(),
+        viewportSize.width() - 12, viewportSize.height() - 12);
+    setScale(fitScale, true);
+}
+
+void PreviewPanel::setZoomControlsEnabled(bool enabled) {
+    zoomInButton_->setEnabled(enabled);
+    zoomOutButton_->setEnabled(enabled);
+    fitButton_->setEnabled(enabled);
 }

@@ -22,3 +22,25 @@ TEST(GuiSupportTest, DataKindDisplayNameIsChinese) {
     EXPECT_EQ(gis::gui::dataKindDisplayName(gis::gui::DataKind::Vector), "矢量");
     EXPECT_EQ(gis::gui::dataKindDisplayName(gis::gui::DataKind::Unknown), "未知");
 }
+
+TEST(GuiSupportTest, BuildDataDisplayLabelIncludesRoleAndName) {
+    EXPECT_EQ(
+        gis::gui::buildDataDisplayLabel("D:/data/image.tif", gis::gui::DataKind::Raster, false),
+        "[栅格][输入] image.tif");
+    EXPECT_EQ(
+        gis::gui::buildDataDisplayLabel("D:/data/result.geojson", gis::gui::DataKind::Vector, true),
+        "[矢量][输出] result.geojson");
+}
+
+TEST(GuiSupportTest, ZoomScaleIsClampedAndStepped) {
+    EXPECT_DOUBLE_EQ(gis::gui::zoomInScale(1.0), 1.25);
+    EXPECT_DOUBLE_EQ(gis::gui::zoomOutScale(1.0), 0.8);
+    EXPECT_DOUBLE_EQ(gis::gui::zoomInScale(8.0), 8.0);
+    EXPECT_DOUBLE_EQ(gis::gui::zoomOutScale(0.1), 0.1);
+}
+
+TEST(GuiSupportTest, FitScaleUsesViewportBounds) {
+    EXPECT_DOUBLE_EQ(gis::gui::fitScaleForSize(800, 400, 400, 200), 0.5);
+    EXPECT_DOUBLE_EQ(gis::gui::fitScaleForSize(400, 800, 200, 400), 0.5);
+    EXPECT_DOUBLE_EQ(gis::gui::fitScaleForSize(200, 100, 800, 600), 1.0);
+}

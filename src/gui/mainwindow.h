@@ -5,11 +5,11 @@
 #include <map>
 
 class QLabel;
-class QListWidget;
-class QListWidgetItem;
 class ParamWidget;
 class PreviewPanel;
 class QTabBar;
+class QTreeWidget;
+class QTreeWidgetItem;
 class QtProgressReporter;
 
 class MainWindow : public QMainWindow {
@@ -29,12 +29,16 @@ private slots:
 private:
     void loadPlugins();
     void setupUi();
-    void addDataPath(const QString& path, bool makeCurrent = true);
+    void addDataPath(const QString& path, bool makeCurrent = true, bool isOutput = false);
     void syncCurrentDataToParams();
     QString buildResultSummary(const gis::framework::Result& result) const;
+    QTreeWidgetItem* selectedDataItem() const;
+    bool containsPath(const QString& path) const;
 
     QTabBar* pluginTabs_ = nullptr;
-    QListWidget* dataList_ = nullptr;
+    QTreeWidget* dataTree_ = nullptr;
+    QTreeWidgetItem* inputGroupItem_ = nullptr;
+    QTreeWidgetItem* outputGroupItem_ = nullptr;
     QLabel* pluginTitleLabel_ = nullptr;
     QLabel* pluginDescriptionLabel_ = nullptr;
     QLabel* resultSummaryLabel_ = nullptr;

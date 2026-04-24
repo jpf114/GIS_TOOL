@@ -13,8 +13,8 @@
 #include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
-#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
@@ -22,6 +22,7 @@
 #include <QStatusBar>
 #include <QTabBar>
 #include <QThread>
+#include <QTreeWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -39,7 +40,7 @@ MainWindow::~MainWindow() = default;
 
 void MainWindow::setupUi() {
     setWindowTitle(QStringLiteral("GIS Tool"));
-    resize(1440, 860);
+    resize(1460, 880);
 
     auto* centralWidget = new QWidget;
     setCentralWidget(centralWidget);
@@ -57,7 +58,7 @@ void MainWindow::setupUi() {
     auto* algorithmTitle = new QLabel(QStringLiteral("算法工作台"));
     algorithmTitle->setStyleSheet("font-size: 20px; font-weight: 700;");
     auto* algorithmSubtitle = new QLabel(
-        QStringLiteral("顶部选择算法，左侧管理数据，中间查看预览，右侧填写参数并执行。"));
+        QStringLiteral("顶部选择算法，左侧管理输入/输出数据，中间查看预览，右侧填写参数并执行。"));
     algorithmSubtitle->setStyleSheet("color: #5f6b7a;");
 
     pluginTabs_ = new QTabBar;
@@ -87,10 +88,10 @@ void MainWindow::setupUi() {
     dataLayout->setContentsMargins(14, 14, 14, 14);
     dataLayout->setSpacing(10);
 
-    auto* dataTitle = new QLabel(QStringLiteral("数据"));
+    auto* dataTitle = new QLabel(QStringLiteral("数据图层"));
     dataTitle->setStyleSheet("font-size: 18px; font-weight: 600;");
     auto* dataHint = new QLabel(
-        QStringLiteral("添加栅格或矢量后，选中即可预览，并自动回填到当前算法的输入参数。"));
+        QStringLiteral("输入数据和算法输出会分组显示。选中某一项后，中间显示预览，右侧自动回填 input 参数。"));
     dataHint->setWordWrap(true);
     dataHint->setStyleSheet("color: #5f6b7a;");
 
@@ -105,15 +106,26 @@ void MainWindow::setupUi() {
     dataButtonLayout->addWidget(addVectorBtn);
     dataButtonLayout->addWidget(removeDataBtn);
 
-    dataList_ = new QListWidget;
-    dataList_->setAlternatingRowColors(true);
-    connect(dataList_, &QListWidget::currentItemChanged, this,
-            [this](QListWidgetItem*, QListWidgetItem*) { onDataSelectionChanged(); });
+    dataTree_ = new QTreeWidget;
+    dataTree_->setColumnCount(1);
+    dataTree_->setHeaderHidden(true);
+    dataTree_->setAlternatingRowColors(true);
+    dataTree_->header()->setStretchLastSection(true);
+    connect(dataTree_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onDataSelectionChanged);
+
+    inputGroupItem_ = new QTreeWidgetItem(QStringList(QStringLiteral("输入数据")));
+    outputGroupItem_ = new QTreeWidgetItem(QStringList(QStringLiteral("结果数据")));
+    inputGroupItem_->setFlags(inputGroupItem_->flags() & ~Qt::ItemIsSelectable);
+    outputGroupItem_->setFlags(outputGroupItem_->flags() & ~Qt::ItemIsSelectable);
+    inputGroupItem_->setExpanded(true);
+    outputGroupItem_->setExpanded(true);
+    dataTree_->addTopLevelItem(inputGroupItem_);
+    dataTree_->addTopLevelItem(outputGroupItem_);
 
     dataLayout->addWidget(dataTitle);
     dataLayout->addWidget(dataHint);
     dataLayout->addLayout(dataButtonLayout);
-    dataLayout->addWidget(dataList_, 1);
+    dataLayout->addWidget(dataTree_, 1);
 
     previewPanel_ = new PreviewPanel;
 
@@ -259,7 +271,7 @@ void MainWindow::onExecute() {
 
         if (result.success) {
             if (!result.outputPath.empty() && std::filesystem::exists(result.outputPath)) {
-                addDataPath(QString::fromUtf8(result.outputPath), true);
+                addDataPath(QString::fromUtf8(result.outputPath), true, true);
             }
             statusBar()->showMessage(QStringLiteral("执行成功: ") + msg);
         } else {
@@ -282,10 +294,10 @@ void MainWindow::onAddRasterData() {
         QString(),
         QStringLiteral("Raster (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp)"));
     for (const auto& path : paths) {
-        addDataPath(path, false);
+        addDataPath(path, false, false);
     }
     if (!paths.isEmpty()) {
-        dataList_->setCurrentRow(dataList_->count() - 1);
+        dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
     }
 }
 
@@ -296,67 +308,75 @@ void MainWindow::onAddVectorData() {
         QString(),
         QStringLiteral("Vector (*.shp *.geojson *.json *.gpkg *.kml *.csv)"));
     for (const auto& path : paths) {
-        addDataPath(path, false);
+        addDataPath(path, false, false);
     }
     if (!paths.isEmpty()) {
-        dataList_->setCurrentRow(dataList_->count() - 1);
+        dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
     }
 }
 
 void MainWindow::onRemoveSelectedData() {
-    delete dataList_->takeItem(dataList_->currentRow());
-    if (dataList_->count() == 0) {
+    auto* item = selectedDataItem();
+    if (!item) {
+        return;
+    }
+
+    delete item;
+    if (!selectedDataItem()) {
         previewPanel_->clearPreview();
     }
 }
 
 void MainWindow::onDataSelectionChanged() {
-    auto* item = dataList_->currentItem();
+    auto* item = selectedDataItem();
     if (!item) {
         previewPanel_->clearPreview();
         return;
     }
 
-    const QString path = item->data(Qt::UserRole).toString();
+    const QString path = item->data(0, Qt::UserRole).toString();
     previewPanel_->showPath(path.toUtf8().constData());
     syncCurrentDataToParams();
 }
 
-void MainWindow::addDataPath(const QString& path, bool makeCurrent) {
-    if (path.isEmpty()) {
+void MainWindow::addDataPath(const QString& path, bool makeCurrent, bool isOutput) {
+    if (path.isEmpty() || containsPath(path)) {
+        if (makeCurrent && !path.isEmpty()) {
+            for (auto* group : {inputGroupItem_, outputGroupItem_}) {
+                for (int i = 0; i < group->childCount(); ++i) {
+                    if (group->child(i)->data(0, Qt::UserRole).toString() == path) {
+                        dataTree_->setCurrentItem(group->child(i));
+                        return;
+                    }
+                }
+            }
+        }
         return;
     }
 
-    for (int i = 0; i < dataList_->count(); ++i) {
-        if (dataList_->item(i)->data(Qt::UserRole).toString() == path) {
-            if (makeCurrent) {
-                dataList_->setCurrentRow(i);
-            }
-            return;
-        }
-    }
-
     const auto kind = gis::gui::detectDataKind(path.toUtf8().constData());
-    const QString displayText = QStringLiteral("[%1] %2")
-        .arg(QString::fromUtf8(gis::gui::dataKindDisplayName(kind)))
-        .arg(QFileInfo(path).fileName());
-
-    auto* item = new QListWidgetItem(displayText, dataList_);
-    item->setToolTip(path);
-    item->setData(Qt::UserRole, path);
-    item->setData(Qt::UserRole + 1, static_cast<int>(kind));
+    auto* parent = isOutput ? outputGroupItem_ : inputGroupItem_;
+    auto* item = new QTreeWidgetItem(parent);
+    item->setText(0, QString::fromUtf8(
+        gis::gui::buildDataDisplayLabel(path.toStdString(), kind, isOutput)));
+    item->setToolTip(0, path);
+    item->setData(0, Qt::UserRole, path);
+    item->setData(0, Qt::UserRole + 1, static_cast<int>(kind));
+    item->setData(0, Qt::UserRole + 2, isOutput);
+    parent->setExpanded(true);
 
     if (makeCurrent) {
-        dataList_->setCurrentItem(item);
+        dataTree_->setCurrentItem(item);
     }
 }
 
 void MainWindow::syncCurrentDataToParams() {
-    if (!currentPlugin_ || !dataList_->currentItem()) {
+    auto* item = selectedDataItem();
+    if (!currentPlugin_ || !item) {
         return;
     }
 
-    const QString path = dataList_->currentItem()->data(Qt::UserRole).toString();
+    const QString path = item->data(0, Qt::UserRole).toString();
     if (paramWidget_->hasParam("input")) {
         paramWidget_->setStringValue("input", path.toUtf8().constData());
     }
@@ -382,4 +402,27 @@ QString MainWindow::buildResultSummary(const gis::framework::Result& result) con
     }
 
     return summary;
+}
+
+QTreeWidgetItem* MainWindow::selectedDataItem() const {
+    if (!dataTree_) {
+        return nullptr;
+    }
+
+    auto* item = dataTree_->currentItem();
+    if (!item || item == inputGroupItem_ || item == outputGroupItem_) {
+        return nullptr;
+    }
+    return item;
+}
+
+bool MainWindow::containsPath(const QString& path) const {
+    for (auto* group : {inputGroupItem_, outputGroupItem_}) {
+        for (int i = 0; i < group->childCount(); ++i) {
+            if (group->child(i)->data(0, Qt::UserRole).toString() == path) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
