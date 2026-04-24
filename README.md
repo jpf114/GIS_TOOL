@@ -10,6 +10,8 @@
 - `GIS_BUILD_GUI=OFF/ON` 两种模式均已验证构建通过
 - `ctest` 当前为 `51/51` 通过
 - `gis-gui.exe` 已验证可成功启动，不闪退
+- Windows 下 `gis-cli.exe` 已验证可直接处理中文路径输入
+- `vector filter` 已用真实 GeoJSON 数据验证中文属性条件可正常过滤
 
 当前项目更准确的状态是：
 

@@ -8,6 +8,12 @@
 #include <cstdlib>
 #include <sstream>
 #include <variant>
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 static void listPlugins(gis::framework::PluginManager& mgr) {
     if (mgr.plugins().empty()) {
@@ -95,20 +101,67 @@ static gis::framework::ParamValue convertParam(
     return value;
 }
 
+#ifdef _WIN32
+static std::string wideToUtf8(const std::wstring& value) {
+    if (value.empty()) {
+        return {};
+    }
+
+    const int sizeNeeded = WideCharToMultiByte(
+        CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()),
+        nullptr, 0, nullptr, nullptr);
+    if (sizeNeeded <= 0) {
+        return {};
+    }
+
+    std::string utf8(sizeNeeded, '\0');
+    WideCharToMultiByte(
+        CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()),
+        utf8.data(), sizeNeeded, nullptr, nullptr);
+    return utf8;
+}
+
+static std::vector<std::string> collectCliArgs() {
+    int argc = 0;
+    LPWSTR* argvW = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argvW) {
+        return {};
+    }
+
+    std::vector<std::string> args;
+    args.reserve(argc);
+    for (int i = 0; i < argc; ++i) {
+        args.push_back(wideToUtf8(argvW[i]));
+    }
+    LocalFree(argvW);
+    return args;
+}
+#else
+static std::vector<std::string> collectCliArgs(int argc, char* argv[]) {
+    return std::vector<std::string>(argv, argv + argc);
+}
+#endif
+
 int main(int argc, char* argv[]) {
     gis::core::initRuntimeEnvironment();
     gis::core::initGDAL();
 
-    auto args = gis::cli::parseArgs(argc, argv);
+#ifdef _WIN32
+    auto cliArgv = collectCliArgs();
+#else
+    auto cliArgv = collectCliArgs(argc, argv);
+#endif
+    auto args = gis::cli::parseArgs(cliArgv);
+    const std::string programName = cliArgv.empty() ? "gis-cli" : cliArgv.front();
 
     if (args.showHelp && args.pluginName.empty()) {
-        gis::cli::printUsage(argv[0]);
+        gis::cli::printUsage(programName);
         return 0;
     }
 
     std::string pluginsDir;
     namespace fs = std::filesystem;
-    auto exePath = fs::canonical(fs::path(argv[0]).parent_path());
+    auto exePath = fs::canonical(fs::path(programName).parent_path());
     pluginsDir = (exePath / "plugins").string();
 
     gis::framework::PluginManager mgr;
@@ -120,7 +173,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (args.pluginName.empty()) {
-        gis::cli::printUsage(argv[0]);
+        gis::cli::printUsage(programName);
         return 1;
     }
 

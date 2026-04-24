@@ -13,7 +13,7 @@ struct CliArgs {
     std::vector<std::string> positional;
 };
 
-CliArgs parseArgs(int argc, char* argv[]);
-void printUsage(const char* progName);
+CliArgs parseArgs(const std::vector<std::string>& argv);
+void printUsage(const std::string& progName);
 
 } // namespace gis::cli

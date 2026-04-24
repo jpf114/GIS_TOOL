@@ -3,10 +3,10 @@
 
 namespace gis::cli {
 
-CliArgs parseArgs(int argc, char* argv[]) {
+CliArgs parseArgs(const std::vector<std::string>& argv) {
     CliArgs args;
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
+    for (size_t i = 1; i < argv.size(); ++i) {
+        const std::string& arg = argv[i];
         if (arg == "--list" || arg == "-l") {
             args.listPlugins = true;
         } else if (arg == "--help" || arg == "-h") {
@@ -19,7 +19,7 @@ CliArgs parseArgs(int argc, char* argv[]) {
                 args.params[key] = val;
             } else {
                 std::string key = arg.substr(2);
-                if (i + 1 < argc && std::string(argv[i + 1])[0] != '-') {
+                if (i + 1 < argv.size() && !argv[i + 1].empty() && argv[i + 1][0] != '-') {
                     args.params[key] = argv[++i];
                 } else {
                     args.params[key] = "true";
@@ -36,7 +36,7 @@ CliArgs parseArgs(int argc, char* argv[]) {
     return args;
 }
 
-void printUsage(const char* progName) {
+void printUsage(const std::string& progName) {
     std::cout << "GIS Tool - Geospatial processing toolkit" << std::endl;
     std::cout << std::endl;
     std::cout << "Usage:" << std::endl;
