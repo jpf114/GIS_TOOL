@@ -2,16 +2,20 @@
 
 #include "gui_data_support.h"
 
+#include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <gdal_priv.h>
 #include <ogr_spatialref.h>
@@ -191,9 +195,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     connect(zoomInButton_, &QPushButton::clicked, this, [this]() {
         setScale(gis::gui::zoomInScale(currentScale_), false);
     });
-    connect(fitButton_, &QPushButton::clicked, this, [this]() {
-        fitCurrentImage();
-    });
+    connect(fitButton_, &QPushButton::clicked, this, &PreviewPanel::refitPreview);
 
     toolbarLayout->addWidget(zoomOutButton_);
     toolbarLayout->addWidget(fitButton_);
@@ -224,6 +226,8 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     imageScrollArea_->setWidgetResizable(true);
     imageScrollArea_->setAlignment(Qt::AlignCenter);
     imageScrollArea_->setWidget(imageLabel_);
+    imageScrollArea_->viewport()->installEventFilter(this);
+    imageLabel_->installEventFilter(this);
 
     stackedWidget_->addWidget(placeholderLabel_);
     stackedWidget_->addWidget(imageScrollArea_);
@@ -245,6 +249,11 @@ void PreviewPanel::clearPreview() {
     currentImage_ = QImage();
     currentScale_ = 1.0;
     fitMode_ = true;
+    isPanning_ = false;
+    lastPanPoint_ = {};
+    if (imageLabel_) {
+        imageLabel_->setCursor(Qt::ArrowCursor);
+    }
     setZoomControlsEnabled(false);
     setPlaceholder(QStringLiteral("预览区"),
                    QStringLiteral("请选择左侧数据，或执行算法后查看输出预览"));
@@ -264,11 +273,61 @@ void PreviewPanel::showPath(const std::string& path) {
     }
 }
 
+void PreviewPanel::refitPreview() {
+    fitCurrentImage();
+}
+
 void PreviewPanel::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
-    if (fitMode_ && !currentImage_.isNull() && stackedWidget_->currentIndex() == 1) {
+    if (fitMode_ && hasRasterPreview()) {
         fitCurrentImage();
     }
+}
+
+bool PreviewPanel::eventFilter(QObject* watched, QEvent* event) {
+    const bool previewReady = hasRasterPreview();
+    if ((watched == imageScrollArea_->viewport() || watched == imageLabel_) && previewReady) {
+        if (event->type() == QEvent::Wheel) {
+            auto* wheelEvent = static_cast<QWheelEvent*>(event);
+            if (wheelEvent->angleDelta().y() > 0) {
+                setScale(gis::gui::zoomInScale(currentScale_), false);
+            } else if (wheelEvent->angleDelta().y() < 0) {
+                setScale(gis::gui::zoomOutScale(currentScale_), false);
+            }
+            return true;
+        }
+
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->button() == Qt::LeftButton) {
+                isPanning_ = true;
+                lastPanPoint_ = mouseEvent->globalPosition().toPoint();
+                imageLabel_->setCursor(Qt::ClosedHandCursor);
+                return true;
+            }
+        }
+
+        if (event->type() == QEvent::MouseMove && isPanning_) {
+            auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            const QPoint currentPoint = mouseEvent->globalPosition().toPoint();
+            const QPoint delta = currentPoint - lastPanPoint_;
+            lastPanPoint_ = currentPoint;
+
+            imageScrollArea_->horizontalScrollBar()->setValue(
+                imageScrollArea_->horizontalScrollBar()->value() - delta.x());
+            imageScrollArea_->verticalScrollBar()->setValue(
+                imageScrollArea_->verticalScrollBar()->value() - delta.y());
+            return true;
+        }
+
+        if ((event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::Leave) && isPanning_) {
+            isPanning_ = false;
+            imageLabel_->setCursor(Qt::OpenHandCursor);
+            return true;
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
 }
 
 void PreviewPanel::setPlaceholder(const QString& title, const QString& message) {
@@ -309,6 +368,7 @@ void PreviewPanel::showRasterPreview(const std::string& path) {
                rasterSummary(ds.get()),
                toQString(path));
     setZoomControlsEnabled(true);
+    imageLabel_->setCursor(Qt::OpenHandCursor);
     stackedWidget_->setCurrentIndex(1);
     fitCurrentImage();
 }
@@ -316,6 +376,7 @@ void PreviewPanel::showRasterPreview(const std::string& path) {
 void PreviewPanel::showVectorPreview(const std::string& path) {
     currentImage_ = QImage();
     setZoomControlsEnabled(false);
+    imageLabel_->setCursor(Qt::ArrowCursor);
 
     std::unique_ptr<GDALDataset, DatasetCloser> ds(
         static_cast<GDALDataset*>(GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
@@ -338,6 +399,7 @@ void PreviewPanel::showVectorPreview(const std::string& path) {
 void PreviewPanel::showUnsupportedPreview(const std::string& path) {
     currentImage_ = QImage();
     setZoomControlsEnabled(false);
+    imageLabel_->setCursor(Qt::ArrowCursor);
     setSummary(QStringLiteral("预览区"),
                QStringLiteral("该文件类型暂不支持预览，但仍可作为输入或输出结果保存在数据区。"),
                toQString(path));
@@ -383,7 +445,7 @@ void PreviewPanel::setScale(double scale, bool keepFitMode) {
 }
 
 void PreviewPanel::fitCurrentImage() {
-    if (currentImage_.isNull() || !imageScrollArea_) {
+    if (!hasRasterPreview()) {
         return;
     }
 
@@ -398,4 +460,8 @@ void PreviewPanel::setZoomControlsEnabled(bool enabled) {
     zoomInButton_->setEnabled(enabled);
     zoomOutButton_->setEnabled(enabled);
     fitButton_->setEnabled(enabled);
+}
+
+bool PreviewPanel::hasRasterPreview() const {
+    return !currentImage_.isNull() && stackedWidget_->currentIndex() == 1;
 }

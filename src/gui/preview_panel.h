@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QImage>
+#include <QPoint>
 #include <QWidget>
 
 class QLabel;
@@ -15,9 +16,11 @@ public:
 
     void clearPreview();
     void showPath(const std::string& path);
+    void refitPreview();
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void setPlaceholder(const QString& title, const QString& message);
@@ -30,6 +33,7 @@ private:
     void setScale(double scale, bool keepFitMode);
     void fitCurrentImage();
     void setZoomControlsEnabled(bool enabled);
+    bool hasRasterPreview() const;
 
     QLabel* titleLabel_ = nullptr;
     QLabel* pathLabel_ = nullptr;
@@ -46,4 +50,6 @@ private:
     QImage currentImage_;
     double currentScale_ = 1.0;
     bool fitMode_ = true;
+    bool isPanning_ = false;
+    QPoint lastPanPoint_;
 };

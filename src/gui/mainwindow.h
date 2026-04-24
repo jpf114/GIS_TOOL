@@ -25,6 +25,8 @@ private slots:
     void onAddVectorData();
     void onRemoveSelectedData();
     void onDataSelectionChanged();
+    void onDataItemDoubleClicked(QTreeWidgetItem* item, int column);
+    void showDataContextMenu(const QPoint& pos);
 
 private:
     void loadPlugins();
@@ -34,6 +36,7 @@ private:
     QString buildResultSummary(const gis::framework::Result& result) const;
     QTreeWidgetItem* selectedDataItem() const;
     bool containsPath(const QString& path) const;
+    void moveDataItemToRole(QTreeWidgetItem* item, bool isOutput);
 
     QTabBar* pluginTabs_ = nullptr;
     QTreeWidget* dataTree_ = nullptr;

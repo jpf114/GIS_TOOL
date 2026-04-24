@@ -9,12 +9,12 @@
 
 #include <QApplication>
 #include <QFileDialog>
-#include <QFileInfo>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
@@ -91,7 +91,7 @@ void MainWindow::setupUi() {
     auto* dataTitle = new QLabel(QStringLiteral("数据图层"));
     dataTitle->setStyleSheet("font-size: 18px; font-weight: 600;");
     auto* dataHint = new QLabel(
-        QStringLiteral("输入数据和算法输出会分组显示。选中某一项后，中间显示预览，右侧自动回填 input 参数。"));
+        QStringLiteral("输入数据和算法输出会分组显示。双击可重新定位预览，右键可切换为输入或输出。"));
     dataHint->setWordWrap(true);
     dataHint->setStyleSheet("color: #5f6b7a;");
 
@@ -111,7 +111,10 @@ void MainWindow::setupUi() {
     dataTree_->setHeaderHidden(true);
     dataTree_->setAlternatingRowColors(true);
     dataTree_->header()->setStretchLastSection(true);
+    dataTree_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(dataTree_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onDataSelectionChanged);
+    connect(dataTree_, &QTreeWidget::itemDoubleClicked, this, &MainWindow::onDataItemDoubleClicked);
+    connect(dataTree_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::showDataContextMenu);
 
     inputGroupItem_ = new QTreeWidgetItem(QStringList(QStringLiteral("输入数据")));
     outputGroupItem_ = new QTreeWidgetItem(QStringList(QStringLiteral("结果数据")));
@@ -339,6 +342,45 @@ void MainWindow::onDataSelectionChanged() {
     syncCurrentDataToParams();
 }
 
+void MainWindow::onDataItemDoubleClicked(QTreeWidgetItem* item, int) {
+    if (!item || item == inputGroupItem_ || item == outputGroupItem_) {
+        return;
+    }
+
+    dataTree_->setCurrentItem(item);
+    previewPanel_->showPath(item->data(0, Qt::UserRole).toString().toUtf8().constData());
+    previewPanel_->refitPreview();
+}
+
+void MainWindow::showDataContextMenu(const QPoint& pos) {
+    auto* item = dataTree_->itemAt(pos);
+    if (!item || item == inputGroupItem_ || item == outputGroupItem_) {
+        return;
+    }
+
+    QMenu menu(this);
+    auto* setInputAction = menu.addAction(QStringLiteral("设为输入数据"));
+    auto* setOutputAction = menu.addAction(QStringLiteral("设为结果数据"));
+    menu.addSeparator();
+    auto* removeAction = menu.addAction(QStringLiteral("移除"));
+
+    QAction* selectedAction = menu.exec(dataTree_->viewport()->mapToGlobal(pos));
+    if (!selectedAction) {
+        return;
+    }
+
+    if (selectedAction == setInputAction) {
+        moveDataItemToRole(item, false);
+    } else if (selectedAction == setOutputAction) {
+        moveDataItemToRole(item, true);
+    } else if (selectedAction == removeAction) {
+        delete item;
+        if (!selectedDataItem()) {
+            previewPanel_->clearPreview();
+        }
+    }
+}
+
 void MainWindow::addDataPath(const QString& path, bool makeCurrent, bool isOutput) {
     if (path.isEmpty() || containsPath(path)) {
         if (makeCurrent && !path.isEmpty()) {
@@ -373,6 +415,11 @@ void MainWindow::addDataPath(const QString& path, bool makeCurrent, bool isOutpu
 void MainWindow::syncCurrentDataToParams() {
     auto* item = selectedDataItem();
     if (!currentPlugin_ || !item) {
+        return;
+    }
+
+    const bool isOutput = item->data(0, Qt::UserRole + 2).toBool();
+    if (isOutput) {
         return;
     }
 
@@ -425,4 +472,31 @@ bool MainWindow::containsPath(const QString& path) const {
         }
     }
     return false;
+}
+
+void MainWindow::moveDataItemToRole(QTreeWidgetItem* item, bool isOutput) {
+    if (!item) {
+        return;
+    }
+
+    auto* currentParent = item->parent();
+    auto* targetParent = isOutput ? outputGroupItem_ : inputGroupItem_;
+    if (currentParent == targetParent) {
+        return;
+    }
+
+    const QString path = item->data(0, Qt::UserRole).toString();
+    const auto kind = static_cast<gis::gui::DataKind>(item->data(0, Qt::UserRole + 1).toInt());
+
+    currentParent->removeChild(item);
+    targetParent->addChild(item);
+    item->setText(0, QString::fromUtf8(
+        gis::gui::buildDataDisplayLabel(path.toStdString(), kind, isOutput)));
+    item->setData(0, Qt::UserRole + 2, isOutput);
+    targetParent->setExpanded(true);
+    dataTree_->setCurrentItem(item);
+
+    if (!isOutput) {
+        syncCurrentDataToParams();
+    }
 }
