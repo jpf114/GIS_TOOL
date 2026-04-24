@@ -4,6 +4,7 @@ add_executable(gis_tests
     test_core.cpp
     test_framework.cpp
     test_plugins.cpp
+    test_support.cpp
 )
 
 target_link_libraries(gis_tests PRIVATE
@@ -18,6 +19,27 @@ target_link_libraries(gis_tests PRIVATE
 
 if(MSVC)
     target_compile_options(gis_tests PRIVATE /utf-8)
+endif()
+
+target_compile_definitions(gis_tests PRIVATE
+    GIS_TEST_PLUGIN_DIR="$<SHELL_PATH:$<TARGET_FILE_DIR:plugin_test_lifecycle>>"
+)
+
+add_library(plugin_test_lifecycle SHARED
+    plugins/test_lifecycle_plugin.cpp
+)
+
+target_link_libraries(plugin_test_lifecycle PRIVATE
+    gis_framework
+)
+
+set_target_properties(plugin_test_lifecycle PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "plugin_test_lifecycle"
+)
+
+if(MSVC)
+    target_compile_options(plugin_test_lifecycle PRIVATE /utf-8)
 endif()
 
 # Copy vcpkg runtime DLLs next to test executable so plugin DLLs can find dependencies

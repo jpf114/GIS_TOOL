@@ -3,6 +3,10 @@
 #include <gis/framework/param_spec.h>
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/result.h>
+#include <filesystem>
+#include <fstream>
+
+#include "test_support.h"
 
 TEST(FrameworkTest, ResultOk) {
     auto r = gis::framework::Result::ok("success", "/path/to/output");
@@ -81,4 +85,34 @@ TEST(FrameworkTest, PluginManagerEmpty) {
     gis::framework::PluginManager mgr;
     EXPECT_TRUE(mgr.plugins().empty());
     EXPECT_EQ(mgr.find("anything"), nullptr);
+}
+
+TEST(FrameworkTest, PluginManagerUnloadCallsDestroy) {
+    auto outputDir = gis::tests::defaultTestOutputDir("test_framework_output");
+    gis::tests::ensureDirectory(outputDir);
+
+    auto counterFile = outputDir / "plugin_lifecycle_counter.txt";
+    std::filesystem::remove(counterFile);
+
+#ifdef _WIN32
+    _putenv_s("GIS_TEST_LIFECYCLE_COUNTER", counterFile.string().c_str());
+#else
+    setenv("GIS_TEST_LIFECYCLE_COUNTER", counterFile.string().c_str(), 1);
+#endif
+
+    {
+        gis::framework::PluginManager mgr;
+        mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+        auto* plugin = mgr.find("lifecycle_test");
+        ASSERT_NE(plugin, nullptr);
+    }
+
+    std::ifstream in(counterFile);
+    ASSERT_TRUE(in.is_open());
+
+    std::string fileContent((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+
+    EXPECT_NE(fileContent.find("create"), std::string::npos);
+    EXPECT_NE(fileContent.find("destroy"), std::string::npos);
 }

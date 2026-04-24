@@ -9,26 +9,27 @@
 #include <ogrsf_frmts.h>
 #include <filesystem>
 #include <map>
+#include "test_support.h"
 
 namespace fs = std::filesystem;
 
-static std::string getTestDir() {
-    return "D:/Develop/GIS/GIS_TOOL/build/test_e2e_output";
+static fs::path getTestDir() {
+    return gis::tests::defaultTestOutputDir("test_e2e_output");
 }
 
-static std::string getPluginDir() {
-    return "D:/Develop/GIS/GIS_TOOL/build/plugins";
+static fs::path getPluginDir() {
+    return gis::tests::testPluginDir();
 }
 
 class PluginTest : public ::testing::Test {
 protected:
     static void SetUpTestSuite() {
         gis::core::initGDAL();
-        fs::create_directories(getTestDir());
+        gis::tests::ensureDirectory(getTestDir());
     }
 
     void SetUp() override {
-        mgr_.loadFromDirectory(getPluginDir());
+        mgr_.loadFromDirectory(getPluginDir().string());
     }
 
     gis::framework::PluginManager mgr_;
@@ -37,7 +38,7 @@ protected:
 
 static std::string createTestRaster(const std::string& name, int w = 100, int h = 100,
                                      int bands = 1, GDALDataType dt = GDT_Float32) {
-    std::string path = getTestDir() + "/" + name;
+    std::string path = (getTestDir() / name).string();
     auto ds = gis::core::createRaster(path, w, h, bands, dt);
     double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
     ds->SetGeoTransform(adfGT);
@@ -153,7 +154,7 @@ TEST_F(PluginTest, ProcessingThresholdExecution) {
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_thresh_input.tif", 50, 50);
-    std::string output = getTestDir() + "/e2e_thresh_output.tif";
+    std::string output = (getTestDir() / "e2e_thresh_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("threshold");
@@ -173,7 +174,7 @@ TEST_F(PluginTest, ProcessingFilterExecution) {
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_filter_input.tif", 50, 50);
-    std::string output = getTestDir() + "/e2e_filter_output.tif";
+    std::string output = (getTestDir() / "e2e_filter_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("filter");
@@ -192,7 +193,7 @@ TEST_F(PluginTest, ProcessingEdgeExecution) {
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_edge_input.tif", 50, 50);
-    std::string output = getTestDir() + "/e2e_edge_output.tif";
+    std::string output = (getTestDir() / "e2e_edge_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("edge");
@@ -211,7 +212,7 @@ TEST_F(PluginTest, ProcessingEnhanceExecution) {
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_enhance_input.tif", 50, 50);
-    std::string output = getTestDir() + "/e2e_enhance_output.tif";
+    std::string output = (getTestDir() / "e2e_enhance_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("enhance");
@@ -230,7 +231,7 @@ TEST_F(PluginTest, ProcessingContourExecution) {
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_contour_input.tif", 50, 50);
-    std::string output = getTestDir() + "/e2e_contour_output.tif";
+    std::string output = (getTestDir() / "e2e_contour_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("contour");
@@ -284,7 +285,7 @@ TEST_F(PluginTest, VectorInfoExecution) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";
 
-    std::string shpPath = getTestDir() + "/e2e_vector_test.shp";
+    std::string shpPath = (getTestDir() / "e2e_vector_test.shp").string();
     {
         auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
         ASSERT_NE(driver, nullptr);
@@ -318,7 +319,7 @@ TEST_F(PluginTest, ProcessingHoughExecution) {
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_hough_input.tif", 50, 50);
-    std::string output = getTestDir() + "/e2e_hough_output.tif";
+    std::string output = (getTestDir() / "e2e_hough_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("hough");
@@ -338,7 +339,7 @@ TEST_F(PluginTest, ProcessingWatershedExecution) {
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_watershed_input.tif", 50, 50);
-    std::string output = getTestDir() + "/e2e_watershed_output.tif";
+    std::string output = (getTestDir() / "e2e_watershed_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("watershed");
@@ -357,7 +358,7 @@ TEST_F(PluginTest, ProcessingKMeansExecution) {
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_kmeans_input.tif", 30, 30, 3);
-    std::string output = getTestDir() + "/e2e_kmeans_output.tif";
+    std::string output = (getTestDir() / "e2e_kmeans_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("kmeans");
@@ -375,8 +376,8 @@ TEST_F(PluginTest, VectorDissolveExecution) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";
 
-    std::string shpPath = getTestDir() + "/e2e_dissolve_input.shp";
-    std::string output = getTestDir() + "/e2e_dissolve_output.geojson";
+    std::string shpPath = (getTestDir() / "e2e_dissolve_input.shp").string();
+    std::string output = (getTestDir() / "e2e_dissolve_output.geojson").string();
     {
         auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
         ASSERT_NE(driver, nullptr);
@@ -431,8 +432,8 @@ TEST_F(PluginTest, VectorConvertExecution) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";
 
-    std::string shpPath = getTestDir() + "/e2e_convert_input.shp";
-    std::string output = getTestDir() + "/e2e_convert_output.geojson";
+    std::string shpPath = (getTestDir() / "e2e_convert_input.shp").string();
+    std::string output = (getTestDir() / "e2e_convert_output.geojson").string();
     {
         auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
         ASSERT_NE(driver, nullptr);
@@ -468,7 +469,7 @@ TEST_F(PluginTest, ProcessingBandMathExecution) {
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_bandmath_input.tif", 30, 30, 2);
-    std::string output = getTestDir() + "/e2e_bandmath_output.tif";
+    std::string output = (getTestDir() / "e2e_bandmath_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("band_math");

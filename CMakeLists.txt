@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
+
+# vcpkg toolchain integration must happen before project()
+if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+endif()
+
 project(gis-tool VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -11,11 +17,6 @@ endif()
 
 option(GIS_BUILD_GUI "Build Qt GUI" OFF)
 option(GIS_BUILD_TESTS "Build tests" ON)
-
-# vcpkg toolchain integration
-if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
-endif()
 
 find_package(GDAL REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d flann calib3d highgui)

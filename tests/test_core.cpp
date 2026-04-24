@@ -8,23 +8,19 @@
 #include <opencv2/opencv.hpp>
 #include <filesystem>
 #include <fstream>
+#include "test_support.h"
 
 namespace fs = std::filesystem;
 
-static std::string getTestDir() {
-    return "D:/Develop/GIS/GIS_TOOL/build/test_core_output";
+static fs::path getTestDir() {
+    return gis::tests::defaultTestOutputDir("test_core_output");
 }
 
 class CoreTest : public ::testing::Test {
 protected:
     static void SetUpTestSuite() {
         gis::core::initGDAL();
-        fs::create_directories(getTestDir());
-        const char* projData = std::getenv("PROJ_DATA");
-        if (!projData) {
-            std::string projDb = "D:/Develop/vcpkg/installed/x64-windows/share/proj";
-            _putenv_s("PROJ_DATA", projDb.c_str());
-        }
+        gis::tests::ensureDirectory(getTestDir());
     }
     void SetUp() override {}
     void TearDown() override {}
@@ -35,7 +31,7 @@ TEST_F(CoreTest, InitGDAL) {
 }
 
 TEST_F(CoreTest, CreateAndOpenRaster) {
-    std::string path = getTestDir() + "/create_test.tif";
+    std::string path = (getTestDir() / "create_test.tif").string();
     {
         auto ds = gis::core::createRaster(path, 100, 100, 1, GDT_Float32);
         ASSERT_NE(ds, nullptr);
@@ -50,7 +46,7 @@ TEST_F(CoreTest, CreateAndOpenRaster) {
 }
 
 TEST_F(CoreTest, GdalBandToMat) {
-    std::string path = getTestDir() + "/band_test.tif";
+    std::string path = (getTestDir() / "band_test.tif").string();
     {
         auto ds = gis::core::createRaster(path, 50, 50, 1, GDT_Float32);
         auto* band = ds->GetRasterBand(1);
@@ -67,8 +63,8 @@ TEST_F(CoreTest, GdalBandToMat) {
 }
 
 TEST_F(CoreTest, MatToGdalTiff) {
-    std::string srcPath = getTestDir() + "/mat_src.tif";
-    std::string dstPath = getTestDir() + "/mat_dst.tif";
+    std::string srcPath = (getTestDir() / "mat_src.tif").string();
+    std::string dstPath = (getTestDir() / "mat_dst.tif").string();
 
     auto srcDS = gis::core::createRaster(srcPath, 30, 30, 1, GDT_Float32);
     double adfGT[6] = {100.0, 0.5, 0.0, 200.0, 0.0, -0.5};
@@ -84,7 +80,7 @@ TEST_F(CoreTest, MatToGdalTiff) {
 }
 
 TEST_F(CoreTest, ComputeBandStats) {
-    std::string path = getTestDir() + "/stats_test.tif";
+    std::string path = (getTestDir() / "stats_test.tif").string();
     {
         auto ds = gis::core::createRaster(path, 100, 100, 1, GDT_Float32);
         auto* band = ds->GetRasterBand(1);
@@ -102,7 +98,7 @@ TEST_F(CoreTest, ComputeBandStats) {
 }
 
 TEST_F(CoreTest, NoDataValue) {
-    std::string path = getTestDir() + "/nodata_test.tif";
+    std::string path = (getTestDir() / "nodata_test.tif").string();
     {
         auto ds = gis::core::createRaster(path, 10, 10, 1, GDT_Float32);
         ds->GetRasterBand(1)->SetNoDataValue(-9999.0);
@@ -117,7 +113,7 @@ TEST_F(CoreTest, NoDataValue) {
 }
 
 TEST_F(CoreTest, SetNoDataValue) {
-    std::string path = getTestDir() + "/set_nodata_test.tif";
+    std::string path = (getTestDir() / "set_nodata_test.tif").string();
     auto ds = gis::core::createRaster(path, 10, 10, 1, GDT_Float32);
     EXPECT_TRUE(gis::core::setNoDataValue(ds.get(), 1, -999.0));
 
@@ -128,7 +124,7 @@ TEST_F(CoreTest, SetNoDataValue) {
 }
 
 TEST_F(CoreTest, GetRasterInfo) {
-    std::string path = getTestDir() + "/info_test.tif";
+    std::string path = (getTestDir() / "info_test.tif").string();
     {
         auto ds = gis::core::createRaster(path, 200, 150, 2, GDT_Byte, "GTiff");
         double adfGT[6] = {116.0, 0.01, 0.0, 40.0, 0.0, -0.01};
@@ -146,7 +142,7 @@ TEST_F(CoreTest, GetRasterInfo) {
 }
 
 TEST_F(CoreTest, ComputeHistogram) {
-    std::string path = getTestDir() + "/hist_test.tif";
+    std::string path = (getTestDir() / "hist_test.tif").string();
     {
         auto ds = gis::core::createRaster(path, 100, 100, 1, GDT_Byte);
         auto* band = ds->GetRasterBand(1);
@@ -190,8 +186,8 @@ TEST_F(CoreTest, ProgressReporter) {
 }
 
 TEST_F(CoreTest, MatsToGdalTiff) {
-    std::string srcPath = getTestDir() + "/multi_src.tif";
-    std::string dstPath = getTestDir() + "/multi_dst.tif";
+    std::string srcPath = (getTestDir() / "multi_src.tif").string();
+    std::string dstPath = (getTestDir() / "multi_dst.tif").string();
 
     auto srcDS = gis::core::createRaster(srcPath, 20, 20, 3, GDT_Float32);
 
@@ -207,7 +203,7 @@ TEST_F(CoreTest, MatsToGdalTiff) {
 }
 
 TEST_F(CoreTest, BuildOverviews) {
-    std::string path = getTestDir() + "/ovr_test.tif";
+    std::string path = (getTestDir() / "ovr_test.tif").string();
     {
         auto ds = gis::core::createRaster(path, 512, 512, 1, GDT_Byte);
         auto* band = ds->GetRasterBand(1);
@@ -222,7 +218,7 @@ TEST_F(CoreTest, BuildOverviews) {
 }
 
 TEST_F(CoreTest, RasterInfoStructure) {
-    std::string path = getTestDir() + "/raster_info_struct.tif";
+    std::string path = (getTestDir() / "raster_info_struct.tif").string();
     {
         auto ds = gis::core::createRaster(path, 100, 80, 2, GDT_Float32);
         double adfGT[6] = {120.0, 0.01, 0.0, 30.0, 0.0, -0.01};
@@ -244,7 +240,7 @@ TEST_F(CoreTest, RasterInfoStructure) {
 }
 
 TEST_F(CoreTest, HistogramBins) {
-    std::string path = getTestDir() + "/hist_bins.tif";
+    std::string path = (getTestDir() / "hist_bins.tif").string();
     {
         auto ds = gis::core::createRaster(path, 50, 50, 1, GDT_Byte);
         auto* band = ds->GetRasterBand(1);

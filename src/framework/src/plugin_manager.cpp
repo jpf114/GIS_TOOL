@@ -50,7 +50,8 @@ IGisPlugin* PluginManager::find(const std::string& name) const {
 
 void PluginManager::unloadAll() {
     for (auto& h : handles_) {
-        if (h.plugin) {
+        if (h.plugin && h.destroy) {
+            h.destroy(h.plugin);
             h.plugin = nullptr;
         }
 #ifdef _WIN32
@@ -89,8 +90,8 @@ void PluginManager::loadPlugin(const std::string& path) {
         dlsym(lib, "destroyPlugin"));
 #endif
 
-    if (!createFn) {
-        std::cerr << "Warning: no createPlugin symbol in: " << path << std::endl;
+    if (!createFn || !destroyFn) {
+        std::cerr << "Warning: incomplete plugin entry points in: " << path << std::endl;
 #ifdef _WIN32
         FreeLibrary(static_cast<HMODULE>(lib));
 #else
@@ -109,7 +110,7 @@ void PluginManager::loadPlugin(const std::string& path) {
         return;
     }
 
-    handles_.push_back({lib, plugin});
+    handles_.push_back({lib, plugin, destroyFn});
     plugins_.push_back(plugin);
     std::cerr << "Loaded plugin: " << plugin->displayName()
               << " (" << plugin->name() << " v" << plugin->version() << ")" << std::endl;

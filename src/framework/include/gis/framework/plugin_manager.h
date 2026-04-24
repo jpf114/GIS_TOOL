@@ -28,6 +28,7 @@ private:
     struct PluginHandle {
         void* library = nullptr;
         IGisPlugin* plugin = nullptr;
+        void (*destroy)(IGisPlugin*) = nullptr;
     };
 
     std::vector<PluginHandle> handles_;
