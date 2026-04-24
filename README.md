@@ -2,67 +2,63 @@
 
 基于 `C++17 + GDAL + OpenCV + PROJ + Qt` 的插件式 GIS 工具集，支持命令行和桌面图形界面两种入口。
 
-## 项目简介
-
-当前项目采用统一的插件式架构：
-
-- `src/core`：GDAL / OpenCV 基础封装与通用类型
-- `src/framework`：插件接口、参数元数据、插件管理器
-- `src/plugins`：各类 GIS/图像处理插件
-- `src/cli`：命令行入口
-- `src/gui`：Qt 图形界面入口
-- `tests`：核心、框架与插件测试
-- `docs`：功能说明、架构设计、计划文档
-
-当前已经实现的主要插件类别包括：
-
-- `projection`：投影与坐标系处理
-- `cutting`：裁切、分块、拼接
-- `matching`：特征匹配、配准、变化检测
-- `processing`：阈值、滤波、增强、统计、分割等
-- `vector`：矢量数据处理
-- `utility`：辅助工具类功能
-
-## 技术栈
-
-- `C++17`
-- `CMake`
-- `vcpkg`
-- `GDAL`
-- `OpenCV`
-- `PROJ`
-- `Qt 6`
-- `GoogleTest`
-
 ## 当前状态
 
-项目已经完成基础架构与多类插件原型开发，但仍处于工程稳定化阶段，当前优先工作包括：
+当前代码基线已经完成以下验证：
 
-- 打通默认构建链路
-- 清理测试中的环境依赖
-- 加强插件生命周期管理
-- 补齐协作文档与持续集成
+- `Visual Studio 2022 + C++17 + 全局 vcpkg` 可稳定配置与编译
+- `GIS_BUILD_GUI=OFF/ON` 两种模式均已验证构建通过
+- `ctest` 当前为 `51/51` 通过
+- `gis-gui.exe` 已验证可成功启动，不闪退
 
-详细路线图见：
+当前项目更准确的状态是：
 
-- [项目稳定化与迭代路线图](/D:/Code/MyProject/GIS_TOOL/docs/superpowers/plans/2026-04-24-project-stabilization-roadmap.md:1)
+- `core / framework / plugins / cli` 已具备可用的功能主链路
+- `gui` 已具备基础执行界面，但仍属于工具型前端，不是完整 GIS 工作台
+- 全项目仍处于“稳定化 + 验收补齐”阶段，不能直接宣称“所有功能都已完整无问题”
 
-## 构建准备
+## 项目结构
 
-建议在 Windows 环境下使用以下工具：
+- `src/core`
+  - GDAL / OpenCV 基础封装、运行时环境初始化、通用类型
+- `src/framework`
+  - 插件接口、参数描述、插件管理器、执行结果模型
+- `src/plugins`
+  - 六大插件：投影、裁切、匹配、处理、栅格工具、矢量工具
+- `src/cli`
+  - 命令行入口
+- `src/gui`
+  - Qt Widgets 图形界面入口
+- `tests`
+  - 核心能力、框架能力、插件能力测试
+- `docs`
+  - 构建说明、功能与验证说明、历史设计文档
 
-1. 安装 Visual Studio 2022/2026 C++ 工具链
-2. 安装 `CMake`
-3. 安装并配置 `vcpkg`
-4. 设置环境变量 `VCPKG_ROOT`
+## 已实现插件
 
-项目依赖清单记录在 `vcpkg.json` 中，但本项目默认**不在构建目录内自动安装依赖**，而是直接复用全局 `vcpkg` 已安装目录中的包。
+- `projection`
+  - 重投影、坐标系信息查看、坐标转换、赋予坐标系
+- `cutting`
+  - 裁切、镶嵌、分块、波段合并
+- `matching`
+  - 特征检测、特征匹配、影像配准、变化检测、ECC 配准、角点检测、拼接
+- `processing`
+  - 阈值分割、滤波、增强、波段运算、统计、边缘检测、轮廓提取、模板匹配、全色锐化、霍夫、分水岭、K-Means
+- `utility`
+  - 金字塔、NoData、直方图、信息查看、伪彩色、NDVI
+- `vector`
+  - 信息查看、过滤、缓冲、裁切、栅格化、面矢量化、格式转换、并集、差集、融合
 
-全局依赖建议统一安装到：
+## 依赖策略
 
-- `VCPKG_ROOT/installed/x64-windows`
+项目遵循以下依赖约束：
 
-默认依赖包括：
+- 所有第三方依赖统一安装到全局 `vcpkg`
+- 默认复用 `VCPKG_ROOT/installed/x64-windows`
+- 不在项目构建目录重复下载和重复安装依赖
+- 运行时 DLL、Qt 平台插件、GDAL/PROJ 数据目录从全局 `vcpkg` 拷贝
+
+推荐已安装包：
 
 - `gdal`
 - `opencv4`
@@ -70,39 +66,25 @@
 - `gtest`
 - `qtbase`
 
-## 推荐构建方式
+## 推荐构建命令
 
-### 1. 先在全局 vcpkg 安装依赖
-
-```powershell
-vcpkg install gdal opencv4 proj gtest qtbase --triplet x64-windows
-```
-
-### 2. 配置
+仅构建 CLI 与测试：
 
 ```powershell
-cmake -S . -B build -DGIS_BUILD_GUI=OFF -DGIS_BUILD_TESTS=ON
-```
-
-如果需要 GUI：
-
-```powershell
-cmake -S . -B build -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
-```
-
-### 3. 编译
-
-```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=OFF -DGIS_BUILD_TESTS=ON
 cmake --build build --config Debug
-```
-
-### 4. 运行测试
-
-```powershell
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-## CLI 使用示例
+构建 GUI、CLI 与测试：
+
+```powershell
+cmake -S . -B build-gui -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
+cmake --build build-gui --config Debug
+ctest --test-dir build-gui -C Debug --output-on-failure
+```
+
+## 运行方式
 
 列出插件：
 
@@ -110,46 +92,19 @@ ctest --test-dir build -C Debug --output-on-failure
 .\build\src\cli\Debug\gis-cli.exe --list
 ```
 
-查看插件帮助：
+启动 GUI：
 
 ```powershell
-.\build\src\cli\Debug\gis-cli.exe projection --help
+.\build-gui\src\gui\Debug\gis-gui.exe
 ```
-
-执行投影转换：
-
-```powershell
-.\build\src\cli\Debug\gis-cli.exe projection reproject --input=dem.tif --output=dem_4326.tif --dst_srs=EPSG:4326
-```
-
-## GUI 说明
-
-当启用 `GIS_BUILD_GUI=ON` 时会编译 Qt 图形界面。GUI 会根据插件提供的 `ParamSpec` 自动生成参数表单，因此 CLI 与 GUI 使用的是同一套插件定义。
 
 ## 文档索引
 
-- `docs/GDAL_OpenCV_Cpp_功能清单.md`
-- `docs/superpowers/specs/2026-04-22-gis-tool-plugin-architecture-design.md`
-- `docs/superpowers/plans/2026-04-24-project-stabilization-roadmap.md`
-
-## 开发说明
-
-当前建议优先遵循以下顺序推进：
-
-1. 先修复构建与测试基线
-2. 再稳定插件框架
-3. 再拆分大插件并补测试
-4. 最后增强 GUI 与发布流程
+- [构建与开发说明](D:/Code/MyProject/GIS_TOOL/docs/构建与开发说明.md)
+- [当前功能与真实数据验证指南](D:/Code/MyProject/GIS_TOOL/docs/当前功能与真实数据验证指南.md)
+- [项目稳定化与迭代路线图](D:/Code/MyProject/GIS_TOOL/docs/superpowers/plans/2026-04-24-project-stabilization-roadmap.md)
 
 ## 说明
 
-仓库内新增和维护的文档统一使用中文。
-
-## 依赖策略
-
-项目遵循以下依赖策略：
-
-- 所有第三方依赖统一安装到全局 `vcpkg` 目录
-- 项目构建时直接使用全局 `vcpkg` 已安装包
-- 运行时 DLL 与 Qt 平台插件从全局 `vcpkg` 目录拷贝
-- 不在项目构建目录里重复下载和重复安装依赖
+- 所有新增和维护文档统一使用中文
+- 提交信息统一使用中文
