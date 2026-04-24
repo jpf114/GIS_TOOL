@@ -1,5 +1,6 @@
 ﻿#include <gis/framework/plugin_manager.h>
 #include <gis/core/error.h>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 
@@ -10,6 +11,15 @@
 #endif
 
 namespace gis::framework {
+
+namespace {
+
+bool shouldLogLoadedPlugins() {
+    const char* value = std::getenv("GIS_VERBOSE_PLUGIN_LOAD");
+    return value != nullptr && value[0] != '\0' && std::string(value) != "0";
+}
+
+} // namespace
 
 PluginManager::~PluginManager() {
     unloadAll();
@@ -112,8 +122,10 @@ void PluginManager::loadPlugin(const std::string& path) {
 
     handles_.push_back({lib, plugin, destroyFn});
     plugins_.push_back(plugin);
-    std::cerr << "Loaded plugin: " << plugin->displayName()
-              << " (" << plugin->name() << " v" << plugin->version() << ")" << std::endl;
+    if (shouldLogLoadedPlugins()) {
+        std::cerr << "Loaded plugin: " << plugin->displayName()
+                  << " (" << plugin->name() << " v" << plugin->version() << ")" << std::endl;
+    }
 }
 
 } // namespace gis::framework

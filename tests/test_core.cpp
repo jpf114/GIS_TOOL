@@ -223,7 +223,14 @@ TEST_F(CoreTest, RasterInfoStructure) {
         auto ds = gis::core::createRaster(path, 100, 80, 2, GDT_Float32);
         double adfGT[6] = {120.0, 0.01, 0.0, 30.0, 0.0, -0.01};
         ds->SetGeoTransform(adfGT);
+        std::vector<float> band1Data(100 * 80, 12.0f);
+        std::vector<float> band2Data(100 * 80, 24.0f);
+        band1Data.front() = -9999.0f;
         ds->GetRasterBand(1)->SetNoDataValue(-9999.0);
+        ds->GetRasterBand(1)->RasterIO(
+            GF_Write, 0, 0, 100, 80, band1Data.data(), 100, 80, GDT_Float32, 0, 0);
+        ds->GetRasterBand(2)->RasterIO(
+            GF_Write, 0, 0, 100, 80, band2Data.data(), 100, 80, GDT_Float32, 0, 0);
         ds->GetRasterBand(1)->FlushCache();
         ds->GetRasterBand(2)->FlushCache();
     }
