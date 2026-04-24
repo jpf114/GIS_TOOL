@@ -8,7 +8,10 @@
 #include "qt_progress_reporter.h"
 
 #include <QApplication>
+#include <QBrush>
+#include <QColor>
 #include <QFileDialog>
+#include <QFont>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -58,7 +61,7 @@ void MainWindow::setupUi() {
     auto* algorithmTitle = new QLabel(QStringLiteral("算法工作台"));
     algorithmTitle->setStyleSheet("font-size: 20px; font-weight: 700;");
     auto* algorithmSubtitle = new QLabel(
-        QStringLiteral("顶部选择算法，左侧管理输入/输出数据，中间查看预览，右侧填写参数并执行。"));
+        QStringLiteral("顶部选择算法，左侧管理输入与输出数据，中间查看预览，右侧填写参数并执行。"));
     algorithmSubtitle->setStyleSheet("color: #5f6b7a;");
 
     pluginTabs_ = new QTabBar;
@@ -158,7 +161,7 @@ void MainWindow::setupUi() {
 
     auto* resultGroup = new QGroupBox(QStringLiteral("执行结果"));
     auto* resultLayout = new QVBoxLayout(resultGroup);
-    resultSummaryLabel_ = new QLabel(QStringLiteral("执行后会在这里展示结果摘要。"));
+    resultSummaryLabel_ = new QLabel(QStringLiteral("执行后会在这里显示结果摘要。"));
     resultSummaryLabel_->setWordWrap(true);
     resultLayout->addWidget(resultSummaryLabel_);
 
@@ -301,6 +304,8 @@ void MainWindow::onAddRasterData() {
     }
     if (!paths.isEmpty()) {
         dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
+    } else {
+        refreshDataTreeVisualState();
     }
 }
 
@@ -315,6 +320,8 @@ void MainWindow::onAddVectorData() {
     }
     if (!paths.isEmpty()) {
         dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
+    } else {
+        refreshDataTreeVisualState();
     }
 }
 
@@ -327,19 +334,24 @@ void MainWindow::onRemoveSelectedData() {
     delete item;
     if (!selectedDataItem()) {
         previewPanel_->clearPreview();
+        statusBar()->showMessage(QStringLiteral("已移除当前数据"));
     }
+    refreshDataTreeVisualState();
 }
 
 void MainWindow::onDataSelectionChanged() {
     auto* item = selectedDataItem();
     if (!item) {
         previewPanel_->clearPreview();
+        refreshDataTreeVisualState();
         return;
     }
 
     const QString path = item->data(0, Qt::UserRole).toString();
     previewPanel_->showPath(path.toUtf8().constData());
     syncCurrentDataToParams();
+    refreshDataTreeVisualState();
+    statusBar()->showMessage(QStringLiteral("当前数据: %1").arg(path));
 }
 
 void MainWindow::onDataItemDoubleClicked(QTreeWidgetItem* item, int) {
@@ -378,6 +390,7 @@ void MainWindow::showDataContextMenu(const QPoint& pos) {
         if (!selectedDataItem()) {
             previewPanel_->clearPreview();
         }
+        refreshDataTreeVisualState();
     }
 }
 
@@ -393,22 +406,24 @@ void MainWindow::addDataPath(const QString& path, bool makeCurrent, bool isOutpu
                 }
             }
         }
+        refreshDataTreeVisualState();
         return;
     }
 
     const auto kind = gis::gui::detectDataKind(path.toUtf8().constData());
     auto* parent = isOutput ? outputGroupItem_ : inputGroupItem_;
     auto* item = new QTreeWidgetItem(parent);
-    item->setText(0, QString::fromUtf8(
-        gis::gui::buildDataDisplayLabel(path.toStdString(), kind, isOutput)));
     item->setToolTip(0, path);
     item->setData(0, Qt::UserRole, path);
     item->setData(0, Qt::UserRole + 1, static_cast<int>(kind));
     item->setData(0, Qt::UserRole + 2, isOutput);
+    updateDataItemPresentation(item, false);
     parent->setExpanded(true);
 
     if (makeCurrent) {
         dataTree_->setCurrentItem(item);
+    } else {
+        refreshDataTreeVisualState();
     }
 }
 
@@ -485,18 +500,49 @@ void MainWindow::moveDataItemToRole(QTreeWidgetItem* item, bool isOutput) {
         return;
     }
 
-    const QString path = item->data(0, Qt::UserRole).toString();
-    const auto kind = static_cast<gis::gui::DataKind>(item->data(0, Qt::UserRole + 1).toInt());
-
     currentParent->removeChild(item);
     targetParent->addChild(item);
-    item->setText(0, QString::fromUtf8(
-        gis::gui::buildDataDisplayLabel(path.toStdString(), kind, isOutput)));
     item->setData(0, Qt::UserRole + 2, isOutput);
     targetParent->setExpanded(true);
     dataTree_->setCurrentItem(item);
 
     if (!isOutput) {
         syncCurrentDataToParams();
+    }
+    refreshDataTreeVisualState();
+}
+
+void MainWindow::refreshDataTreeVisualState() {
+    auto* activeItem = selectedDataItem();
+    for (auto* group : {inputGroupItem_, outputGroupItem_}) {
+        for (int i = 0; i < group->childCount(); ++i) {
+            auto* item = group->child(i);
+            updateDataItemPresentation(item, item == activeItem);
+        }
+    }
+}
+
+void MainWindow::updateDataItemPresentation(QTreeWidgetItem* item, bool isActive) {
+    if (!item) {
+        return;
+    }
+
+    const QString path = item->data(0, Qt::UserRole).toString();
+    const auto kind = static_cast<gis::gui::DataKind>(item->data(0, Qt::UserRole + 1).toInt());
+    const bool isOutput = item->data(0, Qt::UserRole + 2).toBool();
+
+    item->setText(0, QString::fromUtf8(
+        gis::gui::buildDataDisplayLabel(path.toStdString(), kind, isOutput, isActive)));
+
+    QFont font = item->font(0);
+    font.setBold(isActive);
+    item->setFont(0, font);
+
+    if (isActive) {
+        item->setBackground(0, QBrush(QColor("#d6ebff")));
+        item->setForeground(0, QBrush(QColor("#0f3d62")));
+    } else {
+        item->setBackground(0, QBrush());
+        item->setForeground(0, QBrush());
     }
 }

@@ -32,6 +32,27 @@ TEST(GuiSupportTest, BuildDataDisplayLabelIncludesRoleAndName) {
         "[矢量][输出] result.geojson");
 }
 
+TEST(GuiSupportTest, BuildDataDisplayLabelIncludesActiveState) {
+    EXPECT_EQ(
+        gis::gui::buildDataDisplayLabel("D:/data/image.tif", gis::gui::DataKind::Raster, false, true),
+        "[栅格][输入][当前] image.tif");
+    EXPECT_EQ(
+        gis::gui::buildDataDisplayLabel("D:/data/result.geojson", gis::gui::DataKind::Vector, true, false),
+        "[矢量][输出] result.geojson");
+}
+
+TEST(GuiSupportTest, BuildPreviewStatusTextShowsKindScaleAndMode) {
+    EXPECT_EQ(
+        gis::gui::buildPreviewStatusText(gis::gui::DataKind::Raster, 1.25, true, false),
+        "当前预览: 栅格 | 缩放: 125% | 模式: 适配视图");
+    EXPECT_EQ(
+        gis::gui::buildPreviewStatusText(gis::gui::DataKind::Raster, 2.0, false, true),
+        "当前预览: 栅格 | 缩放: 200% | 模式: 拖拽浏览");
+    EXPECT_EQ(
+        gis::gui::buildPreviewStatusText(gis::gui::DataKind::Vector, 1.0, false, false),
+        "当前预览: 矢量 | 缩放: 摘要模式 | 模式: 属性摘要");
+}
+
 TEST(GuiSupportTest, ZoomScaleIsClampedAndStepped) {
     EXPECT_DOUBLE_EQ(gis::gui::zoomInScale(1.0), 1.25);
     EXPECT_DOUBLE_EQ(gis::gui::zoomOutScale(1.0), 0.8);

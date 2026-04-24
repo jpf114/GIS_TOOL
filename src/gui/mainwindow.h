@@ -37,6 +37,8 @@ private:
     QTreeWidgetItem* selectedDataItem() const;
     bool containsPath(const QString& path) const;
     void moveDataItemToRole(QTreeWidgetItem* item, bool isOutput);
+    void refreshDataTreeVisualState();
+    void updateDataItemPresentation(QTreeWidgetItem* item, bool isActive);
 
     QTabBar* pluginTabs_ = nullptr;
     QTreeWidget* dataTree_ = nullptr;

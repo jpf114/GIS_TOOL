@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gui_data_support.h"
+
 #include <QImage>
 #include <QPoint>
 #include <QWidget>
@@ -40,6 +42,7 @@ private:
     QLabel* summaryLabel_ = nullptr;
     QLabel* placeholderLabel_ = nullptr;
     QLabel* imageLabel_ = nullptr;
+    QLabel* statusLabel_ = nullptr;
     QLabel* scaleLabel_ = nullptr;
     QPushButton* zoomInButton_ = nullptr;
     QPushButton* zoomOutButton_ = nullptr;
@@ -48,6 +51,7 @@ private:
     QStackedWidget* stackedWidget_ = nullptr;
 
     QImage currentImage_;
+    gis::gui::DataKind currentDataKind_ = gis::gui::DataKind::Unknown;
     double currentScale_ = 1.0;
     bool fitMode_ = true;
     bool isPanning_ = false;

@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 
@@ -22,6 +24,32 @@ std::string lowerExtension(const std::string& path) {
 
 double clampScale(double value) {
     return std::clamp(value, kMinScale, kMaxScale);
+}
+
+std::string previewScaleText(gis::gui::DataKind kind, double scale) {
+    if (kind != gis::gui::DataKind::Raster) {
+        return "摘要模式";
+    }
+
+    std::ostringstream oss;
+    oss << static_cast<int>(std::round(scale * 100.0)) << "%";
+    return oss.str();
+}
+
+std::string previewModeText(gis::gui::DataKind kind, bool fitMode, bool isPanning) {
+    if (kind == gis::gui::DataKind::Vector) {
+        return "属性摘要";
+    }
+    if (kind == gis::gui::DataKind::Unknown) {
+        return "等待选择";
+    }
+    if (isPanning) {
+        return "拖拽浏览";
+    }
+    if (fitMode) {
+        return "适配视图";
+    }
+    return "手动缩放";
 }
 
 } // namespace
@@ -61,10 +89,17 @@ std::string dataKindDisplayName(DataKind kind) {
     }
 }
 
-std::string buildDataDisplayLabel(const std::string& path, DataKind kind, bool isOutput) {
+std::string buildDataDisplayLabel(const std::string& path, DataKind kind, bool isOutput, bool isActive) {
     const std::string role = isOutput ? "输出" : "输入";
-    return "[" + dataKindDisplayName(kind) + "][" + role + "] "
+    const std::string active = isActive ? "[当前]" : "";
+    return "[" + dataKindDisplayName(kind) + "][" + role + "]" + active + " "
         + std::filesystem::path(path).filename().string();
+}
+
+std::string buildPreviewStatusText(DataKind kind, double scale, bool fitMode, bool isPanning) {
+    return "当前预览: " + dataKindDisplayName(kind)
+        + " | 缩放: " + previewScaleText(kind, scale)
+        + " | 模式: " + previewModeText(kind, fitMode, isPanning);
 }
 
 double zoomInScale(double currentScale) {

@@ -1,7 +1,5 @@
 #include "preview_panel.h"
 
-#include "gui_data_support.h"
-
 #include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -157,6 +155,13 @@ QString vectorSummary(GDALDataset* ds) {
     return toQString(oss.str());
 }
 
+QString scaleLabelText(gis::gui::DataKind kind, double scale) {
+    if (kind != gis::gui::DataKind::Raster) {
+        return QStringLiteral("摘要模式");
+    }
+    return QStringLiteral("%1%").arg(static_cast<int>(std::round(scale * 100.0)));
+}
+
 } // namespace
 
 PreviewPanel::PreviewPanel(QWidget* parent)
@@ -186,6 +191,8 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     zoomOutButton_ = new QPushButton(QStringLiteral("缩小"));
     fitButton_ = new QPushButton(QStringLiteral("适配"));
     zoomInButton_ = new QPushButton(QStringLiteral("放大"));
+    statusLabel_ = new QLabel;
+    statusLabel_->setStyleSheet("color: #4b5c6f;");
     scaleLabel_ = new QLabel(QStringLiteral("100%"));
     scaleLabel_->setStyleSheet("color: #4b5c6f; font-weight: 600;");
 
@@ -200,7 +207,8 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     toolbarLayout->addWidget(zoomOutButton_);
     toolbarLayout->addWidget(fitButton_);
     toolbarLayout->addWidget(zoomInButton_);
-    toolbarLayout->addStretch(1);
+    toolbarLayout->addSpacing(8);
+    toolbarLayout->addWidget(statusLabel_, 1);
     toolbarLayout->addWidget(scaleLabel_);
 
     headerLayout->addWidget(titleLabel_);
@@ -246,6 +254,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 }
 
 void PreviewPanel::clearPreview() {
+    currentDataKind_ = gis::gui::DataKind::Unknown;
     currentImage_ = QImage();
     currentScale_ = 1.0;
     fitMode_ = true;
@@ -303,6 +312,7 @@ bool PreviewPanel::eventFilter(QObject* watched, QEvent* event) {
                 isPanning_ = true;
                 lastPanPoint_ = mouseEvent->globalPosition().toPoint();
                 imageLabel_->setCursor(Qt::ClosedHandCursor);
+                updateScaleLabel();
                 return true;
             }
         }
@@ -323,6 +333,7 @@ bool PreviewPanel::eventFilter(QObject* watched, QEvent* event) {
         if ((event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::Leave) && isPanning_) {
             isPanning_ = false;
             imageLabel_->setCursor(Qt::OpenHandCursor);
+            updateScaleLabel();
             return true;
         }
     }
@@ -346,6 +357,7 @@ void PreviewPanel::setSummary(const QString& title, const QString& summary, cons
 }
 
 void PreviewPanel::showRasterPreview(const std::string& path) {
+    currentDataKind_ = gis::gui::DataKind::Raster;
     std::unique_ptr<GDALDataset, DatasetCloser> ds(
         static_cast<GDALDataset*>(GDALOpen(path.c_str(), GA_ReadOnly)));
     if (!ds) {
@@ -374,7 +386,11 @@ void PreviewPanel::showRasterPreview(const std::string& path) {
 }
 
 void PreviewPanel::showVectorPreview(const std::string& path) {
+    currentDataKind_ = gis::gui::DataKind::Vector;
     currentImage_ = QImage();
+    currentScale_ = 1.0;
+    fitMode_ = false;
+    isPanning_ = false;
     setZoomControlsEnabled(false);
     imageLabel_->setCursor(Qt::ArrowCursor);
 
@@ -397,7 +413,11 @@ void PreviewPanel::showVectorPreview(const std::string& path) {
 }
 
 void PreviewPanel::showUnsupportedPreview(const std::string& path) {
+    currentDataKind_ = gis::gui::DataKind::Unknown;
     currentImage_ = QImage();
+    currentScale_ = 1.0;
+    fitMode_ = false;
+    isPanning_ = false;
     setZoomControlsEnabled(false);
     imageLabel_->setCursor(Qt::ArrowCursor);
     setSummary(QStringLiteral("预览区"),
@@ -429,7 +449,9 @@ void PreviewPanel::updateImageDisplay() {
 }
 
 void PreviewPanel::updateScaleLabel() {
-    scaleLabel_->setText(QStringLiteral("%1%").arg(static_cast<int>(std::round(currentScale_ * 100.0))));
+    scaleLabel_->setText(scaleLabelText(currentDataKind_, currentScale_));
+    statusLabel_->setText(QString::fromUtf8(
+        gis::gui::buildPreviewStatusText(currentDataKind_, currentScale_, fitMode_, isPanning_)));
 }
 
 void PreviewPanel::setScale(double scale, bool keepFitMode) {
