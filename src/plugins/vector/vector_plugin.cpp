@@ -324,6 +324,8 @@ struct OverlayGeometryEntry {
     OGREnvelope envelope{};
 };
 
+static OGRGeometry* unionGeometryList(std::vector<OGRGeometry*>& geoms);
+
 static std::vector<OverlayGeometryEntry> collectNormalizedGeometries(OGRLayer* layer) {
     std::vector<OverlayGeometryEntry> entries;
     if (!layer) {
@@ -400,6 +402,19 @@ static OGRGeometry* buildCandidateOverlayGeometry(
     }
 
     return merged;
+}
+
+static OGRGeometry* buildMergedOverlayGeometry(
+    const std::vector<OverlayGeometryEntry>& entries) {
+    std::vector<OGRGeometry*> geometries;
+    geometries.reserve(entries.size());
+    for (const auto& entry : entries) {
+        if (!entry.geometry || entry.geometry->IsEmpty()) {
+            continue;
+        }
+        geometries.push_back(entry.geometry->clone());
+    }
+    return unionGeometryList(geometries);
 }
 
 static std::vector<const OverlayGeometryEntry*> collectCandidateOverlayEntries(
@@ -507,6 +522,29 @@ static bool writeGeometryFeature(
     OGRGeometry* geom,
     const std::function<void(OGRFeature*)>& fillAttributes = {});
 
+static std::unique_ptr<OGRGeometry> promoteGeometryToLayerType(
+    OGRLayer* layer,
+    OGRGeometry* geom) {
+    if (!layer || !geom) {
+        return nullptr;
+    }
+
+    const auto targetType = wkbFlatten(layer->GetGeomType());
+    if (targetType == wkbMultiLineString && wkbFlatten(geom->getGeometryType()) == wkbLineString) {
+        auto multi = std::make_unique<OGRMultiLineString>();
+        multi->addGeometry(geom);
+        return multi;
+    }
+
+    if (targetType == wkbMultiPolygon && wkbFlatten(geom->getGeometryType()) == wkbPolygon) {
+        auto multi = std::make_unique<OGRMultiPolygon>();
+        multi->addGeometry(geom);
+        return multi;
+    }
+
+    return nullptr;
+}
+
 static bool writeUnionFeature(OGRLayer* layer, OGRGeometry* geom, const char* sourceValue) {
     return writeGeometryFeature(layer, geom, [sourceValue](OGRFeature* feature) {
         feature->SetField("source", sourceValue);
@@ -522,17 +560,7 @@ static bool writeGeometryFeature(
     }
 
     OGRFeature* dstFeat = OGRFeature::CreateFeature(layer->GetLayerDefn());
-    const auto targetType = wkbFlatten(layer->GetGeomType());
-    std::unique_ptr<OGRGeometry> promoted;
-    if (targetType == wkbMultiLineString && wkbFlatten(geom->getGeometryType()) == wkbLineString) {
-        auto multi = std::make_unique<OGRMultiLineString>();
-        multi->addGeometry(geom);
-        promoted = std::move(multi);
-    } else if (targetType == wkbMultiPolygon && wkbFlatten(geom->getGeometryType()) == wkbPolygon) {
-        auto multi = std::make_unique<OGRMultiPolygon>();
-        multi->addGeometry(geom);
-        promoted = std::move(multi);
-    }
+    std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(layer, geom);
 
     dstFeat->SetGeometry(promoted ? promoted.get() : geom);
     if (fillAttributes) {
@@ -990,6 +1018,11 @@ gis::framework::Result VectorPlugin::doClip(
         return failInvalidGeometry("Clip");
     }
 
+    std::unique_ptr<OGRGeometry> mergedClipGeometry;
+    if (clipEntries.size() <= 128) {
+        mergedClipGeometry.reset(buildMergedOverlayGeometry(clipEntries));
+    }
+
     progress.onProgress(0.3);
 
     namespace fs = std::filesystem;
@@ -1015,7 +1048,8 @@ gis::framework::Result VectorPlugin::doClip(
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
+    OGRLayer* dstLayer = dstDS->CreateLayer(
+        srcLayer->GetName(), srcSRS, resultLayerGeometryType(srcLayer->GetGeomType()), nullptr);
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1038,15 +1072,21 @@ gis::framework::Result VectorPlugin::doClip(
     }
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
-        std::unique_ptr<OGRGeometry> candidateOverlay(buildCandidateOverlayGeometry(clipEntries, geom));
-        if (geom && candidateOverlay && geom->Intersects(candidateOverlay.get())) {
-            OGRGeometry* clipped = candidateOverlay->Contains(geom)
+        OGRGeometry* overlayGeometry = mergedClipGeometry.get();
+        std::unique_ptr<OGRGeometry> candidateOverlay;
+        if (!overlayGeometry) {
+            candidateOverlay.reset(buildCandidateOverlayGeometry(clipEntries, geom));
+            overlayGeometry = candidateOverlay.get();
+        }
+        if (geom && overlayGeometry && geom->Intersects(overlayGeometry)) {
+            OGRGeometry* clipped = overlayGeometry->Contains(geom)
                 ? geom->clone()
-                : geom->Intersection(candidateOverlay.get());
+                : geom->Intersection(overlayGeometry);
             if (clipped && !clipped->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
                 dstFeat->SetFrom(feat);
-                dstFeat->SetGeometry(clipped);
+                std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, clipped);
+                dstFeat->SetGeometry(promoted ? promoted.get() : clipped);
                 dstLayer->CreateFeature(dstFeat);
                 OGRFeature::DestroyFeature(dstFeat);
                 count++;
@@ -1538,6 +1578,11 @@ gis::framework::Result VectorPlugin::doDifference(
         return failInvalidGeometry("Difference");
     }
 
+    std::unique_ptr<OGRGeometry> mergedOverlayGeometry;
+    if (overlayEntries.size() <= 128) {
+        mergedOverlayGeometry.reset(buildMergedOverlayGeometry(overlayEntries));
+    }
+
     progress.onProgress(0.3);
 
     namespace fs = std::filesystem;
@@ -1585,17 +1630,23 @@ gis::framework::Result VectorPlugin::doDifference(
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
         if (geom) {
-            std::unique_ptr<OGRGeometry> candidateOverlay(buildCandidateOverlayGeometry(overlayEntries, geom));
+            OGRGeometry* overlayGeometry = mergedOverlayGeometry.get();
+            std::unique_ptr<OGRGeometry> candidateOverlay;
+            if (!overlayGeometry) {
+                candidateOverlay.reset(buildCandidateOverlayGeometry(overlayEntries, geom));
+                overlayGeometry = candidateOverlay.get();
+            }
             OGRGeometry* diffGeom = nullptr;
-            if (!candidateOverlay || !geom->Intersects(candidateOverlay.get())) {
+            if (!overlayGeometry || !geom->Intersects(overlayGeometry)) {
                 diffGeom = geom->clone();
-            } else if (!candidateOverlay->Contains(geom)) {
-                diffGeom = geom->Difference(candidateOverlay.get());
+            } else if (!overlayGeometry->Contains(geom)) {
+                diffGeom = geom->Difference(overlayGeometry);
             }
             if (diffGeom && !diffGeom->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
                 dstFeat->SetFrom(feat);
-                dstFeat->SetGeometry(diffGeom);
+                std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, diffGeom);
+                dstFeat->SetGeometry(promoted ? promoted.get() : diffGeom);
                 dstLayer->CreateFeature(dstFeat);
                 OGRFeature::DestroyFeature(dstFeat);
                 count++;

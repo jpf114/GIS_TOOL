@@ -7,8 +7,12 @@
 #include <gis/core/progress.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
+#include <cpl_error.h>
 #include <filesystem>
 #include <map>
+#include <mutex>
+#include <string>
+#include <vector>
 #include "test_support.h"
 
 namespace fs = std::filesystem;
@@ -39,6 +43,21 @@ protected:
     gis::framework::PluginManager mgr_;
     gis::core::CliProgress progress_;
 };
+
+namespace {
+
+std::mutex g_gdalWarningMutex;
+std::vector<std::string> g_gdalWarnings;
+
+void captureGdalWarning(CPLErr errClass, CPLErrorNum errNo, const char* msg) {
+    if (errClass == CE_Warning && msg) {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        g_gdalWarnings.emplace_back(msg);
+    }
+    CPLDefaultErrorHandler(errClass, errNo, msg);
+}
+
+} // namespace
 
 static std::string createTestRaster(const std::string& name, int w = 100, int h = 100,
                                      int bands = 1, GDALDataType dt = GDT_Float32) {
@@ -914,17 +933,97 @@ TEST_F(PluginTest, VectorDifferenceKeepsLinearGeometryOutput) {
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
     auto layerType = wkbFlatten(outLayer->GetGeomType());
-    EXPECT_TRUE(layerType == wkbUnknown || layerType == wkbLineString || layerType == wkbMultiLineString)
+    EXPECT_EQ(layerType, wkbMultiLineString)
         << "Unexpected layer geometry type: " << OGRGeometryTypeToName(outLayer->GetGeomType());
     OGRFeature* outFeat = outLayer->GetNextFeature();
     ASSERT_NE(outFeat, nullptr);
     OGRGeometry* outGeom = outFeat->GetGeometryRef();
     ASSERT_NE(outGeom, nullptr);
     auto outType = wkbFlatten(outGeom->getGeometryType());
-    EXPECT_TRUE(outType == wkbLineString || outType == wkbMultiLineString)
+    EXPECT_EQ(outType, wkbMultiLineString)
         << "Unexpected geometry type: " << OGRGeometryTypeToName(outGeom->getGeometryType());
     OGRFeature::DestroyFeature(outFeat);
     GDALClose(outDs);
+}
+
+TEST_F(PluginTest, VectorDifferenceWithoutOverlapAvoidsMultiGeometryWarning) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_difference_no_overlap_input.shp").string();
+    std::string overlay = (getTestDir() / "e2e_difference_no_overlap_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_difference_no_overlap_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs1 = std::make_unique<OGRSpatialReference>();
+        srs1->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs1.get(), wkbLineString);
+        ASSERT_NE(layer1, nullptr);
+        auto* featDefn1 = layer1->GetLayerDefn();
+        auto* feat1 = OGRFeature::CreateFeature(featDefn1);
+        OGRLineString line;
+        line.addPoint(0, 0);
+        line.addPoint(200, 0);
+        feat1->SetGeometry(&line);
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(overlay.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto srs2 = std::make_unique<OGRSpatialReference>();
+        srs2->importFromEPSG(3857);
+        auto* layer2 = ds2->CreateLayer("overlay", srs2.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* featDefn2 = layer2->GetLayerDefn();
+        auto* feat2 = OGRFeature::CreateFeature(featDefn2);
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(500, -20);
+        ring.addPoint(520, -20);
+        ring.addPoint(520, 20);
+        ring.addPoint(500, 20);
+        ring.addPoint(500, -20);
+        poly.addRing(&ring);
+        feat2->SetGeometry(&poly);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("difference");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        g_gdalWarnings.clear();
+    }
+
+    CPLPushErrorHandler(captureGdalWarning);
+    auto result = p->execute(params, progress_);
+    CPLPopErrorHandler();
+
+    EXPECT_TRUE(result.success) << "Difference failed: " << result.message;
+
+    bool hasGeometryTypeWarning = false;
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        for (const auto& warning : g_gdalWarnings) {
+            if (warning.find("geometry type MULTILINESTRING") != std::string::npos) {
+                hasGeometryTypeWarning = true;
+                break;
+            }
+        }
+    }
+    EXPECT_FALSE(hasGeometryTypeWarning);
 }
 
 TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
@@ -983,9 +1082,29 @@ TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
     params["clip_vector"] = clip;
     params["output"] = output;
 
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        g_gdalWarnings.clear();
+    }
+
+    CPLPushErrorHandler(captureGdalWarning);
     auto result = p->execute(params, progress_);
+    CPLPopErrorHandler();
     EXPECT_TRUE(result.success) << "Clip failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
+
+    bool hasGeometryTypeWarning = false;
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        for (const auto& warning : g_gdalWarnings) {
+            if (warning.find("geometry type LINESTRING") != std::string::npos ||
+                warning.find("geometry type MULTILINESTRING") != std::string::npos) {
+                hasGeometryTypeWarning = true;
+                break;
+            }
+        }
+    }
+    EXPECT_FALSE(hasGeometryTypeWarning);
 }
 
 TEST_F(PluginTest, VectorFilterShapefileAsciiOutputReopens) {
