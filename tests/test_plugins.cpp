@@ -470,7 +470,7 @@ TEST_F(PluginTest, VectorDissolveExecution) {
         auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
         ASSERT_NE(ds, nullptr);
         auto srs = std::make_unique<OGRSpatialReference>();
-        srs->importFromEPSG(4326);
+        srs->importFromEPSG(3857);
         auto* layer = ds->CreateLayer("test", srs.get(), wkbPolygon);
         ASSERT_NE(layer, nullptr);
         OGRFieldDefn fieldDefn("type", OFTString);
@@ -480,9 +480,9 @@ TEST_F(PluginTest, VectorDissolveExecution) {
         auto* feat1 = OGRFeature::CreateFeature(featDefn);
         OGRPolygon poly1;
         OGRLinearRing ring1;
-        ring1.addPoint(116.0, 40.0); ring1.addPoint(116.01, 40.0);
-        ring1.addPoint(116.01, 40.01); ring1.addPoint(116.0, 40.01);
-        ring1.addPoint(116.0, 40.0);
+        ring1.addPoint(0.0, 0.0); ring1.addPoint(100.0, 0.0);
+        ring1.addPoint(100.0, 100.0); ring1.addPoint(0.0, 100.0);
+        ring1.addPoint(0.0, 0.0);
         poly1.addRing(&ring1);
         feat1->SetGeometry(&poly1);
         feat1->SetField("type", "A");
@@ -492,9 +492,9 @@ TEST_F(PluginTest, VectorDissolveExecution) {
         auto* feat2 = OGRFeature::CreateFeature(featDefn);
         OGRPolygon poly2;
         OGRLinearRing ring2;
-        ring2.addPoint(116.01, 40.0); ring2.addPoint(116.02, 40.0);
-        ring2.addPoint(116.02, 40.01); ring2.addPoint(116.01, 40.01);
-        ring2.addPoint(116.01, 40.0);
+        ring2.addPoint(100.0, 0.0); ring2.addPoint(200.0, 0.0);
+        ring2.addPoint(200.0, 100.0); ring2.addPoint(100.0, 100.0);
+        ring2.addPoint(100.0, 0.0);
         poly2.addRing(&ring2);
         feat2->SetGeometry(&poly2);
         feat2->SetField("type", "A");
@@ -512,6 +512,222 @@ TEST_F(PluginTest, VectorDissolveExecution) {
 
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Dissolve failed: " << result.message;
+}
+
+TEST_F(PluginTest, VectorClipRejectsMismatchedSrs) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_clip_input.shp").string();
+    std::string clip = (getTestDir() / "e2e_clip_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_clip_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs1 = std::make_unique<OGRSpatialReference>();
+        srs1->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs1.get(), wkbPolygon);
+        ASSERT_NE(layer1, nullptr);
+        auto* featDefn1 = layer1->GetLayerDefn();
+        auto* feat1 = OGRFeature::CreateFeature(featDefn1);
+        OGRPolygon poly1;
+        OGRLinearRing ring1;
+        ring1.addPoint(0, 0); ring1.addPoint(100, 0); ring1.addPoint(100, 100); ring1.addPoint(0, 100); ring1.addPoint(0, 0);
+        poly1.addRing(&ring1);
+        feat1->SetGeometry(&poly1);
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(clip.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto srs2 = std::make_unique<OGRSpatialReference>();
+        srs2->importFromEPSG(4326);
+        auto* layer2 = ds2->CreateLayer("clip", srs2.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* featDefn2 = layer2->GetLayerDefn();
+        auto* feat2 = OGRFeature::CreateFeature(featDefn2);
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(116, 39); ring2.addPoint(117, 39); ring2.addPoint(117, 40); ring2.addPoint(116, 40); ring2.addPoint(116, 39);
+        poly2.addRing(&ring2);
+        feat2->SetGeometry(&poly2);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = input;
+    params["clip_vector"] = clip;
+    params["output"] = output;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("CRS"), std::string::npos);
+}
+
+TEST_F(PluginTest, VectorUnionRejectsMismatchedSrs) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_union_input.shp").string();
+    std::string overlay = (getTestDir() / "e2e_union_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_union_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs1 = std::make_unique<OGRSpatialReference>();
+        srs1->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs1.get(), wkbPolygon);
+        ASSERT_NE(layer1, nullptr);
+        auto* featDefn1 = layer1->GetLayerDefn();
+        auto* feat1 = OGRFeature::CreateFeature(featDefn1);
+        OGRPolygon poly1;
+        OGRLinearRing ring1;
+        ring1.addPoint(0, 0); ring1.addPoint(100, 0); ring1.addPoint(100, 100); ring1.addPoint(0, 100); ring1.addPoint(0, 0);
+        poly1.addRing(&ring1);
+        feat1->SetGeometry(&poly1);
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(overlay.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto srs2 = std::make_unique<OGRSpatialReference>();
+        srs2->importFromEPSG(4326);
+        auto* layer2 = ds2->CreateLayer("overlay", srs2.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* featDefn2 = layer2->GetLayerDefn();
+        auto* feat2 = OGRFeature::CreateFeature(featDefn2);
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(116, 39); ring2.addPoint(117, 39); ring2.addPoint(117, 40); ring2.addPoint(116, 40); ring2.addPoint(116, 39);
+        poly2.addRing(&ring2);
+        feat2->SetGeometry(&poly2);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("CRS"), std::string::npos);
+}
+
+TEST_F(PluginTest, VectorDifferenceRejectsMismatchedSrs) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_difference_input.shp").string();
+    std::string overlay = (getTestDir() / "e2e_difference_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_difference_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs1 = std::make_unique<OGRSpatialReference>();
+        srs1->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs1.get(), wkbPolygon);
+        ASSERT_NE(layer1, nullptr);
+        auto* featDefn1 = layer1->GetLayerDefn();
+        auto* feat1 = OGRFeature::CreateFeature(featDefn1);
+        OGRPolygon poly1;
+        OGRLinearRing ring1;
+        ring1.addPoint(0, 0); ring1.addPoint(100, 0); ring1.addPoint(100, 100); ring1.addPoint(0, 100); ring1.addPoint(0, 0);
+        poly1.addRing(&ring1);
+        feat1->SetGeometry(&poly1);
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(overlay.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto srs2 = std::make_unique<OGRSpatialReference>();
+        srs2->importFromEPSG(4326);
+        auto* layer2 = ds2->CreateLayer("overlay", srs2.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* featDefn2 = layer2->GetLayerDefn();
+        auto* feat2 = OGRFeature::CreateFeature(featDefn2);
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(116, 39); ring2.addPoint(117, 39); ring2.addPoint(117, 40); ring2.addPoint(116, 40); ring2.addPoint(116, 39);
+        poly2.addRing(&ring2);
+        feat2->SetGeometry(&poly2);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("difference");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("CRS"), std::string::npos);
+}
+
+TEST_F(PluginTest, VectorDissolveRejectsGeographicSrs) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_dissolve_geo_input.shp").string();
+    std::string output = (getTestDir() / "e2e_dissolve_geo_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(4326);
+        auto* layer = ds->CreateLayer("input", srs.get(), wkbPolygon);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn fieldDefn("type", OFTString);
+        ASSERT_EQ(layer->CreateField(&fieldDefn), OGRERR_NONE);
+        auto* featDefn = layer->GetLayerDefn();
+        auto* feat = OGRFeature::CreateFeature(featDefn);
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(116, 39); ring.addPoint(116.1, 39); ring.addPoint(116.1, 39.1); ring.addPoint(116, 39.1); ring.addPoint(116, 39);
+        poly.addRing(&ring);
+        feat->SetGeometry(&poly);
+        feat->SetField("type", "A");
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("dissolve");
+    params["input"] = input;
+    params["output"] = output;
+    params["dissolve_field"] = std::string("type");
+
+    auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("projected"), std::string::npos);
 }
 
 TEST_F(PluginTest, VectorConvertExecution) {

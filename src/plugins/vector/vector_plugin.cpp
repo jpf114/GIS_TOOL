@@ -147,6 +147,23 @@ static std::string detectSrsType(const OGRSpatialReference* srs) {
     return "unknown";
 }
 
+static bool areSameCrs(const OGRSpatialReference* lhs, const OGRSpatialReference* rhs) {
+    if (!lhs || !rhs) {
+        return lhs == rhs;
+    }
+    return lhs->IsSame(rhs);
+}
+
+static gis::framework::Result failProjectedRequired(const std::string& action) {
+    return gis::framework::Result::fail(
+        action + " requires a projected coordinate system. Please reproject the input layer before processing.");
+}
+
+static gis::framework::Result failCrsMismatch(const std::string& action) {
+    return gis::framework::Result::fail(
+        action + " requires input layers to use the same CRS.");
+}
+
 gis::framework::Result VectorPlugin::doInfo(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -495,6 +512,11 @@ gis::framework::Result VectorPlugin::doClip(
     if (!srcLayer || !clipLayer) {
         GDALClose(clipDS); GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find required layers");
+    }
+
+    if (!areSameCrs(srcLayer->GetSpatialRef(), clipLayer->GetSpatialRef())) {
+        GDALClose(clipDS); GDALClose(srcDS);
+        return failCrsMismatch("Clip");
     }
 
     std::vector<OGRGeometry*> clipGeoms;
@@ -872,6 +894,11 @@ gis::framework::Result VectorPlugin::doUnion(
         return gis::framework::Result::fail("Cannot find required layers");
     }
 
+    if (!areSameCrs(srcLayer->GetSpatialRef(), overlayLayer->GetSpatialRef())) {
+        GDALClose(overlayDS); GDALClose(srcDS);
+        return failCrsMismatch("Union");
+    }
+
     std::vector<OGRGeometry*> overlayGeoms;
     overlayLayer->ResetReading();
     OGRFeature* feat;
@@ -989,6 +1016,11 @@ gis::framework::Result VectorPlugin::doDifference(
         return gis::framework::Result::fail("Cannot find required layers");
     }
 
+    if (!areSameCrs(srcLayer->GetSpatialRef(), overlayLayer->GetSpatialRef())) {
+        GDALClose(overlayDS); GDALClose(srcDS);
+        return failCrsMismatch("Difference");
+    }
+
     std::vector<OGRGeometry*> overlayGeoms;
     overlayLayer->ResetReading();
     OGRFeature* feat;
@@ -1094,6 +1126,12 @@ gis::framework::Result VectorPlugin::doDissolve(
     OGRLayer* srcLayer = getLayer(srcDS, layerName);
     if (!srcLayer) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot find layer"); }
 
+    const OGRSpatialReference* srcSRSRef = srcLayer->GetSpatialRef();
+    if (detectSrsType(srcSRSRef) == "geographic") {
+        GDALClose(srcDS);
+        return failProjectedRequired("Dissolve");
+    }
+
     progress.onProgress(0.2);
 
     std::map<std::string, std::vector<OGRGeometry*>> groups;
@@ -1140,7 +1178,7 @@ gis::framework::Result VectorPlugin::doDissolve(
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
     if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer("dissolved", srcSRS, wkbPolygon, nullptr);
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
