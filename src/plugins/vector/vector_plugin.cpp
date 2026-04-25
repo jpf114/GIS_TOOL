@@ -542,6 +542,37 @@ static bool shouldRejectHighlyOverlappedMixedUnion(const std::vector<OverlayGeom
     return computeEnvelopeOverlapRatio(entries) >= 0.25;
 }
 
+static OGRGeometry* unionGeometryRange(std::vector<OGRGeometry*>& geoms, size_t begin, size_t end) {
+    if (begin >= end) {
+        return nullptr;
+    }
+    if (end - begin == 1) {
+        return geoms[begin];
+    }
+
+    const size_t mid = begin + (end - begin) / 2;
+    OGRGeometry* left = unionGeometryRange(geoms, begin, mid);
+    OGRGeometry* right = unionGeometryRange(geoms, mid, end);
+    if (!left) {
+        return right;
+    }
+    if (!right) {
+        return left;
+    }
+
+    OGRGeometry* merged = left->Union(right);
+    delete left;
+    delete right;
+    return merged;
+}
+
+static OGRGeometry* unionGeometryList(std::vector<OGRGeometry*>& geoms) {
+    if (geoms.empty()) {
+        return nullptr;
+    }
+    return unionGeometryRange(geoms, 0, geoms.size());
+}
+
 static std::vector<OGRGeometry*> splitLineByOverlayEntries(
     const OGRGeometry* geom,
     const std::vector<const OverlayGeometryEntry*>& candidates) {
@@ -1593,19 +1624,19 @@ gis::framework::Result VectorPlugin::doDissolve(
     srcLayer->ResetReading();
     OGRFeature* feat;
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
-        OGRGeometry* geom = feat->GetGeometryRef();
+        OGRGeometry* geom = cloneNormalizedGeometry(feat->GetGeometryRef());
         if (!geom) { OGRFeature::DestroyFeature(feat); continue; }
 
         if (!dissolveField.empty()) {
             int fieldIdx = srcLayer->GetLayerDefn()->GetFieldIndex(dissolveField.c_str());
             if (fieldIdx >= 0) {
                 std::string val = feat->GetFieldAsString(fieldIdx);
-                groups[val].push_back(geom->clone());
+                groups[val].push_back(geom);
             } else {
-                allGeoms.push_back(geom->clone());
+                allGeoms.push_back(geom);
             }
         } else {
-            allGeoms.push_back(geom->clone());
+            allGeoms.push_back(geom);
         }
         OGRFeature::DestroyFeature(feat);
     }
@@ -1632,7 +1663,7 @@ gis::framework::Result VectorPlugin::doDissolve(
     if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer("dissolved", srcSRS, wkbPolygon, nullptr);
+    OGRLayer* dstLayer = dstDS->CreateLayer("dissolved", srcSRS, wkbMultiPolygon, nullptr);
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1646,24 +1677,30 @@ gis::framework::Result VectorPlugin::doDissolve(
     progress.onProgress(0.5);
 
     int count = 0;
+    const bool useTransactions = outFormat == "GPKG";
+    if (useTransactions) {
+        dstLayer->StartTransaction();
+    }
 
     if (!dissolveField.empty()) {
         for (auto& [key, geoms] : groups) {
             if (geoms.empty()) continue;
 
-            OGRGeometry* result = geoms[0];
-            for (size_t i = 1; i < geoms.size(); ++i) {
-                OGRGeometry* newResult = result->Union(geoms[i]);
-                delete result;
-                result = newResult;
-                delete geoms[i];
-            }
+            OGRGeometry* result = unionGeometryList(geoms);
 
             if (result && !result->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
                 dstFeat->SetGeometry(result);
                 dstFeat->SetField(dissolveField.c_str(), key.c_str());
-                dstLayer->CreateFeature(dstFeat);
+                if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
+                    OGRFeature::DestroyFeature(dstFeat);
+                    if (useTransactions) {
+                        dstLayer->RollbackTransaction();
+                    }
+                    delete result;
+                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    return gis::framework::Result::fail("Failed to write dissolve feature");
+                }
                 OGRFeature::DestroyFeature(dstFeat);
                 count++;
             }
@@ -1671,18 +1708,20 @@ gis::framework::Result VectorPlugin::doDissolve(
         }
     } else {
         if (!allGeoms.empty()) {
-            OGRGeometry* result = allGeoms[0];
-            for (size_t i = 1; i < allGeoms.size(); ++i) {
-                OGRGeometry* newResult = result->Union(allGeoms[i]);
-                delete result;
-                result = newResult;
-                delete allGeoms[i];
-            }
+            OGRGeometry* result = unionGeometryList(allGeoms);
 
             if (result && !result->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
                 dstFeat->SetGeometry(result);
-                dstLayer->CreateFeature(dstFeat);
+                if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
+                    OGRFeature::DestroyFeature(dstFeat);
+                    if (useTransactions) {
+                        dstLayer->RollbackTransaction();
+                    }
+                    delete result;
+                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    return gis::framework::Result::fail("Failed to write dissolve feature");
+                }
                 OGRFeature::DestroyFeature(dstFeat);
                 count++;
             }
@@ -1690,6 +1729,9 @@ gis::framework::Result VectorPlugin::doDissolve(
         }
     }
 
+    if (useTransactions) {
+        dstLayer->CommitTransaction();
+    }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 

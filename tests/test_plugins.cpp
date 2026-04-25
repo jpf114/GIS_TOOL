@@ -1174,6 +1174,58 @@ TEST_F(PluginTest, VectorDissolveRejectsGeographicSrs) {
     EXPECT_NE(result.message.find("projected"), std::string::npos);
 }
 
+TEST_F(PluginTest, VectorDissolveRepairsInvalidPolygonGeometry) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_dissolve_invalid_input.shp").string();
+    std::string output = (getTestDir() / "e2e_dissolve_invalid_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("input", srs.get(), wkbPolygon);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn fieldDefn("type", OFTString);
+        ASSERT_EQ(layer->CreateField(&fieldDefn), OGRERR_NONE);
+
+        auto* featDefn = layer->GetLayerDefn();
+        auto createInvalidFeature = [&](double offsetX) {
+            auto* feat = OGRFeature::CreateFeature(featDefn);
+            OGRPolygon poly;
+            OGRLinearRing ring;
+            ring.addPoint(0 + offsetX, 0);
+            ring.addPoint(100 + offsetX, 100);
+            ring.addPoint(100 + offsetX, 0);
+            ring.addPoint(0 + offsetX, 100);
+            ring.addPoint(0 + offsetX, 0);
+            poly.addRing(&ring);
+            feat->SetGeometry(&poly);
+            feat->SetField("type", "A");
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        };
+
+        createInvalidFeature(0);
+        createInvalidFeature(20);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("dissolve");
+    params["input"] = input;
+    params["output"] = output;
+    params["dissolve_field"] = std::string("type");
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Dissolve failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+}
+
 TEST_F(PluginTest, VectorConvertExecution) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";
