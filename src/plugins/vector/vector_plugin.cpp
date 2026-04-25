@@ -260,6 +260,17 @@ static gis::framework::Result failInvalidGeometry(const std::string& action) {
         action + " requires valid overlay geometries and automatic repair failed.");
 }
 
+class ScopedQuietGdalErrorHandler {
+public:
+    ScopedQuietGdalErrorHandler() {
+        CPLPushErrorHandler(CPLQuietErrorHandler);
+    }
+
+    ~ScopedQuietGdalErrorHandler() {
+        CPLPopErrorHandler();
+    }
+};
+
 static OGRGeometry* cloneNormalizedGeometry(const OGRGeometry* geom) {
     if (!geom) {
         return nullptr;
@@ -270,11 +281,20 @@ static OGRGeometry* cloneNormalizedGeometry(const OGRGeometry* geom) {
         return cloned;
     }
 
-    if (cloned->IsValid()) {
+    bool isValid = false;
+    {
+        ScopedQuietGdalErrorHandler quietErrors;
+        isValid = cloned->IsValid();
+    }
+    if (isValid) {
         return cloned;
     }
 
-    OGRGeometry* fixed = cloned->MakeValid();
+    OGRGeometry* fixed = nullptr;
+    {
+        ScopedQuietGdalErrorHandler quietErrors;
+        fixed = cloned->MakeValid();
+    }
     delete cloned;
     if (!fixed || fixed->IsEmpty()) {
         delete fixed;

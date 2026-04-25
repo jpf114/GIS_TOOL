@@ -1094,17 +1094,21 @@ TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
     EXPECT_TRUE(fs::exists(output));
 
     bool hasGeometryTypeWarning = false;
+    bool hasSelfIntersectionWarning = false;
     {
         std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
         for (const auto& warning : g_gdalWarnings) {
             if (warning.find("geometry type LINESTRING") != std::string::npos ||
                 warning.find("geometry type MULTILINESTRING") != std::string::npos) {
                 hasGeometryTypeWarning = true;
-                break;
+            }
+            if (warning.find("Self-intersection") != std::string::npos) {
+                hasSelfIntersectionWarning = true;
             }
         }
     }
     EXPECT_FALSE(hasGeometryTypeWarning);
+    EXPECT_FALSE(hasSelfIntersectionWarning);
 }
 
 TEST_F(PluginTest, VectorFilterShapefileAsciiOutputReopens) {
