@@ -42,7 +42,7 @@ MainWindow::MainWindow(QWidget* parent)
 MainWindow::~MainWindow() = default;
 
 void MainWindow::setupUi() {
-    setWindowTitle(QStringLiteral("GIS Tool"));
+    setWindowTitle(QStringLiteral("GIS 工具台"));
     resize(1460, 880);
 
     auto* centralWidget = new QWidget;
@@ -55,13 +55,13 @@ void MainWindow::setupUi() {
     auto* algorithmFrame = new QFrame;
     algorithmFrame->setObjectName(QStringLiteral("algorithmFrame"));
     auto* algorithmLayout = new QVBoxLayout(algorithmFrame);
-    algorithmLayout->setContentsMargins(16, 12, 16, 12);
-    algorithmLayout->setSpacing(8);
+    algorithmLayout->setContentsMargins(18, 16, 18, 16);
+    algorithmLayout->setSpacing(10);
 
     auto* algorithmTitle = new QLabel(QStringLiteral("算法工作台"));
     algorithmTitle->setStyleSheet("font-size: 20px; font-weight: 700;");
     auto* algorithmSubtitle = new QLabel(
-        QStringLiteral("顶部选择算法，左侧管理输入与输出数据，中间查看预览，右侧填写参数并执行。"));
+        QStringLiteral("顶部选择算法，左侧管理输入与结果数据，中间预览数据，下方填写参数并查看执行结果。"));
     algorithmSubtitle->setStyleSheet("color: #5f6b7a;");
 
     pluginTabs_ = new QTabBar;
@@ -79,9 +79,33 @@ void MainWindow::setupUi() {
         "}");
     connect(pluginTabs_, &QTabBar::currentChanged, this, &MainWindow::onPluginSelected);
 
+    pluginTitleLabel_ = new QLabel(QStringLiteral("请选择算法"));
+    pluginTitleLabel_->setStyleSheet("font-size: 18px; font-weight: 700;");
+    pluginDescriptionLabel_ = new QLabel(QStringLiteral("当前算法说明会显示在这里。"));
+    pluginDescriptionLabel_->setWordWrap(true);
+    pluginDescriptionLabel_->setStyleSheet("color: #5f6b7a;");
+
+    auto* executeBtn = new QPushButton(QStringLiteral("执行当前算法"));
+    executeBtn->setMinimumHeight(42);
+    executeBtn->setMinimumWidth(180);
+    executeBtn->setStyleSheet(
+        "QPushButton { background: #1f5f8b; color: white; border-radius: 8px; font-size: 14px; font-weight: 600; }"
+        "QPushButton:hover { background: #194c6f; }");
+    connect(executeBtn, &QPushButton::clicked, this, &MainWindow::onExecute);
+
+    auto* algorithmMetaLayout = new QHBoxLayout;
+    algorithmMetaLayout->setSpacing(16);
+    auto* algorithmTextLayout = new QVBoxLayout;
+    algorithmTextLayout->setSpacing(4);
+    algorithmTextLayout->addWidget(pluginTitleLabel_);
+    algorithmTextLayout->addWidget(pluginDescriptionLabel_);
+    algorithmMetaLayout->addLayout(algorithmTextLayout, 1);
+    algorithmMetaLayout->addWidget(executeBtn, 0, Qt::AlignTop);
+
     algorithmLayout->addWidget(algorithmTitle);
     algorithmLayout->addWidget(algorithmSubtitle);
     algorithmLayout->addWidget(pluginTabs_);
+    algorithmLayout->addLayout(algorithmMetaLayout);
 
     auto* workspaceSplitter = new QSplitter(Qt::Horizontal);
 
@@ -91,10 +115,10 @@ void MainWindow::setupUi() {
     dataLayout->setContentsMargins(14, 14, 14, 14);
     dataLayout->setSpacing(10);
 
-    auto* dataTitle = new QLabel(QStringLiteral("数据图层"));
+    auto* dataTitle = new QLabel(QStringLiteral("数据目录"));
     dataTitle->setStyleSheet("font-size: 18px; font-weight: 600;");
     auto* dataHint = new QLabel(
-        QStringLiteral("输入数据和算法输出会分组显示。双击可重新定位预览，右键可切换为输入或输出。"));
+        QStringLiteral("输入数据和算法结果分组显示。双击可重新定位预览，右键可切换为输入或结果。"));
     dataHint->setWordWrap(true);
     dataHint->setStyleSheet("color: #5f6b7a;");
 
@@ -133,31 +157,31 @@ void MainWindow::setupUi() {
     dataLayout->addLayout(dataButtonLayout);
     dataLayout->addWidget(dataTree_, 1);
 
+    auto* centerPanel = new QFrame;
+    centerPanel->setObjectName(QStringLiteral("centerPanel"));
+    auto* centerLayout = new QVBoxLayout(centerPanel);
+    centerLayout->setContentsMargins(0, 0, 0, 0);
+    centerLayout->setSpacing(10);
+
+    auto* centerSplitter = new QSplitter(Qt::Vertical);
     previewPanel_ = new PreviewPanel;
 
-    auto* rightPanel = new QFrame;
-    rightPanel->setObjectName(QStringLiteral("rightPanel"));
-    auto* rightLayout = new QVBoxLayout(rightPanel);
-    rightLayout->setContentsMargins(14, 14, 14, 14);
-    rightLayout->setSpacing(10);
+    auto* paramsPanel = new QFrame;
+    paramsPanel->setObjectName(QStringLiteral("paramsPanel"));
+    auto* paramsLayout = new QVBoxLayout(paramsPanel);
+    paramsLayout->setContentsMargins(14, 14, 14, 14);
+    paramsLayout->setSpacing(10);
 
-    pluginTitleLabel_ = new QLabel(QStringLiteral("请选择算法"));
-    pluginTitleLabel_->setStyleSheet("font-size: 18px; font-weight: 700;");
-    pluginDescriptionLabel_ = new QLabel(QStringLiteral("当前算法说明会显示在这里。"));
-    pluginDescriptionLabel_->setWordWrap(true);
-    pluginDescriptionLabel_->setStyleSheet("color: #5f6b7a;");
+    auto* paramsTitle = new QLabel(QStringLiteral("参数与结果"));
+    paramsTitle->setStyleSheet("font-size: 18px; font-weight: 600;");
+    auto* paramsHint = new QLabel(QStringLiteral("当前算法参数会自动生成，执行结果摘要会显示在下方。"));
+    paramsHint->setWordWrap(true);
+    paramsHint->setStyleSheet("color: #5f6b7a;");
 
     auto* scrollArea = new QScrollArea;
     scrollArea->setWidgetResizable(true);
     paramWidget_ = new ParamWidget;
     scrollArea->setWidget(paramWidget_);
-
-    auto* executeBtn = new QPushButton(QStringLiteral("执行当前算法"));
-    executeBtn->setMinimumHeight(40);
-    executeBtn->setStyleSheet(
-        "QPushButton { background: #1f5f8b; color: white; border-radius: 8px; font-size: 14px; }"
-        "QPushButton:hover { background: #194c6f; }");
-    connect(executeBtn, &QPushButton::clicked, this, &MainWindow::onExecute);
 
     auto* resultGroup = new QGroupBox(QStringLiteral("执行结果"));
     auto* resultLayout = new QVBoxLayout(resultGroup);
@@ -165,24 +189,27 @@ void MainWindow::setupUi() {
     resultSummaryLabel_->setWordWrap(true);
     resultLayout->addWidget(resultSummaryLabel_);
 
-    rightLayout->addWidget(pluginTitleLabel_);
-    rightLayout->addWidget(pluginDescriptionLabel_);
-    rightLayout->addWidget(scrollArea, 1);
-    rightLayout->addWidget(executeBtn);
-    rightLayout->addWidget(resultGroup);
+    paramsLayout->addWidget(paramsTitle);
+    paramsLayout->addWidget(paramsHint);
+    paramsLayout->addWidget(scrollArea, 1);
+    paramsLayout->addWidget(resultGroup);
+
+    centerSplitter->addWidget(previewPanel_);
+    centerSplitter->addWidget(paramsPanel);
+    centerSplitter->setStretchFactor(0, 5);
+    centerSplitter->setStretchFactor(1, 3);
+    centerLayout->addWidget(centerSplitter);
 
     workspaceSplitter->addWidget(dataPanel);
-    workspaceSplitter->addWidget(previewPanel_);
-    workspaceSplitter->addWidget(rightPanel);
+    workspaceSplitter->addWidget(centerPanel);
     workspaceSplitter->setStretchFactor(0, 2);
-    workspaceSplitter->setStretchFactor(1, 5);
-    workspaceSplitter->setStretchFactor(2, 3);
+    workspaceSplitter->setStretchFactor(1, 7);
 
     mainLayout->addWidget(algorithmFrame);
     mainLayout->addWidget(workspaceSplitter, 1);
 
     centralWidget->setStyleSheet(
-        "QFrame#algorithmFrame, QFrame#dataPanel, QFrame#rightPanel {"
+        "QFrame#algorithmFrame, QFrame#dataPanel, QFrame#centerPanel, QFrame#paramsPanel {"
         "  background: #f8fbfd;"
         "  border: 1px solid #dce6ee;"
         "  border-radius: 10px;"
