@@ -88,6 +88,27 @@ function Invoke-Case {
     return $result
 }
 
+function Save-RegressionResults {
+    param(
+        [string]$ResolvedOutputRoot,
+        [string]$Mode,
+        [object[]]$Results
+    )
+
+    $jsonPath = Join-Path $ResolvedOutputRoot ("summary_" + $Mode + ".json")
+    $csvPath = Join-Path $ResolvedOutputRoot ("summary_" + $Mode + ".csv")
+
+    $payload = [pscustomobject]@{
+        mode = $Mode
+        generated_at = (Get-Date).ToString("s")
+        output_root = $ResolvedOutputRoot
+        results = $Results
+    }
+
+    $payload | ConvertTo-Json -Depth 6 | Set-Content -Path $jsonPath -Encoding UTF8
+    $Results | Select-Object Name,ExitCode,Seconds | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+}
+
 if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
     $WorkspaceRoot = Get-DefaultWorkspaceRoot
 }
@@ -171,7 +192,11 @@ foreach ($case in $cases) {
     $results += Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
 }
 
+Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results
+
 Write-Host "Vector regression completed:" -ForegroundColor Green
 foreach ($result in $results) {
     Write-Host ("  " + $result.Name.PadRight(20) + " " + $result.Seconds + "s")
 }
+Write-Host ("  summary_json".PadRight(22) + (Join-Path $ResolvedOutputRoot ("summary_" + $Mode + ".json")))
+Write-Host ("  summary_csv".PadRight(22) + (Join-Path $ResolvedOutputRoot ("summary_" + $Mode + ".csv")))

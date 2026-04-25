@@ -63,4 +63,16 @@ if(GIS_POWERSHELL_EXECUTABLE)
         USES_TERMINAL
         COMMENT "运行真实矢量回归脚本"
     )
+
+    add_custom_target(real_vector_regression_full
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=full
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
+        DEPENDS gis-cli plugin_vector copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "运行完整真实矢量回归脚本"
+    )
 endif()
