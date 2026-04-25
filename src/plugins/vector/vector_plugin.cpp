@@ -749,10 +749,16 @@ gis::framework::Result VectorPlugin::doClip(
     srcLayer->ResetReading();
     OGRFeature* feat;
     int count = 0;
+    const bool useTransactions = outFormat == "GPKG";
+    if (useTransactions) {
+        dstLayer->StartTransaction();
+    }
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
         if (geom && geom->Intersects(clipUnion)) {
-            OGRGeometry* clipped = geom->Intersection(clipUnion);
+            OGRGeometry* clipped = clipUnion->Contains(geom)
+                ? geom->clone()
+                : geom->Intersection(clipUnion);
             if (clipped && !clipped->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
                 dstFeat->SetFrom(feat);
@@ -760,12 +766,19 @@ gis::framework::Result VectorPlugin::doClip(
                 dstLayer->CreateFeature(dstFeat);
                 OGRFeature::DestroyFeature(dstFeat);
                 count++;
+                if (useTransactions && count % 1000 == 0) {
+                    dstLayer->CommitTransaction();
+                    dstLayer->StartTransaction();
+                }
             }
             delete clipped;
         }
         OGRFeature::DestroyFeature(feat);
     }
 
+    if (useTransactions) {
+        dstLayer->CommitTransaction();
+    }
     delete clipUnion; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
@@ -1216,10 +1229,19 @@ gis::framework::Result VectorPlugin::doDifference(
     srcLayer->ResetReading();
     OGRFeature* feat = nullptr;
     int count = 0;
+    const bool useTransactions = outFormat == "GPKG";
+    if (useTransactions) {
+        dstLayer->StartTransaction();
+    }
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
         if (geom) {
-            OGRGeometry* diffGeom = geom->Difference(overlayUnion);
+            OGRGeometry* diffGeom = nullptr;
+            if (!geom->Intersects(overlayUnion)) {
+                diffGeom = geom->clone();
+            } else if (!overlayUnion->Contains(geom)) {
+                diffGeom = geom->Difference(overlayUnion);
+            }
             if (diffGeom && !diffGeom->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
                 dstFeat->SetFrom(feat);
@@ -1227,12 +1249,19 @@ gis::framework::Result VectorPlugin::doDifference(
                 dstLayer->CreateFeature(dstFeat);
                 OGRFeature::DestroyFeature(dstFeat);
                 count++;
+                if (useTransactions && count % 1000 == 0) {
+                    dstLayer->CommitTransaction();
+                    dstLayer->StartTransaction();
+                }
             }
             delete diffGeom;
         }
         OGRFeature::DestroyFeature(feat);
     }
 
+    if (useTransactions) {
+        dstLayer->CommitTransaction();
+    }
     delete overlayUnion; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
