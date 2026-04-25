@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <chrono>
+#include <string>
 
 namespace gis::plugins {
 
@@ -164,6 +165,104 @@ static gis::framework::Result failCrsMismatch(const std::string& action) {
         action + " requires input layers to use the same CRS.");
 }
 
+static gis::framework::Result failInvalidGeometry(const std::string& action) {
+    return gis::framework::Result::fail(
+        action + " requires valid overlay geometries and automatic repair failed.");
+}
+
+static OGRGeometry* cloneNormalizedGeometry(const OGRGeometry* geom) {
+    if (!geom) {
+        return nullptr;
+    }
+
+    OGRGeometry* cloned = geom->clone();
+    if (!cloned || cloned->IsEmpty()) {
+        return cloned;
+    }
+
+    if (cloned->IsValid()) {
+        return cloned;
+    }
+
+    OGRGeometry* fixed = cloned->MakeValid();
+    delete cloned;
+    if (!fixed || fixed->IsEmpty()) {
+        delete fixed;
+        return nullptr;
+    }
+
+    return fixed;
+}
+
+static OGRGeometry* buildNormalizedUnion(OGRLayer* layer) {
+    if (!layer) {
+        return nullptr;
+    }
+
+    std::vector<OGRGeometry*> geoms;
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    while ((feat = layer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = cloneNormalizedGeometry(feat->GetGeometryRef());
+        if (geom) {
+            geoms.push_back(geom);
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    if (geoms.empty()) {
+        return nullptr;
+    }
+
+    OGRGeometry* merged = geoms[0];
+    for (size_t i = 1; i < geoms.size(); ++i) {
+        OGRGeometry* next = merged ? merged->Union(geoms[i]) : nullptr;
+        delete merged;
+        delete geoms[i];
+        if (!next || next->IsEmpty()) {
+            delete next;
+            return nullptr;
+        }
+        merged = next;
+    }
+
+    return merged;
+}
+
+static void removeExistingVectorOutput(const std::string& output, const std::string& format) {
+    namespace fs = std::filesystem;
+    if (!fs::exists(output)) {
+        return;
+    }
+
+    if (format == "ESRI Shapefile") {
+        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
+            if (entry.path().stem() == fs::path(output).stem()) {
+                fs::remove(entry.path());
+            }
+        }
+        return;
+    }
+
+    fs::remove(output);
+}
+
+static OGRwkbGeometryType resultLayerGeometryType(OGRwkbGeometryType srcType) {
+    switch (wkbFlatten(srcType)) {
+        case wkbPoint:
+        case wkbMultiPoint:
+            return wkbMultiPoint;
+        case wkbLineString:
+        case wkbMultiLineString:
+            return wkbMultiLineString;
+        case wkbPolygon:
+        case wkbMultiPolygon:
+            return wkbMultiPolygon;
+        default:
+            return wkbUnknown;
+    }
+}
+
 gis::framework::Result VectorPlugin::doInfo(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -296,11 +395,7 @@ gis::framework::Result VectorPlugin::doFilter(
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
-    if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
-        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
-        }
-    }
+    removeExistingVectorOutput(output, outFormat);
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
     if (!dstDS) {
@@ -309,7 +404,8 @@ gis::framework::Result VectorPlugin::doFilter(
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
+    OGRLayer* dstLayer = dstDS->CreateLayer(
+        srcLayer->GetName(), srcSRS, resultLayerGeometryType(srcLayer->GetGeomType()), nullptr);
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -391,11 +487,7 @@ gis::framework::Result VectorPlugin::doBuffer(
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
-    if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
-        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
-        }
-    }
+    removeExistingVectorOutput(output, outFormat);
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
     if (!dstDS) {
@@ -519,27 +611,12 @@ gis::framework::Result VectorPlugin::doClip(
         return failCrsMismatch("Clip");
     }
 
-    std::vector<OGRGeometry*> clipGeoms;
-    clipLayer->ResetReading();
-    OGRFeature* clipFeat;
-    while ((clipFeat = clipLayer->GetNextFeature()) != nullptr) {
-        OGRGeometry* geom = clipFeat->GetGeometryRef();
-        if (geom) clipGeoms.push_back(geom->clone());
-        OGRFeature::DestroyFeature(clipFeat);
-    }
+    OGRGeometry* clipUnion = buildNormalizedUnion(clipLayer);
     GDALClose(clipDS);
 
-    if (clipGeoms.empty()) {
+    if (!clipUnion) {
         GDALClose(srcDS);
-        return gis::framework::Result::fail("No geometries found in clip vector");
-    }
-
-    OGRGeometry* clipUnion = clipGeoms[0];
-    for (size_t i = 1; i < clipGeoms.size(); ++i) {
-        OGRGeometry* newUnion = clipUnion->Union(clipGeoms[i]);
-        delete clipUnion;
-        clipUnion = newUnion;
-        delete clipGeoms[i];
+        return failInvalidGeometry("Clip");
     }
 
     progress.onProgress(0.3);
@@ -558,11 +635,7 @@ gis::framework::Result VectorPlugin::doClip(
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
-    if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
-        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
-        }
-    }
+    removeExistingVectorOutput(output, outFormat);
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
     if (!dstDS) {
@@ -899,27 +972,12 @@ gis::framework::Result VectorPlugin::doUnion(
         return failCrsMismatch("Union");
     }
 
-    std::vector<OGRGeometry*> overlayGeoms;
-    overlayLayer->ResetReading();
-    OGRFeature* feat;
-    while ((feat = overlayLayer->GetNextFeature()) != nullptr) {
-        OGRGeometry* geom = feat->GetGeometryRef();
-        if (geom) overlayGeoms.push_back(geom->clone());
-        OGRFeature::DestroyFeature(feat);
-    }
+    OGRGeometry* overlayUnion = buildNormalizedUnion(overlayLayer);
     GDALClose(overlayDS);
 
-    if (overlayGeoms.empty()) {
+    if (!overlayUnion) {
         GDALClose(srcDS);
-        return gis::framework::Result::fail("No geometries in overlay vector");
-    }
-
-    OGRGeometry* overlayUnion = overlayGeoms[0];
-    for (size_t i = 1; i < overlayGeoms.size(); ++i) {
-        OGRGeometry* newUnion = overlayUnion->Union(overlayGeoms[i]);
-        delete overlayUnion;
-        overlayUnion = newUnion;
-        delete overlayGeoms[i];
+        return failInvalidGeometry("Union");
     }
 
     progress.onProgress(0.3);
@@ -944,7 +1002,7 @@ gis::framework::Result VectorPlugin::doUnion(
     if (!dstDS) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer("union", srcSRS, wkbPolygon, nullptr);
+    OGRLayer* dstLayer = dstDS->CreateLayer("union", srcSRS, wkbUnknown, nullptr);
     if (!dstLayer) {
         GDALClose(dstDS); delete overlayUnion; GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -956,6 +1014,7 @@ gis::framework::Result VectorPlugin::doUnion(
     progress.onProgress(0.4);
 
     srcLayer->ResetReading();
+    OGRFeature* feat = nullptr;
     int count = 0;
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
@@ -1021,27 +1080,12 @@ gis::framework::Result VectorPlugin::doDifference(
         return failCrsMismatch("Difference");
     }
 
-    std::vector<OGRGeometry*> overlayGeoms;
-    overlayLayer->ResetReading();
-    OGRFeature* feat;
-    while ((feat = overlayLayer->GetNextFeature()) != nullptr) {
-        OGRGeometry* geom = feat->GetGeometryRef();
-        if (geom) overlayGeoms.push_back(geom->clone());
-        OGRFeature::DestroyFeature(feat);
-    }
+    OGRGeometry* overlayUnion = buildNormalizedUnion(overlayLayer);
     GDALClose(overlayDS);
 
-    if (overlayGeoms.empty()) {
+    if (!overlayUnion) {
         GDALClose(srcDS);
-        return gis::framework::Result::fail("No geometries in overlay vector");
-    }
-
-    OGRGeometry* overlayUnion = overlayGeoms[0];
-    for (size_t i = 1; i < overlayGeoms.size(); ++i) {
-        OGRGeometry* newUnion = overlayUnion->Union(overlayGeoms[i]);
-        delete overlayUnion;
-        overlayUnion = newUnion;
-        delete overlayGeoms[i];
+        return failInvalidGeometry("Difference");
     }
 
     progress.onProgress(0.3);
@@ -1066,7 +1110,8 @@ gis::framework::Result VectorPlugin::doDifference(
     if (!dstDS) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer("difference", srcSRS, wkbPolygon, nullptr);
+    OGRLayer* dstLayer = dstDS->CreateLayer(
+        "difference", srcSRS, resultLayerGeometryType(srcLayer->GetGeomType()), nullptr);
     if (!dstLayer) {
         GDALClose(dstDS); delete overlayUnion; GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1081,6 +1126,7 @@ gis::framework::Result VectorPlugin::doDifference(
     progress.onProgress(0.4);
 
     srcLayer->ResetReading();
+    OGRFeature* feat = nullptr;
     int count = 0;
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
