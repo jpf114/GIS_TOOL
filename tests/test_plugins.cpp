@@ -385,6 +385,17 @@ TEST_F(PluginTest, VectorBufferExecutionReportsMetadata) {
     EXPECT_EQ(result.metadata["srs_type"], "projected");
     EXPECT_EQ(result.metadata["output_format"], "GPKG");
     EXPECT_TRUE(result.metadata.count("elapsed_ms") > 0);
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "road");
+    OGRFeature::DestroyFeature(outFeat);
+    GDALClose(outDs);
 }
 
 TEST_F(PluginTest, VectorBufferRejectsGeographicSrs) {

@@ -585,19 +585,39 @@ static bool writeGeometryFeature(
     }
     std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(layer, geom);
     dstFeat->SetGeometry(promoted ? promoted.get() : geom);
+    dstFeat->SetFID(OGRNullFID);
     const bool ok = layer->CreateFeature(dstFeat) == OGRERR_NONE;
     OGRFeature::DestroyFeature(dstFeat);
     return ok;
 }
 
+static void copyFeatureFieldsOnly(
+    OGRFeature* dstFeature,
+    const OGRFeature* srcFeature,
+    const std::vector<int>& fieldMap) {
+    if (!dstFeature || !srcFeature) {
+        return;
+    }
+
+    if (!fieldMap.empty()) {
+        dstFeature->SetFieldsFrom(srcFeature, fieldMap.data(), TRUE);
+    }
+    dstFeature->SetFID(OGRNullFID);
+}
+
 static bool writeFeatureWithCopiedFields(
     OGRLayer* layer,
     const OGRFeature* sourceFeature,
-    OGRGeometry* geom) {
-    return writeGeometryFeature(layer, geom, [sourceFeature](OGRFeature* feature) {
+    OGRGeometry* geom,
+    const std::vector<int>* fieldMap = nullptr) {
+    return writeGeometryFeature(layer, geom, [sourceFeature, fieldMap](OGRFeature* feature) {
         if (sourceFeature) {
-            feature->SetFrom(sourceFeature, TRUE);
-            feature->SetFID(OGRNullFID);
+            if (!fieldMap) {
+                feature->SetFrom(sourceFeature, TRUE);
+                feature->SetFID(OGRNullFID);
+            } else {
+                copyFeatureFieldsOnly(feature, sourceFeature, *fieldMap);
+            }
         }
     });
 }
@@ -961,6 +981,7 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     srcLayer->ResetReading();
     auto* dstLayerDefn = dstLayer->GetLayerDefn();
+    const std::vector<int> fieldMap = dstLayerDefn->ComputeMapForSetFrom(srcLayerDefn, true);
     OGRFeature* feat;
     int count = 0;
     int total = static_cast<int>(srcLayer->GetFeatureCount(FALSE));
@@ -979,7 +1000,7 @@ gis::framework::Result VectorPlugin::doBuffer(
             OGRGeometry* bufferGeom = geom->Buffer(distance);
             if (bufferGeom) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayerDefn);
-                dstFeat->SetFrom(feat);
+                copyFeatureFieldsOnly(dstFeat, feat, fieldMap);
                 std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, bufferGeom);
                 dstFeat->SetGeometry(promoted ? promoted.get() : bufferGeom);
                 if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
@@ -1120,6 +1141,7 @@ gis::framework::Result VectorPlugin::doClip(
     progress.onProgress(0.4);
 
     srcLayer->ResetReading();
+    const std::vector<int> fieldMap = dstLayer->GetLayerDefn()->ComputeMapForSetFrom(srcLayerDefn, true);
     OGRFeature* feat;
     int count = 0;
     const bool useTransactions = outFormat == "GPKG";
@@ -1138,7 +1160,7 @@ gis::framework::Result VectorPlugin::doClip(
                 }
 
                 if (segment.overlapsOverlay) {
-                    if (writeFeatureWithCopiedFields(dstLayer, feat, segment.geometry)) {
+                    if (writeFeatureWithCopiedFields(dstLayer, feat, segment.geometry, &fieldMap)) {
                         count++;
                         if (useTransactions && count % 1000 == 0) {
                             dstLayer->CommitTransaction();
@@ -1164,7 +1186,7 @@ gis::framework::Result VectorPlugin::doClip(
                 : geom->Intersection(overlayGeometry);
             if (clipped && !clipped->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
-                dstFeat->SetFrom(feat);
+                copyFeatureFieldsOnly(dstFeat, feat, fieldMap);
                 std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, clipped);
                 dstFeat->SetGeometry(promoted ? promoted.get() : clipped);
                 dstLayer->CreateFeature(dstFeat);
@@ -1703,6 +1725,7 @@ gis::framework::Result VectorPlugin::doDifference(
     progress.onProgress(0.4);
 
     srcLayer->ResetReading();
+    const std::vector<int> fieldMap = dstLayer->GetLayerDefn()->ComputeMapForSetFrom(srcLayerDefn, true);
     OGRFeature* feat = nullptr;
     int count = 0;
     const bool useTransactions = outFormat == "GPKG";
@@ -1715,7 +1738,7 @@ gis::framework::Result VectorPlugin::doDifference(
             if (useLinearPolygonSegmentation) {
                 const auto candidates = collectCandidateOverlayEntries(overlayEntries, geom);
                 if (candidates.empty()) {
-                    if (writeFeatureWithCopiedFields(dstLayer, feat, geom->clone())) {
+                    if (writeFeatureWithCopiedFields(dstLayer, feat, geom->clone(), &fieldMap)) {
                         count++;
                         if (useTransactions && count % 1000 == 0) {
                             dstLayer->CommitTransaction();
@@ -1734,7 +1757,7 @@ gis::framework::Result VectorPlugin::doDifference(
                     }
 
                     if (!segment.overlapsOverlay) {
-                        if (writeFeatureWithCopiedFields(dstLayer, feat, segment.geometry)) {
+                        if (writeFeatureWithCopiedFields(dstLayer, feat, segment.geometry, &fieldMap)) {
                             count++;
                             if (useTransactions && count % 1000 == 0) {
                                 dstLayer->CommitTransaction();
@@ -1762,7 +1785,7 @@ gis::framework::Result VectorPlugin::doDifference(
             }
             if (diffGeom && !diffGeom->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
-                dstFeat->SetFrom(feat);
+                copyFeatureFieldsOnly(dstFeat, feat, fieldMap);
                 std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, diffGeom);
                 dstFeat->SetGeometry(promoted ? promoted.get() : diffGeom);
                 dstLayer->CreateFeature(dstFeat);
