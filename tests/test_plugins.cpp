@@ -711,7 +711,7 @@ TEST_F(PluginTest, VectorUnionLinePolygonOutputsSplitLinesOnly) {
         OGRGeometry* outGeom = outFeat->GetGeometryRef();
         ASSERT_NE(outGeom, nullptr);
         auto outType = wkbFlatten(outGeom->getGeometryType());
-        EXPECT_TRUE(outType == wkbLineString || outType == wkbMultiLineString)
+        EXPECT_EQ(outType, wkbMultiLineString)
             << "Unexpected geometry type: " << OGRGeometryTypeToName(outGeom->getGeometryType());
         OGRFeature::DestroyFeature(outFeat);
     }
@@ -1224,6 +1224,20 @@ TEST_F(PluginTest, VectorDissolveRepairsInvalidPolygonGeometry) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Dissolve failed: " << result.message;
     ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    OGRGeometry* outGeom = outFeat->GetGeometryRef();
+    ASSERT_NE(outGeom, nullptr);
+    EXPECT_EQ(wkbFlatten(outGeom->getGeometryType()), wkbMultiPolygon)
+        << "Unexpected geometry type: " << OGRGeometryTypeToName(outGeom->getGeometryType());
+    OGRFeature::DestroyFeature(outFeat);
+    GDALClose(outDs);
 }
 
 TEST_F(PluginTest, VectorConvertExecution) {

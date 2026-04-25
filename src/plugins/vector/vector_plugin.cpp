@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <functional>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -501,14 +502,42 @@ static void collectLinearGeometryParts(const OGRGeometry* geom, std::vector<OGRG
     }
 }
 
+static bool writeGeometryFeature(
+    OGRLayer* layer,
+    OGRGeometry* geom,
+    const std::function<void(OGRFeature*)>& fillAttributes = {});
+
 static bool writeUnionFeature(OGRLayer* layer, OGRGeometry* geom, const char* sourceValue) {
+    return writeGeometryFeature(layer, geom, [sourceValue](OGRFeature* feature) {
+        feature->SetField("source", sourceValue);
+    });
+}
+
+static bool writeGeometryFeature(
+    OGRLayer* layer,
+    OGRGeometry* geom,
+    const std::function<void(OGRFeature*)>& fillAttributes) {
     if (!layer || !geom || geom->IsEmpty()) {
         return true;
     }
 
     OGRFeature* dstFeat = OGRFeature::CreateFeature(layer->GetLayerDefn());
-    dstFeat->SetGeometry(geom);
-    dstFeat->SetField("source", sourceValue);
+    const auto targetType = wkbFlatten(layer->GetGeomType());
+    std::unique_ptr<OGRGeometry> promoted;
+    if (targetType == wkbMultiLineString && wkbFlatten(geom->getGeometryType()) == wkbLineString) {
+        auto multi = std::make_unique<OGRMultiLineString>();
+        multi->addGeometry(geom);
+        promoted = std::move(multi);
+    } else if (targetType == wkbMultiPolygon && wkbFlatten(geom->getGeometryType()) == wkbPolygon) {
+        auto multi = std::make_unique<OGRMultiPolygon>();
+        multi->addGeometry(geom);
+        promoted = std::move(multi);
+    }
+
+    dstFeat->SetGeometry(promoted ? promoted.get() : geom);
+    if (fillAttributes) {
+        fillAttributes(dstFeat);
+    }
     const bool ok = layer->CreateFeature(dstFeat) == OGRERR_NONE;
     OGRFeature::DestroyFeature(dstFeat);
     return ok;
@@ -1689,11 +1718,9 @@ gis::framework::Result VectorPlugin::doDissolve(
             OGRGeometry* result = unionGeometryList(geoms);
 
             if (result && !result->IsEmpty()) {
-                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
-                dstFeat->SetGeometry(result);
-                dstFeat->SetField(dissolveField.c_str(), key.c_str());
-                if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
-                    OGRFeature::DestroyFeature(dstFeat);
+                if (!writeGeometryFeature(dstLayer, result, [&](OGRFeature* feature) {
+                        feature->SetField(dissolveField.c_str(), key.c_str());
+                    })) {
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
@@ -1701,7 +1728,6 @@ gis::framework::Result VectorPlugin::doDissolve(
                     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
-                OGRFeature::DestroyFeature(dstFeat);
                 count++;
             }
             delete result;
@@ -1711,10 +1737,7 @@ gis::framework::Result VectorPlugin::doDissolve(
             OGRGeometry* result = unionGeometryList(allGeoms);
 
             if (result && !result->IsEmpty()) {
-                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
-                dstFeat->SetGeometry(result);
-                if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
-                    OGRFeature::DestroyFeature(dstFeat);
+                if (!writeGeometryFeature(dstLayer, result)) {
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
@@ -1722,7 +1745,6 @@ gis::framework::Result VectorPlugin::doDissolve(
                     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
-                OGRFeature::DestroyFeature(dstFeat);
                 count++;
             }
             delete result;
