@@ -48,11 +48,16 @@ namespace {
 
 std::mutex g_gdalWarningMutex;
 std::vector<std::string> g_gdalWarnings;
+std::vector<std::string> g_gdalErrors;
 
 void captureGdalWarning(CPLErr errClass, CPLErrorNum errNo, const char* msg) {
-    if (errClass == CE_Warning && msg) {
+    if (msg && errClass == CE_Warning) {
         std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
         g_gdalWarnings.emplace_back(msg);
+    }
+    if (msg && errClass >= CE_Failure) {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        g_gdalErrors.emplace_back(msg);
     }
     CPLDefaultErrorHandler(errClass, errNo, msg);
 }
@@ -477,6 +482,7 @@ TEST_F(PluginTest, VectorBufferAvoidsMultiPolygonWarning) {
     {
         std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
         g_gdalWarnings.clear();
+        g_gdalErrors.clear();
     }
 
     CPLPushErrorHandler(captureGdalWarning);
@@ -1186,6 +1192,7 @@ TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
 
     bool hasGeometryTypeWarning = false;
     bool hasSelfIntersectionWarning = false;
+    bool hasDuplicateFidError = false;
     {
         std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
         for (const auto& warning : g_gdalWarnings) {
@@ -1197,9 +1204,16 @@ TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
                 hasSelfIntersectionWarning = true;
             }
         }
+        for (const auto& error : g_gdalErrors) {
+            if (error.find("UNIQUE constraint failed") != std::string::npos &&
+                error.find(".fid") != std::string::npos) {
+                hasDuplicateFidError = true;
+            }
+        }
     }
     EXPECT_FALSE(hasGeometryTypeWarning);
     EXPECT_FALSE(hasSelfIntersectionWarning);
+    EXPECT_FALSE(hasDuplicateFidError);
 }
 
 TEST_F(PluginTest, VectorFilterShapefileAsciiOutputReopens) {

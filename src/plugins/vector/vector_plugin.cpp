@@ -728,6 +728,33 @@ static std::vector<SegmentedLinePart> splitLineByOverlayEntries(
     return segments;
 }
 
+static OGRGeometry* buildMergedSegmentGeometry(
+    const std::vector<SegmentedLinePart>& segments,
+    bool overlapsOverlay) {
+    std::vector<OGRGeometry*> matchedParts;
+    for (const auto& segment : segments) {
+        if (!segment.geometry || segment.geometry->IsEmpty() || segment.overlapsOverlay != overlapsOverlay) {
+            continue;
+        }
+        matchedParts.push_back(segment.geometry->clone());
+    }
+
+    if (matchedParts.empty()) {
+        return nullptr;
+    }
+
+    if (matchedParts.size() == 1) {
+        return matchedParts[0];
+    }
+
+    auto* merged = new OGRMultiLineString();
+    for (auto* part : matchedParts) {
+        merged->addGeometry(part);
+        delete part;
+    }
+    return merged;
+}
+
 gis::framework::Result VectorPlugin::doInfo(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -1153,22 +1180,19 @@ gis::framework::Result VectorPlugin::doClip(
         if (useLinearPolygonSegmentation && geom) {
             const auto candidates = collectCandidateOverlayEntries(clipEntries, geom);
             auto segments = splitLineByOverlayEntries(geom, candidates);
+            std::unique_ptr<OGRGeometry> clippedGeom(buildMergedSegmentGeometry(segments, true));
             for (auto& segment : segments) {
-                if (!segment.geometry || segment.geometry->IsEmpty()) {
-                    delete segment.geometry;
-                    continue;
-                }
+                delete segment.geometry;
+            }
 
-                if (segment.overlapsOverlay) {
-                    if (writeFeatureWithCopiedFields(dstLayer, feat, segment.geometry, &fieldMap)) {
-                        count++;
-                        if (useTransactions && count % 1000 == 0) {
-                            dstLayer->CommitTransaction();
-                            dstLayer->StartTransaction();
-                        }
+            if (clippedGeom && !clippedGeom->IsEmpty()) {
+                if (writeFeatureWithCopiedFields(dstLayer, feat, clippedGeom.get(), &fieldMap)) {
+                    count++;
+                    if (useTransactions && count % 1000 == 0) {
+                        dstLayer->CommitTransaction();
+                        dstLayer->StartTransaction();
                     }
                 }
-                delete segment.geometry;
             }
             OGRFeature::DestroyFeature(feat);
             continue;
@@ -1750,22 +1774,19 @@ gis::framework::Result VectorPlugin::doDifference(
                 }
 
                 auto segments = splitLineByOverlayEntries(geom, candidates);
+                std::unique_ptr<OGRGeometry> diffGeom(buildMergedSegmentGeometry(segments, false));
                 for (auto& segment : segments) {
-                    if (!segment.geometry || segment.geometry->IsEmpty()) {
-                        delete segment.geometry;
-                        continue;
-                    }
+                    delete segment.geometry;
+                }
 
-                    if (!segment.overlapsOverlay) {
-                        if (writeFeatureWithCopiedFields(dstLayer, feat, segment.geometry, &fieldMap)) {
-                            count++;
-                            if (useTransactions && count % 1000 == 0) {
-                                dstLayer->CommitTransaction();
-                                dstLayer->StartTransaction();
-                            }
+                if (diffGeom && !diffGeom->IsEmpty()) {
+                    if (writeFeatureWithCopiedFields(dstLayer, feat, diffGeom.get(), &fieldMap)) {
+                        count++;
+                        if (useTransactions && count % 1000 == 0) {
+                            dstLayer->CommitTransaction();
+                            dstLayer->StartTransaction();
                         }
                     }
-                    delete segment.geometry;
                 }
                 OGRFeature::DestroyFeature(feat);
                 continue;
