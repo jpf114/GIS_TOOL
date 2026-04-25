@@ -67,11 +67,23 @@ function Invoke-Case {
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $arguments = [string[]]$Case.Args
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $output = & $ResolvedCliPath @arguments 2>&1
-    $ErrorActionPreference = $previousErrorActionPreference
-    $code = $LASTEXITCODE
+    $stdoutPath = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString() + "_gis_stdout.txt")
+    $stderrPath = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString() + "_gis_stderr.txt")
+
+    $process = Start-Process -FilePath $ResolvedCliPath `
+        -ArgumentList $arguments `
+        -NoNewWindow `
+        -Wait `
+        -PassThru `
+        -RedirectStandardOutput $stdoutPath `
+        -RedirectStandardError $stderrPath
+
+    $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { "" }
+    $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
+    Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    $output = (($stdout + [Environment]::NewLine + $stderr).Trim())
+    $code = $process.ExitCode
     $watch.Stop()
 
     $result = [pscustomobject]@{
