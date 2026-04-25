@@ -314,6 +314,92 @@ TEST_F(PluginTest, VectorInfoExecution) {
     EXPECT_TRUE(result.success) << "Vector info failed: " << result.message;
 }
 
+TEST_F(PluginTest, VectorBufferExecutionReportsMetadata) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string shpPath = (getTestDir() / "e2e_buffer_input.shp").string();
+    std::string output = (getTestDir() / "e2e_buffer_output.gpkg").string();
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("buffer_test", srs.get(), wkbLineString);
+        ASSERT_NE(layer, nullptr);
+
+        OGRFieldDefn fieldDefn("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&fieldDefn), OGRERR_NONE);
+
+        auto* featDefn = layer->GetLayerDefn();
+        for (int i = 0; i < 200; ++i) {
+            auto* feat = OGRFeature::CreateFeature(featDefn);
+            OGRLineString line;
+            line.addPoint(12940000 + i * 20, 4852000);
+            line.addPoint(12940010 + i * 20, 4852100);
+            line.addPoint(12940030 + i * 20, 4852200);
+            feat->SetGeometry(&line);
+            feat->SetField("name", "road");
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("buffer");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["distance"] = 25.0;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Buffer failed: " << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata["feature_count"], "200");
+    EXPECT_EQ(result.metadata["distance"], "25");
+    EXPECT_EQ(result.metadata["srs_type"], "projected");
+    EXPECT_EQ(result.metadata["output_format"], "GPKG");
+    EXPECT_TRUE(result.metadata.count("elapsed_ms") > 0);
+}
+
+TEST_F(PluginTest, VectorBufferRejectsGeographicSrs) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string shpPath = (getTestDir() / "e2e_buffer_geo_input.shp").string();
+    std::string output = (getTestDir() / "e2e_buffer_geo_output.geojson").string();
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(4326);
+        auto* layer = ds->CreateLayer("buffer_geo_test", srs.get(), wkbPoint);
+        ASSERT_NE(layer, nullptr);
+
+        auto* featDefn = layer->GetLayerDefn();
+        auto* feat = OGRFeature::CreateFeature(featDefn);
+        OGRPoint pt(116.4, 39.9);
+        feat->SetGeometry(&pt);
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("buffer");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["distance"] = 100.0;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("projected"), std::string::npos);
+}
+
 TEST_F(PluginTest, ProcessingHoughExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

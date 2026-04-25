@@ -9,6 +9,7 @@
 #include <sstream>
 #include <algorithm>
 #include <filesystem>
+#include <chrono>
 
 namespace gis::plugins {
 
@@ -131,6 +132,19 @@ static GDALDriver* getDriverForFormat(const std::string& format) {
     if (format == "KML")             return GetGDALDriverManager()->GetDriverByName("KML");
     if (format == "CSV")             return GetGDALDriverManager()->GetDriverByName("CSV");
     return nullptr;
+}
+
+static std::string detectSrsType(const OGRSpatialReference* srs) {
+    if (!srs) {
+        return "unknown";
+    }
+    if (srs->IsGeographic()) {
+        return "geographic";
+    }
+    if (srs->IsProjected()) {
+        return "projected";
+    }
+    return "unknown";
 }
 
 gis::framework::Result VectorPlugin::doInfo(
@@ -317,6 +331,7 @@ gis::framework::Result VectorPlugin::doFilter(
 gis::framework::Result VectorPlugin::doBuffer(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
+    const auto startedAt = std::chrono::steady_clock::now();
 
     std::string input = gis::framework::getParam<std::string>(params, "input", "");
     std::string output = gis::framework::getParam<std::string>(params, "output", "");
@@ -335,6 +350,14 @@ gis::framework::Result VectorPlugin::doBuffer(
     if (!srcLayer) {
         GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer: " + layerName);
+    }
+
+    const OGRSpatialReference* srcSRSRef = srcLayer->GetSpatialRef();
+    const std::string srsType = detectSrsType(srcSRSRef);
+    if (srsType == "geographic") {
+        GDALClose(srcDS);
+        return gis::framework::Result::fail(
+            "Buffer requires a projected coordinate system. Please reproject the input layer before buffering.");
     }
 
     namespace fs = std::filesystem;
@@ -363,7 +386,7 @@ gis::framework::Result VectorPlugin::doBuffer(
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(
         (std::string(srcLayer->GetName()) + "_buffer").c_str(), srcSRS, wkbPolygon, nullptr);
     if (!dstLayer) {
@@ -380,21 +403,30 @@ gis::framework::Result VectorPlugin::doBuffer(
     progress.onProgress(0.3);
 
     srcLayer->ResetReading();
+    auto* dstLayerDefn = dstLayer->GetLayerDefn();
     OGRFeature* feat;
     int count = 0;
     int total = static_cast<int>(srcLayer->GetFeatureCount(FALSE));
     if (total <= 0) total = 1;
+
+    const bool useTransactions = outFormat == "GPKG";
+    if (useTransactions) {
+        dstLayer->StartTransaction();
+    }
 
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
         if (geom) {
             OGRGeometry* bufferGeom = geom->Buffer(distance);
             if (bufferGeom) {
-                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
+                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayerDefn);
                 dstFeat->SetFrom(feat);
                 dstFeat->SetGeometry(bufferGeom);
                 if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
                     OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
+                    if (useTransactions) {
+                        dstLayer->RollbackTransaction();
+                    }
                     delete bufferGeom; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
                     return gis::framework::Result::fail("Failed to write buffer feature");
                 }
@@ -404,14 +436,34 @@ gis::framework::Result VectorPlugin::doBuffer(
         }
         OGRFeature::DestroyFeature(feat);
         count++;
+        if (useTransactions && count % 1000 == 0) {
+            dstLayer->CommitTransaction();
+            dstLayer->StartTransaction();
+        }
         if (count % 100 == 0) progress.onProgress(0.3 + 0.6 * static_cast<double>(count) / total);
     }
 
+    if (useTransactions) {
+        dstLayer->CommitTransaction();
+    }
+    dstLayer->SyncToDisk();
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
-    return gis::framework::Result::ok(
+    auto result = gis::framework::Result::ok(
         "Buffer completed: " + std::to_string(count) + " features processed", output);
+    result.metadata["feature_count"] = std::to_string(count);
+    {
+        std::ostringstream oss;
+        oss << distance;
+        result.metadata["distance"] = oss.str();
+    }
+    result.metadata["srs_type"] = srsType;
+    result.metadata["output_format"] = outFormat;
+    result.metadata["elapsed_ms"] = std::to_string(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startedAt).count());
+    return result;
 }
 
 gis::framework::Result VectorPlugin::doClip(
