@@ -423,6 +423,86 @@ TEST_F(PluginTest, VectorBufferRejectsGeographicSrs) {
     EXPECT_NE(result.message.find("projected"), std::string::npos);
 }
 
+TEST_F(PluginTest, VectorBufferAvoidsMultiPolygonWarning) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_buffer_multi_input.gpkg").string();
+    std::string output = (getTestDir() / "e2e_buffer_multi_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("buffer_multi_test", srs.get(), wkbMultiLineString, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        auto* featDefn = layer->GetLayerDefn();
+        auto* feat = OGRFeature::CreateFeature(featDefn);
+        OGRMultiLineString multiLine;
+        OGRLineString line1;
+        line1.addPoint(0, 0);
+        line1.addPoint(10, 0);
+        OGRLineString line2;
+        line2.addPoint(100, 0);
+        line2.addPoint(110, 0);
+        multiLine.addGeometry(&line1);
+        multiLine.addGeometry(&line2);
+        feat->SetGeometry(&multiLine);
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("buffer");
+    params["input"] = input;
+    params["output"] = output;
+    params["distance"] = 20.0;
+
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        g_gdalWarnings.clear();
+    }
+
+    CPLPushErrorHandler(captureGdalWarning);
+    auto result = p->execute(params, progress_);
+    CPLPopErrorHandler();
+
+    EXPECT_TRUE(result.success) << "Buffer failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    bool hasMultiPolygonWarning = false;
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        for (const auto& warning : g_gdalWarnings) {
+            if (warning.find("geometry type POLYGON") != std::string::npos &&
+                warning.find("MULTIPOLYGON") != std::string::npos) {
+                hasMultiPolygonWarning = true;
+                break;
+            }
+        }
+    }
+    EXPECT_FALSE(hasMultiPolygonWarning);
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(wkbFlatten(outLayer->GetGeomType()), wkbMultiPolygon);
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    OGRGeometry* outGeom = outFeat->GetGeometryRef();
+    ASSERT_NE(outGeom, nullptr);
+    EXPECT_EQ(wkbFlatten(outGeom->getGeometryType()), wkbMultiPolygon);
+    OGRFeature::DestroyFeature(outFeat);
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, ProcessingHoughExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

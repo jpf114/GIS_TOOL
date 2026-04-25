@@ -916,7 +916,10 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(
-        (std::string(srcLayer->GetName()) + "_buffer").c_str(), srcSRS, wkbPolygon, nullptr);
+        (std::string(srcLayer->GetName()) + "_buffer").c_str(),
+        srcSRS,
+        resultLayerGeometryType(wkbPolygon),
+        nullptr);
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -936,6 +939,8 @@ gis::framework::Result VectorPlugin::doBuffer(
     int count = 0;
     int total = static_cast<int>(srcLayer->GetFeatureCount(FALSE));
     if (total <= 0) total = 1;
+    constexpr int transactionBatchSize = 5000;
+    constexpr int progressUpdateInterval = 1000;
 
     const bool useTransactions = outFormat == "GPKG";
     if (useTransactions) {
@@ -949,7 +954,8 @@ gis::framework::Result VectorPlugin::doBuffer(
             if (bufferGeom) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayerDefn);
                 dstFeat->SetFrom(feat);
-                dstFeat->SetGeometry(bufferGeom);
+                std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, bufferGeom);
+                dstFeat->SetGeometry(promoted ? promoted.get() : bufferGeom);
                 if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
                     OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
                     if (useTransactions) {
@@ -964,11 +970,13 @@ gis::framework::Result VectorPlugin::doBuffer(
         }
         OGRFeature::DestroyFeature(feat);
         count++;
-        if (useTransactions && count % 1000 == 0) {
+        if (useTransactions && count % transactionBatchSize == 0) {
             dstLayer->CommitTransaction();
             dstLayer->StartTransaction();
         }
-        if (count % 100 == 0) progress.onProgress(0.3 + 0.6 * static_cast<double>(count) / total);
+        if (count % progressUpdateInterval == 0) {
+            progress.onProgress(0.3 + 0.6 * static_cast<double>(count) / total);
+        }
     }
 
     if (useTransactions) {
