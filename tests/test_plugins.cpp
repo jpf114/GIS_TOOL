@@ -17,6 +17,10 @@ static fs::path getTestDir() {
     return gis::tests::defaultTestOutputDir("test_e2e_output");
 }
 
+static std::string utf8PathString(const fs::path& path) {
+    return path.u8string();
+}
+
 static fs::path getPluginDir() {
     return gis::tests::testPluginDir();
 }
@@ -829,6 +833,150 @@ TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Clip failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
+}
+
+TEST_F(PluginTest, VectorFilterShapefileAsciiOutputReopens) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_filter_ascii_input.shp").string();
+    std::string output = (getTestDir() / "e2e_filter_ascii_output.shp").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(4326);
+        auto* layer = ds->CreateLayer("roads", srs.get(), wkbLineString);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn fieldDefn("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&fieldDefn), OGRERR_NONE);
+        auto* featDefn = layer->GetLayerDefn();
+        auto* feat = OGRFeature::CreateFeature(featDefn);
+        OGRLineString line;
+        line.addPoint(116.1, 39.9);
+        line.addPoint(116.2, 40.0);
+        feat->SetGeometry(&line);
+        feat->SetField("name", "road");
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("filter");
+    params["input"] = input;
+    params["output"] = output;
+    params["extent"] = std::array<double, 4>{116.0, 39.8, 116.3, 40.1};
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Filter failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(outLayer->GetFeatureCount(FALSE), 1);
+    GDALClose(outDs);
+}
+
+TEST_F(PluginTest, VectorFilterShapefileChineseOutputReopens) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_filter_cn_input.shp").string();
+    std::string output = (getTestDir() / "e2e_filter_cn_output.shp").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(4326);
+        auto* layer = ds->CreateLayer("roads", srs.get(), wkbLineString);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn fieldDefn("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&fieldDefn), OGRERR_NONE);
+        auto* featDefn = layer->GetLayerDefn();
+        auto* feat = OGRFeature::CreateFeature(featDefn);
+        OGRLineString line;
+        line.addPoint(116.1, 39.9);
+        line.addPoint(116.2, 40.0);
+        feat->SetGeometry(&line);
+        feat->SetField("name", "道路");
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("filter");
+    params["input"] = input;
+    params["output"] = output;
+    params["extent"] = std::array<double, 4>{116.0, 39.8, 116.3, 40.1};
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Filter failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(outLayer->GetFeatureCount(FALSE), 1);
+    GDALClose(outDs);
+}
+
+TEST_F(PluginTest, VectorInfoSupportsChinesePath) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    fs::path asciiPath = getTestDir() / "e2e_chinese_path_ascii.shp";
+    fs::path chinesePath = getTestDir() / "中文道路数据.shp";
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(asciiPath.string().c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(4326);
+        auto* layer = ds->CreateLayer("roads", srs.get(), wkbLineString);
+        ASSERT_NE(layer, nullptr);
+        auto* featDefn = layer->GetLayerDefn();
+        auto* feat = OGRFeature::CreateFeature(featDefn);
+        OGRLineString line;
+        line.addPoint(116.1, 39.9);
+        line.addPoint(116.2, 40.0);
+        feat->SetGeometry(&line);
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    for (const char* ext : {".shp", ".shx", ".dbf", ".prj"}) {
+        fs::path src = asciiPath;
+        src.replace_extension(ext);
+        fs::path dst = chinesePath;
+        dst.replace_extension(ext);
+        if (fs::exists(dst)) {
+            fs::remove(dst);
+        }
+        fs::rename(src, dst);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("info");
+    params["input"] = utf8PathString(chinesePath);
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Info failed: " << result.message;
 }
 
 TEST_F(PluginTest, VectorDissolveRejectsGeographicSrs) {

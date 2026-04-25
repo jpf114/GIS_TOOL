@@ -8,11 +8,98 @@
 #include <gdal_utils.h>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <chrono>
 #include <string>
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace gis::plugins {
+
+namespace fs = std::filesystem;
+
+namespace {
+
+bool containsNonAscii(const std::string& value) {
+    return std::any_of(value.begin(), value.end(), [](unsigned char ch) {
+        return ch >= 0x80;
+    });
+}
+
+bool isShapefilePath(const std::string& path) {
+    fs::path fsPath = fs::u8path(path);
+    std::string ext = fsPath.extension().u8string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return ext == ".shp";
+}
+
+#ifdef _WIN32
+std::wstring utf8ToWide(const std::string& value) {
+    if (value.empty()) {
+        return {};
+    }
+
+    const int sizeNeeded = MultiByteToWideChar(
+        CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()),
+        nullptr, 0);
+    if (sizeNeeded <= 0) {
+        return {};
+    }
+
+    std::wstring wide(sizeNeeded, L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()),
+        wide.data(), sizeNeeded);
+    return wide;
+}
+
+std::string makeAsciiShapefileMirror(const std::string& sourcePath) {
+    const fs::path sourceFsPath(utf8ToWide(sourcePath));
+    if (sourceFsPath.empty() || !fs::exists(sourceFsPath)) {
+        return sourcePath;
+    }
+
+    const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path tempDir = fs::temp_directory_path() / "gis_tool_shapefile_utf8" / std::to_string(timestamp);
+    fs::create_directories(tempDir);
+
+    const fs::path tempBase = tempDir / "input.shp";
+    const std::vector<std::wstring> sidecarExts = {
+        L".shp", L".shx", L".dbf", L".prj", L".cpg", L".qix", L".fix", L".sbn", L".sbx"
+    };
+
+    for (const auto& ext : sidecarExts) {
+        fs::path src = sourceFsPath;
+        src.replace_extension(ext);
+        if (!fs::exists(src)) {
+            continue;
+        }
+
+        fs::path dst = tempBase;
+        dst.replace_extension(ext);
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing);
+    }
+
+    return tempBase.string();
+}
+#endif
+
+std::string resolveVectorInputPath(const std::string& path) {
+#ifdef _WIN32
+    if (containsNonAscii(path) && isShapefilePath(path)) {
+        return makeAsciiShapefileMirror(path);
+    }
+#endif
+    return path;
+}
+
+} // namespace
 
 std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
     return {
@@ -100,9 +187,10 @@ gis::framework::Result VectorPlugin::execute(
 }
 
 static GDALDataset* openVector(const std::string& path, bool readOnly = true) {
+    const std::string resolvedPath = resolveVectorInputPath(path);
     return (GDALDataset*)GDALOpenEx(
-        path.c_str(),
-        readOnly ? GDAL_OF_READONLY : GDAL_OF_UPDATE,
+        resolvedPath.c_str(),
+        (readOnly ? GDAL_OF_READONLY : GDAL_OF_UPDATE) | GDAL_OF_VECTOR,
         nullptr, nullptr, nullptr);
 }
 
