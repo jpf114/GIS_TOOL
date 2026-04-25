@@ -580,15 +580,26 @@ static bool writeGeometryFeature(
     }
 
     OGRFeature* dstFeat = OGRFeature::CreateFeature(layer->GetLayerDefn());
-    std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(layer, geom);
-
-    dstFeat->SetGeometry(promoted ? promoted.get() : geom);
     if (fillAttributes) {
         fillAttributes(dstFeat);
     }
+    std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(layer, geom);
+    dstFeat->SetGeometry(promoted ? promoted.get() : geom);
     const bool ok = layer->CreateFeature(dstFeat) == OGRERR_NONE;
     OGRFeature::DestroyFeature(dstFeat);
     return ok;
+}
+
+static bool writeFeatureWithCopiedFields(
+    OGRLayer* layer,
+    const OGRFeature* sourceFeature,
+    OGRGeometry* geom) {
+    return writeGeometryFeature(layer, geom, [sourceFeature](OGRFeature* feature) {
+        if (sourceFeature) {
+            feature->SetFrom(sourceFeature, TRUE);
+            feature->SetFID(OGRNullFID);
+        }
+    });
 }
 
 static bool isLinePolygonPracticalUnionCase(OGRLayer* srcLayer, OGRLayer* overlayLayer) {
@@ -650,31 +661,46 @@ static OGRGeometry* unionGeometryList(std::vector<OGRGeometry*>& geoms) {
     return unionGeometryRange(geoms, 0, geoms.size());
 }
 
-static std::vector<OGRGeometry*> splitLineByOverlayEntries(
+struct SegmentedLinePart {
+    OGRGeometry* geometry = nullptr;
+    bool overlapsOverlay = false;
+};
+
+static std::vector<SegmentedLinePart> splitLineByOverlayEntries(
     const OGRGeometry* geom,
     const std::vector<const OverlayGeometryEntry*>& candidates) {
-    std::vector<OGRGeometry*> segments;
+    std::vector<SegmentedLinePart> segments;
     if (!geom || geom->IsEmpty()) {
         return segments;
     }
 
-    segments.push_back(geom->clone());
+    segments.push_back({geom->clone(), false});
     for (const auto* entry : candidates) {
-        std::vector<OGRGeometry*> nextSegments;
-        for (auto* segment : segments) {
-            if (!segment || segment->IsEmpty()) {
-                delete segment;
+        std::vector<SegmentedLinePart> nextSegments;
+        for (auto& segment : segments) {
+            if (!segment.geometry || segment.geometry->IsEmpty()) {
+                delete segment.geometry;
                 continue;
             }
 
-            if (!segment->Intersects(entry->geometry.get())) {
+            if (segment.overlapsOverlay || !segment.geometry->Intersects(entry->geometry.get())) {
                 nextSegments.push_back(segment);
                 continue;
             }
 
-            collectLinearGeometryParts(segment->Difference(entry->geometry.get()), nextSegments);
-            collectLinearGeometryParts(segment->Intersection(entry->geometry.get()), nextSegments);
-            delete segment;
+            std::vector<OGRGeometry*> outsideParts;
+            collectLinearGeometryParts(segment.geometry->Difference(entry->geometry.get()), outsideParts);
+            for (auto* part : outsideParts) {
+                nextSegments.push_back({part, false});
+            }
+
+            std::vector<OGRGeometry*> insideParts;
+            collectLinearGeometryParts(segment.geometry->Intersection(entry->geometry.get()), insideParts);
+            for (auto* part : insideParts) {
+                nextSegments.push_back({part, true});
+            }
+
+            delete segment.geometry;
         }
         segments = std::move(nextSegments);
     }
@@ -1039,6 +1065,8 @@ gis::framework::Result VectorPlugin::doClip(
     }
 
     auto clipEntries = collectNormalizedGeometries(clipLayer);
+    const bool useLinearPolygonSegmentation =
+        isLinearGeometryType(srcLayer->GetGeomType()) && detectOverlayGeometryDimensionRank(clipEntries) == 2;
     GDALClose(clipDS);
 
     if (clipEntries.empty()) {
@@ -1100,6 +1128,30 @@ gis::framework::Result VectorPlugin::doClip(
     }
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
+        if (useLinearPolygonSegmentation && geom) {
+            const auto candidates = collectCandidateOverlayEntries(clipEntries, geom);
+            auto segments = splitLineByOverlayEntries(geom, candidates);
+            for (auto& segment : segments) {
+                if (!segment.geometry || segment.geometry->IsEmpty()) {
+                    delete segment.geometry;
+                    continue;
+                }
+
+                if (segment.overlapsOverlay) {
+                    if (writeFeatureWithCopiedFields(dstLayer, feat, segment.geometry)) {
+                        count++;
+                        if (useTransactions && count % 1000 == 0) {
+                            dstLayer->CommitTransaction();
+                            dstLayer->StartTransaction();
+                        }
+                    }
+                }
+                delete segment.geometry;
+            }
+            OGRFeature::DestroyFeature(feat);
+            continue;
+        }
+
         OGRGeometry* overlayGeometry = mergedClipGeometry.get();
         std::unique_ptr<OGRGeometry> candidateOverlay;
         if (!overlayGeometry) {
@@ -1489,13 +1541,13 @@ gis::framework::Result VectorPlugin::doUnion(
         OGRGeometry* geom = feat->GetGeometryRef();
         if (usePracticalMixedUnion && geom) {
             const auto candidates = collectCandidateOverlayEntries(overlayEntries, geom);
-            std::vector<OGRGeometry*> lineParts = splitLineByOverlayEntries(geom, candidates);
+            auto lineParts = splitLineByOverlayEntries(geom, candidates);
 
             for (size_t i = 0; i < lineParts.size(); ++i) {
-                OGRGeometry* part = lineParts[i];
+                OGRGeometry* part = lineParts[i].geometry;
                 if (!writeUnionFeature(dstLayer, part, "split")) {
                     for (size_t j = i; j < lineParts.size(); ++j) {
-                        delete lineParts[j];
+                        delete lineParts[j].geometry;
                     }
                     OGRFeature::DestroyFeature(feat);
                     if (useTransactions) {
@@ -1505,7 +1557,7 @@ gis::framework::Result VectorPlugin::doUnion(
                     return gis::framework::Result::fail("Failed to write union feature");
                 }
                 delete part;
-                lineParts[i] = nullptr;
+                lineParts[i].geometry = nullptr;
                 count++;
                 if (useTransactions && count % 1000 == 0) {
                     dstLayer->CommitTransaction();
@@ -1599,6 +1651,8 @@ gis::framework::Result VectorPlugin::doDifference(
     }
 
     auto overlayEntries = collectNormalizedGeometries(overlayLayer);
+    const bool useLinearPolygonSegmentation =
+        isLinearGeometryType(srcLayer->GetGeomType()) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
     GDALClose(overlayDS);
 
     if (overlayEntries.empty()) {
@@ -1658,6 +1712,42 @@ gis::framework::Result VectorPlugin::doDifference(
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
         if (geom) {
+            if (useLinearPolygonSegmentation) {
+                const auto candidates = collectCandidateOverlayEntries(overlayEntries, geom);
+                if (candidates.empty()) {
+                    if (writeFeatureWithCopiedFields(dstLayer, feat, geom->clone())) {
+                        count++;
+                        if (useTransactions && count % 1000 == 0) {
+                            dstLayer->CommitTransaction();
+                            dstLayer->StartTransaction();
+                        }
+                    }
+                    OGRFeature::DestroyFeature(feat);
+                    continue;
+                }
+
+                auto segments = splitLineByOverlayEntries(geom, candidates);
+                for (auto& segment : segments) {
+                    if (!segment.geometry || segment.geometry->IsEmpty()) {
+                        delete segment.geometry;
+                        continue;
+                    }
+
+                    if (!segment.overlapsOverlay) {
+                        if (writeFeatureWithCopiedFields(dstLayer, feat, segment.geometry)) {
+                            count++;
+                            if (useTransactions && count % 1000 == 0) {
+                                dstLayer->CommitTransaction();
+                                dstLayer->StartTransaction();
+                            }
+                        }
+                    }
+                    delete segment.geometry;
+                }
+                OGRFeature::DestroyFeature(feat);
+                continue;
+            }
+
             OGRGeometry* overlayGeometry = mergedOverlayGeometry.get();
             std::unique_ptr<OGRGeometry> candidateOverlay;
             if (!overlayGeometry) {

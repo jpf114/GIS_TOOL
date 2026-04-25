@@ -1443,6 +1443,94 @@ TEST_F(PluginTest, VectorDissolveRepairsInvalidPolygonGeometry) {
     GDALClose(outDs);
 }
 
+TEST_F(PluginTest, VectorClipKeepsOnlyLinearOverlapSegments) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_clip_line_input.shp").string();
+    std::string clip = (getTestDir() / "e2e_clip_line_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_clip_line_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs1 = std::make_unique<OGRSpatialReference>();
+        srs1->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs1.get(), wkbLineString);
+        ASSERT_NE(layer1, nullptr);
+        auto* featDefn1 = layer1->GetLayerDefn();
+        auto* feat1 = OGRFeature::CreateFeature(featDefn1);
+        OGRLineString line;
+        line.addPoint(0, 0);
+        line.addPoint(200, 0);
+        feat1->SetGeometry(&line);
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(clip.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto srs2 = std::make_unique<OGRSpatialReference>();
+        srs2->importFromEPSG(3857);
+        auto* layer2 = ds2->CreateLayer("clip", srs2.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* featDefn2 = layer2->GetLayerDefn();
+        auto* feat2 = OGRFeature::CreateFeature(featDefn2);
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(80, -20);
+        ring.addPoint(120, -20);
+        ring.addPoint(120, 20);
+        ring.addPoint(80, 20);
+        ring.addPoint(80, -20);
+        poly.addRing(&ring);
+        feat2->SetGeometry(&poly);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = input;
+    params["clip_vector"] = clip;
+    params["output"] = output;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Clip failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    OGRGeometry* outGeom = outFeat->GetGeometryRef();
+    ASSERT_NE(outGeom, nullptr);
+    auto outType = wkbFlatten(outGeom->getGeometryType());
+    EXPECT_EQ(outType, wkbMultiLineString)
+        << "Unexpected geometry type: " << OGRGeometryTypeToName(outGeom->getGeometryType());
+
+    const auto* multiLine = outGeom->toMultiLineString();
+    ASSERT_NE(multiLine, nullptr);
+    ASSERT_EQ(multiLine->getNumGeometries(), 1);
+    const auto* clippedLine = multiLine->getGeometryRef(0)->toLineString();
+    ASSERT_NE(clippedLine, nullptr);
+    EXPECT_DOUBLE_EQ(clippedLine->getX(0), 80.0);
+    EXPECT_DOUBLE_EQ(clippedLine->getY(0), 0.0);
+    EXPECT_DOUBLE_EQ(clippedLine->getX(clippedLine->getNumPoints() - 1), 120.0);
+    EXPECT_DOUBLE_EQ(clippedLine->getY(clippedLine->getNumPoints() - 1), 0.0);
+
+    OGRFeature::DestroyFeature(outFeat);
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, VectorConvertExecution) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";
