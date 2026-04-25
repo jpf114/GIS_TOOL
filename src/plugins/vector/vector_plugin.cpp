@@ -349,6 +349,25 @@ static bool envelopesIntersect(const OGREnvelope& lhs, const OGREnvelope& rhs) {
     return !(lhs.MaxX < rhs.MinX || lhs.MinX > rhs.MaxX || lhs.MaxY < rhs.MinY || lhs.MinY > rhs.MaxY);
 }
 
+static double computeEnvelopeOverlapRatio(const std::vector<OverlayGeometryEntry>& entries) {
+    if (entries.size() < 2) {
+        return 0.0;
+    }
+
+    size_t overlapPairs = 0;
+    size_t totalPairs = 0;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        for (size_t j = i + 1; j < entries.size(); ++j) {
+            ++totalPairs;
+            if (envelopesIntersect(entries[i].envelope, entries[j].envelope)) {
+                ++overlapPairs;
+            }
+        }
+    }
+
+    return totalPairs == 0 ? 0.0 : static_cast<double>(overlapPairs) / static_cast<double>(totalPairs);
+}
+
 static OGRGeometry* buildCandidateOverlayGeometry(
     const std::vector<OverlayGeometryEntry>& entries,
     const OGRGeometry* target) {
@@ -502,6 +521,25 @@ static bool isLinePolygonPracticalUnionCase(OGRLayer* srcLayer, OGRLayer* overla
 
     return isLinearGeometryType(srcLayer->GetGeomType())
         && geometryDimensionRank(overlayLayer->GetGeomType()) == 2;
+}
+
+static int detectOverlayGeometryDimensionRank(const std::vector<OverlayGeometryEntry>& entries) {
+    int maxRank = -1;
+    for (const auto& entry : entries) {
+        if (!entry.geometry) {
+            continue;
+        }
+        maxRank = (std::max)(maxRank, geometryDimensionRank(entry.geometry->getGeometryType()));
+    }
+    return maxRank;
+}
+
+static bool shouldRejectHighlyOverlappedMixedUnion(const std::vector<OverlayGeometryEntry>& entries) {
+    if (entries.size() < 3) {
+        return false;
+    }
+
+    return computeEnvelopeOverlapRatio(entries) >= 0.25;
 }
 
 static std::vector<OGRGeometry*> splitLineByOverlayEntries(
@@ -1260,12 +1298,20 @@ gis::framework::Result VectorPlugin::doUnion(
     }
 
     auto overlayEntries = collectNormalizedGeometries(overlayLayer);
-    const bool usePracticalMixedUnion = isLinePolygonPracticalUnionCase(srcLayer, overlayLayer);
+    const bool usePracticalMixedUnion =
+        isLinearGeometryType(srcLayer->GetGeomType()) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
     GDALClose(overlayDS);
 
     if (overlayEntries.empty()) {
         GDALClose(srcDS);
         return failInvalidGeometry("Union");
+    }
+
+    if (usePracticalMixedUnion && shouldRejectHighlyOverlappedMixedUnion(overlayEntries)) {
+        GDALClose(srcDS);
+        return gis::framework::Result::fail(
+            "Union detected heavily overlapped polygon overlays for mixed-dimension input. "
+            "Please dissolve or simplify the overlay polygons first, or use clip/difference instead.");
     }
 
     progress.onProgress(0.3);

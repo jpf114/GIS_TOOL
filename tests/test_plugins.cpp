@@ -720,6 +720,73 @@ TEST_F(PluginTest, VectorUnionLinePolygonOutputsSplitLinesOnly) {
     GDALClose(outDs);
 }
 
+TEST_F(PluginTest, VectorUnionRejectsHighlyOverlappedMixedDimensionOverlay) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_union_overlap_input.shp").string();
+    std::string overlay = (getTestDir() / "e2e_union_overlap_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_union_overlap_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs1 = std::make_unique<OGRSpatialReference>();
+        srs1->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs1.get(), wkbLineString);
+        ASSERT_NE(layer1, nullptr);
+        auto* featDefn1 = layer1->GetLayerDefn();
+        auto* feat1 = OGRFeature::CreateFeature(featDefn1);
+        OGRLineString line;
+        line.addPoint(0, 50);
+        line.addPoint(100, 50);
+        feat1->SetGeometry(&line);
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(overlay.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto srs2 = std::make_unique<OGRSpatialReference>();
+        srs2->importFromEPSG(3857);
+        auto* layer2 = ds2->CreateLayer("overlay", srs2.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+
+        auto createPolygonFeature = [&](double minX, double minY, double maxX, double maxY) {
+            auto* feat = OGRFeature::CreateFeature(layer2->GetLayerDefn());
+            OGRPolygon poly;
+            OGRLinearRing ring;
+            ring.addPoint(minX, minY);
+            ring.addPoint(maxX, minY);
+            ring.addPoint(maxX, maxY);
+            ring.addPoint(minX, maxY);
+            ring.addPoint(minX, minY);
+            poly.addRing(&ring);
+            feat->SetGeometry(&poly);
+            ASSERT_EQ(layer2->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        };
+
+        createPolygonFeature(10, 10, 90, 90);
+        createPolygonFeature(20, 20, 80, 80);
+        createPolygonFeature(30, 30, 70, 70);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("overlap"), std::string::npos);
+}
+
 TEST_F(PluginTest, VectorDifferenceRejectsMismatchedSrs) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";
