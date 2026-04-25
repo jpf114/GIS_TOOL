@@ -382,6 +382,24 @@ static OGRGeometry* buildCandidateOverlayGeometry(
     return merged;
 }
 
+static std::vector<const OverlayGeometryEntry*> collectCandidateOverlayEntries(
+    const std::vector<OverlayGeometryEntry>& entries,
+    const OGRGeometry* target) {
+    std::vector<const OverlayGeometryEntry*> candidates;
+    if (!target) {
+        return candidates;
+    }
+
+    OGREnvelope targetEnvelope;
+    target->getEnvelope(&targetEnvelope);
+    for (const auto& entry : entries) {
+        if (envelopesIntersect(entry.envelope, targetEnvelope)) {
+            candidates.push_back(&entry);
+        }
+    }
+    return candidates;
+}
+
 static void removeExistingVectorOutput(const std::string& output, const std::string& format) {
     namespace fs = std::filesystem;
     if (!fs::exists(output)) {
@@ -414,6 +432,108 @@ static OGRwkbGeometryType resultLayerGeometryType(OGRwkbGeometryType srcType) {
         default:
             return wkbUnknown;
     }
+}
+
+static int geometryDimensionRank(OGRwkbGeometryType type) {
+    switch (wkbFlatten(type)) {
+        case wkbPoint:
+        case wkbMultiPoint:
+            return 0;
+        case wkbLineString:
+        case wkbMultiLineString:
+            return 1;
+        case wkbPolygon:
+        case wkbMultiPolygon:
+            return 2;
+        default:
+            return -1;
+    }
+}
+
+static bool isLinearGeometryType(OGRwkbGeometryType type) {
+    const auto flatType = wkbFlatten(type);
+    return flatType == wkbLineString || flatType == wkbMultiLineString;
+}
+
+static void collectLinearGeometryParts(const OGRGeometry* geom, std::vector<OGRGeometry*>& parts) {
+    if (!geom || geom->IsEmpty()) {
+        return;
+    }
+
+    const auto flatType = wkbFlatten(geom->getGeometryType());
+    if (flatType == wkbLineString) {
+        parts.push_back(geom->clone());
+        return;
+    }
+
+    if (flatType == wkbMultiLineString) {
+        const auto* multiLine = geom->toMultiLineString();
+        for (int i = 0; i < multiLine->getNumGeometries(); ++i) {
+            parts.push_back(multiLine->getGeometryRef(i)->clone());
+        }
+        return;
+    }
+
+    if (flatType == wkbGeometryCollection) {
+        const auto* collection = geom->toGeometryCollection();
+        for (int i = 0; i < collection->getNumGeometries(); ++i) {
+            collectLinearGeometryParts(collection->getGeometryRef(i), parts);
+        }
+    }
+}
+
+static bool writeUnionFeature(OGRLayer* layer, OGRGeometry* geom, const char* sourceValue) {
+    if (!layer || !geom || geom->IsEmpty()) {
+        return true;
+    }
+
+    OGRFeature* dstFeat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    dstFeat->SetGeometry(geom);
+    dstFeat->SetField("source", sourceValue);
+    const bool ok = layer->CreateFeature(dstFeat) == OGRERR_NONE;
+    OGRFeature::DestroyFeature(dstFeat);
+    return ok;
+}
+
+static bool isLinePolygonPracticalUnionCase(OGRLayer* srcLayer, OGRLayer* overlayLayer) {
+    if (!srcLayer || !overlayLayer) {
+        return false;
+    }
+
+    return isLinearGeometryType(srcLayer->GetGeomType())
+        && geometryDimensionRank(overlayLayer->GetGeomType()) == 2;
+}
+
+static std::vector<OGRGeometry*> splitLineByOverlayEntries(
+    const OGRGeometry* geom,
+    const std::vector<const OverlayGeometryEntry*>& candidates) {
+    std::vector<OGRGeometry*> segments;
+    if (!geom || geom->IsEmpty()) {
+        return segments;
+    }
+
+    segments.push_back(geom->clone());
+    for (const auto* entry : candidates) {
+        std::vector<OGRGeometry*> nextSegments;
+        for (auto* segment : segments) {
+            if (!segment || segment->IsEmpty()) {
+                delete segment;
+                continue;
+            }
+
+            if (!segment->Intersects(entry->geometry.get())) {
+                nextSegments.push_back(segment);
+                continue;
+            }
+
+            collectLinearGeometryParts(segment->Difference(entry->geometry.get()), nextSegments);
+            collectLinearGeometryParts(segment->Intersection(entry->geometry.get()), nextSegments);
+            delete segment;
+        }
+        segments = std::move(nextSegments);
+    }
+
+    return segments;
 }
 
 gis::framework::Result VectorPlugin::doInfo(
@@ -1140,6 +1260,7 @@ gis::framework::Result VectorPlugin::doUnion(
     }
 
     auto overlayEntries = collectNormalizedGeometries(overlayLayer);
+    const bool usePracticalMixedUnion = isLinePolygonPracticalUnionCase(srcLayer, overlayLayer);
     GDALClose(overlayDS);
 
     if (overlayEntries.empty()) {
@@ -1169,7 +1290,10 @@ gis::framework::Result VectorPlugin::doUnion(
     if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer("union", srcSRS, wkbUnknown, nullptr);
+    const auto outputGeomType = usePracticalMixedUnion
+        ? resultLayerGeometryType(srcLayer->GetGeomType())
+        : wkbUnknown;
+    OGRLayer* dstLayer = dstDS->CreateLayer("union", srcSRS, outputGeomType, nullptr);
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1189,15 +1313,45 @@ gis::framework::Result VectorPlugin::doUnion(
     }
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
-        std::unique_ptr<OGRGeometry> candidateOverlay(buildCandidateOverlayGeometry(overlayEntries, geom));
-        if (geom && candidateOverlay && geom->Intersects(candidateOverlay.get())) {
+        if (usePracticalMixedUnion && geom) {
+            const auto candidates = collectCandidateOverlayEntries(overlayEntries, geom);
+            std::vector<OGRGeometry*> lineParts = splitLineByOverlayEntries(geom, candidates);
+
+            for (size_t i = 0; i < lineParts.size(); ++i) {
+                OGRGeometry* part = lineParts[i];
+                if (!writeUnionFeature(dstLayer, part, "split")) {
+                    for (size_t j = i; j < lineParts.size(); ++j) {
+                        delete lineParts[j];
+                    }
+                    OGRFeature::DestroyFeature(feat);
+                    if (useTransactions) {
+                        dstLayer->RollbackTransaction();
+                    }
+                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    return gis::framework::Result::fail("Failed to write union feature");
+                }
+                delete part;
+                lineParts[i] = nullptr;
+                count++;
+                if (useTransactions && count % 1000 == 0) {
+                    dstLayer->CommitTransaction();
+                    dstLayer->StartTransaction();
+                }
+            }
+        } else {
+            std::unique_ptr<OGRGeometry> candidateOverlay(buildCandidateOverlayGeometry(overlayEntries, geom));
+            if (geom && candidateOverlay && geom->Intersects(candidateOverlay.get())) {
             OGRGeometry* unionGeom = geom->Union(candidateOverlay.get());
             if (unionGeom && !unionGeom->IsEmpty()) {
-                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
-                dstFeat->SetGeometry(unionGeom);
-                dstFeat->SetField("source", "union");
-                dstLayer->CreateFeature(dstFeat);
-                OGRFeature::DestroyFeature(dstFeat);
+                if (!writeUnionFeature(dstLayer, unionGeom, "union")) {
+                    OGRFeature::DestroyFeature(feat);
+                    if (useTransactions) {
+                        dstLayer->RollbackTransaction();
+                    }
+                    delete unionGeom;
+                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    return gis::framework::Result::fail("Failed to write union feature");
+                }
                 count++;
                 if (useTransactions && count % 1000 == 0) {
                     dstLayer->CommitTransaction();
@@ -1205,16 +1359,23 @@ gis::framework::Result VectorPlugin::doUnion(
                 }
             }
             delete unionGeom;
-        } else if (geom) {
-            OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
-            dstFeat->SetGeometry(geom->clone());
-            dstFeat->SetField("source", "input");
-            dstLayer->CreateFeature(dstFeat);
-            OGRFeature::DestroyFeature(dstFeat);
-            count++;
-            if (useTransactions && count % 1000 == 0) {
-                dstLayer->CommitTransaction();
-                dstLayer->StartTransaction();
+            } else if (geom) {
+                OGRGeometry* cloned = geom->clone();
+                if (!writeUnionFeature(dstLayer, cloned, "input")) {
+                    OGRFeature::DestroyFeature(feat);
+                    if (useTransactions) {
+                        dstLayer->RollbackTransaction();
+                    }
+                    delete cloned;
+                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    return gis::framework::Result::fail("Failed to write union feature");
+                }
+                delete cloned;
+                count++;
+                if (useTransactions && count % 1000 == 0) {
+                    dstLayer->CommitTransaction();
+                    dstLayer->StartTransaction();
+                }
             }
         }
         OGRFeature::DestroyFeature(feat);

@@ -634,6 +634,92 @@ TEST_F(PluginTest, VectorUnionRejectsMismatchedSrs) {
     EXPECT_NE(result.message.find("CRS"), std::string::npos);
 }
 
+TEST_F(PluginTest, VectorUnionLinePolygonOutputsSplitLinesOnly) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_union_line_input.shp").string();
+    std::string overlay = (getTestDir() / "e2e_union_line_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_union_line_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs1 = std::make_unique<OGRSpatialReference>();
+        srs1->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs1.get(), wkbLineString);
+        ASSERT_NE(layer1, nullptr);
+        OGRFieldDefn fieldDefn("name", OFTString);
+        ASSERT_EQ(layer1->CreateField(&fieldDefn), OGRERR_NONE);
+        auto* featDefn1 = layer1->GetLayerDefn();
+        auto* feat1 = OGRFeature::CreateFeature(featDefn1);
+        OGRLineString line;
+        line.addPoint(0, 50);
+        line.addPoint(100, 50);
+        feat1->SetGeometry(&line);
+        feat1->SetField("name", "road");
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(overlay.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto srs2 = std::make_unique<OGRSpatialReference>();
+        srs2->importFromEPSG(3857);
+        auto* layer2 = ds2->CreateLayer("overlay", srs2.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* featDefn2 = layer2->GetLayerDefn();
+        auto* feat2 = OGRFeature::CreateFeature(featDefn2);
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(25, 25);
+        ring.addPoint(75, 25);
+        ring.addPoint(75, 75);
+        ring.addPoint(25, 75);
+        ring.addPoint(25, 25);
+        poly.addRing(&ring);
+        feat2->SetGeometry(&poly);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Union failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+
+    int featureCount = 0;
+    outLayer->ResetReading();
+    OGRFeature* outFeat = nullptr;
+    while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
+        ++featureCount;
+        OGRGeometry* outGeom = outFeat->GetGeometryRef();
+        ASSERT_NE(outGeom, nullptr);
+        auto outType = wkbFlatten(outGeom->getGeometryType());
+        EXPECT_TRUE(outType == wkbLineString || outType == wkbMultiLineString)
+            << "Unexpected geometry type: " << OGRGeometryTypeToName(outGeom->getGeometryType());
+        OGRFeature::DestroyFeature(outFeat);
+    }
+
+    EXPECT_EQ(featureCount, 3);
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, VectorDifferenceRejectsMismatchedSrs) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";
