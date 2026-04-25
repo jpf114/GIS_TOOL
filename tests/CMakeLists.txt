@@ -49,3 +49,18 @@ add_custom_command(TARGET gis_tests POST_BUILD
 
 include(GoogleTest)
 gtest_discover_tests(gis_tests DISCOVERY_MODE PRE_TEST)
+
+find_program(GIS_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
+if(GIS_POWERSHELL_EXECUTABLE)
+    add_custom_target(real_vector_regression
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=quick
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
+        DEPENDS gis-cli plugin_vector copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "运行真实矢量回归脚本"
+    )
+endif()
