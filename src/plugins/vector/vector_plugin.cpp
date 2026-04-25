@@ -11,6 +11,7 @@
 #include <cctype>
 #include <filesystem>
 #include <chrono>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -312,6 +313,70 @@ static OGRGeometry* buildNormalizedUnion(OGRLayer* layer) {
             return nullptr;
         }
         merged = next;
+    }
+
+    return merged;
+}
+
+struct OverlayGeometryEntry {
+    std::unique_ptr<OGRGeometry> geometry;
+    OGREnvelope envelope{};
+};
+
+static std::vector<OverlayGeometryEntry> collectNormalizedGeometries(OGRLayer* layer) {
+    std::vector<OverlayGeometryEntry> entries;
+    if (!layer) {
+        return entries;
+    }
+
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    while ((feat = layer->GetNextFeature()) != nullptr) {
+        std::unique_ptr<OGRGeometry> geom(cloneNormalizedGeometry(feat->GetGeometryRef()));
+        if (geom && !geom->IsEmpty()) {
+            OverlayGeometryEntry entry;
+            geom->getEnvelope(&entry.envelope);
+            entry.geometry = std::move(geom);
+            entries.push_back(std::move(entry));
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    return entries;
+}
+
+static bool envelopesIntersect(const OGREnvelope& lhs, const OGREnvelope& rhs) {
+    return !(lhs.MaxX < rhs.MinX || lhs.MinX > rhs.MaxX || lhs.MaxY < rhs.MinY || lhs.MinY > rhs.MaxY);
+}
+
+static OGRGeometry* buildCandidateOverlayGeometry(
+    const std::vector<OverlayGeometryEntry>& entries,
+    const OGRGeometry* target) {
+    if (!target) {
+        return nullptr;
+    }
+
+    OGREnvelope targetEnvelope;
+    target->getEnvelope(&targetEnvelope);
+
+    OGRGeometry* merged = nullptr;
+    for (const auto& entry : entries) {
+        if (!envelopesIntersect(entry.envelope, targetEnvelope)) {
+            continue;
+        }
+
+        if (!merged) {
+            merged = entry.geometry->clone();
+            continue;
+        }
+
+        OGRGeometry* next = merged->Union(entry.geometry.get());
+        delete merged;
+        merged = next;
+        if (!merged || merged->IsEmpty()) {
+            delete merged;
+            return nullptr;
+        }
     }
 
     return merged;
@@ -699,10 +764,10 @@ gis::framework::Result VectorPlugin::doClip(
         return failCrsMismatch("Clip");
     }
 
-    OGRGeometry* clipUnion = buildNormalizedUnion(clipLayer);
+    auto clipEntries = collectNormalizedGeometries(clipLayer);
     GDALClose(clipDS);
 
-    if (!clipUnion) {
+    if (clipEntries.empty()) {
         GDALClose(srcDS);
         return failInvalidGeometry("Clip");
     }
@@ -719,7 +784,7 @@ gis::framework::Result VectorPlugin::doClip(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        delete clipUnion; GDALClose(srcDS);
+        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
@@ -727,14 +792,14 @@ gis::framework::Result VectorPlugin::doClip(
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
     if (!dstDS) {
-        delete clipUnion; GDALClose(srcDS);
+        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS); delete clipUnion; GDALClose(srcDS); delete srcSRS;
+        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -755,10 +820,11 @@ gis::framework::Result VectorPlugin::doClip(
     }
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
-        if (geom && geom->Intersects(clipUnion)) {
-            OGRGeometry* clipped = clipUnion->Contains(geom)
+        std::unique_ptr<OGRGeometry> candidateOverlay(buildCandidateOverlayGeometry(clipEntries, geom));
+        if (geom && candidateOverlay && geom->Intersects(candidateOverlay.get())) {
+            OGRGeometry* clipped = candidateOverlay->Contains(geom)
                 ? geom->clone()
-                : geom->Intersection(clipUnion);
+                : geom->Intersection(candidateOverlay.get());
             if (clipped && !clipped->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
                 dstFeat->SetFrom(feat);
@@ -779,7 +845,7 @@ gis::framework::Result VectorPlugin::doClip(
     if (useTransactions) {
         dstLayer->CommitTransaction();
     }
-    delete clipUnion; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -1073,10 +1139,10 @@ gis::framework::Result VectorPlugin::doUnion(
         return failCrsMismatch("Union");
     }
 
-    OGRGeometry* overlayUnion = buildNormalizedUnion(overlayLayer);
+    auto overlayEntries = collectNormalizedGeometries(overlayLayer);
     GDALClose(overlayDS);
 
-    if (!overlayUnion) {
+    if (overlayEntries.empty()) {
         GDALClose(srcDS);
         return failInvalidGeometry("Union");
     }
@@ -1091,7 +1157,7 @@ gis::framework::Result VectorPlugin::doUnion(
     else if (ext == ".gpkg") outFormat = "GPKG";
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
-    if (!drv) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+    if (!drv) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
@@ -1100,12 +1166,12 @@ gis::framework::Result VectorPlugin::doUnion(
     }
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+    if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer("union", srcSRS, wkbUnknown, nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS); delete overlayUnion; GDALClose(srcDS); delete srcSRS;
+        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -1117,10 +1183,15 @@ gis::framework::Result VectorPlugin::doUnion(
     srcLayer->ResetReading();
     OGRFeature* feat = nullptr;
     int count = 0;
+    const bool useTransactions = outFormat == "GPKG";
+    if (useTransactions) {
+        dstLayer->StartTransaction();
+    }
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
-        if (geom && geom->Intersects(overlayUnion)) {
-            OGRGeometry* unionGeom = geom->Union(overlayUnion);
+        std::unique_ptr<OGRGeometry> candidateOverlay(buildCandidateOverlayGeometry(overlayEntries, geom));
+        if (geom && candidateOverlay && geom->Intersects(candidateOverlay.get())) {
+            OGRGeometry* unionGeom = geom->Union(candidateOverlay.get());
             if (unionGeom && !unionGeom->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
                 dstFeat->SetGeometry(unionGeom);
@@ -1128,6 +1199,10 @@ gis::framework::Result VectorPlugin::doUnion(
                 dstLayer->CreateFeature(dstFeat);
                 OGRFeature::DestroyFeature(dstFeat);
                 count++;
+                if (useTransactions && count % 1000 == 0) {
+                    dstLayer->CommitTransaction();
+                    dstLayer->StartTransaction();
+                }
             }
             delete unionGeom;
         } else if (geom) {
@@ -1137,11 +1212,18 @@ gis::framework::Result VectorPlugin::doUnion(
             dstLayer->CreateFeature(dstFeat);
             OGRFeature::DestroyFeature(dstFeat);
             count++;
+            if (useTransactions && count % 1000 == 0) {
+                dstLayer->CommitTransaction();
+                dstLayer->StartTransaction();
+            }
         }
         OGRFeature::DestroyFeature(feat);
     }
 
-    delete overlayUnion; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    if (useTransactions) {
+        dstLayer->CommitTransaction();
+    }
+    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -1181,10 +1263,10 @@ gis::framework::Result VectorPlugin::doDifference(
         return failCrsMismatch("Difference");
     }
 
-    OGRGeometry* overlayUnion = buildNormalizedUnion(overlayLayer);
+    auto overlayEntries = collectNormalizedGeometries(overlayLayer);
     GDALClose(overlayDS);
 
-    if (!overlayUnion) {
+    if (overlayEntries.empty()) {
         GDALClose(srcDS);
         return failInvalidGeometry("Difference");
     }
@@ -1199,7 +1281,7 @@ gis::framework::Result VectorPlugin::doDifference(
     else if (ext == ".gpkg") outFormat = "GPKG";
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
-    if (!drv) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+    if (!drv) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
@@ -1208,13 +1290,13 @@ gis::framework::Result VectorPlugin::doDifference(
     }
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) { delete overlayUnion; GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+    if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "difference", srcSRS, resultLayerGeometryType(srcLayer->GetGeomType()), nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS); delete overlayUnion; GDALClose(srcDS); delete srcSRS;
+        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -1236,11 +1318,12 @@ gis::framework::Result VectorPlugin::doDifference(
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
         if (geom) {
+            std::unique_ptr<OGRGeometry> candidateOverlay(buildCandidateOverlayGeometry(overlayEntries, geom));
             OGRGeometry* diffGeom = nullptr;
-            if (!geom->Intersects(overlayUnion)) {
+            if (!candidateOverlay || !geom->Intersects(candidateOverlay.get())) {
                 diffGeom = geom->clone();
-            } else if (!overlayUnion->Contains(geom)) {
-                diffGeom = geom->Difference(overlayUnion);
+            } else if (!candidateOverlay->Contains(geom)) {
+                diffGeom = geom->Difference(candidateOverlay.get());
             }
             if (diffGeom && !diffGeom->IsEmpty()) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
@@ -1262,7 +1345,7 @@ gis::framework::Result VectorPlugin::doDifference(
     if (useTransactions) {
         dstLayer->CommitTransaction();
     }
-    delete overlayUnion; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
