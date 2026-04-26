@@ -85,13 +85,13 @@ void MainWindow::setupUi() {
     pluginDescriptionLabel_->setWordWrap(true);
     pluginDescriptionLabel_->setStyleSheet("color: #5f6b7a;");
 
-    auto* executeBtn = new QPushButton(QStringLiteral("执行当前算法"));
-    executeBtn->setMinimumHeight(42);
-    executeBtn->setMinimumWidth(180);
-    executeBtn->setStyleSheet(
+    executeButton_ = new QPushButton(QStringLiteral("执行当前算法"));
+    executeButton_->setMinimumHeight(42);
+    executeButton_->setMinimumWidth(180);
+    executeButton_->setStyleSheet(
         "QPushButton { background: #1f5f8b; color: white; border-radius: 8px; font-size: 14px; font-weight: 600; }"
         "QPushButton:hover { background: #194c6f; }");
-    connect(executeBtn, &QPushButton::clicked, this, &MainWindow::onExecute);
+    connect(executeButton_, &QPushButton::clicked, this, &MainWindow::onExecute);
 
     auto* algorithmMetaLayout = new QHBoxLayout;
     algorithmMetaLayout->setSpacing(16);
@@ -100,7 +100,7 @@ void MainWindow::setupUi() {
     algorithmTextLayout->addWidget(pluginTitleLabel_);
     algorithmTextLayout->addWidget(pluginDescriptionLabel_);
     algorithmMetaLayout->addLayout(algorithmTextLayout, 1);
-    algorithmMetaLayout->addWidget(executeBtn, 0, Qt::AlignTop);
+    algorithmMetaLayout->addWidget(executeButton_, 0, Qt::AlignTop);
 
     algorithmLayout->addWidget(algorithmTitle);
     algorithmLayout->addWidget(algorithmSubtitle);
@@ -217,6 +217,7 @@ void MainWindow::setupUi() {
         "}");
 
     statusBar()->showMessage(QStringLiteral("就绪"));
+    refreshExecuteButtonState();
 }
 
 void MainWindow::loadPlugins() {
@@ -263,6 +264,7 @@ void MainWindow::onPluginSelected(int index) {
         currentPlugin_ = nullptr;
         paramWidget_->clear();
         lastSuggestedOutputPath_.clear();
+        refreshExecuteButtonState();
         return;
     }
 
@@ -276,6 +278,7 @@ void MainWindow::onPluginSelected(int index) {
     pluginDescriptionLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
     statusBar()->showMessage(QStringLiteral("当前算法: %1").arg(QString::fromStdString(currentPlugin_->name())));
     syncCurrentDataToParams();
+    refreshExecuteButtonState();
 }
 
 void MainWindow::onExecute() {
@@ -408,6 +411,7 @@ void MainWindow::onDataSelectionChanged() {
     syncCurrentDataToParams();
     refreshDataTreeVisualState();
     statusBar()->showMessage(QStringLiteral("当前数据: %1").arg(path));
+    refreshExecuteButtonState();
 }
 
 void MainWindow::onParamValuesChanged() {
@@ -416,6 +420,7 @@ void MainWindow::onParamValuesChanged() {
     }
 
     refreshSuggestedOutputFromCurrentData();
+    refreshExecuteButtonState();
 }
 
 void MainWindow::onDataItemDoubleClicked(QTreeWidgetItem* item, int) {
@@ -563,6 +568,7 @@ void MainWindow::bindDataPathToParam(const QString& path, const std::string& key
     isSyncingParams_ = false;
     statusBar()->showMessage(
         QStringLiteral("已将当前数据填入参数: %1").arg(QString::fromStdString(key)));
+    refreshExecuteButtonState();
 }
 
 QString MainWindow::buildResultSummary(const gis::framework::Result& result) const {
@@ -607,6 +613,30 @@ void MainWindow::refreshSuggestedOutputFromCurrentData() {
         paramWidget_->setStringValue("output", suggestedOutput.toUtf8().constData());
         lastSuggestedOutputPath_ = suggestedOutput;
     }
+}
+
+void MainWindow::refreshExecuteButtonState() {
+    if (!executeButton_) {
+        return;
+    }
+
+    if (!currentPlugin_) {
+        executeButton_->setEnabled(false);
+        executeButton_->setToolTip(QStringLiteral("请先选择一个算法"));
+        return;
+    }
+
+    const std::string validationMessage = gis::gui::validateExecutionParams(
+        currentPlugin_->paramSpecs(),
+        paramWidget_->collectParams());
+    if (!validationMessage.empty()) {
+        executeButton_->setEnabled(false);
+        executeButton_->setToolTip(QString::fromUtf8(validationMessage));
+        return;
+    }
+
+    executeButton_->setEnabled(true);
+    executeButton_->setToolTip(QStringLiteral("参数已就绪，可执行当前算法"));
 }
 
 QTreeWidgetItem* MainWindow::selectedDataItem() const {

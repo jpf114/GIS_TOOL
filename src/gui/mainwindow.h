@@ -7,6 +7,7 @@
 class QLabel;
 class ParamWidget;
 class PreviewPanel;
+class QPushButton;
 class QTabBar;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -46,6 +47,7 @@ private:
     void refreshDataTreeVisualState();
     void updateDataItemPresentation(QTreeWidgetItem* item, bool isActive);
     void refreshSuggestedOutputFromCurrentData();
+    void refreshExecuteButtonState();
 
     QTabBar* pluginTabs_ = nullptr;
     QTreeWidget* dataTree_ = nullptr;
@@ -54,6 +56,7 @@ private:
     QLabel* pluginTitleLabel_ = nullptr;
     QLabel* pluginDescriptionLabel_ = nullptr;
     QLabel* resultSummaryLabel_ = nullptr;
+    QPushButton* executeButton_ = nullptr;
     ParamWidget* paramWidget_ = nullptr;
     PreviewPanel* previewPanel_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;
