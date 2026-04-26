@@ -93,6 +93,11 @@ void MainWindow::setupUi() {
         "QPushButton:hover { background: #194c6f; }");
     connect(executeButton_, &QPushButton::clicked, this, &MainWindow::onExecute);
 
+    quickPreviewButton_ = new QPushButton(QStringLiteral("生成8位预览"));
+    quickPreviewButton_->setMinimumHeight(42);
+    quickPreviewButton_->setMinimumWidth(160);
+    connect(quickPreviewButton_, &QPushButton::clicked, this, &MainWindow::onBuildQuickPreview);
+
     auto* algorithmMetaLayout = new QHBoxLayout;
     algorithmMetaLayout->setSpacing(16);
     auto* algorithmTextLayout = new QVBoxLayout;
@@ -100,6 +105,7 @@ void MainWindow::setupUi() {
     algorithmTextLayout->addWidget(pluginTitleLabel_);
     algorithmTextLayout->addWidget(pluginDescriptionLabel_);
     algorithmMetaLayout->addLayout(algorithmTextLayout, 1);
+    algorithmMetaLayout->addWidget(quickPreviewButton_, 0, Qt::AlignTop);
     algorithmMetaLayout->addWidget(executeButton_, 0, Qt::AlignTop);
 
     algorithmLayout->addWidget(algorithmTitle);
@@ -217,6 +223,7 @@ void MainWindow::setupUi() {
         "}");
 
     statusBar()->showMessage(QStringLiteral("就绪"));
+    refreshQuickPreviewButtonState();
     refreshExecuteButtonState();
     refreshParamValidationState();
 }
@@ -265,6 +272,7 @@ void MainWindow::onPluginSelected(int index) {
         currentPlugin_ = nullptr;
         paramWidget_->clear();
         lastSuggestedOutputPath_.clear();
+        refreshQuickPreviewButtonState();
         refreshParamValidationState();
         refreshExecuteButtonState();
         return;
@@ -280,8 +288,41 @@ void MainWindow::onPluginSelected(int index) {
     pluginDescriptionLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
     statusBar()->showMessage(QStringLiteral("当前算法: %1").arg(QString::fromStdString(currentPlugin_->name())));
     syncCurrentDataToParams();
+    refreshQuickPreviewButtonState();
     refreshParamValidationState();
     refreshExecuteButtonState();
+}
+
+void MainWindow::onBuildQuickPreview() {
+    const QString inputPath = currentSelectedDataPath();
+    if (inputPath.isEmpty() ||
+        gis::gui::detectDataKind(inputPath.toStdString()) != gis::gui::DataKind::Raster) {
+        QMessageBox::warning(this, QStringLiteral("提示"),
+                             QStringLiteral("请先选择一个栅格输入数据"));
+        return;
+    }
+
+    const QString outputPath = QString::fromStdString(
+        gis::gui::buildQuickPreviewOutputPath(inputPath.toStdString()));
+    if (outputPath.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("提示"),
+                             QStringLiteral("无法生成预览输出路径"));
+        return;
+    }
+
+    if (!gis::gui::buildQuickPreviewRaster(
+            inputPath.toStdString(),
+            outputPath.toStdString(),
+            512)) {
+        QMessageBox::warning(this, QStringLiteral("提示"),
+                             QStringLiteral("快速预览影像生成失败"));
+        return;
+    }
+
+    addDataPath(outputPath, true, true);
+    resultSummaryLabel_->setText(
+        QStringLiteral("已生成8位快速预览影像:\n%1").arg(outputPath));
+    statusBar()->showMessage(QStringLiteral("已生成8位快速预览影像"));
 }
 
 void MainWindow::onExecute() {
@@ -418,6 +459,7 @@ void MainWindow::onDataSelectionChanged() {
     syncCurrentDataToParams();
     refreshDataTreeVisualState();
     statusBar()->showMessage(QStringLiteral("当前数据: %1").arg(path));
+    refreshQuickPreviewButtonState();
     refreshParamValidationState();
     refreshExecuteButtonState();
 }
@@ -647,6 +689,21 @@ void MainWindow::refreshExecuteButtonState() {
 
     executeButton_->setEnabled(true);
     executeButton_->setToolTip(QStringLiteral("参数已就绪，可执行当前算法"));
+}
+
+void MainWindow::refreshQuickPreviewButtonState() {
+    if (!quickPreviewButton_) {
+        return;
+    }
+
+    const QString path = currentSelectedDataPath();
+    const bool isRaster = !path.isEmpty() &&
+        gis::gui::detectDataKind(path.toStdString()) == gis::gui::DataKind::Raster;
+    quickPreviewButton_->setEnabled(isRaster);
+    quickPreviewButton_->setToolTip(
+        isRaster
+            ? QStringLiteral("基于当前栅格生成8位小尺寸预览影像")
+            : QStringLiteral("请选择一个栅格数据后再生成8位预览"));
 }
 
 void MainWindow::refreshParamValidationState() {

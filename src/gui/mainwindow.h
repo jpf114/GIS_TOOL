@@ -22,6 +22,7 @@ public:
 private slots:
     void onPluginSelected(int index);
     void onExecute();
+    void onBuildQuickPreview();
     void onAddRasterData();
     void onAddVectorData();
     void onRemoveSelectedData();
@@ -48,6 +49,7 @@ private:
     void updateDataItemPresentation(QTreeWidgetItem* item, bool isActive);
     void refreshSuggestedOutputFromCurrentData();
     void refreshExecuteButtonState();
+    void refreshQuickPreviewButtonState();
     void refreshParamValidationState();
 
     QTabBar* pluginTabs_ = nullptr;
@@ -58,6 +60,7 @@ private:
     QLabel* pluginDescriptionLabel_ = nullptr;
     QLabel* resultSummaryLabel_ = nullptr;
     QPushButton* executeButton_ = nullptr;
+    QPushButton* quickPreviewButton_ = nullptr;
     ParamWidget* paramWidget_ = nullptr;
     PreviewPanel* previewPanel_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;

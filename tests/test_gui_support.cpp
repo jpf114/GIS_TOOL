@@ -122,6 +122,12 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesPluginAndActionSuffix) {
         "D:/data/scene_result.tif");
 }
 
+TEST(GuiSupportTest, BuildQuickPreviewOutputPathAddsPreviewSuffix) {
+    EXPECT_EQ(
+        gis::gui::buildQuickPreviewOutputPath("D:/data/image.tif"),
+        "D:/data/image_preview8.tif");
+}
+
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {
     GDALAllRegister();
     gis::tests::ensureDirectory(guiSupportTestDir());
@@ -293,4 +299,43 @@ TEST(GuiSupportTest, CollectBindableParamOptionsKeepsGenericFileParams) {
     ASSERT_EQ(rasterOptions.size(), 2);
     EXPECT_EQ(rasterOptions[0].key, "template_file");
     EXPECT_EQ(rasterOptions[1].key, "pan_file");
+}
+
+TEST(GuiSupportTest, BuildQuickPreviewRasterCreatesByteRasterWithLimitedSize) {
+    GDALAllRegister();
+    gis::tests::ensureDirectory(guiSupportTestDir());
+
+    const fs::path inputPath = guiSupportTestDir() / "quick_preview_input.tif";
+    const fs::path outputPath = guiSupportTestDir() / "quick_preview_output.tif";
+
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    ASSERT_NE(driver, nullptr);
+
+    std::unique_ptr<GDALDataset, DatasetCloser> inputDs(
+        driver->Create(inputPath.string().c_str(), 200, 100, 1, GDT_Float32, nullptr));
+    ASSERT_NE(inputDs, nullptr);
+
+    std::vector<float> pixels(200 * 100);
+    for (int y = 0; y < 100; ++y) {
+        for (int x = 0; x < 200; ++x) {
+            pixels[y * 200 + x] = static_cast<float>(x + y);
+        }
+    }
+    ASSERT_EQ(inputDs->GetRasterBand(1)->RasterIO(
+        GF_Write, 0, 0, 200, 100,
+        pixels.data(), 200, 100, GDT_Float32, 0, 0), CE_None);
+    inputDs.reset();
+
+    EXPECT_TRUE(gis::gui::buildQuickPreviewRaster(
+        inputPath.string(),
+        outputPath.string(),
+        64));
+
+    std::unique_ptr<GDALDataset, DatasetCloser> outputDs(
+        static_cast<GDALDataset*>(GDALOpen(outputPath.string().c_str(), GA_ReadOnly)));
+    ASSERT_NE(outputDs, nullptr);
+    EXPECT_EQ(outputDs->GetRasterXSize(), 64);
+    EXPECT_EQ(outputDs->GetRasterYSize(), 32);
+    ASSERT_NE(outputDs->GetRasterBand(1), nullptr);
+    EXPECT_EQ(outputDs->GetRasterBand(1)->GetRasterDataType(), GDT_Byte);
 }

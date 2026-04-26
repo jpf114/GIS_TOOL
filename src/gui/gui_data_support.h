@@ -36,6 +36,10 @@ std::string buildPreviewStatusText(DataKind kind, double scale, bool fitMode, bo
 std::string buildSuggestedOutputPath(const std::string& inputPath,
                                      const std::string& pluginName,
                                      const std::string& action);
+std::string buildQuickPreviewOutputPath(const std::string& inputPath);
+bool buildQuickPreviewRaster(const std::string& inputPath,
+                             const std::string& outputPath,
+                             int maxLongEdge = 512);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
 std::string buildResultSummaryText(const gis::framework::Result& result);
 std::string validateExecutionParams(

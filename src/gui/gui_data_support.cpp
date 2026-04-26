@@ -1,6 +1,10 @@
 #include "gui_data_support.h"
 
+#include <gis/core/gdal_wrapper.h>
+#include <gis/core/opencv_wrapper.h>
+
 #include <gdal_priv.h>
+#include <opencv2/imgproc.hpp>
 #include <ogr_spatialref.h>
 #include <ogrsf_frmts.h>
 
@@ -202,6 +206,90 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
     const fs::path suggested = input.parent_path() /
         fs::path(input.stem().string() + "_" + suffix + input.extension().string());
     return suggested.generic_string();
+}
+
+std::string buildQuickPreviewOutputPath(const std::string& inputPath) {
+    namespace fs = std::filesystem;
+
+    fs::path input = fs::path(inputPath);
+    if (input.empty()) {
+        return {};
+    }
+
+    const fs::path output = input.parent_path() /
+        fs::path(input.stem().string() + "_preview8" + input.extension().string());
+    return output.generic_string();
+}
+
+bool buildQuickPreviewRaster(const std::string& inputPath,
+                             const std::string& outputPath,
+                             int maxLongEdge) {
+    if (detectDataKind(inputPath) != DataKind::Raster || outputPath.empty() || maxLongEdge <= 0) {
+        return false;
+    }
+
+    auto srcDs = gis::core::openRaster(inputPath, true);
+    if (!srcDs) {
+        return false;
+    }
+
+    cv::Mat band = gis::core::gdalBandToMat(srcDs.get(), 1);
+    if (band.empty()) {
+        return false;
+    }
+
+    const int srcWidth = band.cols;
+    const int srcHeight = band.rows;
+    const int longEdge = std::max(srcWidth, srcHeight);
+    const double scale = longEdge > maxLongEdge
+        ? static_cast<double>(maxLongEdge) / static_cast<double>(longEdge)
+        : 1.0;
+
+    cv::Mat resized = band;
+    if (scale < 1.0) {
+        const cv::Size targetSize(
+            std::max(1, static_cast<int>(std::round(srcWidth * scale))),
+            std::max(1, static_cast<int>(std::round(srcHeight * scale))));
+        cv::resize(band, resized, targetSize, 0.0, 0.0, cv::INTER_AREA);
+    }
+
+    cv::Mat preview = gis::core::toUint8(resized);
+    auto dstDs = gis::core::createRaster(outputPath, preview.cols, preview.rows, 1, GDT_Byte);
+    if (!dstDs) {
+        return false;
+    }
+
+    double gt[6] = {};
+    if (srcDs->GetGeoTransform(gt) == CE_None) {
+        const double scaleX = static_cast<double>(srcWidth) / static_cast<double>(preview.cols);
+        const double scaleY = static_cast<double>(srcHeight) / static_cast<double>(preview.rows);
+        gt[1] *= scaleX;
+        gt[2] *= scaleY;
+        gt[4] *= scaleX;
+        gt[5] *= scaleY;
+        dstDs->SetGeoTransform(gt);
+    }
+
+    const std::string projection = gis::core::getSRSWKT(srcDs.get());
+    if (!projection.empty()) {
+        dstDs->SetProjection(projection.c_str());
+    }
+
+    auto* srcBand = srcDs->GetRasterBand(1);
+    auto* dstBand = dstDs->GetRasterBand(1);
+    if (!srcBand || !dstBand) {
+        return false;
+    }
+
+    int hasNoData = 0;
+    const double noDataValue = srcBand->GetNoDataValue(&hasNoData);
+    if (hasNoData) {
+        dstBand->SetNoDataValue(noDataValue);
+    }
+
+    return dstBand->RasterIO(
+        GF_Write, 0, 0, preview.cols, preview.rows,
+        preview.ptr<uint8_t>(), preview.cols, preview.rows, GDT_Byte, 0, 0) == CE_None;
 }
 
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
