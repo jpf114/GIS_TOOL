@@ -23,6 +23,7 @@ private slots:
     void onPluginSelected(int index);
     void onExecute();
     void onBuildQuickPreview();
+    void onRunQuickPreview();
     void onAddRasterData();
     void onAddVectorData();
     void onRemoveSelectedData();
@@ -48,8 +49,12 @@ private:
     void refreshDataTreeVisualState();
     void updateDataItemPresentation(QTreeWidgetItem* item, bool isActive);
     void refreshSuggestedOutputFromCurrentData();
+    void runPluginWithParams(const std::map<std::string, gis::framework::ParamValue>& params,
+                             const QString& statusPrefix,
+                             bool syncOutputBackToForm);
     void refreshExecuteButtonState();
     void refreshQuickPreviewButtonState();
+    void refreshQuickRunButtonState();
     void refreshParamValidationState();
 
     QTabBar* pluginTabs_ = nullptr;
@@ -61,6 +66,7 @@ private:
     QLabel* resultSummaryLabel_ = nullptr;
     QPushButton* executeButton_ = nullptr;
     QPushButton* quickPreviewButton_ = nullptr;
+    QPushButton* quickRunButton_ = nullptr;
     ParamWidget* paramWidget_ = nullptr;
     PreviewPanel* previewPanel_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;

@@ -37,9 +37,19 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
                                      const std::string& pluginName,
                                      const std::string& action);
 std::string buildQuickPreviewOutputPath(const std::string& inputPath);
+std::string buildQuickPreviewResultPath(const std::string& inputPath,
+                                        const std::string& pluginName,
+                                        const std::string& action);
 bool buildQuickPreviewRaster(const std::string& inputPath,
                              const std::string& outputPath,
                              int maxLongEdge = 512);
+bool buildQuickPreviewExecutionParams(
+    const std::vector<gis::framework::ParamSpec>& specs,
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const std::string& pluginName,
+    const std::string& action,
+    std::map<std::string, gis::framework::ParamValue>& outParams,
+    int maxLongEdge = 512);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
 std::string buildResultSummaryText(const gis::framework::Result& result);
 std::string validateExecutionParams(

@@ -128,6 +128,12 @@ TEST(GuiSupportTest, BuildQuickPreviewOutputPathAddsPreviewSuffix) {
         "D:/data/image_preview8.tif");
 }
 
+TEST(GuiSupportTest, BuildQuickPreviewResultPathAddsPreviewRunSuffix) {
+    EXPECT_EQ(
+        gis::gui::buildQuickPreviewResultPath("D:/data/image.tif", "processing", "threshold"),
+        "D:/data/image_processing_threshold_preview.tif");
+}
+
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {
     GDALAllRegister();
     gis::tests::ensureDirectory(guiSupportTestDir());
@@ -338,4 +344,49 @@ TEST(GuiSupportTest, BuildQuickPreviewRasterCreatesByteRasterWithLimitedSize) {
     EXPECT_EQ(outputDs->GetRasterYSize(), 32);
     ASSERT_NE(outputDs->GetRasterBand(1), nullptr);
     EXPECT_EQ(outputDs->GetRasterBand(1)->GetRasterDataType(), GDT_Byte);
+}
+
+TEST(GuiSupportTest, BuildQuickPreviewExecutionParamsRewritesRasterInputsAndOutput) {
+    GDALAllRegister();
+    gis::tests::ensureDirectory(guiSupportTestDir());
+
+    const fs::path inputPath = guiSupportTestDir() / "quick_run_input.tif";
+    const fs::path templatePath = guiSupportTestDir() / "quick_run_template.tif";
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    ASSERT_NE(driver, nullptr);
+
+    for (const auto& path : {inputPath, templatePath}) {
+        std::unique_ptr<GDALDataset, DatasetCloser> ds(
+            driver->Create(path.string().c_str(), 120, 60, 1, GDT_Float32, nullptr));
+        ASSERT_NE(ds, nullptr);
+        std::vector<float> pixels(120 * 60, 42.0f);
+        ASSERT_EQ(ds->GetRasterBand(1)->RasterIO(
+            GF_Write, 0, 0, 120, 60,
+            pixels.data(), 120, 60, GDT_Float32, 0, 0), CE_None);
+    }
+
+    std::vector<gis::framework::ParamSpec> specs = {
+        {"input", "输入文件", "", gis::framework::ParamType::FilePath, true},
+        {"template_file", "模板文件", "", gis::framework::ParamType::FilePath, false},
+        {"output", "输出文件", "", gis::framework::ParamType::FilePath, false}
+    };
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = inputPath.string();
+    params["template_file"] = templatePath.string();
+    params["output"] = std::string();
+
+    std::map<std::string, gis::framework::ParamValue> outParams;
+    ASSERT_TRUE(gis::gui::buildQuickPreviewExecutionParams(
+        specs, params, "processing", "template_match", outParams, 64));
+
+    const auto previewInput = std::get<std::string>(outParams.at("input"));
+    const auto previewTemplate = std::get<std::string>(outParams.at("template_file"));
+    const auto previewOutput = std::get<std::string>(outParams.at("output"));
+
+    EXPECT_EQ(previewInput, (guiSupportTestDir() / "quick_run_input_preview8.tif").generic_string());
+    EXPECT_EQ(previewTemplate, (guiSupportTestDir() / "quick_run_template_preview8.tif").generic_string());
+    EXPECT_EQ(previewOutput, (guiSupportTestDir() / "quick_run_input_processing_template_match_preview.tif").generic_string());
+    EXPECT_TRUE(fs::exists(previewInput));
+    EXPECT_TRUE(fs::exists(previewTemplate));
 }

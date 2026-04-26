@@ -221,6 +221,32 @@ std::string buildQuickPreviewOutputPath(const std::string& inputPath) {
     return output.generic_string();
 }
 
+std::string buildQuickPreviewResultPath(const std::string& inputPath,
+                                        const std::string& pluginName,
+                                        const std::string& action) {
+    namespace fs = std::filesystem;
+
+    fs::path input = fs::path(inputPath);
+    if (input.empty()) {
+        return {};
+    }
+
+    std::string suffix = sanitizeSuffixPart(pluginName);
+    const std::string actionSuffix = sanitizeSuffixPart(action);
+    if (!actionSuffix.empty()) {
+        suffix += suffix.empty() ? actionSuffix : "_" + actionSuffix;
+    }
+    if (suffix.empty()) {
+        suffix = "preview";
+    } else {
+        suffix += "_preview";
+    }
+
+    const fs::path output = input.parent_path() /
+        fs::path(input.stem().string() + "_" + suffix + input.extension().string());
+    return output.generic_string();
+}
+
 bool buildQuickPreviewRaster(const std::string& inputPath,
                              const std::string& outputPath,
                              int maxLongEdge) {
@@ -290,6 +316,61 @@ bool buildQuickPreviewRaster(const std::string& inputPath,
     return dstBand->RasterIO(
         GF_Write, 0, 0, preview.cols, preview.rows,
         preview.ptr<uint8_t>(), preview.cols, preview.rows, GDT_Byte, 0, 0) == CE_None;
+}
+
+bool buildQuickPreviewExecutionParams(
+    const std::vector<gis::framework::ParamSpec>& specs,
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const std::string& pluginName,
+    const std::string& action,
+    std::map<std::string, gis::framework::ParamValue>& outParams,
+    int maxLongEdge) {
+    outParams = params;
+
+    std::string primaryInput;
+    if (auto it = params.find("input"); it != params.end()) {
+        if (const auto* text = std::get_if<std::string>(&it->second)) {
+            primaryInput = *text;
+        }
+    }
+    for (const auto& spec : specs) {
+        if (spec.type != gis::framework::ParamType::FilePath) {
+            continue;
+        }
+
+        auto it = outParams.find(spec.key);
+        if (it == outParams.end()) {
+            continue;
+        }
+
+        auto* text = std::get_if<std::string>(&it->second);
+        if (!text || text->empty()) {
+            continue;
+        }
+
+        if (spec.key == "output") {
+            continue;
+        }
+
+        if (detectDataKind(*text) != DataKind::Raster) {
+            continue;
+        }
+
+        const std::string originalPath = *text;
+
+        const std::string previewPath = buildQuickPreviewOutputPath(originalPath);
+        if (!buildQuickPreviewRaster(originalPath, previewPath, maxLongEdge)) {
+            return false;
+        }
+        it->second = previewPath;
+    }
+
+    auto outputIt = outParams.find("output");
+    if (outputIt != outParams.end() && !primaryInput.empty()) {
+        outputIt->second = buildQuickPreviewResultPath(primaryInput, pluginName, action);
+    }
+
+    return true;
 }
 
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
