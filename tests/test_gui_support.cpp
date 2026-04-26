@@ -390,3 +390,19 @@ TEST(GuiSupportTest, BuildQuickPreviewExecutionParamsRewritesRasterInputsAndOutp
     EXPECT_TRUE(fs::exists(previewInput));
     EXPECT_TRUE(fs::exists(previewTemplate));
 }
+
+TEST(GuiSupportTest, CanBuildQuickPreviewExecutionRequiresAtLeastOneRasterInput) {
+    std::vector<gis::framework::ParamSpec> specs = {
+        {"input", "输入文件", "", gis::framework::ParamType::FilePath, true},
+        {"reference", "参考影像", "", gis::framework::ParamType::FilePath, false},
+        {"output", "输出文件", "", gis::framework::ParamType::FilePath, false}
+    };
+
+    std::map<std::string, gis::framework::ParamValue> rasterParams;
+    rasterParams["input"] = std::string("D:/data/image.tif");
+    EXPECT_TRUE(gis::gui::canBuildQuickPreviewExecution(specs, rasterParams));
+
+    std::map<std::string, gis::framework::ParamValue> nonRasterParams;
+    nonRasterParams["input"] = std::string("D:/data/roads.shp");
+    EXPECT_FALSE(gis::gui::canBuildQuickPreviewExecution(specs, nonRasterParams));
+}

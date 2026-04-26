@@ -7,6 +7,7 @@
 class QLabel;
 class ParamWidget;
 class PreviewPanel;
+class QCheckBox;
 class QPushButton;
 class QTabBar;
 class QTreeWidget;
@@ -67,6 +68,7 @@ private:
     QPushButton* executeButton_ = nullptr;
     QPushButton* quickPreviewButton_ = nullptr;
     QPushButton* quickRunButton_ = nullptr;
+    QCheckBox* quickRunCheckBox_ = nullptr;
     ParamWidget* paramWidget_ = nullptr;
     PreviewPanel* previewPanel_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;

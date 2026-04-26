@@ -50,6 +50,9 @@ bool buildQuickPreviewExecutionParams(
     const std::string& action,
     std::map<std::string, gis::framework::ParamValue>& outParams,
     int maxLongEdge = 512);
+bool canBuildQuickPreviewExecution(
+    const std::vector<gis::framework::ParamSpec>& specs,
+    const std::map<std::string, gis::framework::ParamValue>& params);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
 std::string buildResultSummaryText(const gis::framework::Result& result);
 std::string validateExecutionParams(

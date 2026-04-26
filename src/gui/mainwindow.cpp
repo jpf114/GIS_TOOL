@@ -9,6 +9,7 @@
 
 #include <QApplication>
 #include <QBrush>
+#include <QCheckBox>
 #include <QColor>
 #include <QFileDialog>
 #include <QFont>
@@ -103,12 +104,16 @@ void MainWindow::setupUi() {
     quickRunButton_->setMinimumWidth(180);
     connect(quickRunButton_, &QPushButton::clicked, this, &MainWindow::onRunQuickPreview);
 
+    quickRunCheckBox_ = new QCheckBox(QStringLiteral("执行时使用快速试算"));
+    quickRunCheckBox_->setToolTip(QStringLiteral("勾选后，“执行当前算法”会自动使用8位小尺寸预览影像先跑一版"));
+
     auto* algorithmMetaLayout = new QHBoxLayout;
     algorithmMetaLayout->setSpacing(16);
     auto* algorithmTextLayout = new QVBoxLayout;
     algorithmTextLayout->setSpacing(4);
     algorithmTextLayout->addWidget(pluginTitleLabel_);
     algorithmTextLayout->addWidget(pluginDescriptionLabel_);
+    algorithmTextLayout->addWidget(quickRunCheckBox_);
     algorithmMetaLayout->addLayout(algorithmTextLayout, 1);
     algorithmMetaLayout->addWidget(quickPreviewButton_, 0, Qt::AlignTop);
     algorithmMetaLayout->addWidget(quickRunButton_, 0, Qt::AlignTop);
@@ -396,6 +401,24 @@ void MainWindow::onExecute() {
         QMessageBox::warning(this, QStringLiteral("参数不完整"),
                              QString::fromUtf8(validationMessage));
         statusBar()->showMessage(QStringLiteral("执行已拦截: 请先补全必要参数"));
+        return;
+    }
+
+    if (quickRunCheckBox_ && quickRunCheckBox_->isChecked()) {
+        std::map<std::string, gis::framework::ParamValue> quickParams;
+        if (!gis::gui::buildQuickPreviewExecutionParams(
+                specs,
+                params,
+                currentPlugin_->name(),
+                currentActionValue().toStdString(),
+                quickParams,
+                512)) {
+            QMessageBox::warning(this, QStringLiteral("提示"),
+                                 QStringLiteral("快速试算参数准备失败，请确认当前输入包含可生成预览的栅格数据"));
+            return;
+        }
+
+        runPluginWithParams(quickParams, QStringLiteral("快速试算"), false);
         return;
     }
 
@@ -778,29 +801,19 @@ void MainWindow::refreshQuickRunButtonState() {
         return;
     }
 
-    bool ok = false;
-    for (const auto& spec : specs) {
-        if (spec.type != gis::framework::ParamType::FilePath || spec.key == "output") {
-            continue;
-        }
-        auto it = params.find(spec.key);
-        if (it == params.end()) {
-            continue;
-        }
-        const auto* text = std::get_if<std::string>(&it->second);
-        if (!text || text->empty()) {
-            continue;
-        }
-        if (gis::gui::detectDataKind(*text) == gis::gui::DataKind::Raster) {
-            ok = true;
-            break;
-        }
-    }
+    const bool ok = gis::gui::canBuildQuickPreviewExecution(specs, params);
     quickRunButton_->setEnabled(ok);
     quickRunButton_->setToolTip(
         ok
             ? QStringLiteral("使用8位小尺寸预览影像快速试算当前算法")
             : QStringLiteral("当前参数里需要至少有一个可生成预览的栅格输入"));
+
+    if (quickRunCheckBox_) {
+        quickRunCheckBox_->setEnabled(ok);
+        if (!ok) {
+            quickRunCheckBox_->setChecked(false);
+        }
+    }
 }
 
 void MainWindow::refreshParamValidationState() {

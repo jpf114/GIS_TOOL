@@ -373,6 +373,32 @@ bool buildQuickPreviewExecutionParams(
     return true;
 }
 
+bool canBuildQuickPreviewExecution(
+    const std::vector<gis::framework::ParamSpec>& specs,
+    const std::map<std::string, gis::framework::ParamValue>& params) {
+    for (const auto& spec : specs) {
+        if (spec.type != gis::framework::ParamType::FilePath || spec.key == "output") {
+            continue;
+        }
+
+        auto it = params.find(spec.key);
+        if (it == params.end()) {
+            continue;
+        }
+
+        const auto* text = std::get_if<std::string>(&it->second);
+        if (!text || text->empty()) {
+            continue;
+        }
+
+        if (detectDataKind(*text) == DataKind::Raster) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
     DataAutoFillInfo info;
     const DataKind kind = detectDataKind(path);
