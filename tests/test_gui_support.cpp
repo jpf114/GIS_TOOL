@@ -245,6 +245,24 @@ TEST(GuiSupportTest, ValidateExecutionParamsAcceptsValidValues) {
     EXPECT_TRUE(gis::gui::validateExecutionParams(specs, params).empty());
 }
 
+TEST(GuiSupportTest, FindFirstInvalidParamKeyReturnsMissingRequiredField) {
+    std::vector<gis::framework::ParamSpec> specs;
+    specs.push_back(gis::framework::ParamSpec{
+        "input", "输入文件", "", gis::framework::ParamType::FilePath, true
+    });
+    specs.push_back(gis::framework::ParamSpec{
+        "output", "输出文件", "", gis::framework::ParamType::FilePath, true
+    });
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string("D:/data/image.tif");
+    params["output"] = std::string();
+
+    EXPECT_EQ(
+        gis::gui::findFirstInvalidParamKey(specs, params),
+        "output");
+}
+
 TEST(GuiSupportTest, CollectBindableParamOptionsFiltersByTypeRoleAndKind) {
     std::vector<gis::framework::ParamSpec> specs = {
         {"input", "输入文件", "", gis::framework::ParamType::FilePath, true},

@@ -41,6 +41,9 @@ std::string buildResultSummaryText(const gis::framework::Result& result);
 std::string validateExecutionParams(
     const std::vector<gis::framework::ParamSpec>& specs,
     const std::map<std::string, gis::framework::ParamValue>& params);
+std::string findFirstInvalidParamKey(
+    const std::vector<gis::framework::ParamSpec>& specs,
+    const std::map<std::string, gis::framework::ParamValue>& params);
 std::vector<BindableParamOption> collectBindableParamOptions(
     const std::vector<gis::framework::ParamSpec>& specs,
     DataKind dataKind);

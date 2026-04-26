@@ -9,6 +9,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QLabel;
 class QLineEdit;
 class QSpinBox;
 
@@ -24,6 +25,7 @@ public:
     void setStringValue(const std::string& key, const std::string& value);
     void setExtentValue(const std::string& key, const std::array<double, 4>& value);
     std::string stringValue(const std::string& key) const;
+    void setHighlightedParam(const std::string& key);
 
 signals:
     void paramsChanged();
@@ -31,6 +33,7 @@ signals:
 private:
     struct WidgetRow {
         gis::framework::ParamSpec spec;
+        QLabel* label = nullptr;
         QWidget* editor = nullptr;
         QWidget* browseBtn = nullptr;
     };
@@ -38,6 +41,7 @@ private:
     void buildForm();
     QWidget* createEditor(const gis::framework::ParamSpec& spec);
     gis::framework::ParamValue collectValue(const WidgetRow& row) const;
+    void applyHighlightStyle(WidgetRow& row, bool highlighted);
 
     std::vector<WidgetRow> rows_;
     std::vector<gis::framework::ParamSpec> specs_;

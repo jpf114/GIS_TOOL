@@ -218,6 +218,7 @@ void MainWindow::setupUi() {
 
     statusBar()->showMessage(QStringLiteral("就绪"));
     refreshExecuteButtonState();
+    refreshParamValidationState();
 }
 
 void MainWindow::loadPlugins() {
@@ -264,6 +265,7 @@ void MainWindow::onPluginSelected(int index) {
         currentPlugin_ = nullptr;
         paramWidget_->clear();
         lastSuggestedOutputPath_.clear();
+        refreshParamValidationState();
         refreshExecuteButtonState();
         return;
     }
@@ -278,6 +280,7 @@ void MainWindow::onPluginSelected(int index) {
     pluginDescriptionLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
     statusBar()->showMessage(QStringLiteral("当前算法: %1").arg(QString::fromStdString(currentPlugin_->name())));
     syncCurrentDataToParams();
+    refreshParamValidationState();
     refreshExecuteButtonState();
 }
 
@@ -305,6 +308,7 @@ void MainWindow::onExecute() {
 
     const std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
     if (!validationMessage.empty()) {
+        refreshParamValidationState();
         QMessageBox::warning(this, QStringLiteral("参数不完整"),
                              QString::fromUtf8(validationMessage));
         statusBar()->showMessage(QStringLiteral("执行已拦截: 请先补全必要参数"));
@@ -411,6 +415,7 @@ void MainWindow::onDataSelectionChanged() {
     syncCurrentDataToParams();
     refreshDataTreeVisualState();
     statusBar()->showMessage(QStringLiteral("当前数据: %1").arg(path));
+    refreshParamValidationState();
     refreshExecuteButtonState();
 }
 
@@ -420,6 +425,7 @@ void MainWindow::onParamValuesChanged() {
     }
 
     refreshSuggestedOutputFromCurrentData();
+    refreshParamValidationState();
     refreshExecuteButtonState();
 }
 
@@ -568,6 +574,7 @@ void MainWindow::bindDataPathToParam(const QString& path, const std::string& key
     isSyncingParams_ = false;
     statusBar()->showMessage(
         QStringLiteral("已将当前数据填入参数: %1").arg(QString::fromStdString(key)));
+    refreshParamValidationState();
     refreshExecuteButtonState();
 }
 
@@ -637,6 +644,20 @@ void MainWindow::refreshExecuteButtonState() {
 
     executeButton_->setEnabled(true);
     executeButton_->setToolTip(QStringLiteral("参数已就绪，可执行当前算法"));
+}
+
+void MainWindow::refreshParamValidationState() {
+    if (!paramWidget_ || !currentPlugin_) {
+        if (paramWidget_) {
+            paramWidget_->setHighlightedParam({});
+        }
+        return;
+    }
+
+    const std::string invalidKey = gis::gui::findFirstInvalidParamKey(
+        currentPlugin_->paramSpecs(),
+        paramWidget_->collectParams());
+    paramWidget_->setHighlightedParam(invalidKey);
 }
 
 QTreeWidgetItem* MainWindow::selectedDataItem() const {

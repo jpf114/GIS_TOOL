@@ -132,6 +132,12 @@ std::string ParamWidget::stringValue(const std::string& key) const {
     return {};
 }
 
+void ParamWidget::setHighlightedParam(const std::string& key) {
+    for (auto& row : rows_) {
+        applyHighlightStyle(row, !key.empty() && row.spec.key == key);
+    }
+}
+
 void ParamWidget::buildForm() {
     clear();
 
@@ -146,10 +152,12 @@ void ParamWidget::buildForm() {
         QWidget* editor = createEditor(spec);
         row.editor = editor;
 
-        QString label = QString::fromUtf8(spec.displayName);
+        QString labelText = QString::fromUtf8(spec.displayName);
         if (spec.required) {
-            label += QStringLiteral(" *");
+            labelText += QStringLiteral(" *");
         }
+        auto* labelWidget = new QLabel(labelText);
+        row.label = labelWidget;
 
         if (spec.type == gis::framework::ParamType::FilePath ||
             spec.type == gis::framework::ParamType::DirPath ||
@@ -187,7 +195,7 @@ void ParamWidget::buildForm() {
                 });
             }
 
-            formLayout->addRow(label, container);
+            formLayout->addRow(labelWidget, container);
         } else if (spec.type == gis::framework::ParamType::Extent) {
             delete editor;
             editor = nullptr;
@@ -228,9 +236,9 @@ void ParamWidget::buildForm() {
             }
 
             row.editor = extentWidget;
-            formLayout->addRow(label, extentWidget);
+            formLayout->addRow(labelWidget, extentWidget);
         } else {
-            formLayout->addRow(label, editor);
+            formLayout->addRow(labelWidget, editor);
         }
 
         if (!spec.description.empty()) {
@@ -244,6 +252,15 @@ void ParamWidget::buildForm() {
     }
 
     setLayout(formLayout);
+}
+
+void ParamWidget::applyHighlightStyle(WidgetRow& row, bool highlighted) {
+    if (row.label) {
+        row.label->setStyleSheet(highlighted ? "color: #b42318; font-weight: 600;" : "");
+    }
+    if (row.editor) {
+        row.editor->setStyleSheet(highlighted ? "border: 1px solid #d92d20; border-radius: 4px;" : "");
+    }
 }
 
 QWidget* ParamWidget::createEditor(const gis::framework::ParamSpec& spec) {

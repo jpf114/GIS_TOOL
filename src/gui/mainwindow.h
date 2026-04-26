@@ -48,6 +48,7 @@ private:
     void updateDataItemPresentation(QTreeWidgetItem* item, bool isActive);
     void refreshSuggestedOutputFromCurrentData();
     void refreshExecuteButtonState();
+    void refreshParamValidationState();
 
     QTabBar* pluginTabs_ = nullptr;
     QTreeWidget* dataTree_ = nullptr;
