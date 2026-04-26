@@ -1,5 +1,9 @@
 #include "gui_data_support.h"
 
+#include <gdal_priv.h>
+#include <ogr_spatialref.h>
+#include <ogrsf_frmts.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -9,6 +13,14 @@
 #include <unordered_set>
 
 namespace {
+
+struct DatasetCloser {
+    void operator()(GDALDataset* ds) const {
+        if (ds) {
+            GDALClose(ds);
+        }
+    }
+};
 
 constexpr double kMinScale = 0.1;
 constexpr double kMaxScale = 8.0;
@@ -33,6 +45,32 @@ std::string sanitizeSuffixPart(const std::string& value) {
         }
     }
     return sanitized;
+}
+
+std::string spatialReferenceText(const OGRSpatialReference* srs) {
+    if (!srs) {
+        return {};
+    }
+
+    const char* authName = srs->GetAuthorityName(nullptr);
+    const char* authCode = srs->GetAuthorityCode(nullptr);
+    if (authName && authCode) {
+        return std::string(authName) + ":" + authCode;
+    }
+
+    char* wkt = nullptr;
+    OGRSpatialReference cloned(*srs);
+    if (cloned.exportToWkt(&wkt) != OGRERR_NONE || !wkt) {
+        return {};
+    }
+
+    std::string text = wkt;
+    CPLFree(wkt);
+    return text;
+}
+
+std::array<double, 4> envelopeToExtent(const OGREnvelope& envelope) {
+    return {envelope.MinX, envelope.MinY, envelope.MaxX, envelope.MaxY};
 }
 
 double clampScale(double value) {
@@ -138,6 +176,62 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
     const fs::path suggested = input.parent_path() /
         fs::path(input.stem().string() + "_" + suffix + input.extension().string());
     return suggested.generic_string();
+}
+
+DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
+    DataAutoFillInfo info;
+    const DataKind kind = detectDataKind(path);
+
+    if (kind == DataKind::Raster) {
+        std::unique_ptr<GDALDataset, DatasetCloser> ds(
+            static_cast<GDALDataset*>(GDALOpen(path.c_str(), GA_ReadOnly)));
+        if (!ds) {
+            return info;
+        }
+
+        info.crs = spatialReferenceText(ds->GetSpatialRef());
+
+        double gt[6] = {};
+        if (ds->GetGeoTransform(gt) == CE_None) {
+            const double minX = gt[0];
+            const double maxY = gt[3];
+            const double maxX = gt[0] + gt[1] * ds->GetRasterXSize() + gt[2] * ds->GetRasterYSize();
+            const double minY = gt[3] + gt[4] * ds->GetRasterXSize() + gt[5] * ds->GetRasterYSize();
+            info.extent = {
+                std::min(minX, maxX),
+                std::min(minY, maxY),
+                std::max(minX, maxX),
+                std::max(minY, maxY)
+            };
+            info.hasExtent = true;
+        }
+        return info;
+    }
+
+    if (kind == DataKind::Vector) {
+        std::unique_ptr<GDALDataset, DatasetCloser> ds(
+            static_cast<GDALDataset*>(GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                                                 nullptr, nullptr, nullptr)));
+        if (!ds) {
+            return info;
+        }
+
+        auto* layer = ds->GetLayer(0);
+        if (!layer) {
+            return info;
+        }
+
+        info.layerName = layer->GetName();
+        info.crs = spatialReferenceText(layer->GetSpatialRef());
+
+        OGREnvelope envelope{};
+        if (layer->GetExtent(&envelope, TRUE) == OGRERR_NONE) {
+            info.extent = envelopeToExtent(envelope);
+            info.hasExtent = true;
+        }
+    }
+
+    return info;
 }
 
 double zoomInScale(double currentScale) {

@@ -85,6 +85,23 @@ void ParamWidget::setStringValue(const std::string& key, const std::string& valu
     }
 }
 
+void ParamWidget::setExtentValue(const std::string& key, const std::array<double, 4>& value) {
+    for (auto& row : rows_) {
+        if (row.spec.key != key || row.spec.type != gis::framework::ParamType::Extent) {
+            continue;
+        }
+
+        const auto spins = row.editor->findChildren<QDoubleSpinBox*>();
+        if (spins.size() >= 4) {
+            spins[0]->setValue(value[0]);
+            spins[1]->setValue(value[1]);
+            spins[2]->setValue(value[2]);
+            spins[3]->setValue(value[3]);
+        }
+        return;
+    }
+}
+
 std::string ParamWidget::stringValue(const std::string& key) const {
     for (const auto& row : rows_) {
         if (row.spec.key != key) {

@@ -479,6 +479,7 @@ void MainWindow::syncCurrentDataToParams() {
     if (path.isEmpty()) {
         return;
     }
+    const auto autoFillInfo = gis::gui::inspectDataForAutoFill(path.toStdString());
 
     if (paramWidget_->hasParam("input")) {
         paramWidget_->setStringValue("input", path.toUtf8().constData());
@@ -491,6 +492,23 @@ void MainWindow::syncCurrentDataToParams() {
             (currentOutput.isEmpty() || currentOutput == lastSuggestedOutputPath_)) {
             paramWidget_->setStringValue("output", suggestedOutput.toUtf8().constData());
             lastSuggestedOutputPath_ = suggestedOutput;
+        }
+    }
+
+    if (paramWidget_->hasParam("layer") && !autoFillInfo.layerName.empty()) {
+        paramWidget_->setStringValue("layer", autoFillInfo.layerName);
+    }
+
+    if (paramWidget_->hasParam("extent") && autoFillInfo.hasExtent) {
+        paramWidget_->setExtentValue("extent", autoFillInfo.extent);
+    }
+
+    if (!autoFillInfo.crs.empty()) {
+        if (paramWidget_->hasParam("src_srs")) {
+            paramWidget_->setStringValue("src_srs", autoFillInfo.crs);
+        }
+        if (paramWidget_->hasParam("srs")) {
+            paramWidget_->setStringValue("srs", autoFillInfo.crs);
         }
     }
 }

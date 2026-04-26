@@ -1,6 +1,43 @@
 #include <gtest/gtest.h>
 
+#include <gdal_priv.h>
+#include <ogr_spatialref.h>
+#include <ogrsf_frmts.h>
+
+#include <array>
+#include <filesystem>
+#include <memory>
+
 #include "../src/gui/gui_data_support.h"
+#include "test_support.h"
+
+namespace fs = std::filesystem;
+
+namespace {
+
+struct DatasetCloser {
+    void operator()(GDALDataset* ds) const {
+        if (ds) {
+            GDALClose(ds);
+        }
+    }
+};
+
+fs::path guiSupportTestDir() {
+    return gis::tests::defaultTestOutputDir("test_gui_support_output");
+}
+
+std::string exportWktFromEpsg(int epsg) {
+    OGRSpatialReference srs;
+    srs.importFromEPSG(epsg);
+    char* wkt = nullptr;
+    srs.exportToWkt(&wkt);
+    std::string result = wkt ? wkt : "";
+    CPLFree(wkt);
+    return result;
+}
+
+} // namespace
 
 TEST(GuiSupportTest, DetectRasterDataKind) {
     EXPECT_EQ(gis::gui::detectDataKind("demo.TIF"), gis::gui::DataKind::Raster);
@@ -82,4 +119,62 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesPluginAndActionSuffix) {
         gis::gui::buildSuggestedOutputPath(
             "D:/data/scene.tif", "", ""),
         "D:/data/scene_result.tif");
+}
+
+TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {
+    GDALAllRegister();
+    gis::tests::ensureDirectory(guiSupportTestDir());
+
+    const fs::path rasterPath = guiSupportTestDir() / "autofill_raster.tif";
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    ASSERT_NE(driver, nullptr);
+
+    std::unique_ptr<GDALDataset, DatasetCloser> ds(
+        driver->Create(rasterPath.string().c_str(), 20, 10, 1, GDT_Byte, nullptr));
+    ASSERT_NE(ds, nullptr);
+
+    const double geotransform[6] = {100.0, 2.0, 0.0, 50.0, 0.0, -3.0};
+    ASSERT_EQ(ds->SetGeoTransform(const_cast<double*>(geotransform)), CE_None);
+    const std::string wkt = exportWktFromEpsg(3857);
+    ASSERT_EQ(ds->SetProjection(wkt.c_str()), CE_None);
+    ds.reset();
+
+    const auto info = gis::gui::inspectDataForAutoFill(rasterPath.string());
+    EXPECT_EQ(info.crs, std::string("EPSG:3857"));
+    EXPECT_TRUE(info.hasExtent);
+    EXPECT_EQ(info.layerName, std::string());
+    EXPECT_TRUE(info.extent == (std::array<double, 4>{100.0, 20.0, 140.0, 50.0}));
+}
+
+TEST(GuiSupportTest, InspectVectorAutoFillInfoReadsLayerCrsAndExtent) {
+    GDALAllRegister();
+    gis::tests::ensureDirectory(guiSupportTestDir());
+
+    const fs::path vectorPath = guiSupportTestDir() / "autofill_vector.gpkg";
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    ASSERT_NE(driver, nullptr);
+
+    std::unique_ptr<GDALDataset, DatasetCloser> ds(
+        driver->Create(vectorPath.string().c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+    ASSERT_NE(ds, nullptr);
+
+    OGRSpatialReference srs;
+    srs.importFromEPSG(4326);
+    auto* layer = ds->CreateLayer("roads", &srs, wkbLineString, nullptr);
+    ASSERT_NE(layer, nullptr);
+
+    OGRFeatureDefn* defn = layer->GetLayerDefn();
+    std::unique_ptr<OGRFeature> feature(OGRFeature::CreateFeature(defn));
+    auto geometry = std::make_unique<OGRLineString>();
+    geometry->addPoint(120.0, 30.0);
+    geometry->addPoint(121.5, 31.5);
+    ASSERT_EQ(feature->SetGeometry(geometry.get()), OGRERR_NONE);
+    ASSERT_EQ(layer->CreateFeature(feature.get()), OGRERR_NONE);
+    ds.reset();
+
+    const auto info = gis::gui::inspectDataForAutoFill(vectorPath.string());
+    EXPECT_EQ(info.crs, std::string("EPSG:4326"));
+    EXPECT_TRUE(info.hasExtent);
+    EXPECT_EQ(info.layerName, std::string("roads"));
+    EXPECT_TRUE(info.extent == (std::array<double, 4>{120.0, 30.0, 121.5, 31.5}));
 }
