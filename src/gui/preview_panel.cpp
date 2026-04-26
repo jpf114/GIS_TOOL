@@ -385,6 +385,9 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 
     titleLabel_ = new QLabel(QStringLiteral("预览区"));
     titleLabel_->setStyleSheet("font-size: 18px; font-weight: 600;");
+    originLabel_ = new QLabel(QStringLiteral("当前对象: 未选择"));
+    originLabel_->setStyleSheet(
+        "color: #1f5f8b; background: #e8f1f8; border-radius: 999px; padding: 4px 10px; font-weight: 600;");
     pathLabel_ = new QLabel(QStringLiteral("未选择数据"));
     pathLabel_->setWordWrap(true);
     pathLabel_->setStyleSheet("color: #5f6b7a;");
@@ -400,6 +403,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     zoomInButton_ = new QPushButton(QStringLiteral("放大"));
     showInputButton_ = new QPushButton(QStringLiteral("查看输入"));
     showOutputButton_ = new QPushButton(QStringLiteral("查看结果"));
+    useAsInputButton_ = new QPushButton(QStringLiteral("作为输入"));
     statusLabel_ = new QLabel;
     statusLabel_->setStyleSheet("color: #4b5c6f;");
     scaleLabel_ = new QLabel(QStringLiteral("100%"));
@@ -415,6 +419,11 @@ PreviewPanel::PreviewPanel(QWidget* parent)
             emit requestOpenPath(compareOutputPath_);
         }
     });
+    connect(useAsInputButton_, &QPushButton::clicked, this, [this]() {
+        if (!currentPath_.isEmpty()) {
+            emit requestUseAsInput(currentPath_);
+        }
+    });
     connect(zoomOutButton_, &QPushButton::clicked, this, [this]() {
         setScale(gis::gui::zoomOutScale(currentScale_), false);
     });
@@ -425,6 +434,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 
     toolbarLayout->addWidget(showInputButton_);
     toolbarLayout->addWidget(showOutputButton_);
+    toolbarLayout->addWidget(useAsInputButton_);
     toolbarLayout->addSpacing(8);
     toolbarLayout->addWidget(zoomOutButton_);
     toolbarLayout->addWidget(fitButton_);
@@ -434,6 +444,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     toolbarLayout->addWidget(scaleLabel_);
 
     headerLayout->addWidget(titleLabel_);
+    headerLayout->addWidget(originLabel_);
     headerLayout->addWidget(pathLabel_);
     headerLayout->addWidget(summaryLabel_);
     headerLayout->addLayout(toolbarLayout);
@@ -478,6 +489,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 void PreviewPanel::clearPreview() {
     currentDataKind_ = gis::gui::DataKind::Unknown;
     currentPath_.clear();
+    currentOriginText_.clear();
     currentImage_ = QImage();
     currentScale_ = 1.0;
     fitMode_ = true;
@@ -514,6 +526,11 @@ void PreviewPanel::setCompareTargets(const QString& inputPath, const QString& ou
     compareInputPath_ = inputPath;
     compareOutputPath_ = outputPath;
     updateCompareButtons();
+}
+
+void PreviewPanel::setCurrentOrigin(gis::gui::DataOrigin origin) {
+    currentOriginText_ = QString::fromUtf8(gis::gui::dataOriginDisplayName(origin));
+    updateOriginLabel();
 }
 
 void PreviewPanel::resizeEvent(QResizeEvent* event) {
@@ -577,6 +594,7 @@ void PreviewPanel::setPlaceholder(const QString& title, const QString& message) 
     summaryLabel_->setText(message);
     placeholderLabel_->setText(message);
     stackedWidget_->setCurrentIndex(0);
+    updateOriginLabel();
     updateScaleLabel();
 }
 
@@ -584,6 +602,7 @@ void PreviewPanel::setSummary(const QString& title, const QString& summary, cons
     titleLabel_->setText(title);
     pathLabel_->setText(pathText);
     summaryLabel_->setText(summary);
+    updateOriginLabel();
 }
 
 void PreviewPanel::showRasterPreview(const std::string& path) {
@@ -739,6 +758,30 @@ void PreviewPanel::updateCompareButtons() {
         showOutputButton_->setToolTip(
             compareOutputPath_.isEmpty() ? QStringLiteral("当前没有可切换的结果数据") : compareOutputPath_);
     }
+
+    if (useAsInputButton_) {
+        const bool canUseAsInput = !currentPath_.isEmpty();
+        useAsInputButton_->setEnabled(canUseAsInput);
+        useAsInputButton_->setToolTip(
+            canUseAsInput
+                ? QStringLiteral("将当前预览文件直接填入当前算法的 input 参数")
+                : QStringLiteral("当前没有可作为输入的数据"));
+    }
+}
+
+void PreviewPanel::updateOriginLabel() {
+    if (!originLabel_) {
+        return;
+    }
+
+    if (currentOriginText_.isEmpty()) {
+        originLabel_->setText(QStringLiteral("当前对象: 未选择"));
+        originLabel_->setToolTip(QStringLiteral("当前还没有选中的输入或结果数据"));
+        return;
+    }
+
+    originLabel_->setText(QStringLiteral("当前对象: %1").arg(currentOriginText_));
+    originLabel_->setToolTip(originLabel_->text());
 }
 
 bool PreviewPanel::hasImagePreview() const {

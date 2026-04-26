@@ -73,6 +73,7 @@ private:
     QTreeWidgetItem* outputGroupItem_ = nullptr;
     QLabel* pluginTitleLabel_ = nullptr;
     QLabel* pluginDescriptionLabel_ = nullptr;
+    QLabel* paramValidationLabel_ = nullptr;
     QLabel* resultSummaryLabel_ = nullptr;
     QPushButton* executeButton_ = nullptr;
     QPushButton* quickPreviewButton_ = nullptr;

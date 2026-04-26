@@ -21,9 +21,11 @@ public:
     void showPath(const std::string& path);
     void refitPreview();
     void setCompareTargets(const QString& inputPath, const QString& outputPath);
+    void setCurrentOrigin(gis::gui::DataOrigin origin);
 
 signals:
     void requestOpenPath(const QString& path);
+    void requestUseAsInput(const QString& path);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -41,9 +43,11 @@ private:
     void fitCurrentImage();
     void setZoomControlsEnabled(bool enabled);
     void updateCompareButtons();
+    void updateOriginLabel();
     bool hasImagePreview() const;
 
     QLabel* titleLabel_ = nullptr;
+    QLabel* originLabel_ = nullptr;
     QLabel* pathLabel_ = nullptr;
     QLabel* summaryLabel_ = nullptr;
     QLabel* placeholderLabel_ = nullptr;
@@ -52,6 +56,7 @@ private:
     QLabel* scaleLabel_ = nullptr;
     QPushButton* showInputButton_ = nullptr;
     QPushButton* showOutputButton_ = nullptr;
+    QPushButton* useAsInputButton_ = nullptr;
     QPushButton* zoomInButton_ = nullptr;
     QPushButton* zoomOutButton_ = nullptr;
     QPushButton* fitButton_ = nullptr;
@@ -67,4 +72,5 @@ private:
     QString currentPath_;
     QString compareInputPath_;
     QString compareOutputPath_;
+    QString currentOriginText_;
 };

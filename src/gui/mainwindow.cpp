@@ -185,6 +185,9 @@ void MainWindow::setupUi() {
     connect(previewPanel_, &PreviewPanel::requestOpenPath, this, [this](const QString& path) {
         openDataPath(path, true);
     });
+    connect(previewPanel_, &PreviewPanel::requestUseAsInput, this, [this](const QString& path) {
+        bindDataPathToParam(path, "input");
+    });
 
     auto* paramsPanel = new QFrame;
     paramsPanel->setObjectName(QStringLiteral("paramsPanel"));
@@ -204,6 +207,11 @@ void MainWindow::setupUi() {
     connect(paramWidget_, &ParamWidget::paramsChanged, this, &MainWindow::onParamValuesChanged);
     scrollArea->setWidget(paramWidget_);
 
+    paramValidationLabel_ = new QLabel(QStringLiteral("当前参数已就绪。"));
+    paramValidationLabel_->setWordWrap(true);
+    paramValidationLabel_->setStyleSheet(
+        "background: #eef6ec; color: #245b2b; border: 1px solid #cfe4cc; border-radius: 8px; padding: 8px 10px;");
+
     auto* resultGroup = new QGroupBox(QStringLiteral("执行结果"));
     auto* resultLayout = new QVBoxLayout(resultGroup);
     resultSummaryLabel_ = new QLabel(QStringLiteral("执行后会在这里显示结果摘要。"));
@@ -212,6 +220,7 @@ void MainWindow::setupUi() {
 
     paramsLayout->addWidget(paramsTitle);
     paramsLayout->addWidget(paramsHint);
+    paramsLayout->addWidget(paramValidationLabel_);
     paramsLayout->addWidget(scrollArea, 1);
     paramsLayout->addWidget(resultGroup);
 
@@ -538,6 +547,8 @@ void MainWindow::onDataSelectionChanged() {
     }
 
     const QString path = item->data(0, Qt::UserRole).toString();
+    const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
+    previewPanel_->setCurrentOrigin(origin);
     previewPanel_->showPath(path.toUtf8().constData());
     syncCurrentDataToParams();
     refreshPreviewCompareTargets();
@@ -710,6 +721,9 @@ void MainWindow::bindDataPathToParam(const QString& path, const std::string& key
 
     isSyncingParams_ = true;
     paramWidget_->setStringValue(key, path.toUtf8().constData());
+    if (key == "input") {
+        refreshSuggestedOutputFromCurrentData();
+    }
     applyAutoFillFromPath(path);
     isSyncingParams_ = false;
     statusBar()->showMessage(
@@ -905,6 +919,11 @@ void MainWindow::refreshParamValidationState() {
         if (paramWidget_) {
             paramWidget_->setHighlightedParam({});
         }
+        if (paramValidationLabel_) {
+            paramValidationLabel_->setText(QStringLiteral("请先选择一个算法。"));
+            paramValidationLabel_->setStyleSheet(
+                "background: #f4f6f8; color: #5f6b7a; border: 1px solid #d5dde5; border-radius: 8px; padding: 8px 10px;");
+        }
         return;
     }
 
@@ -912,6 +931,30 @@ void MainWindow::refreshParamValidationState() {
         currentPlugin_->paramSpecs(),
         paramWidget_->collectParams());
     paramWidget_->setHighlightedParam(invalidKey);
+
+    if (!paramValidationLabel_) {
+        return;
+    }
+
+    if (invalidKey.empty()) {
+        paramValidationLabel_->setText(QStringLiteral("当前参数已就绪，可以直接执行或快速试算。"));
+        paramValidationLabel_->setStyleSheet(
+            "background: #eef6ec; color: #245b2b; border: 1px solid #cfe4cc; border-radius: 8px; padding: 8px 10px;");
+        return;
+    }
+
+    QString displayName = QString::fromUtf8(invalidKey);
+    for (const auto& spec : currentPlugin_->paramSpecs()) {
+        if (spec.key == invalidKey) {
+            displayName = QString::fromUtf8(spec.displayName.empty() ? spec.key : spec.displayName);
+            break;
+        }
+    }
+
+    paramValidationLabel_->setText(
+        QStringLiteral("当前还不能执行，请先检查参数：%1").arg(displayName));
+    paramValidationLabel_->setStyleSheet(
+        "background: #fff4e8; color: #8a4b12; border: 1px solid #f0cfaa; border-radius: 8px; padding: 8px 10px;");
 }
 
 QTreeWidgetItem* MainWindow::selectedDataItem() const {
