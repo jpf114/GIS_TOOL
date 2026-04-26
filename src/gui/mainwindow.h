@@ -27,6 +27,7 @@ private slots:
     void onDataSelectionChanged();
     void onDataItemDoubleClicked(QTreeWidgetItem* item, int column);
     void showDataContextMenu(const QPoint& pos);
+    void onParamValuesChanged();
 
 private:
     void loadPlugins();
@@ -42,6 +43,7 @@ private:
     void moveDataItemToRole(QTreeWidgetItem* item, bool isOutput);
     void refreshDataTreeVisualState();
     void updateDataItemPresentation(QTreeWidgetItem* item, bool isActive);
+    void refreshSuggestedOutputFromCurrentData();
 
     QTabBar* pluginTabs_ = nullptr;
     QTreeWidget* dataTree_ = nullptr;
@@ -54,6 +56,7 @@ private:
     PreviewPanel* previewPanel_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;
     QString lastSuggestedOutputPath_;
+    bool isSyncingParams_ = false;
 
     gis::framework::PluginManager pluginManager_;
     gis::framework::IGisPlugin* currentPlugin_ = nullptr;

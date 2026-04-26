@@ -25,6 +25,9 @@ public:
     void setExtentValue(const std::string& key, const std::array<double, 4>& value);
     std::string stringValue(const std::string& key) const;
 
+signals:
+    void paramsChanged();
+
 private:
     struct WidgetRow {
         gis::framework::ParamSpec spec;

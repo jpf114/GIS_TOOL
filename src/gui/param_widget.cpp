@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLayout>
 #include <QPushButton>
 #include <QSpinBox>
 
@@ -252,6 +253,7 @@ QWidget* ParamWidget::createEditor(const gis::framework::ParamSpec& spec) {
         case gis::framework::ParamType::DirPath:
         case gis::framework::ParamType::CRS: {
             auto* edit = new QLineEdit;
+            connect(edit, &QLineEdit::textChanged, this, &ParamWidget::paramsChanged);
             if (auto* defStr = std::get_if<std::string>(&spec.defaultValue); defStr && !defStr->empty()) {
                 edit->setText(QString::fromUtf8(*defStr));
             }
@@ -259,6 +261,7 @@ QWidget* ParamWidget::createEditor(const gis::framework::ParamSpec& spec) {
         }
         case gis::framework::ParamType::Int: {
             auto* spin = new QSpinBox;
+            connect(spin, &QSpinBox::valueChanged, this, [this](int) { emit paramsChanged(); });
             spin->setRange(-2147483647, 2147483647);
             if (auto* defInt = std::get_if<int>(&spec.defaultValue)) {
                 spin->setValue(*defInt);
@@ -272,6 +275,7 @@ QWidget* ParamWidget::createEditor(const gis::framework::ParamSpec& spec) {
         }
         case gis::framework::ParamType::Double: {
             auto* spin = new QDoubleSpinBox;
+            connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { emit paramsChanged(); });
             spin->setRange(-1e15, 1e15);
             spin->setDecimals(6);
             if (auto* defDouble = std::get_if<double>(&spec.defaultValue)) {
@@ -281,6 +285,7 @@ QWidget* ParamWidget::createEditor(const gis::framework::ParamSpec& spec) {
         }
         case gis::framework::ParamType::Bool: {
             auto* check = new QCheckBox(QStringLiteral("启用"));
+            connect(check, &QCheckBox::checkStateChanged, this, [this](Qt::CheckState) { emit paramsChanged(); });
             if (auto* defBool = std::get_if<bool>(&spec.defaultValue)) {
                 check->setChecked(*defBool);
             }
@@ -288,6 +293,7 @@ QWidget* ParamWidget::createEditor(const gis::framework::ParamSpec& spec) {
         }
         case gis::framework::ParamType::Enum: {
             auto* combo = new QComboBox;
+            connect(combo, &QComboBox::currentIndexChanged, this, [this](int) { emit paramsChanged(); });
             for (const auto& val : spec.enumValues) {
                 combo->addItem(QString::fromUtf8(val));
             }

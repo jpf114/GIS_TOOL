@@ -181,6 +181,7 @@ void MainWindow::setupUi() {
     auto* scrollArea = new QScrollArea;
     scrollArea->setWidgetResizable(true);
     paramWidget_ = new ParamWidget;
+    connect(paramWidget_, &ParamWidget::paramsChanged, this, &MainWindow::onParamValuesChanged);
     scrollArea->setWidget(paramWidget_);
 
     auto* resultGroup = new QGroupBox(QStringLiteral("执行结果"));
@@ -409,6 +410,14 @@ void MainWindow::onDataSelectionChanged() {
     statusBar()->showMessage(QStringLiteral("当前数据: %1").arg(path));
 }
 
+void MainWindow::onParamValuesChanged() {
+    if (isSyncingParams_) {
+        return;
+    }
+
+    refreshSuggestedOutputFromCurrentData();
+}
+
 void MainWindow::onDataItemDoubleClicked(QTreeWidgetItem* item, int) {
     if (!item || item == inputGroupItem_ || item == outputGroupItem_) {
         return;
@@ -491,21 +500,14 @@ void MainWindow::syncCurrentDataToParams() {
     if (path.isEmpty()) {
         return;
     }
+    isSyncingParams_ = true;
     const auto autoFillInfo = gis::gui::inspectDataForAutoFill(path.toStdString());
 
     if (paramWidget_->hasParam("input")) {
         paramWidget_->setStringValue("input", path.toUtf8().constData());
     }
 
-    if (paramWidget_->hasParam("output")) {
-        const QString currentOutput = QString::fromUtf8(paramWidget_->stringValue("output"));
-        const QString suggestedOutput = buildSuggestedOutputPathFor(path);
-        if (!suggestedOutput.isEmpty() &&
-            (currentOutput.isEmpty() || currentOutput == lastSuggestedOutputPath_)) {
-            paramWidget_->setStringValue("output", suggestedOutput.toUtf8().constData());
-            lastSuggestedOutputPath_ = suggestedOutput;
-        }
-    }
+    refreshSuggestedOutputFromCurrentData();
 
     if (paramWidget_->hasParam("layer") && !autoFillInfo.layerName.empty()) {
         paramWidget_->setStringValue("layer", autoFillInfo.layerName);
@@ -523,6 +525,7 @@ void MainWindow::syncCurrentDataToParams() {
             paramWidget_->setStringValue("srs", autoFillInfo.crs);
         }
     }
+    isSyncingParams_ = false;
 }
 
 QString MainWindow::buildResultSummary(const gis::framework::Result& result) const {
@@ -552,6 +555,21 @@ QString MainWindow::buildSuggestedOutputPathFor(const QString& inputPath) const 
         inputPath.toStdString(),
         currentPlugin_->name(),
         currentActionValue().toStdString()));
+}
+
+void MainWindow::refreshSuggestedOutputFromCurrentData() {
+    const QString path = currentSelectedDataPath();
+    if (path.isEmpty() || !paramWidget_ || !paramWidget_->hasParam("output")) {
+        return;
+    }
+
+    const QString currentOutput = QString::fromUtf8(paramWidget_->stringValue("output"));
+    const QString suggestedOutput = buildSuggestedOutputPathFor(path);
+    if (!suggestedOutput.isEmpty() &&
+        (currentOutput.isEmpty() || currentOutput == lastSuggestedOutputPath_)) {
+        paramWidget_->setStringValue("output", suggestedOutput.toUtf8().constData());
+        lastSuggestedOutputPath_ = suggestedOutput;
+    }
 }
 
 QTreeWidgetItem* MainWindow::selectedDataItem() const {
