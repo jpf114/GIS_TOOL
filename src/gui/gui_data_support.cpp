@@ -27,8 +27,8 @@ double clampScale(double value) {
 }
 
 std::string previewScaleText(gis::gui::DataKind kind, double scale) {
-    if (kind != gis::gui::DataKind::Raster) {
-        return "摘要模式";
+    if (kind == gis::gui::DataKind::Unknown) {
+        return "无预览";
     }
 
     std::ostringstream oss;
@@ -37,9 +37,6 @@ std::string previewScaleText(gis::gui::DataKind kind, double scale) {
 }
 
 std::string previewModeText(gis::gui::DataKind kind, bool fitMode, bool isPanning) {
-    if (kind == gis::gui::DataKind::Vector) {
-        return "属性摘要";
-    }
     if (kind == gis::gui::DataKind::Unknown) {
         return "等待选择";
     }

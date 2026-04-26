@@ -1,16 +1,22 @@
 #include "preview_panel.h"
 
+#include <QColor>
 #include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPen>
 #include <QPixmap>
+#include <QPointF>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSize>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -27,6 +33,13 @@
 #include <vector>
 
 namespace {
+
+constexpr int kMaxRasterPreviewSize = 960;
+constexpr int kVectorPreviewWidth = 960;
+constexpr int kVectorPreviewHeight = 720;
+constexpr double kVectorPreviewMargin = 28.0;
+constexpr int kMaxVectorPreviewFeatures = 4000;
+constexpr double kMinExtentSize = 1e-9;
 
 struct DatasetCloser {
     void operator()(GDALDataset* ds) const {
@@ -53,8 +66,6 @@ QString geometryTypeName(OGRwkbGeometryType type) {
 }
 
 QImage buildRasterPreviewImage(GDALDataset* ds) {
-    constexpr int kMaxPreviewSize = 960;
-
     const int srcWidth = ds->GetRasterXSize();
     const int srcHeight = ds->GetRasterYSize();
     if (srcWidth <= 0 || srcHeight <= 0 || ds->GetRasterCount() <= 0) {
@@ -62,8 +73,8 @@ QImage buildRasterPreviewImage(GDALDataset* ds) {
     }
 
     const int longEdge = std::max(srcWidth, srcHeight);
-    const double scale = longEdge > kMaxPreviewSize
-        ? static_cast<double>(kMaxPreviewSize) / static_cast<double>(longEdge)
+    const double scale = longEdge > kMaxRasterPreviewSize
+        ? static_cast<double>(kMaxRasterPreviewSize) / static_cast<double>(longEdge)
         : 1.0;
     const int previewWidth = std::max(1, static_cast<int>(std::round(srcWidth * scale)));
     const int previewHeight = std::max(1, static_cast<int>(std::round(srcHeight * scale)));
@@ -156,10 +167,206 @@ QString vectorSummary(GDALDataset* ds) {
 }
 
 QString scaleLabelText(gis::gui::DataKind kind, double scale) {
-    if (kind != gis::gui::DataKind::Raster) {
-        return QStringLiteral("摘要模式");
+    if (kind == gis::gui::DataKind::Unknown) {
+        return QStringLiteral("无预览");
     }
     return QStringLiteral("%1%").arg(static_cast<int>(std::round(scale * 100.0)));
+}
+
+QRectF previewViewportRect(const QSize& size) {
+    return QRectF(
+        kVectorPreviewMargin,
+        kVectorPreviewMargin,
+        std::max(1.0, static_cast<double>(size.width()) - kVectorPreviewMargin * 2.0),
+        std::max(1.0, static_cast<double>(size.height()) - kVectorPreviewMargin * 2.0));
+}
+
+OGREnvelope normalizedEnvelope(OGREnvelope envelope) {
+    if (!std::isfinite(envelope.MinX) || !std::isfinite(envelope.MaxX) ||
+        !std::isfinite(envelope.MinY) || !std::isfinite(envelope.MaxY)) {
+        envelope.MinX = -1.0;
+        envelope.MaxX = 1.0;
+        envelope.MinY = -1.0;
+        envelope.MaxY = 1.0;
+        return envelope;
+    }
+
+    if (std::abs(envelope.MaxX - envelope.MinX) < kMinExtentSize) {
+        envelope.MinX -= 0.5;
+        envelope.MaxX += 0.5;
+    }
+    if (std::abs(envelope.MaxY - envelope.MinY) < kMinExtentSize) {
+        envelope.MinY -= 0.5;
+        envelope.MaxY += 0.5;
+    }
+    return envelope;
+}
+
+QPointF projectPoint(double x, double y, const OGREnvelope& envelope, const QRectF& viewport) {
+    const double sourceWidth = envelope.MaxX - envelope.MinX;
+    const double sourceHeight = envelope.MaxY - envelope.MinY;
+    const double scale = std::min(viewport.width() / sourceWidth, viewport.height() / sourceHeight);
+
+    const double contentWidth = sourceWidth * scale;
+    const double contentHeight = sourceHeight * scale;
+    const double offsetX = viewport.left() + (viewport.width() - contentWidth) * 0.5;
+    const double offsetY = viewport.top() + (viewport.height() - contentHeight) * 0.5;
+
+    const double px = offsetX + (x - envelope.MinX) * scale;
+    const double py = offsetY + (envelope.MaxY - y) * scale;
+    return {px, py};
+}
+
+void appendLineStringPath(QPainterPath& path,
+                          const OGRLineString& line,
+                          const OGREnvelope& envelope,
+                          const QRectF& viewport) {
+    if (line.getNumPoints() <= 0) {
+        return;
+    }
+
+    const QPointF first = projectPoint(line.getX(0), line.getY(0), envelope, viewport);
+    path.moveTo(first);
+    for (int i = 1; i < line.getNumPoints(); ++i) {
+        path.lineTo(projectPoint(line.getX(i), line.getY(i), envelope, viewport));
+    }
+}
+
+void appendPolygonPath(QPainterPath& path,
+                       const OGRPolygon& polygon,
+                       const OGREnvelope& envelope,
+                       const QRectF& viewport) {
+    if (const auto* outerRing = polygon.getExteriorRing()) {
+        appendLineStringPath(path, *outerRing, envelope, viewport);
+        path.closeSubpath();
+    }
+
+    for (int i = 0; i < polygon.getNumInteriorRings(); ++i) {
+        if (const auto* innerRing = polygon.getInteriorRing(i)) {
+            appendLineStringPath(path, *innerRing, envelope, viewport);
+            path.closeSubpath();
+        }
+    }
+}
+
+void collectGeometryPaths(const OGRGeometry& geometry,
+                          const OGREnvelope& envelope,
+                          const QRectF& viewport,
+                          QPainterPath& linePath,
+                          QPainterPath& fillPath,
+                          std::vector<QPointF>& points) {
+    switch (wkbFlatten(geometry.getGeometryType())) {
+        case wkbPoint: {
+            const auto* point = dynamic_cast<const OGRPoint*>(&geometry);
+            if (point) {
+                points.push_back(projectPoint(point->getX(), point->getY(), envelope, viewport));
+            }
+            break;
+        }
+        case wkbMultiPoint:
+        case wkbMultiLineString:
+        case wkbMultiPolygon:
+        case wkbGeometryCollection: {
+            const auto* collection = dynamic_cast<const OGRGeometryCollection*>(&geometry);
+            if (!collection) {
+                break;
+            }
+            for (int i = 0; i < collection->getNumGeometries(); ++i) {
+                if (const auto* child = collection->getGeometryRef(i)) {
+                    collectGeometryPaths(*child, envelope, viewport, linePath, fillPath, points);
+                }
+            }
+            break;
+        }
+        case wkbLineString:
+        case wkbLinearRing: {
+            const auto* line = dynamic_cast<const OGRLineString*>(&geometry);
+            if (line) {
+                appendLineStringPath(linePath, *line, envelope, viewport);
+            }
+            break;
+        }
+        case wkbPolygon: {
+            const auto* polygon = dynamic_cast<const OGRPolygon*>(&geometry);
+            if (polygon) {
+                appendPolygonPath(fillPath, *polygon, envelope, viewport);
+                appendPolygonPath(linePath, *polygon, envelope, viewport);
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+QImage buildVectorPreviewImage(GDALDataset* ds) {
+    auto* layer = ds->GetLayer(0);
+    if (!layer) {
+        return {};
+    }
+
+    OGREnvelope envelope{};
+    if (layer->GetExtent(&envelope, TRUE) != OGRERR_NONE) {
+        return {};
+    }
+    envelope = normalizedEnvelope(envelope);
+
+    QImage image(kVectorPreviewWidth, kVectorPreviewHeight, QImage::Format_ARGB32_Premultiplied);
+    image.fill(QColor(248, 250, 252));
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(QColor(210, 218, 226), 1.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(image.rect().adjusted(0, 0, -1, -1));
+
+    const QRectF viewport = previewViewportRect(image.size());
+    const GIntBig featureCount = layer->GetFeatureCount(TRUE);
+    const int stride = featureCount > kMaxVectorPreviewFeatures
+        ? std::max<GIntBig>(1, (featureCount + kMaxVectorPreviewFeatures - 1) / kMaxVectorPreviewFeatures)
+        : 1;
+
+    QPainterPath fillPath;
+    QPainterPath linePath;
+    std::vector<QPointF> points;
+    points.reserve(512);
+
+    layer->ResetReading();
+    std::unique_ptr<OGRFeature> feature;
+    int featureIndex = 0;
+    while (true) {
+        feature.reset(layer->GetNextFeature());
+        if (!feature) {
+            break;
+        }
+        if ((featureIndex % stride) != 0) {
+            ++featureIndex;
+            continue;
+        }
+        ++featureIndex;
+
+        const OGRGeometry* geometry = feature->GetGeometryRef();
+        if (!geometry || geometry->IsEmpty()) {
+            continue;
+        }
+        collectGeometryPaths(*geometry, envelope, viewport, linePath, fillPath, points);
+    }
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(76, 132, 255, 68));
+    painter.drawPath(fillPath);
+
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(QColor(41, 98, 255), 1.4));
+    painter.drawPath(linePath);
+
+    painter.setBrush(QColor(27, 94, 224));
+    painter.setPen(QPen(QColor(255, 255, 255, 220), 1.0));
+    for (const QPointF& point : points) {
+        painter.drawEllipse(point, 3.2, 3.2);
+    }
+
+    return image;
 }
 
 } // namespace
@@ -288,13 +495,13 @@ void PreviewPanel::refitPreview() {
 
 void PreviewPanel::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
-    if (fitMode_ && hasRasterPreview()) {
+    if (fitMode_ && hasImagePreview()) {
         fitCurrentImage();
     }
 }
 
 bool PreviewPanel::eventFilter(QObject* watched, QEvent* event) {
-    const bool previewReady = hasRasterPreview();
+    const bool previewReady = hasImagePreview();
     if ((watched == imageScrollArea_->viewport() || watched == imageLabel_) && previewReady) {
         if (event->type() == QEvent::Wheel) {
             auto* wheelEvent = static_cast<QWheelEvent*>(event);
@@ -387,17 +594,17 @@ void PreviewPanel::showRasterPreview(const std::string& path) {
 
 void PreviewPanel::showVectorPreview(const std::string& path) {
     currentDataKind_ = gis::gui::DataKind::Vector;
-    currentImage_ = QImage();
     currentScale_ = 1.0;
-    fitMode_ = false;
+    fitMode_ = true;
     isPanning_ = false;
-    setZoomControlsEnabled(false);
-    imageLabel_->setCursor(Qt::ArrowCursor);
 
     std::unique_ptr<GDALDataset, DatasetCloser> ds(
         static_cast<GDALDataset*>(GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                                              nullptr, nullptr, nullptr)));
     if (!ds) {
+        currentImage_ = QImage();
+        setZoomControlsEnabled(false);
+        imageLabel_->setCursor(Qt::ArrowCursor);
         setPlaceholder(QStringLiteral("矢量预览"),
                        QStringLiteral("无法打开矢量数据"));
         return;
@@ -406,10 +613,20 @@ void PreviewPanel::showVectorPreview(const std::string& path) {
     setSummary(QStringLiteral("矢量预览"),
                vectorSummary(ds.get()),
                toQString(path));
-    placeholderLabel_->setText(QStringLiteral(
-        "当前为轻量预览模式\n\n矢量数据先展示摘要信息，后续可升级为真实地图浏览。"));
-    stackedWidget_->setCurrentIndex(0);
-    updateScaleLabel();
+    currentImage_ = buildVectorPreviewImage(ds.get());
+    if (currentImage_.isNull()) {
+        setZoomControlsEnabled(false);
+        imageLabel_->setCursor(Qt::ArrowCursor);
+        placeholderLabel_->setText(QStringLiteral("矢量已加载，但暂时无法生成预览图"));
+        stackedWidget_->setCurrentIndex(0);
+        updateScaleLabel();
+        return;
+    }
+
+    setZoomControlsEnabled(true);
+    imageLabel_->setCursor(Qt::OpenHandCursor);
+    stackedWidget_->setCurrentIndex(1);
+    fitCurrentImage();
 }
 
 void PreviewPanel::showUnsupportedPreview(const std::string& path) {
@@ -467,7 +684,7 @@ void PreviewPanel::setScale(double scale, bool keepFitMode) {
 }
 
 void PreviewPanel::fitCurrentImage() {
-    if (!hasRasterPreview()) {
+    if (!hasImagePreview()) {
         return;
     }
 
@@ -484,6 +701,6 @@ void PreviewPanel::setZoomControlsEnabled(bool enabled) {
     fitButton_->setEnabled(enabled);
 }
 
-bool PreviewPanel::hasRasterPreview() const {
+bool PreviewPanel::hasImagePreview() const {
     return !currentImage_.isNull() && stackedWidget_->currentIndex() == 1;
 }

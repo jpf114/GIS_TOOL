@@ -50,7 +50,10 @@ TEST(GuiSupportTest, BuildPreviewStatusTextShowsKindScaleAndMode) {
         "当前预览: 栅格 | 缩放: 200% | 模式: 拖拽浏览");
     EXPECT_EQ(
         gis::gui::buildPreviewStatusText(gis::gui::DataKind::Vector, 1.0, false, false),
-        "当前预览: 矢量 | 缩放: 摘要模式 | 模式: 属性摘要");
+        "当前预览: 矢量 | 缩放: 100% | 模式: 手动缩放");
+    EXPECT_EQ(
+        gis::gui::buildPreviewStatusText(gis::gui::DataKind::Vector, 1.0, true, false),
+        "当前预览: 矢量 | 缩放: 100% | 模式: 适配视图");
 }
 
 TEST(GuiSupportTest, ZoomScaleIsClampedAndStepped) {

@@ -35,7 +35,7 @@ private:
     void setScale(double scale, bool keepFitMode);
     void fitCurrentImage();
     void setZoomControlsEnabled(bool enabled);
-    bool hasRasterPreview() const;
+    bool hasImagePreview() const;
 
     QLabel* titleLabel_ = nullptr;
     QLabel* pathLabel_ = nullptr;
