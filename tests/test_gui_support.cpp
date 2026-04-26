@@ -63,20 +63,24 @@ TEST(GuiSupportTest, DataKindDisplayNameIsChinese) {
 
 TEST(GuiSupportTest, BuildDataDisplayLabelIncludesRoleAndName) {
     EXPECT_EQ(
-        gis::gui::buildDataDisplayLabel("D:/data/image.tif", gis::gui::DataKind::Raster, false),
+        gis::gui::buildDataDisplayLabel(
+            "D:/data/image.tif", gis::gui::DataKind::Raster, gis::gui::DataOrigin::Input),
         "[栅格][输入] image.tif");
     EXPECT_EQ(
-        gis::gui::buildDataDisplayLabel("D:/data/result.geojson", gis::gui::DataKind::Vector, true),
-        "[矢量][输出] result.geojson");
+        gis::gui::buildDataDisplayLabel(
+            "D:/data/result.geojson", gis::gui::DataKind::Vector, gis::gui::DataOrigin::Output),
+        "[矢量][正式结果] result.geojson");
 }
 
 TEST(GuiSupportTest, BuildDataDisplayLabelIncludesActiveState) {
     EXPECT_EQ(
-        gis::gui::buildDataDisplayLabel("D:/data/image.tif", gis::gui::DataKind::Raster, false, true),
+        gis::gui::buildDataDisplayLabel(
+            "D:/data/image.tif", gis::gui::DataKind::Raster, gis::gui::DataOrigin::Input, true),
         "[栅格][输入][当前] image.tif");
     EXPECT_EQ(
-        gis::gui::buildDataDisplayLabel("D:/data/result.geojson", gis::gui::DataKind::Vector, true, false),
-        "[矢量][输出] result.geojson");
+        gis::gui::buildDataDisplayLabel(
+            "D:/data/result.geojson", gis::gui::DataKind::Vector, gis::gui::DataOrigin::QuickRun, false),
+        "[矢量][快速试算] result.geojson");
 }
 
 TEST(GuiSupportTest, BuildPreviewStatusTextShowsKindScaleAndMode) {

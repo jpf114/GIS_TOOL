@@ -182,6 +182,9 @@ void MainWindow::setupUi() {
 
     auto* centerSplitter = new QSplitter(Qt::Vertical);
     previewPanel_ = new PreviewPanel;
+    connect(previewPanel_, &PreviewPanel::requestOpenPath, this, [this](const QString& path) {
+        openDataPath(path, true);
+    });
 
     auto* paramsPanel = new QFrame;
     paramsPanel->setObjectName(QStringLiteral("paramsPanel"));
@@ -333,9 +336,9 @@ void MainWindow::onBuildQuickPreview() {
         return;
     }
 
-    addDataPath(outputPath, true, true);
-    resultSummaryLabel_->setText(
-        QStringLiteral("已生成8位快速预览影像:\n%1").arg(outputPath));
+    addDataPath(outputPath, true, gis::gui::DataOrigin::QuickPreview);
+    latestOutputPath_ = outputPath;
+    resultSummaryLabel_->setText(QStringLiteral("结果类型: 预览影像\n已生成 8 位快速预览影像\n%1").arg(outputPath));
     statusBar()->showMessage(QStringLiteral("已生成8位快速预览影像"));
     refreshQuickRunButtonState();
 }
@@ -370,7 +373,8 @@ void MainWindow::onRunQuickPreview() {
         return;
     }
 
-    runPluginWithParams(quickParams, QStringLiteral("快速试算"), false);
+    runPluginWithParams(
+        quickParams, QStringLiteral("快速试算"), QStringLiteral("快速试算结果"), gis::gui::DataOrigin::QuickRun, false);
 }
 
 void MainWindow::onExecute() {
@@ -418,16 +422,20 @@ void MainWindow::onExecute() {
             return;
         }
 
-        runPluginWithParams(quickParams, QStringLiteral("快速试算"), false);
+        runPluginWithParams(
+            quickParams, QStringLiteral("快速试算"), QStringLiteral("快速试算结果"), gis::gui::DataOrigin::QuickRun, false);
         return;
     }
 
-    runPluginWithParams(params, QStringLiteral("执行"), true);
+    runPluginWithParams(
+        params, QStringLiteral("执行"), QStringLiteral("正式结果"), gis::gui::DataOrigin::Output, true);
 }
 
 void MainWindow::runPluginWithParams(
     const std::map<std::string, gis::framework::ParamValue>& params,
     const QString& statusPrefix,
+    const QString& resultType,
+    gis::gui::DataOrigin outputOrigin,
     bool syncOutputBackToForm) {
     reporter_->reset();
 
@@ -440,14 +448,14 @@ void MainWindow::runPluginWithParams(
     auto* progressDialog = new ProgressDialog(reporter_);
 
     connect(thread, &QThread::started, worker, &ExecuteWorker::run);
-    connect(worker, &ExecuteWorker::finished, this, [this, progressDialog, statusPrefix, syncOutputBackToForm](const gis::framework::Result& result) {
+    connect(worker, &ExecuteWorker::finished, this, [this, progressDialog, statusPrefix, resultType, outputOrigin, syncOutputBackToForm](const gis::framework::Result& result) {
         QString message = QString::fromUtf8(result.message);
         const bool cancelled = result.message == "已取消执行";
         if (result.success && !result.outputPath.empty()) {
             message += QStringLiteral("\n结果已写出并加入左侧结果数据区。");
         }
         progressDialog->setFinished(message, result.success, cancelled);
-        resultSummaryLabel_->setText(QString::fromUtf8(gis::gui::buildResultSummaryText(result)));
+        resultSummaryLabel_->setText(buildResultSummary(result, resultType));
 
         if (result.success) {
             if (syncOutputBackToForm && paramWidget_->hasParam("output") && !result.outputPath.empty()) {
@@ -455,7 +463,8 @@ void MainWindow::runPluginWithParams(
                 lastSuggestedOutputPath_ = QString::fromUtf8(result.outputPath);
             }
             if (!result.outputPath.empty() && std::filesystem::exists(result.outputPath)) {
-                addDataPath(QString::fromUtf8(result.outputPath), true, true);
+                latestOutputPath_ = QString::fromUtf8(result.outputPath);
+                addDataPath(latestOutputPath_, true, outputOrigin);
             }
             statusBar()->showMessage(statusPrefix + QStringLiteral("成功: ") + message);
         } else if (cancelled) {
@@ -480,7 +489,7 @@ void MainWindow::onAddRasterData() {
         QString(),
         QStringLiteral("Raster (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp)"));
     for (const auto& path : paths) {
-        addDataPath(path, false, false);
+        addDataPath(path, false, gis::gui::DataOrigin::Input);
     }
     if (!paths.isEmpty()) {
         dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
@@ -496,7 +505,7 @@ void MainWindow::onAddVectorData() {
         QString(),
         QStringLiteral("Vector (*.shp *.geojson *.json *.gpkg *.kml *.csv)"));
     for (const auto& path : paths) {
-        addDataPath(path, false, false);
+        addDataPath(path, false, gis::gui::DataOrigin::Input);
     }
     if (!paths.isEmpty()) {
         dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
@@ -523,6 +532,7 @@ void MainWindow::onDataSelectionChanged() {
     auto* item = selectedDataItem();
     if (!item) {
         previewPanel_->clearPreview();
+        refreshPreviewCompareTargets();
         refreshDataTreeVisualState();
         return;
     }
@@ -530,6 +540,7 @@ void MainWindow::onDataSelectionChanged() {
     const QString path = item->data(0, Qt::UserRole).toString();
     previewPanel_->showPath(path.toUtf8().constData());
     syncCurrentDataToParams();
+    refreshPreviewCompareTargets();
     refreshDataTreeVisualState();
     statusBar()->showMessage(QStringLiteral("当前数据: %1").arg(path));
     refreshQuickPreviewButtonState();
@@ -554,9 +565,7 @@ void MainWindow::onDataItemDoubleClicked(QTreeWidgetItem* item, int) {
         return;
     }
 
-    dataTree_->setCurrentItem(item);
-    previewPanel_->showPath(item->data(0, Qt::UserRole).toString().toUtf8().constData());
-    previewPanel_->refitPreview();
+    openDataPath(item->data(0, Qt::UserRole).toString(), true);
 }
 
 void MainWindow::showDataContextMenu(const QPoint& pos) {
@@ -602,11 +611,12 @@ void MainWindow::showDataContextMenu(const QPoint& pos) {
         if (!selectedDataItem()) {
             previewPanel_->clearPreview();
         }
+        refreshPreviewCompareTargets();
         refreshDataTreeVisualState();
     }
 }
 
-void MainWindow::addDataPath(const QString& path, bool makeCurrent, bool isOutput) {
+void MainWindow::addDataPath(const QString& path, bool makeCurrent, gis::gui::DataOrigin origin) {
     if (path.isEmpty() || containsPath(path)) {
         if (makeCurrent && !path.isEmpty()) {
             for (auto* group : {inputGroupItem_, outputGroupItem_}) {
@@ -623,12 +633,12 @@ void MainWindow::addDataPath(const QString& path, bool makeCurrent, bool isOutpu
     }
 
     const auto kind = gis::gui::detectDataKind(path.toUtf8().constData());
-    auto* parent = isOutput ? outputGroupItem_ : inputGroupItem_;
+    auto* parent = gis::gui::isOutputDataOrigin(origin) ? outputGroupItem_ : inputGroupItem_;
     auto* item = new QTreeWidgetItem(parent);
     item->setToolTip(0, path);
     item->setData(0, Qt::UserRole, path);
     item->setData(0, Qt::UserRole + 1, static_cast<int>(kind));
-    item->setData(0, Qt::UserRole + 2, isOutput);
+    item->setData(0, Qt::UserRole + 2, static_cast<int>(origin));
     updateDataItemPresentation(item, false);
     parent->setExpanded(true);
 
@@ -641,6 +651,16 @@ void MainWindow::addDataPath(const QString& path, bool makeCurrent, bool isOutpu
 
 void MainWindow::syncCurrentDataToParams() {
     if (!currentPlugin_) {
+        return;
+    }
+
+    auto* item = selectedDataItem();
+    if (!item) {
+        return;
+    }
+
+    const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
+    if (origin != gis::gui::DataOrigin::Input) {
         return;
     }
 
@@ -699,8 +719,12 @@ void MainWindow::bindDataPathToParam(const QString& path, const std::string& key
     refreshExecuteButtonState();
 }
 
-QString MainWindow::buildResultSummary(const gis::framework::Result& result) const {
-    return QString::fromUtf8(gis::gui::buildResultSummaryText(result));
+QString MainWindow::buildResultSummary(const gis::framework::Result& result, const QString& resultType) const {
+    QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result));
+    if (!resultType.isEmpty()) {
+        summary = QStringLiteral("结果类型: %1\n").arg(resultType) + summary;
+    }
+    return summary;
 }
 
 QString MainWindow::currentSelectedDataPath() const {
@@ -709,6 +733,34 @@ QString MainWindow::currentSelectedDataPath() const {
         return {};
     }
     return item->data(0, Qt::UserRole).toString();
+}
+
+QString MainWindow::currentInputReferencePath() const {
+    if (paramWidget_ && paramWidget_->hasParam("input")) {
+        const QString path = QString::fromUtf8(paramWidget_->stringValue("input"));
+        if (!path.isEmpty()) {
+            return path;
+        }
+    }
+
+    auto* item = selectedDataItem();
+    if (!item) {
+        return {};
+    }
+
+    const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
+    return origin == gis::gui::DataOrigin::Input ? item->data(0, Qt::UserRole).toString() : QString();
+}
+
+QString MainWindow::currentOutputReferencePath() const {
+    auto* item = selectedDataItem();
+    if (item) {
+        const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
+        if (gis::gui::isOutputDataOrigin(origin)) {
+            return item->data(0, Qt::UserRole).toString();
+        }
+    }
+    return latestOutputPath_;
 }
 
 QString MainWindow::currentActionValue() const {
@@ -728,6 +780,31 @@ QString MainWindow::buildSuggestedOutputPathFor(const QString& inputPath) const 
         currentActionValue().toStdString()));
 }
 
+void MainWindow::openDataPath(const QString& path, bool refitPreview) {
+    if (path.isEmpty()) {
+        return;
+    }
+
+    for (auto* group : {inputGroupItem_, outputGroupItem_}) {
+        for (int i = 0; i < group->childCount(); ++i) {
+            auto* item = group->child(i);
+            if (item->data(0, Qt::UserRole).toString() == path) {
+                dataTree_->setCurrentItem(item);
+                if (refitPreview) {
+                    previewPanel_->refitPreview();
+                }
+                return;
+            }
+        }
+    }
+
+    previewPanel_->showPath(path.toUtf8().constData());
+    refreshPreviewCompareTargets();
+    if (refitPreview) {
+        previewPanel_->refitPreview();
+    }
+}
+
 void MainWindow::refreshSuggestedOutputFromCurrentData() {
     const QString path = currentSelectedDataPath();
     if (path.isEmpty() || !paramWidget_ || !paramWidget_->hasParam("output")) {
@@ -741,6 +818,13 @@ void MainWindow::refreshSuggestedOutputFromCurrentData() {
         paramWidget_->setStringValue("output", suggestedOutput.toUtf8().constData());
         lastSuggestedOutputPath_ = suggestedOutput;
     }
+}
+
+void MainWindow::refreshPreviewCompareTargets() {
+    if (!previewPanel_) {
+        return;
+    }
+    previewPanel_->setCompareTargets(currentInputReferencePath(), currentOutputReferencePath());
 }
 
 void MainWindow::refreshExecuteButtonState() {
@@ -866,11 +950,13 @@ void MainWindow::moveDataItemToRole(QTreeWidgetItem* item, bool isOutput) {
 
     currentParent->removeChild(item);
     targetParent->addChild(item);
-    item->setData(0, Qt::UserRole + 2, isOutput);
+    item->setData(0, Qt::UserRole + 2,
+                  static_cast<int>(isOutput ? gis::gui::DataOrigin::Output : gis::gui::DataOrigin::Input));
     targetParent->setExpanded(true);
     dataTree_->setCurrentItem(item);
 
     syncCurrentDataToParams();
+    refreshPreviewCompareTargets();
     refreshDataTreeVisualState();
 }
 
@@ -891,10 +977,10 @@ void MainWindow::updateDataItemPresentation(QTreeWidgetItem* item, bool isActive
 
     const QString path = item->data(0, Qt::UserRole).toString();
     const auto kind = static_cast<gis::gui::DataKind>(item->data(0, Qt::UserRole + 1).toInt());
-    const bool isOutput = item->data(0, Qt::UserRole + 2).toBool();
+    const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
 
     item->setText(0, QString::fromUtf8(
-        gis::gui::buildDataDisplayLabel(path.toStdString(), kind, isOutput, isActive)));
+        gis::gui::buildDataDisplayLabel(path.toStdString(), kind, origin, isActive)));
 
     QFont font = item->font(0);
     font.setBold(isActive);

@@ -398,11 +398,23 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     zoomOutButton_ = new QPushButton(QStringLiteral("缩小"));
     fitButton_ = new QPushButton(QStringLiteral("适配"));
     zoomInButton_ = new QPushButton(QStringLiteral("放大"));
+    showInputButton_ = new QPushButton(QStringLiteral("查看输入"));
+    showOutputButton_ = new QPushButton(QStringLiteral("查看结果"));
     statusLabel_ = new QLabel;
     statusLabel_->setStyleSheet("color: #4b5c6f;");
     scaleLabel_ = new QLabel(QStringLiteral("100%"));
     scaleLabel_->setStyleSheet("color: #4b5c6f; font-weight: 600;");
 
+    connect(showInputButton_, &QPushButton::clicked, this, [this]() {
+        if (!compareInputPath_.isEmpty()) {
+            emit requestOpenPath(compareInputPath_);
+        }
+    });
+    connect(showOutputButton_, &QPushButton::clicked, this, [this]() {
+        if (!compareOutputPath_.isEmpty()) {
+            emit requestOpenPath(compareOutputPath_);
+        }
+    });
     connect(zoomOutButton_, &QPushButton::clicked, this, [this]() {
         setScale(gis::gui::zoomOutScale(currentScale_), false);
     });
@@ -411,6 +423,9 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     });
     connect(fitButton_, &QPushButton::clicked, this, &PreviewPanel::refitPreview);
 
+    toolbarLayout->addWidget(showInputButton_);
+    toolbarLayout->addWidget(showOutputButton_);
+    toolbarLayout->addSpacing(8);
     toolbarLayout->addWidget(zoomOutButton_);
     toolbarLayout->addWidget(fitButton_);
     toolbarLayout->addWidget(zoomInButton_);
@@ -462,6 +477,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 
 void PreviewPanel::clearPreview() {
     currentDataKind_ = gis::gui::DataKind::Unknown;
+    currentPath_.clear();
     currentImage_ = QImage();
     currentScale_ = 1.0;
     fitMode_ = true;
@@ -476,6 +492,7 @@ void PreviewPanel::clearPreview() {
 }
 
 void PreviewPanel::showPath(const std::string& path) {
+    currentPath_ = toQString(path);
     switch (gis::gui::detectDataKind(path)) {
         case gis::gui::DataKind::Raster:
             showRasterPreview(path);
@@ -491,6 +508,12 @@ void PreviewPanel::showPath(const std::string& path) {
 
 void PreviewPanel::refitPreview() {
     fitCurrentImage();
+}
+
+void PreviewPanel::setCompareTargets(const QString& inputPath, const QString& outputPath) {
+    compareInputPath_ = inputPath;
+    compareOutputPath_ = outputPath;
+    updateCompareButtons();
 }
 
 void PreviewPanel::resizeEvent(QResizeEvent* event) {
@@ -669,6 +692,7 @@ void PreviewPanel::updateScaleLabel() {
     scaleLabel_->setText(scaleLabelText(currentDataKind_, currentScale_));
     statusLabel_->setText(QString::fromUtf8(
         gis::gui::buildPreviewStatusText(currentDataKind_, currentScale_, fitMode_, isPanning_)));
+    updateCompareButtons();
 }
 
 void PreviewPanel::setScale(double scale, bool keepFitMode) {
@@ -699,6 +723,22 @@ void PreviewPanel::setZoomControlsEnabled(bool enabled) {
     zoomInButton_->setEnabled(enabled);
     zoomOutButton_->setEnabled(enabled);
     fitButton_->setEnabled(enabled);
+}
+
+void PreviewPanel::updateCompareButtons() {
+    if (showInputButton_) {
+        const bool canOpenInput = !compareInputPath_.isEmpty() && compareInputPath_ != currentPath_;
+        showInputButton_->setEnabled(canOpenInput);
+        showInputButton_->setToolTip(
+            compareInputPath_.isEmpty() ? QStringLiteral("当前没有可切换的输入数据") : compareInputPath_);
+    }
+
+    if (showOutputButton_) {
+        const bool canOpenOutput = !compareOutputPath_.isEmpty() && compareOutputPath_ != currentPath_;
+        showOutputButton_->setEnabled(canOpenOutput);
+        showOutputButton_->setToolTip(
+            compareOutputPath_.isEmpty() ? QStringLiteral("当前没有可切换的结果数据") : compareOutputPath_);
+    }
 }
 
 bool PreviewPanel::hasImagePreview() const {

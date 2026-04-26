@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include "gui_data_support.h"
 #include <gis/framework/plugin_manager.h>
 #include <map>
 
@@ -36,22 +37,30 @@ private slots:
 private:
     void loadPlugins();
     void setupUi();
-    void addDataPath(const QString& path, bool makeCurrent = true, bool isOutput = false);
+    void addDataPath(const QString& path,
+                     bool makeCurrent = true,
+                     gis::gui::DataOrigin origin = gis::gui::DataOrigin::Input);
+    void openDataPath(const QString& path, bool refitPreview = false);
     void syncCurrentDataToParams();
     void applyAutoFillFromPath(const QString& path);
     void bindDataPathToParam(const QString& path, const std::string& key);
-    QString buildResultSummary(const gis::framework::Result& result) const;
+    QString buildResultSummary(const gis::framework::Result& result, const QString& resultType) const;
     QString currentSelectedDataPath() const;
+    QString currentInputReferencePath() const;
+    QString currentOutputReferencePath() const;
     QString currentActionValue() const;
     QString buildSuggestedOutputPathFor(const QString& inputPath) const;
     QTreeWidgetItem* selectedDataItem() const;
     bool containsPath(const QString& path) const;
     void moveDataItemToRole(QTreeWidgetItem* item, bool isOutput);
     void refreshDataTreeVisualState();
+    void refreshPreviewCompareTargets();
     void updateDataItemPresentation(QTreeWidgetItem* item, bool isActive);
     void refreshSuggestedOutputFromCurrentData();
     void runPluginWithParams(const std::map<std::string, gis::framework::ParamValue>& params,
                              const QString& statusPrefix,
+                             const QString& resultType,
+                             gis::gui::DataOrigin outputOrigin,
                              bool syncOutputBackToForm);
     void refreshExecuteButtonState();
     void refreshQuickPreviewButtonState();
@@ -73,6 +82,7 @@ private:
     PreviewPanel* previewPanel_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;
     QString lastSuggestedOutputPath_;
+    QString latestOutputPath_;
     bool isSyncingParams_ = false;
 
     gis::framework::PluginManager pluginManager_;

@@ -174,6 +174,34 @@ std::string buildDataDisplayLabel(const std::string& path, DataKind kind, bool i
         + std::filesystem::path(path).filename().string();
 }
 
+std::string dataOriginDisplayName(DataOrigin origin) {
+    switch (origin) {
+        case DataOrigin::Input:
+            return "输入";
+        case DataOrigin::Output:
+            return "正式结果";
+        case DataOrigin::QuickPreview:
+            return "预览影像";
+        case DataOrigin::QuickRun:
+            return "快速试算";
+        default:
+            return "未知";
+    }
+}
+
+bool isOutputDataOrigin(DataOrigin origin) {
+    return origin != DataOrigin::Input;
+}
+
+std::string buildDataDisplayLabel(const std::string& path,
+                                  DataKind kind,
+                                  DataOrigin origin,
+                                  bool isActive) {
+    const std::string active = isActive ? "[当前]" : "";
+    return "[" + dataKindDisplayName(kind) + "][" + dataOriginDisplayName(origin) + "]" + active + " "
+        + std::filesystem::path(path).filename().string();
+}
+
 std::string buildPreviewStatusText(DataKind kind, double scale, bool fitMode, bool isPanning) {
     return "当前预览: " + dataKindDisplayName(kind)
         + " | 缩放: " + previewScaleText(kind, scale)

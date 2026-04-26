@@ -16,6 +16,13 @@ enum class DataKind {
     Vector,
 };
 
+enum class DataOrigin {
+    Input,
+    Output,
+    QuickPreview,
+    QuickRun,
+};
+
 struct DataAutoFillInfo {
     std::string crs;
     std::string layerName;
@@ -31,7 +38,12 @@ struct BindableParamOption {
 DataKind detectDataKind(const std::string& path);
 bool canPreviewData(const std::string& path);
 std::string dataKindDisplayName(DataKind kind);
-std::string buildDataDisplayLabel(const std::string& path, DataKind kind, bool isOutput, bool isActive = false);
+std::string dataOriginDisplayName(DataOrigin origin);
+bool isOutputDataOrigin(DataOrigin origin);
+std::string buildDataDisplayLabel(const std::string& path,
+                                  DataKind kind,
+                                  DataOrigin origin,
+                                  bool isActive = false);
 std::string buildPreviewStatusText(DataKind kind, double scale, bool fitMode, bool isPanning);
 std::string buildSuggestedOutputPath(const std::string& inputPath,
                                      const std::string& pluginName,

@@ -4,6 +4,7 @@
 
 #include <QImage>
 #include <QPoint>
+#include <QString>
 #include <QWidget>
 
 class QLabel;
@@ -19,6 +20,10 @@ public:
     void clearPreview();
     void showPath(const std::string& path);
     void refitPreview();
+    void setCompareTargets(const QString& inputPath, const QString& outputPath);
+
+signals:
+    void requestOpenPath(const QString& path);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -35,6 +40,7 @@ private:
     void setScale(double scale, bool keepFitMode);
     void fitCurrentImage();
     void setZoomControlsEnabled(bool enabled);
+    void updateCompareButtons();
     bool hasImagePreview() const;
 
     QLabel* titleLabel_ = nullptr;
@@ -44,6 +50,8 @@ private:
     QLabel* imageLabel_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     QLabel* scaleLabel_ = nullptr;
+    QPushButton* showInputButton_ = nullptr;
+    QPushButton* showOutputButton_ = nullptr;
     QPushButton* zoomInButton_ = nullptr;
     QPushButton* zoomOutButton_ = nullptr;
     QPushButton* fitButton_ = nullptr;
@@ -56,4 +64,7 @@ private:
     bool fitMode_ = true;
     bool isPanning_ = false;
     QPoint lastPanPoint_;
+    QString currentPath_;
+    QString compareInputPath_;
+    QString compareOutputPath_;
 };
