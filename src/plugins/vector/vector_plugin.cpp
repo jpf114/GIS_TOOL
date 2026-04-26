@@ -67,13 +67,36 @@ std::string makeAsciiShapefileMirror(const std::string& sourcePath) {
         return sourcePath;
     }
 
-    const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const fs::path tempDir = fs::temp_directory_path() / "gis_tool_shapefile_utf8" / std::to_string(timestamp);
-    fs::create_directories(tempDir);
+    std::error_code ec;
+    const auto sourceFileSize = fs::file_size(sourceFsPath, ec);
+    const auto sourceWriteTime = fs::last_write_time(sourceFsPath, ec);
+    const auto cacheKey = std::to_string(std::hash<std::string>{}(sourcePath)) + "_" +
+        std::to_string(static_cast<unsigned long long>(sourceFileSize)) + "_" +
+        std::to_string(sourceWriteTime.time_since_epoch().count());
+    const fs::path tempDir = fs::temp_directory_path() / "gis_tool_shapefile_utf8" / cacheKey;
+    fs::create_directories(tempDir, ec);
 
     const fs::path tempBase = tempDir / "input.shp";
+    if (fs::exists(tempBase)) {
+        return tempBase.string();
+    }
+
     const std::vector<std::wstring> sidecarExts = {
         L".shp", L".shx", L".dbf", L".prj", L".cpg", L".qix", L".fix", L".sbn", L".sbx"
+    };
+
+    auto copyOrLinkFile = [](const fs::path& src, const fs::path& dst) {
+        std::error_code localEc;
+        fs::remove(dst, localEc);
+        localEc.clear();
+        fs::create_hard_link(src, dst, localEc);
+        if (!localEc) {
+            return true;
+        }
+
+        localEc.clear();
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, localEc);
+        return !localEc;
     };
 
     for (const auto& ext : sidecarExts) {
@@ -85,7 +108,13 @@ std::string makeAsciiShapefileMirror(const std::string& sourcePath) {
 
         fs::path dst = tempBase;
         dst.replace_extension(ext);
-        fs::copy_file(src, dst, fs::copy_options::overwrite_existing);
+        if (!copyOrLinkFile(src, dst)) {
+            return sourcePath;
+        }
+    }
+
+    if (!fs::exists(tempBase)) {
+        return sourcePath;
     }
 
     return tempBase.string();

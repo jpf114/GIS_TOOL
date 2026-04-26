@@ -1360,6 +1360,62 @@ TEST_F(PluginTest, VectorInfoSupportsChinesePath) {
     EXPECT_TRUE(result.success) << "Info failed: " << result.message;
 }
 
+TEST_F(PluginTest, VectorBufferSupportsChinesePath) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    fs::path asciiPath = getTestDir() / "e2e_buffer_chinese_ascii.shp";
+    fs::path chinesePath = getTestDir() / "中文道路缓冲输入.shp";
+    std::string output = utf8PathString(getTestDir() / "e2e_buffer_chinese_output.gpkg");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(asciiPath.string().c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("roads", srs.get(), wkbLineString);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn fieldDefn("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&fieldDefn), OGRERR_NONE);
+        auto* featDefn = layer->GetLayerDefn();
+        for (int i = 0; i < 3; ++i) {
+            auto* feat = OGRFeature::CreateFeature(featDefn);
+            OGRLineString line;
+            line.addPoint(i * 100.0, 0.0);
+            line.addPoint(i * 100.0 + 50.0, 20.0);
+            feat->SetGeometry(&line);
+            feat->SetField("name", "road");
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(ds);
+    }
+
+    for (const char* ext : {".shp", ".shx", ".dbf", ".prj"}) {
+        fs::path src = asciiPath;
+        src.replace_extension(ext);
+        fs::path dst = chinesePath;
+        dst.replace_extension(ext);
+        if (fs::exists(dst)) {
+            fs::remove(dst);
+        }
+        fs::rename(src, dst);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("buffer");
+    params["input"] = utf8PathString(chinesePath);
+    params["output"] = output;
+    params["distance"] = 15.0;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Buffer failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata["feature_count"], "3");
+}
+
 TEST_F(PluginTest, VectorDissolveRejectsGeographicSrs) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";
