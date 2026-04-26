@@ -61,6 +61,20 @@ TEST(GuiSupportTest, DataKindDisplayNameIsChinese) {
     EXPECT_EQ(gis::gui::dataKindDisplayName(gis::gui::DataKind::Unknown), "未知");
 }
 
+TEST(GuiSupportTest, DataOriginDisplayNameIsChinese) {
+    EXPECT_EQ(gis::gui::dataOriginDisplayName(gis::gui::DataOrigin::Input), "输入");
+    EXPECT_EQ(gis::gui::dataOriginDisplayName(gis::gui::DataOrigin::Output), "正式结果");
+    EXPECT_EQ(gis::gui::dataOriginDisplayName(gis::gui::DataOrigin::QuickPreview), "预览影像");
+    EXPECT_EQ(gis::gui::dataOriginDisplayName(gis::gui::DataOrigin::QuickRun), "快速试算");
+}
+
+TEST(GuiSupportTest, OutputDataOriginIncludesPreviewAndQuickRun) {
+    EXPECT_FALSE(gis::gui::isOutputDataOrigin(gis::gui::DataOrigin::Input));
+    EXPECT_TRUE(gis::gui::isOutputDataOrigin(gis::gui::DataOrigin::Output));
+    EXPECT_TRUE(gis::gui::isOutputDataOrigin(gis::gui::DataOrigin::QuickPreview));
+    EXPECT_TRUE(gis::gui::isOutputDataOrigin(gis::gui::DataOrigin::QuickRun));
+}
+
 TEST(GuiSupportTest, BuildDataDisplayLabelIncludesRoleAndName) {
     EXPECT_EQ(
         gis::gui::buildDataDisplayLabel(
