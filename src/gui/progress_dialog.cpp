@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QDialogButtonBox>
+#include <QTimer>
 
 ProgressDialog::ProgressDialog(QtProgressReporter* reporter, QWidget* parent)
     : QDialog(parent), reporter_(reporter) {
@@ -38,7 +39,7 @@ ProgressDialog::ProgressDialog(QtProgressReporter* reporter, QWidget* parent)
     connect(reporter_, &QtProgressReporter::messageLogged, this, &ProgressDialog::onMessageLogged);
 }
 
-void ProgressDialog::setFinished(const QString& message, bool success) {
+void ProgressDialog::setFinished(const QString& message, bool success, bool cancelled) {
     cancelButton_->setEnabled(false);
 
     if (success) {
@@ -46,9 +47,13 @@ void ProgressDialog::setFinished(const QString& message, bool success) {
         setWindowTitle(QStringLiteral("执行完成"));
         statusLabel_->setText(QStringLiteral("执行完成"));
         logEdit_->append(QStringLiteral("<b style='color:green;'>%1</b>").arg(message));
+    } else if (cancelled) {
+        setWindowTitle(QStringLiteral("执行已取消"));
+        statusLabel_->setText(QStringLiteral("执行已取消"));
+        logEdit_->append(QStringLiteral("<b style='color:#b54708;'>%1</b>").arg(message));
     } else {
         setWindowTitle(QStringLiteral("执行失败"));
-        statusLabel_->setText(QStringLiteral("执行未完成"));
+        statusLabel_->setText(QStringLiteral("执行失败，请查看日志"));
         logEdit_->append(QStringLiteral("<b style='color:red;'>%1</b>").arg(message));
     }
 
@@ -59,6 +64,10 @@ void ProgressDialog::setFinished(const QString& message, bool success) {
     if (btnBox) {
         btnBox->clear();
         btnBox->addButton(closeBtn, QDialogButtonBox::AcceptRole);
+    }
+
+    if (success) {
+        QTimer::singleShot(700, this, &QDialog::accept);
     }
 }
 

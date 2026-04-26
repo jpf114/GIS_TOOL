@@ -13,7 +13,7 @@ class ProgressDialog : public QDialog {
 public:
     explicit ProgressDialog(QtProgressReporter* reporter, QWidget* parent = nullptr);
 
-    void setFinished(const QString& message, bool success);
+    void setFinished(const QString& message, bool success, bool cancelled = false);
 
 private slots:
     void onCancel();

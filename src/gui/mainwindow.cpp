@@ -328,10 +328,11 @@ void MainWindow::onExecute() {
     connect(thread, &QThread::started, worker, &ExecuteWorker::run);
     connect(worker, &ExecuteWorker::finished, this, [this, progressDialog](const gis::framework::Result& result) {
         QString message = QString::fromUtf8(result.message);
+        const bool cancelled = result.message == "已取消执行";
         if (result.success && !result.outputPath.empty()) {
             message += QStringLiteral("\n结果已写出并加入左侧结果数据区。");
         }
-        progressDialog->setFinished(message, result.success);
+        progressDialog->setFinished(message, result.success, cancelled);
         resultSummaryLabel_->setText(QString::fromUtf8(gis::gui::buildResultSummaryText(result)));
 
         if (result.success) {
@@ -343,6 +344,8 @@ void MainWindow::onExecute() {
                 addDataPath(QString::fromUtf8(result.outputPath), true, true);
             }
             statusBar()->showMessage(QStringLiteral("执行成功: ") + message);
+        } else if (cancelled) {
+            statusBar()->showMessage(QStringLiteral("执行已取消"));
         } else {
             statusBar()->showMessage(QStringLiteral("执行失败: ") + message);
         }
