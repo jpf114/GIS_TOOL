@@ -284,6 +284,7 @@ void MainWindow::onExecute() {
         return;
     }
 
+    const auto specs = currentPlugin_->paramSpecs();
     auto params = paramWidget_->collectParams();
     const QString inputPath = currentSelectedDataPath();
     if (paramWidget_->hasParam("output")) {
@@ -298,6 +299,14 @@ void MainWindow::onExecute() {
         }
     }
 
+    const std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
+    if (!validationMessage.empty()) {
+        QMessageBox::warning(this, QStringLiteral("参数不完整"),
+                             QString::fromUtf8(validationMessage));
+        statusBar()->showMessage(QStringLiteral("执行已拦截: 请先补全必要参数"));
+        return;
+    }
+
     reporter_->reset();
 
     auto* worker = new ExecuteWorker;
@@ -310,7 +319,10 @@ void MainWindow::onExecute() {
 
     connect(thread, &QThread::started, worker, &ExecuteWorker::run);
     connect(worker, &ExecuteWorker::finished, this, [this, progressDialog](const gis::framework::Result& result) {
-        const QString message = QString::fromUtf8(result.message);
+        QString message = QString::fromUtf8(result.message);
+        if (result.success && !result.outputPath.empty()) {
+            message += QStringLiteral("\n结果已写出并加入左侧结果数据区。");
+        }
         progressDialog->setFinished(message, result.success);
         resultSummaryLabel_->setText(QString::fromUtf8(gis::gui::buildResultSummaryText(result)));
 

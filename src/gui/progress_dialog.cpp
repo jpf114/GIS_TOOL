@@ -15,8 +15,8 @@ ProgressDialog::ProgressDialog(QtProgressReporter* reporter, QWidget* parent)
 
     auto* layout = new QVBoxLayout(this);
 
-    auto* statusLabel = new QLabel(QStringLiteral("正在执行，请稍候..."));
-    layout->addWidget(statusLabel);
+    statusLabel_ = new QLabel(QStringLiteral("正在执行，请稍候..."));
+    layout->addWidget(statusLabel_);
 
     progressBar_ = new QProgressBar;
     progressBar_->setRange(0, 100);
@@ -40,13 +40,15 @@ ProgressDialog::ProgressDialog(QtProgressReporter* reporter, QWidget* parent)
 
 void ProgressDialog::setFinished(const QString& message, bool success) {
     cancelButton_->setEnabled(false);
-    progressBar_->setValue(100);
 
     if (success) {
+        progressBar_->setValue(100);
         setWindowTitle(QStringLiteral("执行完成"));
+        statusLabel_->setText(QStringLiteral("执行完成"));
         logEdit_->append(QStringLiteral("<b style='color:green;'>%1</b>").arg(message));
     } else {
         setWindowTitle(QStringLiteral("执行失败"));
+        statusLabel_->setText(QStringLiteral("执行未完成"));
         logEdit_->append(QStringLiteral("<b style='color:red;'>%1</b>").arg(message));
     }
 
@@ -65,8 +67,9 @@ void ProgressDialog::onCancel() {
         reporter_->cancel();
     }
     cancelButton_->setEnabled(false);
-    cancelButton_->setText(QStringLiteral("正在取消..."));
-    logEdit_->append(QStringLiteral("<i>已请求取消...</i>"));
+    cancelButton_->setText(QStringLiteral("等待当前步骤结束"));
+    statusLabel_->setText(QStringLiteral("已请求取消，正在等待当前步骤结束..."));
+    logEdit_->append(QStringLiteral("<i>已请求取消，需等待当前步骤结束</i>"));
 }
 
 void ProgressDialog::onProgressChanged(double percent) {
@@ -74,5 +77,6 @@ void ProgressDialog::onProgressChanged(double percent) {
 }
 
 void ProgressDialog::onMessageLogged(const QString& msg) {
+    statusLabel_->setText(msg);
     logEdit_->append(msg);
 }

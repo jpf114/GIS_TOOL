@@ -5,6 +5,7 @@
 class QProgressBar;
 class QTextEdit;
 class QPushButton;
+class QLabel;
 class QtProgressReporter;
 
 class ProgressDialog : public QDialog {
@@ -20,6 +21,7 @@ private slots:
     void onMessageLogged(const QString& msg);
 
 private:
+    QLabel* statusLabel_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
     QTextEdit* logEdit_ = nullptr;
     QPushButton* cancelButton_ = nullptr;

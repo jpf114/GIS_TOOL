@@ -1,8 +1,11 @@
 #pragma once
 
 #include <array>
+#include <map>
 #include <string>
+#include <vector>
 
+#include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
 
 namespace gis::gui {
@@ -30,6 +33,9 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
                                      const std::string& action);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
 std::string buildResultSummaryText(const gis::framework::Result& result);
+std::string validateExecutionParams(
+    const std::vector<gis::framework::ParamSpec>& specs,
+    const std::map<std::string, gis::framework::ParamValue>& params);
 
 double zoomInScale(double currentScale);
 double zoomOutScale(double currentScale);

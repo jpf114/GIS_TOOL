@@ -19,6 +19,9 @@ void ExecuteWorker::run() {
     try {
         if (plugin_ && reporter_) {
             result = plugin_->execute(params_, *reporter_);
+            if (reporter_->isCancelled()) {
+                result = gis::framework::Result::fail("已取消执行");
+            }
         } else {
             result = gis::framework::Result::fail("No plugin or reporter configured");
         }

@@ -254,6 +254,77 @@ std::string buildResultSummaryText(const gis::framework::Result& result) {
     return oss.str();
 }
 
+std::string validateExecutionParams(
+    const std::vector<gis::framework::ParamSpec>& specs,
+    const std::map<std::string, gis::framework::ParamValue>& params) {
+    auto displayNameFor = [](const gis::framework::ParamSpec& spec) {
+        return spec.displayName.empty() ? spec.key : spec.displayName;
+    };
+
+    for (const auto& spec : specs) {
+        auto it = params.find(spec.key);
+        const auto issuePrefix = "参数“" + displayNameFor(spec) + "”";
+
+        if (it == params.end()) {
+            if (spec.required) {
+                return issuePrefix + "不能为空";
+            }
+            continue;
+        }
+
+        switch (spec.type) {
+            case gis::framework::ParamType::String:
+            case gis::framework::ParamType::FilePath:
+            case gis::framework::ParamType::DirPath:
+            case gis::framework::ParamType::Enum:
+            case gis::framework::ParamType::CRS: {
+                const auto* text = std::get_if<std::string>(&it->second);
+                if (spec.required && (!text || text->empty())) {
+                    return issuePrefix + "不能为空";
+                }
+                break;
+            }
+            case gis::framework::ParamType::Int: {
+                const auto* value = std::get_if<int>(&it->second);
+                if (!value) {
+                    return issuePrefix + "类型无效";
+                }
+
+                const auto* minValue = std::get_if<int>(&spec.minValue);
+                const auto* maxValue = std::get_if<int>(&spec.maxValue);
+                if (minValue && maxValue && *maxValue > *minValue &&
+                    (*value < *minValue || *value > *maxValue)) {
+                    std::ostringstream oss;
+                    oss << issuePrefix << "超出范围 [" << *minValue << ", " << *maxValue << "]";
+                    return oss.str();
+                }
+                break;
+            }
+            case gis::framework::ParamType::Double: {
+                const auto* value = std::get_if<double>(&it->second);
+                if (!value) {
+                    return issuePrefix + "类型无效";
+                }
+
+                const auto* minValue = std::get_if<double>(&spec.minValue);
+                const auto* maxValue = std::get_if<double>(&spec.maxValue);
+                if (minValue && maxValue && *maxValue > *minValue &&
+                    (*value < *minValue || *value > *maxValue)) {
+                    std::ostringstream oss;
+                    oss << issuePrefix << "超出范围 [" << *minValue << ", " << *maxValue << "]";
+                    return oss.str();
+                }
+                break;
+            }
+            case gis::framework::ParamType::Bool:
+            case gis::framework::ParamType::Extent:
+                break;
+        }
+    }
+
+    return {};
+}
+
 double zoomInScale(double currentScale) {
     return clampScale(currentScale * kZoomStep);
 }

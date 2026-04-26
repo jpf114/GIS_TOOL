@@ -196,3 +196,51 @@ TEST(GuiSupportTest, BuildResultSummaryTextUsesChineseLabels) {
     EXPECT_NE(summary.find("- rows: 256"), std::string::npos);
     EXPECT_NE(summary.find("- cols: 512"), std::string::npos);
 }
+
+TEST(GuiSupportTest, ValidateExecutionParamsRejectsMissingRequiredPath) {
+    std::vector<gis::framework::ParamSpec> specs;
+    specs.push_back(gis::framework::ParamSpec{
+        "input", "输入文件", "", gis::framework::ParamType::FilePath, true
+    });
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string();
+
+    EXPECT_EQ(
+        gis::gui::validateExecutionParams(specs, params),
+        "参数“输入文件”不能为空");
+}
+
+TEST(GuiSupportTest, ValidateExecutionParamsRejectsOutOfRangeNumber) {
+    gis::framework::ParamSpec spec{
+        "threshold", "阈值", "", gis::framework::ParamType::Double, true
+    };
+    spec.minValue = 0.0;
+    spec.maxValue = 1.0;
+
+    std::vector<gis::framework::ParamSpec> specs{spec};
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["threshold"] = 2.5;
+
+    EXPECT_EQ(
+        gis::gui::validateExecutionParams(specs, params),
+        "参数“阈值”超出范围 [0, 1]");
+}
+
+TEST(GuiSupportTest, ValidateExecutionParamsAcceptsValidValues) {
+    gis::framework::ParamSpec inputSpec{
+        "input", "输入文件", "", gis::framework::ParamType::FilePath, true
+    };
+    gis::framework::ParamSpec thresholdSpec{
+        "threshold", "阈值", "", gis::framework::ParamType::Double, true
+    };
+    thresholdSpec.minValue = 0.0;
+    thresholdSpec.maxValue = 1.0;
+
+    std::vector<gis::framework::ParamSpec> specs{inputSpec, thresholdSpec};
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string("D:/data/image.tif");
+    params["threshold"] = 0.75;
+
+    EXPECT_TRUE(gis::gui::validateExecutionParams(specs, params).empty());
+}
