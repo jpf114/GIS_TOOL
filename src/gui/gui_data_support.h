@@ -15,6 +15,9 @@ bool canPreviewData(const std::string& path);
 std::string dataKindDisplayName(DataKind kind);
 std::string buildDataDisplayLabel(const std::string& path, DataKind kind, bool isOutput, bool isActive = false);
 std::string buildPreviewStatusText(DataKind kind, double scale, bool fitMode, bool isPanning);
+std::string buildSuggestedOutputPath(const std::string& inputPath,
+                                     const std::string& pluginName,
+                                     const std::string& action);
 
 double zoomInScale(double currentScale);
 double zoomOutScale(double currentScale);

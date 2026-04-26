@@ -68,3 +68,18 @@ TEST(GuiSupportTest, FitScaleUsesViewportBounds) {
     EXPECT_DOUBLE_EQ(gis::gui::fitScaleForSize(400, 800, 200, 400), 0.5);
     EXPECT_DOUBLE_EQ(gis::gui::fitScaleForSize(200, 100, 800, 600), 1.0);
 }
+
+TEST(GuiSupportTest, BuildSuggestedOutputPathUsesPluginAndActionSuffix) {
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "processing", "threshold"),
+        "D:/data/image_processing_threshold.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/roads.shp", "vector", "buffer"),
+        "D:/data/roads_vector_buffer.shp");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/scene.tif", "", ""),
+        "D:/data/scene_result.tif");
+}

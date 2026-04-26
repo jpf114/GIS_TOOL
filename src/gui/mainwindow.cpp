@@ -61,7 +61,7 @@ void MainWindow::setupUi() {
     auto* algorithmTitle = new QLabel(QStringLiteral("算法工作台"));
     algorithmTitle->setStyleSheet("font-size: 20px; font-weight: 700;");
     auto* algorithmSubtitle = new QLabel(
-        QStringLiteral("顶部选择算法，左侧管理输入与结果数据，中间预览数据，下方填写参数并查看执行结果。"));
+        QStringLiteral("上方选择算法，左侧管理输入与结果数据，中间预览数据，下方填写参数并查看执行结果。"));
     algorithmSubtitle->setStyleSheet("color: #5f6b7a;");
 
     pluginTabs_ = new QTabBar;
@@ -221,9 +221,8 @@ void MainWindow::setupUi() {
 void MainWindow::loadPlugins() {
     namespace fs = std::filesystem;
 
-    std::string pluginsDir;
     auto exePath = fs::canonical(fs::path(QApplication::applicationFilePath().toStdWString()).parent_path());
-    pluginsDir = (exePath / "plugins").string();
+    const std::string pluginsDir = (exePath / "plugins").string();
 
     pluginManager_.loadFromDirectory(pluginsDir);
 
@@ -244,7 +243,7 @@ void MainWindow::loadPlugins() {
     });
 
     for (auto* plugin : plugins) {
-        int index = pluginTabs_->addTab(QString::fromUtf8(plugin->displayName()));
+        const int index = pluginTabs_->addTab(QString::fromUtf8(plugin->displayName()));
         pluginTabs_->setTabToolTip(index, QString::fromUtf8(plugin->description()));
         pluginTabMap_[index] = plugin->name();
     }
@@ -262,6 +261,7 @@ void MainWindow::onPluginSelected(int index) {
     if (index < 0 || pluginTabMap_.count(index) == 0) {
         currentPlugin_ = nullptr;
         paramWidget_->clear();
+        lastSuggestedOutputPath_.clear();
         return;
     }
 
@@ -285,6 +285,18 @@ void MainWindow::onExecute() {
     }
 
     auto params = paramWidget_->collectParams();
+    const QString inputPath = currentSelectedDataPath();
+    if (paramWidget_->hasParam("output")) {
+        const std::string currentOutput = paramWidget_->stringValue("output");
+        if (currentOutput.empty() && !inputPath.isEmpty()) {
+            const QString suggestedOutputPath = buildSuggestedOutputPathFor(inputPath);
+            if (!suggestedOutputPath.isEmpty()) {
+                paramWidget_->setStringValue("output", suggestedOutputPath.toUtf8().constData());
+                params["output"] = suggestedOutputPath.toUtf8().constData();
+                lastSuggestedOutputPath_ = suggestedOutputPath;
+            }
+        }
+    }
 
     reporter_->reset();
 
@@ -298,17 +310,21 @@ void MainWindow::onExecute() {
 
     connect(thread, &QThread::started, worker, &ExecuteWorker::run);
     connect(worker, &ExecuteWorker::finished, this, [this, progressDialog](const gis::framework::Result& result) {
-        const QString msg = QString::fromUtf8(result.message);
-        progressDialog->setFinished(msg, result.success);
+        const QString message = QString::fromUtf8(result.message);
+        progressDialog->setFinished(message, result.success);
         resultSummaryLabel_->setText(buildResultSummary(result));
 
         if (result.success) {
+            if (paramWidget_->hasParam("output") && !result.outputPath.empty()) {
+                paramWidget_->setStringValue("output", result.outputPath);
+                lastSuggestedOutputPath_ = QString::fromUtf8(result.outputPath);
+            }
             if (!result.outputPath.empty() && std::filesystem::exists(result.outputPath)) {
                 addDataPath(QString::fromUtf8(result.outputPath), true, true);
             }
-            statusBar()->showMessage(QStringLiteral("执行成功: ") + msg);
+            statusBar()->showMessage(QStringLiteral("执行成功: ") + message);
         } else {
-            statusBar()->showMessage(QStringLiteral("执行失败: ") + msg);
+            statusBar()->showMessage(QStringLiteral("执行失败: ") + message);
         }
     });
     connect(worker, &ExecuteWorker::finished, thread, &QThread::quit);
@@ -455,19 +471,27 @@ void MainWindow::addDataPath(const QString& path, bool makeCurrent, bool isOutpu
 }
 
 void MainWindow::syncCurrentDataToParams() {
-    auto* item = selectedDataItem();
-    if (!currentPlugin_ || !item) {
+    if (!currentPlugin_) {
         return;
     }
 
-    const bool isOutput = item->data(0, Qt::UserRole + 2).toBool();
-    if (isOutput) {
+    const QString path = currentSelectedDataPath();
+    if (path.isEmpty()) {
         return;
     }
 
-    const QString path = item->data(0, Qt::UserRole).toString();
     if (paramWidget_->hasParam("input")) {
         paramWidget_->setStringValue("input", path.toUtf8().constData());
+    }
+
+    if (paramWidget_->hasParam("output")) {
+        const QString currentOutput = QString::fromUtf8(paramWidget_->stringValue("output"));
+        const QString suggestedOutput = buildSuggestedOutputPathFor(path);
+        if (!suggestedOutput.isEmpty() &&
+            (currentOutput.isEmpty() || currentOutput == lastSuggestedOutputPath_)) {
+            paramWidget_->setStringValue("output", suggestedOutput.toUtf8().constData());
+            lastSuggestedOutputPath_ = suggestedOutput;
+        }
     }
 }
 
@@ -491,6 +515,31 @@ QString MainWindow::buildResultSummary(const gis::framework::Result& result) con
     }
 
     return summary;
+}
+
+QString MainWindow::currentSelectedDataPath() const {
+    auto* item = selectedDataItem();
+    if (!item) {
+        return {};
+    }
+    return item->data(0, Qt::UserRole).toString();
+}
+
+QString MainWindow::currentActionValue() const {
+    if (!paramWidget_ || !paramWidget_->hasParam("action")) {
+        return {};
+    }
+    return QString::fromUtf8(paramWidget_->stringValue("action"));
+}
+
+QString MainWindow::buildSuggestedOutputPathFor(const QString& inputPath) const {
+    if (!currentPlugin_ || inputPath.isEmpty()) {
+        return {};
+    }
+    return QString::fromStdString(gis::gui::buildSuggestedOutputPath(
+        inputPath.toStdString(),
+        currentPlugin_->name(),
+        currentActionValue().toStdString()));
 }
 
 QTreeWidgetItem* MainWindow::selectedDataItem() const {
@@ -533,9 +582,7 @@ void MainWindow::moveDataItemToRole(QTreeWidgetItem* item, bool isOutput) {
     targetParent->setExpanded(true);
     dataTree_->setCurrentItem(item);
 
-    if (!isOutput) {
-        syncCurrentDataToParams();
-    }
+    syncCurrentDataToParams();
     refreshDataTreeVisualState();
 }
 

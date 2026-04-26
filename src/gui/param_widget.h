@@ -21,6 +21,7 @@ public:
     void clear();
     bool hasParam(const std::string& key) const;
     void setStringValue(const std::string& key, const std::string& value);
+    std::string stringValue(const std::string& key) const;
 
 private:
     struct WidgetRow {

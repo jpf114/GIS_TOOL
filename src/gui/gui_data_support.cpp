@@ -22,6 +22,19 @@ std::string lowerExtension(const std::string& path) {
     return ext;
 }
 
+std::string sanitizeSuffixPart(const std::string& value) {
+    std::string sanitized;
+    sanitized.reserve(value.size());
+    for (unsigned char ch : value) {
+        if (std::isalnum(ch)) {
+            sanitized.push_back(static_cast<char>(std::tolower(ch)));
+        } else if (ch == '-' || ch == '_') {
+            sanitized.push_back('_');
+        }
+    }
+    return sanitized;
+}
+
 double clampScale(double value) {
     return std::clamp(value, kMinScale, kMaxScale);
 }
@@ -97,6 +110,34 @@ std::string buildPreviewStatusText(DataKind kind, double scale, bool fitMode, bo
     return "当前预览: " + dataKindDisplayName(kind)
         + " | 缩放: " + previewScaleText(kind, scale)
         + " | 模式: " + previewModeText(kind, fitMode, isPanning);
+}
+
+std::string buildSuggestedOutputPath(const std::string& inputPath,
+                                     const std::string& pluginName,
+                                     const std::string& action) {
+    namespace fs = std::filesystem;
+
+    fs::path input = fs::path(inputPath);
+    if (input.empty()) {
+        return {};
+    }
+
+    const std::string pluginSuffix = sanitizeSuffixPart(pluginName);
+    const std::string actionSuffix = sanitizeSuffixPart(action);
+
+    std::string suffix = "result";
+    if (!pluginSuffix.empty()) {
+        suffix = pluginSuffix;
+        if (!actionSuffix.empty()) {
+            suffix += "_" + actionSuffix;
+        }
+    } else if (!actionSuffix.empty()) {
+        suffix = actionSuffix;
+    }
+
+    const fs::path suggested = input.parent_path() /
+        fs::path(input.stem().string() + "_" + suffix + input.extension().string());
+    return suggested.generic_string();
 }
 
 double zoomInScale(double currentScale) {

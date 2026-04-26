@@ -4,6 +4,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
@@ -82,6 +83,35 @@ void ParamWidget::setStringValue(const std::string& key, const std::string& valu
                 return;
         }
     }
+}
+
+std::string ParamWidget::stringValue(const std::string& key) const {
+    for (const auto& row : rows_) {
+        if (row.spec.key != key) {
+            continue;
+        }
+
+        switch (row.spec.type) {
+            case gis::framework::ParamType::String:
+            case gis::framework::ParamType::FilePath:
+            case gis::framework::ParamType::DirPath:
+            case gis::framework::ParamType::CRS: {
+                if (auto* edit = qobject_cast<QLineEdit*>(row.editor)) {
+                    return edit->text().toUtf8().constData();
+                }
+                return {};
+            }
+            case gis::framework::ParamType::Enum: {
+                if (auto* combo = qobject_cast<QComboBox*>(row.editor)) {
+                    return combo->currentText().toUtf8().constData();
+                }
+                return {};
+            }
+            default:
+                return {};
+        }
+    }
+    return {};
 }
 
 void ParamWidget::buildForm() {

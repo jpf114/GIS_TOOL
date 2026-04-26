@@ -34,6 +34,9 @@ private:
     void addDataPath(const QString& path, bool makeCurrent = true, bool isOutput = false);
     void syncCurrentDataToParams();
     QString buildResultSummary(const gis::framework::Result& result) const;
+    QString currentSelectedDataPath() const;
+    QString currentActionValue() const;
+    QString buildSuggestedOutputPathFor(const QString& inputPath) const;
     QTreeWidgetItem* selectedDataItem() const;
     bool containsPath(const QString& path) const;
     void moveDataItemToRole(QTreeWidgetItem* item, bool isOutput);
@@ -50,6 +53,7 @@ private:
     ParamWidget* paramWidget_ = nullptr;
     PreviewPanel* previewPanel_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;
+    QString lastSuggestedOutputPath_;
 
     gis::framework::PluginManager pluginManager_;
     gis::framework::IGisPlugin* currentPlugin_ = nullptr;
