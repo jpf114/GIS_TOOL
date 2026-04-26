@@ -34,6 +34,8 @@ private:
     void setupUi();
     void addDataPath(const QString& path, bool makeCurrent = true, bool isOutput = false);
     void syncCurrentDataToParams();
+    void applyAutoFillFromPath(const QString& path);
+    void bindDataPathToParam(const QString& path, const std::string& key);
     QString buildResultSummary(const gis::framework::Result& result) const;
     QString currentSelectedDataPath() const;
     QString currentActionValue() const;

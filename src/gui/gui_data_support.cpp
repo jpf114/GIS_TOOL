@@ -12,6 +12,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_set>
+#include <utility>
 
 namespace {
 
@@ -99,6 +100,30 @@ std::string previewModeText(gis::gui::DataKind kind, bool fitMode, bool isPannin
         return "适配视图";
     }
     return "手动缩放";
+}
+
+bool isLikelyVectorParamKey(const std::string& key) {
+    static const std::vector<std::string> hints = {
+        "vector", "shape", "shp", "overlay", "clip"
+    };
+    for (const auto& hint : hints) {
+        if (key.find(hint) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool isLikelyRasterParamKey(const std::string& key) {
+    static const std::vector<std::string> hints = {
+        "reference", "template", "pan", "raster", "image", "img"
+    };
+    for (const auto& hint : hints) {
+        if (key.find(hint) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -323,6 +348,32 @@ std::string validateExecutionParams(
     }
 
     return {};
+}
+
+std::vector<BindableParamOption> collectBindableParamOptions(
+    const std::vector<gis::framework::ParamSpec>& specs,
+    DataKind dataKind) {
+    std::vector<BindableParamOption> options;
+    for (const auto& spec : specs) {
+        if (spec.type != gis::framework::ParamType::FilePath) {
+            continue;
+        }
+        if (spec.key == "input" || spec.key == "output") {
+            continue;
+        }
+
+        const bool looksVector = isLikelyVectorParamKey(spec.key);
+        const bool looksRaster = isLikelyRasterParamKey(spec.key);
+        if (dataKind == DataKind::Vector && looksRaster && !looksVector) {
+            continue;
+        }
+        if (dataKind == DataKind::Raster && looksVector && !looksRaster) {
+            continue;
+        }
+
+        options.push_back({spec.key, spec.displayName.empty() ? spec.key : spec.displayName});
+    }
+    return options;
 }
 
 double zoomInScale(double currentScale) {

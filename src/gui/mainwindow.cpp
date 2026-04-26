@@ -434,9 +434,24 @@ void MainWindow::showDataContextMenu(const QPoint& pos) {
         return;
     }
 
+    const QString path = item->data(0, Qt::UserRole).toString();
+    const auto kind = static_cast<gis::gui::DataKind>(item->data(0, Qt::UserRole + 1).toInt());
+
     QMenu menu(this);
     auto* setInputAction = menu.addAction(QStringLiteral("设为输入数据"));
     auto* setOutputAction = menu.addAction(QStringLiteral("设为结果数据"));
+    std::map<QAction*, std::string> bindActions;
+    if (currentPlugin_) {
+        const auto options = gis::gui::collectBindableParamOptions(currentPlugin_->paramSpecs(), kind);
+        if (!options.empty()) {
+            auto* bindMenu = menu.addMenu(QStringLiteral("填入参数"));
+            for (const auto& option : options) {
+                auto* action = bindMenu->addAction(QString::fromUtf8(option.displayName));
+                action->setToolTip(QString::fromUtf8(option.key));
+                bindActions[action] = option.key;
+            }
+        }
+    }
     menu.addSeparator();
     auto* removeAction = menu.addAction(QStringLiteral("移除"));
 
@@ -449,6 +464,8 @@ void MainWindow::showDataContextMenu(const QPoint& pos) {
         moveDataItemToRole(item, false);
     } else if (selectedAction == setOutputAction) {
         moveDataItemToRole(item, true);
+    } else if (bindActions.count(selectedAction) > 0) {
+        bindDataPathToParam(path, bindActions[selectedAction]);
     } else if (selectedAction == removeAction) {
         delete item;
         if (!selectedDataItem()) {
@@ -501,14 +518,22 @@ void MainWindow::syncCurrentDataToParams() {
         return;
     }
     isSyncingParams_ = true;
-    const auto autoFillInfo = gis::gui::inspectDataForAutoFill(path.toStdString());
 
     if (paramWidget_->hasParam("input")) {
         paramWidget_->setStringValue("input", path.toUtf8().constData());
     }
 
     refreshSuggestedOutputFromCurrentData();
+    applyAutoFillFromPath(path);
+    isSyncingParams_ = false;
+}
 
+void MainWindow::applyAutoFillFromPath(const QString& path) {
+    if (path.isEmpty()) {
+        return;
+    }
+
+    const auto autoFillInfo = gis::gui::inspectDataForAutoFill(path.toStdString());
     if (paramWidget_->hasParam("layer") && !autoFillInfo.layerName.empty()) {
         paramWidget_->setStringValue("layer", autoFillInfo.layerName);
     }
@@ -525,7 +550,19 @@ void MainWindow::syncCurrentDataToParams() {
             paramWidget_->setStringValue("srs", autoFillInfo.crs);
         }
     }
+}
+
+void MainWindow::bindDataPathToParam(const QString& path, const std::string& key) {
+    if (!paramWidget_ || path.isEmpty() || key.empty() || !paramWidget_->hasParam(key)) {
+        return;
+    }
+
+    isSyncingParams_ = true;
+    paramWidget_->setStringValue(key, path.toUtf8().constData());
+    applyAutoFillFromPath(path);
     isSyncingParams_ = false;
+    statusBar()->showMessage(
+        QStringLiteral("已将当前数据填入参数: %1").arg(QString::fromStdString(key)));
 }
 
 QString MainWindow::buildResultSummary(const gis::framework::Result& result) const {

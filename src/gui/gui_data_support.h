@@ -23,6 +23,11 @@ struct DataAutoFillInfo {
     bool hasExtent = false;
 };
 
+struct BindableParamOption {
+    std::string key;
+    std::string displayName;
+};
+
 DataKind detectDataKind(const std::string& path);
 bool canPreviewData(const std::string& path);
 std::string dataKindDisplayName(DataKind kind);
@@ -36,6 +41,9 @@ std::string buildResultSummaryText(const gis::framework::Result& result);
 std::string validateExecutionParams(
     const std::vector<gis::framework::ParamSpec>& specs,
     const std::map<std::string, gis::framework::ParamValue>& params);
+std::vector<BindableParamOption> collectBindableParamOptions(
+    const std::vector<gis::framework::ParamSpec>& specs,
+    DataKind dataKind);
 
 double zoomInScale(double currentScale);
 double zoomOutScale(double currentScale);

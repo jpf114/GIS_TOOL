@@ -244,3 +244,35 @@ TEST(GuiSupportTest, ValidateExecutionParamsAcceptsValidValues) {
 
     EXPECT_TRUE(gis::gui::validateExecutionParams(specs, params).empty());
 }
+
+TEST(GuiSupportTest, CollectBindableParamOptionsFiltersByTypeRoleAndKind) {
+    std::vector<gis::framework::ParamSpec> specs = {
+        {"input", "输入文件", "", gis::framework::ParamType::FilePath, true},
+        {"output", "输出文件", "", gis::framework::ParamType::FilePath, true},
+        {"reference", "参考影像", "", gis::framework::ParamType::FilePath, true},
+        {"clip_vector", "裁切矢量", "", gis::framework::ParamType::FilePath, true},
+        {"threshold", "阈值", "", gis::framework::ParamType::Double, true}
+    };
+
+    const auto rasterOptions = gis::gui::collectBindableParamOptions(specs, gis::gui::DataKind::Raster);
+    ASSERT_EQ(rasterOptions.size(), 1);
+    EXPECT_EQ(rasterOptions[0].key, "reference");
+    EXPECT_EQ(rasterOptions[0].displayName, "参考影像");
+
+    const auto vectorOptions = gis::gui::collectBindableParamOptions(specs, gis::gui::DataKind::Vector);
+    ASSERT_EQ(vectorOptions.size(), 1);
+    EXPECT_EQ(vectorOptions[0].key, "clip_vector");
+    EXPECT_EQ(vectorOptions[0].displayName, "裁切矢量");
+}
+
+TEST(GuiSupportTest, CollectBindableParamOptionsKeepsGenericFileParams) {
+    std::vector<gis::framework::ParamSpec> specs = {
+        {"template_file", "模板文件", "", gis::framework::ParamType::FilePath, true},
+        {"pan_file", "全色影像", "", gis::framework::ParamType::FilePath, true}
+    };
+
+    const auto rasterOptions = gis::gui::collectBindableParamOptions(specs, gis::gui::DataKind::Raster);
+    ASSERT_EQ(rasterOptions.size(), 2);
+    EXPECT_EQ(rasterOptions[0].key, "template_file");
+    EXPECT_EQ(rasterOptions[1].key, "pan_file");
+}
