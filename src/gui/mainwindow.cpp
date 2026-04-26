@@ -221,7 +221,7 @@ void MainWindow::setupUi() {
 void MainWindow::loadPlugins() {
     namespace fs = std::filesystem;
 
-    auto exePath = fs::canonical(fs::path(QApplication::applicationFilePath().toStdWString()).parent_path());
+    const auto exePath = fs::canonical(fs::path(QApplication::applicationFilePath().toStdWString()).parent_path());
     const std::string pluginsDir = (exePath / "plugins").string();
 
     pluginManager_.loadFromDirectory(pluginsDir);
@@ -312,7 +312,7 @@ void MainWindow::onExecute() {
     connect(worker, &ExecuteWorker::finished, this, [this, progressDialog](const gis::framework::Result& result) {
         const QString message = QString::fromUtf8(result.message);
         progressDialog->setFinished(message, result.success);
-        resultSummaryLabel_->setText(buildResultSummary(result));
+        resultSummaryLabel_->setText(QString::fromUtf8(gis::gui::buildResultSummaryText(result)));
 
         if (result.success) {
             if (paramWidget_->hasParam("output") && !result.outputPath.empty()) {
@@ -514,25 +514,7 @@ void MainWindow::syncCurrentDataToParams() {
 }
 
 QString MainWindow::buildResultSummary(const gis::framework::Result& result) const {
-    QString summary = result.success ? QStringLiteral("状态: 成功\n")
-                                     : QStringLiteral("状态: 失败\n");
-    summary += QStringLiteral("消息: ") + QString::fromUtf8(result.message);
-
-    if (!result.outputPath.empty()) {
-        summary += QStringLiteral("\n输出: ") + QString::fromUtf8(result.outputPath);
-    }
-
-    if (!result.metadata.empty()) {
-        summary += QStringLiteral("\n元数据:");
-        for (const auto& [key, value] : result.metadata) {
-            summary += QStringLiteral("\n- ")
-                + QString::fromStdString(key)
-                + QStringLiteral(": ")
-                + QString::fromStdString(value);
-        }
-    }
-
-    return summary;
+    return QString::fromUtf8(gis::gui::buildResultSummaryText(result));
 }
 
 QString MainWindow::currentSelectedDataPath() const {

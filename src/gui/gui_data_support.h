@@ -3,6 +3,8 @@
 #include <array>
 #include <string>
 
+#include <gis/framework/result.h>
+
 namespace gis::gui {
 
 enum class DataKind {
@@ -27,6 +29,7 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
                                      const std::string& pluginName,
                                      const std::string& action);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
+std::string buildResultSummaryText(const gis::framework::Result& result);
 
 double zoomInScale(double currentScale);
 double zoomOutScale(double currentScale);

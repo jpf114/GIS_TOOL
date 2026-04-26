@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -232,6 +233,25 @@ DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
     }
 
     return info;
+}
+
+std::string buildResultSummaryText(const gis::framework::Result& result) {
+    std::ostringstream oss;
+    oss << "状态: " << (result.success ? "成功" : "失败") << "\n";
+    oss << "消息: " << result.message;
+
+    if (!result.outputPath.empty()) {
+        oss << "\n输出: " << result.outputPath;
+    }
+
+    if (!result.metadata.empty()) {
+        oss << "\n元数据:";
+        for (const auto& [key, value] : result.metadata) {
+            oss << "\n- " << key << ": " << value;
+        }
+    }
+
+    return oss.str();
 }
 
 double zoomInScale(double currentScale) {

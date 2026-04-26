@@ -7,6 +7,7 @@
 #include <array>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 #include "../src/gui/gui_data_support.h"
 #include "test_support.h"
@@ -177,4 +178,21 @@ TEST(GuiSupportTest, InspectVectorAutoFillInfoReadsLayerCrsAndExtent) {
     EXPECT_TRUE(info.hasExtent);
     EXPECT_EQ(info.layerName, std::string("roads"));
     EXPECT_TRUE(info.extent == (std::array<double, 4>{120.0, 30.0, 121.5, 31.5}));
+}
+
+TEST(GuiSupportTest, BuildResultSummaryTextUsesChineseLabels) {
+    gis::framework::Result result;
+    result.success = true;
+    result.message = "处理完成";
+    result.outputPath = "D:/data/out.tif";
+    result.metadata["rows"] = "256";
+    result.metadata["cols"] = "512";
+
+    const std::string summary = gis::gui::buildResultSummaryText(result);
+    EXPECT_NE(summary.find("状态: 成功"), std::string::npos);
+    EXPECT_NE(summary.find("消息: 处理完成"), std::string::npos);
+    EXPECT_NE(summary.find("输出: D:/data/out.tif"), std::string::npos);
+    EXPECT_NE(summary.find("元数据:"), std::string::npos);
+    EXPECT_NE(summary.find("- rows: 256"), std::string::npos);
+    EXPECT_NE(summary.find("- cols: 512"), std::string::npos);
 }
