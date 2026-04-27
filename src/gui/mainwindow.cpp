@@ -30,19 +30,81 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTabBar>
+#include <QTabWidget>
 #include <QThread>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <vector>
+
+namespace {
+
+QString actionDisplayName(const QString& actionKey) {
+    static const std::map<QString, QString> kLabels = {
+        {QStringLiteral("reproject"), QStringLiteral("重投影")},
+        {QStringLiteral("info"), QStringLiteral("信息查看")},
+        {QStringLiteral("transform"), QStringLiteral("坐标转换")},
+        {QStringLiteral("assign_srs"), QStringLiteral("赋予坐标系")},
+        {QStringLiteral("clip"), QStringLiteral("裁切")},
+        {QStringLiteral("mosaic"), QStringLiteral("镶嵌")},
+        {QStringLiteral("split"), QStringLiteral("分块")},
+        {QStringLiteral("merge_bands"), QStringLiteral("波段合并")},
+        {QStringLiteral("detect"), QStringLiteral("特征检测")},
+        {QStringLiteral("match"), QStringLiteral("特征匹配")},
+        {QStringLiteral("register"), QStringLiteral("影像配准")},
+        {QStringLiteral("change"), QStringLiteral("变化检测")},
+        {QStringLiteral("ecc_register"), QStringLiteral("ECC 配准")},
+        {QStringLiteral("corner"), QStringLiteral("角点检测")},
+        {QStringLiteral("stitch"), QStringLiteral("图像拼接")},
+        {QStringLiteral("threshold"), QStringLiteral("阈值分割")},
+        {QStringLiteral("filter"), QStringLiteral("滤波")},
+        {QStringLiteral("enhance"), QStringLiteral("增强")},
+        {QStringLiteral("band_math"), QStringLiteral("波段运算")},
+        {QStringLiteral("stats"), QStringLiteral("统计信息")},
+        {QStringLiteral("edge"), QStringLiteral("边缘检测")},
+        {QStringLiteral("contour"), QStringLiteral("轮廓提取")},
+        {QStringLiteral("template_match"), QStringLiteral("模板匹配")},
+        {QStringLiteral("pansharpen"), QStringLiteral("全色锐化")},
+        {QStringLiteral("hough"), QStringLiteral("霍夫变换")},
+        {QStringLiteral("watershed"), QStringLiteral("分水岭")},
+        {QStringLiteral("kmeans"), QStringLiteral("K-Means")},
+        {QStringLiteral("overviews"), QStringLiteral("金字塔")},
+        {QStringLiteral("nodata"), QStringLiteral("NoData 设置")},
+        {QStringLiteral("histogram"), QStringLiteral("直方图")},
+        {QStringLiteral("colormap"), QStringLiteral("伪彩色")},
+        {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
+        {QStringLiteral("buffer"), QStringLiteral("缓冲区")},
+        {QStringLiteral("rasterize"), QStringLiteral("栅格化")},
+        {QStringLiteral("polygonize"), QStringLiteral("面矢量化")},
+        {QStringLiteral("convert"), QStringLiteral("格式转换")},
+        {QStringLiteral("union"), QStringLiteral("并集")},
+        {QStringLiteral("difference"), QStringLiteral("差集")},
+        {QStringLiteral("dissolve"), QStringLiteral("融合")}
+    };
+
+    const auto it = kLabels.find(actionKey);
+    if (it != kLabels.end()) {
+        return it->second;
+    }
+    return actionKey;
+}
+
+QString elidedNativePath(const QString& path) {
+    return QDir::toNativeSeparators(path);
+}
+
+} // namespace
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -114,103 +176,135 @@ void MainWindow::dropEvent(QDropEvent* event) {
 
 void MainWindow::setupUi() {
     setWindowTitle(QStringLiteral("GIS 工具台"));
-    resize(1460, 880);
+    resize(1520, 920);
+    setMinimumSize(1360, 860);
     setAcceptDrops(true);
 
     auto* centralWidget = new QWidget;
     setCentralWidget(centralWidget);
 
     auto* mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setContentsMargins(12, 12, 12, 12);
-    mainLayout->setSpacing(10);
+    mainLayout->setContentsMargins(10, 10, 10, 10);
+    mainLayout->setSpacing(8);
 
     auto* algorithmFrame = new QFrame;
     algorithmFrame->setObjectName(QStringLiteral("algorithmFrame"));
     auto* algorithmLayout = new QVBoxLayout(algorithmFrame);
-    algorithmLayout->setContentsMargins(18, 16, 18, 16);
+    algorithmLayout->setContentsMargins(16, 14, 16, 14);
     algorithmLayout->setSpacing(10);
 
     auto* algorithmTitle = new QLabel(QStringLiteral("算法工作台"));
-    algorithmTitle->setStyleSheet("font-size: 20px; font-weight: 700;");
+    algorithmTitle->setObjectName(QStringLiteral("sectionTitle"));
     auto* algorithmSubtitle = new QLabel(
-        QStringLiteral("上方选择算法，左侧管理输入与结果数据，中间预览数据，下方填写参数并查看执行结果。"));
-    algorithmSubtitle->setStyleSheet("color: #5f6b7a;");
+        QStringLiteral("顶部选择主功能与子功能，左侧管理数据，中间查看预览与结果，右侧查看信息或配置参数。"));
+    algorithmSubtitle->setObjectName(QStringLiteral("sectionHint"));
 
     pluginTabs_ = new QTabBar;
-    pluginTabs_->setExpanding(false);
-    pluginTabs_->setUsesScrollButtons(true);
+    pluginTabs_->setExpanding(true);
+    pluginTabs_->setUsesScrollButtons(false);
     pluginTabs_->setDrawBase(false);
     pluginTabs_->setDocumentMode(true);
-    pluginTabs_->setStyleSheet(
-        "QTabBar::tab {"
-        "  background: #dfe8ef; color: #243442; border-radius: 8px;"
-        "  padding: 10px 18px; margin-right: 8px; min-width: 96px;"
-        "}"
-        "QTabBar::tab:selected {"
-        "  background: #1f5f8b; color: white; font-weight: 600;"
-        "}");
     connect(pluginTabs_, &QTabBar::currentChanged, this, &MainWindow::onPluginSelected);
 
-    pluginTitleLabel_ = new QLabel(QStringLiteral("请选择算法"));
-    pluginTitleLabel_->setStyleSheet("font-size: 18px; font-weight: 700;");
-    pluginDescriptionLabel_ = new QLabel(QStringLiteral("当前算法说明会显示在这里。"));
+    subFunctionTabs_ = new QTabBar;
+    subFunctionTabs_->setExpanding(false);
+    subFunctionTabs_->setUsesScrollButtons(true);
+    subFunctionTabs_->setDrawBase(false);
+    subFunctionTabs_->setDocumentMode(true);
+    connect(subFunctionTabs_, &QTabBar::currentChanged, this, &MainWindow::onSubFunctionSelected);
+
+    pluginTitleLabel_ = new QLabel(QStringLiteral("请选择主功能"));
+    pluginTitleLabel_->setObjectName(QStringLiteral("contextTitle"));
+    pluginDescriptionLabel_ = new QLabel(QStringLiteral("选择主功能后，将在下方展示对应的子功能与操作入口。"));
     pluginDescriptionLabel_->setWordWrap(true);
-    pluginDescriptionLabel_->setStyleSheet("color: #5f6b7a;");
+    pluginDescriptionLabel_->setObjectName(QStringLiteral("sectionHint"));
+    subFunctionLabel_ = new QLabel(QStringLiteral("请选择子功能"));
+    subFunctionLabel_->setObjectName(QStringLiteral("sectionHint"));
 
     executeButton_ = new QPushButton(QStringLiteral("执行当前算法"));
-    executeButton_->setMinimumHeight(42);
-    executeButton_->setMinimumWidth(180);
-    executeButton_->setStyleSheet(
-        "QPushButton { background: #1f5f8b; color: white; border-radius: 8px; font-size: 14px; font-weight: 600; }"
-        "QPushButton:hover { background: #194c6f; }");
+    executeButton_->setMinimumHeight(36);
+    executeButton_->setMinimumWidth(140);
+    executeButton_->setObjectName(QStringLiteral("primaryButton"));
     connect(executeButton_, &QPushButton::clicked, this, &MainWindow::onExecute);
 
     quickPreviewButton_ = new QPushButton(QStringLiteral("生成8位预览"));
-    quickPreviewButton_->setMinimumHeight(42);
-    quickPreviewButton_->setMinimumWidth(160);
+    quickPreviewButton_->setMinimumHeight(36);
+    quickPreviewButton_->setMinimumWidth(128);
     connect(quickPreviewButton_, &QPushButton::clicked, this, &MainWindow::onBuildQuickPreview);
 
     quickRunButton_ = new QPushButton(QStringLiteral("快速试算当前算法"));
-    quickRunButton_->setMinimumHeight(42);
-    quickRunButton_->setMinimumWidth(180);
+    quickRunButton_->setMinimumHeight(36);
+    quickRunButton_->setMinimumWidth(152);
     connect(quickRunButton_, &QPushButton::clicked, this, &MainWindow::onRunQuickPreview);
 
     quickRunCheckBox_ = new QCheckBox(QStringLiteral("执行时使用快速试算"));
-    quickRunCheckBox_->setToolTip(QStringLiteral("勾选后，“执行当前算法”会自动使用8位小尺寸预览影像先跑一版"));
+    quickRunCheckBox_->setToolTip(QStringLiteral("勾选后，正式执行前会先用缩略栅格快速验证流程。"));
 
-    auto* algorithmMetaLayout = new QHBoxLayout;
-    algorithmMetaLayout->setSpacing(16);
-    auto* algorithmTextLayout = new QVBoxLayout;
-    algorithmTextLayout->setSpacing(4);
-    algorithmTextLayout->addWidget(pluginTitleLabel_);
-    algorithmTextLayout->addWidget(pluginDescriptionLabel_);
-    algorithmTextLayout->addWidget(quickRunCheckBox_);
-    algorithmMetaLayout->addLayout(algorithmTextLayout, 1);
-    algorithmMetaLayout->addWidget(quickPreviewButton_, 0, Qt::AlignTop);
-    algorithmMetaLayout->addWidget(quickRunButton_, 0, Qt::AlignTop);
-    algorithmMetaLayout->addWidget(executeButton_, 0, Qt::AlignTop);
+    auto* topHeaderLayout = new QHBoxLayout;
+    topHeaderLayout->setSpacing(18);
+    auto* topTextLayout = new QVBoxLayout;
+    topTextLayout->setSpacing(3);
+    topTextLayout->addWidget(algorithmTitle);
+    topTextLayout->addWidget(algorithmSubtitle);
+    topHeaderLayout->addLayout(topTextLayout, 1);
 
-    algorithmLayout->addWidget(algorithmTitle);
-    algorithmLayout->addWidget(algorithmSubtitle);
+    auto* actionButtonLayout = new QHBoxLayout;
+    actionButtonLayout->setSpacing(8);
+    sidebarToggleButton_ = new QToolButton;
+    sidebarToggleButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    connect(sidebarToggleButton_, &QToolButton::clicked, this, [this]() {
+        setSidebarVisible(!isSidebarVisible_);
+    });
+    actionButtonLayout->addWidget(sidebarToggleButton_);
+    actionButtonLayout->addWidget(quickPreviewButton_);
+    actionButtonLayout->addWidget(quickRunButton_);
+    actionButtonLayout->addWidget(executeButton_);
+    topHeaderLayout->addLayout(actionButtonLayout, 0);
+
+    auto* pluginInfoFrame = new QFrame;
+    pluginInfoFrame->setObjectName(QStringLiteral("topInfoFrame"));
+    auto* pluginInfoLayout = new QVBoxLayout(pluginInfoFrame);
+    pluginInfoLayout->setContentsMargins(14, 10, 14, 10);
+    pluginInfoLayout->setSpacing(4);
+    pluginInfoLayout->addWidget(pluginTitleLabel_);
+    pluginInfoLayout->addWidget(pluginDescriptionLabel_);
+
+    auto* subFunctionFrame = new QFrame;
+    subFunctionFrame->setObjectName(QStringLiteral("topInfoFrame"));
+    auto* subFunctionLayout = new QVBoxLayout(subFunctionFrame);
+    subFunctionLayout->setContentsMargins(14, 10, 14, 10);
+    subFunctionLayout->setSpacing(6);
+    subFunctionLayout->addWidget(subFunctionLabel_);
+    subFunctionLayout->addWidget(subFunctionTabs_);
+
+    auto* quickRunRow = new QHBoxLayout;
+    quickRunRow->addWidget(quickRunCheckBox_);
+    quickRunRow->addStretch();
+    subFunctionLayout->addLayout(quickRunRow);
+
+    algorithmLayout->addLayout(topHeaderLayout);
     algorithmLayout->addWidget(pluginTabs_);
-    algorithmLayout->addLayout(algorithmMetaLayout);
+    algorithmLayout->addWidget(pluginInfoFrame);
+    algorithmLayout->addWidget(subFunctionFrame);
 
     auto* workspaceSplitter = new QSplitter(Qt::Horizontal);
+    workspaceSplitter->setChildrenCollapsible(false);
 
     auto* dataPanel = new QFrame;
     dataPanel->setObjectName(QStringLiteral("dataPanel"));
     auto* dataLayout = new QVBoxLayout(dataPanel);
-    dataLayout->setContentsMargins(14, 14, 14, 14);
-    dataLayout->setSpacing(10);
+    dataLayout->setContentsMargins(12, 12, 12, 12);
+    dataLayout->setSpacing(8);
 
     auto* dataTitle = new QLabel(QStringLiteral("数据目录"));
-    dataTitle->setStyleSheet("font-size: 18px; font-weight: 600;");
+    dataTitle->setObjectName(QStringLiteral("sectionTitle"));
     auto* dataHint = new QLabel(
-        QStringLiteral("输入数据和算法结果分组显示。双击可重新定位预览，右键可切换为输入或结果。"));
+        QStringLiteral("统一管理输入与结果数据，双击可定位到主展示区，右键可执行常用操作。"));
     dataHint->setWordWrap(true);
-    dataHint->setStyleSheet("color: #5f6b7a;");
+    dataHint->setObjectName(QStringLiteral("sectionHint"));
 
     auto* dataButtonLayout = new QHBoxLayout;
+    dataButtonLayout->setSpacing(6);
     auto* addRasterBtn = new QPushButton(QStringLiteral("添加栅格"));
     auto* addVectorBtn = new QPushButton(QStringLiteral("添加矢量"));
     auto* addDirectoryBtn = new QPushButton(QStringLiteral("导入目录"));
@@ -225,6 +319,7 @@ void MainWindow::setupUi() {
     dataButtonLayout->addWidget(removeDataBtn);
 
     auto* dataActionLayout = new QHBoxLayout;
+    dataActionLayout->setSpacing(6);
     useAsInputButton_ = new QPushButton(QStringLiteral("设为输入"));
     useAsOutputButton_ = new QPushButton(QStringLiteral("设为结果"));
     bindInputButton_ = new QPushButton(QStringLiteral("填入参数"));
@@ -244,6 +339,7 @@ void MainWindow::setupUi() {
     dataTree_->setAlternatingRowColors(true);
     dataTree_->header()->setStretchLastSection(true);
     dataTree_->setContextMenuPolicy(Qt::CustomContextMenu);
+    dataTree_->setMinimumWidth(250);
     connect(dataTree_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onDataSelectionChanged);
     connect(dataTree_, &QTreeWidget::itemDoubleClicked, this, &MainWindow::onDataItemDoubleClicked);
     connect(dataTree_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::showDataContextMenu);
@@ -266,10 +362,14 @@ void MainWindow::setupUi() {
     auto* centerPanel = new QFrame;
     centerPanel->setObjectName(QStringLiteral("centerPanel"));
     auto* centerLayout = new QVBoxLayout(centerPanel);
-    centerLayout->setContentsMargins(0, 0, 0, 0);
-    centerLayout->setSpacing(10);
+    centerLayout->setContentsMargins(12, 12, 12, 12);
+    centerLayout->setSpacing(8);
 
-    auto* centerSplitter = new QSplitter(Qt::Vertical);
+    auto* previewTitle = new QLabel(QStringLiteral("主展示区"));
+    previewTitle->setObjectName(QStringLiteral("sectionTitle"));
+    auto* previewHint = new QLabel(QStringLiteral("在这里查看栅格、矢量、对比结果与执行反馈。"));
+    previewHint->setWordWrap(true);
+    previewHint->setObjectName(QStringLiteral("sectionHint"));
     previewPanel_ = new PreviewPanel;
     connect(previewPanel_, &PreviewPanel::requestOpenPath, this, [this](const QString& path) {
         openDataPath(path, true);
@@ -277,18 +377,79 @@ void MainWindow::setupUi() {
     connect(previewPanel_, &PreviewPanel::requestUseAsInput, this, [this](const QString& path) {
         bindDataPathToParam(path, "input");
     });
+    centerLayout->addWidget(previewTitle);
+    centerLayout->addWidget(previewHint);
+    centerLayout->addWidget(previewPanel_, 1);
 
-    auto* paramsPanel = new QFrame;
-    paramsPanel->setObjectName(QStringLiteral("paramsPanel"));
-    auto* paramsLayout = new QVBoxLayout(paramsPanel);
-    paramsLayout->setContentsMargins(14, 14, 14, 14);
-    paramsLayout->setSpacing(10);
+    sidebarPanel_ = new QFrame;
+    sidebarPanel_->setObjectName(QStringLiteral("sidebarPanel"));
+    auto* sidebarLayout = new QVBoxLayout(sidebarPanel_);
+    sidebarLayout->setContentsMargins(12, 12, 12, 12);
+    sidebarLayout->setSpacing(8);
 
-    auto* paramsTitle = new QLabel(QStringLiteral("参数与结果"));
-    paramsTitle->setStyleSheet("font-size: 18px; font-weight: 600;");
-    auto* paramsHint = new QLabel(QStringLiteral("当前算法参数会自动生成，执行结果摘要会显示在下方。"));
+    auto* sidebarHeaderLayout = new QHBoxLayout;
+    auto* sidebarTitle = new QLabel(QStringLiteral("上下文侧栏"));
+    sidebarTitle->setObjectName(QStringLiteral("sectionTitle"));
+    auto* autoModeButton = new QToolButton;
+    autoModeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    autoModeButton->setText(QStringLiteral("自动"));
+    autoModeButton->setToolTip(QStringLiteral("恢复信息/参数侧栏的自动切换"));
+    connect(autoModeButton, &QToolButton::clicked, this, [this]() {
+        contextPanelMode_ = ContextPanelMode::Auto;
+        if (selectedDataItem()) {
+            refreshContextPanelForDataSelection();
+        } else {
+            refreshContextPanelForActionSelection();
+        }
+    });
+    sidebarHeaderLayout->addWidget(sidebarTitle);
+    sidebarHeaderLayout->addStretch();
+    sidebarHeaderLayout->addWidget(autoModeButton);
+
+    contextTabWidget_ = new QTabWidget;
+    contextTabWidget_->setDocumentMode(true);
+    connect(contextTabWidget_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (isSyncingContextTabs_) {
+            return;
+        }
+        if (!contextTabWidget_) {
+            return;
+        }
+        if (index == 0) {
+            contextPanelMode_ = ContextPanelMode::InfoLocked;
+        } else if (index == 1) {
+            contextPanelMode_ = ContextPanelMode::ParamsLocked;
+        }
+    });
+
+    auto* infoTab = new QWidget;
+    auto* infoLayout = new QVBoxLayout(infoTab);
+    infoLayout->setContentsMargins(10, 10, 10, 10);
+    infoLayout->setSpacing(8);
+    dataInfoTitleLabel_ = new QLabel(QStringLiteral("未选择对象"));
+    dataInfoTitleLabel_->setObjectName(QStringLiteral("contextTitle"));
+    dataInfoPathLabel_ = new QLabel(QStringLiteral("请选择左侧数据或执行结果。"));
+    dataInfoPathLabel_->setObjectName(QStringLiteral("sectionHint"));
+    dataInfoPathLabel_->setWordWrap(true);
+    dataInfoMetaLabel_ = new QLabel(QStringLiteral("暂无数据概览"));
+    dataInfoMetaLabel_->setWordWrap(true);
+    dataInfoSummaryEdit_ = new QPlainTextEdit;
+    dataInfoSummaryEdit_->setReadOnly(true);
+    dataInfoSummaryEdit_->setMinimumHeight(220);
+    infoLayout->addWidget(dataInfoTitleLabel_);
+    infoLayout->addWidget(dataInfoPathLabel_);
+    infoLayout->addWidget(dataInfoMetaLabel_);
+    infoLayout->addWidget(dataInfoSummaryEdit_, 1);
+
+    auto* paramsTab = new QWidget;
+    auto* paramsLayout = new QVBoxLayout(paramsTab);
+    paramsLayout->setContentsMargins(10, 10, 10, 10);
+    paramsLayout->setSpacing(8);
+    auto* paramsTitle = new QLabel(QStringLiteral("参数配置"));
+    paramsTitle->setObjectName(QStringLiteral("contextTitle"));
+    auto* paramsHint = new QLabel(QStringLiteral("选择子功能后，在这里填写参数、快速试算并执行。"));
     paramsHint->setWordWrap(true);
-    paramsHint->setStyleSheet("color: #5f6b7a;");
+    paramsHint->setObjectName(QStringLiteral("sectionHint"));
 
     auto* scrollArea = new QScrollArea;
     scrollArea->setWidgetResizable(true);
@@ -298,8 +459,6 @@ void MainWindow::setupUi() {
 
     paramValidationLabel_ = new QLabel(QStringLiteral("当前参数已就绪。"));
     paramValidationLabel_->setWordWrap(true);
-    paramValidationLabel_->setStyleSheet(
-        "background: #eef6ec; color: #245b2b; border: 1px solid #cfe4cc; border-radius: 8px; padding: 8px 10px;");
 
     auto* resultGroup = new QGroupBox(QStringLiteral("执行结果"));
     auto* resultLayout = new QVBoxLayout(resultGroup);
@@ -313,28 +472,59 @@ void MainWindow::setupUi() {
     paramsLayout->addWidget(scrollArea, 1);
     paramsLayout->addWidget(resultGroup);
 
-    centerSplitter->addWidget(previewPanel_);
-    centerSplitter->addWidget(paramsPanel);
-    centerSplitter->setStretchFactor(0, 5);
-    centerSplitter->setStretchFactor(1, 3);
-    centerLayout->addWidget(centerSplitter);
+    contextTabWidget_->addTab(infoTab, QStringLiteral("信息"));
+    contextTabWidget_->addTab(paramsTab, QStringLiteral("参数"));
+
+    sidebarLayout->addLayout(sidebarHeaderLayout);
+    sidebarLayout->addWidget(contextTabWidget_, 1);
 
     workspaceSplitter->addWidget(dataPanel);
     workspaceSplitter->addWidget(centerPanel);
+    workspaceSplitter->addWidget(sidebarPanel_);
     workspaceSplitter->setStretchFactor(0, 2);
     workspaceSplitter->setStretchFactor(1, 7);
+    workspaceSplitter->setStretchFactor(2, 3);
+    workspaceSplitter->setSizes({280, 860, 340});
 
     mainLayout->addWidget(algorithmFrame);
     mainLayout->addWidget(workspaceSplitter, 1);
 
     centralWidget->setStyleSheet(
-        "QFrame#algorithmFrame, QFrame#dataPanel, QFrame#centerPanel, QFrame#paramsPanel {"
-        "  background: #f8fbfd;"
-        "  border: 1px solid #dce6ee;"
-        "  border-radius: 10px;"
-        "}");
+        "QWidget { color: #243447; font-size: 13px; }"
+        "QMainWindow { background: #eef2f6; }"
+        "QFrame#algorithmFrame, QFrame#dataPanel, QFrame#centerPanel, QFrame#sidebarPanel, QFrame#topInfoFrame {"
+        "  background: #f8fafc;"
+        "  border: 1px solid #d7e0e8;"
+        "  border-radius: 8px;"
+        "}"
+        "QLabel#sectionTitle { font-size: 18px; font-weight: 600; color: #1f2d3d; }"
+        "QLabel#contextTitle { font-size: 16px; font-weight: 600; color: #213043; }"
+        "QLabel#sectionHint { color: #627284; }"
+        "QPushButton {"
+        "  min-height: 32px; padding: 0 12px; border-radius: 6px;"
+        "  border: 1px solid #c9d4df; background: #f7f9fb; color: #223548;"
+        "}"
+        "QPushButton:hover { background: #edf3f8; border-color: #9db2c6; }"
+        "QPushButton:disabled { background: #f1f4f7; color: #98a6b5; border-color: #dde4eb; }"
+        "QPushButton#primaryButton { background: #2f5f85; color: white; border: 1px solid #2f5f85; font-weight: 600; }"
+        "QPushButton#primaryButton:hover { background: #2a5475; }"
+        "QTabBar::tab {"
+        "  background: #e8edf3; color: #3a4b5e; border: 1px solid #d3dde6; border-radius: 6px;"
+        "  padding: 8px 16px; margin-right: 6px; min-height: 18px;"
+        "}"
+        "QTabBar::tab:selected { background: #dce7f1; color: #173754; border-color: #9fb8ce; font-weight: 600; }"
+        "QTreeWidget, QScrollArea, QPlainTextEdit, QGroupBox, QTabWidget::pane {"
+        "  background: #ffffff; border: 1px solid #d8e0e8; border-radius: 6px;"
+        "}"
+        "QPlainTextEdit { padding: 6px; }"
+        "QGroupBox { margin-top: 8px; padding-top: 12px; font-weight: 600; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"
+        "QToolButton { color: #35526f; border: 1px solid #cad6e1; border-radius: 6px; padding: 4px 10px; background: #f7f9fb; }"
+        "QToolButton:hover { background: #edf3f8; }");
 
     statusBar()->showMessage(QStringLiteral("就绪"));
+    clearDataInfoPanel();
+    setSidebarVisible(true);
     refreshQuickPreviewButtonState();
     refreshQuickRunButtonState();
     refreshExecuteButtonState();
@@ -382,11 +572,187 @@ void MainWindow::loadPlugins() {
     statusBar()->showMessage(QStringLiteral("已加载 %1 个算法插件").arg(plugins.size()));
 }
 
+std::vector<gis::framework::ParamSpec> MainWindow::effectiveParamSpecs() const {
+    if (!currentPlugin_) {
+        return {};
+    }
+
+    std::vector<gis::framework::ParamSpec> filtered;
+    for (const auto& spec : currentPlugin_->paramSpecs()) {
+        if (spec.key == "action") {
+            continue;
+        }
+        filtered.push_back(spec);
+    }
+    return filtered;
+}
+
+std::map<std::string, gis::framework::ParamValue> MainWindow::collectExecutionParams() const {
+    auto params = paramWidget_ ? paramWidget_->collectParams() : std::map<std::string, gis::framework::ParamValue>{};
+    if (!currentActionKey_.isEmpty()) {
+        params["action"] = currentActionKey_.toStdString();
+    }
+    return params;
+}
+
+QString MainWindow::displayTextForAction(const QString& actionKey) const {
+    return actionDisplayName(actionKey);
+}
+
+void MainWindow::rebuildSubFunctionTabs() {
+    while (subFunctionTabs_ && subFunctionTabs_->count() > 0) {
+        subFunctionTabs_->removeTab(0);
+    }
+    subFunctionTabMap_.clear();
+    currentActionKey_.clear();
+
+    if (!currentPlugin_ || !subFunctionTabs_) {
+        return;
+    }
+
+    for (const auto& spec : currentPlugin_->paramSpecs()) {
+        if (spec.key != "action") {
+            continue;
+        }
+        for (const auto& action : spec.enumValues) {
+            const QString actionKey = QString::fromStdString(action);
+            const int index = subFunctionTabs_->addTab(displayTextForAction(actionKey));
+            subFunctionTabs_->setTabToolTip(index, actionKey);
+            subFunctionTabMap_[index] = actionKey;
+        }
+        break;
+    }
+
+    if (subFunctionTabs_->count() > 0) {
+        subFunctionTabs_->setCurrentIndex(0);
+    }
+}
+
+void MainWindow::setCurrentActionValue(const QString& actionKey) {
+    currentActionKey_ = actionKey;
+    subFunctionLabel_->setText(
+        actionKey.isEmpty()
+            ? QStringLiteral("请选择子功能")
+            : QStringLiteral("当前子功能：%1").arg(displayTextForAction(actionKey)));
+}
+
+void MainWindow::refreshContextTabSelection(bool preferParams) {
+    if (!contextTabWidget_) {
+        return;
+    }
+
+    isSyncingContextTabs_ = true;
+    if (contextPanelMode_ == ContextPanelMode::InfoLocked) {
+        contextTabWidget_->setCurrentIndex(0);
+    } else if (contextPanelMode_ == ContextPanelMode::ParamsLocked) {
+        contextTabWidget_->setCurrentIndex(1);
+    } else {
+        contextTabWidget_->setCurrentIndex(preferParams ? 1 : 0);
+    }
+    isSyncingContextTabs_ = false;
+}
+
+void MainWindow::setSidebarVisible(bool visible) {
+    isSidebarVisible_ = visible;
+    if (sidebarPanel_) {
+        sidebarPanel_->setVisible(visible);
+    }
+    updateSidebarToggleText();
+}
+
+void MainWindow::updateSidebarToggleText() {
+    if (!sidebarToggleButton_) {
+        return;
+    }
+    sidebarToggleButton_->setText(isSidebarVisible_ ? QStringLiteral("隐藏") : QStringLiteral("显示"));
+    sidebarToggleButton_->setToolTip(isSidebarVisible_ ? QStringLiteral("隐藏右侧上下文侧栏")
+                                                       : QStringLiteral("显示右侧上下文侧栏"));
+}
+
+void MainWindow::clearDataInfoPanel() {
+    if (dataInfoTitleLabel_) {
+        dataInfoTitleLabel_->setText(QStringLiteral("未选择对象"));
+    }
+    if (dataInfoPathLabel_) {
+        dataInfoPathLabel_->setText(QStringLiteral("请选择左侧数据或执行结果。"));
+    }
+    if (dataInfoMetaLabel_) {
+        dataInfoMetaLabel_->setText(QStringLiteral("暂无数据概览"));
+    }
+    if (dataInfoSummaryEdit_) {
+        dataInfoSummaryEdit_->setPlainText(QStringLiteral("在数据目录中选择一个对象后，这里会显示路径、类型、坐标系、范围与辅助说明。"));
+    }
+}
+
+void MainWindow::updateDataInfoPanel(const QString& path,
+                                     gis::gui::DataKind kind,
+                                     gis::gui::DataOrigin origin) {
+    if (!dataInfoTitleLabel_ || !dataInfoPathLabel_ || !dataInfoMetaLabel_ || !dataInfoSummaryEdit_) {
+        return;
+    }
+
+    const auto info = gis::gui::inspectDataForAutoFill(path.toStdString());
+    dataInfoTitleLabel_->setText(
+        QStringLiteral("%1 | %2")
+            .arg(QString::fromUtf8(gis::gui::dataKindDisplayName(kind)))
+            .arg(QString::fromUtf8(gis::gui::dataOriginDisplayName(origin))));
+    dataInfoPathLabel_->setText(elidedNativePath(path));
+
+    QStringList metaLines;
+    if (!info.crs.empty()) {
+        metaLines << QStringLiteral("坐标系：%1").arg(QString::fromStdString(info.crs));
+    }
+    if (!info.layerName.empty()) {
+        metaLines << QStringLiteral("图层：%1").arg(QString::fromStdString(info.layerName));
+    }
+    if (info.hasExtent) {
+        metaLines << QStringLiteral("范围：[%1, %2, %3, %4]")
+                         .arg(info.extent[0], 0, 'f', 4)
+                         .arg(info.extent[1], 0, 'f', 4)
+                         .arg(info.extent[2], 0, 'f', 4)
+                         .arg(info.extent[3], 0, 'f', 4);
+    }
+    if (metaLines.isEmpty()) {
+        metaLines << QStringLiteral("暂无可解析的空间元信息");
+    }
+    dataInfoMetaLabel_->setText(metaLines.join('\n'));
+
+    QString summary =
+        QStringLiteral("文件名：%1\n类型：%2\n来源：%3")
+            .arg(QFileInfo(path).fileName())
+            .arg(QString::fromUtf8(gis::gui::dataKindDisplayName(kind)))
+            .arg(QString::fromUtf8(gis::gui::dataOriginDisplayName(origin)));
+    if (!info.crs.empty()) {
+        summary += QStringLiteral("\n坐标系：%1").arg(QString::fromStdString(info.crs));
+    }
+    if (!info.layerName.empty()) {
+        summary += QStringLiteral("\n图层名：%1").arg(QString::fromStdString(info.layerName));
+    }
+    summary += QStringLiteral("\n\n可用操作：\n- 双击定位到主展示区\n- 右键切换输入/结果\n- 右键复制路径或打开目录");
+    dataInfoSummaryEdit_->setPlainText(summary);
+}
+
+void MainWindow::refreshContextPanelForDataSelection() {
+    refreshContextTabSelection(false);
+}
+
+void MainWindow::refreshContextPanelForActionSelection() {
+    refreshContextTabSelection(true);
+}
+
 void MainWindow::onPluginSelected(int index) {
     if (index < 0 || pluginTabMap_.count(index) == 0) {
         currentPlugin_ = nullptr;
         paramWidget_->clear();
         lastSuggestedOutputPath_.clear();
+        if (subFunctionTabs_) {
+            while (subFunctionTabs_->count() > 0) {
+                subFunctionTabs_->removeTab(0);
+            }
+        }
+        setCurrentActionValue({});
+        pluginTitleLabel_->setText(QStringLiteral("请选择主功能"));
+        pluginDescriptionLabel_->setText(QStringLiteral("选择主功能后，将在下方展示对应的子功能与操作入口。"));
         refreshQuickPreviewButtonState();
         refreshQuickRunButtonState();
         refreshParamValidationState();
@@ -399,15 +765,36 @@ void MainWindow::onPluginSelected(int index) {
         return;
     }
 
-    paramWidget_->setParamSpecs(currentPlugin_->paramSpecs());
     pluginTitleLabel_->setText(QString::fromUtf8(currentPlugin_->displayName()));
     pluginDescriptionLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
-    statusBar()->showMessage(QStringLiteral("当前算法: %1").arg(QString::fromStdString(currentPlugin_->name())));
+    contextPanelMode_ = ContextPanelMode::Auto;
+    rebuildSubFunctionTabs();
+    statusBar()->showMessage(QStringLiteral("当前主功能: %1").arg(QString::fromUtf8(currentPlugin_->displayName())));
+}
+
+void MainWindow::onSubFunctionSelected(int index) {
+    if (!currentPlugin_ || index < 0 || subFunctionTabMap_.count(index) == 0) {
+        setCurrentActionValue({});
+        if (paramWidget_) {
+            paramWidget_->clear();
+        }
+        refreshQuickPreviewButtonState();
+        refreshQuickRunButtonState();
+        refreshParamValidationState();
+        refreshExecuteButtonState();
+        return;
+    }
+
+    setCurrentActionValue(subFunctionTabMap_[index]);
+    contextPanelMode_ = ContextPanelMode::Auto;
+    paramWidget_->setParamSpecs(effectiveParamSpecs());
     syncCurrentDataToParams();
+    refreshContextPanelForActionSelection();
     refreshQuickPreviewButtonState();
     refreshQuickRunButtonState();
     refreshParamValidationState();
     refreshExecuteButtonState();
+    statusBar()->showMessage(QStringLiteral("当前子功能: %1").arg(displayTextForAction(currentActionKey_)));
 }
 
 void MainWindow::onBuildQuickPreview() {
@@ -451,9 +838,14 @@ void MainWindow::onRunQuickPreview() {
                              QStringLiteral("请先选择一个算法"));
         return;
     }
+    if (currentActionKey_.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("提示"),
+                             QStringLiteral("请先选择一个子功能"));
+        return;
+    }
 
     const auto specs = currentPlugin_->paramSpecs();
-    const auto params = paramWidget_->collectParams();
+    const auto params = collectExecutionParams();
     const std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
     if (!validationMessage.empty()) {
         refreshParamValidationState();
@@ -467,7 +859,7 @@ void MainWindow::onRunQuickPreview() {
             specs,
             params,
             currentPlugin_->name(),
-            currentActionValue().toStdString(),
+            currentActionKey_.toStdString(),
             quickParams,
             512)) {
         QMessageBox::warning(this, QStringLiteral("提示"),
@@ -485,9 +877,14 @@ void MainWindow::onExecute() {
                              QStringLiteral("请先选择一个算法"));
         return;
     }
+    if (currentActionKey_.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("提示"),
+                             QStringLiteral("请先选择一个子功能"));
+        return;
+    }
 
     const auto specs = currentPlugin_->paramSpecs();
-    auto params = paramWidget_->collectParams();
+    auto params = collectExecutionParams();
     const QString inputPath = currentSelectedDataPath();
     if (paramWidget_->hasParam("output")) {
         const std::string currentOutput = paramWidget_->stringValue("output");
@@ -516,7 +913,7 @@ void MainWindow::onExecute() {
                 specs,
                 params,
                 currentPlugin_->name(),
-                currentActionValue().toStdString(),
+                currentActionKey_.toStdString(),
                 quickParams,
                 512)) {
             QMessageBox::warning(this, QStringLiteral("提示"),
@@ -695,17 +1092,22 @@ void MainWindow::onDataSelectionChanged() {
     auto* item = selectedDataItem();
     if (!item) {
         previewPanel_->clearPreview();
+        clearDataInfoPanel();
         refreshPreviewCompareTargets();
+        refreshContextPanelForDataSelection();
         refreshDataTreeVisualState();
         return;
     }
 
     const QString path = item->data(0, Qt::UserRole).toString();
     const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
+    const auto kind = static_cast<gis::gui::DataKind>(item->data(0, Qt::UserRole + 1).toInt());
     previewPanel_->setCurrentOrigin(origin);
     previewPanel_->showPath(path.toUtf8().constData());
+    updateDataInfoPanel(path, kind, origin);
     syncCurrentDataToParams();
     refreshPreviewCompareTargets();
+    refreshContextPanelForDataSelection();
     refreshDataTreeVisualState();
     statusBar()->showMessage(QStringLiteral("当前数据: %1").arg(path));
     refreshQuickPreviewButtonState();
@@ -997,10 +1399,7 @@ QString MainWindow::currentOutputReferencePath() const {
 }
 
 QString MainWindow::currentActionValue() const {
-    if (!paramWidget_ || !paramWidget_->hasParam("action")) {
-        return {};
-    }
-    return QString::fromUtf8(paramWidget_->stringValue("action"));
+    return currentActionKey_;
 }
 
 QString MainWindow::buildSuggestedOutputPathFor(const QString& inputPath) const {
@@ -1010,7 +1409,7 @@ QString MainWindow::buildSuggestedOutputPathFor(const QString& inputPath) const 
     return QString::fromStdString(gis::gui::buildSuggestedOutputPath(
         inputPath.toStdString(),
         currentPlugin_->name(),
-        currentActionValue().toStdString()));
+        currentActionKey_.toStdString()));
 }
 
 void MainWindow::openDataPath(const QString& path, bool refitPreview) {
@@ -1065,15 +1464,15 @@ void MainWindow::refreshExecuteButtonState() {
         return;
     }
 
-    if (!currentPlugin_) {
+    if (!currentPlugin_ || currentActionKey_.isEmpty()) {
         executeButton_->setEnabled(false);
-        executeButton_->setToolTip(QStringLiteral("请先选择一个算法"));
+        executeButton_->setToolTip(QStringLiteral("请先选择主功能和子功能"));
         return;
     }
 
     const std::string validationMessage = gis::gui::validateExecutionParams(
         currentPlugin_->paramSpecs(),
-        paramWidget_->collectParams());
+        collectExecutionParams());
     if (!validationMessage.empty()) {
         executeButton_->setEnabled(false);
         executeButton_->setToolTip(QString::fromUtf8(validationMessage));
@@ -1103,14 +1502,14 @@ void MainWindow::refreshQuickRunButtonState() {
     if (!quickRunButton_) {
         return;
     }
-    if (!currentPlugin_) {
+    if (!currentPlugin_ || currentActionKey_.isEmpty()) {
         quickRunButton_->setEnabled(false);
-        quickRunButton_->setToolTip(QStringLiteral("请先选择一个算法"));
+        quickRunButton_->setToolTip(QStringLiteral("请先选择主功能和子功能"));
         return;
     }
 
     const auto specs = currentPlugin_->paramSpecs();
-    const auto params = paramWidget_->collectParams();
+    const auto params = collectExecutionParams();
     const std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
     if (!validationMessage.empty()) {
         quickRunButton_->setEnabled(false);
@@ -1134,12 +1533,12 @@ void MainWindow::refreshQuickRunButtonState() {
 }
 
 void MainWindow::refreshParamValidationState() {
-    if (!paramWidget_ || !currentPlugin_) {
+    if (!paramWidget_ || !currentPlugin_ || currentActionKey_.isEmpty()) {
         if (paramWidget_) {
             paramWidget_->setHighlightedParam({});
         }
         if (paramValidationLabel_) {
-            paramValidationLabel_->setText(QStringLiteral("请先选择一个算法。"));
+            paramValidationLabel_->setText(QStringLiteral("请先选择主功能和子功能。"));
             paramValidationLabel_->setStyleSheet(
                 "background: #f4f6f8; color: #5f6b7a; border: 1px solid #d5dde5; border-radius: 8px; padding: 8px 10px;");
         }
@@ -1148,7 +1547,7 @@ void MainWindow::refreshParamValidationState() {
 
     const std::string invalidKey = gis::gui::findFirstInvalidParamKey(
         currentPlugin_->paramSpecs(),
-        paramWidget_->collectParams());
+        collectExecutionParams());
     paramWidget_->setHighlightedParam(invalidKey);
 
     if (!paramValidationLabel_) {
