@@ -7,6 +7,8 @@
 #include "progress_dialog.h"
 #include "qt_progress_reporter.h"
 
+#include <gis/core/runtime_env.h>
+
 #include <QApplication>
 #include <QBrush>
 #include <QCheckBox>
@@ -256,9 +258,10 @@ void MainWindow::loadPlugins() {
     namespace fs = std::filesystem;
 
     const auto exePath = fs::canonical(fs::path(QApplication::applicationFilePath().toStdWString()).parent_path());
-    const std::string pluginsDir = (exePath / "plugins").string();
-
-    pluginManager_.loadFromDirectory(pluginsDir);
+    const auto pluginsDir = gis::core::findPluginDirectoryFrom(exePath);
+    if (!pluginsDir.empty()) {
+        pluginManager_.loadFromDirectory(pluginsDir.string());
+    }
 
     static const std::vector<std::string> preferredOrder = {
         "projection", "cutting", "matching", "processing", "utility", "vector"
