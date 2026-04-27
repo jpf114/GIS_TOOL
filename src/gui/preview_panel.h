@@ -44,6 +44,8 @@ private:
     void setScale(double scale, bool keepFitMode);
     void fitCurrentImage();
     void setZoomControlsEnabled(bool enabled);
+    void openCurrentPathDirectory();
+    void copyCurrentPath();
     void updateCompareButtons();
     void updateOriginLabel();
     bool hasImagePreview() const;
@@ -60,6 +62,8 @@ private:
     QPushButton* showOutputButton_ = nullptr;
     QPushButton* compareButton_ = nullptr;
     QPushButton* useAsInputButton_ = nullptr;
+    QPushButton* openDirButton_ = nullptr;
+    QPushButton* copyPathButton_ = nullptr;
     QPushButton* zoomInButton_ = nullptr;
     QPushButton* zoomOutButton_ = nullptr;
     QPushButton* fitButton_ = nullptr;

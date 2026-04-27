@@ -1,8 +1,13 @@
 #include "preview_panel.h"
 
 #include <QColor>
+#include <QClipboard>
+#include <QDir>
+#include <QDesktopServices>
 #include <QEvent>
+#include <QFileInfo>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
@@ -18,6 +23,7 @@
 #include <QScrollBar>
 #include <QSize>
 #include <QStackedWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -492,7 +498,9 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     showInputButton_ = new QPushButton(QStringLiteral("查看输入"));
     showOutputButton_ = new QPushButton(QStringLiteral("查看结果"));
     useAsInputButton_ = new QPushButton(QStringLiteral("作为输入"));
-    compareButton_ = new QPushButton(QStringLiteral("瀵规瘮棰勮"));
+    compareButton_ = new QPushButton(QStringLiteral("对比预览"));
+    openDirButton_ = new QPushButton(QStringLiteral("打开目录"));
+    copyPathButton_ = new QPushButton(QStringLiteral("复制路径"));
     statusLabel_ = new QLabel;
     statusLabel_->setStyleSheet("color: #4b5c6f;");
     scaleLabel_ = new QLabel(QStringLiteral("100%"));
@@ -514,6 +522,8 @@ PreviewPanel::PreviewPanel(QWidget* parent)
             emit requestUseAsInput(currentPath_);
         }
     });
+    connect(openDirButton_, &QPushButton::clicked, this, &PreviewPanel::openCurrentPathDirectory);
+    connect(copyPathButton_, &QPushButton::clicked, this, &PreviewPanel::copyCurrentPath);
     connect(zoomOutButton_, &QPushButton::clicked, this, [this]() {
         setScale(gis::gui::zoomOutScale(currentScale_), false);
     });
@@ -886,6 +896,30 @@ void PreviewPanel::setZoomControlsEnabled(bool enabled) {
     zoomInButton_->setEnabled(enabled);
     zoomOutButton_->setEnabled(enabled);
     fitButton_->setEnabled(enabled);
+}
+
+void PreviewPanel::openCurrentPathDirectory() {
+    if (currentPath_.isEmpty()) {
+        return;
+    }
+
+    const QFileInfo info(currentPath_);
+    const QString targetDir = info.absolutePath();
+    if (targetDir.isEmpty()) {
+        return;
+    }
+
+    QDesktopServices::openUrl(QUrl::fromLocalFile(targetDir));
+}
+
+void PreviewPanel::copyCurrentPath() {
+    if (currentPath_.isEmpty()) {
+        return;
+    }
+
+    if (auto* clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(QDir::toNativeSeparators(currentPath_));
+    }
 }
 
 void PreviewPanel::updateCompareButtons() {
