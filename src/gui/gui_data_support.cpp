@@ -225,6 +225,16 @@ bool canPreviewData(const std::string& path) {
     return isSupportedDataPath(path);
 }
 
+bool canComparePreview(const std::string& inputPath, const std::string& outputPath) {
+    if (!canPreviewData(inputPath) || !canPreviewData(outputPath)) {
+        return false;
+    }
+
+    const auto inputKind = detectDataKind(inputPath);
+    const auto outputKind = detectDataKind(outputPath);
+    return inputKind != DataKind::Unknown && inputKind == outputKind;
+}
+
 std::string dataKindDisplayName(DataKind kind) {
     switch (kind) {
         case DataKind::Raster:

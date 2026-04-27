@@ -65,6 +65,8 @@ QString geometryTypeName(OGRwkbGeometryType type) {
     }
 }
 
+QImage buildVectorPreviewImage(GDALDataset* ds);
+
 QImage buildRasterPreviewImage(GDALDataset* ds) {
     const int srcWidth = ds->GetRasterXSize();
     const int srcHeight = ds->GetRasterYSize();
@@ -164,6 +166,92 @@ QString vectorSummary(GDALDataset* ds) {
         oss << "要素: " << layer->GetFeatureCount(TRUE) << "\n";
     }
     return toQString(oss.str());
+}
+
+bool loadPreviewContent(const std::string& path,
+                        gis::gui::DataKind& kind,
+                        QImage& image,
+                        QString& summary) {
+    kind = gis::gui::detectDataKind(path);
+    switch (kind) {
+        case gis::gui::DataKind::Raster: {
+            std::unique_ptr<GDALDataset, DatasetCloser> ds(
+                static_cast<GDALDataset*>(GDALOpen(path.c_str(), GA_ReadOnly)));
+            if (!ds) {
+                return false;
+            }
+            image = buildRasterPreviewImage(ds.get());
+            if (image.isNull()) {
+                return false;
+            }
+            summary = rasterSummary(ds.get());
+            return true;
+        }
+        case gis::gui::DataKind::Vector: {
+            std::unique_ptr<GDALDataset, DatasetCloser> ds(
+                static_cast<GDALDataset*>(GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                                                     nullptr, nullptr, nullptr)));
+            if (!ds) {
+                return false;
+            }
+            image = buildVectorPreviewImage(ds.get());
+            if (image.isNull()) {
+                return false;
+            }
+            summary = vectorSummary(ds.get());
+            return true;
+        }
+        default:
+            break;
+    }
+    return false;
+}
+
+QImage buildComparePreviewImage(const QImage& leftImage,
+                                const QImage& rightImage,
+                                const QString& leftTitle,
+                                const QString& rightTitle) {
+    constexpr int kPadding = 20;
+    constexpr int kHeaderHeight = 38;
+    constexpr int kGap = 16;
+
+    const int bodyHeight = std::max(leftImage.height(), rightImage.height());
+    const int canvasWidth = leftImage.width() + rightImage.width() + kPadding * 2 + kGap;
+    const int canvasHeight = bodyHeight + kPadding * 2 + kHeaderHeight;
+
+    QImage canvas(canvasWidth, canvasHeight, QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(QColor(17, 24, 39));
+
+    QPainter painter(&canvas);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    const QRect leftRect(
+        kPadding,
+        kPadding + kHeaderHeight + std::max(0, (bodyHeight - leftImage.height()) / 2),
+        leftImage.width(),
+        leftImage.height());
+    const QRect rightRect(
+        kPadding + leftImage.width() + kGap,
+        kPadding + kHeaderHeight + std::max(0, (bodyHeight - rightImage.height()) / 2),
+        rightImage.width(),
+        rightImage.height());
+
+    painter.fillRect(QRect(kPadding, kPadding, leftImage.width(), kHeaderHeight), QColor(30, 41, 59));
+    painter.fillRect(QRect(kPadding + leftImage.width() + kGap, kPadding, rightImage.width(), kHeaderHeight),
+                     QColor(30, 41, 59));
+
+    painter.setPen(QColor(226, 232, 240));
+    painter.drawText(QRect(kPadding + 12, kPadding, leftImage.width() - 24, kHeaderHeight),
+                     Qt::AlignVCenter | Qt::AlignLeft, leftTitle);
+    painter.drawText(QRect(kPadding + leftImage.width() + kGap + 12, kPadding, rightImage.width() - 24, kHeaderHeight),
+                     Qt::AlignVCenter | Qt::AlignLeft, rightTitle);
+
+    painter.fillRect(leftRect.adjusted(-1, -1, 1, 1), QColor(148, 163, 184));
+    painter.fillRect(rightRect.adjusted(-1, -1, 1, 1), QColor(148, 163, 184));
+    painter.drawImage(leftRect.topLeft(), leftImage);
+    painter.drawImage(rightRect.topLeft(), rightImage);
+    return canvas;
 }
 
 QString scaleLabelText(gis::gui::DataKind kind, double scale) {
@@ -404,6 +492,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     showInputButton_ = new QPushButton(QStringLiteral("查看输入"));
     showOutputButton_ = new QPushButton(QStringLiteral("查看结果"));
     useAsInputButton_ = new QPushButton(QStringLiteral("作为输入"));
+    compareButton_ = new QPushButton(QStringLiteral("瀵规瘮棰勮"));
     statusLabel_ = new QLabel;
     statusLabel_->setStyleSheet("color: #4b5c6f;");
     scaleLabel_ = new QLabel(QStringLiteral("100%"));
@@ -419,6 +508,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
             emit requestOpenPath(compareOutputPath_);
         }
     });
+    connect(compareButton_, &QPushButton::clicked, this, &PreviewPanel::showComparePreview);
     connect(useAsInputButton_, &QPushButton::clicked, this, [this]() {
         if (!currentPath_.isEmpty()) {
             emit requestUseAsInput(currentPath_);
@@ -434,6 +524,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 
     toolbarLayout->addWidget(showInputButton_);
     toolbarLayout->addWidget(showOutputButton_);
+    toolbarLayout->addWidget(compareButton_);
     toolbarLayout->addWidget(useAsInputButton_);
     toolbarLayout->addSpacing(8);
     toolbarLayout->addWidget(zoomOutButton_);
@@ -605,6 +696,51 @@ void PreviewPanel::setSummary(const QString& title, const QString& summary, cons
     updateOriginLabel();
 }
 
+void PreviewPanel::showComparePreview() {
+    if (!gis::gui::canComparePreview(compareInputPath_.toStdString(), compareOutputPath_.toStdString())) {
+        setPlaceholder(QStringLiteral("对比预览"),
+                       QStringLiteral("需要同时具备可预览的输入和结果数据，且两者类型一致。"));
+        return;
+    }
+
+    gis::gui::DataKind leftKind = gis::gui::DataKind::Unknown;
+    gis::gui::DataKind rightKind = gis::gui::DataKind::Unknown;
+    QImage leftImage;
+    QImage rightImage;
+    QString leftSummary;
+    QString rightSummary;
+
+    if (!loadPreviewContent(compareInputPath_.toStdString(), leftKind, leftImage, leftSummary) ||
+        !loadPreviewContent(compareOutputPath_.toStdString(), rightKind, rightImage, rightSummary) ||
+        leftKind != rightKind) {
+        setPlaceholder(QStringLiteral("对比预览"),
+                       QStringLiteral("当前输入和结果无法生成稳定的并排对比图。"));
+        return;
+    }
+
+    currentDataKind_ = leftKind;
+    currentImage_ = buildComparePreviewImage(
+        leftImage,
+        rightImage,
+        QStringLiteral("输入"),
+        QStringLiteral("结果"));
+    if (currentImage_.isNull()) {
+        setPlaceholder(QStringLiteral("对比预览"),
+                       QStringLiteral("对比图生成失败，请先查看单独预览确认数据可打开。"));
+        return;
+    }
+
+    setSummary(
+        QStringLiteral("输入 / 结果对比"),
+        QStringLiteral("左侧为输入，右侧为结果。\n\n[输入]\n%1\n\n[结果]\n%2")
+            .arg(leftSummary, rightSummary),
+        compareInputPath_ + QStringLiteral("\nvs\n") + compareOutputPath_);
+    setZoomControlsEnabled(true);
+    imageLabel_->setCursor(Qt::OpenHandCursor);
+    stackedWidget_->setCurrentIndex(1);
+    fitCurrentImage();
+}
+
 void PreviewPanel::showRasterPreview(const std::string& path) {
     currentDataKind_ = gis::gui::DataKind::Raster;
     std::unique_ptr<GDALDataset, DatasetCloser> ds(
@@ -757,6 +893,17 @@ void PreviewPanel::updateCompareButtons() {
         showOutputButton_->setEnabled(canOpenOutput);
         showOutputButton_->setToolTip(
             compareOutputPath_.isEmpty() ? QStringLiteral("当前没有可切换的结果数据") : compareOutputPath_);
+    }
+
+    if (compareButton_) {
+        const bool canCompare = gis::gui::canComparePreview(
+            compareInputPath_.toStdString(),
+            compareOutputPath_.toStdString());
+        compareButton_->setEnabled(canCompare);
+        compareButton_->setToolTip(
+            canCompare
+                ? QStringLiteral("并排查看输入与结果，快速比较处理前后差异")
+                : QStringLiteral("需要同时具备同类型的输入和结果数据，才能进行对比预览"));
     }
 
     if (useAsInputButton_) {

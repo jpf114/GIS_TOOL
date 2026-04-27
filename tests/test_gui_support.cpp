@@ -57,6 +57,14 @@ TEST(GuiSupportTest, DetectUnknownDataKind) {
     EXPECT_FALSE(gis::gui::canPreviewData("notes.txt"));
 }
 
+TEST(GuiSupportTest, CanComparePreviewRequiresTwoPreviewablePathsOfSameKind) {
+    EXPECT_TRUE(gis::gui::canComparePreview("before.tif", "after.tif"));
+    EXPECT_TRUE(gis::gui::canComparePreview("roads.shp", "roads_buffer.geojson"));
+    EXPECT_FALSE(gis::gui::canComparePreview("before.tif", "roads.shp"));
+    EXPECT_FALSE(gis::gui::canComparePreview("before.tif", "notes.txt"));
+    EXPECT_FALSE(gis::gui::canComparePreview("", "after.tif"));
+}
+
 TEST(GuiSupportTest, IsSupportedDataPathRecognizesSupportedExtensions) {
     EXPECT_TRUE(gis::gui::isSupportedDataPath("scene.tif"));
     EXPECT_TRUE(gis::gui::isSupportedDataPath("roads.gpkg"));

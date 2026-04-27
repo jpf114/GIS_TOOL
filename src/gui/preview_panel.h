@@ -34,6 +34,7 @@ protected:
 private:
     void setPlaceholder(const QString& title, const QString& message);
     void setSummary(const QString& title, const QString& summary, const QString& pathText);
+    void showComparePreview();
     void showRasterPreview(const std::string& path);
     void showVectorPreview(const std::string& path);
     void showUnsupportedPreview(const std::string& path);
@@ -56,6 +57,7 @@ private:
     QLabel* scaleLabel_ = nullptr;
     QPushButton* showInputButton_ = nullptr;
     QPushButton* showOutputButton_ = nullptr;
+    QPushButton* compareButton_ = nullptr;
     QPushButton* useAsInputButton_ = nullptr;
     QPushButton* zoomInButton_ = nullptr;
     QPushButton* zoomOutButton_ = nullptr;
