@@ -34,6 +34,7 @@ private slots:
     void onRunQuickPreview();
     void onAddRasterData();
     void onAddVectorData();
+    void onAddDataDirectory();
     void onRemoveSelectedData();
     void onDataSelectionChanged();
     void onDataItemDoubleClicked(QTreeWidgetItem* item, int column);

@@ -4,8 +4,10 @@
 #include <ogr_spatialref.h>
 #include <ogrsf_frmts.h>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 
@@ -73,6 +75,35 @@ TEST(GuiSupportTest, CollectSupportedDataPathsFiltersUnsupportedEntries) {
     ASSERT_EQ(supported.size(), 2u);
     EXPECT_EQ(supported[0], "D:/data/scene.tif");
     EXPECT_EQ(supported[1], "D:/data/roads.shp");
+}
+
+TEST(GuiSupportTest, CollectSupportedDataPathsRecursivelyFindsFilesInNestedDirectories) {
+    gis::tests::ensureDirectory(guiSupportTestDir());
+
+    const fs::path rootDir = guiSupportTestDir() / "recursive_import";
+    const fs::path nestedDir = rootDir / "nested";
+    gis::tests::ensureDirectory(nestedDir);
+
+    const fs::path rasterPath = rootDir / "scene.tif";
+    const fs::path vectorPath = nestedDir / "roads.shp";
+    const fs::path textPath = nestedDir / "notes.txt";
+
+    {
+        std::ofstream(rasterPath.string()).put('\n');
+        std::ofstream(vectorPath.string()).put('\n');
+        std::ofstream(textPath.string()).put('\n');
+    }
+
+    const auto supported = gis::gui::collectSupportedDataPathsRecursively({rootDir.string()});
+    ASSERT_EQ(supported.size(), 2u);
+    EXPECT_NE(
+        std::find(supported.begin(), supported.end(),
+                  (rootDir / "scene.tif").lexically_normal().generic_string()),
+        supported.end());
+    EXPECT_NE(
+        std::find(supported.begin(), supported.end(),
+                  (nestedDir / "roads.shp").lexically_normal().generic_string()),
+        supported.end());
 }
 
 TEST(GuiSupportTest, DataKindDisplayNameIsChinese) {

@@ -167,6 +167,60 @@ std::vector<std::string> collectSupportedDataPaths(const std::vector<std::string
     return supported;
 }
 
+std::vector<std::string> collectSupportedDataPathsRecursively(const std::vector<std::string>& paths) {
+    namespace fs = std::filesystem;
+
+    std::vector<std::string> supported;
+    std::unordered_set<std::string> seen;
+
+    auto appendIfSupported = [&](const fs::path& path) {
+        if (!path.has_filename()) {
+            return;
+        }
+        const std::string normalized = path.lexically_normal().generic_string();
+        if (!isSupportedDataPath(normalized)) {
+            return;
+        }
+        if (seen.insert(normalized).second) {
+            supported.push_back(normalized);
+        }
+    };
+
+    for (const auto& rawPath : paths) {
+        if (rawPath.empty()) {
+            continue;
+        }
+
+        fs::path path(rawPath);
+        std::error_code ec;
+        const fs::file_status status = fs::status(path, ec);
+        if (ec) {
+            continue;
+        }
+
+        if (fs::is_regular_file(status)) {
+            appendIfSupported(path);
+            continue;
+        }
+
+        if (!fs::is_directory(status)) {
+            continue;
+        }
+
+        fs::recursive_directory_iterator it(path, fs::directory_options::skip_permission_denied, ec);
+        fs::recursive_directory_iterator end;
+        for (; !ec && it != end; it.increment(ec)) {
+            if (ec || !it->is_regular_file()) {
+                continue;
+            }
+            appendIfSupported(it->path());
+        }
+    }
+
+    std::sort(supported.begin(), supported.end());
+    return supported;
+}
+
 bool canPreviewData(const std::string& path) {
     return isSupportedDataPath(path);
 }

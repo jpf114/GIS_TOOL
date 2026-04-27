@@ -59,7 +59,7 @@ void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
         }
     }
 
-    if (!gis::gui::collectSupportedDataPaths(paths).empty()) {
+    if (!gis::gui::collectSupportedDataPathsRecursively(paths).empty()) {
         event->acceptProposedAction();
     }
 }
@@ -76,7 +76,7 @@ void MainWindow::dropEvent(QDropEvent* event) {
         }
     }
 
-    const auto supportedPaths = gis::gui::collectSupportedDataPaths(droppedPaths);
+    const auto supportedPaths = gis::gui::collectSupportedDataPathsRecursively(droppedPaths);
     if (supportedPaths.empty()) {
         statusBar()->showMessage(QStringLiteral("拖入的数据类型暂不支持"));
         return;
@@ -207,12 +207,15 @@ void MainWindow::setupUi() {
     auto* dataButtonLayout = new QHBoxLayout;
     auto* addRasterBtn = new QPushButton(QStringLiteral("添加栅格"));
     auto* addVectorBtn = new QPushButton(QStringLiteral("添加矢量"));
+    auto* addDirectoryBtn = new QPushButton(QStringLiteral("导入目录"));
     auto* removeDataBtn = new QPushButton(QStringLiteral("移除"));
     connect(addRasterBtn, &QPushButton::clicked, this, &MainWindow::onAddRasterData);
     connect(addVectorBtn, &QPushButton::clicked, this, &MainWindow::onAddVectorData);
+    connect(addDirectoryBtn, &QPushButton::clicked, this, &MainWindow::onAddDataDirectory);
     connect(removeDataBtn, &QPushButton::clicked, this, &MainWindow::onRemoveSelectedData);
     dataButtonLayout->addWidget(addRasterBtn);
     dataButtonLayout->addWidget(addVectorBtn);
+    dataButtonLayout->addWidget(addDirectoryBtn);
     dataButtonLayout->addWidget(removeDataBtn);
 
     auto* dataActionLayout = new QHBoxLayout;
@@ -625,6 +628,43 @@ void MainWindow::onAddVectorData() {
     } else {
         refreshDataTreeVisualState();
     }
+}
+
+void MainWindow::onAddDataDirectory() {
+    const QString directory = QFileDialog::getExistingDirectory(
+        this,
+        QStringLiteral("选择数据目录"),
+        QString(),
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (directory.isEmpty()) {
+        refreshDataTreeVisualState();
+        return;
+    }
+
+    const auto supportedPaths = gis::gui::collectSupportedDataPathsRecursively(
+        {directory.toStdString()});
+    if (supportedPaths.empty()) {
+        statusBar()->showMessage(QStringLiteral("该目录下未发现支持的栅格或矢量数据"));
+        return;
+    }
+
+    int importedCount = 0;
+    for (const auto& path : supportedPaths) {
+        if (addDataPath(QString::fromStdString(path), false, gis::gui::DataOrigin::Input)) {
+            ++importedCount;
+        }
+    }
+
+    if (inputGroupItem_->childCount() > 0) {
+        dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
+    }
+
+    const int duplicateCount = static_cast<int>(supportedPaths.size()) - importedCount;
+    QString message = QStringLiteral("目录导入完成，新增 %1 个数据").arg(importedCount);
+    if (duplicateCount > 0) {
+        message += QStringLiteral("，跳过 %1 个重复项").arg(duplicateCount);
+    }
+    statusBar()->showMessage(message);
 }
 
 void MainWindow::onRemoveSelectedData() {

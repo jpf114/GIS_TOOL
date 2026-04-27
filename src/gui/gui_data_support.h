@@ -39,6 +39,7 @@ struct BindableParamOption {
 DataKind detectDataKind(const std::string& path);
 bool isSupportedDataPath(const std::string& path);
 std::vector<std::string> collectSupportedDataPaths(const std::vector<std::string>& paths);
+std::vector<std::string> collectSupportedDataPathsRecursively(const std::vector<std::string>& paths);
 bool canPreviewData(const std::string& path);
 std::string dataKindDisplayName(DataKind kind);
 std::string dataOriginDisplayName(DataOrigin origin);
