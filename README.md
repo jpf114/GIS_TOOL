@@ -10,6 +10,7 @@
 
 - `Visual Studio 2022 + C++17 + 全局 vcpkg` 可稳定配置与编译
 - `GIS_BUILD_GUI=OFF/ON` 两种模式均可构建
+- 标准构建目录为 `build`，标准安装目录为 `install`
 - `ctest -C Debug --output-on-failure` 为 `106/106` 通过
 - `gis-cli.exe --list` 可正常列出全部主插件
 - `gis-gui.exe -platform offscreen --self-test` 可正常启动并退出
@@ -88,34 +89,36 @@ ctest --test-dir build -C Debug --output-on-failure
 构建 GUI、CLI 与测试：
 
 ```powershell
-cmake -S . -B build-verify -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
-cmake --build build-verify --config Debug
-ctest --test-dir build-verify -C Debug --output-on-failure
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
+cmake --build build --config Debug
+ctest --test-dir build -C Debug --output-on-failure
+cmake --install build --config Debug
 ```
 
 建议：
 
-- 使用 `build-verify` 作为标准验证目录
-- 日常开发可继续使用独立构建目录，但发布前应至少完整跑一次 `build-verify`
+- 使用 `build` 作为标准构建与验证目录
+- 使用 `install` 作为标准安装目录
+- 发布或交付前至少完整执行一次 `build + test + install`
 
 ## 使用
 
 列出插件：
 
 ```powershell
-.\build\src\cli\Debug\gis-cli.exe --list
+.\install\bin\gis-cli.exe --list
 ```
 
 运行一个插件时，形式为：
 
 ```powershell
-.\build\src\cli\Debug\gis-cli.exe <plugin> <action> --input <path> --output <path>
+.\install\bin\gis-cli.exe <plugin> <action> --input <path> --output <path>
 ```
 
 启动 GUI：
 
 ```powershell
-.\build-verify\src\gui\Debug\gis-gui.exe
+.\install\bin\gis-gui.exe
 ```
 
 GUI 当前适合：

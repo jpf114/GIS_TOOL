@@ -13,13 +13,13 @@ int main(int argc, char* argv[])
     // Initialize GDAL (must be done before any GDAL operations)
     gis::core::initGDAL();
 
+    // Must be set before QApplication/QGuiApplication is constructed.
+    QApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+
     QApplication app(argc, argv);
     app.setApplicationName("GIS Tool");
     app.setOrganizationName("GIS");
-
-    // High DPI support
-    QApplication::setHighDpiScaleFactorRoundingPolicy(
-        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
     const bool selfTestMode = std::any_of(argv, argv + argc, [](const char* arg) {
         return arg != nullptr && std::string(arg) == "--self-test";

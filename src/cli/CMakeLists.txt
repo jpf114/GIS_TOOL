@@ -37,3 +37,7 @@ foreach(GIS_PLUGIN_TARGET IN LISTS GIS_PLUGIN_TARGETS)
             $<TARGET_FILE_DIR:gis-cli>/plugins/$<TARGET_FILE_NAME:${GIS_PLUGIN_TARGET}>
     )
 endforeach()
+
+install(TARGETS gis-cli
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)

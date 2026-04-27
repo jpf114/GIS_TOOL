@@ -24,3 +24,8 @@ add_custom_command(TARGET plugin_vector POST_BUILD
         $<TARGET_FILE:plugin_vector>
         ${CMAKE_BINARY_DIR}/plugins/$<TARGET_FILE_NAME:plugin_vector>
 )
+
+install(TARGETS plugin_vector
+    RUNTIME DESTINATION ${GIS_INSTALL_PLUGIN_DIR}
+    LIBRARY DESTINATION ${GIS_INSTALL_PLUGIN_DIR}
+)

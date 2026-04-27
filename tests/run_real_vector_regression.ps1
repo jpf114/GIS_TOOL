@@ -17,7 +17,7 @@ function Get-DefaultWorkspaceRoot {
 
 function Get-DefaultCliPath {
     param([string]$Root)
-    return Join-Path $Root "build-vs2022-global\src\cli\Debug\gis-cli.exe"
+    return Join-Path $Root "build\src\cli\Debug\gis-cli.exe"
 }
 
 function Get-DefaultOutputRoot {

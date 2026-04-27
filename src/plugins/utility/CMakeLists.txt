@@ -26,3 +26,8 @@ add_custom_command(TARGET plugin_utility POST_BUILD
         $<TARGET_FILE:plugin_utility>
         ${CMAKE_BINARY_DIR}/plugins/$<TARGET_FILE_NAME:plugin_utility>
 )
+
+install(TARGETS plugin_utility
+    RUNTIME DESTINATION ${GIS_INSTALL_PLUGIN_DIR}
+    LIBRARY DESTINATION ${GIS_INSTALL_PLUGIN_DIR}
+)

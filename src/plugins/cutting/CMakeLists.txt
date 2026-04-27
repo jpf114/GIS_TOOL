@@ -24,3 +24,8 @@ add_custom_command(TARGET plugin_cutting POST_BUILD
         $<TARGET_FILE:plugin_cutting>
         ${CMAKE_BINARY_DIR}/plugins/$<TARGET_FILE_NAME:plugin_cutting>
 )
+
+install(TARGETS plugin_cutting
+    RUNTIME DESTINATION ${GIS_INSTALL_PLUGIN_DIR}
+    LIBRARY DESTINATION ${GIS_INSTALL_PLUGIN_DIR}
+)

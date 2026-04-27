@@ -26,3 +26,8 @@ add_custom_command(TARGET plugin_processing POST_BUILD
         $<TARGET_FILE:plugin_processing>
         ${CMAKE_BINARY_DIR}/plugins/$<TARGET_FILE_NAME:plugin_processing>
 )
+
+install(TARGETS plugin_processing
+    RUNTIME DESTINATION ${GIS_INSTALL_PLUGIN_DIR}
+    LIBRARY DESTINATION ${GIS_INSTALL_PLUGIN_DIR}
+)
