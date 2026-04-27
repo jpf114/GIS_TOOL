@@ -502,6 +502,18 @@ static void removeExistingVectorOutput(const std::string& output, const std::str
     fs::remove(output);
 }
 
+static std::string escapeSqlLiteral(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char ch : value) {
+        escaped.push_back(ch);
+        if (ch == '\'') {
+            escaped.push_back('\'');
+        }
+    }
+    return escaped;
+}
+
 static OGRwkbGeometryType resultLayerGeometryType(OGRwkbGeometryType srcType) {
     switch (wkbFlatten(srcType)) {
         case wkbPoint:
@@ -1017,11 +1029,23 @@ gis::framework::Result VectorPlugin::doBuffer(
     }
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
+    const bool useTransactions = outFormat == "GPKG";
+    std::vector<std::string> layerOptionStorage;
+    std::vector<char*> layerOptions;
+    if (useTransactions) {
+        layerOptionStorage.emplace_back("SPATIAL_INDEX=NO");
+    }
+    for (auto& option : layerOptionStorage) {
+        layerOptions.push_back(option.data());
+    }
+    layerOptions.push_back(nullptr);
+
+    const std::string outputLayerName = std::string(srcLayer->GetName()) + "_buffer";
     OGRLayer* dstLayer = dstDS->CreateLayer(
-        (std::string(srcLayer->GetName()) + "_buffer").c_str(),
+        outputLayerName.c_str(),
         srcSRS,
         resultLayerGeometryType(wkbPolygon),
-        nullptr);
+        layerOptionStorage.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1042,10 +1066,9 @@ gis::framework::Result VectorPlugin::doBuffer(
     int count = 0;
     int total = static_cast<int>(srcLayer->GetFeatureCount(FALSE));
     if (total <= 0) total = 1;
-    constexpr int transactionBatchSize = 5000;
+    const int transactionBatchSize = useTransactions ? 20000 : 5000;
     constexpr int progressUpdateInterval = 1000;
 
-    const bool useTransactions = outFormat == "GPKG";
     if (useTransactions) {
         dstLayer->StartTransaction();
     }
@@ -1058,7 +1081,14 @@ gis::framework::Result VectorPlugin::doBuffer(
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayerDefn);
                 copyFeatureFieldsOnly(dstFeat, feat, fieldMap);
                 std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, bufferGeom);
-                dstFeat->SetGeometry(promoted ? promoted.get() : bufferGeom);
+                if (promoted) {
+                    delete bufferGeom;
+                    bufferGeom = nullptr;
+                    dstFeat->SetGeometryDirectly(promoted.release());
+                } else {
+                    dstFeat->SetGeometryDirectly(bufferGeom);
+                    bufferGeom = nullptr;
+                }
                 if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
                     OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
                     if (useTransactions) {
@@ -1084,6 +1114,15 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
+        const char* geometryColumn = dstLayer->GetGeometryColumn();
+        const std::string geometryColumnName =
+            (geometryColumn && *geometryColumn) ? geometryColumn : "geom";
+        const std::string addSpatialIndexSql =
+            "SELECT gpkgAddSpatialIndex('" + escapeSqlLiteral(outputLayerName) +
+            "', '" + escapeSqlLiteral(geometryColumnName) + "')";
+        if (OGRLayer* sqlResult = dstDS->ExecuteSQL(addSpatialIndexSql.c_str(), nullptr, nullptr)) {
+            dstDS->ReleaseResultSet(sqlResult);
+        }
     }
     dstLayer->SyncToDisk();
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
