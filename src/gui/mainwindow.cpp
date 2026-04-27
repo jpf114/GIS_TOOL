@@ -12,12 +12,17 @@
 #include <QApplication>
 #include <QBrush>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QColor>
+#include <QDesktopServices>
+#include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -32,6 +37,7 @@
 #include <QTabBar>
 #include <QThread>
 #include <QTreeWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -765,6 +771,8 @@ void MainWindow::showDataContextMenu(const QPoint& pos) {
     QMenu menu(this);
     auto* setInputAction = menu.addAction(QStringLiteral("设为输入数据"));
     auto* setOutputAction = menu.addAction(QStringLiteral("设为结果数据"));
+    auto* revealAction = menu.addAction(QStringLiteral("打开所在目录"));
+    auto* copyPathAction = menu.addAction(QStringLiteral("复制路径"));
     std::map<QAction*, std::string> bindActions;
     if (currentPlugin_) {
         const auto options = gis::gui::collectBindableParamOptions(currentPlugin_->paramSpecs(), kind);
@@ -789,6 +797,10 @@ void MainWindow::showDataContextMenu(const QPoint& pos) {
         moveDataItemToRole(item, false);
     } else if (selectedAction == setOutputAction) {
         moveDataItemToRole(item, true);
+    } else if (selectedAction == revealAction) {
+        openDataPathInExplorer(path);
+    } else if (selectedAction == copyPathAction) {
+        copyDataPathToClipboard(path);
     } else if (bindActions.count(selectedAction) > 0) {
         bindDataPathToParam(path, bindActions[selectedAction]);
     } else if (selectedAction == removeAction) {
@@ -923,6 +935,37 @@ QString MainWindow::currentSelectedDataPath() const {
         return {};
     }
     return item->data(0, Qt::UserRole).toString();
+}
+
+void MainWindow::openDataPathInExplorer(const QString& path) {
+    if (path.isEmpty()) {
+        return;
+    }
+
+    const QFileInfo info(path);
+    const QString targetDir = info.absolutePath();
+    if (targetDir.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("无法定位当前数据所在目录"));
+        return;
+    }
+
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(targetDir))) {
+        statusBar()->showMessage(QStringLiteral("打开目录失败: %1").arg(targetDir));
+        return;
+    }
+
+    statusBar()->showMessage(QStringLiteral("已打开目录: %1").arg(QDir::toNativeSeparators(targetDir)));
+}
+
+void MainWindow::copyDataPathToClipboard(const QString& path) {
+    if (path.isEmpty()) {
+        return;
+    }
+
+    if (auto* clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(QDir::toNativeSeparators(path));
+        statusBar()->showMessage(QStringLiteral("已复制路径: %1").arg(QDir::toNativeSeparators(path)));
+    }
 }
 
 QString MainWindow::currentInputReferencePath() const {

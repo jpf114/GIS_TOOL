@@ -63,6 +63,8 @@ private:
     QTreeWidgetItem* selectedDataItem() const;
     bool containsPath(const QString& path) const;
     void moveDataItemToRole(QTreeWidgetItem* item, bool isOutput);
+    void openDataPathInExplorer(const QString& path);
+    void copyDataPathToClipboard(const QString& path);
     void refreshDataTreeVisualState();
     void refreshPreviewCompareTargets();
     void updateDataItemPresentation(QTreeWidgetItem* item, bool isActive);
