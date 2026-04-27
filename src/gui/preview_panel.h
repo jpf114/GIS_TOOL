@@ -22,6 +22,7 @@ public:
     void refitPreview();
     void setCompareTargets(const QString& inputPath, const QString& outputPath);
     void setCurrentOrigin(gis::gui::DataOrigin origin);
+    bool showComparePreviewIfAvailable();
 
 signals:
     void requestOpenPath(const QString& path);

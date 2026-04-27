@@ -432,6 +432,8 @@ void MainWindow::onBuildQuickPreview() {
 
     addDataPath(outputPath, true, gis::gui::DataOrigin::QuickPreview);
     latestOutputPath_ = outputPath;
+    refreshPreviewCompareTargets();
+    previewPanel_->showComparePreviewIfAvailable();
     resultSummaryLabel_->setText(QStringLiteral("结果类型: 预览影像\n已生成 8 位快速预览影像\n%1").arg(outputPath));
     statusBar()->showMessage(QStringLiteral("已生成8位快速预览影像"));
     refreshQuickRunButtonState();
@@ -559,6 +561,8 @@ void MainWindow::runPluginWithParams(
             if (!result.outputPath.empty() && std::filesystem::exists(result.outputPath)) {
                 latestOutputPath_ = QString::fromUtf8(result.outputPath);
                 addDataPath(latestOutputPath_, true, outputOrigin);
+                refreshPreviewCompareTargets();
+                previewPanel_->showComparePreviewIfAvailable();
             }
             statusBar()->showMessage(statusPrefix + QStringLiteral("成功: ") + message);
         } else if (cancelled) {

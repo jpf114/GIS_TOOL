@@ -624,6 +624,14 @@ void PreviewPanel::setCurrentOrigin(gis::gui::DataOrigin origin) {
     updateOriginLabel();
 }
 
+bool PreviewPanel::showComparePreviewIfAvailable() {
+    if (!gis::gui::canComparePreview(compareInputPath_.toStdString(), compareOutputPath_.toStdString())) {
+        return false;
+    }
+    showComparePreview();
+    return true;
+}
+
 void PreviewPanel::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     if (fitMode_ && hasImagePreview()) {
