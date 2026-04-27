@@ -1735,3 +1735,29 @@ TEST_F(PluginTest, ProcessingBandMathExecution) {
     EXPECT_TRUE(result.success) << "Band math failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
 }
+
+TEST_F(PluginTest, MatchingPluginDebugLightweightActionsFailFast) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    std::map<std::string, gis::framework::ParamValue> eccParams;
+    eccParams["action"] = std::string("ecc_register");
+
+    std::map<std::string, gis::framework::ParamValue> stitchParams;
+    stitchParams["action"] = std::string("stitch");
+
+    const auto eccResult = p->execute(eccParams, progress_);
+    const auto stitchResult = p->execute(stitchParams, progress_);
+
+#ifdef _DEBUG
+    EXPECT_FALSE(eccResult.success);
+    EXPECT_NE(eccResult.message.find("Debug lightweight mode"), std::string::npos);
+    EXPECT_FALSE(stitchResult.success);
+    EXPECT_NE(stitchResult.message.find("Debug lightweight mode"), std::string::npos);
+#else
+    EXPECT_FALSE(eccResult.success);
+    EXPECT_NE(eccResult.message.find("reference is required"), std::string::npos);
+    EXPECT_FALSE(stitchResult.success);
+    EXPECT_NE(stitchResult.message.find("input is required"), std::string::npos);
+#endif
+}
