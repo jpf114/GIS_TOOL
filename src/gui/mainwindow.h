@@ -39,11 +39,14 @@ private slots:
     void onDataItemDoubleClicked(QTreeWidgetItem* item, int column);
     void showDataContextMenu(const QPoint& pos);
     void onParamValuesChanged();
+    void onUseSelectedAsInput();
+    void onUseSelectedAsOutput();
+    void onBindSelectedToInputParam();
 
 private:
     void loadPlugins();
     void setupUi();
-    void addDataPath(const QString& path,
+    bool addDataPath(const QString& path,
                      bool makeCurrent = true,
                      gis::gui::DataOrigin origin = gis::gui::DataOrigin::Input);
     void openDataPath(const QString& path, bool refitPreview = false);
@@ -72,6 +75,7 @@ private:
     void refreshQuickPreviewButtonState();
     void refreshQuickRunButtonState();
     void refreshParamValidationState();
+    void refreshDataActionButtonsState();
 
     QTabBar* pluginTabs_ = nullptr;
     QTreeWidget* dataTree_ = nullptr;
@@ -84,6 +88,9 @@ private:
     QPushButton* executeButton_ = nullptr;
     QPushButton* quickPreviewButton_ = nullptr;
     QPushButton* quickRunButton_ = nullptr;
+    QPushButton* useAsInputButton_ = nullptr;
+    QPushButton* useAsOutputButton_ = nullptr;
+    QPushButton* bindInputButton_ = nullptr;
     QCheckBox* quickRunCheckBox_ = nullptr;
     ParamWidget* paramWidget_ = nullptr;
     PreviewPanel* previewPanel_ = nullptr;

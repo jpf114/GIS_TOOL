@@ -82,18 +82,25 @@ void MainWindow::dropEvent(QDropEvent* event) {
         return;
     }
 
+    int importedCount = 0;
     for (const auto& path : supportedPaths) {
-        addDataPath(QString::fromStdString(path), false, gis::gui::DataOrigin::Input);
+        if (addDataPath(QString::fromStdString(path), false, gis::gui::DataOrigin::Input)) {
+            ++importedCount;
+        }
     }
 
     if (inputGroupItem_->childCount() > 0) {
         dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
     }
 
-    const int ignoredCount = static_cast<int>(droppedPaths.size() - supportedPaths.size());
-    QString message = QStringLiteral("已导入 %1 个数据").arg(supportedPaths.size());
-    if (ignoredCount > 0) {
-        message += QStringLiteral("，忽略 %1 个不支持的文件").arg(ignoredCount);
+    const int unsupportedCount = static_cast<int>(droppedPaths.size() - supportedPaths.size());
+    const int duplicateCount = static_cast<int>(supportedPaths.size()) - importedCount;
+    QString message = QStringLiteral("已导入 %1 个数据").arg(importedCount);
+    if (duplicateCount > 0) {
+        message += QStringLiteral("，跳过 %1 个重复项").arg(duplicateCount);
+    }
+    if (unsupportedCount > 0) {
+        message += QStringLiteral("，忽略 %1 个不支持的文件").arg(unsupportedCount);
     }
     statusBar()->showMessage(message);
     event->acceptProposedAction();
@@ -208,6 +215,20 @@ void MainWindow::setupUi() {
     dataButtonLayout->addWidget(addVectorBtn);
     dataButtonLayout->addWidget(removeDataBtn);
 
+    auto* dataActionLayout = new QHBoxLayout;
+    useAsInputButton_ = new QPushButton(QStringLiteral("设为输入"));
+    useAsOutputButton_ = new QPushButton(QStringLiteral("设为结果"));
+    bindInputButton_ = new QPushButton(QStringLiteral("填入参数"));
+    useAsInputButton_->setToolTip(QStringLiteral("把当前选中数据切换到输入数据分组"));
+    useAsOutputButton_->setToolTip(QStringLiteral("把当前选中数据切换到结果数据分组"));
+    bindInputButton_->setToolTip(QStringLiteral("把当前选中数据填入 input 参数"));
+    connect(useAsInputButton_, &QPushButton::clicked, this, &MainWindow::onUseSelectedAsInput);
+    connect(useAsOutputButton_, &QPushButton::clicked, this, &MainWindow::onUseSelectedAsOutput);
+    connect(bindInputButton_, &QPushButton::clicked, this, &MainWindow::onBindSelectedToInputParam);
+    dataActionLayout->addWidget(useAsInputButton_);
+    dataActionLayout->addWidget(useAsOutputButton_);
+    dataActionLayout->addWidget(bindInputButton_);
+
     dataTree_ = new QTreeWidget;
     dataTree_->setColumnCount(1);
     dataTree_->setHeaderHidden(true);
@@ -230,6 +251,7 @@ void MainWindow::setupUi() {
     dataLayout->addWidget(dataTitle);
     dataLayout->addWidget(dataHint);
     dataLayout->addLayout(dataButtonLayout);
+    dataLayout->addLayout(dataActionLayout);
     dataLayout->addWidget(dataTree_, 1);
 
     auto* centerPanel = new QFrame;
@@ -308,6 +330,7 @@ void MainWindow::setupUi() {
     refreshQuickRunButtonState();
     refreshExecuteButtonState();
     refreshParamValidationState();
+    refreshDataActionButtonsState();
 }
 
 void MainWindow::loadPlugins() {
@@ -556,11 +579,22 @@ void MainWindow::onAddRasterData() {
         QStringLiteral("选择栅格数据"),
         QString(),
         QStringLiteral("Raster (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp)"));
+    int importedCount = 0;
     for (const auto& path : paths) {
-        addDataPath(path, false, gis::gui::DataOrigin::Input);
+        if (addDataPath(path, false, gis::gui::DataOrigin::Input)) {
+            ++importedCount;
+        }
     }
-    if (!paths.isEmpty()) {
+    if (!paths.isEmpty() && inputGroupItem_->childCount() > 0) {
         dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
+        const int duplicateCount = paths.size() - importedCount;
+        QString message = QStringLiteral("已导入 %1 个栅格数据").arg(importedCount);
+        if (duplicateCount > 0) {
+            message += QStringLiteral("，跳过 %1 个重复项").arg(duplicateCount);
+        }
+        statusBar()->showMessage(message);
+    } else if (!paths.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("未导入新栅格数据，所选文件均已存在"));
     } else {
         refreshDataTreeVisualState();
     }
@@ -572,11 +606,22 @@ void MainWindow::onAddVectorData() {
         QStringLiteral("选择矢量数据"),
         QString(),
         QStringLiteral("Vector (*.shp *.geojson *.json *.gpkg *.kml *.csv)"));
+    int importedCount = 0;
     for (const auto& path : paths) {
-        addDataPath(path, false, gis::gui::DataOrigin::Input);
+        if (addDataPath(path, false, gis::gui::DataOrigin::Input)) {
+            ++importedCount;
+        }
     }
-    if (!paths.isEmpty()) {
+    if (!paths.isEmpty() && inputGroupItem_->childCount() > 0) {
         dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
+        const int duplicateCount = paths.size() - importedCount;
+        QString message = QStringLiteral("已导入 %1 个矢量数据").arg(importedCount);
+        if (duplicateCount > 0) {
+            message += QStringLiteral("，跳过 %1 个重复项").arg(duplicateCount);
+        }
+        statusBar()->showMessage(message);
+    } else if (!paths.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("未导入新矢量数据，所选文件均已存在"));
     } else {
         refreshDataTreeVisualState();
     }
@@ -628,6 +673,32 @@ void MainWindow::onParamValuesChanged() {
     refreshQuickRunButtonState();
     refreshParamValidationState();
     refreshExecuteButtonState();
+}
+
+void MainWindow::onUseSelectedAsInput() {
+    auto* item = selectedDataItem();
+    if (!item) {
+        return;
+    }
+    moveDataItemToRole(item, false);
+    statusBar()->showMessage(QStringLiteral("当前数据已设为输入数据"));
+}
+
+void MainWindow::onUseSelectedAsOutput() {
+    auto* item = selectedDataItem();
+    if (!item) {
+        return;
+    }
+    moveDataItemToRole(item, true);
+    statusBar()->showMessage(QStringLiteral("当前数据已设为结果数据"));
+}
+
+void MainWindow::onBindSelectedToInputParam() {
+    const QString path = currentSelectedDataPath();
+    if (path.isEmpty()) {
+        return;
+    }
+    bindDataPathToParam(path, "input");
 }
 
 void MainWindow::onDataItemDoubleClicked(QTreeWidgetItem* item, int) {
@@ -686,20 +757,20 @@ void MainWindow::showDataContextMenu(const QPoint& pos) {
     }
 }
 
-void MainWindow::addDataPath(const QString& path, bool makeCurrent, gis::gui::DataOrigin origin) {
+bool MainWindow::addDataPath(const QString& path, bool makeCurrent, gis::gui::DataOrigin origin) {
     if (path.isEmpty() || containsPath(path)) {
         if (makeCurrent && !path.isEmpty()) {
             for (auto* group : {inputGroupItem_, outputGroupItem_}) {
                 for (int i = 0; i < group->childCount(); ++i) {
                     if (group->child(i)->data(0, Qt::UserRole).toString() == path) {
                         dataTree_->setCurrentItem(group->child(i));
-                        return;
+                        return false;
                     }
                 }
             }
         }
         refreshDataTreeVisualState();
-        return;
+        return false;
     }
 
     const auto kind = gis::gui::detectDataKind(path.toUtf8().constData());
@@ -717,6 +788,7 @@ void MainWindow::addDataPath(const QString& path, bool makeCurrent, gis::gui::Da
     } else {
         refreshDataTreeVisualState();
     }
+    return true;
 }
 
 void MainWindow::syncCurrentDataToParams() {
@@ -790,6 +862,7 @@ void MainWindow::bindDataPathToParam(const QString& path, const std::string& key
     refreshParamValidationState();
     refreshQuickRunButtonState();
     refreshExecuteButtonState();
+    refreshDataActionButtonsState();
 }
 
 QString MainWindow::buildResultSummary(const gis::framework::Result& result, const QString& resultType) const {
@@ -1070,6 +1143,7 @@ void MainWindow::refreshDataTreeVisualState() {
             updateDataItemPresentation(item, item == activeItem);
         }
     }
+    refreshDataActionButtonsState();
 }
 
 void MainWindow::updateDataItemPresentation(QTreeWidgetItem* item, bool isActive) {
@@ -1094,5 +1168,26 @@ void MainWindow::updateDataItemPresentation(QTreeWidgetItem* item, bool isActive
     } else {
         item->setBackground(0, QBrush());
         item->setForeground(0, QBrush());
+    }
+}
+
+void MainWindow::refreshDataActionButtonsState() {
+    auto* item = selectedDataItem();
+    const bool hasItem = item != nullptr;
+    const bool canBindInput = hasItem && currentPlugin_ && paramWidget_ && paramWidget_->hasParam("input");
+    bool isOutput = false;
+    if (hasItem) {
+        const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
+        isOutput = gis::gui::isOutputDataOrigin(origin);
+    }
+
+    if (useAsInputButton_) {
+        useAsInputButton_->setEnabled(hasItem && isOutput);
+    }
+    if (useAsOutputButton_) {
+        useAsOutputButton_->setEnabled(hasItem && !isOutput);
+    }
+    if (bindInputButton_) {
+        bindInputButton_->setEnabled(canBindInput);
     }
 }
