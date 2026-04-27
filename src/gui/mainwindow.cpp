@@ -184,20 +184,21 @@ void MainWindow::setupUi() {
     setCentralWidget(centralWidget);
 
     auto* mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setContentsMargins(10, 10, 10, 10);
-    mainLayout->setSpacing(8);
+    mainLayout->setContentsMargins(12, 12, 12, 12);
+    mainLayout->setSpacing(10);
 
     auto* algorithmFrame = new QFrame;
     algorithmFrame->setObjectName(QStringLiteral("algorithmFrame"));
     auto* algorithmLayout = new QVBoxLayout(algorithmFrame);
-    algorithmLayout->setContentsMargins(16, 14, 16, 14);
+    algorithmLayout->setContentsMargins(18, 16, 18, 16);
     algorithmLayout->setSpacing(10);
 
-    auto* algorithmTitle = new QLabel(QStringLiteral("算法工作台"));
+    auto* algorithmTitle = new QLabel(QStringLiteral("GIS 工作台"));
     algorithmTitle->setObjectName(QStringLiteral("sectionTitle"));
     auto* algorithmSubtitle = new QLabel(
-        QStringLiteral("顶部选择主功能与子功能，左侧管理数据，中间查看预览与结果，右侧查看信息或配置参数。"));
+        QStringLiteral("主功能位于顶部，子功能与快捷操作紧随其后；左侧统一管理数据，中间聚焦预览，右侧按对象切换信息与参数。"));
     algorithmSubtitle->setObjectName(QStringLiteral("sectionHint"));
+    algorithmSubtitle->setWordWrap(true);
 
     pluginTabs_ = new QTabBar;
     pluginTabs_->setObjectName(QStringLiteral("pluginTabs"));
@@ -242,15 +243,22 @@ void MainWindow::setupUi() {
     quickRunCheckBox_ = new QCheckBox(QStringLiteral("执行时使用快速试算"));
     quickRunCheckBox_->setToolTip(QStringLiteral("勾选后，正式执行前会先用缩略栅格快速验证流程。"));
 
-    auto* topHeaderLayout = new QHBoxLayout;
-    topHeaderLayout->setSpacing(18);
+    auto* topHeaderFrame = new QFrame;
+    topHeaderFrame->setObjectName(QStringLiteral("workbenchHeaderFrame"));
+    auto* topHeaderLayout = new QHBoxLayout(topHeaderFrame);
+    topHeaderLayout->setContentsMargins(14, 12, 14, 12);
+    topHeaderLayout->setSpacing(16);
+
     auto* topTextLayout = new QVBoxLayout;
-    topTextLayout->setSpacing(3);
+    topTextLayout->setSpacing(4);
     topTextLayout->addWidget(algorithmTitle);
     topTextLayout->addWidget(algorithmSubtitle);
     topHeaderLayout->addLayout(topTextLayout, 1);
 
-    auto* actionButtonLayout = new QHBoxLayout;
+    auto* actionButtonFrame = new QFrame;
+    actionButtonFrame->setObjectName(QStringLiteral("toolbarCard"));
+    auto* actionButtonLayout = new QHBoxLayout(actionButtonFrame);
+    actionButtonLayout->setContentsMargins(10, 8, 10, 8);
     actionButtonLayout->setSpacing(8);
     sidebarToggleButton_ = new QToolButton;
     sidebarToggleButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -261,33 +269,73 @@ void MainWindow::setupUi() {
     actionButtonLayout->addWidget(quickPreviewButton_);
     actionButtonLayout->addWidget(quickRunButton_);
     actionButtonLayout->addWidget(executeButton_);
-    topHeaderLayout->addLayout(actionButtonLayout, 0);
+    topHeaderLayout->addWidget(actionButtonFrame, 0);
+
+    auto* pluginRailFrame = new QFrame;
+    pluginRailFrame->setObjectName(QStringLiteral("workbenchBand"));
+    auto* pluginRailLayout = new QHBoxLayout(pluginRailFrame);
+    pluginRailLayout->setContentsMargins(14, 10, 14, 10);
+    pluginRailLayout->setSpacing(12);
+    auto* pluginRailTitle = new QLabel(QStringLiteral("主功能"));
+    pluginRailTitle->setObjectName(QStringLiteral("bandLabel"));
+    pluginRailLayout->addWidget(pluginRailTitle);
+    pluginRailLayout->addWidget(pluginTabs_, 1);
+
+    auto* modeFrame = new QFrame;
+    modeFrame->setObjectName(QStringLiteral("modeBandFrame"));
+    auto* modeLayout = new QHBoxLayout(modeFrame);
+    modeLayout->setContentsMargins(0, 0, 0, 0);
+    modeLayout->setSpacing(10);
 
     auto* pluginInfoFrame = new QFrame;
     pluginInfoFrame->setObjectName(QStringLiteral("topInfoFrame"));
     auto* pluginInfoLayout = new QVBoxLayout(pluginInfoFrame);
-    pluginInfoLayout->setContentsMargins(14, 10, 14, 10);
-    pluginInfoLayout->setSpacing(4);
+    pluginInfoLayout->setContentsMargins(14, 12, 14, 12);
+    pluginInfoLayout->setSpacing(6);
+    auto* pluginInfoLabel = new QLabel(QStringLiteral("当前主功能"));
+    pluginInfoLabel->setObjectName(QStringLiteral("bandLabel"));
+    pluginInfoLayout->addWidget(pluginInfoLabel);
     pluginInfoLayout->addWidget(pluginTitleLabel_);
     pluginInfoLayout->addWidget(pluginDescriptionLabel_);
 
     auto* subFunctionFrame = new QFrame;
     subFunctionFrame->setObjectName(QStringLiteral("topInfoFrame"));
     auto* subFunctionLayout = new QVBoxLayout(subFunctionFrame);
-    subFunctionLayout->setContentsMargins(14, 10, 14, 10);
-    subFunctionLayout->setSpacing(6);
-    subFunctionLayout->addWidget(subFunctionLabel_);
+    subFunctionLayout->setContentsMargins(14, 12, 14, 12);
+    subFunctionLayout->setSpacing(8);
+    auto* subFunctionHeader = new QHBoxLayout;
+    subFunctionHeader->setContentsMargins(0, 0, 0, 0);
+    subFunctionHeader->setSpacing(8);
+    auto* subFunctionBandLabel = new QLabel(QStringLiteral("子功能"));
+    subFunctionBandLabel->setObjectName(QStringLiteral("bandLabel"));
+    subFunctionHeader->addWidget(subFunctionBandLabel);
+    subFunctionHeader->addStretch();
+    subFunctionHeader->addWidget(subFunctionLabel_);
+    subFunctionLayout->addLayout(subFunctionHeader);
     subFunctionLayout->addWidget(subFunctionTabs_);
 
-    auto* quickRunRow = new QHBoxLayout;
-    quickRunRow->addWidget(quickRunCheckBox_);
-    quickRunRow->addStretch();
-    subFunctionLayout->addLayout(quickRunRow);
+    auto* actionCardFrame = new QFrame;
+    actionCardFrame->setObjectName(QStringLiteral("topInfoFrame"));
+    auto* actionCardLayout = new QVBoxLayout(actionCardFrame);
+    actionCardLayout->setContentsMargins(14, 12, 14, 12);
+    actionCardLayout->setSpacing(8);
+    auto* actionCardLabel = new QLabel(QStringLiteral("执行控制"));
+    actionCardLabel->setObjectName(QStringLiteral("bandLabel"));
+    auto* actionCardHint = new QLabel(QStringLiteral("先核对参数，再决定是否先进行快速试算。"));
+    actionCardHint->setObjectName(QStringLiteral("sectionHint"));
+    actionCardHint->setWordWrap(true);
+    actionCardLayout->addWidget(actionCardLabel);
+    actionCardLayout->addWidget(quickRunCheckBox_);
+    actionCardLayout->addWidget(actionCardHint);
+    actionCardLayout->addStretch();
 
-    algorithmLayout->addLayout(topHeaderLayout);
-    algorithmLayout->addWidget(pluginTabs_);
-    algorithmLayout->addWidget(pluginInfoFrame);
-    algorithmLayout->addWidget(subFunctionFrame);
+    modeLayout->addWidget(pluginInfoFrame, 3);
+    modeLayout->addWidget(subFunctionFrame, 5);
+    modeLayout->addWidget(actionCardFrame, 2);
+
+    algorithmLayout->addWidget(topHeaderFrame);
+    algorithmLayout->addWidget(pluginRailFrame);
+    algorithmLayout->addWidget(modeFrame);
 
     auto* workspaceSplitter = new QSplitter(Qt::Horizontal);
     workspaceSplitter->setChildrenCollapsible(false);
@@ -303,7 +351,7 @@ void MainWindow::setupUi() {
     auto* dataTitle = new QLabel(QStringLiteral("数据目录"));
     dataTitle->setObjectName(QStringLiteral("sectionTitle"));
     auto* dataHint = new QLabel(
-        QStringLiteral("统一管理输入与结果数据，双击可定位到主展示区，右键可执行常用操作。"));
+        QStringLiteral("集中管理输入、输出和预览结果；双击即可在中间预览，右键可直接切换角色或打开目录。"));
     dataHint->setWordWrap(true);
     dataHint->setObjectName(QStringLiteral("sectionHint"));
 
@@ -371,11 +419,25 @@ void MainWindow::setupUi() {
     centerLayout->setContentsMargins(12, 12, 12, 12);
     centerLayout->setSpacing(8);
 
-    auto* previewTitle = new QLabel(QStringLiteral("主展示区"));
+    auto* centerHeaderFrame = new QFrame;
+    centerHeaderFrame->setObjectName(QStringLiteral("centerHeaderFrame"));
+    auto* centerHeaderLayout = new QHBoxLayout(centerHeaderFrame);
+    centerHeaderLayout->setContentsMargins(14, 10, 14, 10);
+    centerHeaderLayout->setSpacing(12);
+    auto* centerHeaderTextLayout = new QVBoxLayout;
+    centerHeaderTextLayout->setSpacing(3);
+    auto* previewTitle = new QLabel(QStringLiteral("影像与结果展示"));
     previewTitle->setObjectName(QStringLiteral("sectionTitle"));
-    auto* previewHint = new QLabel(QStringLiteral("在这里查看栅格、矢量、对比结果与执行反馈。"));
+    auto* previewHint = new QLabel(QStringLiteral("中间区域保持最大权重，用于查看数据预览、输入输出对比和执行结果。"));
     previewHint->setWordWrap(true);
     previewHint->setObjectName(QStringLiteral("sectionHint"));
+    centerHeaderTextLayout->addWidget(previewTitle);
+    centerHeaderTextLayout->addWidget(previewHint);
+    centerHeaderLayout->addLayout(centerHeaderTextLayout, 1);
+    auto* centerBadge = new QLabel(QStringLiteral("主显示区"));
+    centerBadge->setObjectName(QStringLiteral("panelBadge"));
+    centerHeaderLayout->addWidget(centerBadge, 0, Qt::AlignTop);
+
     previewPanel_ = new PreviewPanel;
     connect(previewPanel_, &PreviewPanel::requestOpenPath, this, [this](const QString& path) {
         openDataPath(path, true);
@@ -383,8 +445,7 @@ void MainWindow::setupUi() {
     connect(previewPanel_, &PreviewPanel::requestUseAsInput, this, [this](const QString& path) {
         bindDataPathToParam(path, "input");
     });
-    centerLayout->addWidget(previewTitle);
-    centerLayout->addWidget(previewHint);
+    centerLayout->addWidget(centerHeaderFrame);
     centerLayout->addWidget(previewPanel_, 1);
 
     sidebarPanel_ = new QFrame;
@@ -394,8 +455,12 @@ void MainWindow::setupUi() {
     sidebarLayout->setContentsMargins(12, 12, 12, 12);
     sidebarLayout->setSpacing(8);
 
-    auto* sidebarHeaderLayout = new QHBoxLayout;
-    auto* sidebarTitle = new QLabel(QStringLiteral("上下文侧栏"));
+    auto* sidebarHeaderFrame = new QFrame;
+    sidebarHeaderFrame->setObjectName(QStringLiteral("sidebarHeaderFrame"));
+    auto* sidebarHeaderLayout = new QHBoxLayout(sidebarHeaderFrame);
+    sidebarHeaderLayout->setContentsMargins(12, 10, 12, 10);
+    sidebarHeaderLayout->setSpacing(8);
+    auto* sidebarTitle = new QLabel(QStringLiteral("上下文与参数"));
     sidebarTitle->setObjectName(QStringLiteral("sectionTitle"));
     auto* autoModeButton = new QToolButton;
     autoModeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -436,6 +501,9 @@ void MainWindow::setupUi() {
     auto* infoLayout = new QVBoxLayout(infoTab);
     infoLayout->setContentsMargins(10, 10, 10, 10);
     infoLayout->setSpacing(8);
+    auto* infoIntro = new QLabel(QStringLiteral("选中左侧数据时，此处显示路径、空间信息和可执行操作。"));
+    infoIntro->setObjectName(QStringLiteral("sectionHint"));
+    infoIntro->setWordWrap(true);
     dataInfoTitleLabel_ = new QLabel(QStringLiteral("未选择对象"));
     dataInfoTitleLabel_->setObjectName(QStringLiteral("contextTitle"));
     dataInfoPathLabel_ = new QLabel(QStringLiteral("请选择左侧数据或执行结果。"));
@@ -446,6 +514,7 @@ void MainWindow::setupUi() {
     dataInfoSummaryEdit_ = new QPlainTextEdit;
     dataInfoSummaryEdit_->setReadOnly(true);
     dataInfoSummaryEdit_->setMinimumHeight(220);
+    infoLayout->addWidget(infoIntro);
     infoLayout->addWidget(dataInfoTitleLabel_);
     infoLayout->addWidget(dataInfoPathLabel_);
     infoLayout->addWidget(dataInfoMetaLabel_);
@@ -457,7 +526,7 @@ void MainWindow::setupUi() {
     paramsLayout->setSpacing(8);
     auto* paramsTitle = new QLabel(QStringLiteral("参数配置"));
     paramsTitle->setObjectName(QStringLiteral("contextTitle"));
-    auto* paramsHint = new QLabel(QStringLiteral("选择子功能后，在这里填写参数、快速试算并执行。"));
+    auto* paramsHint = new QLabel(QStringLiteral("选择顶部子功能后，在这里按顺序配置参数、检查校验状态，并查看执行摘要。"));
     paramsHint->setWordWrap(true);
     paramsHint->setObjectName(QStringLiteral("sectionHint"));
 
@@ -485,7 +554,7 @@ void MainWindow::setupUi() {
     contextTabWidget_->addTab(infoTab, QStringLiteral("信息"));
     contextTabWidget_->addTab(paramsTab, QStringLiteral("参数"));
 
-    sidebarLayout->addLayout(sidebarHeaderLayout);
+    sidebarLayout->addWidget(sidebarHeaderFrame);
     sidebarLayout->addWidget(contextTabWidget_, 1);
 
     workspaceSplitter->addWidget(dataPanel);
@@ -502,14 +571,24 @@ void MainWindow::setupUi() {
     centralWidget->setStyleSheet(
         "QWidget { color: #243447; font-size: 13px; }"
         "QMainWindow { background: #edf1f5; }"
-        "QFrame#algorithmFrame, QFrame#dataPanel, QFrame#centerPanel, QFrame#sidebarPanel, QFrame#topInfoFrame {"
+        "QFrame#algorithmFrame, QFrame#dataPanel, QFrame#centerPanel, QFrame#sidebarPanel, "
+        "QFrame#topInfoFrame, QFrame#workbenchHeaderFrame, QFrame#workbenchBand, "
+        "QFrame#toolbarCard, QFrame#centerHeaderFrame, QFrame#sidebarHeaderFrame {"
         "  background: #f7fafc;"
         "  border: 1px solid #d8e1e9;"
         "  border-radius: 8px;"
         "}"
         "QFrame#algorithmFrame { background: #f4f8fb; }"
+        "QFrame#workbenchBand, QFrame#modeBandFrame { background: transparent; border: none; }"
+        "QFrame#toolbarCard, QFrame#sidebarHeaderFrame { background: #f9fbfd; }"
+        "QFrame#centerHeaderFrame { background: #f6f9fc; }"
         "QLabel#sectionTitle { font-size: 18px; font-weight: 600; color: #1f2d3d; }"
         "QLabel#contextTitle { font-size: 16px; font-weight: 600; color: #213043; }"
+        "QLabel#bandLabel { color: #617284; font-weight: 600; }"
+        "QLabel#panelBadge {"
+        "  color: #234764; background: #e6eef6; border: 1px solid #cfdbe7;"
+        "  border-radius: 999px; padding: 5px 10px; font-weight: 600;"
+        "}"
         "QLabel#sectionHint { color: #627284; }"
         "QPushButton {"
         "  min-height: 32px; padding: 0 12px; border-radius: 6px;"
@@ -520,13 +599,13 @@ void MainWindow::setupUi() {
         "QPushButton#primaryButton { background: #2f5f85; color: white; border: 1px solid #2f5f85; font-weight: 600; }"
         "QPushButton#primaryButton:hover { background: #2a5475; }"
         "QTabBar#pluginTabs::tab {"
-        "  background: #e6edf3; color: #36485b; border: 1px solid #d1dbe5; border-radius: 6px;"
-        "  padding: 10px 18px; margin-right: 6px; min-height: 18px;"
+        "  background: #e8eef4; color: #36485b; border: 1px solid #d1dbe5; border-radius: 6px;"
+        "  padding: 10px 20px; margin-right: 6px; min-height: 18px;"
         "}"
         "QTabBar#pluginTabs::tab:selected { background: #d8e5ef; color: #173754; border-color: #9fb8ce; font-weight: 600; }"
         "QTabBar#subFunctionTabs::tab {"
         "  background: #f4f7fa; color: #425365; border: 1px solid #d6e0e8; border-radius: 6px;"
-        "  padding: 7px 14px; margin-right: 6px; min-height: 16px;"
+        "  padding: 8px 16px; margin-right: 6px; min-height: 16px;"
         "}"
         "QTabBar#subFunctionTabs::tab:selected { background: #edf4f9; color: #1f4766; border-color: #acc1d4; font-weight: 600; }"
         "QTreeWidget, QScrollArea, QPlainTextEdit, QGroupBox, QTabWidget::pane {"
@@ -600,6 +679,7 @@ void MainWindow::loadPlugins() {
     }
 
     pluginTabs_->setCurrentIndex(0);
+    onPluginSelected(pluginTabs_->currentIndex());
     statusBar()->showMessage(QStringLiteral("已加载 %1 个算法插件").arg(plugins.size()));
 }
 
@@ -656,6 +736,7 @@ void MainWindow::rebuildSubFunctionTabs() {
 
     if (subFunctionTabs_->count() > 0) {
         subFunctionTabs_->setCurrentIndex(0);
+        onSubFunctionSelected(subFunctionTabs_->currentIndex());
     }
 }
 

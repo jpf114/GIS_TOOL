@@ -510,12 +510,12 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     zoomOutButton_ = new QPushButton(QStringLiteral("缩小"));
     fitButton_ = new QPushButton(QStringLiteral("适配"));
     zoomInButton_ = new QPushButton(QStringLiteral("放大"));
-    showInputButton_ = new QPushButton(QStringLiteral("查看输入"));
-    showOutputButton_ = new QPushButton(QStringLiteral("查看结果"));
-    useAsInputButton_ = new QPushButton(QStringLiteral("作为输入"));
-    compareButton_ = new QPushButton(QStringLiteral("对比预览"));
-    openDirButton_ = new QPushButton(QStringLiteral("打开目录"));
-    copyPathButton_ = new QPushButton(QStringLiteral("复制路径"));
+    showInputButton_ = new QPushButton(QStringLiteral("输入"));
+    showOutputButton_ = new QPushButton(QStringLiteral("结果"));
+    useAsInputButton_ = new QPushButton(QStringLiteral("设输入"));
+    compareButton_ = new QPushButton(QStringLiteral("对比"));
+    openDirButton_ = new QPushButton(QStringLiteral("目录"));
+    copyPathButton_ = new QPushButton(QStringLiteral("复制"));
     statusLabel_ = new QLabel;
     statusLabel_->setObjectName(QStringLiteral("previewStatus"));
     scaleLabel_ = new QLabel(QStringLiteral("100%"));
@@ -524,14 +524,17 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     for (auto* button : {showInputButton_, showOutputButton_, compareButton_, useAsInputButton_}) {
         button->setObjectName(QStringLiteral("previewActionButton"));
         button->setMinimumHeight(30);
+        button->setMinimumWidth(76);
     }
     for (auto* button : {zoomOutButton_, fitButton_, zoomInButton_}) {
         button->setObjectName(QStringLiteral("previewToolButton"));
         button->setMinimumHeight(30);
+        button->setMinimumWidth(72);
     }
     for (auto* button : {openDirButton_, copyPathButton_}) {
         button->setObjectName(QStringLiteral("previewSoftButton"));
         button->setMinimumHeight(30);
+        button->setMinimumWidth(72);
     }
 
     connect(showInputButton_, &QPushButton::clicked, this, [this]() {
