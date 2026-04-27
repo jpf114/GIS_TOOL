@@ -475,22 +475,37 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     headerFrame->setObjectName(QStringLiteral("previewHeader"));
     auto* headerLayout = new QVBoxLayout(headerFrame);
     headerLayout->setContentsMargins(16, 14, 16, 14);
-    headerLayout->setSpacing(6);
+    headerLayout->setSpacing(8);
 
     titleLabel_ = new QLabel(QStringLiteral("预览区"));
-    titleLabel_->setStyleSheet("font-size: 18px; font-weight: 600;");
+    titleLabel_->setObjectName(QStringLiteral("previewTitle"));
     originLabel_ = new QLabel(QStringLiteral("当前对象: 未选择"));
-    originLabel_->setStyleSheet(
-        "color: #1f5f8b; background: #e8f1f8; border-radius: 999px; padding: 4px 10px; font-weight: 600;");
+    originLabel_->setObjectName(QStringLiteral("originBadge"));
     pathLabel_ = new QLabel(QStringLiteral("未选择数据"));
     pathLabel_->setWordWrap(true);
-    pathLabel_->setStyleSheet("color: #5f6b7a;");
+    pathLabel_->setObjectName(QStringLiteral("previewPath"));
     summaryLabel_ = new QLabel;
     summaryLabel_->setWordWrap(true);
-    summaryLabel_->setStyleSheet("color: #2f3a46;");
+    summaryLabel_->setObjectName(QStringLiteral("previewSummary"));
+
+    auto* titleRow = new QHBoxLayout;
+    titleRow->setContentsMargins(0, 0, 0, 0);
+    titleRow->setSpacing(8);
+    titleRow->addWidget(titleLabel_);
+    titleRow->addStretch();
+    titleRow->addWidget(originLabel_);
+
+    auto* metaFrame = new QFrame;
+    metaFrame->setObjectName(QStringLiteral("previewMetaFrame"));
+    auto* metaLayout = new QVBoxLayout(metaFrame);
+    metaLayout->setContentsMargins(12, 10, 12, 10);
+    metaLayout->setSpacing(6);
+    metaLayout->addWidget(pathLabel_);
+    metaLayout->addWidget(summaryLabel_);
 
     auto* toolbarLayout = new QHBoxLayout;
-    toolbarLayout->setContentsMargins(0, 4, 0, 0);
+    toolbarLayout->setContentsMargins(0, 0, 0, 0);
+    toolbarLayout->setSpacing(6);
 
     zoomOutButton_ = new QPushButton(QStringLiteral("缩小"));
     fitButton_ = new QPushButton(QStringLiteral("适配"));
@@ -502,9 +517,22 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     openDirButton_ = new QPushButton(QStringLiteral("打开目录"));
     copyPathButton_ = new QPushButton(QStringLiteral("复制路径"));
     statusLabel_ = new QLabel;
-    statusLabel_->setStyleSheet("color: #4b5c6f;");
+    statusLabel_->setObjectName(QStringLiteral("previewStatus"));
     scaleLabel_ = new QLabel(QStringLiteral("100%"));
-    scaleLabel_->setStyleSheet("color: #4b5c6f; font-weight: 600;");
+    scaleLabel_->setObjectName(QStringLiteral("previewScale"));
+
+    for (auto* button : {showInputButton_, showOutputButton_, compareButton_, useAsInputButton_}) {
+        button->setObjectName(QStringLiteral("previewActionButton"));
+        button->setMinimumHeight(30);
+    }
+    for (auto* button : {zoomOutButton_, fitButton_, zoomInButton_}) {
+        button->setObjectName(QStringLiteral("previewToolButton"));
+        button->setMinimumHeight(30);
+    }
+    for (auto* button : {openDirButton_, copyPathButton_}) {
+        button->setObjectName(QStringLiteral("previewSoftButton"));
+        button->setMinimumHeight(30);
+    }
 
     connect(showInputButton_, &QPushButton::clicked, this, [this]() {
         if (!compareInputPath_.isEmpty()) {
@@ -547,10 +575,8 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     toolbarLayout->addWidget(statusLabel_, 1);
     toolbarLayout->addWidget(scaleLabel_);
 
-    headerLayout->addWidget(titleLabel_);
-    headerLayout->addWidget(originLabel_);
-    headerLayout->addWidget(pathLabel_);
-    headerLayout->addWidget(summaryLabel_);
+    headerLayout->addLayout(titleRow);
+    headerLayout->addWidget(metaFrame);
     headerLayout->addLayout(toolbarLayout);
 
     stackedWidget_ = new QStackedWidget;
@@ -568,6 +594,7 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     imageLabel_->setStyleSheet("background: #111827; border-radius: 10px;");
 
     imageScrollArea_ = new QScrollArea;
+    imageScrollArea_->setObjectName(QStringLiteral("previewScrollArea"));
     imageScrollArea_->setWidgetResizable(true);
     imageScrollArea_->setAlignment(Qt::AlignCenter);
     imageScrollArea_->setWidget(imageLabel_);
@@ -582,9 +609,36 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 
     setStyleSheet(
         "QFrame#previewHeader {"
-        "  background: #eef4f8;"
+        "  background: #f5f8fb;"
         "  border: 1px solid #d8e2ea;"
         "  border-radius: 10px;"
+        "}"
+        "QLabel#previewTitle { font-size: 17px; font-weight: 600; color: #213345; }"
+        "QLabel#originBadge {"
+        "  color: #27557c; background: #e7f0f8; border: 1px solid #cfdde9;"
+        "  border-radius: 999px; padding: 4px 10px; font-weight: 600;"
+        "}"
+        "QFrame#previewMetaFrame {"
+        "  background: #ffffff; border: 1px solid #dde6ee; border-radius: 8px;"
+        "}"
+        "QLabel#previewPath { color: #57687a; }"
+        "QLabel#previewSummary { color: #2d3d4d; }"
+        "QPushButton#previewActionButton, QPushButton#previewSoftButton, QPushButton#previewToolButton {"
+        "  border-radius: 6px; padding: 0 12px; border: 1px solid #cad5df;"
+        "  background: #ffffff; color: #294056;"
+        "}"
+        "QPushButton#previewActionButton:hover, QPushButton#previewSoftButton:hover, QPushButton#previewToolButton:hover {"
+        "  background: #eef4f8; border-color: #9db0c3;"
+        "}"
+        "QPushButton#previewActionButton { background: #f7fafc; }"
+        "QPushButton#previewToolButton { min-width: 58px; }"
+        "QLabel#previewStatus { color: #5c6d7f; }"
+        "QLabel#previewScale {"
+        "  color: #23425e; font-weight: 700; background: #eaf1f7;"
+        "  border: 1px solid #d3dee8; border-radius: 999px; padding: 4px 10px;"
+        "}"
+        "QScrollArea#previewScrollArea {"
+        "  background: #edf2f6; border: 1px solid #d7e0e8; border-radius: 10px;"
         "}");
 
     clearPreview();
