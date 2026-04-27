@@ -87,7 +87,6 @@ std::filesystem::path findRuntimePathFrom(
 
 std::filesystem::path findPluginDirectoryFrom(const std::filesystem::path& startDir) {
     auto current = startDir;
-    std::filesystem::path matched;
     while (!current.empty()) {
         const auto candidate = current / "plugins";
         if (std::filesystem::exists(candidate) && std::filesystem::is_directory(candidate)) {
@@ -97,8 +96,7 @@ std::filesystem::path findPluginDirectoryFrom(const std::filesystem::path& start
                     break;
                 }
                 if (isPluginLibraryPath(entry)) {
-                    matched = candidate;
-                    break;
+                    return candidate;
                 }
             }
         }
@@ -108,7 +106,7 @@ std::filesystem::path findPluginDirectoryFrom(const std::filesystem::path& start
         }
         current = current.parent_path();
     }
-    return matched;
+    return {};
 }
 
 void initRuntimeEnvironment() {

@@ -542,6 +542,12 @@ gis::framework::Result MatchingPlugin::doChange(
 gis::framework::Result MatchingPlugin::doEccRegister(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
+#ifdef GIS_MATCHING_LIGHTWEIGHT_DEBUG
+    (void)params;
+    progress.onMessage("ECC registration is disabled in Debug lightweight mode");
+    return gis::framework::Result::fail(
+        "ecc_register is unavailable in Debug lightweight mode; please use Release build");
+#else
 
     std::string reference  = gis::framework::getParam<std::string>(params, "reference", "");
     std::string input      = gis::framework::getParam<std::string>(params, "input", "");
@@ -626,6 +632,7 @@ gis::framework::Result MatchingPlugin::doEccRegister(
     warpOss << warpMat;
     result.metadata["warp_matrix"] = warpOss.str();
     return result;
+#endif
 }
 
 gis::framework::Result MatchingPlugin::doCornerDetect(
@@ -733,6 +740,12 @@ gis::framework::Result MatchingPlugin::doCornerDetect(
 gis::framework::Result MatchingPlugin::doStitch(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
+#ifdef GIS_MATCHING_LIGHTWEIGHT_DEBUG
+    (void)params;
+    progress.onMessage("Image stitching is disabled in Debug lightweight mode");
+    return gis::framework::Result::fail(
+        "stitch is unavailable in Debug lightweight mode; please use Release build");
+#else
 
     std::string input  = gis::framework::getParam<std::string>(params, "input", "");
     std::string output = gis::framework::getParam<std::string>(params, "output", "");
@@ -795,6 +808,7 @@ gis::framework::Result MatchingPlugin::doStitch(
     result.metadata["output_width"] = std::to_string(pano.cols);
     result.metadata["output_height"] = std::to_string(pano.rows);
     return result;
+#endif
 }
 
 } // namespace gis::plugins

@@ -40,6 +40,14 @@ if(MSVC)
     target_compile_options(plugin_test_lifecycle PRIVATE /utf-8)
 endif()
 
+add_dependencies(gis_tests plugin_test_lifecycle)
+
+add_custom_command(TARGET gis_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:plugin_test_lifecycle>
+        $<TARGET_FILE_DIR:gis_tests>/$<TARGET_FILE_NAME:plugin_test_lifecycle>
+)
+
 # Copy vcpkg runtime DLLs next to test executable so plugin DLLs can find dependencies
 add_custom_command(TARGET gis_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

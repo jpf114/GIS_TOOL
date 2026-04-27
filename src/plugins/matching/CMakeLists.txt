@@ -6,6 +6,10 @@ target_include_directories(plugin_matching PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+target_compile_definitions(plugin_matching PRIVATE
+    $<$<CONFIG:Debug>:GIS_MATCHING_LIGHTWEIGHT_DEBUG>
+)
+
 target_link_libraries(plugin_matching PRIVATE
     gis_core
     gis_framework
@@ -15,8 +19,8 @@ target_link_libraries(plugin_matching PRIVATE
     opencv_imgproc
     opencv_flann
     opencv_calib3d
-    opencv_video
-    opencv_stitching
+    $<$<NOT:$<CONFIG:Debug>>:opencv_video>
+    $<$<NOT:$<CONFIG:Debug>>:opencv_stitching>
 )
 
 set_target_properties(plugin_matching PROPERTIES

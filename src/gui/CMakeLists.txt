@@ -13,6 +13,17 @@ add_executable(gis-gui
     qt_progress_reporter.cpp
 )
 
+set(GIS_PLUGIN_TARGETS
+    plugin_projection
+    plugin_cutting
+    plugin_matching
+    plugin_processing
+    plugin_utility
+    plugin_vector
+)
+
+add_dependencies(gis-gui ${GIS_PLUGIN_TARGETS})
+
 # Link against our framework and Qt
 target_link_libraries(gis-gui PRIVATE
     gis_framework
@@ -58,13 +69,20 @@ add_custom_command(TARGET gis-gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${GIS_VCPKG_RUNTIME_BIN_DIR}
         $<TARGET_FILE_DIR:gis-gui>
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_BINARY_DIR}/plugins
-        $<TARGET_FILE_DIR:gis-gui>/plugins
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:gis-gui>/platforms
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        $<TARGET_FILE_DIR:gis-gui>/plugins
     COMMAND_EXPAND_LISTS
 )
+
+foreach(GIS_PLUGIN_TARGET IN LISTS GIS_PLUGIN_TARGETS)
+    add_custom_command(TARGET gis-gui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:${GIS_PLUGIN_TARGET}>
+            $<TARGET_FILE_DIR:gis-gui>/plugins/$<TARGET_FILE_NAME:${GIS_PLUGIN_TARGET}>
+    )
+endforeach()
 
 if(GIS_COPY_QT_PLATFORM_DLL)
     add_custom_command(TARGET gis-gui POST_BUILD

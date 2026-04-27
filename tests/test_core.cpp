@@ -294,7 +294,7 @@ TEST_F(CoreTest, FindPluginDirectoryFromSkipsEmptyLocalPluginsDir) {
     EXPECT_EQ(fs::weakly_canonical(resolved), fs::weakly_canonical(actualPluginsDir));
 }
 
-TEST_F(CoreTest, FindPluginDirectoryFromPrefersOuterBuildPluginsDir) {
+TEST_F(CoreTest, FindPluginDirectoryFromPrefersNearestPluginsDir) {
     const fs::path root = gis::tests::testExecutableDir().parent_path().parent_path().parent_path()
         / "tmp" / "gis_tool_plugin_dir_outer_case";
     std::filesystem::remove_all(root);
@@ -308,5 +308,5 @@ TEST_F(CoreTest, FindPluginDirectoryFromPrefersOuterBuildPluginsDir) {
     std::ofstream(outerPluginsDir / "plugin_vector.dll").put('\n');
 
     const auto resolved = gis::core::findPluginDirectoryFrom(exeDir);
-    EXPECT_EQ(fs::weakly_canonical(resolved), fs::weakly_canonical(outerPluginsDir));
+    EXPECT_EQ(fs::weakly_canonical(resolved), fs::weakly_canonical(localPluginsDir));
 }

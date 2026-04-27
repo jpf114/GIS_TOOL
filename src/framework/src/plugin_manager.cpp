@@ -77,7 +77,7 @@ void PluginManager::unloadAll() {
 
 void PluginManager::loadPlugin(const std::string& path) {
 #ifdef _WIN32
-    void* lib = LoadLibraryExA(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    void* lib = LoadLibraryA(path.c_str());
 #else
     void* lib = dlopen(path.c_str(), RTLD_NOW);
 #endif
@@ -116,6 +116,7 @@ void PluginManager::loadPlugin(const std::string& path) {
 #endif
         return;
     }
+
 
     IGisPlugin* plugin = createFn();
     if (!plugin) {
