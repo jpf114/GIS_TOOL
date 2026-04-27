@@ -200,6 +200,7 @@ void MainWindow::setupUi() {
     algorithmSubtitle->setObjectName(QStringLiteral("sectionHint"));
 
     pluginTabs_ = new QTabBar;
+    pluginTabs_->setObjectName(QStringLiteral("pluginTabs"));
     pluginTabs_->setExpanding(true);
     pluginTabs_->setUsesScrollButtons(false);
     pluginTabs_->setDrawBase(false);
@@ -207,6 +208,7 @@ void MainWindow::setupUi() {
     connect(pluginTabs_, &QTabBar::currentChanged, this, &MainWindow::onPluginSelected);
 
     subFunctionTabs_ = new QTabBar;
+    subFunctionTabs_->setObjectName(QStringLiteral("subFunctionTabs"));
     subFunctionTabs_->setExpanding(false);
     subFunctionTabs_->setUsesScrollButtons(true);
     subFunctionTabs_->setDrawBase(false);
@@ -289,6 +291,7 @@ void MainWindow::setupUi() {
 
     auto* workspaceSplitter = new QSplitter(Qt::Horizontal);
     workspaceSplitter->setChildrenCollapsible(false);
+    workspaceSplitter->setHandleWidth(8);
 
     auto* dataPanel = new QFrame;
     dataPanel->setObjectName(QStringLiteral("dataPanel"));
@@ -334,6 +337,7 @@ void MainWindow::setupUi() {
     dataActionLayout->addWidget(bindInputButton_);
 
     dataTree_ = new QTreeWidget;
+    dataTree_->setObjectName(QStringLiteral("dataTree"));
     dataTree_->setColumnCount(1);
     dataTree_->setHeaderHidden(true);
     dataTree_->setAlternatingRowColors(true);
@@ -407,7 +411,9 @@ void MainWindow::setupUi() {
     sidebarHeaderLayout->addWidget(autoModeButton);
 
     contextTabWidget_ = new QTabWidget;
+    contextTabWidget_->setObjectName(QStringLiteral("contextTabWidget"));
     contextTabWidget_->setDocumentMode(true);
+    contextTabWidget_->tabBar()->setExpanding(true);
     connect(contextTabWidget_, &QTabWidget::currentChanged, this, [this](int index) {
         if (isSyncingContextTabs_) {
             return;
@@ -491,36 +497,57 @@ void MainWindow::setupUi() {
 
     centralWidget->setStyleSheet(
         "QWidget { color: #243447; font-size: 13px; }"
-        "QMainWindow { background: #eef2f6; }"
+        "QMainWindow { background: #edf1f5; }"
         "QFrame#algorithmFrame, QFrame#dataPanel, QFrame#centerPanel, QFrame#sidebarPanel, QFrame#topInfoFrame {"
-        "  background: #f8fafc;"
-        "  border: 1px solid #d7e0e8;"
+        "  background: #f7fafc;"
+        "  border: 1px solid #d8e1e9;"
         "  border-radius: 8px;"
         "}"
+        "QFrame#algorithmFrame { background: #f4f8fb; }"
         "QLabel#sectionTitle { font-size: 18px; font-weight: 600; color: #1f2d3d; }"
         "QLabel#contextTitle { font-size: 16px; font-weight: 600; color: #213043; }"
         "QLabel#sectionHint { color: #627284; }"
         "QPushButton {"
         "  min-height: 32px; padding: 0 12px; border-radius: 6px;"
-        "  border: 1px solid #c9d4df; background: #f7f9fb; color: #223548;"
+        "  border: 1px solid #c9d4df; background: #f8fafc; color: #223548;"
         "}"
         "QPushButton:hover { background: #edf3f8; border-color: #9db2c6; }"
         "QPushButton:disabled { background: #f1f4f7; color: #98a6b5; border-color: #dde4eb; }"
         "QPushButton#primaryButton { background: #2f5f85; color: white; border: 1px solid #2f5f85; font-weight: 600; }"
         "QPushButton#primaryButton:hover { background: #2a5475; }"
-        "QTabBar::tab {"
-        "  background: #e8edf3; color: #3a4b5e; border: 1px solid #d3dde6; border-radius: 6px;"
-        "  padding: 8px 16px; margin-right: 6px; min-height: 18px;"
+        "QTabBar#pluginTabs::tab {"
+        "  background: #e6edf3; color: #36485b; border: 1px solid #d1dbe5; border-radius: 6px;"
+        "  padding: 10px 18px; margin-right: 6px; min-height: 18px;"
         "}"
-        "QTabBar::tab:selected { background: #dce7f1; color: #173754; border-color: #9fb8ce; font-weight: 600; }"
+        "QTabBar#pluginTabs::tab:selected { background: #d8e5ef; color: #173754; border-color: #9fb8ce; font-weight: 600; }"
+        "QTabBar#subFunctionTabs::tab {"
+        "  background: #f4f7fa; color: #425365; border: 1px solid #d6e0e8; border-radius: 6px;"
+        "  padding: 7px 14px; margin-right: 6px; min-height: 16px;"
+        "}"
+        "QTabBar#subFunctionTabs::tab:selected { background: #edf4f9; color: #1f4766; border-color: #acc1d4; font-weight: 600; }"
         "QTreeWidget, QScrollArea, QPlainTextEdit, QGroupBox, QTabWidget::pane {"
         "  background: #ffffff; border: 1px solid #d8e0e8; border-radius: 6px;"
         "}"
+        "QTabWidget#contextTabWidget::pane { margin-top: 6px; }"
+        "QTabWidget#contextTabWidget QTabBar::tab {"
+        "  background: #eef3f7; color: #45586c; border: 1px solid #d8e1ea; border-radius: 6px;"
+        "  padding: 8px 0; min-width: 88px;"
+        "}"
+        "QTabWidget#contextTabWidget QTabBar::tab:selected {"
+        "  background: #dfeaf3; color: #1d4666; border-color: #abc1d3; font-weight: 600;"
+        "}"
+        "QTreeWidget#dataTree { outline: none; padding: 4px; }"
+        "QTreeWidget#dataTree::item { height: 26px; border-radius: 4px; padding: 2px 4px; }"
+        "QTreeWidget#dataTree::item:selected { background: #dfeaf3; color: #1f3f5d; }"
+        "QTreeWidget#dataTree::item:hover { background: #eef4f8; }"
         "QPlainTextEdit { padding: 6px; }"
         "QGroupBox { margin-top: 8px; padding-top: 12px; font-weight: 600; }"
         "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"
         "QToolButton { color: #35526f; border: 1px solid #cad6e1; border-radius: 6px; padding: 4px 10px; background: #f7f9fb; }"
-        "QToolButton:hover { background: #edf3f8; }");
+        "QToolButton:hover { background: #edf3f8; }"
+        "QCheckBox { color: #425264; spacing: 6px; }"
+        "QSplitter::handle { background: transparent; }"
+        "QSplitter::handle:hover { background: #d7e2eb; }");
 
     statusBar()->showMessage(QStringLiteral("就绪"));
     clearDataInfoPanel();

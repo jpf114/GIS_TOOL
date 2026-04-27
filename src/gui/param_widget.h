@@ -34,6 +34,7 @@ private:
     struct WidgetRow {
         gis::framework::ParamSpec spec;
         QLabel* label = nullptr;
+        QWidget* card = nullptr;
         QWidget* editor = nullptr;
         QWidget* browseBtn = nullptr;
     };
