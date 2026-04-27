@@ -4,20 +4,34 @@
 
 ## 当前状态
 
-当前代码基线已经完成以下验证：
+### 文档中的已验证状态
 
 - `Visual Studio 2022 + C++17 + 全局 vcpkg` 可稳定配置与编译
 - `GIS_BUILD_GUI=OFF/ON` 两种模式均已验证构建通过
-- `ctest` 当前为 `51/51` 通过
-- `gis-gui.exe` 已验证可成功启动，不闪退
 - Windows 下 `gis-cli.exe` 已验证可直接处理中文路径输入
 - `vector filter` 已用真实 GeoJSON 数据验证中文属性条件可正常过滤
 
-当前项目更准确的状态是：
+### 2026-04-27 实测状态快照
 
-- `core / framework / plugins / cli` 已具备可用的功能主链路
+本轮基于全新 `build-verify` 目录重新验证得到：
+
+- `cmake configure`：通过
+- `cmake --build --config Debug`：通过
+- `ctest -C Debug -N`：通过，识别 `106` 个测试
+- `ctest -C Debug --output-on-failure`：通过，`106/106`
+- `gis-cli.exe --list`：通过
+- `gui_smoke_startup`：通过
+
+### 当前更准确的项目定位
+
+- `core / framework / plugins / cli / gui / tests` 主链路已经可用
 - `gui` 已具备基础执行界面，但仍属于工具型前端，不是完整 GIS 工作台
-- 全项目仍处于“稳定化 + 验收补齐”阶段，不能直接宣称“所有功能都已完整无问题”
+- 项目当前更需要持续维护“构建可复现、验证可复现、文档与代码同步”，而不是继续堆叠未验证的新功能
+
+### 当前轮次已确认差异
+
+- 之前工作区中的主要阻塞点不是插件框架失效，而是 `src/gui/preview_panel.*` 的一组未完成改动导致 GUI 链接失败
+- 修复该问题后，新的验证构建目录可以完成完整测试链路
 
 ## 项目结构
 
@@ -81,10 +95,15 @@ ctest --test-dir build -C Debug --output-on-failure
 构建 GUI、CLI 与测试：
 
 ```powershell
-cmake -S . -B build-gui -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
-cmake --build build-gui --config Debug
-ctest --test-dir build-gui -C Debug --output-on-failure
+cmake -S . -B build-verify -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
+cmake --build build-verify --config Debug
+ctest --test-dir build-verify -C Debug --output-on-failure
 ```
+
+说明：
+
+- 当前建议把 `build-verify` 作为“重新验证当前仓库状态”的标准目录
+- 支持基线应以文档中的验证命令为准，而不是依赖历史构建目录残留状态
 
 ## 运行方式
 
@@ -97,12 +116,13 @@ ctest --test-dir build-gui -C Debug --output-on-failure
 启动 GUI：
 
 ```powershell
-.\build-gui\src\gui\Debug\gis-gui.exe
+.\build-verify\src\gui\Debug\gis-gui.exe
 ```
 
 ## 文档索引
 
 - [构建与开发说明](D:/Code/MyProject/GIS_TOOL/docs/构建与开发说明.md)
+- [构建与验证基线](D:/Code/MyProject/GIS_TOOL/docs/build-baseline.md)
 - [当前功能与真实数据验证指南](D:/Code/MyProject/GIS_TOOL/docs/当前功能与真实数据验证指南.md)
 - [项目稳定化与迭代路线图](D:/Code/MyProject/GIS_TOOL/docs/superpowers/plans/2026-04-24-project-stabilization-roadmap.md)
 

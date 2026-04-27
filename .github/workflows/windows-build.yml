@@ -1,0 +1,43 @@
+name: windows-build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+
+      - name: 安装依赖
+        shell: pwsh
+        env:
+          VCPKG_ROOT: C:\vcpkg
+        run: |
+          C:\vcpkg\vcpkg.exe install gdal opencv4 proj gtest qtbase --triplet x64-windows
+
+      - name: 配置
+        shell: pwsh
+        env:
+          VCPKG_ROOT: C:\vcpkg
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
+
+      - name: 构建
+        shell: pwsh
+        run: |
+          cmake --build build --config Debug
+
+      - name: 执行测试
+        shell: pwsh
+        run: |
+          ctest --test-dir build -C Debug --output-on-failure
