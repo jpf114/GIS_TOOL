@@ -295,6 +295,7 @@ void MainWindow::setupUi() {
 
     auto* dataPanel = new QFrame;
     dataPanel->setObjectName(QStringLiteral("dataPanel"));
+    dataPanel->setMinimumWidth(280);
     auto* dataLayout = new QVBoxLayout(dataPanel);
     dataLayout->setContentsMargins(12, 12, 12, 12);
     dataLayout->setSpacing(8);
@@ -365,6 +366,7 @@ void MainWindow::setupUi() {
 
     auto* centerPanel = new QFrame;
     centerPanel->setObjectName(QStringLiteral("centerPanel"));
+    centerPanel->setMinimumWidth(620);
     auto* centerLayout = new QVBoxLayout(centerPanel);
     centerLayout->setContentsMargins(12, 12, 12, 12);
     centerLayout->setSpacing(8);
@@ -387,6 +389,7 @@ void MainWindow::setupUi() {
 
     sidebarPanel_ = new QFrame;
     sidebarPanel_->setObjectName(QStringLiteral("sidebarPanel"));
+    sidebarPanel_->setMinimumWidth(360);
     auto* sidebarLayout = new QVBoxLayout(sidebarPanel_);
     sidebarLayout->setContentsMargins(12, 12, 12, 12);
     sidebarLayout->setSpacing(8);
@@ -413,7 +416,8 @@ void MainWindow::setupUi() {
     contextTabWidget_ = new QTabWidget;
     contextTabWidget_->setObjectName(QStringLiteral("contextTabWidget"));
     contextTabWidget_->setDocumentMode(true);
-    contextTabWidget_->tabBar()->setExpanding(true);
+    contextTabWidget_->tabBar()->setExpanding(false);
+    contextTabWidget_->tabBar()->setUsesScrollButtons(false);
     connect(contextTabWidget_, &QTabWidget::currentChanged, this, [this](int index) {
         if (isSyncingContextTabs_) {
             return;
@@ -490,7 +494,7 @@ void MainWindow::setupUi() {
     workspaceSplitter->setStretchFactor(0, 2);
     workspaceSplitter->setStretchFactor(1, 7);
     workspaceSplitter->setStretchFactor(2, 3);
-    workspaceSplitter->setSizes({280, 860, 340});
+    workspaceSplitter->setSizes({300, 800, 420});
 
     mainLayout->addWidget(algorithmFrame);
     mainLayout->addWidget(workspaceSplitter, 1);
@@ -531,7 +535,7 @@ void MainWindow::setupUi() {
         "QTabWidget#contextTabWidget::pane { margin-top: 6px; }"
         "QTabWidget#contextTabWidget QTabBar::tab {"
         "  background: #eef3f7; color: #45586c; border: 1px solid #d8e1ea; border-radius: 6px;"
-        "  padding: 8px 0; min-width: 88px;"
+        "  padding: 8px 10px; min-width: 64px;"
         "}"
         "QTabWidget#contextTabWidget QTabBar::tab:selected {"
         "  background: #dfeaf3; color: #1d4666; border-color: #abc1d3; font-weight: 600;"
