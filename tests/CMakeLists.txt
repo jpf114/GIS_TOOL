@@ -50,6 +50,16 @@ add_custom_command(TARGET gis_tests POST_BUILD
 include(GoogleTest)
 gtest_discover_tests(gis_tests DISCOVERY_MODE PRE_TEST)
 
+if(TARGET gis-gui)
+    add_test(
+        NAME gui_smoke_startup
+        COMMAND $<TARGET_FILE:gis-gui> -platform offscreen --self-test
+    )
+    set_tests_properties(gui_smoke_startup PROPERTIES
+        PASS_REGULAR_EXPRESSION ""
+    )
+endif()
+
 find_program(GIS_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
 if(GIS_POWERSHELL_EXECUTABLE)
     add_custom_target(real_vector_regression
