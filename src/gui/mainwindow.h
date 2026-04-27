@@ -9,6 +9,8 @@ class QLabel;
 class ParamWidget;
 class PreviewPanel;
 class QCheckBox;
+class QDragEnterEvent;
+class QDropEvent;
 class QPushButton;
 class QTabBar;
 class QTreeWidget;
@@ -20,6 +22,10 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow();
+
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
 private slots:
     void onPluginSelected(int index);

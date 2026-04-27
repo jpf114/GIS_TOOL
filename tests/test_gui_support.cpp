@@ -55,6 +55,26 @@ TEST(GuiSupportTest, DetectUnknownDataKind) {
     EXPECT_FALSE(gis::gui::canPreviewData("notes.txt"));
 }
 
+TEST(GuiSupportTest, IsSupportedDataPathRecognizesSupportedExtensions) {
+    EXPECT_TRUE(gis::gui::isSupportedDataPath("scene.tif"));
+    EXPECT_TRUE(gis::gui::isSupportedDataPath("roads.gpkg"));
+    EXPECT_FALSE(gis::gui::isSupportedDataPath("report.docx"));
+}
+
+TEST(GuiSupportTest, CollectSupportedDataPathsFiltersUnsupportedEntries) {
+    const std::vector<std::string> paths = {
+        "D:/data/scene.tif",
+        "D:/data/readme.txt",
+        "D:/data/roads.shp",
+        "D:/data/archive.zip"
+    };
+
+    const auto supported = gis::gui::collectSupportedDataPaths(paths);
+    ASSERT_EQ(supported.size(), 2u);
+    EXPECT_EQ(supported[0], "D:/data/scene.tif");
+    EXPECT_EQ(supported[1], "D:/data/roads.shp");
+}
+
 TEST(GuiSupportTest, DataKindDisplayNameIsChinese) {
     EXPECT_EQ(gis::gui::dataKindDisplayName(gis::gui::DataKind::Raster), "栅格");
     EXPECT_EQ(gis::gui::dataKindDisplayName(gis::gui::DataKind::Vector), "矢量");

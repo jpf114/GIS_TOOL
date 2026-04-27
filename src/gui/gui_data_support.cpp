@@ -152,8 +152,23 @@ DataKind detectDataKind(const std::string& path) {
     return DataKind::Unknown;
 }
 
-bool canPreviewData(const std::string& path) {
+bool isSupportedDataPath(const std::string& path) {
     return detectDataKind(path) != DataKind::Unknown;
+}
+
+std::vector<std::string> collectSupportedDataPaths(const std::vector<std::string>& paths) {
+    std::vector<std::string> supported;
+    supported.reserve(paths.size());
+    for (const auto& path : paths) {
+        if (isSupportedDataPath(path)) {
+            supported.push_back(path);
+        }
+    }
+    return supported;
+}
+
+bool canPreviewData(const std::string& path) {
+    return isSupportedDataPath(path);
 }
 
 std::string dataKindDisplayName(DataKind kind) {

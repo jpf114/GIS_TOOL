@@ -13,6 +13,8 @@
 #include <QBrush>
 #include <QCheckBox>
 #include <QColor>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFont>
 #include <QFrame>
@@ -21,6 +23,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QMenu>
+#include <QMimeData>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
@@ -44,9 +47,62 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() = default;
 
+void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
+    if (!event || !event->mimeData() || !event->mimeData()->hasUrls()) {
+        return;
+    }
+
+    std::vector<std::string> paths;
+    for (const auto& url : event->mimeData()->urls()) {
+        if (url.isLocalFile()) {
+            paths.push_back(url.toLocalFile().toStdString());
+        }
+    }
+
+    if (!gis::gui::collectSupportedDataPaths(paths).empty()) {
+        event->acceptProposedAction();
+    }
+}
+
+void MainWindow::dropEvent(QDropEvent* event) {
+    if (!event || !event->mimeData() || !event->mimeData()->hasUrls()) {
+        return;
+    }
+
+    std::vector<std::string> droppedPaths;
+    for (const auto& url : event->mimeData()->urls()) {
+        if (url.isLocalFile()) {
+            droppedPaths.push_back(url.toLocalFile().toStdString());
+        }
+    }
+
+    const auto supportedPaths = gis::gui::collectSupportedDataPaths(droppedPaths);
+    if (supportedPaths.empty()) {
+        statusBar()->showMessage(QStringLiteral("拖入的数据类型暂不支持"));
+        return;
+    }
+
+    for (const auto& path : supportedPaths) {
+        addDataPath(QString::fromStdString(path), false, gis::gui::DataOrigin::Input);
+    }
+
+    if (inputGroupItem_->childCount() > 0) {
+        dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
+    }
+
+    const int ignoredCount = static_cast<int>(droppedPaths.size() - supportedPaths.size());
+    QString message = QStringLiteral("已导入 %1 个数据").arg(supportedPaths.size());
+    if (ignoredCount > 0) {
+        message += QStringLiteral("，忽略 %1 个不支持的文件").arg(ignoredCount);
+    }
+    statusBar()->showMessage(message);
+    event->acceptProposedAction();
+}
+
 void MainWindow::setupUi() {
     setWindowTitle(QStringLiteral("GIS 工具台"));
     resize(1460, 880);
+    setAcceptDrops(true);
 
     auto* centralWidget = new QWidget;
     setCentralWidget(centralWidget);
