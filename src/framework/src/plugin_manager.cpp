@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <string>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -76,12 +77,18 @@ void PluginManager::unloadAll() {
 
 void PluginManager::loadPlugin(const std::string& path) {
 #ifdef _WIN32
-    void* lib = LoadLibraryA(path.c_str());
+    void* lib = LoadLibraryExA(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 #else
     void* lib = dlopen(path.c_str(), RTLD_NOW);
 #endif
     if (!lib) {
+#ifdef _WIN32
+        const DWORD errorCode = GetLastError();
+        std::cerr << "Warning: cannot load plugin: " << path
+                  << " (Win32 error " << errorCode << ")" << std::endl;
+#else
         std::cerr << "Warning: cannot load plugin: " << path << std::endl;
+#endif
         return;
     }
 

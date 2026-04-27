@@ -514,6 +514,43 @@ static std::string escapeSqlLiteral(const std::string& value) {
     return escaped;
 }
 
+static std::vector<std::string> buildGpkgFastWriteLayerOptions(bool useTransactions) {
+    std::vector<std::string> options;
+    if (useTransactions) {
+        options.emplace_back("SPATIAL_INDEX=NO");
+    }
+    return options;
+}
+
+static std::vector<char*> buildLayerOptionPointers(std::vector<std::string>& options) {
+    std::vector<char*> pointers;
+    for (auto& option : options) {
+        pointers.push_back(option.data());
+    }
+    pointers.push_back(nullptr);
+    return pointers;
+}
+
+static void addSpatialIndexIfNeeded(
+    GDALDataset* dataset,
+    OGRLayer* layer,
+    bool useTransactions,
+    const std::string& layerName) {
+    if (!dataset || !layer || !useTransactions) {
+        return;
+    }
+
+    const char* geometryColumn = layer->GetGeometryColumn();
+    const std::string geometryColumnName =
+        (geometryColumn && *geometryColumn) ? geometryColumn : "geom";
+    const std::string addSpatialIndexSql =
+        "SELECT gpkgAddSpatialIndex('" + escapeSqlLiteral(layerName) +
+        "', '" + escapeSqlLiteral(geometryColumnName) + "')";
+    if (OGRLayer* sqlResult = dataset->ExecuteSQL(addSpatialIndexSql.c_str(), nullptr, nullptr)) {
+        dataset->ReleaseResultSet(sqlResult);
+    }
+}
+
 static OGRwkbGeometryType resultLayerGeometryType(OGRwkbGeometryType srcType) {
     switch (wkbFlatten(srcType)) {
         case wkbPoint:
@@ -583,6 +620,11 @@ static bool writeGeometryFeature(
     OGRGeometry* geom,
     const std::function<void(OGRFeature*)>& fillAttributes = {});
 
+static bool writeGeometryFeatureOwned(
+    OGRLayer* layer,
+    std::unique_ptr<OGRGeometry> geom,
+    const std::function<void(OGRFeature*)>& fillAttributes = {});
+
 static std::unique_ptr<OGRGeometry> promoteGeometryToLayerType(
     OGRLayer* layer,
     OGRGeometry* geom) {
@@ -612,6 +654,15 @@ static bool writeUnionFeature(OGRLayer* layer, OGRGeometry* geom, const char* so
     });
 }
 
+static bool writeUnionFeatureOwned(
+    OGRLayer* layer,
+    std::unique_ptr<OGRGeometry> geom,
+    const char* sourceValue) {
+    return writeGeometryFeatureOwned(layer, std::move(geom), [sourceValue](OGRFeature* feature) {
+        feature->SetField("source", sourceValue);
+    });
+}
+
 static bool writeGeometryFeature(
     OGRLayer* layer,
     OGRGeometry* geom,
@@ -626,6 +677,31 @@ static bool writeGeometryFeature(
     }
     std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(layer, geom);
     dstFeat->SetGeometry(promoted ? promoted.get() : geom);
+    dstFeat->SetFID(OGRNullFID);
+    const bool ok = layer->CreateFeature(dstFeat) == OGRERR_NONE;
+    OGRFeature::DestroyFeature(dstFeat);
+    return ok;
+}
+
+static bool writeGeometryFeatureOwned(
+    OGRLayer* layer,
+    std::unique_ptr<OGRGeometry> geom,
+    const std::function<void(OGRFeature*)>& fillAttributes) {
+    if (!layer || !geom || geom->IsEmpty()) {
+        return true;
+    }
+
+    OGRFeature* dstFeat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    if (fillAttributes) {
+        fillAttributes(dstFeat);
+    }
+    std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(layer, geom.get());
+    if (promoted) {
+        geom.reset();
+        dstFeat->SetGeometryDirectly(promoted.release());
+    } else {
+        dstFeat->SetGeometryDirectly(geom.release());
+    }
     dstFeat->SetFID(OGRNullFID);
     const bool ok = layer->CreateFeature(dstFeat) == OGRERR_NONE;
     OGRFeature::DestroyFeature(dstFeat);
@@ -652,6 +728,23 @@ static bool writeFeatureWithCopiedFields(
     OGRGeometry* geom,
     const std::vector<int>* fieldMap = nullptr) {
     return writeGeometryFeature(layer, geom, [sourceFeature, fieldMap](OGRFeature* feature) {
+        if (sourceFeature) {
+            if (!fieldMap) {
+                feature->SetFrom(sourceFeature, TRUE);
+                feature->SetFID(OGRNullFID);
+            } else {
+                copyFeatureFieldsOnly(feature, sourceFeature, *fieldMap);
+            }
+        }
+    });
+}
+
+static bool writeFeatureWithCopiedFieldsOwned(
+    OGRLayer* layer,
+    const OGRFeature* sourceFeature,
+    std::unique_ptr<OGRGeometry> geom,
+    const std::vector<int>* fieldMap = nullptr) {
+    return writeGeometryFeatureOwned(layer, std::move(geom), [sourceFeature, fieldMap](OGRFeature* feature) {
         if (sourceFeature) {
             if (!fieldMap) {
                 feature->SetFrom(sourceFeature, TRUE);
@@ -937,8 +1030,14 @@ gis::framework::Result VectorPlugin::doFilter(
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    const bool useTransactions = outFormat == "GPKG";
+    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
-        srcLayer->GetName(), srcSRS, resultLayerGeometryType(srcLayer->GetGeomType()), nullptr);
+        srcLayer->GetName(),
+        srcSRS,
+        resultLayerGeometryType(srcLayer->GetGeomType()),
+        layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1030,15 +1129,8 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
-    std::vector<std::string> layerOptionStorage;
-    std::vector<char*> layerOptions;
-    if (useTransactions) {
-        layerOptionStorage.emplace_back("SPATIAL_INDEX=NO");
-    }
-    for (auto& option : layerOptionStorage) {
-        layerOptions.push_back(option.data());
-    }
-    layerOptions.push_back(nullptr);
+    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
 
     const std::string outputLayerName = std::string(srcLayer->GetName()) + "_buffer";
     OGRLayer* dstLayer = dstDS->CreateLayer(
@@ -1114,15 +1206,7 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        const char* geometryColumn = dstLayer->GetGeometryColumn();
-        const std::string geometryColumnName =
-            (geometryColumn && *geometryColumn) ? geometryColumn : "geom";
-        const std::string addSpatialIndexSql =
-            "SELECT gpkgAddSpatialIndex('" + escapeSqlLiteral(outputLayerName) +
-            "', '" + escapeSqlLiteral(geometryColumnName) + "')";
-        if (OGRLayer* sqlResult = dstDS->ExecuteSQL(addSpatialIndexSql.c_str(), nullptr, nullptr)) {
-            dstDS->ReleaseResultSet(sqlResult);
-        }
+        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, outputLayerName);
     }
     dstLayer->SyncToDisk();
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
@@ -1220,8 +1304,14 @@ gis::framework::Result VectorPlugin::doClip(
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    const bool useTransactions = outFormat == "GPKG";
+    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
-        srcLayer->GetName(), srcSRS, resultLayerGeometryType(srcLayer->GetGeomType()), nullptr);
+        srcLayer->GetName(),
+        srcSRS,
+        resultLayerGeometryType(srcLayer->GetGeomType()),
+        layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1239,7 +1329,7 @@ gis::framework::Result VectorPlugin::doClip(
     const std::vector<int> fieldMap = dstLayer->GetLayerDefn()->ComputeMapForSetFrom(srcLayerDefn, true);
     OGRFeature* feat;
     int count = 0;
-    const bool useTransactions = outFormat == "GPKG";
+    const int transactionBatchSize = useTransactions ? 20000 : 1000;
     if (useTransactions) {
         dstLayer->StartTransaction();
     }
@@ -1256,7 +1346,7 @@ gis::framework::Result VectorPlugin::doClip(
             if (clippedGeom && !clippedGeom->IsEmpty()) {
                 if (writeFeatureWithCopiedFields(dstLayer, feat, clippedGeom.get(), &fieldMap)) {
                     count++;
-                    if (useTransactions && count % 1000 == 0) {
+                    if (useTransactions && count % transactionBatchSize == 0) {
                         dstLayer->CommitTransaction();
                         dstLayer->StartTransaction();
                     }
@@ -1277,16 +1367,14 @@ gis::framework::Result VectorPlugin::doClip(
                 ? geom->clone()
                 : geom->Intersection(overlayGeometry);
             if (clipped && !clipped->IsEmpty()) {
-                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
-                copyFeatureFieldsOnly(dstFeat, feat, fieldMap);
-                std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, clipped);
-                dstFeat->SetGeometry(promoted ? promoted.get() : clipped);
-                dstLayer->CreateFeature(dstFeat);
-                OGRFeature::DestroyFeature(dstFeat);
-                count++;
-                if (useTransactions && count % 1000 == 0) {
-                    dstLayer->CommitTransaction();
-                    dstLayer->StartTransaction();
+                if (writeFeatureWithCopiedFieldsOwned(
+                        dstLayer, feat, std::unique_ptr<OGRGeometry>(clipped), &fieldMap)) {
+                    clipped = nullptr;
+                    count++;
+                    if (useTransactions && count % transactionBatchSize == 0) {
+                        dstLayer->CommitTransaction();
+                        dstLayer->StartTransaction();
+                    }
                 }
             }
             delete clipped;
@@ -1296,6 +1384,7 @@ gis::framework::Result VectorPlugin::doClip(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
+        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, srcLayer->GetName());
     }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
@@ -1633,7 +1722,14 @@ gis::framework::Result VectorPlugin::doUnion(
     const auto outputGeomType = usePracticalMixedUnion
         ? resultLayerGeometryType(srcLayer->GetGeomType())
         : wkbUnknown;
-    OGRLayer* dstLayer = dstDS->CreateLayer("union", srcSRS, outputGeomType, nullptr);
+    const bool useTransactions = outFormat == "GPKG";
+    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
+    OGRLayer* dstLayer = dstDS->CreateLayer(
+        "union",
+        srcSRS,
+        outputGeomType,
+        layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1647,7 +1743,7 @@ gis::framework::Result VectorPlugin::doUnion(
     srcLayer->ResetReading();
     OGRFeature* feat = nullptr;
     int count = 0;
-    const bool useTransactions = outFormat == "GPKG";
+    const int transactionBatchSize = useTransactions ? 20000 : 1000;
     if (useTransactions) {
         dstLayer->StartTransaction();
     }
@@ -1673,7 +1769,7 @@ gis::framework::Result VectorPlugin::doUnion(
                 delete part;
                 lineParts[i].geometry = nullptr;
                 count++;
-                if (useTransactions && count % 1000 == 0) {
+                if (useTransactions && count % transactionBatchSize == 0) {
                     dstLayer->CommitTransaction();
                     dstLayer->StartTransaction();
                 }
@@ -1683,7 +1779,9 @@ gis::framework::Result VectorPlugin::doUnion(
             if (geom && candidateOverlay && geom->Intersects(candidateOverlay.get())) {
             OGRGeometry* unionGeom = geom->Union(candidateOverlay.get());
             if (unionGeom && !unionGeom->IsEmpty()) {
-                if (!writeUnionFeature(dstLayer, unionGeom, "union")) {
+                if (!writeUnionFeatureOwned(
+                        dstLayer, std::unique_ptr<OGRGeometry>(unionGeom), "union")) {
+                    unionGeom = nullptr;
                     OGRFeature::DestroyFeature(feat);
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
@@ -1693,7 +1791,7 @@ gis::framework::Result VectorPlugin::doUnion(
                     return gis::framework::Result::fail("Failed to write union feature");
                 }
                 count++;
-                if (useTransactions && count % 1000 == 0) {
+                if (useTransactions && count % transactionBatchSize == 0) {
                     dstLayer->CommitTransaction();
                     dstLayer->StartTransaction();
                 }
@@ -1712,7 +1810,7 @@ gis::framework::Result VectorPlugin::doUnion(
                 }
                 delete cloned;
                 count++;
-                if (useTransactions && count % 1000 == 0) {
+                if (useTransactions && count % transactionBatchSize == 0) {
                     dstLayer->CommitTransaction();
                     dstLayer->StartTransaction();
                 }
@@ -1723,6 +1821,7 @@ gis::framework::Result VectorPlugin::doUnion(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
+        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "union");
     }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
@@ -1801,8 +1900,14 @@ gis::framework::Result VectorPlugin::doDifference(
     if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    const bool useTransactions = outFormat == "GPKG";
+    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
-        "difference", srcSRS, resultLayerGeometryType(srcLayer->GetGeomType()), nullptr);
+        "difference",
+        srcSRS,
+        resultLayerGeometryType(srcLayer->GetGeomType()),
+        layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1820,7 +1925,7 @@ gis::framework::Result VectorPlugin::doDifference(
     const std::vector<int> fieldMap = dstLayer->GetLayerDefn()->ComputeMapForSetFrom(srcLayerDefn, true);
     OGRFeature* feat = nullptr;
     int count = 0;
-    const bool useTransactions = outFormat == "GPKG";
+    const int transactionBatchSize = useTransactions ? 20000 : 1000;
     if (useTransactions) {
         dstLayer->StartTransaction();
     }
@@ -1832,7 +1937,7 @@ gis::framework::Result VectorPlugin::doDifference(
                 if (candidates.empty()) {
                     if (writeFeatureWithCopiedFields(dstLayer, feat, geom->clone(), &fieldMap)) {
                         count++;
-                        if (useTransactions && count % 1000 == 0) {
+                        if (useTransactions && count % transactionBatchSize == 0) {
                             dstLayer->CommitTransaction();
                             dstLayer->StartTransaction();
                         }
@@ -1850,7 +1955,7 @@ gis::framework::Result VectorPlugin::doDifference(
                 if (diffGeom && !diffGeom->IsEmpty()) {
                     if (writeFeatureWithCopiedFields(dstLayer, feat, diffGeom.get(), &fieldMap)) {
                         count++;
-                        if (useTransactions && count % 1000 == 0) {
+                        if (useTransactions && count % transactionBatchSize == 0) {
                             dstLayer->CommitTransaction();
                             dstLayer->StartTransaction();
                         }
@@ -1873,16 +1978,14 @@ gis::framework::Result VectorPlugin::doDifference(
                 diffGeom = geom->Difference(overlayGeometry);
             }
             if (diffGeom && !diffGeom->IsEmpty()) {
-                OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
-                copyFeatureFieldsOnly(dstFeat, feat, fieldMap);
-                std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, diffGeom);
-                dstFeat->SetGeometry(promoted ? promoted.get() : diffGeom);
-                dstLayer->CreateFeature(dstFeat);
-                OGRFeature::DestroyFeature(dstFeat);
-                count++;
-                if (useTransactions && count % 1000 == 0) {
-                    dstLayer->CommitTransaction();
-                    dstLayer->StartTransaction();
+                if (writeFeatureWithCopiedFieldsOwned(
+                        dstLayer, feat, std::unique_ptr<OGRGeometry>(diffGeom), &fieldMap)) {
+                    diffGeom = nullptr;
+                    count++;
+                    if (useTransactions && count % transactionBatchSize == 0) {
+                        dstLayer->CommitTransaction();
+                        dstLayer->StartTransaction();
+                    }
                 }
             }
             delete diffGeom;
@@ -1892,6 +1995,7 @@ gis::framework::Result VectorPlugin::doDifference(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
+        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "difference");
     }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);
@@ -1973,7 +2077,14 @@ gis::framework::Result VectorPlugin::doDissolve(
     if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer("dissolved", srcSRS, wkbMultiPolygon, nullptr);
+    const bool useTransactions = outFormat == "GPKG";
+    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
+    OGRLayer* dstLayer = dstDS->CreateLayer(
+        "dissolved",
+        srcSRS,
+        wkbMultiPolygon,
+        layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
@@ -1987,7 +2098,6 @@ gis::framework::Result VectorPlugin::doDissolve(
     progress.onProgress(0.5);
 
     int count = 0;
-    const bool useTransactions = outFormat == "GPKG";
     if (useTransactions) {
         dstLayer->StartTransaction();
     }
@@ -1999,9 +2109,10 @@ gis::framework::Result VectorPlugin::doDissolve(
             OGRGeometry* result = unionGeometryList(geoms);
 
             if (result && !result->IsEmpty()) {
-                if (!writeGeometryFeature(dstLayer, result, [&](OGRFeature* feature) {
+                if (!writeGeometryFeatureOwned(dstLayer, std::unique_ptr<OGRGeometry>(result), [&](OGRFeature* feature) {
                         feature->SetField(dissolveField.c_str(), key.c_str());
                     })) {
+                    result = nullptr;
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
@@ -2009,6 +2120,7 @@ gis::framework::Result VectorPlugin::doDissolve(
                     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
+                result = nullptr;
                 count++;
             }
             delete result;
@@ -2018,7 +2130,8 @@ gis::framework::Result VectorPlugin::doDissolve(
             OGRGeometry* result = unionGeometryList(allGeoms);
 
             if (result && !result->IsEmpty()) {
-                if (!writeGeometryFeature(dstLayer, result)) {
+                if (!writeGeometryFeatureOwned(dstLayer, std::unique_ptr<OGRGeometry>(result))) {
+                    result = nullptr;
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
@@ -2026,6 +2139,7 @@ gis::framework::Result VectorPlugin::doDissolve(
                     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
+                result = nullptr;
                 count++;
             }
             delete result;
@@ -2034,6 +2148,7 @@ gis::framework::Result VectorPlugin::doDissolve(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
+        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "dissolved");
     }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
     progress.onProgress(1.0);

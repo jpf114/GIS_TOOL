@@ -3,8 +3,11 @@
 #include <gis/framework/param_spec.h>
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/result.h>
+#include <array>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 #include "test_support.h"
 
@@ -115,4 +118,38 @@ TEST(FrameworkTest, PluginManagerUnloadCallsDestroy) {
 
     EXPECT_NE(fileContent.find("create"), std::string::npos);
     EXPECT_NE(fileContent.find("destroy"), std::string::npos);
+}
+
+TEST(FrameworkTest, CliListLoadsRealPlugins) {
+    const auto exeDir = gis::tests::testExecutableDir();
+    const auto buildRoot = exeDir.parent_path().parent_path();
+    const auto cliPath = buildRoot / "src" / "cli" / exeDir.filename() / "gis-cli.exe";
+
+    ASSERT_TRUE(std::filesystem::exists(cliPath)) << cliPath.string();
+
+    const std::string command = "\"" + cliPath.string() + "\" --list 2>&1";
+    std::array<char, 512> buffer{};
+    std::string output;
+
+#ifdef _WIN32
+    FILE* pipe = _popen(command.c_str(), "r");
+#else
+    FILE* pipe = popen(command.c_str(), "r");
+#endif
+    ASSERT_NE(pipe, nullptr);
+
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+        output += buffer.data();
+    }
+
+#ifdef _WIN32
+    const int exitCode = _pclose(pipe);
+#else
+    const int exitCode = pclose(pipe);
+#endif
+
+    EXPECT_EQ(exitCode, 0) << output;
+    EXPECT_NE(output.find("Available plugins:"), std::string::npos) << output;
+    EXPECT_NE(output.find("vector - "), std::string::npos) << output;
+    EXPECT_NE(output.find("processing - "), std::string::npos) << output;
 }

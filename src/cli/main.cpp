@@ -159,13 +159,14 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    std::string pluginsDir;
     namespace fs = std::filesystem;
     auto exePath = fs::canonical(fs::path(programName).parent_path());
-    pluginsDir = (exePath / "plugins").string();
+    const auto pluginsDir = gis::core::findPluginDirectoryFrom(exePath);
 
     gis::framework::PluginManager mgr;
-    mgr.loadFromDirectory(pluginsDir);
+    if (!pluginsDir.empty()) {
+        mgr.loadFromDirectory(pluginsDir.string());
+    }
 
     if (args.listPlugins) {
         listPlugins(mgr);

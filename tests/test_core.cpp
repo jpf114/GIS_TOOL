@@ -4,6 +4,7 @@
 #include <gis/core/types.h>
 #include <gis/core/error.h>
 #include <gis/core/progress.h>
+#include <gis/core/runtime_env.h>
 #include <gdal_priv.h>
 #include <opencv2/opencv.hpp>
 #include <filesystem>
@@ -261,4 +262,51 @@ TEST_F(CoreTest, HistogramBins) {
     auto hist = gis::core::computeHistogram(ds.get(), 1, 10);
     EXPECT_EQ(hist.size(), 10u);
     EXPECT_GT(hist[0].count, 0u);
+}
+
+TEST_F(CoreTest, FindRuntimePathFromWalksUpToAncestorResourceDir) {
+    const fs::path root = gis::tests::testExecutableDir().parent_path().parent_path().parent_path()
+        / "tmp" / "gis_tool_runtime_path_case";
+    std::filesystem::remove_all(root);
+    const fs::path exeDir = root / "build" / "src" / "cli" / "Debug";
+    const fs::path pluginsDir = root / "build" / "plugins";
+    gis::tests::ensureDirectory(exeDir);
+    gis::tests::ensureDirectory(pluginsDir);
+
+    const auto resolved = gis::core::findRuntimePathFrom(exeDir, "plugins");
+    EXPECT_EQ(fs::weakly_canonical(resolved), fs::weakly_canonical(pluginsDir));
+}
+
+TEST_F(CoreTest, FindPluginDirectoryFromSkipsEmptyLocalPluginsDir) {
+    const fs::path root = gis::tests::testExecutableDir().parent_path().parent_path().parent_path()
+        / "tmp" / "gis_tool_plugin_dir_case";
+    std::filesystem::remove_all(root);
+    const fs::path exeDir = root / "build" / "src" / "cli" / "Debug";
+    const fs::path localPluginsDir = exeDir / "plugins";
+    const fs::path actualPluginsDir = root / "build" / "plugins";
+    gis::tests::ensureDirectory(localPluginsDir);
+    gis::tests::ensureDirectory(actualPluginsDir);
+
+    std::ofstream(actualPluginsDir / "plugin_vector.dll").put('\n');
+    std::ofstream(localPluginsDir / "opencv_core.dll").put('\n');
+
+    const auto resolved = gis::core::findPluginDirectoryFrom(exeDir);
+    EXPECT_EQ(fs::weakly_canonical(resolved), fs::weakly_canonical(actualPluginsDir));
+}
+
+TEST_F(CoreTest, FindPluginDirectoryFromPrefersOuterBuildPluginsDir) {
+    const fs::path root = gis::tests::testExecutableDir().parent_path().parent_path().parent_path()
+        / "tmp" / "gis_tool_plugin_dir_outer_case";
+    std::filesystem::remove_all(root);
+    const fs::path exeDir = root / "build" / "src" / "cli" / "Debug";
+    const fs::path localPluginsDir = exeDir / "plugins";
+    const fs::path outerPluginsDir = root / "build" / "plugins";
+    gis::tests::ensureDirectory(localPluginsDir);
+    gis::tests::ensureDirectory(outerPluginsDir);
+
+    std::ofstream(localPluginsDir / "plugin_vector.dll").put('\n');
+    std::ofstream(outerPluginsDir / "plugin_vector.dll").put('\n');
+
+    const auto resolved = gis::core::findPluginDirectoryFrom(exeDir);
+    EXPECT_EQ(fs::weakly_canonical(resolved), fs::weakly_canonical(outerPluginsDir));
 }

@@ -110,6 +110,76 @@ TEST_F(PluginTest, ProjectionPluginParams) {
     }
 }
 
+TEST_F(PluginTest, ProjectionVectorReprojectExecution) {
+    auto* p = mgr_.find("projection");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "projection_vector_input.geojson");
+    const std::string output = utf8PathString(getTestDir() / "projection_vector_output.gpkg");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GeoJSON");
+        ASSERT_NE(driver, nullptr);
+
+        GDALDataset* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+
+        OGRSpatialReference srs;
+        ASSERT_EQ(srs.SetFromUserInput("EPSG:4326"), OGRERR_NONE);
+
+        OGRLayer* layer = ds->CreateLayer("input", &srs, wkbLineString, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+
+        OGRFeature* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        ASSERT_NE(feature, nullptr);
+        feature->SetField("name", "road");
+
+        auto geometry = std::unique_ptr<OGRGeometry>(
+            OGRGeometryFactory::createGeometry(wkbLineString));
+        auto* line = geometry->toLineString();
+        line->addPoint(116.38, 39.90);
+        line->addPoint(116.42, 39.92);
+        feature->SetGeometry(geometry.get());
+
+        ASSERT_EQ(layer->CreateFeature(feature), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feature);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("reproject");
+    params["input"] = input;
+    params["output"] = output;
+    params["dst_srs"] = std::string("EPSG:3857");
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(),
+        GDAL_OF_READONLY | GDAL_OF_VECTOR,
+        nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(outLayer->GetFeatureCount(), 1);
+
+    const OGRSpatialReference* outSrs = outLayer->GetSpatialRef();
+    ASSERT_NE(outSrs, nullptr);
+    EXPECT_TRUE(outSrs->IsProjected());
+
+    OGREnvelope extent;
+    ASSERT_EQ(outLayer->GetExtent(&extent, TRUE), OGRERR_NONE);
+    EXPECT_GT(std::abs(extent.MaxX), 1000.0);
+    EXPECT_GT(std::abs(extent.MaxY), 1000.0);
+
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, VectorPluginParams) {
     auto* p = mgr_.find("vector");
     if (p) {

@@ -7,6 +7,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 
 function Get-DefaultWorkspaceRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -66,24 +69,25 @@ function Invoke-Case {
     )
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    $arguments = [string[]]$Case.Args
+    $arguments = @()
+    foreach ($arg in [string[]]$Case.Args) {
+        if ($null -ne $arg -and $arg -ne "") {
+            $arguments += $arg
+        }
+    }
+
     $stdoutPath = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString() + "_gis_stdout.txt")
     $stderrPath = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString() + "_gis_stderr.txt")
 
-    $process = Start-Process -FilePath $ResolvedCliPath `
-        -ArgumentList $arguments `
-        -NoNewWindow `
-        -Wait `
-        -PassThru `
-        -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath
-
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $ResolvedCliPath @arguments 1> $stdoutPath 2> $stderrPath
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorAction
     $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { "" }
     $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
     Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
-
     $output = (($stdout + [Environment]::NewLine + $stderr).Trim())
-    $code = $process.ExitCode
     $watch.Stop()
 
     $result = [pscustomobject]@{
@@ -121,6 +125,128 @@ function Save-RegressionResults {
     $Results | Select-Object Name,ExitCode,Seconds | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
 }
 
+function Invoke-SetupCommand {
+    param(
+        [string]$ResolvedCliPath,
+        [string]$Name,
+        [string[]]$CaseArgs
+    )
+
+    $case = [pscustomobject]@{
+        Name = $Name
+        Args = [string[]]$CaseArgs
+    }
+
+    return Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case | Out-Null
+}
+
+function Ensure-BenchmarkData {
+    param(
+        [string]$ResolvedCliPath,
+        [string]$ResolvedWorkspaceRoot
+    )
+
+    $benchmarkRoot = Join-Path $ResolvedWorkspaceRoot "tmp\vector_benchmark"
+    New-Item -ItemType Directory -Force -Path $benchmarkRoot | Out-Null
+
+    $vectorDataRoot = Join-Path $ResolvedWorkspaceRoot "data\vector"
+    $roadsRawFile = Get-ChildItem $vectorDataRoot -Filter "*.shp" |
+        Sort-Object Length |
+        Select-Object -First 1
+    $chinaRawFile = Get-ChildItem $vectorDataRoot -Filter "*.geojson" |
+        Select-Object -First 1
+
+    if ($null -eq $roadsRawFile) {
+        throw ("raw roads missing under: " + $vectorDataRoot)
+    }
+    if ($null -eq $chinaRawFile) {
+        throw ("raw china missing under: " + $vectorDataRoot)
+    }
+
+    $roadsRaw = $roadsRawFile.FullName
+    $chinaRaw = $chinaRawFile.FullName
+
+    $roadsCore = Join-Path $benchmarkRoot "bj_roads_core.gpkg"
+    $roadsCore3857 = Join-Path $benchmarkRoot "bj_roads_core_3857.gpkg"
+    $chinaFocus = Join-Path $benchmarkRoot "china_focus.gpkg"
+    $chinaBbox = Join-Path $benchmarkRoot "china_bbox.geojson"
+    $chinaBbox3857 = Join-Path $benchmarkRoot "china_bbox_3857.gpkg"
+
+    Require-Path -Path $roadsRaw -Label "raw roads"
+    Require-Path -Path $chinaRaw -Label "raw china"
+
+    if (-not (Test-Path $roadsCore)) {
+        Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_roads_core" -CaseArgs @(
+            "vector", "filter",
+            ("--input=" + $roadsRaw),
+            ("--output=" + $roadsCore),
+            "--where=fclass IN ('motorway','trunk','primary','secondary')"
+        )
+    }
+
+    if (-not (Test-Path $chinaFocus)) {
+        Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_china_focus" -CaseArgs @(
+            "vector", "filter",
+            ("--input=" + $chinaRaw),
+            ("--output=" + $chinaFocus),
+            "--extent=115.30,39.35,117.60,41.10"
+        )
+    }
+
+    if (-not (Test-Path $chinaBbox)) {
+        @'
+{
+  "type": "FeatureCollection",
+  "name": "beijing_bbox",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "beijing_bbox"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [115.30, 39.35],
+            [117.60, 39.35],
+            [117.60, 41.10],
+            [115.30, 41.10],
+            [115.30, 39.35]
+          ]
+        ]
+      }
+    }
+  ]
+}
+'@ | Set-Content -Path $chinaBbox -Encoding UTF8
+    }
+
+    if (-not (Test-Path $roadsCore3857)) {
+        Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_roads_core_3857" -CaseArgs @(
+            "projection", "reproject",
+            ("--input=" + $roadsCore),
+            ("--output=" + $roadsCore3857),
+            "--dst_srs=EPSG:3857"
+        )
+    }
+
+    if (-not (Test-Path $chinaBbox3857)) {
+        Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_china_bbox_3857" -CaseArgs @(
+            "projection", "reproject",
+            ("--input=" + $chinaBbox),
+            ("--output=" + $chinaBbox3857),
+            "--dst_srs=EPSG:3857"
+        )
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
     $WorkspaceRoot = Get-DefaultWorkspaceRoot
 }
@@ -139,17 +265,16 @@ $ResolvedOutputRoot = $OutputRoot
 New-Item -ItemType Directory -Force -Path $ResolvedOutputRoot | Out-Null
 
 Sync-PluginDlls -ResolvedCliPath $ResolvedCliPath
+Ensure-BenchmarkData -ResolvedCliPath $ResolvedCliPath -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot
 
 $benchmarkRoot = Join-Path $ResolvedWorkspaceRoot "tmp\vector_benchmark"
-$roadsCore = Join-Path $benchmarkRoot "bj_roads_core.shp"
+$roadsCore = Join-Path $benchmarkRoot "bj_roads_core.gpkg"
 $roadsCore3857 = Join-Path $benchmarkRoot "bj_roads_core_3857.gpkg"
-$chinaFocus = Join-Path $benchmarkRoot "china_focus.geojson"
 $chinaBbox = Join-Path $benchmarkRoot "china_bbox.geojson"
 $chinaBbox3857 = Join-Path $benchmarkRoot "china_bbox_3857.gpkg"
 
 Require-Path -Path $roadsCore -Label "roads core"
 Require-Path -Path $roadsCore3857 -Label "roads core 3857"
-Require-Path -Path $chinaFocus -Label "china focus"
 Require-Path -Path $chinaBbox -Label "china bbox"
 Require-Path -Path $chinaBbox3857 -Label "china bbox 3857"
 
@@ -163,19 +288,19 @@ $cases += New-Case -Name "buffer_quick" -CaseArgs @(
 $cases += New-Case -Name "clip_focus" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
-    ("--clip_vector=" + $chinaFocus),
+    ("--clip_vector=" + $chinaBbox),
     ("--output=" + (Join-Path $ResolvedOutputRoot "clip_focus.gpkg"))
 )
 $cases += New-Case -Name "difference_focus" -CaseArgs @(
     "vector", "difference",
     ("--input=" + $roadsCore),
-    ("--overlay_vector=" + $chinaFocus),
+    ("--overlay_vector=" + $chinaBbox),
     ("--output=" + (Join-Path $ResolvedOutputRoot "difference_focus.gpkg"))
 )
 $cases += New-Case -Name "union_focus" -CaseArgs @(
     "vector", "union",
     ("--input=" + $roadsCore),
-    ("--overlay_vector=" + $chinaFocus),
+    ("--overlay_vector=" + $chinaBbox),
     ("--output=" + (Join-Path $ResolvedOutputRoot "union_focus.gpkg"))
 )
 $cases += New-Case -Name "dissolve_bbox" -CaseArgs @(

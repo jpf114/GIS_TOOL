@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <system_error>
 #include <string>
 
 #ifdef _WIN32
@@ -59,7 +60,56 @@ bool envVarExists(const char* key) {
     return value != nullptr && value[0] != '\0';
 }
 
+bool isPluginLibraryPath(const std::filesystem::directory_entry& entry) {
+    if (!entry.is_regular_file()) {
+        return false;
+    }
+
+    const auto filename = entry.path().filename().string();
+    if (filename.rfind("plugin_", 0) != 0) {
+        return false;
+    }
+
+#ifdef _WIN32
+    return entry.path().extension() == ".dll";
+#else
+    return entry.path().extension() == ".so" || entry.path().extension() == ".dylib";
+#endif
+}
+
 } // namespace
+
+std::filesystem::path findRuntimePathFrom(
+    const std::filesystem::path& startDir,
+    const std::filesystem::path& relativePath) {
+    return findRuntimePath(startDir, relativePath);
+}
+
+std::filesystem::path findPluginDirectoryFrom(const std::filesystem::path& startDir) {
+    auto current = startDir;
+    std::filesystem::path matched;
+    while (!current.empty()) {
+        const auto candidate = current / "plugins";
+        if (std::filesystem::exists(candidate) && std::filesystem::is_directory(candidate)) {
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(candidate, ec)) {
+                if (ec) {
+                    break;
+                }
+                if (isPluginLibraryPath(entry)) {
+                    matched = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (!current.has_parent_path() || current == current.parent_path()) {
+            break;
+        }
+        current = current.parent_path();
+    }
+    return matched;
+}
 
 void initRuntimeEnvironment() {
     const auto exeDir = executableDir();

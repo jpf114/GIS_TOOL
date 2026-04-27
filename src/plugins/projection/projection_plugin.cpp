@@ -5,12 +5,164 @@
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
 #include <gdal_utils.h>
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
 #include <sstream>
 #include <cmath>
 #include <iomanip>
 #include <memory>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace gis::plugins {
+
+namespace fs = std::filesystem;
+
+namespace {
+
+bool containsNonAscii(const std::string& value) {
+    for (unsigned char ch : value) {
+        if (ch >= 0x80) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool isShapefilePath(const std::string& path) {
+    fs::path fsPath = fs::u8path(path);
+    std::string ext = fsPath.extension().u8string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return ext == ".shp";
+}
+
+#ifdef _WIN32
+std::wstring utf8ToWide(const std::string& value) {
+    if (value.empty()) {
+        return {};
+    }
+
+    const int sizeNeeded = MultiByteToWideChar(
+        CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()),
+        nullptr, 0);
+    if (sizeNeeded <= 0) {
+        return {};
+    }
+
+    std::wstring wide(sizeNeeded, L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()),
+        wide.data(), sizeNeeded);
+    return wide;
+}
+
+std::string makeAsciiShapefileMirror(const std::string& sourcePath) {
+    const fs::path sourceFsPath(utf8ToWide(sourcePath));
+    if (sourceFsPath.empty() || !fs::exists(sourceFsPath)) {
+        return sourcePath;
+    }
+
+    std::error_code ec;
+    const auto sourceFileSize = fs::file_size(sourceFsPath, ec);
+    const auto sourceWriteTime = fs::last_write_time(sourceFsPath, ec);
+    const auto cacheKey = std::to_string(std::hash<std::string>{}(sourcePath)) + "_" +
+        std::to_string(static_cast<unsigned long long>(sourceFileSize)) + "_" +
+        std::to_string(sourceWriteTime.time_since_epoch().count());
+    const fs::path tempDir = fs::temp_directory_path() / "gis_tool_projection_utf8" / cacheKey;
+    fs::create_directories(tempDir, ec);
+
+    const fs::path tempBase = tempDir / "input.shp";
+    if (fs::exists(tempBase)) {
+        return tempBase.string();
+    }
+
+    const std::vector<std::wstring> sidecarExts = {
+        L".shp", L".shx", L".dbf", L".prj", L".cpg", L".qix", L".fix", L".sbn", L".sbx"
+    };
+
+    auto copyOrLinkFile = [](const fs::path& src, const fs::path& dst) {
+        std::error_code localEc;
+        fs::remove(dst, localEc);
+        localEc.clear();
+        fs::create_hard_link(src, dst, localEc);
+        if (!localEc) {
+            return true;
+        }
+
+        localEc.clear();
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, localEc);
+        return !localEc;
+    };
+
+    for (const auto& ext : sidecarExts) {
+        fs::path src = sourceFsPath;
+        src.replace_extension(ext);
+        if (!fs::exists(src)) {
+            continue;
+        }
+
+        fs::path dst = tempBase;
+        dst.replace_extension(ext);
+        if (!copyOrLinkFile(src, dst)) {
+            return sourcePath;
+        }
+    }
+
+    if (!fs::exists(tempBase)) {
+        return sourcePath;
+    }
+
+    return tempBase.string();
+}
+#endif
+
+std::string resolveVectorInputPath(const std::string& path) {
+#ifdef _WIN32
+    if (containsNonAscii(path) && isShapefilePath(path)) {
+        return makeAsciiShapefileMirror(path);
+    }
+#endif
+    return path;
+}
+
+std::string detectVectorFormatFromOutput(const std::string& output) {
+    std::string ext = fs::path(output).extension().u8string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (ext == ".shp") return "ESRI Shapefile";
+    if (ext == ".gpkg") return "GPKG";
+    if (ext == ".kml") return "KML";
+    if (ext == ".csv") return "CSV";
+    return "GeoJSON";
+}
+
+void removeExistingVectorOutput(const std::string& output, const std::string& format) {
+    if (!fs::exists(output)) {
+        return;
+    }
+
+    if (format == "ESRI Shapefile") {
+        const fs::path outputPath = fs::u8path(output);
+        for (const auto& entry : fs::directory_iterator(outputPath.parent_path())) {
+            if (entry.path().stem() == outputPath.stem()) {
+                fs::remove(entry.path());
+            }
+        }
+        return;
+    }
+
+    fs::remove(fs::u8path(output));
+}
+
+} // namespace
 
 std::vector<gis::framework::ParamSpec> ProjectionPlugin::paramSpecs() const {
     return {
@@ -87,6 +239,66 @@ gis::framework::Result ProjectionPlugin::doReproject(
 
     progress.onMessage("Opening source dataset: " + input);
     progress.onProgress(0.0);
+
+    const std::string resolvedVectorInput = resolveVectorInputPath(input);
+    GDALDatasetH vectorSrcHandle = GDALOpenEx(
+        resolvedVectorInput.c_str(),
+        GDAL_OF_READONLY | GDAL_OF_VECTOR,
+        nullptr, nullptr, nullptr);
+    if (vectorSrcHandle) {
+        progress.onMessage("Setting up vector translate options...");
+
+        const std::string outputFormat = detectVectorFormatFromOutput(output);
+        removeExistingVectorOutput(output, outputFormat);
+
+        std::vector<std::string> argStorage;
+        argStorage.push_back("-f");
+        argStorage.push_back(outputFormat);
+        argStorage.push_back("-t_srs");
+        argStorage.push_back(dstSrs);
+
+        if (!srcSrs.empty()) {
+            argStorage.push_back("-s_srs");
+            argStorage.push_back(srcSrs);
+        }
+
+        std::vector<char*> translateArgs;
+        for (auto& arg : argStorage) {
+            translateArgs.push_back(arg.data());
+        }
+        translateArgs.push_back(nullptr);
+
+        GDALVectorTranslateOptions* translateOptions =
+            GDALVectorTranslateOptionsNew(translateArgs.data(), nullptr);
+        if (!translateOptions) {
+            GDALClose(vectorSrcHandle);
+            return gis::framework::Result::fail(
+                "Failed to create vector translate options: " + std::string(CPLGetLastErrorMsg()));
+        }
+
+        progress.onProgress(0.2);
+        progress.onMessage("Reprojecting vector dataset...");
+
+        int usageError = 0;
+        GDALDatasetH dstHandle = GDALVectorTranslate(
+            output.c_str(), nullptr, 1, &vectorSrcHandle, translateOptions, &usageError);
+
+        GDALVectorTranslateOptionsFree(translateOptions);
+        GDALClose(vectorSrcHandle);
+
+        if (!dstHandle || usageError) {
+            if (dstHandle) {
+                GDALClose(dstHandle);
+            }
+            return gis::framework::Result::fail(
+                "Vector reprojection failed: " + std::string(CPLGetLastErrorMsg()));
+        }
+
+        GDALClose(dstHandle);
+        progress.onProgress(1.0);
+        progress.onMessage("Vector reprojection completed.");
+        return gis::framework::Result::ok("Vector reprojection completed successfully", output);
+    }
 
     auto srcDS = gis::core::openRaster(input, true);
 
