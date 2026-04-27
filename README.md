@@ -2,36 +2,25 @@
 
 基于 `C++17 + GDAL + OpenCV + PROJ + Qt` 的插件式 GIS 工具集，支持命令行和桌面图形界面两种入口。
 
-## 当前状态
+## 稳定版本
 
-### 文档中的已验证状态
+当前稳定版本：`0.1.2`
+
+本版本已完成以下验证：
 
 - `Visual Studio 2022 + C++17 + 全局 vcpkg` 可稳定配置与编译
-- `GIS_BUILD_GUI=OFF/ON` 两种模式均已验证构建通过
+- `GIS_BUILD_GUI=OFF/ON` 两种模式均可构建
+- `ctest -C Debug --output-on-failure` 为 `106/106` 通过
+- `gis-cli.exe --list` 可正常列出全部主插件
+- `gui_smoke_startup` 通过
 - Windows 下 `gis-cli.exe` 已验证可直接处理中文路径输入
 - `vector filter` 已用真实 GeoJSON 数据验证中文属性条件可正常过滤
 
-### 2026-04-27 实测状态快照
+当前项目状态：
 
-本轮基于全新 `build-verify` 目录重新验证得到：
-
-- `cmake configure`：通过
-- `cmake --build --config Debug`：通过
-- `ctest -C Debug -N`：通过，识别 `106` 个测试
-- `ctest -C Debug --output-on-failure`：通过，`106/106`
-- `gis-cli.exe --list`：通过
-- `gui_smoke_startup`：通过
-
-### 当前更准确的项目定位
-
-- `core / framework / plugins / cli / gui / tests` 主链路已经可用
-- `gui` 已具备基础执行界面，但仍属于工具型前端，不是完整 GIS 工作台
-- 项目当前更需要持续维护“构建可复现、验证可复现、文档与代码同步”，而不是继续堆叠未验证的新功能
-
-### 当前轮次已确认差异
-
-- 之前工作区中的主要阻塞点不是插件框架失效，而是 `src/gui/preview_panel.*` 的一组未完成改动导致 GUI 链接失败
-- 修复该问题后，新的验证构建目录可以完成完整测试链路
+- `core / framework / plugins / cli / gui / tests` 主链路已可稳定使用
+- GUI 已具备基础执行、预览、对比和结果浏览能力
+- 当前阶段重点从“先跑通”转向“持续维护与后续迭代”
 
 ## 项目结构
 
@@ -48,9 +37,9 @@
 - `tests`
   - 核心能力、框架能力、插件能力测试
 - `docs`
-  - 构建说明、功能与验证说明、历史设计文档
+  - 后续工作计划
 
-## 已实现插件
+## 已实现插件类型
 
 - `projection`
   - 重投影、坐标系信息查看、坐标转换、赋予坐标系
@@ -65,16 +54,17 @@
 - `vector`
   - 信息查看、过滤、缓冲、裁切、栅格化、面矢量化、格式转换、并集、差集、融合
 
-## 依赖策略
+## 环境要求
 
-项目遵循以下依赖约束：
+推荐环境：
 
-- 所有第三方依赖统一安装到全局 `vcpkg`
-- 默认复用 `VCPKG_ROOT/installed/x64-windows`
-- 不在项目构建目录重复下载和重复安装依赖
-- 运行时 DLL、Qt 平台插件、GDAL/PROJ 数据目录从全局 `vcpkg` 拷贝
+- Windows
+- Visual Studio 2022
+- C++17
+- 全局 `vcpkg`
+- `VCPKG_ROOT/installed/x64-windows`
 
-推荐已安装包：
+推荐已安装依赖：
 
 - `gdal`
 - `opencv4`
@@ -82,7 +72,7 @@
 - `gtest`
 - `qtbase`
 
-## 推荐构建命令
+## 构建
 
 仅构建 CLI 与测试：
 
@@ -100,17 +90,23 @@ cmake --build build-verify --config Debug
 ctest --test-dir build-verify -C Debug --output-on-failure
 ```
 
-说明：
+建议：
 
-- 当前建议把 `build-verify` 作为“重新验证当前仓库状态”的标准目录
-- 支持基线应以文档中的验证命令为准，而不是依赖历史构建目录残留状态
+- 使用 `build-verify` 作为标准验证目录
+- 日常开发可继续使用独立构建目录，但发布前应至少完整跑一次 `build-verify`
 
-## 运行方式
+## 使用
 
 列出插件：
 
 ```powershell
 .\build\src\cli\Debug\gis-cli.exe --list
+```
+
+运行一个插件时，形式为：
+
+```powershell
+.\build\src\cli\Debug\gis-cli.exe <plugin> <action> --input <path> --output <path>
 ```
 
 启动 GUI：
@@ -119,14 +115,20 @@ ctest --test-dir build-verify -C Debug --output-on-failure
 .\build-verify\src\gui\Debug\gis-gui.exe
 ```
 
-## 文档索引
+GUI 当前适合：
 
-- [构建与开发说明](D:/Code/MyProject/GIS_TOOL/docs/构建与开发说明.md)
-- [构建与验证基线](D:/Code/MyProject/GIS_TOOL/docs/build-baseline.md)
-- [当前功能与真实数据验证指南](D:/Code/MyProject/GIS_TOOL/docs/当前功能与真实数据验证指南.md)
-- [项目稳定化与迭代路线图](D:/Code/MyProject/GIS_TOOL/docs/superpowers/plans/2026-04-24-project-stabilization-roadmap.md)
+- 导入栅格或矢量数据
+- 选择插件与动作
+- 自动生成参数面板
+- 查看栅格/矢量预览
+- 对比输入与结果
+- 打开结果目录和复制结果路径
+
+## 后续工作
+
+- 后续工作计划见：[后续工作计划](D:/Code/MyProject/GIS_TOOL/docs/后续工作计划.md)
 
 ## 说明
 
-- 所有新增和维护文档统一使用中文
+- 文档统一使用中文
 - 提交信息统一使用中文
