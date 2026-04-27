@@ -541,6 +541,9 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     toolbarLayout->addWidget(fitButton_);
     toolbarLayout->addWidget(zoomInButton_);
     toolbarLayout->addSpacing(8);
+    toolbarLayout->addWidget(openDirButton_);
+    toolbarLayout->addWidget(copyPathButton_);
+    toolbarLayout->addSpacing(8);
     toolbarLayout->addWidget(statusLabel_, 1);
     toolbarLayout->addWidget(scaleLabel_);
 
@@ -955,6 +958,24 @@ void PreviewPanel::updateCompareButtons() {
             canUseAsInput
                 ? QStringLiteral("将当前预览文件直接填入当前算法的 input 参数")
                 : QStringLiteral("当前没有可作为输入的数据"));
+    }
+
+    if (openDirButton_) {
+        const bool canOpenDir = !currentPath_.isEmpty();
+        openDirButton_->setEnabled(canOpenDir);
+        openDirButton_->setToolTip(
+            canOpenDir
+                ? QStringLiteral("打开当前预览文件所在目录")
+                : QStringLiteral("当前没有可打开目录的数据"));
+    }
+
+    if (copyPathButton_) {
+        const bool canCopyPath = !currentPath_.isEmpty();
+        copyPathButton_->setEnabled(canCopyPath);
+        copyPathButton_->setToolTip(
+            canCopyPath
+                ? QStringLiteral("复制当前预览文件路径")
+                : QStringLiteral("当前没有可复制路径的数据"));
     }
 }
 
