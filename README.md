@@ -4,7 +4,7 @@
 
 ## 稳定版本
 
-当前稳定版本：`0.1.2`
+当前稳定版本：`0.1.3`
 
 本版本已完成以下验证：
 
@@ -12,7 +12,9 @@
 - `GIS_BUILD_GUI=OFF/ON` 两种模式均可构建
 - `ctest -C Debug --output-on-failure` 为 `106/106` 通过
 - `gis-cli.exe --list` 可正常列出全部主插件
-- `gui_smoke_startup` 通过
+- `gis-gui.exe -platform offscreen --self-test` 可正常启动并退出
+- GUI 进程级离屏启动检查通过，可稳定进入事件循环
+- 真实数据矢量回归 `quick / full` 均已通过
 - Windows 下 `gis-cli.exe` 已验证可直接处理中文路径输入
 - `vector filter` 已用真实 GeoJSON 数据验证中文属性条件可正常过滤
 
@@ -20,6 +22,7 @@
 
 - `core / framework / plugins / cli / gui / tests` 主链路已可稳定使用
 - GUI 已具备基础执行、预览、对比和结果浏览能力
+- 当前版本可作为稳定使用基线继续迭代
 - 当前阶段重点从“先跑通”转向“持续维护与后续迭代”
 
 ## 项目结构
