@@ -21,5 +21,9 @@ Thumbs.db
 # vcpkg
 vcpkg_installed/
 
+# Local verification assets
+data/
+tmp/
+
 # Superpowers brainstorm
 .superpowers/
