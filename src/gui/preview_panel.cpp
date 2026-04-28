@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QClipboard>
+#include <QButtonGroup>
 #include <QDir>
 #include <QDesktopServices>
 #include <QEvent>
@@ -158,7 +159,6 @@ QString rasterSummary(GDALDataset* ds) {
     }
     return toQString(oss.str());
 }
-
 QString vectorSummary(GDALDataset* ds) {
     std::ostringstream oss;
     oss << "图层数: " << ds->GetLayerCount() << "\n";
@@ -173,7 +173,6 @@ QString vectorSummary(GDALDataset* ds) {
     }
     return toQString(oss.str());
 }
-
 bool loadPreviewContent(const std::string& path,
                         gis::gui::DataKind& kind,
                         QImage& image,
@@ -469,31 +468,49 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     : QWidget(parent) {
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(12, 12, 12, 12);
-    rootLayout->setSpacing(10);
+    rootLayout->setSpacing(8);
 
     auto* headerFrame = new QFrame;
     headerFrame->setObjectName(QStringLiteral("previewHeader"));
     auto* headerLayout = new QVBoxLayout(headerFrame);
-    headerLayout->setContentsMargins(16, 14, 16, 14);
+    headerLayout->setContentsMargins(14, 12, 14, 12);
     headerLayout->setSpacing(8);
 
-    titleLabel_ = new QLabel(QStringLiteral("预览区"));
+    auto* titleRow = new QHBoxLayout;
+    titleRow->setContentsMargins(0, 0, 0, 0);
+    titleRow->setSpacing(8);
+    titleLabel_ = new QLabel(QStringLiteral("预览窗口"));
     titleLabel_->setObjectName(QStringLiteral("previewTitle"));
-    originLabel_ = new QLabel(QStringLiteral("当前对象: 未选择"));
+    originLabel_ = new QLabel(QStringLiteral("当前对象：未选择"));
     originLabel_->setObjectName(QStringLiteral("originBadge"));
+    titleRow->addWidget(titleLabel_);
+    titleRow->addStretch();
+    titleRow->addWidget(originLabel_);
+
+    auto* segmentFrame = new QFrame;
+    segmentFrame->setObjectName(QStringLiteral("segmentFrame"));
+    auto* segmentLayout = new QHBoxLayout(segmentFrame);
+    segmentLayout->setContentsMargins(4, 4, 4, 4);
+    segmentLayout->setSpacing(4);
+    showInputButton_ = new QPushButton(QStringLiteral("输入"));
+    showOutputButton_ = new QPushButton(QStringLiteral("结果"));
+    compareButton_ = new QPushButton(QStringLiteral("对比"));
+    auto* viewButtons = new QButtonGroup(this);
+    viewButtons->setExclusive(true);
+    for (auto* button : {showInputButton_, showOutputButton_, compareButton_}) {
+        button->setCheckable(true);
+        button->setObjectName(QStringLiteral("previewSegmentButton"));
+        button->setMinimumHeight(30);
+        segmentLayout->addWidget(button);
+        viewButtons->addButton(button);
+    }
+
     pathLabel_ = new QLabel(QStringLiteral("未选择数据"));
     pathLabel_->setWordWrap(true);
     pathLabel_->setObjectName(QStringLiteral("previewPath"));
     summaryLabel_ = new QLabel;
     summaryLabel_->setWordWrap(true);
     summaryLabel_->setObjectName(QStringLiteral("previewSummary"));
-
-    auto* titleRow = new QHBoxLayout;
-    titleRow->setContentsMargins(0, 0, 0, 0);
-    titleRow->setSpacing(8);
-    titleRow->addWidget(titleLabel_);
-    titleRow->addStretch();
-    titleRow->addWidget(originLabel_);
 
     auto* metaFrame = new QFrame;
     metaFrame->setObjectName(QStringLiteral("previewMetaFrame"));
@@ -503,39 +520,57 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     metaLayout->addWidget(pathLabel_);
     metaLayout->addWidget(summaryLabel_);
 
-    auto* toolbarLayout = new QHBoxLayout;
-    toolbarLayout->setContentsMargins(0, 0, 0, 0);
-    toolbarLayout->setSpacing(6);
+    headerLayout->addLayout(titleRow);
+    headerLayout->addWidget(segmentFrame);
+    headerLayout->addWidget(metaFrame);
+
+    stackedWidget_ = new QStackedWidget;
+    placeholderLabel_ = new QLabel(QStringLiteral("请选择左侧数据，或执行算法后查看输出预览。"));
+    placeholderLabel_->setAlignment(Qt::AlignCenter);
+    placeholderLabel_->setWordWrap(true);
+    placeholderLabel_->setStyleSheet(
+        "border: 1px dashed #41506b; border-radius: 10px; color: #96a7c0; "
+        "background: #141b28; font-size: 15px; padding: 24px;");
+
+    imageLabel_ = new QLabel;
+    imageLabel_->setAlignment(Qt::AlignCenter);
+    imageLabel_->setMinimumSize(480, 360);
+    imageLabel_->setStyleSheet("background: #0f1622; border-radius: 10px;");
+
+    imageScrollArea_ = new QScrollArea;
+    imageScrollArea_->setObjectName(QStringLiteral("previewScrollArea"));
+    imageScrollArea_->setWidgetResizable(true);
+    imageScrollArea_->setAlignment(Qt::AlignCenter);
+    imageScrollArea_->setWidget(imageLabel_);
+    imageScrollArea_->viewport()->installEventFilter(this);
+    imageLabel_->installEventFilter(this);
+
+    stackedWidget_->addWidget(placeholderLabel_);
+    stackedWidget_->addWidget(imageScrollArea_);
+
+    auto* footerFrame = new QFrame;
+    footerFrame->setObjectName(QStringLiteral("previewFooter"));
+    auto* footerLayout = new QHBoxLayout(footerFrame);
+    footerLayout->setContentsMargins(12, 8, 12, 8);
+    footerLayout->setSpacing(6);
 
     zoomOutButton_ = new QPushButton(QStringLiteral("缩小"));
     fitButton_ = new QPushButton(QStringLiteral("适配"));
     zoomInButton_ = new QPushButton(QStringLiteral("放大"));
-    showInputButton_ = new QPushButton(QStringLiteral("输入"));
-    showOutputButton_ = new QPushButton(QStringLiteral("结果"));
-    useAsInputButton_ = new QPushButton(QStringLiteral("设输入"));
-    compareButton_ = new QPushButton(QStringLiteral("对比"));
+    useAsInputButton_ = new QPushButton(QStringLiteral("设为输入"));
     openDirButton_ = new QPushButton(QStringLiteral("目录"));
-    copyPathButton_ = new QPushButton(QStringLiteral("复制"));
+    copyPathButton_ = new QPushButton(QStringLiteral("复制路径"));
     statusLabel_ = new QLabel;
     statusLabel_->setObjectName(QStringLiteral("previewStatus"));
     scaleLabel_ = new QLabel(QStringLiteral("100%"));
     scaleLabel_->setObjectName(QStringLiteral("previewScale"));
 
-    for (auto* button : {showInputButton_, showOutputButton_, compareButton_, useAsInputButton_}) {
-        button->setObjectName(QStringLiteral("previewActionButton"));
-        button->setMinimumHeight(30);
-        button->setMinimumWidth(76);
-    }
-    for (auto* button : {zoomOutButton_, fitButton_, zoomInButton_}) {
+    for (auto* button : {zoomOutButton_, fitButton_, zoomInButton_, useAsInputButton_, openDirButton_, copyPathButton_}) {
         button->setObjectName(QStringLiteral("previewToolButton"));
         button->setMinimumHeight(30);
-        button->setMinimumWidth(72);
     }
-    for (auto* button : {openDirButton_, copyPathButton_}) {
-        button->setObjectName(QStringLiteral("previewSoftButton"));
-        button->setMinimumHeight(30);
-        button->setMinimumWidth(72);
-    }
+    openDirButton_->setMinimumWidth(72);
+    copyPathButton_->setMinimumWidth(84);
 
     connect(showInputButton_, &QPushButton::clicked, this, [this]() {
         if (!compareInputPath_.isEmpty()) {
@@ -563,90 +598,53 @@ PreviewPanel::PreviewPanel(QWidget* parent)
     });
     connect(fitButton_, &QPushButton::clicked, this, &PreviewPanel::refitPreview);
 
-    toolbarLayout->addWidget(showInputButton_);
-    toolbarLayout->addWidget(showOutputButton_);
-    toolbarLayout->addWidget(compareButton_);
-    toolbarLayout->addWidget(useAsInputButton_);
-    toolbarLayout->addSpacing(8);
-    toolbarLayout->addWidget(zoomOutButton_);
-    toolbarLayout->addWidget(fitButton_);
-    toolbarLayout->addWidget(zoomInButton_);
-    toolbarLayout->addSpacing(8);
-    toolbarLayout->addWidget(openDirButton_);
-    toolbarLayout->addWidget(copyPathButton_);
-    toolbarLayout->addSpacing(8);
-    toolbarLayout->addWidget(statusLabel_, 1);
-    toolbarLayout->addWidget(scaleLabel_);
-
-    headerLayout->addLayout(titleRow);
-    headerLayout->addWidget(metaFrame);
-    headerLayout->addLayout(toolbarLayout);
-
-    stackedWidget_ = new QStackedWidget;
-
-    placeholderLabel_ = new QLabel(QStringLiteral("请选择左侧数据，或执行算法后查看输出预览"));
-    placeholderLabel_->setAlignment(Qt::AlignCenter);
-    placeholderLabel_->setWordWrap(true);
-    placeholderLabel_->setStyleSheet(
-        "border: 1px dashed #b8c2cc; border-radius: 10px; color: #607080; "
-        "background: #f7f9fb; font-size: 16px; padding: 24px;");
-
-    imageLabel_ = new QLabel;
-    imageLabel_->setAlignment(Qt::AlignCenter);
-    imageLabel_->setMinimumSize(480, 360);
-    imageLabel_->setStyleSheet("background: #111827; border-radius: 10px;");
-
-    imageScrollArea_ = new QScrollArea;
-    imageScrollArea_->setObjectName(QStringLiteral("previewScrollArea"));
-    imageScrollArea_->setWidgetResizable(true);
-    imageScrollArea_->setAlignment(Qt::AlignCenter);
-    imageScrollArea_->setWidget(imageLabel_);
-    imageScrollArea_->viewport()->installEventFilter(this);
-    imageLabel_->installEventFilter(this);
-
-    stackedWidget_->addWidget(placeholderLabel_);
-    stackedWidget_->addWidget(imageScrollArea_);
+    footerLayout->addWidget(zoomOutButton_);
+    footerLayout->addWidget(fitButton_);
+    footerLayout->addWidget(zoomInButton_);
+    footerLayout->addSpacing(10);
+    footerLayout->addWidget(useAsInputButton_);
+    footerLayout->addWidget(openDirButton_);
+    footerLayout->addWidget(copyPathButton_);
+    footerLayout->addSpacing(10);
+    footerLayout->addWidget(statusLabel_, 1);
+    footerLayout->addWidget(scaleLabel_);
 
     rootLayout->addWidget(headerFrame);
     rootLayout->addWidget(stackedWidget_, 1);
+    rootLayout->addWidget(footerFrame);
 
     setStyleSheet(
-        "QFrame#previewHeader {"
-        "  background: #f5f8fb;"
-        "  border: 1px solid #d8e2ea;"
-        "  border-radius: 10px;"
+        "QFrame#previewHeader, QFrame#previewFooter {"
+        "  background: #1a2030; border: 1px solid #2b3446; border-radius: 8px;"
         "}"
-        "QLabel#previewTitle { font-size: 17px; font-weight: 600; color: #213345; }"
+        "QLabel#previewTitle { font-size: 15px; font-weight: 600; color: #eff4fd; }"
         "QLabel#originBadge {"
-        "  color: #27557c; background: #e7f0f8; border: 1px solid #cfdde9;"
+        "  color: #d9e8f7; background: #253247; border: 1px solid #3a4c67;"
         "  border-radius: 999px; padding: 4px 10px; font-weight: 600;"
         "}"
-        "QFrame#previewMetaFrame {"
-        "  background: #ffffff; border: 1px solid #dde6ee; border-radius: 8px;"
+        "QFrame#segmentFrame { background: #151c29; border: 1px solid #2b3446; border-radius: 8px; }"
+        "QPushButton#previewSegmentButton {"
+        "  background: #1d2535; color: #9fb0c7; border: 1px solid transparent; border-radius: 6px; padding: 0 18px;"
         "}"
-        "QLabel#previewPath { color: #57687a; }"
-        "QLabel#previewSummary { color: #2d3d4d; }"
-        "QPushButton#previewActionButton, QPushButton#previewSoftButton, QPushButton#previewToolButton {"
-        "  border-radius: 6px; padding: 0 12px; border: 1px solid #cad5df;"
-        "  background: #ffffff; color: #294056;"
+        "QPushButton#previewSegmentButton:hover { background: #26334a; color: #edf4ff; }"
+        "QPushButton#previewSegmentButton:checked { background: #2d405b; color: #ffffff; border-color: #4a90d9; font-weight: 600; }"
+        "QFrame#previewMetaFrame { background: #151c29; border: 1px solid #2b3446; border-radius: 8px; }"
+        "QLabel#previewPath { color: #8fa1b8; }"
+        "QLabel#previewSummary { color: #d8e2ef; }"
+        "QPushButton#previewToolButton {"
+        "  border-radius: 6px; padding: 0 12px; border: 1px solid #34425a;"
+        "  background: #232c3d; color: #d8e2ef;"
         "}"
-        "QPushButton#previewActionButton:hover, QPushButton#previewSoftButton:hover, QPushButton#previewToolButton:hover {"
-        "  background: #eef4f8; border-color: #9db0c3;"
-        "}"
-        "QPushButton#previewActionButton { background: #f7fafc; }"
-        "QPushButton#previewToolButton { min-width: 58px; }"
-        "QLabel#previewStatus { color: #5c6d7f; }"
+        "QPushButton#previewToolButton:hover { background: #2a3550; border-color: #4a90d9; }"
+        "QLabel#previewStatus { color: #95a6bf; }"
         "QLabel#previewScale {"
-        "  color: #23425e; font-weight: 700; background: #eaf1f7;"
-        "  border: 1px solid #d3dee8; border-radius: 999px; padding: 4px 10px;"
+        "  color: #edf4ff; font-weight: 700; background: #253247;"
+        "  border: 1px solid #3a4c67; border-radius: 999px; padding: 4px 10px;"
         "}"
-        "QScrollArea#previewScrollArea {"
-        "  background: #edf2f6; border: 1px solid #d7e0e8; border-radius: 10px;"
-        "}");
+        "QScrollArea#previewScrollArea { background: #111827; border: 1px solid #2b3446; border-radius: 10px; }");
 
     clearPreview();
 }
-
 void PreviewPanel::clearPreview() {
     currentDataKind_ = gis::gui::DataKind::Unknown;
     currentPath_.clear();
@@ -658,6 +656,15 @@ void PreviewPanel::clearPreview() {
     lastPanPoint_ = {};
     if (imageLabel_) {
         imageLabel_->setCursor(Qt::ArrowCursor);
+    }
+    if (showInputButton_) {
+        showInputButton_->setChecked(false);
+    }
+    if (showOutputButton_) {
+        showOutputButton_->setChecked(false);
+    }
+    if (compareButton_) {
+        compareButton_->setChecked(false);
     }
     setZoomControlsEnabled(false);
     setPlaceholder(QStringLiteral("预览区"),
@@ -813,6 +820,7 @@ void PreviewPanel::showComparePreview() {
         QStringLiteral("左侧为输入，右侧为结果。\n\n[输入]\n%1\n\n[结果]\n%2")
             .arg(leftSummary, rightSummary),
         compareInputPath_ + QStringLiteral("\nvs\n") + compareOutputPath_);
+    compareButton_->setChecked(true);
     setZoomControlsEnabled(true);
     imageLabel_->setCursor(Qt::OpenHandCursor);
     stackedWidget_->setCurrentIndex(1);
@@ -842,6 +850,13 @@ void PreviewPanel::showRasterPreview(const std::string& path) {
     setSummary(QStringLiteral("栅格预览"),
                rasterSummary(ds.get()),
                toQString(path));
+    if (showInputButton_ && currentPath_ == compareInputPath_) {
+        showInputButton_->setChecked(true);
+    } else if (showOutputButton_ && currentPath_ == compareOutputPath_) {
+        showOutputButton_->setChecked(true);
+    } else if (compareButton_) {
+        compareButton_->setChecked(false);
+    }
     setZoomControlsEnabled(true);
     imageLabel_->setCursor(Qt::OpenHandCursor);
     stackedWidget_->setCurrentIndex(1);
@@ -869,6 +884,13 @@ void PreviewPanel::showVectorPreview(const std::string& path) {
     setSummary(QStringLiteral("矢量预览"),
                vectorSummary(ds.get()),
                toQString(path));
+    if (showInputButton_ && currentPath_ == compareInputPath_) {
+        showInputButton_->setChecked(true);
+    } else if (showOutputButton_ && currentPath_ == compareOutputPath_) {
+        showOutputButton_->setChecked(true);
+    } else if (compareButton_) {
+        compareButton_->setChecked(false);
+    }
     currentImage_ = buildVectorPreviewImage(ds.get());
     if (currentImage_.isNull()) {
         setZoomControlsEnabled(false);
@@ -897,6 +919,15 @@ void PreviewPanel::showUnsupportedPreview(const std::string& path) {
                QStringLiteral("该文件类型暂不支持预览，但仍可作为输入或输出结果保存在数据区。"),
                toQString(path));
     placeholderLabel_->setText(QStringLiteral("暂不支持该类型的预览"));
+    if (showInputButton_) {
+        showInputButton_->setChecked(false);
+    }
+    if (showOutputButton_) {
+        showOutputButton_->setChecked(false);
+    }
+    if (compareButton_) {
+        compareButton_->setChecked(false);
+    }
     stackedWidget_->setCurrentIndex(0);
     updateScaleLabel();
 }

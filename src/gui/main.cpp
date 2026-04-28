@@ -30,8 +30,12 @@ int main(int argc, char* argv[])
         const QStringList preferredFamilies = {
             QStringLiteral("Microsoft YaHei UI"),
             QStringLiteral("Microsoft YaHei"),
+            QStringLiteral("Noto Sans SC"),
             QStringLiteral("Noto Sans CJK SC"),
             QStringLiteral("Source Han Sans SC"),
+            QStringLiteral("DengXian"),
+            QStringLiteral("SimHei"),
+            QStringLiteral("SimSun"),
             QStringLiteral("SimSun")
         };
         const QFontDatabase fontDb;
@@ -40,6 +44,7 @@ int main(int argc, char* argv[])
             if (fontDb.families().contains(family)) {
                 uiFont.setFamily(family);
                 uiFont.setStyleStrategy(QFont::PreferAntialias);
+                uiFont.setHintingPreference(QFont::PreferFullHinting);
                 app.setFont(uiFont);
                 break;
             }
