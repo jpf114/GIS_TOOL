@@ -172,40 +172,41 @@ bool ParamWidget::hasParam(const std::string& key) const {
 }
 
 void ParamWidget::setStringValue(const std::string& key, const std::string& value) {
-    auto findLineEdit = [&](const ParamCardWidget* card) -> QLineEdit* {
-        if (!card) return nullptr;
-        auto values = card->collectValues();
-        if (values.contains(key)) {
-            return card->findChild<QLineEdit*>();
-        }
-        return nullptr;
+    auto applyToCard = [&](ParamCardWidget* card) -> bool {
+        if (!card || !card->hasParam(key)) return false;
+        card->setStringValue(key, value);
+        return true;
     };
 
-    if (auto* edit = findLineEdit(inputCard_)) { edit->setText(QString::fromUtf8(value)); return; }
-    if (auto* edit = findLineEdit(outputCard_)) { edit->setText(QString::fromUtf8(value)); return; }
-    if (auto* edit = findLineEdit(advancedCard_)) { edit->setText(QString::fromUtf8(value)); return; }
+    if (applyToCard(inputCard_)) return;
+    if (applyToCard(outputCard_)) return;
+    if (applyToCard(advancedCard_)) return;
+}
+
+bool ParamWidget::setValueFromString(const std::string& key, const std::string& value) {
+    auto applyToCard = [&](ParamCardWidget* card) -> bool {
+        if (!card || !card->hasParam(key)) {
+            return false;
+        }
+        return card->setValueFromString(key, value);
+    };
+
+    if (applyToCard(inputCard_)) return true;
+    if (applyToCard(outputCard_)) return true;
+    if (applyToCard(advancedCard_)) return true;
+    return false;
 }
 
 void ParamWidget::setExtentValue(const std::string& key, const std::array<double, 4>& value) {
-    auto findSpins = [&](const ParamCardWidget* card) -> QList<QDoubleSpinBox*> {
-        if (!card) return {};
-        auto values = card->collectValues();
-        if (values.contains(key)) {
-            return card->findChildren<QDoubleSpinBox*>();
-        }
-        return {};
+    auto applyToCard = [&](ParamCardWidget* card) -> bool {
+        if (!card || !card->hasParam(key)) return false;
+        card->setExtentValue(key, value);
+        return true;
     };
 
-    for (auto* card : {inputCard_, outputCard_, advancedCard_}) {
-        auto spins = findSpins(card);
-        if (spins.size() >= 4) {
-            spins[0]->setValue(value[0]);
-            spins[1]->setValue(value[1]);
-            spins[2]->setValue(value[2]);
-            spins[3]->setValue(value[3]);
-            return;
-        }
-    }
+    if (applyToCard(inputCard_)) return;
+    if (applyToCard(outputCard_)) return;
+    if (applyToCard(advancedCard_)) return;
 }
 
 std::string ParamWidget::stringValue(const std::string& key) const {

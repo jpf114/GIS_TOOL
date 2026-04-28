@@ -117,8 +117,8 @@ install(TARGETS gis-gui
 
 if(GIS_COPY_QT_PLATFORM_DLL)
     install(FILES
-        "${GIS_VCPKG_QT_PLATFORMS_DIR}/${GIS_QT_WINDOWS_DLL}"
-        "${GIS_VCPKG_QT_PLATFORMS_DIR}/${GIS_QT_OFFSCREEN_DLL}"
+        "${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}/qwindows.dll"
+        "${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}/qoffscreen.dll"
         DESTINATION ${GIS_INSTALL_PLATFORM_DIR}
     )
 endif()

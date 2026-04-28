@@ -20,6 +20,7 @@ public:
     void clear();
     bool hasParam(const std::string& key) const;
     void setStringValue(const std::string& key, const std::string& value);
+    bool setValueFromString(const std::string& key, const std::string& value);
     void setExtentValue(const std::string& key, const std::array<double, 4>& value);
     std::string stringValue(const std::string& key) const;
     void setHighlightedParam(const std::string& key);

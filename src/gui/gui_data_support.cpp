@@ -1,16 +1,13 @@
-#include "gui_data_support.h"
+﻿#include "gui_data_support.h"
 
 #include <gis/core/gdal_wrapper.h>
-#include <gis/core/opencv_wrapper.h>
 
 #include <gdal_priv.h>
-#include <opencv2/imgproc.hpp>
 #include <ogr_spatialref.h>
 #include <ogrsf_frmts.h>
 
 #include <algorithm>
 #include <cctype>
-#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <sstream>
@@ -27,10 +24,6 @@ struct DatasetCloser {
         }
     }
 };
-
-constexpr double kMinScale = 0.1;
-constexpr double kMaxScale = 8.0;
-constexpr double kZoomStep = 1.25;
 
 std::string lowerExtension(const std::string& path) {
     std::string ext = std::filesystem::path(path).extension().string();
@@ -77,33 +70,6 @@ std::string spatialReferenceText(const OGRSpatialReference* srs) {
 
 std::array<double, 4> envelopeToExtent(const OGREnvelope& envelope) {
     return {envelope.MinX, envelope.MinY, envelope.MaxX, envelope.MaxY};
-}
-
-double clampScale(double value) {
-    return std::clamp(value, kMinScale, kMaxScale);
-}
-
-std::string previewScaleText(gis::gui::DataKind kind, double scale) {
-    if (kind == gis::gui::DataKind::Unknown) {
-        return "无预览";
-    }
-
-    std::ostringstream oss;
-    oss << static_cast<int>(std::round(scale * 100.0)) << "%";
-    return oss.str();
-}
-
-std::string previewModeText(gis::gui::DataKind kind, bool fitMode, bool isPanning) {
-    if (kind == gis::gui::DataKind::Unknown) {
-        return "等待选择";
-    }
-    if (isPanning) {
-        return "拖拽浏览";
-    }
-    if (fitMode) {
-        return "适配视图";
-    }
-    return "手动缩放";
 }
 
 bool isLikelyVectorParamKey(const std::string& key) {
@@ -225,16 +191,6 @@ bool canPreviewData(const std::string& path) {
     return isSupportedDataPath(path);
 }
 
-bool canComparePreview(const std::string& inputPath, const std::string& outputPath) {
-    if (!canPreviewData(inputPath) || !canPreviewData(outputPath)) {
-        return false;
-    }
-
-    const auto inputKind = detectDataKind(inputPath);
-    const auto outputKind = detectDataKind(outputPath);
-    return inputKind != DataKind::Unknown && inputKind == outputKind;
-}
-
 std::string dataKindDisplayName(DataKind kind) {
     switch (kind) {
         case DataKind::Raster:
@@ -258,11 +214,7 @@ std::string dataOriginDisplayName(DataOrigin origin) {
         case DataOrigin::Input:
             return "输入";
         case DataOrigin::Output:
-            return "正式结果";
-        case DataOrigin::QuickPreview:
-            return "预览影像";
-        case DataOrigin::QuickRun:
-            return "快速试算";
+            return "输出结果";
         default:
             return "未知";
     }
@@ -279,12 +231,6 @@ std::string buildDataDisplayLabel(const std::string& path,
     const std::string active = isActive ? "[当前]" : "";
     return "[" + dataKindDisplayName(kind) + "][" + dataOriginDisplayName(origin) + "]" + active + " "
         + std::filesystem::path(path).filename().string();
-}
-
-std::string buildPreviewStatusText(DataKind kind, double scale, bool fitMode, bool isPanning) {
-    return "当前预览: " + dataKindDisplayName(kind)
-        + " | 缩放: " + previewScaleText(kind, scale)
-        + " | 模式: " + previewModeText(kind, fitMode, isPanning);
 }
 
 std::string buildSuggestedOutputPath(const std::string& inputPath,
@@ -313,197 +259,6 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
     const fs::path suggested = input.parent_path() /
         fs::path(input.stem().string() + "_" + suffix + input.extension().string());
     return suggested.generic_string();
-}
-
-std::string buildQuickPreviewOutputPath(const std::string& inputPath) {
-    namespace fs = std::filesystem;
-
-    fs::path input = fs::path(inputPath);
-    if (input.empty()) {
-        return {};
-    }
-
-    const fs::path output = input.parent_path() /
-        fs::path(input.stem().string() + "_preview8" + input.extension().string());
-    return output.generic_string();
-}
-
-std::string buildQuickPreviewResultPath(const std::string& inputPath,
-                                        const std::string& pluginName,
-                                        const std::string& action) {
-    namespace fs = std::filesystem;
-
-    fs::path input = fs::path(inputPath);
-    if (input.empty()) {
-        return {};
-    }
-
-    std::string suffix = sanitizeSuffixPart(pluginName);
-    const std::string actionSuffix = sanitizeSuffixPart(action);
-    if (!actionSuffix.empty()) {
-        suffix += suffix.empty() ? actionSuffix : "_" + actionSuffix;
-    }
-    if (suffix.empty()) {
-        suffix = "preview";
-    } else {
-        suffix += "_preview";
-    }
-
-    const fs::path output = input.parent_path() /
-        fs::path(input.stem().string() + "_" + suffix + input.extension().string());
-    return output.generic_string();
-}
-
-bool buildQuickPreviewRaster(const std::string& inputPath,
-                             const std::string& outputPath,
-                             int maxLongEdge) {
-    if (detectDataKind(inputPath) != DataKind::Raster || outputPath.empty() || maxLongEdge <= 0) {
-        return false;
-    }
-
-    auto srcDs = gis::core::openRaster(inputPath, true);
-    if (!srcDs) {
-        return false;
-    }
-
-    cv::Mat band = gis::core::gdalBandToMat(srcDs.get(), 1);
-    if (band.empty()) {
-        return false;
-    }
-
-    const int srcWidth = band.cols;
-    const int srcHeight = band.rows;
-    const int longEdge = std::max(srcWidth, srcHeight);
-    const double scale = longEdge > maxLongEdge
-        ? static_cast<double>(maxLongEdge) / static_cast<double>(longEdge)
-        : 1.0;
-
-    cv::Mat resized = band;
-    if (scale < 1.0) {
-        const cv::Size targetSize(
-            std::max(1, static_cast<int>(std::round(srcWidth * scale))),
-            std::max(1, static_cast<int>(std::round(srcHeight * scale))));
-        cv::resize(band, resized, targetSize, 0.0, 0.0, cv::INTER_AREA);
-    }
-
-    cv::Mat preview = gis::core::toUint8(resized);
-    auto dstDs = gis::core::createRaster(outputPath, preview.cols, preview.rows, 1, GDT_Byte);
-    if (!dstDs) {
-        return false;
-    }
-
-    double gt[6] = {};
-    if (srcDs->GetGeoTransform(gt) == CE_None) {
-        const double scaleX = static_cast<double>(srcWidth) / static_cast<double>(preview.cols);
-        const double scaleY = static_cast<double>(srcHeight) / static_cast<double>(preview.rows);
-        gt[1] *= scaleX;
-        gt[2] *= scaleY;
-        gt[4] *= scaleX;
-        gt[5] *= scaleY;
-        dstDs->SetGeoTransform(gt);
-    }
-
-    const std::string projection = gis::core::getSRSWKT(srcDs.get());
-    if (!projection.empty()) {
-        dstDs->SetProjection(projection.c_str());
-    }
-
-    auto* srcBand = srcDs->GetRasterBand(1);
-    auto* dstBand = dstDs->GetRasterBand(1);
-    if (!srcBand || !dstBand) {
-        return false;
-    }
-
-    int hasNoData = 0;
-    const double noDataValue = srcBand->GetNoDataValue(&hasNoData);
-    if (hasNoData) {
-        dstBand->SetNoDataValue(noDataValue);
-    }
-
-    return dstBand->RasterIO(
-        GF_Write, 0, 0, preview.cols, preview.rows,
-        preview.ptr<uint8_t>(), preview.cols, preview.rows, GDT_Byte, 0, 0) == CE_None;
-}
-
-bool buildQuickPreviewExecutionParams(
-    const std::vector<gis::framework::ParamSpec>& specs,
-    const std::map<std::string, gis::framework::ParamValue>& params,
-    const std::string& pluginName,
-    const std::string& action,
-    std::map<std::string, gis::framework::ParamValue>& outParams,
-    int maxLongEdge) {
-    outParams = params;
-
-    std::string primaryInput;
-    if (auto it = params.find("input"); it != params.end()) {
-        if (const auto* text = std::get_if<std::string>(&it->second)) {
-            primaryInput = *text;
-        }
-    }
-    for (const auto& spec : specs) {
-        if (spec.type != gis::framework::ParamType::FilePath) {
-            continue;
-        }
-
-        auto it = outParams.find(spec.key);
-        if (it == outParams.end()) {
-            continue;
-        }
-
-        auto* text = std::get_if<std::string>(&it->second);
-        if (!text || text->empty()) {
-            continue;
-        }
-
-        if (spec.key == "output") {
-            continue;
-        }
-
-        if (detectDataKind(*text) != DataKind::Raster) {
-            continue;
-        }
-
-        const std::string originalPath = *text;
-
-        const std::string previewPath = buildQuickPreviewOutputPath(originalPath);
-        if (!buildQuickPreviewRaster(originalPath, previewPath, maxLongEdge)) {
-            return false;
-        }
-        it->second = previewPath;
-    }
-
-    auto outputIt = outParams.find("output");
-    if (outputIt != outParams.end() && !primaryInput.empty()) {
-        outputIt->second = buildQuickPreviewResultPath(primaryInput, pluginName, action);
-    }
-
-    return true;
-}
-
-bool canBuildQuickPreviewExecution(
-    const std::vector<gis::framework::ParamSpec>& specs,
-    const std::map<std::string, gis::framework::ParamValue>& params) {
-    for (const auto& spec : specs) {
-        if (spec.type != gis::framework::ParamType::FilePath || spec.key == "output") {
-            continue;
-        }
-
-        auto it = params.find(spec.key);
-        if (it == params.end()) {
-            continue;
-        }
-
-        const auto* text = std::get_if<std::string>(&it->second);
-        if (!text || text->empty()) {
-            continue;
-        }
-
-        if (detectDataKind(*text) == DataKind::Raster) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
@@ -562,10 +317,41 @@ DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
     return info;
 }
 
+std::string localizeResultMessage(const std::string& message) {
+    static const std::map<std::string, std::string> kKnownMessages = {
+        {"Processing completed successfully", "处理完成"},
+        {"Histogram computed", "直方图计算完成"},
+        {"Overviews built successfully", "金字塔构建完成"},
+        {"NoData updated successfully", "NoData 设置完成"},
+        {"Color map applied successfully", "伪彩色处理完成"},
+        {"NDVI computed successfully", "NDVI 计算完成"},
+        {"Vector buffer completed successfully", "缓冲区处理完成"},
+        {"Vector conversion completed successfully", "格式转换完成"},
+        {"Vector dissolve completed successfully", "融合完成"},
+        {"Vector clip completed successfully", "矢量裁切完成"},
+        {"Vector union completed successfully", "并集处理完成"},
+        {"Vector difference completed successfully", "差集处理完成"},
+    };
+
+    const auto it = kKnownMessages.find(message);
+    if (it != kKnownMessages.end()) {
+        return it->second;
+    }
+
+    if (message.rfind("==== Raster Info:", 0) == 0) {
+        return "栅格信息读取完成";
+    }
+    if (message.rfind("==== Vector Info:", 0) == 0) {
+        return "矢量信息读取完成";
+    }
+
+    return message;
+}
+
 std::string buildResultSummaryText(const gis::framework::Result& result) {
     std::ostringstream oss;
     oss << "状态: " << (result.success ? "成功" : "失败") << "\n";
-    oss << "消息: " << result.message;
+    oss << "消息: " << localizeResultMessage(result.message);
 
     if (!result.outputPath.empty()) {
         oss << "\n输出: " << result.outputPath;
@@ -737,22 +523,6 @@ std::vector<BindableParamOption> collectBindableParamOptions(
     return options;
 }
 
-double zoomInScale(double currentScale) {
-    return clampScale(currentScale * kZoomStep);
-}
-
-double zoomOutScale(double currentScale) {
-    return clampScale(currentScale / kZoomStep);
-}
-
-double fitScaleForSize(int contentWidth, int contentHeight, int viewportWidth, int viewportHeight) {
-    if (contentWidth <= 0 || contentHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
-        return 1.0;
-    }
-
-    const double widthScale = static_cast<double>(viewportWidth) / static_cast<double>(contentWidth);
-    const double heightScale = static_cast<double>(viewportHeight) / static_cast<double>(contentHeight);
-    return clampScale(std::min({widthScale, heightScale, 1.0}));
-}
-
 } // namespace gis::gui
+
+

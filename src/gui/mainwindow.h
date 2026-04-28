@@ -4,6 +4,8 @@
 #include <gis/framework/plugin_manager.h>
 #include <map>
 #include <string>
+#include <set>
+#include <vector>
 
 class QLabel;
 class ParamWidget;
@@ -17,6 +19,13 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow();
+    void selectPluginByName(const std::string& pluginName);
+    void selectActionByKey(const std::string& actionKey);
+    bool setParamValue(const std::string& key, const std::string& value);
+    void triggerExecute();
+
+signals:
+    void executionFinished(bool success);
 
 private slots:
     void onPluginSelected(const std::string& pluginName);
@@ -27,11 +36,21 @@ private slots:
 private:
     void loadPlugins();
     void setupUi();
+    void syncDerivedParams();
+
     std::vector<gis::framework::ParamSpec> effectiveParamSpecs() const;
     std::map<std::string, gis::framework::ParamValue> collectExecutionParams() const;
     void refreshExecuteButtonState();
     void refreshParamValidationState();
     void runPluginWithParams(const std::map<std::string, gis::framework::ParamValue>& params);
+
+    static const std::map<std::string, std::map<std::string, std::set<std::string>>>& actionParamVisibilityMap();
+    static std::set<std::string> visibleParamsForAction(
+        const std::string& pluginName,
+        const std::string& actionKey);
+
+    static QString actionDescription(const std::string& pluginName,
+                                     const QString& actionKey);
 
     NavPanel* navPanel_ = nullptr;
     QLabel* functionTitleLabel_ = nullptr;

@@ -721,7 +721,7 @@ gis::framework::Result MatchingPlugin::doCornerDetect(
                 [&]() {
                     std::vector<cv::KeyPoint> kps;
                     for (auto& c : corners) {
-                        kps.emplace_back(c.x, c.y, 3.0f, -1, 0.0f);
+                        kps.emplace_back(cv::Point2f(c.x, c.y), 3.0f, -1.0f, 0.0f);
                     }
                     return kps;
                 }())) {

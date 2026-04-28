@@ -9,6 +9,7 @@
 #include <ogrsf_frmts.h>
 #include <cpl_error.h>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <string>
@@ -84,6 +85,80 @@ static std::string createTestRaster(const std::string& name, int w = 100, int h 
         band->FlushCache();
     }
     return path;
+}
+
+static std::string createPatternRaster(const std::string& name, int w = 96, int h = 96) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Byte);
+    double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+    ds->SetGeoTransform(adfGT);
+
+    std::vector<uint8_t> data(w * h, 0);
+    for (int y = 8; y < h - 8; ++y) {
+        for (int x = 8; x < w - 8; ++x) {
+            if ((x >= 18 && x <= 34 && y >= 18 && y <= 34) ||
+                (x >= 54 && x <= 78 && y >= 20 && y <= 28) ||
+                (x >= 52 && x <= 60 && y >= 20 && y <= 70) ||
+                ((x % 12) <= 2 && (y % 12) <= 2 && x >= 12 && y >= 12) ||
+                ((x + 2 * y) % 19 == 0 && x >= 10 && y >= 10) ||
+                (x == y) ||
+                (x + y == w - 1)) {
+                data[y * w + x] = 255;
+            }
+        }
+    }
+
+    auto* band = ds->GetRasterBand(1);
+    band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Byte, 0, 0);
+    band->FlushCache();
+    return path;
+}
+
+static std::string createConstantRaster(const std::string& name,
+                                        int w,
+                                        int h,
+                                        float value,
+                                        double originX = 116.0,
+                                        double originY = 40.0,
+                                        double pixelSize = 0.001) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+    double adfGT[6] = {originX, pixelSize, 0.0, originY, 0.0, -pixelSize};
+    ds->SetGeoTransform(adfGT);
+
+    std::vector<float> data(w * h, value);
+    auto* band = ds->GetRasterBand(1);
+    band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+    band->FlushCache();
+    return path;
+}
+
+static void fillRasterRect(const std::string& path,
+                           int xOff,
+                           int yOff,
+                           int width,
+                           int height,
+                           float value) {
+    auto ds = gis::core::openRaster(path, false);
+    ASSERT_NE(ds, nullptr);
+
+    std::vector<float> data(width * height, value);
+    auto* band = ds->GetRasterBand(1);
+    ASSERT_NE(band, nullptr);
+    ASSERT_EQ(band->RasterIO(GF_Write, xOff, yOff, width, height,
+        data.data(), width, height, GDT_Float32, 0, 0), CE_None);
+    band->FlushCache();
+}
+
+static float readRasterPixel(const std::string& path, int x, int y) {
+    auto ds = gis::core::openRaster(path, true);
+    EXPECT_NE(ds, nullptr);
+    auto* band = ds->GetRasterBand(1);
+    EXPECT_NE(band, nullptr);
+
+    float value = 0.0f;
+    EXPECT_EQ(band->RasterIO(GF_Read, x, y, 1, 1, &value, 1, 1, GDT_Float32, 0, 0), CE_None);
+    return value;
 }
 
 TEST_F(PluginTest, PluginManagerScan) {
@@ -1734,6 +1809,221 @@ TEST_F(PluginTest, ProcessingBandMathExecution) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Band math failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
+}
+
+TEST_F(PluginTest, CuttingClipRejectsMissingExtentAndCutline) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("cutting_clip_input.tif", 32, 24);
+    const std::string output = utf8PathString(getTestDir() / "cutting_clip_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("Either extent or cutline must be specified"), std::string::npos);
+}
+
+TEST_F(PluginTest, CuttingClipByExtentProducesExpectedWindow) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createConstantRaster("cutting_clip_extent_input.tif", 20, 10, 5.0f);
+    const std::string output = utf8PathString(getTestDir() / "cutting_clip_extent_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = input;
+    params["output"] = output;
+    params["extent"] = std::array<double, 4>{116.005, 39.994, 116.012, 39.998};
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterXSize(), 7);
+    EXPECT_EQ(outDs->GetRasterYSize(), 4);
+}
+
+TEST_F(PluginTest, CuttingSplitExecutionCreatesTiles) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("cutting_split_input.tif", 30, 20);
+    const fs::path outputDir = getTestDir() / "cutting_split_tiles";
+    fs::remove_all(outputDir);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("split");
+    params["input"] = input;
+    params["output"] = utf8PathString(outputDir);
+    params["tile_size"] = 16;
+    params["overlap"] = 0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(outputDir));
+
+    size_t tileCount = 0;
+    for (const auto& entry : fs::directory_iterator(outputDir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".tif") {
+            ++tileCount;
+        }
+    }
+    EXPECT_EQ(tileCount, 4u);
+}
+
+TEST_F(PluginTest, CuttingMosaicProducesCombinedExtentAndValues) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string left = createConstantRaster("cutting_mosaic_left.tif", 10, 6, 10.0f, 116.0, 40.0);
+    const std::string right = createConstantRaster("cutting_mosaic_right.tif", 10, 6, 30.0f, 116.010, 40.0);
+    const std::string output = utf8PathString(getTestDir() / "cutting_mosaic_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("mosaic");
+    params["input"] = left + "," + right;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterXSize(), 20);
+    EXPECT_EQ(outDs->GetRasterYSize(), 6);
+    EXPECT_NEAR(readRasterPixel(output, 2, 2), 10.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 15, 2), 30.0f, 1e-4f);
+}
+
+TEST_F(PluginTest, CuttingMergeBandsCreatesMultiBandRaster) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input1 = createTestRaster("cutting_merge_band1.tif", 24, 24, 1);
+    const std::string input2 = createTestRaster("cutting_merge_band2.tif", 24, 24, 1);
+    const std::string output = utf8PathString(getTestDir() / "cutting_merge_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("merge_bands");
+    params["input"] = input1 + "," + input2;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterCount(), 2);
+}
+
+TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createPatternRaster("matching_detect_input.tif");
+    const std::string output = utf8PathString(getTestDir() / "matching_detect_output.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("detect");
+    params["input"] = input;
+    params["output"] = output;
+    params["method"] = std::string("orb");
+    params["max_points"] = 200;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    ASSERT_TRUE(result.metadata.count("keypoint_count"));
+    EXPECT_GT(std::stoi(result.metadata.at("keypoint_count")), 0);
+
+    std::ifstream ifs(output);
+    ASSERT_TRUE(ifs.is_open());
+    const std::string content((std::istreambuf_iterator<char>(ifs)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("\"count\":"), std::string::npos);
+}
+
+TEST_F(PluginTest, MatchingChangeRejectsMismatchedRasterSizes) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    const std::string reference = createTestRaster("matching_change_ref.tif", 20, 20);
+    const std::string input = createTestRaster("matching_change_input.tif", 28, 20);
+    const std::string output = utf8PathString(getTestDir() / "matching_change_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("change");
+    params["reference"] = reference;
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("Image sizes do not match"), std::string::npos);
+}
+
+TEST_F(PluginTest, MatchingChangeExecutionReportsChangedPixels) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    const std::string reference = createConstantRaster("matching_change_success_ref.tif", 20, 20, 10.0f);
+    const std::string input = createConstantRaster("matching_change_success_input.tif", 20, 20, 10.0f);
+    fillRasterRect(input, 5, 6, 4, 3, 80.0f);
+    const std::string output = utf8PathString(getTestDir() / "matching_change_success_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("change");
+    params["reference"] = reference;
+    params["input"] = input;
+    params["output"] = output;
+    params["change_method"] = std::string("differencing");
+    params["threshold"] = 1.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    ASSERT_TRUE(result.metadata.count("changed_pixels"));
+    ASSERT_TRUE(result.metadata.count("change_ratio"));
+    EXPECT_EQ(std::stoi(result.metadata.at("changed_pixels")), 12);
+    EXPECT_NEAR(std::stod(result.metadata.at("change_ratio")), 12.0 / 400.0, 1e-6);
+}
+
+TEST_F(PluginTest, MatchingRegisterExecutionProducesAlignedOutput) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    const std::string reference = createPatternRaster("matching_register_ref.tif");
+    const std::string input = reference;
+    const std::string output = utf8PathString(getTestDir() / "matching_register_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("register");
+    params["reference"] = reference;
+    params["input"] = input;
+    params["output"] = output;
+    params["method"] = std::string("orb");
+    params["match_method"] = std::string("bf");
+    params["transform"] = std::string("affine");
+    params["max_points"] = 200;
+    params["ratio_test"] = 0.95;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    ASSERT_TRUE(result.metadata.count("match_count"));
+    EXPECT_GE(std::stoi(result.metadata.at("match_count")), 4);
+
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterXSize(), 96);
+    EXPECT_EQ(outDs->GetRasterYSize(), 96);
 }
 
 TEST_F(PluginTest, MatchingPluginDebugLightweightActionsFailFast) {

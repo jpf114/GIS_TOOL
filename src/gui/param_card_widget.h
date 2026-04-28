@@ -14,6 +14,7 @@
 class QLineEdit;
 class QComboBox;
 class QDoubleSpinBox;
+class QSpinBox;
 class QCheckBox;
 class QPushButton;
 
@@ -23,6 +24,7 @@ struct ParamWidgetEntry {
     QLineEdit* lineEdit = nullptr;
     QComboBox* comboBox = nullptr;
     QDoubleSpinBox* spinBox = nullptr;
+    QSpinBox* intSpinBox = nullptr;
     QCheckBox* checkBox = nullptr;
     QPushButton* browseButton = nullptr;
 };
@@ -40,6 +42,10 @@ public:
 
     QMap<std::string, gis::framework::ParamValue> collectValues() const;
     bool validate() const;
+    bool hasParam(const std::string& key) const;
+    void setStringValue(const std::string& key, const std::string& value);
+    bool setValueFromString(const std::string& key, const std::string& value);
+    void setExtentValue(const std::string& key, const std::array<double, 4>& value);
 
     void markFieldError(const std::string& key, bool error) const;
 

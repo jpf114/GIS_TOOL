@@ -349,7 +349,9 @@ gis::framework::Result CuttingPlugin::doMergeBands(
     for (auto& f : srcPaths) srcNamePtrs.push_back(f.c_str());
     srcNamePtrs.push_back(nullptr);
 
-    GDALBuildVRTOptions* vrtOpts = GDALBuildVRTOptionsNew(nullptr, nullptr);
+    const char* vrtArgv[] = {"-separate", nullptr};
+    GDALBuildVRTOptions* vrtOpts = GDALBuildVRTOptionsNew(
+        const_cast<char**>(vrtArgv), nullptr);
     if (!vrtOpts) {
         for (auto& d : srcDSVec) GDALClose(d);
         return gis::framework::Result::fail("Failed to create VRT options");

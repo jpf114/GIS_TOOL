@@ -1,4 +1,4 @@
-#include "param_card_widget.h"
+﻿#include "param_card_widget.h"
 #include "style_constants.h"
 
 #include <gis/framework/param_spec.h>
@@ -16,7 +16,9 @@
 #include <QHBoxLayout>
 #include <QFrame>
 #include <QFileDialog>
-#include <QMessageBox>
+#include <QSizePolicy>
+
+#include <array>
 
 ParamCardWidget::ParamCardWidget(CardType type, QWidget* parent)
     : QWidget(parent), cardType_(type) {
@@ -42,20 +44,11 @@ void ParamCardWidget::setupUi() {
     auto* headerLayout = new QHBoxLayout;
     headerLayout->setSpacing(8);
 
-    static const QMap<CardType, QString> kIcons = {
-        {CardType::Input,    QStringLiteral("\360\237\223\245")},
-        {CardType::Output,   QStringLiteral("\360\237\223\244")},
-        {CardType::Advanced, QStringLiteral("\342\232\231")},
-    };
     static const QMap<CardType, QString> kDefaultTitles = {
         {CardType::Input,    QStringLiteral("\350\276\223\345\205\245\345\217\202\346\225\260")},
         {CardType::Output,   QStringLiteral("\350\276\223\345\207\272\345\217\202\346\225\260")},
         {CardType::Advanced, QStringLiteral("\351\253\230\347\272\247\345\217\202\346\225\260")},
     };
-
-    iconLabel_ = new QLabel(kIcons.value(cardType_));
-    iconLabel_->setFixedSize(20, 20);
-    headerLayout->addWidget(iconLabel_);
 
     titleLabel_ = new QLabel(kDefaultTitles.value(cardType_));
     titleLabel_->setObjectName(QStringLiteral("cardTitle"));
@@ -74,6 +67,7 @@ void ParamCardWidget::setupUi() {
     paramsLayout_->setContentsMargins(0, 0, 0, 0);
     paramsLayout_->setHorizontalSpacing(12);
     paramsLayout_->setVerticalSpacing(10);
+    paramsLayout_->setColumnMinimumWidth(0, 200);
     paramsLayout_->setColumnStretch(0, gis::style::Size::kLabelInputRatio);
     paramsLayout_->setColumnStretch(1, 5);
     cardContentLayout_->addWidget(paramsContainer);
@@ -90,6 +84,8 @@ void ParamCardWidget::addParam(const gis::framework::ParamSpec& spec) {
     entry.key = spec.key;
 
     auto* labelWidget = new QWidget;
+    labelWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    labelWidget->setMaximumWidth(220);
     auto* labelLayout = new QVBoxLayout(labelWidget);
     labelLayout->setContentsMargins(0, 0, 0, 0);
     labelLayout->setSpacing(2);
@@ -103,6 +99,9 @@ void ParamCardWidget::addParam(const gis::framework::ParamSpec& spec) {
         auto* descLabel = new QLabel(QString::fromUtf8(spec.description));
         descLabel->setObjectName(QStringLiteral("paramDesc"));
         descLabel->setWordWrap(true);
+        descLabel->setAlignment(Qt::AlignRight | Qt::AlignTop);
+        descLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        descLabel->setMaximumWidth(220);
         labelLayout->addWidget(descLabel);
     }
 
@@ -115,8 +114,8 @@ void ParamCardWidget::addParam(const gis::framework::ParamSpec& spec) {
 
     QWidget* inputWidget = createParamWidget(spec, entry);
 
-    paramsLayout_->addWidget(labelWidget, paramsRow_, 0, Qt::AlignRight | Qt::AlignVCenter);
-    paramsLayout_->addWidget(inputWidget, paramsRow_, 1);
+    paramsLayout_->addWidget(labelWidget, paramsRow_, 0, Qt::AlignTop);
+    paramsLayout_->addWidget(inputWidget, paramsRow_, 1, Qt::AlignTop);
     paramsRow_++;
 
     entries_[spec.key] = entry;
@@ -164,13 +163,14 @@ QWidget* ParamCardWidget::createFileWidget(const gis::framework::ParamSpec& spec
         lineEdit->setText(QString::fromUtf8(*defStr));
     }
     entry.lineEdit = lineEdit;
+    connect(lineEdit, &QLineEdit::textChanged, this, &ParamCardWidget::paramChanged);
     layout->addWidget(lineEdit, 1);
 
     if (spec.type != gis::framework::ParamType::CRS) {
         auto* browseBtn = new QPushButton(
             spec.type == gis::framework::ParamType::DirPath
-                ? QStringLiteral("\346\265\217\232\232\210...")
-                : QStringLiteral("\346\265\217\232\232\210..."));
+                ? QStringLiteral("浏览")
+                : QStringLiteral("浏览"));
         browseBtn->setObjectName(QStringLiteral("browseButton"));
         entry.browseButton = browseBtn;
 
@@ -224,8 +224,7 @@ QWidget* ParamCardWidget::createIntWidget(const gis::framework::ParamSpec& spec,
     if (minInt && maxInt && *maxInt > *minInt) {
         spinBox->setRange(*minInt, *maxInt);
     }
-    entry.spinBox = new QDoubleSpinBox;
-    entry.spinBox->hide();
+    entry.intSpinBox = spinBox;
     entry.widget = spinBox;
     connect(spinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int) { emit paramChanged(); });
     return spinBox;
@@ -297,6 +296,7 @@ QWidget* ParamCardWidget::createExtentWidget(const gis::framework::ParamSpec& sp
         spin->setPrefix(QString::fromUtf8(kExtentLabels[i]) + QStringLiteral(" "));
         spin->setValue(defaultExtent[i]);
         spin->setMinimumHeight(gis::style::Size::kInputMinHeight);
+        connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &ParamCardWidget::paramChanged);
         grid->addWidget(spin, i / 2, (i % 2) * 2 + 1);
     }
 
@@ -326,27 +326,20 @@ QMap<std::string, gis::framework::ParamValue> ParamCardWidget::collectValues() c
             result[key] = gis::framework::ParamValue(entry.lineEdit->text().toUtf8().constData());
         } else if (entry.comboBox) {
             result[key] = gis::framework::ParamValue(entry.comboBox->currentText().toUtf8().constData());
-        } else if (entry.spinBox && entry.spinBox->isVisible()) {
-            if (entry.spinBox->decimals() == 0) {
-                result[key] = gis::framework::ParamValue(static_cast<int>(entry.spinBox->value()));
-            } else {
-                result[key] = gis::framework::ParamValue(entry.spinBox->value());
-            }
+        } else if (entry.spinBox) {
+            result[key] = gis::framework::ParamValue(entry.spinBox->value());
+        } else if (entry.intSpinBox) {
+            result[key] = gis::framework::ParamValue(entry.intSpinBox->value());
         } else if (entry.checkBox) {
             result[key] = gis::framework::ParamValue(entry.checkBox->isChecked());
         } else if (entry.widget) {
-            auto* spinBox = qobject_cast<QSpinBox*>(entry.widget);
-            if (spinBox) {
-                result[key] = gis::framework::ParamValue(spinBox->value());
-            } else {
-                auto spins = entry.widget->findChildren<QDoubleSpinBox*>();
-                if (spins.size() >= 4) {
-                    std::array<double, 4> arr = {
-                        spins[0]->value(), spins[1]->value(),
-                        spins[2]->value(), spins[3]->value()
-                    };
-                    result[key] = gis::framework::ParamValue(arr);
-                }
+            auto spins = entry.widget->findChildren<QDoubleSpinBox*>();
+            if (spins.size() >= 4) {
+                std::array<double, 4> arr = {
+                    spins[0]->value(), spins[1]->value(),
+                    spins[2]->value(), spins[3]->value()
+                };
+                result[key] = gis::framework::ParamValue(arr);
             }
         }
     }
@@ -395,5 +388,126 @@ void ParamCardWidget::markFieldError(const std::string& key, bool error) const {
         entry.lineEdit->setStyleSheet(error ? errorStyle : normalStyle);
     } else if (entry.comboBox) {
         entry.comboBox->setStyleSheet(error ? errorStyle : normalStyle);
+    } else if (entry.spinBox) {
+        entry.spinBox->setStyleSheet(error ? errorStyle : normalStyle);
+    } else if (entry.intSpinBox) {
+        entry.intSpinBox->setStyleSheet(error ? errorStyle : normalStyle);
     }
 }
+
+bool ParamCardWidget::hasParam(const std::string& key) const {
+    return entries_.contains(key);
+}
+
+void ParamCardWidget::setStringValue(const std::string& key, const std::string& value) {
+    auto it = entries_.find(key);
+    if (it == entries_.end()) {
+        return;
+    }
+
+    auto& entry = it.value();
+    if (entry.lineEdit) {
+        entry.lineEdit->setText(QString::fromUtf8(value));
+        return;
+    }
+
+    if (entry.comboBox) {
+        const QString text = QString::fromUtf8(value);
+        const int index = entry.comboBox->findText(text);
+        if (index >= 0) {
+            entry.comboBox->setCurrentIndex(index);
+        }
+    }
+}
+
+bool ParamCardWidget::setValueFromString(const std::string& key, const std::string& value) {
+    auto it = entries_.find(key);
+    if (it == entries_.end()) {
+        return false;
+    }
+
+    auto& entry = it.value();
+    if (entry.lineEdit) {
+        entry.lineEdit->setText(QString::fromUtf8(value));
+        return true;
+    }
+
+    if (entry.comboBox) {
+        const QString text = QString::fromUtf8(value);
+        int index = entry.comboBox->findText(text);
+        if (index < 0) {
+            index = entry.comboBox->findText(text, Qt::MatchContains);
+        }
+        if (index >= 0) {
+            entry.comboBox->setCurrentIndex(index);
+            return true;
+        }
+        return false;
+    }
+
+    if (entry.spinBox) {
+        bool ok = false;
+        const double number = QString::fromUtf8(value).toDouble(&ok);
+        if (!ok) {
+            return false;
+        }
+        entry.spinBox->setValue(number);
+        return true;
+    }
+
+    if (entry.intSpinBox) {
+        bool ok = false;
+        const int number = QString::fromUtf8(value).toInt(&ok);
+        if (!ok) {
+            return false;
+        }
+        entry.intSpinBox->setValue(number);
+        return true;
+    }
+
+    if (entry.checkBox) {
+        const QString text = QString::fromUtf8(value).trimmed().toLower();
+        entry.checkBox->setChecked(
+            text == QStringLiteral("1") ||
+            text == QStringLiteral("true") ||
+            text == QStringLiteral("yes") ||
+            text == QStringLiteral("on"));
+        return true;
+    }
+
+    if (entry.widget) {
+        const QStringList parts = QString::fromUtf8(value).split(',', Qt::SkipEmptyParts);
+        if (parts.size() != 4) {
+            return false;
+        }
+        std::array<double, 4> extent = {0, 0, 0, 0};
+        for (int i = 0; i < 4; ++i) {
+            bool ok = false;
+            extent[static_cast<size_t>(i)] = parts[i].trimmed().toDouble(&ok);
+            if (!ok) {
+                return false;
+            }
+        }
+        setExtentValue(key, extent);
+        return true;
+    }
+
+    return false;
+}
+
+void ParamCardWidget::setExtentValue(const std::string& key, const std::array<double, 4>& value) {
+    auto it = entries_.find(key);
+    if (it == entries_.end() || !it.value().widget) {
+        return;
+    }
+
+    const auto spins = it.value().widget->findChildren<QDoubleSpinBox*>();
+    if (spins.size() < 4) {
+        return;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        spins[i]->setValue(value[static_cast<size_t>(i)]);
+    }
+}
+

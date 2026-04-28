@@ -73,28 +73,11 @@ void NavPanel::setPlugins(const std::vector<gis::framework::IGisPlugin*>& plugin
     pluginButtonMap_.clear();
     currentPluginButton_ = nullptr;
 
-    static const std::vector<std::pair<std::string, QString>> kPluginIcons = {
-        {"projection", QStringLiteral("\360\237\227\272")},
-        {"cutting",    QStringLiteral("\342\234\202")},
-        {"matching",   QStringLiteral("\360\237\224\227")},
-        {"processing", QStringLiteral("\342\232\231")},
-        {"utility",    QStringLiteral("\360\237\224\247")},
-        {"vector",     QStringLiteral("\360\237\223\220")},
-    };
-
     for (auto* plugin : plugins) {
         auto* btn = new QPushButton;
         btn->setObjectName(QStringLiteral("navItem"));
         btn->setCheckable(true);
-
-        QString icon;
-        for (const auto& [name, ic] : kPluginIcons) {
-            if (plugin->name() == name) {
-                icon = ic + QStringLiteral(" ");
-                break;
-            }
-        }
-        btn->setText(icon + QString::fromUtf8(plugin->displayName()));
+        btn->setText(QString::fromUtf8(plugin->displayName()));
         btn->setToolTip(QString::fromUtf8(plugin->description()));
 
         connect(btn, &QPushButton::clicked, this, [this, name = plugin->name()]() {

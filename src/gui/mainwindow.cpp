@@ -1,4 +1,4 @@
-#include "mainwindow.h"
+﻿#include "mainwindow.h"
 
 #include "execute_worker.h"
 #include "nav_panel.h"
@@ -25,11 +25,26 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
+#include <set>
+#include <utility>
 #include <vector>
 
 namespace {
 
-QString actionDisplayName(const QString& actionKey) {
+struct ActionUiConfig {
+    QString displayName;
+    QString description;
+    std::set<std::string> visibleKeys;
+    std::set<std::string> requiredKeys;
+};
+
+struct ParamText {
+    QString displayName;
+    QString description;
+};
+
+QString genericActionDisplayName(const QString& actionKey) {
     static const std::map<QString, QString> kLabels = {
         {QStringLiteral("reproject"), QStringLiteral("\351\207\215\346\212\225\345\275\261")},
         {QStringLiteral("info"), QStringLiteral("\344\277\241\346\201\257\346\237\245\347\234\213")},
@@ -70,7 +85,6 @@ QString actionDisplayName(const QString& actionKey) {
         {QStringLiteral("union"), QStringLiteral("\345\271\266\351\233\206")},
         {QStringLiteral("difference"), QStringLiteral("\345\267\256\351\233\206")},
         {QStringLiteral("dissolve"), QStringLiteral("\350\236\215\345\220\210")},
-        {QStringLiteral("filter"), QStringLiteral("\347\251\272\351\227\264\350\277\207\346\273\244")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -78,6 +92,237 @@ QString actionDisplayName(const QString& actionKey) {
         return it->second;
     }
     return actionKey;
+}
+
+const std::map<std::string, ParamText>& commonParamTextStorage() {
+    static const std::map<std::string, ParamText> kTexts = {
+        {"input", {QStringLiteral("输入文件"), QStringLiteral("输入数据路径，可按功能填写单文件或逗号分隔的多文件。")}},
+        {"output", {QStringLiteral("输出文件"), QStringLiteral("输出结果路径。")}},
+        {"reference", {QStringLiteral("参考文件"), QStringLiteral("参考数据路径，常用于匹配、配准或变化检测。")}},
+        {"dst_srs", {QStringLiteral("目标坐标系"), QStringLiteral("目标坐标参考系，例如 EPSG:3857。")}},
+        {"src_srs", {QStringLiteral("源坐标系"), QStringLiteral("源坐标参考系，留空时尽量使用数据自带坐标系。")}},
+        {"srs", {QStringLiteral("坐标系"), QStringLiteral("要写入数据的坐标参考系。")}},
+        {"resample", {QStringLiteral("重采样方式"), QStringLiteral("输出计算或重投影时采用的重采样算法。")}},
+        {"x", {QStringLiteral("X 坐标"), QStringLiteral("待转换点的 X 坐标。")}},
+        {"y", {QStringLiteral("Y 坐标"), QStringLiteral("待转换点的 Y 坐标。")}},
+        {"extent", {QStringLiteral("空间范围"), QStringLiteral("矩形范围 xmin, ymin, xmax, ymax。")}},
+        {"cutline", {QStringLiteral("裁切矢量"), QStringLiteral("用于裁切影像的矢量文件。")}},
+        {"tile_size", {QStringLiteral("分块大小"), QStringLiteral("切块时每块的像素尺寸。")}},
+        {"overlap", {QStringLiteral("重叠像素"), QStringLiteral("相邻分块之间的重叠像素数。")}},
+        {"bands", {QStringLiteral("波段列表"), QStringLiteral("用于合并波段的文件列表，多个文件用逗号分隔。")}},
+        {"layer", {QStringLiteral("图层名"), QStringLiteral("要处理的图层名称，留空时通常使用第一个图层。")}},
+        {"where", {QStringLiteral("属性过滤"), QStringLiteral("SQL WHERE 条件表达式。")}},
+        {"distance", {QStringLiteral("距离"), QStringLiteral("缓冲区或相关分析的距离值。")}},
+        {"clip_vector", {QStringLiteral("裁切矢量"), QStringLiteral("用于裁切当前输入矢量的叠加矢量文件。")}},
+        {"resolution", {QStringLiteral("分辨率"), QStringLiteral("输出栅格的像元大小。")}},
+        {"attribute", {QStringLiteral("属性字段"), QStringLiteral("用于栅格化写值的字段名。")}},
+        {"band", {QStringLiteral("波段号"), QStringLiteral("要处理的波段序号，从 1 开始。")}},
+        {"format", {QStringLiteral("输出格式"), QStringLiteral("输出数据格式。")}},
+        {"overlay_vector", {QStringLiteral("叠加矢量"), QStringLiteral("用于并集或差集分析的第二个矢量文件。")}},
+        {"dissolve_field", {QStringLiteral("融合字段"), QStringLiteral("按该字段值对相邻要素进行融合。")}},
+        {"method", {QStringLiteral("方法"), QStringLiteral("当前算法使用的主要处理方法。")}},
+        {"match_method", {QStringLiteral("匹配方法"), QStringLiteral("特征或模板匹配所采用的方法。")}},
+        {"max_points", {QStringLiteral("最大特征点数"), QStringLiteral("允许检测的最大特征点数量。")}},
+        {"ratio_test", {QStringLiteral("比率阈值"), QStringLiteral("Lowe 比率测试阈值。")}},
+        {"transform", {QStringLiteral("变换模型"), QStringLiteral("配准时使用的几何变换模型。")}},
+        {"change_method", {QStringLiteral("变化方法"), QStringLiteral("变化检测的计算方式。")}},
+        {"threshold", {QStringLiteral("阈值"), QStringLiteral("变化检测或相关处理的阈值。")}},
+        {"ecc_motion", {QStringLiteral("ECC 运动模型"), QStringLiteral("ECC 配准采用的运动模型。")}},
+        {"ecc_iterations", {QStringLiteral("ECC 迭代次数"), QStringLiteral("ECC 配准最大迭代次数。")}},
+        {"ecc_epsilon", {QStringLiteral("ECC 收敛阈值"), QStringLiteral("ECC 配准终止的收敛阈值。")}},
+        {"corner_method", {QStringLiteral("角点方法"), QStringLiteral("角点检测采用的算法。")}},
+        {"max_corners", {QStringLiteral("最大角点数"), QStringLiteral("最多输出的角点数量。")}},
+        {"quality_level", {QStringLiteral("质量阈值"), QStringLiteral("角点质量控制阈值。")}},
+        {"min_distance", {QStringLiteral("最小间距"), QStringLiteral("角点之间的最小距离。")}},
+        {"stitch_confidence", {QStringLiteral("拼接置信度"), QStringLiteral("图像拼接的置信度阈值。")}},
+        {"threshold_value", {QStringLiteral("阈值值"), QStringLiteral("阈值分割时使用的数值阈值。")}},
+        {"max_value", {QStringLiteral("最大值"), QStringLiteral("阈值分割输出的最大像素值。")}},
+        {"filter_type", {QStringLiteral("滤波类型"), QStringLiteral("空间滤波算法类型。")}},
+        {"kernel_size", {QStringLiteral("核大小"), QStringLiteral("滤波核或结构元素大小。")}},
+        {"sigma", {QStringLiteral("Sigma"), QStringLiteral("高斯等滤波的 sigma 参数。")}},
+        {"enhance_type", {QStringLiteral("增强类型"), QStringLiteral("影像增强算法类型。")}},
+        {"clip_limit", {QStringLiteral("裁剪限制"), QStringLiteral("CLAHE 的裁剪限制参数。")}},
+        {"gamma", {QStringLiteral("Gamma"), QStringLiteral("Gamma 校正参数。")}},
+        {"expression", {QStringLiteral("表达式"), QStringLiteral("波段运算表达式，例如 B1+B2。")}},
+        {"edge_method", {QStringLiteral("边缘方法"), QStringLiteral("边缘检测算法类型。")}},
+        {"low_threshold", {QStringLiteral("低阈值"), QStringLiteral("边缘检测的低阈值。")}},
+        {"high_threshold", {QStringLiteral("高阈值"), QStringLiteral("边缘检测的高阈值。")}},
+        {"sobel_dx", {QStringLiteral("Sobel dx"), QStringLiteral("Sobel 的 x 方向导数阶数。")}},
+        {"sobel_dy", {QStringLiteral("Sobel dy"), QStringLiteral("Sobel 的 y 方向导数阶数。")}},
+        {"min_area", {QStringLiteral("最小面积"), QStringLiteral("轮廓筛选的最小面积。")}},
+        {"template_file", {QStringLiteral("模板文件"), QStringLiteral("用于模板匹配的模板影像。")}},
+        {"pan_file", {QStringLiteral("全色影像"), QStringLiteral("全色锐化所需的高分辨率全色影像。")}},
+        {"pan_method", {QStringLiteral("融合方法"), QStringLiteral("全色锐化采用的融合方法。")}},
+        {"hough_type", {QStringLiteral("霍夫类型"), QStringLiteral("霍夫检测类型，例如直线或圆。")}},
+        {"hough_threshold", {QStringLiteral("霍夫阈值"), QStringLiteral("霍夫变换累加器阈值。")}},
+        {"min_line_length", {QStringLiteral("最小线长"), QStringLiteral("霍夫直线检测的最小线段长度。")}},
+        {"max_line_gap", {QStringLiteral("最大线间隙"), QStringLiteral("霍夫直线检测允许的最大线段间隙。")}},
+        {"min_radius", {QStringLiteral("最小半径"), QStringLiteral("霍夫圆检测的最小半径。")}},
+        {"max_radius", {QStringLiteral("最大半径"), QStringLiteral("霍夫圆检测的最大半径。")}},
+        {"circle_param2", {QStringLiteral("圆检测阈值"), QStringLiteral("霍夫圆检测的累加器阈值。")}},
+        {"marker_input", {QStringLiteral("标记输入"), QStringLiteral("分水岭分割的外部标记输入。")}},
+        {"k", {QStringLiteral("聚类数"), QStringLiteral("K-Means 的聚类类别数。")}},
+        {"max_iter", {QStringLiteral("最大迭代"), QStringLiteral("K-Means 的最大迭代次数。")}},
+        {"epsilon_kmeans", {QStringLiteral("收敛阈值"), QStringLiteral("K-Means 的终止收敛阈值。")}},
+        {"levels", {QStringLiteral("金字塔层级"), QStringLiteral("金字塔缩放层级，多个值用空格分隔。")}},
+        {"nodata_value", {QStringLiteral("NoData 值"), QStringLiteral("要写入的 NoData 数值。")}},
+        {"bins", {QStringLiteral("分箱数"), QStringLiteral("直方图的分箱数量。")}},
+        {"cmap", {QStringLiteral("颜色映射"), QStringLiteral("伪彩色映射方案。")}},
+        {"red_band", {QStringLiteral("红光波段"), QStringLiteral("计算 NDVI 的红光波段序号。")}},
+        {"nir_band", {QStringLiteral("近红外波段"), QStringLiteral("计算 NDVI 的近红外波段序号。")}},
+    };
+    return kTexts;
+}
+const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConfigStorage() {
+    static const std::map<std::string, std::map<std::string, ActionUiConfig>> kConfigs = {
+        {"projection", {
+            {"reproject", {QStringLiteral("重投影"), QStringLiteral("将栅格或矢量数据重投影到目标坐标系。"), {"input", "output", "dst_srs", "src_srs", "resample"}, {"input", "output", "dst_srs"}}},
+            {"info", {QStringLiteral("坐标信息"), QStringLiteral("查看影像坐标参考、范围和分辨率信息。"), {"input"}, {"input"}}},
+            {"transform", {QStringLiteral("坐标转换"), QStringLiteral("将单个坐标点从源坐标系转换到目标坐标系。"), {"src_srs", "dst_srs", "x", "y"}, {"dst_srs"}}},
+            {"assign_srs", {QStringLiteral("赋予坐标系"), QStringLiteral("为没有坐标参考的数据直接写入坐标系定义。"), {"input", "srs"}, {"input", "srs"}}},
+        }},
+        {"cutting", {
+            {"clip", {QStringLiteral("裁切"), QStringLiteral("按范围或裁切矢量裁切影像，范围和裁切矢量至少填写一个。"), {"input", "output", "extent", "cutline"}, {"input", "output"}}},
+            {"mosaic", {QStringLiteral("镶嵌"), QStringLiteral("将多幅影像拼接为一幅，可选统一目标坐标系和重采样方式。"), {"input", "output", "dst_srs", "resample"}, {"input", "output"}}},
+            {"split", {QStringLiteral("分块"), QStringLiteral("按固定块大小切分影像，可设置重叠像素。"), {"input", "output", "tile_size", "overlap"}, {"input", "output"}}},
+            {"merge_bands", {QStringLiteral("波段合并"), QStringLiteral("将多个单波段文件按顺序合并为多波段栅格。"), {"input", "bands", "output"}, {"output"}}},
+        }},
+        {"matching", {
+            {"detect", {QStringLiteral("特征检测"), QStringLiteral("提取关键点并可导出为 JSON。"), {"input", "output", "method", "max_points", "band"}, {"input"}}},
+            {"match", {QStringLiteral("特征匹配"), QStringLiteral("比较参考影像和待匹配影像，输出匹配点统计。"), {"reference", "input", "output", "method", "match_method", "max_points", "ratio_test", "band"}, {"reference", "input"}}},
+            {"register", {QStringLiteral("影像配准"), QStringLiteral("根据特征点匹配结果生成配准后的输出影像。"), {"reference", "input", "output", "method", "match_method", "transform", "resample", "max_points", "ratio_test", "band"}, {"reference", "input", "output"}}},
+            {"change", {QStringLiteral("变化检测"), QStringLiteral("对前后两景影像执行变化检测并输出变化图。"), {"reference", "input", "output", "change_method", "threshold", "band"}, {"reference", "input", "output"}}},
+            {"ecc_register", {QStringLiteral("ECC 配准"), QStringLiteral("使用 ECC 优化进行影像精配准。"), {"reference", "input", "output", "ecc_motion", "ecc_iterations", "ecc_epsilon", "resample", "band"}, {"reference", "input", "output"}}},
+            {"corner", {QStringLiteral("角点检测"), QStringLiteral("提取 Harris 或 Shi-Tomasi 角点。"), {"input", "output", "corner_method", "max_corners", "quality_level", "min_distance", "band"}, {"input"}}},
+            {"stitch", {QStringLiteral("图像拼接"), QStringLiteral("将多幅输入影像拼接为一张全景结果。"), {"input", "output", "stitch_confidence"}, {"input", "output"}}},
+        }},
+        {"processing", {
+            {"threshold", {QStringLiteral("阈值分割"), QStringLiteral("按指定阈值方法生成分割结果。"), {"input", "output", "band", "method", "threshold_value", "max_value"}, {"input", "output"}}},
+            {"filter", {QStringLiteral("空间滤波"), QStringLiteral("对影像执行平滑、形态学等滤波操作。"), {"input", "output", "band", "filter_type", "kernel_size", "sigma"}, {"input", "output"}}},
+            {"enhance", {QStringLiteral("影像增强"), QStringLiteral("执行均衡化、CLAHE、归一化、Gamma 等增强。"), {"input", "output", "band", "enhance_type", "clip_limit", "gamma"}, {"input", "output"}}},
+            {"band_math", {QStringLiteral("波段运算"), QStringLiteral("按表达式对多波段影像进行计算。"), {"input", "output", "expression"}, {"input", "output", "expression"}}},
+            {"stats", {QStringLiteral("统计信息"), QStringLiteral("统计指定波段的基础数值信息。"), {"input", "band"}, {"input"}}},
+            {"edge", {QStringLiteral("边缘检测"), QStringLiteral("执行 Canny、Sobel、Laplacian、Scharr 等边缘检测。"), {"input", "output", "band", "edge_method", "low_threshold", "high_threshold", "sobel_dx", "sobel_dy"}, {"input", "output"}}},
+            {"contour", {QStringLiteral("轮廓提取"), QStringLiteral("根据轮廓面积阈值提取目标轮廓。"), {"input", "output", "band", "min_area"}, {"input", "output"}}},
+            {"template_match", {QStringLiteral("模板匹配"), QStringLiteral("使用模板影像在输入影像中查找匹配目标。"), {"input", "output", "band", "template_file", "match_method"}, {"input", "output", "template_file"}}},
+            {"pansharpen", {QStringLiteral("全色锐化"), QStringLiteral("将多光谱影像与全色影像进行融合。"), {"input", "output", "pan_file", "pan_method"}, {"input", "output", "pan_file"}}},
+            {"hough", {QStringLiteral("霍夫变换"), QStringLiteral("检测直线或圆形结构。"), {"input", "output", "band", "hough_type", "hough_threshold", "min_line_length", "max_line_gap", "min_radius", "max_radius", "circle_param2"}, {"input", "output"}}},
+            {"watershed", {QStringLiteral("分水岭分割"), QStringLiteral("执行分水岭分割，可选外部标记输入。"), {"input", "output", "band", "marker_input"}, {"input", "output"}}},
+            {"kmeans", {QStringLiteral("K-Means 分割"), QStringLiteral("按聚类数对影像执行 K-Means 分割。"), {"input", "output", "band", "k", "max_iter", "epsilon_kmeans"}, {"input", "output"}}},
+        }},
+        {"utility", {
+            {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
+            {"nodata", {QStringLiteral("NoData 设置"), QStringLiteral("为单波段或全部波段写入 NoData 值。"), {"input", "band", "nodata_value"}, {"input"}}},
+            {"histogram", {QStringLiteral("直方图"), QStringLiteral("计算波段直方图，可选输出为 JSON。"), {"input", "output", "band", "bins"}, {"input"}}},
+            {"info", {QStringLiteral("栅格信息"), QStringLiteral("查看栅格驱动、范围、波段和统计信息。"), {"input"}, {"input"}}},
+            {"colormap", {QStringLiteral("伪彩色"), QStringLiteral("对单波段影像应用伪彩色映射。"), {"input", "output", "band", "cmap"}, {"input", "output"}}},
+            {"ndvi", {QStringLiteral("NDVI"), QStringLiteral("根据红光与近红外波段计算 NDVI。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},
+        }},
+        {"vector", {
+            {"info", {QStringLiteral("矢量信息"), QStringLiteral("查看矢量图层、字段和空间参考信息。"), {"input", "layer"}, {"input"}}},
+            {"filter", {QStringLiteral("空间过滤"), QStringLiteral("按属性条件或空间范围过滤要素，二者至少填写一个。"), {"input", "output", "layer", "where", "extent"}, {"input", "output"}}},
+            {"buffer", {QStringLiteral("缓冲区"), QStringLiteral("为要素生成指定距离的缓冲区。"), {"input", "output", "layer", "distance"}, {"input", "output"}}},
+            {"clip", {QStringLiteral("矢量裁切"), QStringLiteral("使用裁切矢量对输入矢量执行裁切。"), {"input", "output", "layer", "clip_vector"}, {"input", "output", "clip_vector"}}},
+            {"rasterize", {QStringLiteral("栅格化"), QStringLiteral("按分辨率将矢量图层转换为栅格。"), {"input", "output", "layer", "resolution", "attribute"}, {"input", "output"}}},
+            {"polygonize", {QStringLiteral("面矢量化"), QStringLiteral("将栅格指定波段转为矢量面。"), {"input", "output", "band"}, {"input", "output"}}},
+            {"convert", {QStringLiteral("格式转换"), QStringLiteral("将矢量数据转换到目标格式。"), {"input", "output", "layer", "format"}, {"input", "output"}}},
+            {"union", {QStringLiteral("并集"), QStringLiteral("对输入矢量和叠加矢量执行并集分析。"), {"input", "output", "layer", "overlay_vector"}, {"input", "output", "overlay_vector"}}},
+            {"difference", {QStringLiteral("差集"), QStringLiteral("从输入矢量中扣除叠加矢量区域。"), {"input", "output", "layer", "overlay_vector"}, {"input", "output", "overlay_vector"}}},
+            {"dissolve", {QStringLiteral("融合"), QStringLiteral("按字段或整体融合相邻要素。"), {"input", "output", "layer", "dissolve_field"}, {"input", "output"}}},
+        }},
+    };
+    return kConfigs;
+}
+
+const ActionUiConfig* findActionUiConfig(const std::string& pluginName, const std::string& actionKey) {
+    const auto& all = actionUiConfigStorage();
+    const auto pluginIt = all.find(pluginName);
+    if (pluginIt == all.end()) {
+        return nullptr;
+    }
+
+    const auto actionIt = pluginIt->second.find(actionKey);
+    if (actionIt == pluginIt->second.end()) {
+        return nullptr;
+    }
+
+    return &actionIt->second;
+}
+
+QString actionDisplayName(const std::string& pluginName, const QString& actionKey) {
+    if (const auto* config = findActionUiConfig(pluginName, actionKey.toStdString());
+        config && !config->displayName.isEmpty()) {
+        return config->displayName;
+    }
+    return genericActionDisplayName(actionKey);
+}
+
+const std::map<std::string, std::map<std::string, std::set<std::string>>>& actionVisibilityMapStorage() {
+    static const std::map<std::string, std::map<std::string, std::set<std::string>>> kMap = [] {
+        std::map<std::string, std::map<std::string, std::set<std::string>>> result;
+        for (const auto& [pluginName, actionMap] : actionUiConfigStorage()) {
+            for (const auto& [actionKey, config] : actionMap) {
+                result[pluginName][actionKey] = config.visibleKeys;
+            }
+        }
+        return result;
+    }();
+    return kMap;
+}
+
+bool isZeroExtent(const std::array<double, 4>& extent) {
+    return extent[0] == 0.0 && extent[1] == 0.0 && extent[2] == 0.0 && extent[3] == 0.0;
+}
+
+std::optional<std::array<double, 4>> extentParamValue(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const std::string& key) {
+    const auto it = params.find(key);
+    if (it == params.end()) {
+        return std::nullopt;
+    }
+    if (const auto* arr = std::get_if<std::array<double, 4>>(&it->second)) {
+        return *arr;
+    }
+    return std::nullopt;
+}
+
+std::string actionSpecificValidation(
+    const std::string& pluginName,
+    const std::string& actionKey,
+    const std::map<std::string, gis::framework::ParamValue>& params) {
+    auto stringParam = [&](const std::string& key) {
+        auto it = params.find(key);
+        if (it == params.end()) {
+            return std::string{};
+        }
+        if (const auto* value = std::get_if<std::string>(&it->second)) {
+            return *value;
+        }
+        return std::string{};
+    };
+
+    if (pluginName == "cutting" && actionKey == "clip") {
+        const auto extent = extentParamValue(params, "extent");
+        if ((!extent.has_value() || isZeroExtent(*extent)) && stringParam("cutline").empty()) {
+            return "参数“裁切范围”或“裁切矢量”至少填写一个";
+        }
+    }
+
+    if (pluginName == "cutting" && actionKey == "merge_bands") {
+        if (stringParam("input").empty() && stringParam("bands").empty()) {
+            return "参数“输入文件”或“波段列表”至少填写一个";
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "filter") {
+        const auto extent = extentParamValue(params, "extent");
+        if (stringParam("where").empty() && (!extent.has_value() || isZeroExtent(*extent))) {
+            return "参数“属性过滤”或“空间范围”至少填写一个";
+        }
+    }
+
+    return {};
 }
 
 }
@@ -91,8 +336,44 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() = default;
 
+void MainWindow::selectPluginByName(const std::string& pluginName) {
+    onPluginSelected(pluginName);
+}
+
+void MainWindow::selectActionByKey(const std::string& actionKey) {
+    onSubFunctionSelected(actionKey);
+}
+
+const std::map<std::string, std::map<std::string, std::set<std::string>>>& MainWindow::actionParamVisibilityMap() {
+    return actionVisibilityMapStorage();
+}
+
+std::set<std::string> MainWindow::visibleParamsForAction(
+    const std::string& pluginName,
+    const std::string& actionKey) {
+    const auto& all = actionParamVisibilityMap();
+    const auto pluginIt = all.find(pluginName);
+    if (pluginIt == all.end()) {
+        return {};
+    }
+
+    const auto actionIt = pluginIt->second.find(actionKey);
+    if (actionIt == pluginIt->second.end()) {
+        return {};
+    }
+
+    return actionIt->second;
+}
+
+QString MainWindow::actionDescription(const std::string& pluginName, const QString& actionKey) {
+    if (const auto* config = findActionUiConfig(pluginName, actionKey.toStdString())) {
+        return config->description;
+    }
+    return {};
+}
+
 void MainWindow::setupUi() {
-    setWindowTitle(QStringLiteral("GIS \345\267\245\345\205\267\345\217\260"));
+    setWindowTitle(QStringLiteral("GIS 工具台"));
     resize(gis::style::Size::kWindowDefaultWidth, gis::style::Size::kWindowDefaultHeight);
     setMinimumSize(gis::style::Size::kWindowMinWidth, gis::style::Size::kWindowMinHeight);
 
@@ -129,13 +410,13 @@ void MainWindow::setupUi() {
         gis::style::Size::kCardPadding);
     titleLayout->setSpacing(4);
 
-    functionTitleLabel_ = new QLabel(QStringLiteral("\350\257\267\351\200\211\346\213\251\345\212\237\350\203\275"));
+    functionTitleLabel_ = new QLabel(QStringLiteral("请选择功能"));
     functionTitleLabel_->setObjectName(QStringLiteral("cardTitle"));
     functionTitleLabel_->setStyleSheet(
         QStringLiteral("font-size: 18px; font-weight: 700; color: %1;").arg(gis::style::Color::kTextPrimary));
     titleLayout->addWidget(functionTitleLabel_);
 
-    functionDescLabel_ = new QLabel(QStringLiteral("\344\273\216\345\267\246\344\276\247\351\200\211\346\213\251\346\217\222\344\273\266\345\222\214\345\255\220\345\212\237\350\203\275\345\220\216\357\274\214\350\277\231\351\207\214\344\274\232\346\230\276\347\244\272\345\212\237\350\203\275\350\257\264\346\230\216\345\222\214\345\217\202\346\225\260\351\205\215\347\275\256\343\200\202"));
+    functionDescLabel_ = new QLabel(QStringLiteral("从左侧选择插件和子功能后，这里会显示功能说明和参数配置。"));
     functionDescLabel_->setObjectName(QStringLiteral("cardDesc"));
     functionDescLabel_->setWordWrap(true);
     titleLayout->addWidget(functionDescLabel_);
@@ -167,16 +448,12 @@ void MainWindow::setupUi() {
     auto* execHeaderLayout = new QHBoxLayout;
     execHeaderLayout->setSpacing(12);
 
-    auto* execIconLabel = new QLabel(QStringLiteral("\342\226\266"));
-    execIconLabel->setFixedSize(20, 20);
-    execHeaderLayout->addWidget(execIconLabel);
-
-    auto* execTitleLabel = new QLabel(QStringLiteral("\346\211\247\350\241\214\346\216\247\345\210\266"));
+    auto* execTitleLabel = new QLabel(QStringLiteral("执行控制"));
     execTitleLabel->setObjectName(QStringLiteral("cardTitle"));
     execHeaderLayout->addWidget(execTitleLabel);
     execHeaderLayout->addStretch();
 
-    executeButton_ = new QPushButton(QStringLiteral("\346\211\247\350\241\214"));
+    executeButton_ = new QPushButton(QStringLiteral("执行"));
     executeButton_->setObjectName(QStringLiteral("primaryButton"));
     executeButton_->setEnabled(false);
     connect(executeButton_, &QPushButton::clicked, this, &MainWindow::onExecute);
@@ -201,7 +478,7 @@ void MainWindow::setupUi() {
     resultSummaryLabel_->setWordWrap(true);
     resultSummaryLabel_->setObjectName(QStringLiteral("cardDesc"));
     resultSummaryLabel_->setMinimumHeight(24);
-    resultSummaryLabel_->setText(QStringLiteral("\347\255\211\345\276\205\346\211\247\350\241\214..."));
+    resultSummaryLabel_->setText(QStringLiteral("等待执行..."));
     executionLayout->addWidget(resultSummaryLabel_);
 
     rightLayout->addWidget(executionCard);
@@ -217,9 +494,9 @@ void MainWindow::setupUi() {
 
     mainLayout->addWidget(splitter);
 
-    statusAlgorithmLabel_ = new QLabel(QStringLiteral("\345\275\223\345\211\215\347\256\227\346\263\225\357\274\232\346\234\252\351\200\211\346\213\251"));
-    statusPluginCountLabel_ = new QLabel(QStringLiteral("\346\222\255\344\273\266\346\225\260\357\274\2320"));
-    statusExecutionLabel_ = new QLabel(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\345\260\261\347\273\252"));
+    statusAlgorithmLabel_ = new QLabel(QStringLiteral("当前算法：未选择"));
+    statusPluginCountLabel_ = new QLabel(QStringLiteral("插件数：0"));
+    statusExecutionLabel_ = new QLabel(QStringLiteral("执行状态：就绪"));
     statusProgressBar_ = new QProgressBar;
     statusProgressBar_->setRange(0, 100);
     statusProgressBar_->setValue(0);
@@ -229,7 +506,7 @@ void MainWindow::setupUi() {
     statusBar()->addPermanentWidget(statusPluginCountLabel_);
     statusBar()->addPermanentWidget(statusExecutionLabel_);
     statusBar()->addPermanentWidget(statusProgressBar_);
-    statusBar()->showMessage(QStringLiteral("\345\260\261\347\273\252"));
+    statusBar()->showMessage(QStringLiteral("就绪"));
 }
 
 void MainWindow::loadPlugins() {
@@ -255,30 +532,43 @@ void MainWindow::loadPlugins() {
     navPanel_->setPlugins(plugins);
 
     if (plugins.empty()) {
-        statusBar()->showMessage(QStringLiteral("\346\234\252\346\211\276\345\210\260\346\222\255\344\273\266\357\274\214\350\257\267\346\243\200\346\237\245 plugins \347\233\256\345\275\225"));
+        statusBar()->showMessage(QStringLiteral("未找到插件，请检查 plugins 目录"));
         if (statusPluginCountLabel_) {
-            statusPluginCountLabel_->setText(QStringLiteral("\346\222\255\344\273\266\346\225\260\357\274\2320"));
+            statusPluginCountLabel_->setText(QStringLiteral("插件数：0"));
         }
         return;
     }
 
     if (statusPluginCountLabel_) {
-        statusPluginCountLabel_->setText(QStringLiteral("\346\222\255\344\273\266\346\225\260\357\274\232%1").arg(plugins.size()));
+        statusPluginCountLabel_->setText(QStringLiteral("插件数：%1").arg(plugins.size()));
     }
-    statusBar()->showMessage(QStringLiteral("\345\267\262\345\212\240\350\275\275 %1 \344\270\252\347\256\227\346\263\225\346\222\255\344\273\266").arg(plugins.size()));
+    statusBar()->showMessage(QStringLiteral("已加载 %1 个插件").arg(plugins.size()));
 }
 
 std::vector<gis::framework::ParamSpec> MainWindow::effectiveParamSpecs() const {
-    if (!currentPlugin_) {
+    if (!currentPlugin_ || currentActionKey_.isEmpty()) {
         return {};
     }
 
+    const auto* config = findActionUiConfig(
+        currentPlugin_->name(), currentActionKey_.toStdString());
+    auto visibleKeys = visibleParamsForAction(
+        currentPlugin_->name(), currentActionKey_.toStdString());
+
     std::vector<gis::framework::ParamSpec> filtered;
     for (const auto& spec : currentPlugin_->paramSpecs()) {
-        if (spec.key == "action") {
-            continue;
+        if (spec.key == "action") continue;
+        if (visibleKeys.empty() || visibleKeys.count(spec.key)) {
+            auto adjustedSpec = spec;
+            if (config) {
+                adjustedSpec.required = config->requiredKeys.count(spec.key) > 0;
+            }
+            if (const auto it = commonParamTextStorage().find(spec.key); it != commonParamTextStorage().end()) {
+                adjustedSpec.displayName = it->second.displayName.toUtf8().toStdString();
+                adjustedSpec.description = it->second.description.toUtf8().toStdString();
+            }
+            filtered.push_back(std::move(adjustedSpec));
         }
-        filtered.push_back(spec);
     }
     return filtered;
 }
@@ -291,15 +581,32 @@ std::map<std::string, gis::framework::ParamValue> MainWindow::collectExecutionPa
     return params;
 }
 
+bool MainWindow::setParamValue(const std::string& key, const std::string& value) {
+    if (!paramWidget_ || !paramWidget_->hasParam(key)) {
+        return false;
+    }
+    const bool applied = paramWidget_->setValueFromString(key, value);
+    if (applied) {
+        syncDerivedParams();
+        refreshExecuteButtonState();
+        refreshParamValidationState();
+    }
+    return applied;
+}
+
+void MainWindow::triggerExecute() {
+    onExecute();
+}
+
 void MainWindow::onPluginSelected(const std::string& pluginName) {
     currentPlugin_ = pluginManager_.find(pluginName);
     if (!currentPlugin_) {
         paramWidget_->clear();
         currentActionKey_.clear();
-        functionTitleLabel_->setText(QStringLiteral("\350\257\267\351\200\211\346\213\251\345\212\237\350\203\275"));
-        functionDescLabel_->setText(QStringLiteral("\344\273\216\345\267\246\344\276\247\351\200\211\346\213\251\346\217\222\344\273\266\345\222\214\345\255\220\345\212\237\350\203\275\345\220\216\357\274\214\350\277\231\351\207\214\344\274\232\346\230\276\347\244\272\345\212\237\350\203\275\350\257\264\346\230\216\345\222\214\345\217\202\346\225\260\351\205\215\347\275\256\343\200\202"));
+        functionTitleLabel_->setText(QStringLiteral("请选择功能"));
+        functionDescLabel_->setText(QStringLiteral("从左侧选择插件和子功能后，这里会显示功能说明和参数配置。"));
         if (statusAlgorithmLabel_) {
-            statusAlgorithmLabel_->setText(QStringLiteral("\345\275\223\345\211\215\347\256\227\346\263\225\357\274\232\346\234\252\351\200\211\346\213\251"));
+            statusAlgorithmLabel_->setText(QStringLiteral("当前算法：未选择"));
         }
         navPanel_->clearSubFunctions();
         refreshExecuteButtonState();
@@ -310,7 +617,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     functionDescLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
     if (statusAlgorithmLabel_) {
         statusAlgorithmLabel_->setText(
-            QStringLiteral("\345\275\223\345\211\215\347\256\227\346\263\225\357\274\232%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
+            QStringLiteral("当前算法：%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
     }
 
     std::vector<std::string> actions;
@@ -319,7 +626,8 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
         if (spec.key != "action") continue;
         for (const auto& action : spec.enumValues) {
             actions.push_back(action);
-            displayNames.push_back(actionDisplayName(QString::fromStdString(action)).toStdString());
+            displayNames.push_back(
+                actionDisplayName(currentPlugin_->name(), QString::fromStdString(action)).toUtf8().toStdString());
         }
         break;
     }
@@ -328,7 +636,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     currentActionKey_.clear();
     paramWidget_->clear();
     refreshExecuteButtonState();
-    statusBar()->showMessage(QStringLiteral("\345\275\223\345\211\215\344\270\273\345\212\237\350\203\275: %1").arg(QString::fromUtf8(currentPlugin_->displayName())));
+    statusBar()->showMessage(QStringLiteral("当前主功能：%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
 }
 
 void MainWindow::onSubFunctionSelected(const std::string& actionKey) {
@@ -340,41 +648,48 @@ void MainWindow::onSubFunctionSelected(const std::string& actionKey) {
 
     currentActionKey_ = QString::fromStdString(actionKey);
 
-    QString displayName = actionDisplayName(currentActionKey_);
+    QString displayName = actionDisplayName(currentPlugin_->name(), currentActionKey_);
     functionTitleLabel_->setText(
         QString::fromUtf8(currentPlugin_->displayName()) + QStringLiteral(" \342\206\222 ") + displayName);
-    functionDescLabel_->setText(
-        QString::fromUtf8(currentPlugin_->description()));
+
+    QString desc = actionDescription(currentPlugin_->name(), currentActionKey_);
+    functionDescLabel_->setText(desc.isEmpty()
+        ? QString::fromUtf8(currentPlugin_->description()) : desc);
 
     paramWidget_->setParamSpecs(effectiveParamSpecs());
+    syncDerivedParams();
     refreshExecuteButtonState();
     refreshParamValidationState();
 
     if (statusExecutionLabel_) {
         statusExecutionLabel_->setText(
-            QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\345\267\262\351\200\211\346\213\251 %1").arg(displayName));
+            QStringLiteral("执行状态：已选择 %1").arg(displayName));
     }
-    statusBar()->showMessage(QStringLiteral("\345\275\223\345\211\215\345\255\220\345\212\237\350\203\275: %1").arg(displayName));
+    statusBar()->showMessage(QStringLiteral("当前子功能：%1").arg(displayName));
 }
 
 void MainWindow::onExecute() {
     if (!currentPlugin_) {
         QMessageBox::warning(this, QStringLiteral("\346\217\220\347\244\272"),
-                             QStringLiteral("\350\257\267\345\205\210\351\200\211\346\213\251\344\270\200\344\270\252\347\256\227\346\263\225"));
+                             QStringLiteral("请先选择一个主功能"));
         return;
     }
     if (currentActionKey_.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("\346\217\220\347\244\272"),
-                             QStringLiteral("\350\257\267\345\205\210\351\200\211\346\213\251\344\270\200\344\270\252\345\255\220\345\212\237\350\203\275"));
+                             QStringLiteral("请先选择一个子功能"));
         return;
     }
 
-    const auto specs = currentPlugin_->paramSpecs();
+    const auto specs = effectiveParamSpecs();
     auto params = collectExecutionParams();
-    const std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
+    std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
+    if (validationMessage.empty()) {
+        validationMessage = actionSpecificValidation(
+            currentPlugin_->name(), currentActionKey_.toStdString(), params);
+    }
     if (!validationMessage.empty()) {
         refreshParamValidationState();
-        QMessageBox::warning(this, QStringLiteral("\345\217\202\346\225\260\344\270\215\345\256\214\346\225\264"),
+        QMessageBox::warning(this, QStringLiteral("参数未完成"),
                              QString::fromUtf8(validationMessage));
         return;
     }
@@ -384,6 +699,7 @@ void MainWindow::onExecute() {
 
 void MainWindow::onParamValuesChanged() {
     if (isSyncingParams_) return;
+    syncDerivedParams();
     refreshExecuteButtonState();
     refreshParamValidationState();
 }
@@ -393,13 +709,18 @@ void MainWindow::refreshExecuteButtonState() {
 
     if (!currentPlugin_ || currentActionKey_.isEmpty()) {
         executeButton_->setEnabled(false);
-        executeButton_->setToolTip(QStringLiteral("\350\257\267\345\205\210\351\200\211\346\213\251\344\270\273\345\212\237\350\203\275\345\222\214\345\255\220\345\212\237\350\203\275"));
+        executeButton_->setToolTip(QStringLiteral("请先选择主功能和子功能"));
         return;
     }
 
-    const std::string validationMessage = gis::gui::validateExecutionParams(
-        currentPlugin_->paramSpecs(),
-        collectExecutionParams());
+    const auto params = collectExecutionParams();
+    std::string validationMessage = gis::gui::validateExecutionParams(
+        effectiveParamSpecs(),
+        params);
+    if (validationMessage.empty()) {
+        validationMessage = actionSpecificValidation(
+            currentPlugin_->name(), currentActionKey_.toStdString(), params);
+    }
     if (!validationMessage.empty()) {
         executeButton_->setEnabled(false);
         executeButton_->setToolTip(QString::fromUtf8(validationMessage));
@@ -407,7 +728,7 @@ void MainWindow::refreshExecuteButtonState() {
     }
 
     executeButton_->setEnabled(true);
-    executeButton_->setToolTip(QStringLiteral("\345\217\202\346\225\260\345\267\262\345\260\261\347\273\252\357\274\214\345\217\257\346\211\247\350\241\214\345\275\223\345\211\215\347\256\227\346\263\225"));
+    executeButton_->setToolTip(QStringLiteral("参数已就绪，可以执行当前功能"));
 }
 
 void MainWindow::refreshParamValidationState() {
@@ -419,20 +740,55 @@ void MainWindow::refreshParamValidationState() {
     }
 
     const std::string invalidKey = gis::gui::findFirstInvalidParamKey(
-        currentPlugin_->paramSpecs(),
+        effectiveParamSpecs(),
         collectExecutionParams());
     paramWidget_->setHighlightedParam(invalidKey);
+}
+
+void MainWindow::syncDerivedParams() {
+    if (!paramWidget_ || !currentPlugin_ || currentActionKey_.isEmpty()) {
+        return;
+    }
+
+    const auto actionKey = currentActionKey_.toStdString();
+    auto params = collectExecutionParams();
+    const std::string inputPath = paramWidget_->stringValue("input");
+    const std::string referencePath = paramWidget_->stringValue("reference");
+    const std::string primaryPath = !inputPath.empty() ? inputPath : referencePath;
+
+    isSyncingParams_ = true;
+
+    if (paramWidget_->hasParam("output") && paramWidget_->stringValue("output").empty() && !primaryPath.empty()) {
+        paramWidget_->setStringValue(
+            "output",
+            gis::gui::buildSuggestedOutputPath(primaryPath, currentPlugin_->name(), actionKey));
+    }
+
+    if (!inputPath.empty()) {
+        const auto info = gis::gui::inspectDataForAutoFill(inputPath);
+        if (paramWidget_->hasParam("layer") && paramWidget_->stringValue("layer").empty() && !info.layerName.empty()) {
+            paramWidget_->setStringValue("layer", info.layerName);
+        }
+        if (paramWidget_->hasParam("extent")) {
+            const auto extent = extentParamValue(params, "extent");
+            if ((!extent.has_value() || isZeroExtent(*extent)) && info.hasExtent) {
+                paramWidget_->setExtentValue("extent", info.extent);
+            }
+        }
+    }
+
+    isSyncingParams_ = false;
 }
 
 void MainWindow::runPluginWithParams(
     const std::map<std::string, gis::framework::ParamValue>& params) {
     reporter_->reset();
     if (statusExecutionLabel_) {
-        statusExecutionLabel_->setText(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\350\277\220\350\241\214\344\270\255"));
+        statusExecutionLabel_->setText(QStringLiteral("执行状态：运行中"));
     }
     if (progressBar_) {
         progressBar_->setRange(0, 0);
-        progressBar_->setFormat(QStringLiteral("\345\244\204\347\220\206\344\270\255..."));
+        progressBar_->setFormat(QStringLiteral("处理中..."));
     }
     if (statusProgressBar_) {
         statusProgressBar_->setRange(0, 0);
@@ -450,52 +806,54 @@ void MainWindow::runPluginWithParams(
     connect(thread, &QThread::started, worker, &ExecuteWorker::run);
     connect(worker, &ExecuteWorker::finished, this,
             [this, progressDialog](const gis::framework::Result& result) {
-                QString message = QString::fromUtf8(result.message);
+                const QString localizedMessage =
+                    QString::fromUtf8(gis::gui::localizeResultMessage(result.message));
+                QString message = localizedMessage;
                 const bool cancelled = result.message == "\345\267\262\345\217\226\346\266\210\346\211\247\350\241\214";
                 progressDialog->setFinished(message, result.success, cancelled);
 
                 if (result.success) {
                     QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result));
                     resultSummaryLabel_->setText(
-                        QStringLiteral("\342\234\205 \346\211\247\350\241\214\346\210\220\345\212\237\n%1").arg(summary));
+                        QStringLiteral("✓ 执行成功\n%1").arg(summary));
                     resultSummaryLabel_->setStyleSheet(
                         QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
                     if (progressBar_) {
                         progressBar_->setRange(0, 100);
                         progressBar_->setValue(100);
-                        progressBar_->setFormat(QStringLiteral("\345\256\214\346\210\220 100%"));
+                        progressBar_->setFormat(QStringLiteral("完成 100%"));
                     }
                     if (statusExecutionLabel_) {
-                        statusExecutionLabel_->setText(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\346\210\220\345\212\237"));
+                        statusExecutionLabel_->setText(QStringLiteral("执行状态：成功"));
                     }
-                    statusBar()->showMessage(QStringLiteral("\346\211\247\350\241\214\346\210\220\345\212\237: ") + message);
+                    statusBar()->showMessage(QStringLiteral("执行成功"));
                 } else if (cancelled) {
-                    resultSummaryLabel_->setText(QStringLiteral("\342\234\226 \345\267\262\345\217\226\346\266\210"));
+                    resultSummaryLabel_->setText(QStringLiteral("✖ 已取消"));
                     resultSummaryLabel_->setStyleSheet(
                         QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
                     if (progressBar_) {
                         progressBar_->setRange(0, 100);
                         progressBar_->setValue(0);
-                        progressBar_->setFormat(QStringLiteral("\345\267\262\345\217\226\346\266\210"));
+                        progressBar_->setFormat(QStringLiteral("已取消"));
                     }
                     if (statusExecutionLabel_) {
-                        statusExecutionLabel_->setText(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\345\267\262\345\217\226\346\266\210"));
+                        statusExecutionLabel_->setText(QStringLiteral("执行状态：已取消"));
                     }
-                    statusBar()->showMessage(QStringLiteral("\346\211\247\350\241\214\345\267\262\345\217\226\346\266\210"));
+                    statusBar()->showMessage(QStringLiteral("执行已取消"));
                 } else {
                     resultSummaryLabel_->setText(
-                        QStringLiteral("\342\235\214 \346\211\247\350\241\214\345\244\261\350\264\245\n%1").arg(message));
+                        QStringLiteral("✖ 执行失败\n%1").arg(message));
                     resultSummaryLabel_->setStyleSheet(
                         QStringLiteral("color: %1;").arg(gis::style::Color::kError));
                     if (progressBar_) {
                         progressBar_->setRange(0, 100);
                         progressBar_->setValue(0);
-                        progressBar_->setFormat(QStringLiteral("\345\244\261\350\264\245"));
+                        progressBar_->setFormat(QStringLiteral("失败"));
                     }
                     if (statusExecutionLabel_) {
-                        statusExecutionLabel_->setText(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\345\244\261\350\264\245"));
+                        statusExecutionLabel_->setText(QStringLiteral("执行状态：失败"));
                     }
-                    statusBar()->showMessage(QStringLiteral("\346\211\247\350\241\214\345\244\261\350\264\245: ") + message);
+                    statusBar()->showMessage(QStringLiteral("执行失败：") + message);
                 }
 
                 if (statusProgressBar_) {
@@ -503,6 +861,7 @@ void MainWindow::runPluginWithParams(
                     statusProgressBar_->setValue(result.success ? 100 : 0);
                 }
                 refreshExecuteButtonState();
+                emit executionFinished(result.success);
             });
     connect(worker, &ExecuteWorker::finished, thread, &QThread::quit);
     connect(worker, &ExecuteWorker::finished, worker, &QObject::deleteLater);
@@ -512,3 +871,4 @@ void MainWindow::runPluginWithParams(
     thread->start();
     progressDialog->exec();
 }
+

@@ -63,7 +63,7 @@ constexpr int kLabelInputRatio    = 2;
 inline QString globalStyleSheet() {
     return QString(
         "QMainWindow { background: %1; }"
-        "QWidget { color: %2; font-size: 13px; font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif; }"
+        "QWidget { color: %2; font-size: 13px; }"
         "QFrame#card { background: %3; border: 1px solid %4; border-radius: %5px; }"
         "QLabel#cardTitle { font-size: 14px; font-weight: 600; color: %2; }"
         "QLabel#cardDesc { font-size: 12px; color: %6; }"

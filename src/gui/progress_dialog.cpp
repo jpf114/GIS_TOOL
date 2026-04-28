@@ -1,12 +1,13 @@
 #include "progress_dialog.h"
 #include "qt_progress_reporter.h"
-#include <QVBoxLayout>
-#include <QProgressBar>
-#include <QTextEdit>
-#include <QPushButton>
-#include <QLabel>
+
 #include <QDialogButtonBox>
+#include <QLabel>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QTextEdit>
 #include <QTimer>
+#include <QVBoxLayout>
 
 ProgressDialog::ProgressDialog(QtProgressReporter* reporter, QWidget* parent)
     : QDialog(parent), reporter_(reporter) {
