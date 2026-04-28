@@ -35,6 +35,8 @@
 #include <QScrollArea>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QProgressBar>
+#include <QStyle>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QThread>
@@ -176,8 +178,8 @@ void MainWindow::dropEvent(QDropEvent* event) {
 
 void MainWindow::setupUi() {
     setWindowTitle(QStringLiteral("GIS 工具台"));
-    resize(1520, 920);
-    setMinimumSize(1360, 860);
+    resize(1560, 940);
+    setMinimumSize(1320, 820);
     setAcceptDrops(true);
 
     auto* centralWidget = new QWidget;
@@ -190,16 +192,54 @@ void MainWindow::setupUi() {
     auto* algorithmFrame = new QFrame;
     algorithmFrame->setObjectName(QStringLiteral("algorithmFrame"));
     auto* algorithmLayout = new QVBoxLayout(algorithmFrame);
-    algorithmLayout->setContentsMargins(18, 16, 18, 16);
-    algorithmLayout->setSpacing(10);
+    algorithmLayout->setContentsMargins(12, 10, 12, 10);
+    algorithmLayout->setSpacing(8);
 
-    auto* algorithmTitle = new QLabel(QStringLiteral("GIS 工作台"));
+    auto* topHeaderFrame = new QFrame;
+    topHeaderFrame->setObjectName(QStringLiteral("workbenchHeaderFrame"));
+    topHeaderFrame->setFixedHeight(48);
+    auto* topHeaderLayout = new QHBoxLayout(topHeaderFrame);
+    topHeaderLayout->setContentsMargins(14, 8, 14, 8);
+    topHeaderLayout->setSpacing(8);
+
+    auto* algorithmTitle = new QLabel(QStringLiteral("GIS 工具台"));
     algorithmTitle->setObjectName(QStringLiteral("sectionTitle"));
-    auto* algorithmSubtitle = new QLabel(
-        QStringLiteral("主功能位于顶部，子功能与快捷操作紧随其后；左侧统一管理数据，中间聚焦预览，右侧按对象切换信息与参数。"));
-    algorithmSubtitle->setObjectName(QStringLiteral("sectionHint"));
-    algorithmSubtitle->setWordWrap(true);
+    topHeaderLayout->addWidget(algorithmTitle);
+    topHeaderLayout->addStretch();
 
+    sidebarToggleButton_ = new QToolButton;
+    sidebarToggleButton_->setObjectName(QStringLiteral("headerToolButton"));
+    sidebarToggleButton_->setIcon(style()->standardIcon(QStyle::SP_TitleBarShadeButton));
+    sidebarToggleButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    connect(sidebarToggleButton_, &QToolButton::clicked, this, [this]() {
+        setSidebarVisible(!isSidebarVisible_);
+    });
+
+    quickPreviewButton_ = new QPushButton(QStringLiteral("生成预览"));
+    quickRunButton_ = new QPushButton(QStringLiteral("快速试算"));
+    executeButton_ = new QPushButton(QStringLiteral("执行"));
+    executeButton_->setObjectName(QStringLiteral("primaryButton"));
+    for (auto* button : {quickPreviewButton_, quickRunButton_, executeButton_}) {
+        button->setMinimumHeight(30);
+        button->setMinimumWidth(96);
+    }
+    connect(quickPreviewButton_, &QPushButton::clicked, this, &MainWindow::onBuildQuickPreview);
+    connect(quickRunButton_, &QPushButton::clicked, this, &MainWindow::onRunQuickPreview);
+    connect(executeButton_, &QPushButton::clicked, this, &MainWindow::onExecute);
+
+    topHeaderLayout->addWidget(sidebarToggleButton_);
+    topHeaderLayout->addWidget(quickPreviewButton_);
+    topHeaderLayout->addWidget(quickRunButton_);
+    topHeaderLayout->addWidget(executeButton_);
+
+    auto* pluginRailFrame = new QFrame;
+    pluginRailFrame->setObjectName(QStringLiteral("workbenchBand"));
+    auto* pluginRailLayout = new QHBoxLayout(pluginRailFrame);
+    pluginRailLayout->setContentsMargins(12, 8, 12, 8);
+    pluginRailLayout->setSpacing(10);
+
+    auto* pluginRailTitle = new QLabel(QStringLiteral("主功能"));
+    pluginRailTitle->setObjectName(QStringLiteral("bandLabel"));
     pluginTabs_ = new QTabBar;
     pluginTabs_->setObjectName(QStringLiteral("pluginTabs"));
     pluginTabs_->setExpanding(true);
@@ -207,77 +247,6 @@ void MainWindow::setupUi() {
     pluginTabs_->setDrawBase(false);
     pluginTabs_->setDocumentMode(true);
     connect(pluginTabs_, &QTabBar::currentChanged, this, &MainWindow::onPluginSelected);
-
-    subFunctionTabs_ = new QTabBar;
-    subFunctionTabs_->setObjectName(QStringLiteral("subFunctionTabs"));
-    subFunctionTabs_->setExpanding(false);
-    subFunctionTabs_->setUsesScrollButtons(true);
-    subFunctionTabs_->setDrawBase(false);
-    subFunctionTabs_->setDocumentMode(true);
-    connect(subFunctionTabs_, &QTabBar::currentChanged, this, &MainWindow::onSubFunctionSelected);
-
-    pluginTitleLabel_ = new QLabel(QStringLiteral("请选择主功能"));
-    pluginTitleLabel_->setObjectName(QStringLiteral("contextTitle"));
-    pluginDescriptionLabel_ = new QLabel(QStringLiteral("选择主功能后，将在下方展示对应的子功能与操作入口。"));
-    pluginDescriptionLabel_->setWordWrap(true);
-    pluginDescriptionLabel_->setObjectName(QStringLiteral("sectionHint"));
-    subFunctionLabel_ = new QLabel(QStringLiteral("请选择子功能"));
-    subFunctionLabel_->setObjectName(QStringLiteral("sectionHint"));
-
-    executeButton_ = new QPushButton(QStringLiteral("执行当前算法"));
-    executeButton_->setMinimumHeight(36);
-    executeButton_->setMinimumWidth(140);
-    executeButton_->setObjectName(QStringLiteral("primaryButton"));
-    connect(executeButton_, &QPushButton::clicked, this, &MainWindow::onExecute);
-
-    quickPreviewButton_ = new QPushButton(QStringLiteral("生成8位预览"));
-    quickPreviewButton_->setMinimumHeight(36);
-    quickPreviewButton_->setMinimumWidth(128);
-    connect(quickPreviewButton_, &QPushButton::clicked, this, &MainWindow::onBuildQuickPreview);
-
-    quickRunButton_ = new QPushButton(QStringLiteral("快速试算当前算法"));
-    quickRunButton_->setMinimumHeight(36);
-    quickRunButton_->setMinimumWidth(152);
-    connect(quickRunButton_, &QPushButton::clicked, this, &MainWindow::onRunQuickPreview);
-
-    quickRunCheckBox_ = new QCheckBox(QStringLiteral("执行时使用快速试算"));
-    quickRunCheckBox_->setToolTip(QStringLiteral("勾选后，正式执行前会先用缩略栅格快速验证流程。"));
-
-    auto* topHeaderFrame = new QFrame;
-    topHeaderFrame->setObjectName(QStringLiteral("workbenchHeaderFrame"));
-    auto* topHeaderLayout = new QHBoxLayout(topHeaderFrame);
-    topHeaderLayout->setContentsMargins(14, 12, 14, 12);
-    topHeaderLayout->setSpacing(16);
-
-    auto* topTextLayout = new QVBoxLayout;
-    topTextLayout->setSpacing(4);
-    topTextLayout->addWidget(algorithmTitle);
-    topTextLayout->addWidget(algorithmSubtitle);
-    topHeaderLayout->addLayout(topTextLayout, 1);
-
-    auto* actionButtonFrame = new QFrame;
-    actionButtonFrame->setObjectName(QStringLiteral("toolbarCard"));
-    auto* actionButtonLayout = new QHBoxLayout(actionButtonFrame);
-    actionButtonLayout->setContentsMargins(10, 8, 10, 8);
-    actionButtonLayout->setSpacing(8);
-    sidebarToggleButton_ = new QToolButton;
-    sidebarToggleButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    connect(sidebarToggleButton_, &QToolButton::clicked, this, [this]() {
-        setSidebarVisible(!isSidebarVisible_);
-    });
-    actionButtonLayout->addWidget(sidebarToggleButton_);
-    actionButtonLayout->addWidget(quickPreviewButton_);
-    actionButtonLayout->addWidget(quickRunButton_);
-    actionButtonLayout->addWidget(executeButton_);
-    topHeaderLayout->addWidget(actionButtonFrame, 0);
-
-    auto* pluginRailFrame = new QFrame;
-    pluginRailFrame->setObjectName(QStringLiteral("workbenchBand"));
-    auto* pluginRailLayout = new QHBoxLayout(pluginRailFrame);
-    pluginRailLayout->setContentsMargins(14, 10, 14, 10);
-    pluginRailLayout->setSpacing(12);
-    auto* pluginRailTitle = new QLabel(QStringLiteral("主功能"));
-    pluginRailTitle->setObjectName(QStringLiteral("bandLabel"));
     pluginRailLayout->addWidget(pluginRailTitle);
     pluginRailLayout->addWidget(pluginTabs_, 1);
 
@@ -285,15 +254,20 @@ void MainWindow::setupUi() {
     modeFrame->setObjectName(QStringLiteral("modeBandFrame"));
     auto* modeLayout = new QHBoxLayout(modeFrame);
     modeLayout->setContentsMargins(0, 0, 0, 0);
-    modeLayout->setSpacing(10);
+    modeLayout->setSpacing(8);
 
     auto* pluginInfoFrame = new QFrame;
     pluginInfoFrame->setObjectName(QStringLiteral("topInfoFrame"));
     auto* pluginInfoLayout = new QVBoxLayout(pluginInfoFrame);
-    pluginInfoLayout->setContentsMargins(14, 12, 14, 12);
-    pluginInfoLayout->setSpacing(6);
-    auto* pluginInfoLabel = new QLabel(QStringLiteral("当前主功能"));
+    pluginInfoLayout->setContentsMargins(14, 10, 14, 10);
+    pluginInfoLayout->setSpacing(4);
+    auto* pluginInfoLabel = new QLabel(QStringLiteral("当前功能"));
     pluginInfoLabel->setObjectName(QStringLiteral("bandLabel"));
+    pluginTitleLabel_ = new QLabel(QStringLiteral("请选择主功能"));
+    pluginTitleLabel_->setObjectName(QStringLiteral("contextTitle"));
+    pluginDescriptionLabel_ = new QLabel(QStringLiteral("选择上方主功能后，这里会显示功能说明。"));
+    pluginDescriptionLabel_->setWordWrap(true);
+    pluginDescriptionLabel_->setObjectName(QStringLiteral("sectionHint"));
     pluginInfoLayout->addWidget(pluginInfoLabel);
     pluginInfoLayout->addWidget(pluginTitleLabel_);
     pluginInfoLayout->addWidget(pluginDescriptionLabel_);
@@ -301,33 +275,44 @@ void MainWindow::setupUi() {
     auto* subFunctionFrame = new QFrame;
     subFunctionFrame->setObjectName(QStringLiteral("topInfoFrame"));
     auto* subFunctionLayout = new QVBoxLayout(subFunctionFrame);
-    subFunctionLayout->setContentsMargins(14, 12, 14, 12);
-    subFunctionLayout->setSpacing(8);
+    subFunctionLayout->setContentsMargins(14, 10, 14, 10);
+    subFunctionLayout->setSpacing(6);
     auto* subFunctionHeader = new QHBoxLayout;
     subFunctionHeader->setContentsMargins(0, 0, 0, 0);
     subFunctionHeader->setSpacing(8);
     auto* subFunctionBandLabel = new QLabel(QStringLiteral("子功能"));
     subFunctionBandLabel->setObjectName(QStringLiteral("bandLabel"));
+    subFunctionLabel_ = new QLabel(QStringLiteral("请选择子功能"));
+    subFunctionLabel_->setObjectName(QStringLiteral("sectionHint"));
     subFunctionHeader->addWidget(subFunctionBandLabel);
     subFunctionHeader->addStretch();
     subFunctionHeader->addWidget(subFunctionLabel_);
+    subFunctionTabs_ = new QTabBar;
+    subFunctionTabs_->setObjectName(QStringLiteral("subFunctionTabs"));
+    subFunctionTabs_->setExpanding(false);
+    subFunctionTabs_->setUsesScrollButtons(true);
+    subFunctionTabs_->setDrawBase(false);
+    subFunctionTabs_->setDocumentMode(true);
+    connect(subFunctionTabs_, &QTabBar::currentChanged, this, &MainWindow::onSubFunctionSelected);
     subFunctionLayout->addLayout(subFunctionHeader);
     subFunctionLayout->addWidget(subFunctionTabs_);
 
     auto* actionCardFrame = new QFrame;
     actionCardFrame->setObjectName(QStringLiteral("topInfoFrame"));
     auto* actionCardLayout = new QVBoxLayout(actionCardFrame);
-    actionCardLayout->setContentsMargins(14, 12, 14, 12);
-    actionCardLayout->setSpacing(8);
+    actionCardLayout->setContentsMargins(14, 10, 14, 10);
+    actionCardLayout->setSpacing(6);
     auto* actionCardLabel = new QLabel(QStringLiteral("执行控制"));
     actionCardLabel->setObjectName(QStringLiteral("bandLabel"));
-    auto* actionCardHint = new QLabel(QStringLiteral("先核对参数，再决定是否先进行快速试算。"));
+    quickRunCheckBox_ = new QCheckBox(QStringLiteral("执行前先快速试算"));
+    quickRunCheckBox_->setToolTip(QStringLiteral("勾选后，正式执行前会先用缩略栅格快速验证流程。"));
+    auto* actionCardHint = new QLabel(QStringLiteral("先核对参数，再决定是否先做快速试算。"));
     actionCardHint->setObjectName(QStringLiteral("sectionHint"));
     actionCardHint->setWordWrap(true);
     actionCardLayout->addWidget(actionCardLabel);
     actionCardLayout->addWidget(quickRunCheckBox_);
-    actionCardLayout->addWidget(actionCardHint);
     actionCardLayout->addStretch();
+    actionCardLayout->addWidget(actionCardHint);
 
     modeLayout->addWidget(pluginInfoFrame, 3);
     modeLayout->addWidget(subFunctionFrame, 5);
@@ -350,40 +335,68 @@ void MainWindow::setupUi() {
 
     auto* dataTitle = new QLabel(QStringLiteral("数据目录"));
     dataTitle->setObjectName(QStringLiteral("sectionTitle"));
-    auto* dataHint = new QLabel(
-        QStringLiteral("集中管理输入、输出和预览结果；双击即可在中间预览，右键可直接切换角色或打开目录。"));
+    auto* dataHint = new QLabel(QStringLiteral("统一管理输入、结果和预览数据。双击可在中间预览，右键可切换角色或打开目录。"));
     dataHint->setWordWrap(true);
     dataHint->setObjectName(QStringLiteral("sectionHint"));
 
-    auto* dataButtonLayout = new QHBoxLayout;
-    dataButtonLayout->setSpacing(6);
-    auto* addRasterBtn = new QPushButton(QStringLiteral("添加栅格"));
-    auto* addVectorBtn = new QPushButton(QStringLiteral("添加矢量"));
-    auto* addDirectoryBtn = new QPushButton(QStringLiteral("导入目录"));
-    auto* removeDataBtn = new QPushButton(QStringLiteral("移除"));
-    connect(addRasterBtn, &QPushButton::clicked, this, &MainWindow::onAddRasterData);
-    connect(addVectorBtn, &QPushButton::clicked, this, &MainWindow::onAddVectorData);
-    connect(addDirectoryBtn, &QPushButton::clicked, this, &MainWindow::onAddDataDirectory);
-    connect(removeDataBtn, &QPushButton::clicked, this, &MainWindow::onRemoveSelectedData);
-    dataButtonLayout->addWidget(addRasterBtn);
-    dataButtonLayout->addWidget(addVectorBtn);
-    dataButtonLayout->addWidget(addDirectoryBtn);
-    dataButtonLayout->addWidget(removeDataBtn);
+    auto* dataToolbarFrame = new QFrame;
+    dataToolbarFrame->setObjectName(QStringLiteral("toolbarCard"));
+    auto* dataToolbarLayout = new QHBoxLayout(dataToolbarFrame);
+    dataToolbarLayout->setContentsMargins(6, 6, 6, 6);
+    dataToolbarLayout->setSpacing(4);
 
-    auto* dataActionLayout = new QHBoxLayout;
-    dataActionLayout->setSpacing(6);
-    useAsInputButton_ = new QPushButton(QStringLiteral("设为输入"));
-    useAsOutputButton_ = new QPushButton(QStringLiteral("设为结果"));
-    bindInputButton_ = new QPushButton(QStringLiteral("填入参数"));
-    useAsInputButton_->setToolTip(QStringLiteral("把当前选中数据切换到输入数据分组"));
-    useAsOutputButton_->setToolTip(QStringLiteral("把当前选中数据切换到结果数据分组"));
-    bindInputButton_->setToolTip(QStringLiteral("把当前选中数据填入 input 参数"));
-    connect(useAsInputButton_, &QPushButton::clicked, this, &MainWindow::onUseSelectedAsInput);
-    connect(useAsOutputButton_, &QPushButton::clicked, this, &MainWindow::onUseSelectedAsOutput);
-    connect(bindInputButton_, &QPushButton::clicked, this, &MainWindow::onBindSelectedToInputParam);
-    dataActionLayout->addWidget(useAsInputButton_);
-    dataActionLayout->addWidget(useAsOutputButton_);
-    dataActionLayout->addWidget(bindInputButton_);
+    auto* addRasterBtn = new QToolButton;
+    addRasterBtn->setObjectName(QStringLiteral("dataToolButton"));
+    addRasterBtn->setIcon(style()->standardIcon(QStyle::SP_FileIcon));
+    addRasterBtn->setToolTip(QStringLiteral("添加栅格"));
+    auto* addVectorBtn = new QToolButton;
+    addVectorBtn->setObjectName(QStringLiteral("dataToolButton"));
+    addVectorBtn->setIcon(style()->standardIcon(QStyle::SP_DirIcon));
+    addVectorBtn->setToolTip(QStringLiteral("添加矢量"));
+    auto* addDirectoryBtn = new QToolButton;
+    addDirectoryBtn->setObjectName(QStringLiteral("dataToolButton"));
+    addDirectoryBtn->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
+    addDirectoryBtn->setToolTip(QStringLiteral("导入目录"));
+    auto* removeDataBtn = new QToolButton;
+    removeDataBtn->setObjectName(QStringLiteral("dataToolButton"));
+    removeDataBtn->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    removeDataBtn->setToolTip(QStringLiteral("移除数据"));
+    useAsInputButton_ = new QToolButton;
+    useAsInputButton_->setObjectName(QStringLiteral("dataToolButton"));
+    useAsInputButton_->setIcon(style()->standardIcon(QStyle::SP_ArrowLeft));
+    useAsInputButton_->setToolTip(QStringLiteral("设为输入数据"));
+    useAsOutputButton_ = new QToolButton;
+    useAsOutputButton_->setObjectName(QStringLiteral("dataToolButton"));
+    useAsOutputButton_->setIcon(style()->standardIcon(QStyle::SP_ArrowRight));
+    useAsOutputButton_->setToolTip(QStringLiteral("设为结果数据"));
+    bindInputButton_ = new QToolButton;
+    bindInputButton_->setObjectName(QStringLiteral("dataToolButton"));
+    bindInputButton_->setIcon(style()->standardIcon(QStyle::SP_CommandLink));
+    bindInputButton_->setToolTip(QStringLiteral("填入当前参数"));
+
+    connect(addRasterBtn, &QToolButton::clicked, this, &MainWindow::onAddRasterData);
+    connect(addVectorBtn, &QToolButton::clicked, this, &MainWindow::onAddVectorData);
+    connect(addDirectoryBtn, &QToolButton::clicked, this, &MainWindow::onAddDataDirectory);
+    connect(removeDataBtn, &QToolButton::clicked, this, &MainWindow::onRemoveSelectedData);
+    connect(useAsInputButton_, &QToolButton::clicked, this, &MainWindow::onUseSelectedAsInput);
+    connect(useAsOutputButton_, &QToolButton::clicked, this, &MainWindow::onUseSelectedAsOutput);
+    connect(bindInputButton_, &QToolButton::clicked, this, &MainWindow::onBindSelectedToInputParam);
+
+    for (auto* button : {addRasterBtn, addVectorBtn, addDirectoryBtn, removeDataBtn, useAsInputButton_, useAsOutputButton_, bindInputButton_}) {
+        button->setAutoRaise(false);
+        button->setIconSize(QSize(16, 16));
+        button->setFixedSize(32, 32);
+    }
+
+    dataToolbarLayout->addWidget(addRasterBtn);
+    dataToolbarLayout->addWidget(addVectorBtn);
+    dataToolbarLayout->addWidget(addDirectoryBtn);
+    dataToolbarLayout->addWidget(removeDataBtn);
+    dataToolbarLayout->addSpacing(6);
+    dataToolbarLayout->addWidget(useAsInputButton_);
+    dataToolbarLayout->addWidget(useAsOutputButton_);
+    dataToolbarLayout->addWidget(bindInputButton_);
+    dataToolbarLayout->addStretch();
 
     dataTree_ = new QTreeWidget;
     dataTree_->setObjectName(QStringLiteral("dataTree"));
@@ -408,8 +421,7 @@ void MainWindow::setupUi() {
 
     dataLayout->addWidget(dataTitle);
     dataLayout->addWidget(dataHint);
-    dataLayout->addLayout(dataButtonLayout);
-    dataLayout->addLayout(dataActionLayout);
+    dataLayout->addWidget(dataToolbarFrame);
     dataLayout->addWidget(dataTree_, 1);
 
     auto* centerPanel = new QFrame;
@@ -422,21 +434,15 @@ void MainWindow::setupUi() {
     auto* centerHeaderFrame = new QFrame;
     centerHeaderFrame->setObjectName(QStringLiteral("centerHeaderFrame"));
     auto* centerHeaderLayout = new QHBoxLayout(centerHeaderFrame);
-    centerHeaderLayout->setContentsMargins(14, 10, 14, 10);
+    centerHeaderLayout->setContentsMargins(14, 8, 14, 8);
     centerHeaderLayout->setSpacing(12);
-    auto* centerHeaderTextLayout = new QVBoxLayout;
-    centerHeaderTextLayout->setSpacing(3);
-    auto* previewTitle = new QLabel(QStringLiteral("影像与结果展示"));
+    auto* previewTitle = new QLabel(QStringLiteral("影像预览"));
     previewTitle->setObjectName(QStringLiteral("sectionTitle"));
-    auto* previewHint = new QLabel(QStringLiteral("中间区域保持最大权重，用于查看数据预览、输入输出对比和执行结果。"));
-    previewHint->setWordWrap(true);
-    previewHint->setObjectName(QStringLiteral("sectionHint"));
-    centerHeaderTextLayout->addWidget(previewTitle);
-    centerHeaderTextLayout->addWidget(previewHint);
-    centerHeaderLayout->addLayout(centerHeaderTextLayout, 1);
     auto* centerBadge = new QLabel(QStringLiteral("主显示区"));
     centerBadge->setObjectName(QStringLiteral("panelBadge"));
-    centerHeaderLayout->addWidget(centerBadge, 0, Qt::AlignTop);
+    centerHeaderLayout->addWidget(previewTitle);
+    centerHeaderLayout->addStretch();
+    centerHeaderLayout->addWidget(centerBadge, 0, Qt::AlignVCenter);
 
     previewPanel_ = new PreviewPanel;
     connect(previewPanel_, &PreviewPanel::requestOpenPath, this, [this](const QString& path) {
@@ -458,11 +464,12 @@ void MainWindow::setupUi() {
     auto* sidebarHeaderFrame = new QFrame;
     sidebarHeaderFrame->setObjectName(QStringLiteral("sidebarHeaderFrame"));
     auto* sidebarHeaderLayout = new QHBoxLayout(sidebarHeaderFrame);
-    sidebarHeaderLayout->setContentsMargins(12, 10, 12, 10);
+    sidebarHeaderLayout->setContentsMargins(12, 8, 12, 8);
     sidebarHeaderLayout->setSpacing(8);
-    auto* sidebarTitle = new QLabel(QStringLiteral("上下文与参数"));
+    auto* sidebarTitle = new QLabel(QStringLiteral("上下文参数"));
     sidebarTitle->setObjectName(QStringLiteral("sectionTitle"));
     auto* autoModeButton = new QToolButton;
+    autoModeButton->setObjectName(QStringLiteral("headerToolButton"));
     autoModeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     autoModeButton->setText(QStringLiteral("自动"));
     autoModeButton->setToolTip(QStringLiteral("恢复信息/参数侧栏的自动切换"));
@@ -501,9 +508,11 @@ void MainWindow::setupUi() {
     auto* infoLayout = new QVBoxLayout(infoTab);
     infoLayout->setContentsMargins(10, 10, 10, 10);
     infoLayout->setSpacing(8);
-    auto* infoIntro = new QLabel(QStringLiteral("选中左侧数据时，此处显示路径、空间信息和可执行操作。"));
+    auto* infoIntro = new QLabel(QStringLiteral("选中左侧数据时，这里显示路径、空间信息和可执行操作。"));
     infoIntro->setObjectName(QStringLiteral("sectionHint"));
     infoIntro->setWordWrap(true);
+    auto* infoGroup = new QGroupBox(QStringLiteral("当前对象"));
+    auto* infoGroupLayout = new QVBoxLayout(infoGroup);
     dataInfoTitleLabel_ = new QLabel(QStringLiteral("未选择对象"));
     dataInfoTitleLabel_->setObjectName(QStringLiteral("contextTitle"));
     dataInfoPathLabel_ = new QLabel(QStringLiteral("请选择左侧数据或执行结果。"));
@@ -511,45 +520,49 @@ void MainWindow::setupUi() {
     dataInfoPathLabel_->setWordWrap(true);
     dataInfoMetaLabel_ = new QLabel(QStringLiteral("暂无数据概览"));
     dataInfoMetaLabel_->setWordWrap(true);
+    infoGroupLayout->addWidget(dataInfoTitleLabel_);
+    infoGroupLayout->addWidget(dataInfoPathLabel_);
+    infoGroupLayout->addWidget(dataInfoMetaLabel_);
+    auto* summaryGroup = new QGroupBox(QStringLiteral("详细信息"));
+    auto* summaryLayout = new QVBoxLayout(summaryGroup);
     dataInfoSummaryEdit_ = new QPlainTextEdit;
     dataInfoSummaryEdit_->setReadOnly(true);
     dataInfoSummaryEdit_->setMinimumHeight(220);
+    summaryLayout->addWidget(dataInfoSummaryEdit_);
     infoLayout->addWidget(infoIntro);
-    infoLayout->addWidget(dataInfoTitleLabel_);
-    infoLayout->addWidget(dataInfoPathLabel_);
-    infoLayout->addWidget(dataInfoMetaLabel_);
-    infoLayout->addWidget(dataInfoSummaryEdit_, 1);
+    infoLayout->addWidget(infoGroup);
+    infoLayout->addWidget(summaryGroup, 1);
 
     auto* paramsTab = new QWidget;
     auto* paramsLayout = new QVBoxLayout(paramsTab);
     paramsLayout->setContentsMargins(10, 10, 10, 10);
     paramsLayout->setSpacing(8);
-    auto* paramsTitle = new QLabel(QStringLiteral("参数配置"));
-    paramsTitle->setObjectName(QStringLiteral("contextTitle"));
-    auto* paramsHint = new QLabel(QStringLiteral("选择顶部子功能后，在这里按顺序配置参数、检查校验状态，并查看执行摘要。"));
+    auto* paramsHint = new QLabel(QStringLiteral("选择子功能后，在这里依次配置参数、检查校验状态，并查看执行摘要。"));
     paramsHint->setWordWrap(true);
     paramsHint->setObjectName(QStringLiteral("sectionHint"));
-
+    auto* validationGroup = new QGroupBox(QStringLiteral("校验状态"));
+    auto* validationLayout = new QVBoxLayout(validationGroup);
+    paramValidationLabel_ = new QLabel(QStringLiteral("当前参数已就绪。"));
+    paramValidationLabel_->setWordWrap(true);
+    validationLayout->addWidget(paramValidationLabel_);
+    auto* paramGroup = new QGroupBox(QStringLiteral("参数配置"));
+    auto* paramGroupLayout = new QVBoxLayout(paramGroup);
     auto* scrollArea = new QScrollArea;
     scrollArea->setWidgetResizable(true);
     paramWidget_ = new ParamWidget;
     connect(paramWidget_, &ParamWidget::paramsChanged, this, &MainWindow::onParamValuesChanged);
     scrollArea->setWidget(paramWidget_);
-
-    paramValidationLabel_ = new QLabel(QStringLiteral("当前参数已就绪。"));
-    paramValidationLabel_->setWordWrap(true);
-
+    paramGroupLayout->addWidget(scrollArea);
     auto* resultGroup = new QGroupBox(QStringLiteral("执行结果"));
     auto* resultLayout = new QVBoxLayout(resultGroup);
     resultSummaryLabel_ = new QLabel(QStringLiteral("执行后会在这里显示结果摘要。"));
     resultSummaryLabel_->setWordWrap(true);
     resultLayout->addWidget(resultSummaryLabel_);
-
-    paramsLayout->addWidget(paramsTitle);
     paramsLayout->addWidget(paramsHint);
-    paramsLayout->addWidget(paramValidationLabel_);
-    paramsLayout->addWidget(scrollArea, 1);
+    paramsLayout->addWidget(validationGroup);
+    paramsLayout->addWidget(paramGroup, 1);
     paramsLayout->addWidget(resultGroup);
+    paramsLayout->addStretch();
 
     contextTabWidget_->addTab(infoTab, QStringLiteral("信息"));
     contextTabWidget_->addTab(paramsTab, QStringLiteral("参数"));
@@ -561,78 +574,96 @@ void MainWindow::setupUi() {
     workspaceSplitter->addWidget(centerPanel);
     workspaceSplitter->addWidget(sidebarPanel_);
     workspaceSplitter->setStretchFactor(0, 2);
-    workspaceSplitter->setStretchFactor(1, 7);
+    workspaceSplitter->setStretchFactor(1, 6);
     workspaceSplitter->setStretchFactor(2, 3);
-    workspaceSplitter->setSizes({300, 800, 420});
+    workspaceSplitter->setSizes({300, 900, 450});
 
     mainLayout->addWidget(algorithmFrame);
     mainLayout->addWidget(workspaceSplitter, 1);
 
     centralWidget->setStyleSheet(
-        "QWidget { color: #243447; font-size: 13px; }"
-        "QMainWindow { background: #edf1f5; }"
+        "QMainWindow, QWidget { color: #d7deea; font-size: 13px; }"
+        "QMainWindow { background: #1e2533; }"
+        "QWidget { background: transparent; }"
         "QFrame#algorithmFrame, QFrame#dataPanel, QFrame#centerPanel, QFrame#sidebarPanel, "
         "QFrame#topInfoFrame, QFrame#workbenchHeaderFrame, QFrame#workbenchBand, "
         "QFrame#toolbarCard, QFrame#centerHeaderFrame, QFrame#sidebarHeaderFrame {"
-        "  background: #f7fafc;"
-        "  border: 1px solid #d8e1e9;"
+        "  background: #1a2030;"
+        "  border: 1px solid #2b3446;"
         "  border-radius: 8px;"
         "}"
-        "QFrame#algorithmFrame { background: #f4f8fb; }"
-        "QFrame#workbenchBand, QFrame#modeBandFrame { background: transparent; border: none; }"
-        "QFrame#toolbarCard, QFrame#sidebarHeaderFrame { background: #f9fbfd; }"
-        "QFrame#centerHeaderFrame { background: #f6f9fc; }"
-        "QLabel#sectionTitle { font-size: 18px; font-weight: 600; color: #1f2d3d; }"
-        "QLabel#contextTitle { font-size: 16px; font-weight: 600; color: #213043; }"
-        "QLabel#bandLabel { color: #617284; font-weight: 600; }"
+        "QFrame#modeBandFrame { background: transparent; border: none; }"
+        "QLabel#sectionTitle { font-size: 15px; font-weight: 600; color: #f2f5fb; }"
+        "QLabel#contextTitle { font-size: 14px; font-weight: 600; color: #edf3ff; }"
+        "QLabel#bandLabel { color: #8ea0ba; font-weight: 600; }"
         "QLabel#panelBadge {"
-        "  color: #234764; background: #e6eef6; border: 1px solid #cfdbe7;"
-        "  border-radius: 999px; padding: 5px 10px; font-weight: 600;"
+        "  color: #d9e8f7; background: #253247; border: 1px solid #3a4c67;"
+        "  border-radius: 999px; padding: 4px 10px; font-weight: 600;"
         "}"
-        "QLabel#sectionHint { color: #627284; }"
-        "QPushButton {"
-        "  min-height: 32px; padding: 0 12px; border-radius: 6px;"
-        "  border: 1px solid #c9d4df; background: #f8fafc; color: #223548;"
+        "QLabel#sectionHint { color: #8fa1b8; }"
+        "QPushButton, QToolButton {"
+        "  min-height: 30px; padding: 0 12px; border-radius: 6px;"
+        "  border: 1px solid #34425a; background: #232c3d; color: #d8e2ef;"
         "}"
-        "QPushButton:hover { background: #edf3f8; border-color: #9db2c6; }"
-        "QPushButton:disabled { background: #f1f4f7; color: #98a6b5; border-color: #dde4eb; }"
-        "QPushButton#primaryButton { background: #2f5f85; color: white; border: 1px solid #2f5f85; font-weight: 600; }"
-        "QPushButton#primaryButton:hover { background: #2a5475; }"
+        "QPushButton:hover, QToolButton:hover { background: #2a3550; border-color: #4a90d9; }"
+        "QPushButton:disabled, QToolButton:disabled { background: #202736; color: #68788f; border-color: #2a3344; }"
+        "QPushButton#primaryButton { background: #4a90d9; color: white; border: 1px solid #4a90d9; font-weight: 600; }"
+        "QPushButton#primaryButton:hover { background: #5aa0ea; }"
+        "QToolButton#headerToolButton { padding: 0 10px; }"
+        "QToolButton#dataToolButton { padding: 0; min-width: 32px; min-height: 32px; }"
         "QTabBar#pluginTabs::tab {"
-        "  background: #e8eef4; color: #36485b; border: 1px solid #d1dbe5; border-radius: 6px;"
-        "  padding: 10px 20px; margin-right: 6px; min-height: 18px;"
+        "  background: #232c3d; color: #9fb0c7; border: 1px solid #34425a; border-radius: 6px;"
+        "  padding: 9px 16px; margin-right: 6px; min-height: 18px;"
         "}"
-        "QTabBar#pluginTabs::tab:selected { background: #d8e5ef; color: #173754; border-color: #9fb8ce; font-weight: 600; }"
+        "QTabBar#pluginTabs::tab:selected { background: #2b3a52; color: #f1f6ff; border-color: #4a90d9; font-weight: 600; }"
         "QTabBar#subFunctionTabs::tab {"
-        "  background: #f4f7fa; color: #425365; border: 1px solid #d6e0e8; border-radius: 6px;"
-        "  padding: 8px 16px; margin-right: 6px; min-height: 16px;"
+        "  background: #202736; color: #9aaac0; border: 1px solid #313d52; border-radius: 6px;"
+        "  padding: 7px 14px; margin-right: 6px; min-height: 16px;"
         "}"
-        "QTabBar#subFunctionTabs::tab:selected { background: #edf4f9; color: #1f4766; border-color: #acc1d4; font-weight: 600; }"
+        "QTabBar#subFunctionTabs::tab:selected { background: #26364d; color: #eff5ff; border-color: #4a90d9; font-weight: 600; }"
         "QTreeWidget, QScrollArea, QPlainTextEdit, QGroupBox, QTabWidget::pane {"
-        "  background: #ffffff; border: 1px solid #d8e0e8; border-radius: 6px;"
+        "  background: #151c29; border: 1px solid #2b3446; border-radius: 6px;"
         "}"
         "QTabWidget#contextTabWidget::pane { margin-top: 6px; }"
         "QTabWidget#contextTabWidget QTabBar::tab {"
-        "  background: #eef3f7; color: #45586c; border: 1px solid #d8e1ea; border-radius: 6px;"
-        "  padding: 8px 10px; min-width: 64px;"
+        "  background: #202736; color: #9aaac0; border: 1px solid #313d52; border-radius: 6px;"
+        "  padding: 8px 12px; min-width: 64px;"
         "}"
         "QTabWidget#contextTabWidget QTabBar::tab:selected {"
-        "  background: #dfeaf3; color: #1d4666; border-color: #abc1d3; font-weight: 600;"
+        "  background: #26364d; color: #eef4ff; border-color: #4a90d9; font-weight: 600;"
         "}"
-        "QTreeWidget#dataTree { outline: none; padding: 4px; }"
-        "QTreeWidget#dataTree::item { height: 26px; border-radius: 4px; padding: 2px 4px; }"
-        "QTreeWidget#dataTree::item:selected { background: #dfeaf3; color: #1f3f5d; }"
-        "QTreeWidget#dataTree::item:hover { background: #eef4f8; }"
-        "QPlainTextEdit { padding: 6px; }"
-        "QGroupBox { margin-top: 8px; padding-top: 12px; font-weight: 600; }"
-        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"
-        "QToolButton { color: #35526f; border: 1px solid #cad6e1; border-radius: 6px; padding: 4px 10px; background: #f7f9fb; }"
-        "QToolButton:hover { background: #edf3f8; }"
-        "QCheckBox { color: #425264; spacing: 6px; }"
-        "QSplitter::handle { background: transparent; }"
-        "QSplitter::handle:hover { background: #d7e2eb; }");
+        "QTreeWidget#dataTree { outline: none; padding: 4px; alternate-background-color: #182131; }"
+        "QTreeWidget#dataTree::item { height: 28px; border-radius: 4px; padding: 2px 6px; }"
+        "QTreeWidget#dataTree::item:selected { background: #28415f; color: #f1f7ff; }"
+        "QTreeWidget#dataTree::item:hover { background: #202d42; }"
+        "QPlainTextEdit { padding: 6px; color: #d7deea; }"
+        "QGroupBox { margin-top: 8px; padding-top: 12px; font-weight: 600; color: #dfe7f5; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #cfd9e8; }"
+        "QCheckBox { color: #c9d5e7; spacing: 6px; }"
+        "QScrollBar:vertical, QScrollBar:horizontal { background: #141b28; border: none; margin: 0; }"
+        "QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #33425b; border-radius: 4px; min-height: 24px; min-width: 24px; }"
+        "QSplitter::handle { background: #1e2533; }"
+        "QSplitter::handle:hover { background: #31415b; }");
 
+    statusAlgorithmLabel_ = new QLabel(QStringLiteral("当前算法：未选择"));
+    statusPluginCountLabel_ = new QLabel(QStringLiteral("插件数：0"));
+    statusExecutionLabel_ = new QLabel(QStringLiteral("执行状态：就绪"));
+    statusProgressBar_ = new QProgressBar;
+    statusProgressBar_->setRange(0, 100);
+    statusProgressBar_->setValue(0);
+    statusProgressBar_->setFixedWidth(180);
+    statusProgressBar_->setTextVisible(false);
+    statusBar()->setStyleSheet(
+        "QStatusBar { background: #161c28; color: #cfd8e6; border-top: 1px solid #2b3446; }"
+        "QStatusBar::item { border: none; }"
+        "QProgressBar { background: #202736; border: 1px solid #34425a; border-radius: 5px; }"
+        "QProgressBar::chunk { background: #4a90d9; border-radius: 4px; }");
+    statusBar()->addPermanentWidget(statusAlgorithmLabel_);
+    statusBar()->addPermanentWidget(statusPluginCountLabel_);
+    statusBar()->addPermanentWidget(statusExecutionLabel_);
+    statusBar()->addPermanentWidget(statusProgressBar_);
     statusBar()->showMessage(QStringLiteral("就绪"));
+
     clearDataInfoPanel();
     setSidebarVisible(true);
     refreshQuickPreviewButtonState();
@@ -641,7 +672,6 @@ void MainWindow::setupUi() {
     refreshParamValidationState();
     refreshDataActionButtonsState();
 }
-
 void MainWindow::loadPlugins() {
     namespace fs = std::filesystem;
 
@@ -670,16 +700,37 @@ void MainWindow::loadPlugins() {
     for (auto* plugin : plugins) {
         const int index = pluginTabs_->addTab(QString::fromUtf8(plugin->displayName()));
         pluginTabs_->setTabToolTip(index, QString::fromUtf8(plugin->description()));
+        QIcon icon = style()->standardIcon(QStyle::SP_FileDialogDetailedView);
+        if (plugin->name() == "projection") {
+            icon = style()->standardIcon(QStyle::SP_BrowserReload);
+        } else if (plugin->name() == "cutting") {
+            icon = style()->standardIcon(QStyle::SP_ComputerIcon);
+        } else if (plugin->name() == "matching") {
+            icon = style()->standardIcon(QStyle::SP_DialogYesButton);
+        } else if (plugin->name() == "processing") {
+            icon = style()->standardIcon(QStyle::SP_MediaPlay);
+        } else if (plugin->name() == "utility") {
+            icon = style()->standardIcon(QStyle::SP_FileDialogInfoView);
+        } else if (plugin->name() == "vector") {
+            icon = style()->standardIcon(QStyle::SP_DirHomeIcon);
+        }
+        pluginTabs_->setTabIcon(index, icon);
         pluginTabMap_[index] = plugin->name();
     }
 
     if (plugins.empty()) {
         statusBar()->showMessage(QStringLiteral("未找到插件，请检查 plugins 目录"));
+        if (statusPluginCountLabel_) {
+            statusPluginCountLabel_->setText(QStringLiteral("插件数：0"));
+        }
         return;
     }
 
     pluginTabs_->setCurrentIndex(0);
     onPluginSelected(pluginTabs_->currentIndex());
+    if (statusPluginCountLabel_) {
+        statusPluginCountLabel_->setText(QStringLiteral("插件数：%1").arg(plugins.size()));
+    }
     statusBar()->showMessage(QStringLiteral("已加载 %1 个算法插件").arg(plugins.size()));
 }
 
@@ -865,6 +916,9 @@ void MainWindow::onPluginSelected(int index) {
         setCurrentActionValue({});
         pluginTitleLabel_->setText(QStringLiteral("请选择主功能"));
         pluginDescriptionLabel_->setText(QStringLiteral("选择主功能后，将在下方展示对应的子功能与操作入口。"));
+        if (statusAlgorithmLabel_) {
+            statusAlgorithmLabel_->setText(QStringLiteral("当前算法：未选择"));
+        }
         refreshQuickPreviewButtonState();
         refreshQuickRunButtonState();
         refreshParamValidationState();
@@ -879,6 +933,10 @@ void MainWindow::onPluginSelected(int index) {
 
     pluginTitleLabel_->setText(QString::fromUtf8(currentPlugin_->displayName()));
     pluginDescriptionLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
+    if (statusAlgorithmLabel_) {
+        statusAlgorithmLabel_->setText(
+            QStringLiteral("当前算法：%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
+    }
     contextPanelMode_ = ContextPanelMode::Auto;
     rebuildSubFunctionTabs();
     statusBar()->showMessage(QStringLiteral("当前主功能: %1").arg(QString::fromUtf8(currentPlugin_->displayName())));
@@ -906,6 +964,10 @@ void MainWindow::onSubFunctionSelected(int index) {
     refreshQuickRunButtonState();
     refreshParamValidationState();
     refreshExecuteButtonState();
+    if (statusExecutionLabel_) {
+        statusExecutionLabel_->setText(
+            QStringLiteral("执行状态：已选择 %1").arg(displayTextForAction(currentActionKey_)));
+    }
     statusBar()->showMessage(QStringLiteral("当前子功能: %1").arg(displayTextForAction(currentActionKey_)));
 }
 
@@ -1049,6 +1111,12 @@ void MainWindow::runPluginWithParams(
     gis::gui::DataOrigin outputOrigin,
     bool syncOutputBackToForm) {
     reporter_->reset();
+    if (statusExecutionLabel_) {
+        statusExecutionLabel_->setText(QStringLiteral("执行状态：运行中"));
+    }
+    if (statusProgressBar_) {
+        statusProgressBar_->setRange(0, 0);
+    }
 
     auto* worker = new ExecuteWorker;
     worker->setup(currentPlugin_, params, reporter_);
@@ -1079,11 +1147,24 @@ void MainWindow::runPluginWithParams(
                 refreshPreviewCompareTargets();
                 previewPanel_->showComparePreviewIfAvailable();
             }
+            if (statusExecutionLabel_) {
+                statusExecutionLabel_->setText(QStringLiteral("执行状态：成功"));
+            }
             statusBar()->showMessage(statusPrefix + QStringLiteral("成功: ") + message);
         } else if (cancelled) {
+            if (statusExecutionLabel_) {
+                statusExecutionLabel_->setText(QStringLiteral("执行状态：已取消"));
+            }
             statusBar()->showMessage(statusPrefix + QStringLiteral("已取消"));
         } else {
+            if (statusExecutionLabel_) {
+                statusExecutionLabel_->setText(QStringLiteral("执行状态：失败"));
+            }
             statusBar()->showMessage(statusPrefix + QStringLiteral("失败: ") + message);
+        }
+        if (statusProgressBar_) {
+            statusProgressBar_->setRange(0, 100);
+            statusProgressBar_->setValue(result.success ? 100 : 0);
         }
     });
     connect(worker, &ExecuteWorker::finished, thread, &QThread::quit);
