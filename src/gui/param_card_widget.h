@@ -1,0 +1,70 @@
+#pragma once
+
+#include <QWidget>
+#include <QFrame>
+#include <QLabel>
+#include <QVBoxLayout>
+#include <QGridLayout>
+#include <QMap>
+#include <memory>
+#include <string>
+
+#include <gis/framework/param_spec.h>
+
+class QLineEdit;
+class QComboBox;
+class QDoubleSpinBox;
+class QCheckBox;
+class QPushButton;
+
+struct ParamWidgetEntry {
+    std::string key;
+    QWidget* widget = nullptr;
+    QLineEdit* lineEdit = nullptr;
+    QComboBox* comboBox = nullptr;
+    QDoubleSpinBox* spinBox = nullptr;
+    QCheckBox* checkBox = nullptr;
+    QPushButton* browseButton = nullptr;
+};
+
+class ParamCardWidget : public QWidget {
+    Q_OBJECT
+public:
+    enum class CardType { Input, Output, Advanced };
+
+    explicit ParamCardWidget(CardType type, QWidget* parent = nullptr);
+
+    void setTitle(const QString& title);
+    void addParam(const gis::framework::ParamSpec& spec);
+    void clearParams();
+
+    QMap<std::string, gis::framework::ParamValue> collectValues() const;
+    bool validate() const;
+
+    void markFieldError(const std::string& key, bool error) const;
+
+signals:
+    void paramChanged();
+
+private:
+    void setupUi();
+    QWidget* createParamWidget(const gis::framework::ParamSpec& spec, ParamWidgetEntry& entry);
+    QWidget* createFileWidget(const gis::framework::ParamSpec& spec, ParamWidgetEntry& entry);
+    QWidget* createEnumWidget(const gis::framework::ParamSpec& spec, ParamWidgetEntry& entry);
+    QWidget* createIntWidget(const gis::framework::ParamSpec& spec, ParamWidgetEntry& entry);
+    QWidget* createNumberWidget(const gis::framework::ParamSpec& spec, ParamWidgetEntry& entry);
+    QWidget* createBoolWidget(const gis::framework::ParamSpec& spec, ParamWidgetEntry& entry);
+    QWidget* createTextWidget(const gis::framework::ParamSpec& spec, ParamWidgetEntry& entry);
+    QWidget* createExtentWidget(const gis::framework::ParamSpec& spec, ParamWidgetEntry& entry);
+
+    CardType cardType_;
+    QFrame* cardFrame_ = nullptr;
+    QLabel* titleLabel_ = nullptr;
+    QLabel* iconLabel_ = nullptr;
+    QGridLayout* paramsLayout_ = nullptr;
+    QVBoxLayout* cardContentLayout_ = nullptr;
+    int paramsRow_ = 0;
+
+    QMap<std::string, ParamWidgetEntry> entries_;
+    QMap<std::string, bool> requiredMap_;
+};

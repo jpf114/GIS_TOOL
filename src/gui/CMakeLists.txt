@@ -5,8 +5,9 @@ add_executable(gis-gui
     main.cpp
     gui_data_support.cpp
     mainwindow.cpp
+    nav_panel.cpp
+    param_card_widget.cpp
     param_widget.cpp
-    preview_panel.cpp
     progress_dialog.cpp
     crs_dialog.cpp
     execute_worker.cpp

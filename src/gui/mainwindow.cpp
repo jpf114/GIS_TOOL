@@ -1,98 +1,76 @@
 #include "mainwindow.h"
 
 #include "execute_worker.h"
-#include "gui_data_support.h"
+#include "nav_panel.h"
 #include "param_widget.h"
-#include "preview_panel.h"
 #include "progress_dialog.h"
 #include "qt_progress_reporter.h"
+#include "style_constants.h"
+#include "gui_data_support.h"
 
 #include <gis/core/runtime_env.h>
 
 #include <QApplication>
-#include <QBrush>
-#include <QCheckBox>
-#include <QClipboard>
-#include <QColor>
-#include <QDesktopServices>
-#include <QDir>
-#include <QDragEnterEvent>
-#include <QDropEvent>
-#include <QFileDialog>
-#include <QFileInfo>
-#include <QFont>
 #include <QFrame>
-#include <QGuiApplication>
-#include <QGroupBox>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QLabel>
-#include <QMenu>
-#include <QMimeData>
 #include <QMessageBox>
-#include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSplitter>
 #include <QStatusBar>
-#include <QProgressBar>
-#include <QStyle>
-#include <QTabBar>
-#include <QTabWidget>
 #include <QThread>
-#include <QToolButton>
-#include <QTreeWidget>
-#include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <filesystem>
-#include <map>
 #include <vector>
 
 namespace {
 
 QString actionDisplayName(const QString& actionKey) {
     static const std::map<QString, QString> kLabels = {
-        {QStringLiteral("reproject"), QStringLiteral("重投影")},
-        {QStringLiteral("info"), QStringLiteral("信息查看")},
-        {QStringLiteral("transform"), QStringLiteral("坐标转换")},
-        {QStringLiteral("assign_srs"), QStringLiteral("赋予坐标系")},
-        {QStringLiteral("clip"), QStringLiteral("裁切")},
-        {QStringLiteral("mosaic"), QStringLiteral("镶嵌")},
-        {QStringLiteral("split"), QStringLiteral("分块")},
-        {QStringLiteral("merge_bands"), QStringLiteral("波段合并")},
-        {QStringLiteral("detect"), QStringLiteral("特征检测")},
-        {QStringLiteral("match"), QStringLiteral("特征匹配")},
-        {QStringLiteral("register"), QStringLiteral("影像配准")},
-        {QStringLiteral("change"), QStringLiteral("变化检测")},
-        {QStringLiteral("ecc_register"), QStringLiteral("ECC 配准")},
-        {QStringLiteral("corner"), QStringLiteral("角点检测")},
-        {QStringLiteral("stitch"), QStringLiteral("图像拼接")},
-        {QStringLiteral("threshold"), QStringLiteral("阈值分割")},
-        {QStringLiteral("filter"), QStringLiteral("滤波")},
-        {QStringLiteral("enhance"), QStringLiteral("增强")},
-        {QStringLiteral("band_math"), QStringLiteral("波段运算")},
-        {QStringLiteral("stats"), QStringLiteral("统计信息")},
-        {QStringLiteral("edge"), QStringLiteral("边缘检测")},
-        {QStringLiteral("contour"), QStringLiteral("轮廓提取")},
-        {QStringLiteral("template_match"), QStringLiteral("模板匹配")},
-        {QStringLiteral("pansharpen"), QStringLiteral("全色锐化")},
-        {QStringLiteral("hough"), QStringLiteral("霍夫变换")},
-        {QStringLiteral("watershed"), QStringLiteral("分水岭")},
+        {QStringLiteral("reproject"), QStringLiteral("\351\207\215\346\212\225\345\275\261")},
+        {QStringLiteral("info"), QStringLiteral("\344\277\241\346\201\257\346\237\245\347\234\213")},
+        {QStringLiteral("transform"), QStringLiteral("\345\235\220\346\240\207\350\275\254\346\215\242")},
+        {QStringLiteral("assign_srs"), QStringLiteral("\350\265\213\344\272\210\345\235\220\346\240\207\347\263\273")},
+        {QStringLiteral("clip"), QStringLiteral("\350\243\201\345\210\207")},
+        {QStringLiteral("mosaic"), QStringLiteral("\351\225\266\345\265\214")},
+        {QStringLiteral("split"), QStringLiteral("\345\210\206\345\235\227")},
+        {QStringLiteral("merge_bands"), QStringLiteral("\346\263\242\346\256\265\345\220\210\345\271\266")},
+        {QStringLiteral("detect"), QStringLiteral("\347\211\271\345\276\201\346\243\200\346\265\213")},
+        {QStringLiteral("match"), QStringLiteral("\347\211\271\345\276\201\345\214\271\351\205\215")},
+        {QStringLiteral("register"), QStringLiteral("\345\275\261\345\203\217\351\205\215\345\207\206")},
+        {QStringLiteral("change"), QStringLiteral("\345\217\230\345\214\226\346\243\200\346\265\213")},
+        {QStringLiteral("ecc_register"), QStringLiteral("ECC \351\205\215\345\207\206")},
+        {QStringLiteral("corner"), QStringLiteral("\350\247\222\347\202\271\346\243\200\346\265\213")},
+        {QStringLiteral("stitch"), QStringLiteral("\345\233\276\345\203\217\346\213\274\346\216\245")},
+        {QStringLiteral("threshold"), QStringLiteral("\351\230\210\345\200\274\345\210\206\345\211\262")},
+        {QStringLiteral("filter"), QStringLiteral("\346\273\244\346\263\242")},
+        {QStringLiteral("enhance"), QStringLiteral("\345\242\236\345\274\272")},
+        {QStringLiteral("band_math"), QStringLiteral("\346\263\242\346\256\265\350\277\220\347\256\227")},
+        {QStringLiteral("stats"), QStringLiteral("\347\273\237\350\256\241\344\277\241\346\201\257")},
+        {QStringLiteral("edge"), QStringLiteral("\350\276\271\347\274\230\346\243\200\346\265\213")},
+        {QStringLiteral("contour"), QStringLiteral("\350\275\256\345\273\223\346\217\220\345\217\226")},
+        {QStringLiteral("template_match"), QStringLiteral("\346\250\241\346\235\277\345\214\271\351\205\215")},
+        {QStringLiteral("pansharpen"), QStringLiteral("\345\205\250\350\211\262\351\224\220\345\214\226")},
+        {QStringLiteral("hough"), QStringLiteral("\351\234\215\345\244\253\345\217\230\346\215\242")},
+        {QStringLiteral("watershed"), QStringLiteral("\345\210\206\346\260\264\345\262\255")},
         {QStringLiteral("kmeans"), QStringLiteral("K-Means")},
-        {QStringLiteral("overviews"), QStringLiteral("金字塔")},
-        {QStringLiteral("nodata"), QStringLiteral("NoData 设置")},
-        {QStringLiteral("histogram"), QStringLiteral("直方图")},
-        {QStringLiteral("colormap"), QStringLiteral("伪彩色")},
+        {QStringLiteral("overviews"), QStringLiteral("\351\207\221\345\255\227\345\241\224")},
+        {QStringLiteral("nodata"), QStringLiteral("NoData \350\256\276\347\275\256")},
+        {QStringLiteral("histogram"), QStringLiteral("\347\233\264\346\226\271\345\233\276")},
+        {QStringLiteral("colormap"), QStringLiteral("\344\274\252\345\275\251\350\211\262")},
         {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
-        {QStringLiteral("buffer"), QStringLiteral("缓冲区")},
-        {QStringLiteral("rasterize"), QStringLiteral("栅格化")},
-        {QStringLiteral("polygonize"), QStringLiteral("面矢量化")},
-        {QStringLiteral("convert"), QStringLiteral("格式转换")},
-        {QStringLiteral("union"), QStringLiteral("并集")},
-        {QStringLiteral("difference"), QStringLiteral("差集")},
-        {QStringLiteral("dissolve"), QStringLiteral("融合")}
+        {QStringLiteral("buffer"), QStringLiteral("\347\274\223\345\206\262\345\214\272")},
+        {QStringLiteral("rasterize"), QStringLiteral("\346\240\205\346\240\274\345\214\226")},
+        {QStringLiteral("polygonize"), QStringLiteral("\351\235\242\347\237\242\351\207\217\345\214\226")},
+        {QStringLiteral("convert"), QStringLiteral("\346\240\274\345\274\217\350\275\254\346\215\242")},
+        {QStringLiteral("union"), QStringLiteral("\345\271\266\351\233\206")},
+        {QStringLiteral("difference"), QStringLiteral("\345\267\256\351\233\206")},
+        {QStringLiteral("dissolve"), QStringLiteral("\350\236\215\345\220\210")},
+        {QStringLiteral("filter"), QStringLiteral("\347\251\272\351\227\264\350\277\207\346\273\244")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -102,11 +80,7 @@ QString actionDisplayName(const QString& actionKey) {
     return actionKey;
 }
 
-QString elidedNativePath(const QString& path) {
-    return QDir::toNativeSeparators(path);
 }
-
-} // namespace
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -117,561 +91,147 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() = default;
 
-void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
-    if (!event || !event->mimeData() || !event->mimeData()->hasUrls()) {
-        return;
-    }
-
-    std::vector<std::string> paths;
-    for (const auto& url : event->mimeData()->urls()) {
-        if (url.isLocalFile()) {
-            paths.push_back(url.toLocalFile().toStdString());
-        }
-    }
-
-    if (!gis::gui::collectSupportedDataPathsRecursively(paths).empty()) {
-        event->acceptProposedAction();
-    }
-}
-
-void MainWindow::dropEvent(QDropEvent* event) {
-    if (!event || !event->mimeData() || !event->mimeData()->hasUrls()) {
-        return;
-    }
-
-    std::vector<std::string> droppedPaths;
-    for (const auto& url : event->mimeData()->urls()) {
-        if (url.isLocalFile()) {
-            droppedPaths.push_back(url.toLocalFile().toStdString());
-        }
-    }
-
-    const auto supportedPaths = gis::gui::collectSupportedDataPathsRecursively(droppedPaths);
-    if (supportedPaths.empty()) {
-        statusBar()->showMessage(QStringLiteral("拖入的数据类型暂不支持"));
-        return;
-    }
-
-    int importedCount = 0;
-    for (const auto& path : supportedPaths) {
-        if (addDataPath(QString::fromStdString(path), false, gis::gui::DataOrigin::Input)) {
-            ++importedCount;
-        }
-    }
-
-    if (inputGroupItem_->childCount() > 0) {
-        dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
-    }
-
-    const int unsupportedCount = static_cast<int>(droppedPaths.size() - supportedPaths.size());
-    const int duplicateCount = static_cast<int>(supportedPaths.size()) - importedCount;
-    QString message = QStringLiteral("已导入 %1 个数据").arg(importedCount);
-    if (duplicateCount > 0) {
-        message += QStringLiteral("，跳过 %1 个重复项").arg(duplicateCount);
-    }
-    if (unsupportedCount > 0) {
-        message += QStringLiteral("，忽略 %1 个不支持的文件").arg(unsupportedCount);
-    }
-    statusBar()->showMessage(message);
-    event->acceptProposedAction();
-}
-
 void MainWindow::setupUi() {
-    setWindowTitle(QStringLiteral("GIS 工具台"));
-    resize(1560, 940);
-    setMinimumSize(1320, 820);
-    setAcceptDrops(true);
+    setWindowTitle(QStringLiteral("GIS \345\267\245\345\205\267\345\217\260"));
+    resize(gis::style::Size::kWindowDefaultWidth, gis::style::Size::kWindowDefaultHeight);
+    setMinimumSize(gis::style::Size::kWindowMinWidth, gis::style::Size::kWindowMinHeight);
 
     auto* centralWidget = new QWidget;
     setCentralWidget(centralWidget);
+    centralWidget->setStyleSheet(gis::style::globalStyleSheet());
 
-    auto* mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setContentsMargins(12, 12, 12, 12);
-    mainLayout->setSpacing(10);
+    auto* mainLayout = new QHBoxLayout(centralWidget);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
-    auto* algorithmFrame = new QFrame;
-    algorithmFrame->setObjectName(QStringLiteral("algorithmFrame"));
-    auto* algorithmLayout = new QVBoxLayout(algorithmFrame);
-    algorithmLayout->setContentsMargins(12, 10, 12, 10);
-    algorithmLayout->setSpacing(8);
+    navPanel_ = new NavPanel;
+    connect(navPanel_, &NavPanel::pluginSelected, this, &MainWindow::onPluginSelected);
+    connect(navPanel_, &NavPanel::subFunctionSelected, this, &MainWindow::onSubFunctionSelected);
 
-    auto* topHeaderFrame = new QFrame;
-    topHeaderFrame->setObjectName(QStringLiteral("workbenchHeaderFrame"));
-    topHeaderFrame->setFixedHeight(48);
-    auto* topHeaderLayout = new QHBoxLayout(topHeaderFrame);
-    topHeaderLayout->setContentsMargins(14, 8, 14, 8);
-    topHeaderLayout->setSpacing(8);
+    auto* rightPanel = new QWidget;
+    rightPanel->setStyleSheet(QStringLiteral("background: %1;").arg(gis::style::Color::kWindowBg));
 
-    auto* algorithmTitle = new QLabel(QStringLiteral("GIS 工具台"));
-    algorithmTitle->setObjectName(QStringLiteral("sectionTitle"));
-    topHeaderLayout->addWidget(algorithmTitle);
-    topHeaderLayout->addStretch();
+    auto* rightLayout = new QVBoxLayout(rightPanel);
+    rightLayout->setContentsMargins(
+        gis::style::Size::kCardPadding,
+        gis::style::Size::kCardPadding,
+        gis::style::Size::kCardPadding,
+        gis::style::Size::kCardPadding);
+    rightLayout->setSpacing(gis::style::Size::kCardSpacing);
 
-    sidebarToggleButton_ = new QToolButton;
-    sidebarToggleButton_->setObjectName(QStringLiteral("headerToolButton"));
-    sidebarToggleButton_->setIcon(style()->standardIcon(QStyle::SP_TitleBarShadeButton));
-    sidebarToggleButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    connect(sidebarToggleButton_, &QToolButton::clicked, this, [this]() {
-        setSidebarVisible(!isSidebarVisible_);
-    });
+    auto* titleCard = new QFrame;
+    titleCard->setObjectName(QStringLiteral("card"));
+    auto* titleLayout = new QVBoxLayout(titleCard);
+    titleLayout->setContentsMargins(
+        gis::style::Size::kCardPadding,
+        gis::style::Size::kCardPadding,
+        gis::style::Size::kCardPadding,
+        gis::style::Size::kCardPadding);
+    titleLayout->setSpacing(4);
 
-    quickPreviewButton_ = new QPushButton(QStringLiteral("生成预览"));
-    quickRunButton_ = new QPushButton(QStringLiteral("快速试算"));
-    executeButton_ = new QPushButton(QStringLiteral("执行"));
-    executeButton_->setObjectName(QStringLiteral("primaryButton"));
-    for (auto* button : {quickPreviewButton_, quickRunButton_, executeButton_}) {
-        button->setMinimumHeight(30);
-        button->setMinimumWidth(96);
-    }
-    connect(quickPreviewButton_, &QPushButton::clicked, this, &MainWindow::onBuildQuickPreview);
-    connect(quickRunButton_, &QPushButton::clicked, this, &MainWindow::onRunQuickPreview);
-    connect(executeButton_, &QPushButton::clicked, this, &MainWindow::onExecute);
+    functionTitleLabel_ = new QLabel(QStringLiteral("\350\257\267\351\200\211\346\213\251\345\212\237\350\203\275"));
+    functionTitleLabel_->setObjectName(QStringLiteral("cardTitle"));
+    functionTitleLabel_->setStyleSheet(
+        QStringLiteral("font-size: 18px; font-weight: 700; color: %1;").arg(gis::style::Color::kTextPrimary));
+    titleLayout->addWidget(functionTitleLabel_);
 
-    topHeaderLayout->addWidget(sidebarToggleButton_);
-    topHeaderLayout->addWidget(quickPreviewButton_);
-    topHeaderLayout->addWidget(quickRunButton_);
-    topHeaderLayout->addWidget(executeButton_);
+    functionDescLabel_ = new QLabel(QStringLiteral("\344\273\216\345\267\246\344\276\247\351\200\211\346\213\251\346\217\222\344\273\266\345\222\214\345\255\220\345\212\237\350\203\275\345\220\216\357\274\214\350\277\231\351\207\214\344\274\232\346\230\276\347\244\272\345\212\237\350\203\275\350\257\264\346\230\216\345\222\214\345\217\202\346\225\260\351\205\215\347\275\256\343\200\202"));
+    functionDescLabel_->setObjectName(QStringLiteral("cardDesc"));
+    functionDescLabel_->setWordWrap(true);
+    titleLayout->addWidget(functionDescLabel_);
 
-    auto* pluginRailFrame = new QFrame;
-    pluginRailFrame->setObjectName(QStringLiteral("workbenchBand"));
-    auto* pluginRailLayout = new QHBoxLayout(pluginRailFrame);
-    pluginRailLayout->setContentsMargins(12, 8, 12, 8);
-    pluginRailLayout->setSpacing(10);
+    rightLayout->addWidget(titleCard);
 
-    auto* pluginRailTitle = new QLabel(QStringLiteral("主功能"));
-    pluginRailTitle->setObjectName(QStringLiteral("bandLabel"));
-    pluginTabs_ = new QTabBar;
-    pluginTabs_->setObjectName(QStringLiteral("pluginTabs"));
-    pluginTabs_->setExpanding(true);
-    pluginTabs_->setUsesScrollButtons(false);
-    pluginTabs_->setDrawBase(false);
-    pluginTabs_->setDocumentMode(true);
-    connect(pluginTabs_, &QTabBar::currentChanged, this, &MainWindow::onPluginSelected);
-    pluginRailLayout->addWidget(pluginRailTitle);
-    pluginRailLayout->addWidget(pluginTabs_, 1);
+    auto* paramScrollArea = new QScrollArea;
+    paramScrollArea->setWidgetResizable(true);
+    paramScrollArea->setFrameShape(QFrame::NoFrame);
+    paramScrollArea->setStyleSheet(
+        QStringLiteral("QScrollArea { background: transparent; border: none; }"));
 
-    auto* modeFrame = new QFrame;
-    modeFrame->setObjectName(QStringLiteral("modeBandFrame"));
-    auto* modeLayout = new QHBoxLayout(modeFrame);
-    modeLayout->setContentsMargins(0, 0, 0, 0);
-    modeLayout->setSpacing(8);
-
-    auto* pluginInfoFrame = new QFrame;
-    pluginInfoFrame->setObjectName(QStringLiteral("topInfoFrame"));
-    auto* pluginInfoLayout = new QVBoxLayout(pluginInfoFrame);
-    pluginInfoLayout->setContentsMargins(14, 10, 14, 10);
-    pluginInfoLayout->setSpacing(4);
-    auto* pluginInfoLabel = new QLabel(QStringLiteral("当前功能"));
-    pluginInfoLabel->setObjectName(QStringLiteral("bandLabel"));
-    pluginTitleLabel_ = new QLabel(QStringLiteral("请选择主功能"));
-    pluginTitleLabel_->setObjectName(QStringLiteral("contextTitle"));
-    pluginDescriptionLabel_ = new QLabel(QStringLiteral("选择上方主功能后，这里会显示功能说明。"));
-    pluginDescriptionLabel_->setWordWrap(true);
-    pluginDescriptionLabel_->setObjectName(QStringLiteral("sectionHint"));
-    pluginInfoLayout->addWidget(pluginInfoLabel);
-    pluginInfoLayout->addWidget(pluginTitleLabel_);
-    pluginInfoLayout->addWidget(pluginDescriptionLabel_);
-
-    auto* subFunctionFrame = new QFrame;
-    subFunctionFrame->setObjectName(QStringLiteral("topInfoFrame"));
-    auto* subFunctionLayout = new QVBoxLayout(subFunctionFrame);
-    subFunctionLayout->setContentsMargins(14, 10, 14, 10);
-    subFunctionLayout->setSpacing(6);
-    auto* subFunctionHeader = new QHBoxLayout;
-    subFunctionHeader->setContentsMargins(0, 0, 0, 0);
-    subFunctionHeader->setSpacing(8);
-    auto* subFunctionBandLabel = new QLabel(QStringLiteral("子功能"));
-    subFunctionBandLabel->setObjectName(QStringLiteral("bandLabel"));
-    subFunctionLabel_ = new QLabel(QStringLiteral("请选择子功能"));
-    subFunctionLabel_->setObjectName(QStringLiteral("sectionHint"));
-    subFunctionHeader->addWidget(subFunctionBandLabel);
-    subFunctionHeader->addStretch();
-    subFunctionHeader->addWidget(subFunctionLabel_);
-    subFunctionTabs_ = new QTabBar;
-    subFunctionTabs_->setObjectName(QStringLiteral("subFunctionTabs"));
-    subFunctionTabs_->setExpanding(false);
-    subFunctionTabs_->setUsesScrollButtons(true);
-    subFunctionTabs_->setDrawBase(false);
-    subFunctionTabs_->setDocumentMode(true);
-    connect(subFunctionTabs_, &QTabBar::currentChanged, this, &MainWindow::onSubFunctionSelected);
-    subFunctionLayout->addLayout(subFunctionHeader);
-    subFunctionLayout->addWidget(subFunctionTabs_);
-
-    auto* actionCardFrame = new QFrame;
-    actionCardFrame->setObjectName(QStringLiteral("topInfoFrame"));
-    auto* actionCardLayout = new QVBoxLayout(actionCardFrame);
-    actionCardLayout->setContentsMargins(14, 10, 14, 10);
-    actionCardLayout->setSpacing(6);
-    auto* actionCardLabel = new QLabel(QStringLiteral("执行控制"));
-    actionCardLabel->setObjectName(QStringLiteral("bandLabel"));
-    quickRunCheckBox_ = new QCheckBox(QStringLiteral("执行前先快速试算"));
-    quickRunCheckBox_->setToolTip(QStringLiteral("勾选后，正式执行前会先用缩略栅格快速验证流程。"));
-    auto* actionCardHint = new QLabel(QStringLiteral("先核对参数，再决定是否先做快速试算。"));
-    actionCardHint->setObjectName(QStringLiteral("sectionHint"));
-    actionCardHint->setWordWrap(true);
-    actionCardLayout->addWidget(actionCardLabel);
-    actionCardLayout->addWidget(quickRunCheckBox_);
-    actionCardLayout->addStretch();
-    actionCardLayout->addWidget(actionCardHint);
-
-    modeLayout->addWidget(pluginInfoFrame, 3);
-    modeLayout->addWidget(subFunctionFrame, 5);
-    modeLayout->addWidget(actionCardFrame, 2);
-
-    algorithmLayout->addWidget(topHeaderFrame);
-    algorithmLayout->addWidget(pluginRailFrame);
-    algorithmLayout->addWidget(modeFrame);
-
-    auto* workspaceSplitter = new QSplitter(Qt::Horizontal);
-    workspaceSplitter->setChildrenCollapsible(false);
-    workspaceSplitter->setHandleWidth(8);
-
-    auto* dataPanel = new QFrame;
-    dataPanel->setObjectName(QStringLiteral("dataPanel"));
-    dataPanel->setMinimumWidth(280);
-    auto* dataLayout = new QVBoxLayout(dataPanel);
-    dataLayout->setContentsMargins(12, 12, 12, 12);
-    dataLayout->setSpacing(8);
-
-    auto* dataTitle = new QLabel(QStringLiteral("数据目录"));
-    dataTitle->setObjectName(QStringLiteral("sectionTitle"));
-    auto* dataHint = new QLabel(QStringLiteral("统一管理输入、结果和预览数据。双击可在中间预览，右键可切换角色或打开目录。"));
-    dataHint->setWordWrap(true);
-    dataHint->setObjectName(QStringLiteral("sectionHint"));
-
-    auto* dataToolbarFrame = new QFrame;
-    dataToolbarFrame->setObjectName(QStringLiteral("toolbarCard"));
-    auto* dataToolbarLayout = new QHBoxLayout(dataToolbarFrame);
-    dataToolbarLayout->setContentsMargins(6, 6, 6, 6);
-    dataToolbarLayout->setSpacing(4);
-
-    auto* addRasterBtn = new QToolButton;
-    addRasterBtn->setObjectName(QStringLiteral("dataToolButton"));
-    addRasterBtn->setIcon(style()->standardIcon(QStyle::SP_FileIcon));
-    addRasterBtn->setToolTip(QStringLiteral("添加栅格"));
-    auto* addVectorBtn = new QToolButton;
-    addVectorBtn->setObjectName(QStringLiteral("dataToolButton"));
-    addVectorBtn->setIcon(style()->standardIcon(QStyle::SP_DirIcon));
-    addVectorBtn->setToolTip(QStringLiteral("添加矢量"));
-    auto* addDirectoryBtn = new QToolButton;
-    addDirectoryBtn->setObjectName(QStringLiteral("dataToolButton"));
-    addDirectoryBtn->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
-    addDirectoryBtn->setToolTip(QStringLiteral("导入目录"));
-    auto* removeDataBtn = new QToolButton;
-    removeDataBtn->setObjectName(QStringLiteral("dataToolButton"));
-    removeDataBtn->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
-    removeDataBtn->setToolTip(QStringLiteral("移除数据"));
-    useAsInputButton_ = new QToolButton;
-    useAsInputButton_->setObjectName(QStringLiteral("dataToolButton"));
-    useAsInputButton_->setIcon(style()->standardIcon(QStyle::SP_ArrowLeft));
-    useAsInputButton_->setToolTip(QStringLiteral("设为输入数据"));
-    useAsOutputButton_ = new QToolButton;
-    useAsOutputButton_->setObjectName(QStringLiteral("dataToolButton"));
-    useAsOutputButton_->setIcon(style()->standardIcon(QStyle::SP_ArrowRight));
-    useAsOutputButton_->setToolTip(QStringLiteral("设为结果数据"));
-    bindInputButton_ = new QToolButton;
-    bindInputButton_->setObjectName(QStringLiteral("dataToolButton"));
-    bindInputButton_->setIcon(style()->standardIcon(QStyle::SP_CommandLink));
-    bindInputButton_->setToolTip(QStringLiteral("填入当前参数"));
-
-    connect(addRasterBtn, &QToolButton::clicked, this, &MainWindow::onAddRasterData);
-    connect(addVectorBtn, &QToolButton::clicked, this, &MainWindow::onAddVectorData);
-    connect(addDirectoryBtn, &QToolButton::clicked, this, &MainWindow::onAddDataDirectory);
-    connect(removeDataBtn, &QToolButton::clicked, this, &MainWindow::onRemoveSelectedData);
-    connect(useAsInputButton_, &QToolButton::clicked, this, &MainWindow::onUseSelectedAsInput);
-    connect(useAsOutputButton_, &QToolButton::clicked, this, &MainWindow::onUseSelectedAsOutput);
-    connect(bindInputButton_, &QToolButton::clicked, this, &MainWindow::onBindSelectedToInputParam);
-
-    for (auto* button : {addRasterBtn, addVectorBtn, addDirectoryBtn, removeDataBtn, useAsInputButton_, useAsOutputButton_, bindInputButton_}) {
-        button->setAutoRaise(false);
-        button->setIconSize(QSize(16, 16));
-        button->setFixedSize(32, 32);
-    }
-
-    dataToolbarLayout->addWidget(addRasterBtn);
-    dataToolbarLayout->addWidget(addVectorBtn);
-    dataToolbarLayout->addWidget(addDirectoryBtn);
-    dataToolbarLayout->addWidget(removeDataBtn);
-    dataToolbarLayout->addSpacing(6);
-    dataToolbarLayout->addWidget(useAsInputButton_);
-    dataToolbarLayout->addWidget(useAsOutputButton_);
-    dataToolbarLayout->addWidget(bindInputButton_);
-    dataToolbarLayout->addStretch();
-
-    dataTree_ = new QTreeWidget;
-    dataTree_->setObjectName(QStringLiteral("dataTree"));
-    dataTree_->setColumnCount(1);
-    dataTree_->setHeaderHidden(true);
-    dataTree_->setAlternatingRowColors(true);
-    dataTree_->header()->setStretchLastSection(true);
-    dataTree_->setContextMenuPolicy(Qt::CustomContextMenu);
-    dataTree_->setMinimumWidth(250);
-    connect(dataTree_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::onDataSelectionChanged);
-    connect(dataTree_, &QTreeWidget::itemDoubleClicked, this, &MainWindow::onDataItemDoubleClicked);
-    connect(dataTree_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::showDataContextMenu);
-
-    inputGroupItem_ = new QTreeWidgetItem(QStringList(QStringLiteral("输入数据")));
-    outputGroupItem_ = new QTreeWidgetItem(QStringList(QStringLiteral("结果数据")));
-    inputGroupItem_->setFlags(inputGroupItem_->flags() & ~Qt::ItemIsSelectable);
-    outputGroupItem_->setFlags(outputGroupItem_->flags() & ~Qt::ItemIsSelectable);
-    inputGroupItem_->setExpanded(true);
-    outputGroupItem_->setExpanded(true);
-    dataTree_->addTopLevelItem(inputGroupItem_);
-    dataTree_->addTopLevelItem(outputGroupItem_);
-
-    dataLayout->addWidget(dataTitle);
-    dataLayout->addWidget(dataHint);
-    dataLayout->addWidget(dataToolbarFrame);
-    dataLayout->addWidget(dataTree_, 1);
-
-    auto* centerPanel = new QFrame;
-    centerPanel->setObjectName(QStringLiteral("centerPanel"));
-    centerPanel->setMinimumWidth(620);
-    auto* centerLayout = new QVBoxLayout(centerPanel);
-    centerLayout->setContentsMargins(12, 12, 12, 12);
-    centerLayout->setSpacing(8);
-
-    auto* centerHeaderFrame = new QFrame;
-    centerHeaderFrame->setObjectName(QStringLiteral("centerHeaderFrame"));
-    auto* centerHeaderLayout = new QHBoxLayout(centerHeaderFrame);
-    centerHeaderLayout->setContentsMargins(14, 8, 14, 8);
-    centerHeaderLayout->setSpacing(12);
-    auto* previewTitle = new QLabel(QStringLiteral("影像预览"));
-    previewTitle->setObjectName(QStringLiteral("sectionTitle"));
-    auto* centerBadge = new QLabel(QStringLiteral("主显示区"));
-    centerBadge->setObjectName(QStringLiteral("panelBadge"));
-    centerHeaderLayout->addWidget(previewTitle);
-    centerHeaderLayout->addStretch();
-    centerHeaderLayout->addWidget(centerBadge, 0, Qt::AlignVCenter);
-
-    previewPanel_ = new PreviewPanel;
-    connect(previewPanel_, &PreviewPanel::requestOpenPath, this, [this](const QString& path) {
-        openDataPath(path, true);
-    });
-    connect(previewPanel_, &PreviewPanel::requestUseAsInput, this, [this](const QString& path) {
-        bindDataPathToParam(path, "input");
-    });
-    centerLayout->addWidget(centerHeaderFrame);
-    centerLayout->addWidget(previewPanel_, 1);
-
-    sidebarPanel_ = new QFrame;
-    sidebarPanel_->setObjectName(QStringLiteral("sidebarPanel"));
-    sidebarPanel_->setMinimumWidth(360);
-    auto* sidebarLayout = new QVBoxLayout(sidebarPanel_);
-    sidebarLayout->setContentsMargins(12, 12, 12, 12);
-    sidebarLayout->setSpacing(8);
-
-    auto* sidebarHeaderFrame = new QFrame;
-    sidebarHeaderFrame->setObjectName(QStringLiteral("sidebarHeaderFrame"));
-    auto* sidebarHeaderLayout = new QHBoxLayout(sidebarHeaderFrame);
-    sidebarHeaderLayout->setContentsMargins(12, 8, 12, 8);
-    sidebarHeaderLayout->setSpacing(8);
-    auto* sidebarTitle = new QLabel(QStringLiteral("上下文参数"));
-    sidebarTitle->setObjectName(QStringLiteral("sectionTitle"));
-    auto* autoModeButton = new QToolButton;
-    autoModeButton->setObjectName(QStringLiteral("headerToolButton"));
-    autoModeButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    autoModeButton->setText(QStringLiteral("自动"));
-    autoModeButton->setToolTip(QStringLiteral("恢复信息/参数侧栏的自动切换"));
-    connect(autoModeButton, &QToolButton::clicked, this, [this]() {
-        contextPanelMode_ = ContextPanelMode::Auto;
-        if (selectedDataItem()) {
-            refreshContextPanelForDataSelection();
-        } else {
-            refreshContextPanelForActionSelection();
-        }
-    });
-    sidebarHeaderLayout->addWidget(sidebarTitle);
-    sidebarHeaderLayout->addStretch();
-    sidebarHeaderLayout->addWidget(autoModeButton);
-
-    contextTabWidget_ = new QTabWidget;
-    contextTabWidget_->setObjectName(QStringLiteral("contextTabWidget"));
-    contextTabWidget_->setDocumentMode(true);
-    contextTabWidget_->tabBar()->setExpanding(false);
-    contextTabWidget_->tabBar()->setUsesScrollButtons(false);
-    connect(contextTabWidget_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (isSyncingContextTabs_) {
-            return;
-        }
-        if (!contextTabWidget_) {
-            return;
-        }
-        if (index == 0) {
-            contextPanelMode_ = ContextPanelMode::InfoLocked;
-        } else if (index == 1) {
-            contextPanelMode_ = ContextPanelMode::ParamsLocked;
-        }
-    });
-
-    auto* infoTab = new QWidget;
-    auto* infoLayout = new QVBoxLayout(infoTab);
-    infoLayout->setContentsMargins(10, 10, 10, 10);
-    infoLayout->setSpacing(8);
-    auto* infoIntro = new QLabel(QStringLiteral("选中左侧数据时，这里显示路径、空间信息和可执行操作。"));
-    infoIntro->setObjectName(QStringLiteral("sectionHint"));
-    infoIntro->setWordWrap(true);
-    auto* infoGroup = new QGroupBox(QStringLiteral("当前对象"));
-    auto* infoGroupLayout = new QVBoxLayout(infoGroup);
-    dataInfoTitleLabel_ = new QLabel(QStringLiteral("未选择对象"));
-    dataInfoTitleLabel_->setObjectName(QStringLiteral("contextTitle"));
-    dataInfoPathLabel_ = new QLabel(QStringLiteral("请选择左侧数据或执行结果。"));
-    dataInfoPathLabel_->setObjectName(QStringLiteral("sectionHint"));
-    dataInfoPathLabel_->setWordWrap(true);
-    dataInfoMetaLabel_ = new QLabel(QStringLiteral("暂无数据概览"));
-    dataInfoMetaLabel_->setWordWrap(true);
-    infoGroupLayout->addWidget(dataInfoTitleLabel_);
-    infoGroupLayout->addWidget(dataInfoPathLabel_);
-    infoGroupLayout->addWidget(dataInfoMetaLabel_);
-    auto* summaryGroup = new QGroupBox(QStringLiteral("详细信息"));
-    auto* summaryLayout = new QVBoxLayout(summaryGroup);
-    dataInfoSummaryEdit_ = new QPlainTextEdit;
-    dataInfoSummaryEdit_->setReadOnly(true);
-    dataInfoSummaryEdit_->setMinimumHeight(220);
-    summaryLayout->addWidget(dataInfoSummaryEdit_);
-    infoLayout->addWidget(infoIntro);
-    infoLayout->addWidget(infoGroup);
-    infoLayout->addWidget(summaryGroup, 1);
-
-    auto* paramsTab = new QWidget;
-    auto* paramsLayout = new QVBoxLayout(paramsTab);
-    paramsLayout->setContentsMargins(10, 10, 10, 10);
-    paramsLayout->setSpacing(8);
-    auto* paramsHint = new QLabel(QStringLiteral("选择子功能后，在这里依次配置参数、检查校验状态，并查看执行摘要。"));
-    paramsHint->setWordWrap(true);
-    paramsHint->setObjectName(QStringLiteral("sectionHint"));
-    auto* validationGroup = new QGroupBox(QStringLiteral("校验状态"));
-    auto* validationLayout = new QVBoxLayout(validationGroup);
-    paramValidationLabel_ = new QLabel(QStringLiteral("当前参数已就绪。"));
-    paramValidationLabel_->setWordWrap(true);
-    validationLayout->addWidget(paramValidationLabel_);
-    auto* paramGroup = new QGroupBox(QStringLiteral("参数配置"));
-    auto* paramGroupLayout = new QVBoxLayout(paramGroup);
-    auto* scrollArea = new QScrollArea;
-    scrollArea->setWidgetResizable(true);
     paramWidget_ = new ParamWidget;
     connect(paramWidget_, &ParamWidget::paramsChanged, this, &MainWindow::onParamValuesChanged);
-    scrollArea->setWidget(paramWidget_);
-    paramGroupLayout->addWidget(scrollArea);
-    auto* resultGroup = new QGroupBox(QStringLiteral("执行结果"));
-    auto* resultLayout = new QVBoxLayout(resultGroup);
-    resultSummaryLabel_ = new QLabel(QStringLiteral("执行后会在这里显示结果摘要。"));
+    paramScrollArea->setWidget(paramWidget_);
+
+    rightLayout->addWidget(paramScrollArea, 1);
+
+    auto* executionCard = new QFrame;
+    executionCard->setObjectName(QStringLiteral("card"));
+    auto* executionLayout = new QVBoxLayout(executionCard);
+    executionLayout->setContentsMargins(
+        gis::style::Size::kCardPadding,
+        gis::style::Size::kCardPadding,
+        gis::style::Size::kCardPadding,
+        gis::style::Size::kCardPadding);
+    executionLayout->setSpacing(10);
+
+    auto* execHeaderLayout = new QHBoxLayout;
+    execHeaderLayout->setSpacing(12);
+
+    auto* execIconLabel = new QLabel(QStringLiteral("\342\226\266"));
+    execIconLabel->setFixedSize(20, 20);
+    execHeaderLayout->addWidget(execIconLabel);
+
+    auto* execTitleLabel = new QLabel(QStringLiteral("\346\211\247\350\241\214\346\216\247\345\210\266"));
+    execTitleLabel->setObjectName(QStringLiteral("cardTitle"));
+    execHeaderLayout->addWidget(execTitleLabel);
+    execHeaderLayout->addStretch();
+
+    executeButton_ = new QPushButton(QStringLiteral("\346\211\247\350\241\214"));
+    executeButton_->setObjectName(QStringLiteral("primaryButton"));
+    executeButton_->setEnabled(false);
+    connect(executeButton_, &QPushButton::clicked, this, &MainWindow::onExecute);
+    execHeaderLayout->addWidget(executeButton_);
+
+    executionLayout->addLayout(execHeaderLayout);
+
+    auto* separator = new QFrame;
+    separator->setFrameShape(QFrame::HLine);
+    separator->setStyleSheet(
+        QStringLiteral("background: %1; max-height: 1px;").arg(gis::style::Color::kDivider));
+    executionLayout->addWidget(separator);
+
+    progressBar_ = new QProgressBar;
+    progressBar_->setRange(0, 100);
+    progressBar_->setValue(0);
+    progressBar_->setTextVisible(true);
+    progressBar_->setFormat(QStringLiteral("%p%"));
+    executionLayout->addWidget(progressBar_);
+
+    resultSummaryLabel_ = new QLabel;
     resultSummaryLabel_->setWordWrap(true);
-    resultLayout->addWidget(resultSummaryLabel_);
-    paramsLayout->addWidget(paramsHint);
-    paramsLayout->addWidget(validationGroup);
-    paramsLayout->addWidget(paramGroup, 1);
-    paramsLayout->addWidget(resultGroup);
-    paramsLayout->addStretch();
+    resultSummaryLabel_->setObjectName(QStringLiteral("cardDesc"));
+    resultSummaryLabel_->setMinimumHeight(24);
+    resultSummaryLabel_->setText(QStringLiteral("\347\255\211\345\276\205\346\211\247\350\241\214..."));
+    executionLayout->addWidget(resultSummaryLabel_);
 
-    contextTabWidget_->addTab(infoTab, QStringLiteral("信息"));
-    contextTabWidget_->addTab(paramsTab, QStringLiteral("参数"));
+    rightLayout->addWidget(executionCard);
 
-    sidebarLayout->addWidget(sidebarHeaderFrame);
-    sidebarLayout->addWidget(contextTabWidget_, 1);
+    auto* splitter = new QSplitter(Qt::Horizontal);
+    splitter->setChildrenCollapsible(false);
+    splitter->setHandleWidth(1);
+    splitter->addWidget(navPanel_);
+    splitter->addWidget(rightPanel);
+    splitter->setStretchFactor(0, 0);
+    splitter->setStretchFactor(1, 1);
+    splitter->setSizes({gis::style::Size::kSidebarWidth, gis::style::Size::kWindowDefaultWidth - gis::style::Size::kSidebarWidth});
 
-    workspaceSplitter->addWidget(dataPanel);
-    workspaceSplitter->addWidget(centerPanel);
-    workspaceSplitter->addWidget(sidebarPanel_);
-    workspaceSplitter->setStretchFactor(0, 2);
-    workspaceSplitter->setStretchFactor(1, 6);
-    workspaceSplitter->setStretchFactor(2, 3);
-    workspaceSplitter->setSizes({300, 900, 450});
+    mainLayout->addWidget(splitter);
 
-    mainLayout->addWidget(algorithmFrame);
-    mainLayout->addWidget(workspaceSplitter, 1);
-
-    centralWidget->setStyleSheet(
-        "QMainWindow, QWidget { color: #d7deea; font-size: 13px; }"
-        "QMainWindow { background: #1e2533; }"
-        "QWidget { background: transparent; }"
-        "QFrame#algorithmFrame, QFrame#dataPanel, QFrame#centerPanel, QFrame#sidebarPanel, "
-        "QFrame#topInfoFrame, QFrame#workbenchHeaderFrame, QFrame#workbenchBand, "
-        "QFrame#toolbarCard, QFrame#centerHeaderFrame, QFrame#sidebarHeaderFrame {"
-        "  background: #1a2030;"
-        "  border: 1px solid #2b3446;"
-        "  border-radius: 8px;"
-        "}"
-        "QFrame#modeBandFrame { background: transparent; border: none; }"
-        "QLabel#sectionTitle { font-size: 15px; font-weight: 600; color: #f2f5fb; }"
-        "QLabel#contextTitle { font-size: 14px; font-weight: 600; color: #edf3ff; }"
-        "QLabel#bandLabel { color: #8ea0ba; font-weight: 600; }"
-        "QLabel#panelBadge {"
-        "  color: #d9e8f7; background: #253247; border: 1px solid #3a4c67;"
-        "  border-radius: 999px; padding: 4px 10px; font-weight: 600;"
-        "}"
-        "QLabel#sectionHint { color: #8fa1b8; }"
-        "QPushButton, QToolButton {"
-        "  min-height: 30px; padding: 0 12px; border-radius: 6px;"
-        "  border: 1px solid #34425a; background: #232c3d; color: #d8e2ef;"
-        "}"
-        "QPushButton:hover, QToolButton:hover { background: #2a3550; border-color: #4a90d9; }"
-        "QPushButton:disabled, QToolButton:disabled { background: #202736; color: #68788f; border-color: #2a3344; }"
-        "QPushButton#primaryButton { background: #4a90d9; color: white; border: 1px solid #4a90d9; font-weight: 600; }"
-        "QPushButton#primaryButton:hover { background: #5aa0ea; }"
-        "QToolButton#headerToolButton { padding: 0 10px; }"
-        "QToolButton#dataToolButton { padding: 0; min-width: 32px; min-height: 32px; }"
-        "QTabBar#pluginTabs::tab {"
-        "  background: #232c3d; color: #9fb0c7; border: 1px solid #34425a; border-radius: 6px;"
-        "  padding: 9px 16px; margin-right: 6px; min-height: 18px;"
-        "}"
-        "QTabBar#pluginTabs::tab:selected { background: #2b3a52; color: #f1f6ff; border-color: #4a90d9; font-weight: 600; }"
-        "QTabBar#subFunctionTabs::tab {"
-        "  background: #202736; color: #9aaac0; border: 1px solid #313d52; border-radius: 6px;"
-        "  padding: 7px 14px; margin-right: 6px; min-height: 16px;"
-        "}"
-        "QTabBar#subFunctionTabs::tab:selected { background: #26364d; color: #eff5ff; border-color: #4a90d9; font-weight: 600; }"
-        "QTreeWidget, QScrollArea, QPlainTextEdit, QGroupBox, QTabWidget::pane {"
-        "  background: #151c29; border: 1px solid #2b3446; border-radius: 6px;"
-        "}"
-        "QTabWidget#contextTabWidget::pane { margin-top: 6px; }"
-        "QTabWidget#contextTabWidget QTabBar::tab {"
-        "  background: #202736; color: #9aaac0; border: 1px solid #313d52; border-radius: 6px;"
-        "  padding: 8px 12px; min-width: 64px;"
-        "}"
-        "QTabWidget#contextTabWidget QTabBar::tab:selected {"
-        "  background: #26364d; color: #eef4ff; border-color: #4a90d9; font-weight: 600;"
-        "}"
-        "QTreeWidget#dataTree { outline: none; padding: 4px; alternate-background-color: #182131; }"
-        "QTreeWidget#dataTree::item { height: 28px; border-radius: 4px; padding: 2px 6px; }"
-        "QTreeWidget#dataTree::item:selected { background: #28415f; color: #f1f7ff; }"
-        "QTreeWidget#dataTree::item:hover { background: #202d42; }"
-        "QPlainTextEdit { padding: 6px; color: #d7deea; }"
-        "QGroupBox { margin-top: 8px; padding-top: 12px; font-weight: 600; color: #dfe7f5; }"
-        "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #cfd9e8; }"
-        "QCheckBox { color: #c9d5e7; spacing: 6px; }"
-        "QScrollBar:vertical, QScrollBar:horizontal { background: #141b28; border: none; margin: 0; }"
-        "QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #33425b; border-radius: 4px; min-height: 24px; min-width: 24px; }"
-        "QSplitter::handle { background: #1e2533; }"
-        "QSplitter::handle:hover { background: #31415b; }");
-
-    statusAlgorithmLabel_ = new QLabel(QStringLiteral("当前算法：未选择"));
-    statusPluginCountLabel_ = new QLabel(QStringLiteral("插件数：0"));
-    statusExecutionLabel_ = new QLabel(QStringLiteral("执行状态：就绪"));
+    statusAlgorithmLabel_ = new QLabel(QStringLiteral("\345\275\223\345\211\215\347\256\227\346\263\225\357\274\232\346\234\252\351\200\211\346\213\251"));
+    statusPluginCountLabel_ = new QLabel(QStringLiteral("\346\222\255\344\273\266\346\225\260\357\274\2320"));
+    statusExecutionLabel_ = new QLabel(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\345\260\261\347\273\252"));
     statusProgressBar_ = new QProgressBar;
     statusProgressBar_->setRange(0, 100);
     statusProgressBar_->setValue(0);
     statusProgressBar_->setFixedWidth(180);
     statusProgressBar_->setTextVisible(false);
-    statusBar()->setStyleSheet(
-        "QStatusBar { background: #161c28; color: #cfd8e6; border-top: 1px solid #2b3446; }"
-        "QStatusBar::item { border: none; }"
-        "QProgressBar { background: #202736; border: 1px solid #34425a; border-radius: 5px; }"
-        "QProgressBar::chunk { background: #4a90d9; border-radius: 4px; }");
     statusBar()->addPermanentWidget(statusAlgorithmLabel_);
     statusBar()->addPermanentWidget(statusPluginCountLabel_);
     statusBar()->addPermanentWidget(statusExecutionLabel_);
     statusBar()->addPermanentWidget(statusProgressBar_);
-    statusBar()->showMessage(QStringLiteral("就绪"));
-
-    clearDataInfoPanel();
-    setSidebarVisible(true);
-    refreshQuickPreviewButtonState();
-    refreshQuickRunButtonState();
-    refreshExecuteButtonState();
-    refreshParamValidationState();
-    refreshDataActionButtonsState();
+    statusBar()->showMessage(QStringLiteral("\345\260\261\347\273\252"));
 }
+
 void MainWindow::loadPlugins() {
     namespace fs = std::filesystem;
 
@@ -685,11 +245,6 @@ void MainWindow::loadPlugins() {
         "projection", "cutting", "matching", "processing", "utility", "vector"
     };
 
-    while (pluginTabs_->count() > 0) {
-        pluginTabs_->removeTab(0);
-    }
-    pluginTabMap_.clear();
-
     std::vector<gis::framework::IGisPlugin*> plugins = pluginManager_.plugins();
     std::sort(plugins.begin(), plugins.end(), [&](auto* lhs, auto* rhs) {
         const auto leftIt = std::find(preferredOrder.begin(), preferredOrder.end(), lhs->name());
@@ -697,41 +252,20 @@ void MainWindow::loadPlugins() {
         return leftIt < rightIt;
     });
 
-    for (auto* plugin : plugins) {
-        const int index = pluginTabs_->addTab(QString::fromUtf8(plugin->displayName()));
-        pluginTabs_->setTabToolTip(index, QString::fromUtf8(plugin->description()));
-        QIcon icon = style()->standardIcon(QStyle::SP_FileDialogDetailedView);
-        if (plugin->name() == "projection") {
-            icon = style()->standardIcon(QStyle::SP_BrowserReload);
-        } else if (plugin->name() == "cutting") {
-            icon = style()->standardIcon(QStyle::SP_ComputerIcon);
-        } else if (plugin->name() == "matching") {
-            icon = style()->standardIcon(QStyle::SP_DialogYesButton);
-        } else if (plugin->name() == "processing") {
-            icon = style()->standardIcon(QStyle::SP_MediaPlay);
-        } else if (plugin->name() == "utility") {
-            icon = style()->standardIcon(QStyle::SP_FileDialogInfoView);
-        } else if (plugin->name() == "vector") {
-            icon = style()->standardIcon(QStyle::SP_DirHomeIcon);
-        }
-        pluginTabs_->setTabIcon(index, icon);
-        pluginTabMap_[index] = plugin->name();
-    }
+    navPanel_->setPlugins(plugins);
 
     if (plugins.empty()) {
-        statusBar()->showMessage(QStringLiteral("未找到插件，请检查 plugins 目录"));
+        statusBar()->showMessage(QStringLiteral("\346\234\252\346\211\276\345\210\260\346\222\255\344\273\266\357\274\214\350\257\267\346\243\200\346\237\245 plugins \347\233\256\345\275\225"));
         if (statusPluginCountLabel_) {
-            statusPluginCountLabel_->setText(QStringLiteral("插件数：0"));
+            statusPluginCountLabel_->setText(QStringLiteral("\346\222\255\344\273\266\346\225\260\357\274\2320"));
         }
         return;
     }
 
-    pluginTabs_->setCurrentIndex(0);
-    onPluginSelected(pluginTabs_->currentIndex());
     if (statusPluginCountLabel_) {
-        statusPluginCountLabel_->setText(QStringLiteral("插件数：%1").arg(plugins.size()));
+        statusPluginCountLabel_->setText(QStringLiteral("\346\222\255\344\273\266\346\225\260\357\274\232%1").arg(plugins.size()));
     }
-    statusBar()->showMessage(QStringLiteral("已加载 %1 个算法插件").arg(plugins.size()));
+    statusBar()->showMessage(QStringLiteral("\345\267\262\345\212\240\350\275\275 %1 \344\270\252\347\256\227\346\263\225\346\222\255\344\273\266").arg(plugins.size()));
 }
 
 std::vector<gis::framework::ParamSpec> MainWindow::effectiveParamSpecs() const {
@@ -757,909 +291,109 @@ std::map<std::string, gis::framework::ParamValue> MainWindow::collectExecutionPa
     return params;
 }
 
-QString MainWindow::displayTextForAction(const QString& actionKey) const {
-    return actionDisplayName(actionKey);
-}
-
-void MainWindow::rebuildSubFunctionTabs() {
-    while (subFunctionTabs_ && subFunctionTabs_->count() > 0) {
-        subFunctionTabs_->removeTab(0);
-    }
-    subFunctionTabMap_.clear();
-    currentActionKey_.clear();
-
-    if (!currentPlugin_ || !subFunctionTabs_) {
+void MainWindow::onPluginSelected(const std::string& pluginName) {
+    currentPlugin_ = pluginManager_.find(pluginName);
+    if (!currentPlugin_) {
+        paramWidget_->clear();
+        currentActionKey_.clear();
+        functionTitleLabel_->setText(QStringLiteral("\350\257\267\351\200\211\346\213\251\345\212\237\350\203\275"));
+        functionDescLabel_->setText(QStringLiteral("\344\273\216\345\267\246\344\276\247\351\200\211\346\213\251\346\217\222\344\273\266\345\222\214\345\255\220\345\212\237\350\203\275\345\220\216\357\274\214\350\277\231\351\207\214\344\274\232\346\230\276\347\244\272\345\212\237\350\203\275\350\257\264\346\230\216\345\222\214\345\217\202\346\225\260\351\205\215\347\275\256\343\200\202"));
+        if (statusAlgorithmLabel_) {
+            statusAlgorithmLabel_->setText(QStringLiteral("\345\275\223\345\211\215\347\256\227\346\263\225\357\274\232\346\234\252\351\200\211\346\213\251"));
+        }
+        navPanel_->clearSubFunctions();
+        refreshExecuteButtonState();
         return;
     }
 
+    functionTitleLabel_->setText(QString::fromUtf8(currentPlugin_->displayName()));
+    functionDescLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
+    if (statusAlgorithmLabel_) {
+        statusAlgorithmLabel_->setText(
+            QStringLiteral("\345\275\223\345\211\215\347\256\227\346\263\225\357\274\232%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
+    }
+
+    std::vector<std::string> actions;
+    std::vector<std::string> displayNames;
     for (const auto& spec : currentPlugin_->paramSpecs()) {
-        if (spec.key != "action") {
-            continue;
-        }
+        if (spec.key != "action") continue;
         for (const auto& action : spec.enumValues) {
-            const QString actionKey = QString::fromStdString(action);
-            const int index = subFunctionTabs_->addTab(displayTextForAction(actionKey));
-            subFunctionTabs_->setTabToolTip(index, actionKey);
-            subFunctionTabMap_[index] = actionKey;
+            actions.push_back(action);
+            displayNames.push_back(actionDisplayName(QString::fromStdString(action)).toStdString());
         }
         break;
     }
+    navPanel_->setSubFunctions(actions, displayNames);
 
-    if (subFunctionTabs_->count() > 0) {
-        subFunctionTabs_->setCurrentIndex(0);
-        onSubFunctionSelected(subFunctionTabs_->currentIndex());
-    }
-}
-
-void MainWindow::setCurrentActionValue(const QString& actionKey) {
-    currentActionKey_ = actionKey;
-    subFunctionLabel_->setText(
-        actionKey.isEmpty()
-            ? QStringLiteral("请选择子功能")
-            : QStringLiteral("当前子功能：%1").arg(displayTextForAction(actionKey)));
-}
-
-void MainWindow::refreshContextTabSelection(bool preferParams) {
-    if (!contextTabWidget_) {
-        return;
-    }
-
-    isSyncingContextTabs_ = true;
-    if (contextPanelMode_ == ContextPanelMode::InfoLocked) {
-        contextTabWidget_->setCurrentIndex(0);
-    } else if (contextPanelMode_ == ContextPanelMode::ParamsLocked) {
-        contextTabWidget_->setCurrentIndex(1);
-    } else {
-        contextTabWidget_->setCurrentIndex(preferParams ? 1 : 0);
-    }
-    isSyncingContextTabs_ = false;
-}
-
-void MainWindow::setSidebarVisible(bool visible) {
-    isSidebarVisible_ = visible;
-    if (sidebarPanel_) {
-        sidebarPanel_->setVisible(visible);
-    }
-    updateSidebarToggleText();
-}
-
-void MainWindow::updateSidebarToggleText() {
-    if (!sidebarToggleButton_) {
-        return;
-    }
-    sidebarToggleButton_->setText(isSidebarVisible_ ? QStringLiteral("隐藏") : QStringLiteral("显示"));
-    sidebarToggleButton_->setToolTip(isSidebarVisible_ ? QStringLiteral("隐藏右侧上下文侧栏")
-                                                       : QStringLiteral("显示右侧上下文侧栏"));
-}
-
-void MainWindow::clearDataInfoPanel() {
-    if (dataInfoTitleLabel_) {
-        dataInfoTitleLabel_->setText(QStringLiteral("未选择对象"));
-    }
-    if (dataInfoPathLabel_) {
-        dataInfoPathLabel_->setText(QStringLiteral("请选择左侧数据或执行结果。"));
-    }
-    if (dataInfoMetaLabel_) {
-        dataInfoMetaLabel_->setText(QStringLiteral("暂无数据概览"));
-    }
-    if (dataInfoSummaryEdit_) {
-        dataInfoSummaryEdit_->setPlainText(QStringLiteral("在数据目录中选择一个对象后，这里会显示路径、类型、坐标系、范围与辅助说明。"));
-    }
-}
-
-void MainWindow::updateDataInfoPanel(const QString& path,
-                                     gis::gui::DataKind kind,
-                                     gis::gui::DataOrigin origin) {
-    if (!dataInfoTitleLabel_ || !dataInfoPathLabel_ || !dataInfoMetaLabel_ || !dataInfoSummaryEdit_) {
-        return;
-    }
-
-    const auto info = gis::gui::inspectDataForAutoFill(path.toStdString());
-    dataInfoTitleLabel_->setText(
-        QStringLiteral("%1 | %2")
-            .arg(QString::fromUtf8(gis::gui::dataKindDisplayName(kind)))
-            .arg(QString::fromUtf8(gis::gui::dataOriginDisplayName(origin))));
-    dataInfoPathLabel_->setText(elidedNativePath(path));
-
-    QStringList metaLines;
-    if (!info.crs.empty()) {
-        metaLines << QStringLiteral("坐标系：%1").arg(QString::fromStdString(info.crs));
-    }
-    if (!info.layerName.empty()) {
-        metaLines << QStringLiteral("图层：%1").arg(QString::fromStdString(info.layerName));
-    }
-    if (info.hasExtent) {
-        metaLines << QStringLiteral("范围：[%1, %2, %3, %4]")
-                         .arg(info.extent[0], 0, 'f', 4)
-                         .arg(info.extent[1], 0, 'f', 4)
-                         .arg(info.extent[2], 0, 'f', 4)
-                         .arg(info.extent[3], 0, 'f', 4);
-    }
-    if (metaLines.isEmpty()) {
-        metaLines << QStringLiteral("暂无可解析的空间元信息");
-    }
-    dataInfoMetaLabel_->setText(metaLines.join('\n'));
-
-    QString summary =
-        QStringLiteral("文件名：%1\n类型：%2\n来源：%3")
-            .arg(QFileInfo(path).fileName())
-            .arg(QString::fromUtf8(gis::gui::dataKindDisplayName(kind)))
-            .arg(QString::fromUtf8(gis::gui::dataOriginDisplayName(origin)));
-    if (!info.crs.empty()) {
-        summary += QStringLiteral("\n坐标系：%1").arg(QString::fromStdString(info.crs));
-    }
-    if (!info.layerName.empty()) {
-        summary += QStringLiteral("\n图层名：%1").arg(QString::fromStdString(info.layerName));
-    }
-    summary += QStringLiteral("\n\n可用操作：\n- 双击定位到主展示区\n- 右键切换输入/结果\n- 右键复制路径或打开目录");
-    dataInfoSummaryEdit_->setPlainText(summary);
-}
-
-void MainWindow::refreshContextPanelForDataSelection() {
-    refreshContextTabSelection(false);
-}
-
-void MainWindow::refreshContextPanelForActionSelection() {
-    refreshContextTabSelection(true);
-}
-
-void MainWindow::onPluginSelected(int index) {
-    if (index < 0 || pluginTabMap_.count(index) == 0) {
-        currentPlugin_ = nullptr;
-        paramWidget_->clear();
-        lastSuggestedOutputPath_.clear();
-        if (subFunctionTabs_) {
-            while (subFunctionTabs_->count() > 0) {
-                subFunctionTabs_->removeTab(0);
-            }
-        }
-        setCurrentActionValue({});
-        pluginTitleLabel_->setText(QStringLiteral("请选择主功能"));
-        pluginDescriptionLabel_->setText(QStringLiteral("选择主功能后，将在下方展示对应的子功能与操作入口。"));
-        if (statusAlgorithmLabel_) {
-            statusAlgorithmLabel_->setText(QStringLiteral("当前算法：未选择"));
-        }
-        refreshQuickPreviewButtonState();
-        refreshQuickRunButtonState();
-        refreshParamValidationState();
-        refreshExecuteButtonState();
-        return;
-    }
-
-    currentPlugin_ = pluginManager_.find(pluginTabMap_[index]);
-    if (!currentPlugin_) {
-        return;
-    }
-
-    pluginTitleLabel_->setText(QString::fromUtf8(currentPlugin_->displayName()));
-    pluginDescriptionLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
-    if (statusAlgorithmLabel_) {
-        statusAlgorithmLabel_->setText(
-            QStringLiteral("当前算法：%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
-    }
-    contextPanelMode_ = ContextPanelMode::Auto;
-    rebuildSubFunctionTabs();
-    statusBar()->showMessage(QStringLiteral("当前主功能: %1").arg(QString::fromUtf8(currentPlugin_->displayName())));
-}
-
-void MainWindow::onSubFunctionSelected(int index) {
-    if (!currentPlugin_ || index < 0 || subFunctionTabMap_.count(index) == 0) {
-        setCurrentActionValue({});
-        if (paramWidget_) {
-            paramWidget_->clear();
-        }
-        refreshQuickPreviewButtonState();
-        refreshQuickRunButtonState();
-        refreshParamValidationState();
-        refreshExecuteButtonState();
-        return;
-    }
-
-    setCurrentActionValue(subFunctionTabMap_[index]);
-    contextPanelMode_ = ContextPanelMode::Auto;
-    paramWidget_->setParamSpecs(effectiveParamSpecs());
-    syncCurrentDataToParams();
-    refreshContextPanelForActionSelection();
-    refreshQuickPreviewButtonState();
-    refreshQuickRunButtonState();
-    refreshParamValidationState();
+    currentActionKey_.clear();
+    paramWidget_->clear();
     refreshExecuteButtonState();
+    statusBar()->showMessage(QStringLiteral("\345\275\223\345\211\215\344\270\273\345\212\237\350\203\275: %1").arg(QString::fromUtf8(currentPlugin_->displayName())));
+}
+
+void MainWindow::onSubFunctionSelected(const std::string& actionKey) {
+    if (!currentPlugin_) {
+        paramWidget_->clear();
+        refreshExecuteButtonState();
+        return;
+    }
+
+    currentActionKey_ = QString::fromStdString(actionKey);
+
+    QString displayName = actionDisplayName(currentActionKey_);
+    functionTitleLabel_->setText(
+        QString::fromUtf8(currentPlugin_->displayName()) + QStringLiteral(" \342\206\222 ") + displayName);
+    functionDescLabel_->setText(
+        QString::fromUtf8(currentPlugin_->description()));
+
+    paramWidget_->setParamSpecs(effectiveParamSpecs());
+    refreshExecuteButtonState();
+    refreshParamValidationState();
+
     if (statusExecutionLabel_) {
         statusExecutionLabel_->setText(
-            QStringLiteral("执行状态：已选择 %1").arg(displayTextForAction(currentActionKey_)));
+            QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\345\267\262\351\200\211\346\213\251 %1").arg(displayName));
     }
-    statusBar()->showMessage(QStringLiteral("当前子功能: %1").arg(displayTextForAction(currentActionKey_)));
-}
-
-void MainWindow::onBuildQuickPreview() {
-    const QString inputPath = currentSelectedDataPath();
-    if (inputPath.isEmpty() ||
-        gis::gui::detectDataKind(inputPath.toStdString()) != gis::gui::DataKind::Raster) {
-        QMessageBox::warning(this, QStringLiteral("提示"),
-                             QStringLiteral("请先选择一个栅格输入数据"));
-        return;
-    }
-
-    const QString outputPath = QString::fromStdString(
-        gis::gui::buildQuickPreviewOutputPath(inputPath.toStdString()));
-    if (outputPath.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("提示"),
-                             QStringLiteral("无法生成预览输出路径"));
-        return;
-    }
-
-    if (!gis::gui::buildQuickPreviewRaster(
-            inputPath.toStdString(),
-            outputPath.toStdString(),
-            512)) {
-        QMessageBox::warning(this, QStringLiteral("提示"),
-                             QStringLiteral("快速预览影像生成失败"));
-        return;
-    }
-
-    addDataPath(outputPath, true, gis::gui::DataOrigin::QuickPreview);
-    latestOutputPath_ = outputPath;
-    refreshPreviewCompareTargets();
-    previewPanel_->showComparePreviewIfAvailable();
-    resultSummaryLabel_->setText(QStringLiteral("结果类型: 预览影像\n已生成 8 位快速预览影像\n%1").arg(outputPath));
-    statusBar()->showMessage(QStringLiteral("已生成8位快速预览影像"));
-    refreshQuickRunButtonState();
-}
-
-void MainWindow::onRunQuickPreview() {
-    if (!currentPlugin_) {
-        QMessageBox::warning(this, QStringLiteral("提示"),
-                             QStringLiteral("请先选择一个算法"));
-        return;
-    }
-    if (currentActionKey_.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("提示"),
-                             QStringLiteral("请先选择一个子功能"));
-        return;
-    }
-
-    const auto specs = currentPlugin_->paramSpecs();
-    const auto params = collectExecutionParams();
-    const std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
-    if (!validationMessage.empty()) {
-        refreshParamValidationState();
-        QMessageBox::warning(this, QStringLiteral("参数不完整"),
-                             QString::fromUtf8(validationMessage));
-        return;
-    }
-
-    std::map<std::string, gis::framework::ParamValue> quickParams;
-    if (!gis::gui::buildQuickPreviewExecutionParams(
-            specs,
-            params,
-            currentPlugin_->name(),
-            currentActionKey_.toStdString(),
-            quickParams,
-            512)) {
-        QMessageBox::warning(this, QStringLiteral("提示"),
-                             QStringLiteral("快速试算参数准备失败，请确认当前输入包含可生成预览的栅格数据"));
-        return;
-    }
-
-    runPluginWithParams(
-        quickParams, QStringLiteral("快速试算"), QStringLiteral("快速试算结果"), gis::gui::DataOrigin::QuickRun, false);
+    statusBar()->showMessage(QStringLiteral("\345\275\223\345\211\215\345\255\220\345\212\237\350\203\275: %1").arg(displayName));
 }
 
 void MainWindow::onExecute() {
     if (!currentPlugin_) {
-        QMessageBox::warning(this, QStringLiteral("提示"),
-                             QStringLiteral("请先选择一个算法"));
+        QMessageBox::warning(this, QStringLiteral("\346\217\220\347\244\272"),
+                             QStringLiteral("\350\257\267\345\205\210\351\200\211\346\213\251\344\270\200\344\270\252\347\256\227\346\263\225"));
         return;
     }
     if (currentActionKey_.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("提示"),
-                             QStringLiteral("请先选择一个子功能"));
+        QMessageBox::warning(this, QStringLiteral("\346\217\220\347\244\272"),
+                             QStringLiteral("\350\257\267\345\205\210\351\200\211\346\213\251\344\270\200\344\270\252\345\255\220\345\212\237\350\203\275"));
         return;
     }
 
     const auto specs = currentPlugin_->paramSpecs();
     auto params = collectExecutionParams();
-    const QString inputPath = currentSelectedDataPath();
-    if (paramWidget_->hasParam("output")) {
-        const std::string currentOutput = paramWidget_->stringValue("output");
-        if (currentOutput.empty() && !inputPath.isEmpty()) {
-            const QString suggestedOutputPath = buildSuggestedOutputPathFor(inputPath);
-            if (!suggestedOutputPath.isEmpty()) {
-                paramWidget_->setStringValue("output", suggestedOutputPath.toUtf8().constData());
-                params["output"] = suggestedOutputPath.toUtf8().constData();
-                lastSuggestedOutputPath_ = suggestedOutputPath;
-            }
-        }
-    }
-
     const std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
     if (!validationMessage.empty()) {
         refreshParamValidationState();
-        QMessageBox::warning(this, QStringLiteral("参数不完整"),
+        QMessageBox::warning(this, QStringLiteral("\345\217\202\346\225\260\344\270\215\345\256\214\346\225\264"),
                              QString::fromUtf8(validationMessage));
-        statusBar()->showMessage(QStringLiteral("执行已拦截: 请先补全必要参数"));
         return;
     }
 
-    if (quickRunCheckBox_ && quickRunCheckBox_->isChecked()) {
-        std::map<std::string, gis::framework::ParamValue> quickParams;
-        if (!gis::gui::buildQuickPreviewExecutionParams(
-                specs,
-                params,
-                currentPlugin_->name(),
-                currentActionKey_.toStdString(),
-                quickParams,
-                512)) {
-            QMessageBox::warning(this, QStringLiteral("提示"),
-                                 QStringLiteral("快速试算参数准备失败，请确认当前输入包含可生成预览的栅格数据"));
-            return;
-        }
-
-        runPluginWithParams(
-            quickParams, QStringLiteral("快速试算"), QStringLiteral("快速试算结果"), gis::gui::DataOrigin::QuickRun, false);
-        return;
-    }
-
-    runPluginWithParams(
-        params, QStringLiteral("执行"), QStringLiteral("正式结果"), gis::gui::DataOrigin::Output, true);
-}
-
-void MainWindow::runPluginWithParams(
-    const std::map<std::string, gis::framework::ParamValue>& params,
-    const QString& statusPrefix,
-    const QString& resultType,
-    gis::gui::DataOrigin outputOrigin,
-    bool syncOutputBackToForm) {
-    reporter_->reset();
-    if (statusExecutionLabel_) {
-        statusExecutionLabel_->setText(QStringLiteral("执行状态：运行中"));
-    }
-    if (statusProgressBar_) {
-        statusProgressBar_->setRange(0, 0);
-    }
-
-    auto* worker = new ExecuteWorker;
-    worker->setup(currentPlugin_, params, reporter_);
-
-    auto* thread = new QThread;
-    worker->moveToThread(thread);
-
-    auto* progressDialog = new ProgressDialog(reporter_);
-
-    connect(thread, &QThread::started, worker, &ExecuteWorker::run);
-    connect(worker, &ExecuteWorker::finished, this, [this, progressDialog, statusPrefix, resultType, outputOrigin, syncOutputBackToForm](const gis::framework::Result& result) {
-        QString message = QString::fromUtf8(result.message);
-        const bool cancelled = result.message == "已取消执行";
-        if (result.success && !result.outputPath.empty()) {
-            message += QStringLiteral("\n结果已写出并加入左侧结果数据区。");
-        }
-        progressDialog->setFinished(message, result.success, cancelled);
-        resultSummaryLabel_->setText(buildResultSummary(result, resultType));
-
-        if (result.success) {
-            if (syncOutputBackToForm && paramWidget_->hasParam("output") && !result.outputPath.empty()) {
-                paramWidget_->setStringValue("output", result.outputPath);
-                lastSuggestedOutputPath_ = QString::fromUtf8(result.outputPath);
-            }
-            if (!result.outputPath.empty() && std::filesystem::exists(result.outputPath)) {
-                latestOutputPath_ = QString::fromUtf8(result.outputPath);
-                addDataPath(latestOutputPath_, true, outputOrigin);
-                refreshPreviewCompareTargets();
-                previewPanel_->showComparePreviewIfAvailable();
-            }
-            if (statusExecutionLabel_) {
-                statusExecutionLabel_->setText(QStringLiteral("执行状态：成功"));
-            }
-            statusBar()->showMessage(statusPrefix + QStringLiteral("成功: ") + message);
-        } else if (cancelled) {
-            if (statusExecutionLabel_) {
-                statusExecutionLabel_->setText(QStringLiteral("执行状态：已取消"));
-            }
-            statusBar()->showMessage(statusPrefix + QStringLiteral("已取消"));
-        } else {
-            if (statusExecutionLabel_) {
-                statusExecutionLabel_->setText(QStringLiteral("执行状态：失败"));
-            }
-            statusBar()->showMessage(statusPrefix + QStringLiteral("失败: ") + message);
-        }
-        if (statusProgressBar_) {
-            statusProgressBar_->setRange(0, 100);
-            statusProgressBar_->setValue(result.success ? 100 : 0);
-        }
-    });
-    connect(worker, &ExecuteWorker::finished, thread, &QThread::quit);
-    connect(worker, &ExecuteWorker::finished, worker, &QObject::deleteLater);
-    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-    connect(progressDialog, &QDialog::finished, progressDialog, &QObject::deleteLater);
-
-    thread->start();
-    progressDialog->exec();
-}
-
-void MainWindow::onAddRasterData() {
-    const QStringList paths = QFileDialog::getOpenFileNames(
-        this,
-        QStringLiteral("选择栅格数据"),
-        QString(),
-        QStringLiteral("Raster (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp)"));
-    int importedCount = 0;
-    for (const auto& path : paths) {
-        if (addDataPath(path, false, gis::gui::DataOrigin::Input)) {
-            ++importedCount;
-        }
-    }
-    if (!paths.isEmpty() && inputGroupItem_->childCount() > 0) {
-        dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
-        const int duplicateCount = paths.size() - importedCount;
-        QString message = QStringLiteral("已导入 %1 个栅格数据").arg(importedCount);
-        if (duplicateCount > 0) {
-            message += QStringLiteral("，跳过 %1 个重复项").arg(duplicateCount);
-        }
-        statusBar()->showMessage(message);
-    } else if (!paths.isEmpty()) {
-        statusBar()->showMessage(QStringLiteral("未导入新栅格数据，所选文件均已存在"));
-    } else {
-        refreshDataTreeVisualState();
-    }
-}
-
-void MainWindow::onAddVectorData() {
-    const QStringList paths = QFileDialog::getOpenFileNames(
-        this,
-        QStringLiteral("选择矢量数据"),
-        QString(),
-        QStringLiteral("Vector (*.shp *.geojson *.json *.gpkg *.kml *.csv)"));
-    int importedCount = 0;
-    for (const auto& path : paths) {
-        if (addDataPath(path, false, gis::gui::DataOrigin::Input)) {
-            ++importedCount;
-        }
-    }
-    if (!paths.isEmpty() && inputGroupItem_->childCount() > 0) {
-        dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
-        const int duplicateCount = paths.size() - importedCount;
-        QString message = QStringLiteral("已导入 %1 个矢量数据").arg(importedCount);
-        if (duplicateCount > 0) {
-            message += QStringLiteral("，跳过 %1 个重复项").arg(duplicateCount);
-        }
-        statusBar()->showMessage(message);
-    } else if (!paths.isEmpty()) {
-        statusBar()->showMessage(QStringLiteral("未导入新矢量数据，所选文件均已存在"));
-    } else {
-        refreshDataTreeVisualState();
-    }
-}
-
-void MainWindow::onAddDataDirectory() {
-    const QString directory = QFileDialog::getExistingDirectory(
-        this,
-        QStringLiteral("选择数据目录"),
-        QString(),
-        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
-    if (directory.isEmpty()) {
-        refreshDataTreeVisualState();
-        return;
-    }
-
-    const auto supportedPaths = gis::gui::collectSupportedDataPathsRecursively(
-        {directory.toStdString()});
-    if (supportedPaths.empty()) {
-        statusBar()->showMessage(QStringLiteral("该目录下未发现支持的栅格或矢量数据"));
-        return;
-    }
-
-    int importedCount = 0;
-    for (const auto& path : supportedPaths) {
-        if (addDataPath(QString::fromStdString(path), false, gis::gui::DataOrigin::Input)) {
-            ++importedCount;
-        }
-    }
-
-    if (inputGroupItem_->childCount() > 0) {
-        dataTree_->setCurrentItem(inputGroupItem_->child(inputGroupItem_->childCount() - 1));
-    }
-
-    const int duplicateCount = static_cast<int>(supportedPaths.size()) - importedCount;
-    QString message = QStringLiteral("目录导入完成，新增 %1 个数据").arg(importedCount);
-    if (duplicateCount > 0) {
-        message += QStringLiteral("，跳过 %1 个重复项").arg(duplicateCount);
-    }
-    statusBar()->showMessage(message);
-}
-
-void MainWindow::onRemoveSelectedData() {
-    auto* item = selectedDataItem();
-    if (!item) {
-        return;
-    }
-
-    delete item;
-    if (!selectedDataItem()) {
-        previewPanel_->clearPreview();
-        statusBar()->showMessage(QStringLiteral("已移除当前数据"));
-    }
-    refreshDataTreeVisualState();
-}
-
-void MainWindow::onDataSelectionChanged() {
-    auto* item = selectedDataItem();
-    if (!item) {
-        previewPanel_->clearPreview();
-        clearDataInfoPanel();
-        refreshPreviewCompareTargets();
-        refreshContextPanelForDataSelection();
-        refreshDataTreeVisualState();
-        return;
-    }
-
-    const QString path = item->data(0, Qt::UserRole).toString();
-    const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
-    const auto kind = static_cast<gis::gui::DataKind>(item->data(0, Qt::UserRole + 1).toInt());
-    previewPanel_->setCurrentOrigin(origin);
-    previewPanel_->showPath(path.toUtf8().constData());
-    updateDataInfoPanel(path, kind, origin);
-    syncCurrentDataToParams();
-    refreshPreviewCompareTargets();
-    refreshContextPanelForDataSelection();
-    refreshDataTreeVisualState();
-    statusBar()->showMessage(QStringLiteral("当前数据: %1").arg(path));
-    refreshQuickPreviewButtonState();
-    refreshQuickRunButtonState();
-    refreshParamValidationState();
-    refreshExecuteButtonState();
+    runPluginWithParams(params);
 }
 
 void MainWindow::onParamValuesChanged() {
-    if (isSyncingParams_) {
-        return;
-    }
-
-    refreshSuggestedOutputFromCurrentData();
-    refreshQuickRunButtonState();
-    refreshParamValidationState();
+    if (isSyncingParams_) return;
     refreshExecuteButtonState();
-}
-
-void MainWindow::onUseSelectedAsInput() {
-    auto* item = selectedDataItem();
-    if (!item) {
-        return;
-    }
-    moveDataItemToRole(item, false);
-    statusBar()->showMessage(QStringLiteral("当前数据已设为输入数据"));
-}
-
-void MainWindow::onUseSelectedAsOutput() {
-    auto* item = selectedDataItem();
-    if (!item) {
-        return;
-    }
-    moveDataItemToRole(item, true);
-    statusBar()->showMessage(QStringLiteral("当前数据已设为结果数据"));
-}
-
-void MainWindow::onBindSelectedToInputParam() {
-    const QString path = currentSelectedDataPath();
-    if (path.isEmpty()) {
-        return;
-    }
-    bindDataPathToParam(path, "input");
-}
-
-void MainWindow::onDataItemDoubleClicked(QTreeWidgetItem* item, int) {
-    if (!item || item == inputGroupItem_ || item == outputGroupItem_) {
-        return;
-    }
-
-    openDataPath(item->data(0, Qt::UserRole).toString(), true);
-}
-
-void MainWindow::showDataContextMenu(const QPoint& pos) {
-    auto* item = dataTree_->itemAt(pos);
-    if (!item || item == inputGroupItem_ || item == outputGroupItem_) {
-        return;
-    }
-
-    const QString path = item->data(0, Qt::UserRole).toString();
-    const auto kind = static_cast<gis::gui::DataKind>(item->data(0, Qt::UserRole + 1).toInt());
-
-    QMenu menu(this);
-    auto* setInputAction = menu.addAction(QStringLiteral("设为输入数据"));
-    auto* setOutputAction = menu.addAction(QStringLiteral("设为结果数据"));
-    auto* revealAction = menu.addAction(QStringLiteral("打开所在目录"));
-    auto* copyPathAction = menu.addAction(QStringLiteral("复制路径"));
-    std::map<QAction*, std::string> bindActions;
-    if (currentPlugin_) {
-        const auto options = gis::gui::collectBindableParamOptions(currentPlugin_->paramSpecs(), kind);
-        if (!options.empty()) {
-            auto* bindMenu = menu.addMenu(QStringLiteral("填入参数"));
-            for (const auto& option : options) {
-                auto* action = bindMenu->addAction(QString::fromUtf8(option.displayName));
-                action->setToolTip(QString::fromUtf8(option.key));
-                bindActions[action] = option.key;
-            }
-        }
-    }
-    menu.addSeparator();
-    auto* removeAction = menu.addAction(QStringLiteral("移除"));
-
-    QAction* selectedAction = menu.exec(dataTree_->viewport()->mapToGlobal(pos));
-    if (!selectedAction) {
-        return;
-    }
-
-    if (selectedAction == setInputAction) {
-        moveDataItemToRole(item, false);
-    } else if (selectedAction == setOutputAction) {
-        moveDataItemToRole(item, true);
-    } else if (selectedAction == revealAction) {
-        openDataPathInExplorer(path);
-    } else if (selectedAction == copyPathAction) {
-        copyDataPathToClipboard(path);
-    } else if (bindActions.count(selectedAction) > 0) {
-        bindDataPathToParam(path, bindActions[selectedAction]);
-    } else if (selectedAction == removeAction) {
-        delete item;
-        if (!selectedDataItem()) {
-            previewPanel_->clearPreview();
-        }
-        refreshPreviewCompareTargets();
-        refreshDataTreeVisualState();
-    }
-}
-
-bool MainWindow::addDataPath(const QString& path, bool makeCurrent, gis::gui::DataOrigin origin) {
-    if (path.isEmpty() || containsPath(path)) {
-        if (makeCurrent && !path.isEmpty()) {
-            for (auto* group : {inputGroupItem_, outputGroupItem_}) {
-                for (int i = 0; i < group->childCount(); ++i) {
-                    if (group->child(i)->data(0, Qt::UserRole).toString() == path) {
-                        dataTree_->setCurrentItem(group->child(i));
-                        return false;
-                    }
-                }
-            }
-        }
-        refreshDataTreeVisualState();
-        return false;
-    }
-
-    const auto kind = gis::gui::detectDataKind(path.toUtf8().constData());
-    auto* parent = gis::gui::isOutputDataOrigin(origin) ? outputGroupItem_ : inputGroupItem_;
-    auto* item = new QTreeWidgetItem(parent);
-    item->setToolTip(0, path);
-    item->setData(0, Qt::UserRole, path);
-    item->setData(0, Qt::UserRole + 1, static_cast<int>(kind));
-    item->setData(0, Qt::UserRole + 2, static_cast<int>(origin));
-    updateDataItemPresentation(item, false);
-    parent->setExpanded(true);
-
-    if (makeCurrent) {
-        dataTree_->setCurrentItem(item);
-    } else {
-        refreshDataTreeVisualState();
-    }
-    return true;
-}
-
-void MainWindow::syncCurrentDataToParams() {
-    if (!currentPlugin_) {
-        return;
-    }
-
-    auto* item = selectedDataItem();
-    if (!item) {
-        return;
-    }
-
-    const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
-    if (origin != gis::gui::DataOrigin::Input) {
-        return;
-    }
-
-    const QString path = currentSelectedDataPath();
-    if (path.isEmpty()) {
-        return;
-    }
-    isSyncingParams_ = true;
-
-    if (paramWidget_->hasParam("input")) {
-        paramWidget_->setStringValue("input", path.toUtf8().constData());
-    }
-
-    refreshSuggestedOutputFromCurrentData();
-    applyAutoFillFromPath(path);
-    isSyncingParams_ = false;
-}
-
-void MainWindow::applyAutoFillFromPath(const QString& path) {
-    if (path.isEmpty()) {
-        return;
-    }
-
-    const auto autoFillInfo = gis::gui::inspectDataForAutoFill(path.toStdString());
-    if (paramWidget_->hasParam("layer") && !autoFillInfo.layerName.empty()) {
-        paramWidget_->setStringValue("layer", autoFillInfo.layerName);
-    }
-
-    if (paramWidget_->hasParam("extent") && autoFillInfo.hasExtent) {
-        paramWidget_->setExtentValue("extent", autoFillInfo.extent);
-    }
-
-    if (!autoFillInfo.crs.empty()) {
-        if (paramWidget_->hasParam("src_srs")) {
-            paramWidget_->setStringValue("src_srs", autoFillInfo.crs);
-        }
-        if (paramWidget_->hasParam("srs")) {
-            paramWidget_->setStringValue("srs", autoFillInfo.crs);
-        }
-    }
-}
-
-void MainWindow::bindDataPathToParam(const QString& path, const std::string& key) {
-    if (!paramWidget_ || path.isEmpty() || key.empty() || !paramWidget_->hasParam(key)) {
-        return;
-    }
-
-    isSyncingParams_ = true;
-    paramWidget_->setStringValue(key, path.toUtf8().constData());
-    if (key == "input") {
-        refreshSuggestedOutputFromCurrentData();
-    }
-    applyAutoFillFromPath(path);
-    isSyncingParams_ = false;
-    statusBar()->showMessage(
-        QStringLiteral("已将当前数据填入参数: %1").arg(QString::fromStdString(key)));
     refreshParamValidationState();
-    refreshQuickRunButtonState();
-    refreshExecuteButtonState();
-    refreshDataActionButtonsState();
-}
-
-QString MainWindow::buildResultSummary(const gis::framework::Result& result, const QString& resultType) const {
-    QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result));
-    if (!resultType.isEmpty()) {
-        summary = QStringLiteral("结果类型: %1\n").arg(resultType) + summary;
-    }
-    return summary;
-}
-
-QString MainWindow::currentSelectedDataPath() const {
-    auto* item = selectedDataItem();
-    if (!item) {
-        return {};
-    }
-    return item->data(0, Qt::UserRole).toString();
-}
-
-void MainWindow::openDataPathInExplorer(const QString& path) {
-    if (path.isEmpty()) {
-        return;
-    }
-
-    const QFileInfo info(path);
-    const QString targetDir = info.absolutePath();
-    if (targetDir.isEmpty()) {
-        statusBar()->showMessage(QStringLiteral("无法定位当前数据所在目录"));
-        return;
-    }
-
-    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(targetDir))) {
-        statusBar()->showMessage(QStringLiteral("打开目录失败: %1").arg(targetDir));
-        return;
-    }
-
-    statusBar()->showMessage(QStringLiteral("已打开目录: %1").arg(QDir::toNativeSeparators(targetDir)));
-}
-
-void MainWindow::copyDataPathToClipboard(const QString& path) {
-    if (path.isEmpty()) {
-        return;
-    }
-
-    if (auto* clipboard = QGuiApplication::clipboard()) {
-        clipboard->setText(QDir::toNativeSeparators(path));
-        statusBar()->showMessage(QStringLiteral("已复制路径: %1").arg(QDir::toNativeSeparators(path)));
-    }
-}
-
-QString MainWindow::currentInputReferencePath() const {
-    if (paramWidget_ && paramWidget_->hasParam("input")) {
-        const QString path = QString::fromUtf8(paramWidget_->stringValue("input"));
-        if (!path.isEmpty()) {
-            return path;
-        }
-    }
-
-    auto* item = selectedDataItem();
-    if (!item) {
-        return {};
-    }
-
-    const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
-    return origin == gis::gui::DataOrigin::Input ? item->data(0, Qt::UserRole).toString() : QString();
-}
-
-QString MainWindow::currentOutputReferencePath() const {
-    auto* item = selectedDataItem();
-    if (item) {
-        const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
-        if (gis::gui::isOutputDataOrigin(origin)) {
-            return item->data(0, Qt::UserRole).toString();
-        }
-    }
-    return latestOutputPath_;
-}
-
-QString MainWindow::currentActionValue() const {
-    return currentActionKey_;
-}
-
-QString MainWindow::buildSuggestedOutputPathFor(const QString& inputPath) const {
-    if (!currentPlugin_ || inputPath.isEmpty()) {
-        return {};
-    }
-    return QString::fromStdString(gis::gui::buildSuggestedOutputPath(
-        inputPath.toStdString(),
-        currentPlugin_->name(),
-        currentActionKey_.toStdString()));
-}
-
-void MainWindow::openDataPath(const QString& path, bool refitPreview) {
-    if (path.isEmpty()) {
-        return;
-    }
-
-    for (auto* group : {inputGroupItem_, outputGroupItem_}) {
-        for (int i = 0; i < group->childCount(); ++i) {
-            auto* item = group->child(i);
-            if (item->data(0, Qt::UserRole).toString() == path) {
-                dataTree_->setCurrentItem(item);
-                if (refitPreview) {
-                    previewPanel_->refitPreview();
-                }
-                return;
-            }
-        }
-    }
-
-    previewPanel_->showPath(path.toUtf8().constData());
-    refreshPreviewCompareTargets();
-    if (refitPreview) {
-        previewPanel_->refitPreview();
-    }
-}
-
-void MainWindow::refreshSuggestedOutputFromCurrentData() {
-    const QString path = currentSelectedDataPath();
-    if (path.isEmpty() || !paramWidget_ || !paramWidget_->hasParam("output")) {
-        return;
-    }
-
-    const QString currentOutput = QString::fromUtf8(paramWidget_->stringValue("output"));
-    const QString suggestedOutput = buildSuggestedOutputPathFor(path);
-    if (!suggestedOutput.isEmpty() &&
-        (currentOutput.isEmpty() || currentOutput == lastSuggestedOutputPath_)) {
-        paramWidget_->setStringValue("output", suggestedOutput.toUtf8().constData());
-        lastSuggestedOutputPath_ = suggestedOutput;
-    }
-}
-
-void MainWindow::refreshPreviewCompareTargets() {
-    if (!previewPanel_) {
-        return;
-    }
-    previewPanel_->setCompareTargets(currentInputReferencePath(), currentOutputReferencePath());
 }
 
 void MainWindow::refreshExecuteButtonState() {
-    if (!executeButton_) {
-        return;
-    }
+    if (!executeButton_) return;
 
     if (!currentPlugin_ || currentActionKey_.isEmpty()) {
         executeButton_->setEnabled(false);
-        executeButton_->setToolTip(QStringLiteral("请先选择主功能和子功能"));
+        executeButton_->setToolTip(QStringLiteral("\350\257\267\345\205\210\351\200\211\346\213\251\344\270\273\345\212\237\350\203\275\345\222\214\345\255\220\345\212\237\350\203\275"));
         return;
     }
 
@@ -1673,67 +407,13 @@ void MainWindow::refreshExecuteButtonState() {
     }
 
     executeButton_->setEnabled(true);
-    executeButton_->setToolTip(QStringLiteral("参数已就绪，可执行当前算法"));
-}
-
-void MainWindow::refreshQuickPreviewButtonState() {
-    if (!quickPreviewButton_) {
-        return;
-    }
-
-    const QString path = currentSelectedDataPath();
-    const bool isRaster = !path.isEmpty() &&
-        gis::gui::detectDataKind(path.toStdString()) == gis::gui::DataKind::Raster;
-    quickPreviewButton_->setEnabled(isRaster);
-    quickPreviewButton_->setToolTip(
-        isRaster
-            ? QStringLiteral("基于当前栅格生成8位小尺寸预览影像")
-            : QStringLiteral("请选择一个栅格数据后再生成8位预览"));
-}
-
-void MainWindow::refreshQuickRunButtonState() {
-    if (!quickRunButton_) {
-        return;
-    }
-    if (!currentPlugin_ || currentActionKey_.isEmpty()) {
-        quickRunButton_->setEnabled(false);
-        quickRunButton_->setToolTip(QStringLiteral("请先选择主功能和子功能"));
-        return;
-    }
-
-    const auto specs = currentPlugin_->paramSpecs();
-    const auto params = collectExecutionParams();
-    const std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
-    if (!validationMessage.empty()) {
-        quickRunButton_->setEnabled(false);
-        quickRunButton_->setToolTip(QString::fromUtf8(validationMessage));
-        return;
-    }
-
-    const bool ok = gis::gui::canBuildQuickPreviewExecution(specs, params);
-    quickRunButton_->setEnabled(ok);
-    quickRunButton_->setToolTip(
-        ok
-            ? QStringLiteral("使用8位小尺寸预览影像快速试算当前算法")
-            : QStringLiteral("当前参数里需要至少有一个可生成预览的栅格输入"));
-
-    if (quickRunCheckBox_) {
-        quickRunCheckBox_->setEnabled(ok);
-        if (!ok) {
-            quickRunCheckBox_->setChecked(false);
-        }
-    }
+    executeButton_->setToolTip(QStringLiteral("\345\217\202\346\225\260\345\267\262\345\260\261\347\273\252\357\274\214\345\217\257\346\211\247\350\241\214\345\275\223\345\211\215\347\256\227\346\263\225"));
 }
 
 void MainWindow::refreshParamValidationState() {
     if (!paramWidget_ || !currentPlugin_ || currentActionKey_.isEmpty()) {
         if (paramWidget_) {
             paramWidget_->setHighlightedParam({});
-        }
-        if (paramValidationLabel_) {
-            paramValidationLabel_->setText(QStringLiteral("请先选择主功能和子功能。"));
-            paramValidationLabel_->setStyleSheet(
-                "background: #f4f6f8; color: #5f6b7a; border: 1px solid #d5dde5; border-radius: 8px; padding: 8px 10px;");
         }
         return;
     }
@@ -1742,131 +422,93 @@ void MainWindow::refreshParamValidationState() {
         currentPlugin_->paramSpecs(),
         collectExecutionParams());
     paramWidget_->setHighlightedParam(invalidKey);
-
-    if (!paramValidationLabel_) {
-        return;
-    }
-
-    if (invalidKey.empty()) {
-        paramValidationLabel_->setText(QStringLiteral("当前参数已就绪，可以直接执行或快速试算。"));
-        paramValidationLabel_->setStyleSheet(
-            "background: #eef6ec; color: #245b2b; border: 1px solid #cfe4cc; border-radius: 8px; padding: 8px 10px;");
-        return;
-    }
-
-    QString displayName = QString::fromUtf8(invalidKey);
-    for (const auto& spec : currentPlugin_->paramSpecs()) {
-        if (spec.key == invalidKey) {
-            displayName = QString::fromUtf8(spec.displayName.empty() ? spec.key : spec.displayName);
-            break;
-        }
-    }
-
-    paramValidationLabel_->setText(
-        QStringLiteral("当前还不能执行，请先检查参数：%1").arg(displayName));
-    paramValidationLabel_->setStyleSheet(
-        "background: #fff4e8; color: #8a4b12; border: 1px solid #f0cfaa; border-radius: 8px; padding: 8px 10px;");
 }
 
-QTreeWidgetItem* MainWindow::selectedDataItem() const {
-    if (!dataTree_) {
-        return nullptr;
+void MainWindow::runPluginWithParams(
+    const std::map<std::string, gis::framework::ParamValue>& params) {
+    reporter_->reset();
+    if (statusExecutionLabel_) {
+        statusExecutionLabel_->setText(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\350\277\220\350\241\214\344\270\255"));
     }
-
-    auto* item = dataTree_->currentItem();
-    if (!item || item == inputGroupItem_ || item == outputGroupItem_) {
-        return nullptr;
+    if (progressBar_) {
+        progressBar_->setRange(0, 0);
+        progressBar_->setFormat(QStringLiteral("\345\244\204\347\220\206\344\270\255..."));
     }
-    return item;
-}
-
-bool MainWindow::containsPath(const QString& path) const {
-    for (auto* group : {inputGroupItem_, outputGroupItem_}) {
-        for (int i = 0; i < group->childCount(); ++i) {
-            if (group->child(i)->data(0, Qt::UserRole).toString() == path) {
-                return true;
-            }
-        }
+    if (statusProgressBar_) {
+        statusProgressBar_->setRange(0, 0);
     }
-    return false;
-}
+    executeButton_->setEnabled(false);
 
-void MainWindow::moveDataItemToRole(QTreeWidgetItem* item, bool isOutput) {
-    if (!item) {
-        return;
-    }
+    auto* worker = new ExecuteWorker;
+    worker->setup(currentPlugin_, params, reporter_);
 
-    auto* currentParent = item->parent();
-    auto* targetParent = isOutput ? outputGroupItem_ : inputGroupItem_;
-    if (currentParent == targetParent) {
-        return;
-    }
+    auto* thread = new QThread;
+    worker->moveToThread(thread);
 
-    currentParent->removeChild(item);
-    targetParent->addChild(item);
-    item->setData(0, Qt::UserRole + 2,
-                  static_cast<int>(isOutput ? gis::gui::DataOrigin::Output : gis::gui::DataOrigin::Input));
-    targetParent->setExpanded(true);
-    dataTree_->setCurrentItem(item);
+    auto* progressDialog = new ProgressDialog(reporter_);
 
-    syncCurrentDataToParams();
-    refreshPreviewCompareTargets();
-    refreshDataTreeVisualState();
-}
+    connect(thread, &QThread::started, worker, &ExecuteWorker::run);
+    connect(worker, &ExecuteWorker::finished, this,
+            [this, progressDialog](const gis::framework::Result& result) {
+                QString message = QString::fromUtf8(result.message);
+                const bool cancelled = result.message == "\345\267\262\345\217\226\346\266\210\346\211\247\350\241\214";
+                progressDialog->setFinished(message, result.success, cancelled);
 
-void MainWindow::refreshDataTreeVisualState() {
-    auto* activeItem = selectedDataItem();
-    for (auto* group : {inputGroupItem_, outputGroupItem_}) {
-        for (int i = 0; i < group->childCount(); ++i) {
-            auto* item = group->child(i);
-            updateDataItemPresentation(item, item == activeItem);
-        }
-    }
-    refreshDataActionButtonsState();
-}
+                if (result.success) {
+                    QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result));
+                    resultSummaryLabel_->setText(
+                        QStringLiteral("\342\234\205 \346\211\247\350\241\214\346\210\220\345\212\237\n%1").arg(summary));
+                    resultSummaryLabel_->setStyleSheet(
+                        QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
+                    if (progressBar_) {
+                        progressBar_->setRange(0, 100);
+                        progressBar_->setValue(100);
+                        progressBar_->setFormat(QStringLiteral("\345\256\214\346\210\220 100%"));
+                    }
+                    if (statusExecutionLabel_) {
+                        statusExecutionLabel_->setText(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\346\210\220\345\212\237"));
+                    }
+                    statusBar()->showMessage(QStringLiteral("\346\211\247\350\241\214\346\210\220\345\212\237: ") + message);
+                } else if (cancelled) {
+                    resultSummaryLabel_->setText(QStringLiteral("\342\234\226 \345\267\262\345\217\226\346\266\210"));
+                    resultSummaryLabel_->setStyleSheet(
+                        QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
+                    if (progressBar_) {
+                        progressBar_->setRange(0, 100);
+                        progressBar_->setValue(0);
+                        progressBar_->setFormat(QStringLiteral("\345\267\262\345\217\226\346\266\210"));
+                    }
+                    if (statusExecutionLabel_) {
+                        statusExecutionLabel_->setText(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\345\267\262\345\217\226\346\266\210"));
+                    }
+                    statusBar()->showMessage(QStringLiteral("\346\211\247\350\241\214\345\267\262\345\217\226\346\266\210"));
+                } else {
+                    resultSummaryLabel_->setText(
+                        QStringLiteral("\342\235\214 \346\211\247\350\241\214\345\244\261\350\264\245\n%1").arg(message));
+                    resultSummaryLabel_->setStyleSheet(
+                        QStringLiteral("color: %1;").arg(gis::style::Color::kError));
+                    if (progressBar_) {
+                        progressBar_->setRange(0, 100);
+                        progressBar_->setValue(0);
+                        progressBar_->setFormat(QStringLiteral("\345\244\261\350\264\245"));
+                    }
+                    if (statusExecutionLabel_) {
+                        statusExecutionLabel_->setText(QStringLiteral("\346\211\247\350\241\214\347\212\266\346\200\201\357\274\232\345\244\261\350\264\245"));
+                    }
+                    statusBar()->showMessage(QStringLiteral("\346\211\247\350\241\214\345\244\261\350\264\245: ") + message);
+                }
 
-void MainWindow::updateDataItemPresentation(QTreeWidgetItem* item, bool isActive) {
-    if (!item) {
-        return;
-    }
+                if (statusProgressBar_) {
+                    statusProgressBar_->setRange(0, 100);
+                    statusProgressBar_->setValue(result.success ? 100 : 0);
+                }
+                refreshExecuteButtonState();
+            });
+    connect(worker, &ExecuteWorker::finished, thread, &QThread::quit);
+    connect(worker, &ExecuteWorker::finished, worker, &QObject::deleteLater);
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    connect(progressDialog, &QDialog::finished, progressDialog, &QObject::deleteLater);
 
-    const QString path = item->data(0, Qt::UserRole).toString();
-    const auto kind = static_cast<gis::gui::DataKind>(item->data(0, Qt::UserRole + 1).toInt());
-    const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
-
-    item->setText(0, QString::fromUtf8(
-        gis::gui::buildDataDisplayLabel(path.toStdString(), kind, origin, isActive)));
-
-    QFont font = item->font(0);
-    font.setBold(isActive);
-    item->setFont(0, font);
-
-    if (isActive) {
-        item->setBackground(0, QBrush(QColor("#d6ebff")));
-        item->setForeground(0, QBrush(QColor("#0f3d62")));
-    } else {
-        item->setBackground(0, QBrush());
-        item->setForeground(0, QBrush());
-    }
-}
-
-void MainWindow::refreshDataActionButtonsState() {
-    auto* item = selectedDataItem();
-    const bool hasItem = item != nullptr;
-    const bool canBindInput = hasItem && currentPlugin_ && paramWidget_ && paramWidget_->hasParam("input");
-    bool isOutput = false;
-    if (hasItem) {
-        const auto origin = static_cast<gis::gui::DataOrigin>(item->data(0, Qt::UserRole + 2).toInt());
-        isOutput = gis::gui::isOutputDataOrigin(origin);
-    }
-
-    if (useAsInputButton_) {
-        useAsInputButton_->setEnabled(hasItem && isOutput);
-    }
-    if (useAsOutputButton_) {
-        useAsOutputButton_->setEnabled(hasItem && !isOutput);
-    }
-    if (bindInputButton_) {
-        bindInputButton_->setEnabled(canBindInput);
-    }
+    thread->start();
+    progressDialog->exec();
 }
