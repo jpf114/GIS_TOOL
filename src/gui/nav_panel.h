@@ -23,6 +23,8 @@ public:
     void clearSubFunctions();
     void setSubFunctions(const std::vector<std::string>& actions,
                          const std::vector<std::string>& displayNames);
+    void setCurrentPluginSelection(const std::string& pluginName);
+    void setCurrentSubFunctionSelection(const std::string& actionKey);
 
 signals:
     void pluginSelected(const std::string& pluginName);

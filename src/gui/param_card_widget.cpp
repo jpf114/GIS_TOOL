@@ -39,15 +39,20 @@ void ParamCardWidget::setupUi() {
         gis::style::Size::kCardPadding,
         gis::style::Size::kCardPadding,
         gis::style::Size::kCardPadding);
-    cardContentLayout_->setSpacing(12);
+    cardContentLayout_->setSpacing(14);
 
     auto* headerLayout = new QHBoxLayout;
-    headerLayout->setSpacing(8);
+    headerLayout->setSpacing(10);
+
+    auto* accentBar = new QFrame;
+    accentBar->setObjectName(QStringLiteral("accentBar"));
+    accentBar->setFixedHeight(20);
+    headerLayout->addWidget(accentBar, 0, Qt::AlignTop);
 
     static const QMap<CardType, QString> kDefaultTitles = {
-        {CardType::Input,    QStringLiteral("\350\276\223\345\205\245\345\217\202\346\225\260")},
-        {CardType::Output,   QStringLiteral("\350\276\223\345\207\272\345\217\202\346\225\260")},
-        {CardType::Advanced, QStringLiteral("\351\253\230\347\272\247\345\217\202\346\225\260")},
+        {CardType::Input,    QStringLiteral("输入参数")},
+        {CardType::Output,   QStringLiteral("输出参数")},
+        {CardType::Advanced, QStringLiteral("高级参数")},
     };
 
     titleLabel_ = new QLabel(kDefaultTitles.value(cardType_));
@@ -57,17 +62,12 @@ void ParamCardWidget::setupUi() {
 
     cardContentLayout_->addLayout(headerLayout);
 
-    auto* separator = new QFrame;
-    separator->setFrameShape(QFrame::HLine);
-    separator->setStyleSheet(QStringLiteral("background: %1; max-height: 1px;").arg(gis::style::Color::kDivider));
-    cardContentLayout_->addWidget(separator);
-
     auto* paramsContainer = new QWidget;
     paramsLayout_ = new QGridLayout(paramsContainer);
     paramsLayout_->setContentsMargins(0, 0, 0, 0);
-    paramsLayout_->setHorizontalSpacing(12);
-    paramsLayout_->setVerticalSpacing(10);
-    paramsLayout_->setColumnMinimumWidth(0, 200);
+    paramsLayout_->setHorizontalSpacing(16);
+    paramsLayout_->setVerticalSpacing(14);
+    paramsLayout_->setColumnMinimumWidth(0, 220);
     paramsLayout_->setColumnStretch(0, gis::style::Size::kLabelInputRatio);
     paramsLayout_->setColumnStretch(1, 5);
     cardContentLayout_->addWidget(paramsContainer);
@@ -92,24 +92,23 @@ void ParamCardWidget::addParam(const gis::framework::ParamSpec& spec) {
 
     auto* nameLabel = new QLabel(QString::fromUtf8(spec.displayName));
     nameLabel->setObjectName(QStringLiteral("paramLabel"));
-    nameLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    nameLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     labelLayout->addWidget(nameLabel);
 
     if (!spec.description.empty()) {
         auto* descLabel = new QLabel(QString::fromUtf8(spec.description));
         descLabel->setObjectName(QStringLiteral("paramDesc"));
         descLabel->setWordWrap(true);
-        descLabel->setAlignment(Qt::AlignRight | Qt::AlignTop);
+        descLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         descLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         descLabel->setMaximumWidth(220);
         labelLayout->addWidget(descLabel);
     }
 
     if (spec.required) {
-        auto* reqLabel = new QLabel(QStringLiteral("*"));
-        reqLabel->setObjectName(QStringLiteral("requiredMark"));
-        reqLabel->setAlignment(Qt::AlignRight);
-        labelLayout->addWidget(reqLabel);
+        auto* reqLabel = new QLabel(QStringLiteral("必填"));
+        reqLabel->setObjectName(QStringLiteral("paramKey"));
+        labelLayout->addWidget(reqLabel, 0, Qt::AlignLeft);
     }
 
     QWidget* inputWidget = createParamWidget(spec, entry);
@@ -157,8 +156,8 @@ QWidget* ParamCardWidget::createFileWidget(const gis::framework::ParamSpec& spec
     auto* lineEdit = new QLineEdit;
     lineEdit->setPlaceholderText(
         spec.type == gis::framework::ParamType::CRS
-            ? QStringLiteral("\350\257\267\350\276\223\345\205\245 EPSG \344\273\243\347\240\201...")
-            : QStringLiteral("\350\257\267\351\200\211\346\213\251\346\226\207\344\273\266..."));
+            ? QStringLiteral("请输入 EPSG 代码，例如 EPSG:3857")
+            : QStringLiteral("请选择文件或输入路径"));
     if (auto* defStr = std::get_if<std::string>(&spec.defaultValue); defStr && !defStr->empty()) {
         lineEdit->setText(QString::fromUtf8(*defStr));
     }
@@ -179,13 +178,13 @@ QWidget* ParamCardWidget::createFileWidget(const gis::framework::ParamSpec& spec
         connect(browseBtn, &QPushButton::clicked, this, [lineEdit, isOutput, isDir]() {
             QString filePath;
             if (isDir) {
-                filePath = QFileDialog::getExistingDirectory(nullptr, QStringLiteral("\351\200\211\346\213\251\347\233\256\345\275\225"));
+                filePath = QFileDialog::getExistingDirectory(nullptr, QStringLiteral("选择目录"));
             } else if (isOutput) {
-                filePath = QFileDialog::getSaveFileName(nullptr, QStringLiteral("\344\277\235\345\255\230\346\226\207\344\273\266"), QString(),
-                    QStringLiteral("\346\211\200\346\234\211\346\226\207\344\273\266 (*);;GeoTIFF (*.tif *.tiff);;Shapefile (*.shp)"));
+                filePath = QFileDialog::getSaveFileName(nullptr, QStringLiteral("保存文件"), QString(),
+                    QStringLiteral("所有文件 (*);;GeoTIFF (*.tif *.tiff);;Shapefile (*.shp)"));
             } else {
-                filePath = QFileDialog::getOpenFileName(nullptr, QStringLiteral("\351\200\211\346\213\251\346\226\207\344\273\266"), QString(),
-                    QStringLiteral("\346\211\200\346\234\211\346\226\207\344\273\266 (*);;GeoTIFF (*.tif *.tiff);;Shapefile (*.shp);;JPEG (*.jpg *.jpeg);;PNG (*.png)"));
+                filePath = QFileDialog::getOpenFileName(nullptr, QStringLiteral("选择文件"), QString(),
+                    QStringLiteral("所有文件 (*);;GeoTIFF (*.tif *.tiff);;Shapefile (*.shp);;JPEG (*.jpg *.jpeg);;PNG (*.png)"));
             }
             if (!filePath.isEmpty()) {
                 lineEdit->setText(filePath);
@@ -246,7 +245,7 @@ QWidget* ParamCardWidget::createNumberWidget(const gis::framework::ParamSpec& sp
 
 QWidget* ParamCardWidget::createBoolWidget(const gis::framework::ParamSpec& spec,
                                             ParamWidgetEntry& entry) {
-    auto* checkBox = new QCheckBox(QString::fromUtf8(spec.displayName));
+    auto* checkBox = new QCheckBox(QStringLiteral("启用"));
     if (auto* defBool = std::get_if<bool>(&spec.defaultValue)) {
         checkBox->setChecked(*defBool);
     }
@@ -261,7 +260,7 @@ QWidget* ParamCardWidget::createTextWidget(const gis::framework::ParamSpec& spec
     lineEdit->setPlaceholderText(
         !spec.description.empty()
             ? QString::fromUtf8(spec.description)
-            : QStringLiteral("\350\257\267\350\276\223\345\205\245..."));
+            : QStringLiteral("请输入参数值"));
     if (auto* defStr = std::get_if<std::string>(&spec.defaultValue); defStr && !defStr->empty()) {
         lineEdit->setText(QString::fromUtf8(*defStr));
     }
@@ -287,7 +286,7 @@ QWidget* ParamCardWidget::createExtentWidget(const gis::framework::ParamSpec& sp
     for (int i = 0; i < 4; ++i) {
         auto* label = new QLabel(QString::fromUtf8(kExtentLabels[i]));
         label->setObjectName(QStringLiteral("paramLabel"));
-        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         grid->addWidget(label, i / 2, (i % 2) * 2);
 
         auto* spin = new QDoubleSpinBox;

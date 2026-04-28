@@ -55,6 +55,7 @@ private:
     NavPanel* navPanel_ = nullptr;
     QLabel* functionTitleLabel_ = nullptr;
     QLabel* functionDescLabel_ = nullptr;
+    QLabel* functionMetaLabel_ = nullptr;
     ParamWidget* paramWidget_ = nullptr;
     QPushButton* executeButton_ = nullptr;
     QProgressBar* progressBar_ = nullptr;

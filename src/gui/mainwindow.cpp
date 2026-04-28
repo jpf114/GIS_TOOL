@@ -20,6 +20,7 @@
 #include <QScrollArea>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QStyle>
 #include <QThread>
 #include <QVBoxLayout>
 
@@ -331,16 +332,40 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
     reporter_ = new QtProgressReporter(this);
     setupUi();
+    connect(reporter_, &QtProgressReporter::progressChanged, this, [this](double percent) {
+        const int value = std::clamp(static_cast<int>(percent), 0, 100);
+        if (progressBar_) {
+            progressBar_->setRange(0, 100);
+            progressBar_->setValue(value);
+            progressBar_->setFormat(QStringLiteral("完成 %1%").arg(value));
+        }
+        if (statusProgressBar_) {
+            statusProgressBar_->setRange(0, 100);
+            statusProgressBar_->setValue(value);
+        }
+    });
+    connect(reporter_, &QtProgressReporter::messageLogged, this, [this](const QString& message) {
+        if (!message.isEmpty() && resultSummaryLabel_) {
+            resultSummaryLabel_->setStyleSheet(QString());
+            resultSummaryLabel_->setText(message);
+        }
+    });
     loadPlugins();
 }
 
 MainWindow::~MainWindow() = default;
 
 void MainWindow::selectPluginByName(const std::string& pluginName) {
+    if (navPanel_) {
+        navPanel_->setCurrentPluginSelection(pluginName);
+    }
     onPluginSelected(pluginName);
 }
 
 void MainWindow::selectActionByKey(const std::string& actionKey) {
+    if (navPanel_) {
+        navPanel_->setCurrentSubFunctionSelection(actionKey);
+    }
     onSubFunctionSelected(actionKey);
 }
 
@@ -390,36 +415,48 @@ void MainWindow::setupUi() {
     connect(navPanel_, &NavPanel::subFunctionSelected, this, &MainWindow::onSubFunctionSelected);
 
     auto* rightPanel = new QWidget;
-    rightPanel->setStyleSheet(QStringLiteral("background: %1;").arg(gis::style::Color::kWindowBg));
+    rightPanel->setObjectName(QStringLiteral("pagePanel"));
 
     auto* rightLayout = new QVBoxLayout(rightPanel);
     rightLayout->setContentsMargins(
-        gis::style::Size::kCardPadding,
-        gis::style::Size::kCardPadding,
-        gis::style::Size::kCardPadding,
-        gis::style::Size::kCardPadding);
+        20,
+        20,
+        20,
+        18);
     rightLayout->setSpacing(gis::style::Size::kCardSpacing);
 
     auto* titleCard = new QFrame;
-    titleCard->setObjectName(QStringLiteral("card"));
+    titleCard->setObjectName(QStringLiteral("heroCard"));
     auto* titleLayout = new QVBoxLayout(titleCard);
     titleLayout->setContentsMargins(
-        gis::style::Size::kCardPadding,
-        gis::style::Size::kCardPadding,
-        gis::style::Size::kCardPadding,
-        gis::style::Size::kCardPadding);
-    titleLayout->setSpacing(4);
+        22,
+        20,
+        22,
+        20);
+    titleLayout->setSpacing(8);
+
+    auto* headerTopLayout = new QHBoxLayout;
+    headerTopLayout->setContentsMargins(0, 0, 0, 0);
+    headerTopLayout->setSpacing(10);
+
+    auto* heroBadgeLabel = new QLabel(QStringLiteral("算法工作台"));
+    heroBadgeLabel->setObjectName(QStringLiteral("heroBadge"));
+    headerTopLayout->addWidget(heroBadgeLabel, 0, Qt::AlignLeft);
+    headerTopLayout->addStretch();
+    titleLayout->addLayout(headerTopLayout);
 
     functionTitleLabel_ = new QLabel(QStringLiteral("请选择功能"));
-    functionTitleLabel_->setObjectName(QStringLiteral("cardTitle"));
-    functionTitleLabel_->setStyleSheet(
-        QStringLiteral("font-size: 18px; font-weight: 700; color: %1;").arg(gis::style::Color::kTextPrimary));
+    functionTitleLabel_->setObjectName(QStringLiteral("heroTitle"));
     titleLayout->addWidget(functionTitleLabel_);
 
     functionDescLabel_ = new QLabel(QStringLiteral("从左侧选择插件和子功能后，这里会显示功能说明和参数配置。"));
-    functionDescLabel_->setObjectName(QStringLiteral("cardDesc"));
+    functionDescLabel_->setObjectName(QStringLiteral("heroDesc"));
     functionDescLabel_->setWordWrap(true);
     titleLayout->addWidget(functionDescLabel_);
+
+    functionMetaLabel_ = new QLabel(QStringLiteral("当前状态：等待选择主功能"));
+    functionMetaLabel_->setObjectName(QStringLiteral("heroMeta"));
+    titleLayout->addWidget(functionMetaLabel_);
 
     rightLayout->addWidget(titleCard);
 
@@ -436,14 +473,14 @@ void MainWindow::setupUi() {
     rightLayout->addWidget(paramScrollArea, 1);
 
     auto* executionCard = new QFrame;
-    executionCard->setObjectName(QStringLiteral("card"));
+    executionCard->setObjectName(QStringLiteral("execCard"));
     auto* executionLayout = new QVBoxLayout(executionCard);
     executionLayout->setContentsMargins(
-        gis::style::Size::kCardPadding,
-        gis::style::Size::kCardPadding,
-        gis::style::Size::kCardPadding,
-        gis::style::Size::kCardPadding);
-    executionLayout->setSpacing(10);
+        18,
+        18,
+        18,
+        18);
+    executionLayout->setSpacing(12);
 
     auto* execHeaderLayout = new QHBoxLayout;
     execHeaderLayout->setSpacing(12);
@@ -453,6 +490,10 @@ void MainWindow::setupUi() {
     execHeaderLayout->addWidget(execTitleLabel);
     execHeaderLayout->addStretch();
 
+    statusExecutionLabel_ = new QLabel(QStringLiteral("就绪"));
+    statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeReady"));
+    execHeaderLayout->addWidget(statusExecutionLabel_);
+
     executeButton_ = new QPushButton(QStringLiteral("执行"));
     executeButton_->setObjectName(QStringLiteral("primaryButton"));
     executeButton_->setEnabled(false);
@@ -461,24 +502,18 @@ void MainWindow::setupUi() {
 
     executionLayout->addLayout(execHeaderLayout);
 
-    auto* separator = new QFrame;
-    separator->setFrameShape(QFrame::HLine);
-    separator->setStyleSheet(
-        QStringLiteral("background: %1; max-height: 1px;").arg(gis::style::Color::kDivider));
-    executionLayout->addWidget(separator);
-
     progressBar_ = new QProgressBar;
     progressBar_->setRange(0, 100);
     progressBar_->setValue(0);
     progressBar_->setTextVisible(true);
-    progressBar_->setFormat(QStringLiteral("%p%"));
+    progressBar_->setFormat(QStringLiteral("等待执行"));
     executionLayout->addWidget(progressBar_);
 
     resultSummaryLabel_ = new QLabel;
     resultSummaryLabel_->setWordWrap(true);
-    resultSummaryLabel_->setObjectName(QStringLiteral("cardDesc"));
-    resultSummaryLabel_->setMinimumHeight(24);
-    resultSummaryLabel_->setText(QStringLiteral("等待执行..."));
+    resultSummaryLabel_->setObjectName(QStringLiteral("execSummary"));
+    resultSummaryLabel_->setMinimumHeight(28);
+    resultSummaryLabel_->setText(QStringLiteral("当前未执行任务。选择子功能并补全参数后，可以直接开始运行。"));
     executionLayout->addWidget(resultSummaryLabel_);
 
     rightLayout->addWidget(executionCard);
@@ -496,15 +531,15 @@ void MainWindow::setupUi() {
 
     statusAlgorithmLabel_ = new QLabel(QStringLiteral("当前算法：未选择"));
     statusPluginCountLabel_ = new QLabel(QStringLiteral("插件数：0"));
-    statusExecutionLabel_ = new QLabel(QStringLiteral("执行状态：就绪"));
     statusProgressBar_ = new QProgressBar;
     statusProgressBar_->setRange(0, 100);
     statusProgressBar_->setValue(0);
     statusProgressBar_->setFixedWidth(180);
     statusProgressBar_->setTextVisible(false);
+    statusAlgorithmLabel_->setObjectName(QStringLiteral("statusBarLabel"));
+    statusPluginCountLabel_->setObjectName(QStringLiteral("statusBarLabel"));
     statusBar()->addPermanentWidget(statusAlgorithmLabel_);
     statusBar()->addPermanentWidget(statusPluginCountLabel_);
-    statusBar()->addPermanentWidget(statusExecutionLabel_);
     statusBar()->addPermanentWidget(statusProgressBar_);
     statusBar()->showMessage(QStringLiteral("就绪"));
 }
@@ -605,6 +640,9 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
         currentActionKey_.clear();
         functionTitleLabel_->setText(QStringLiteral("请选择功能"));
         functionDescLabel_->setText(QStringLiteral("从左侧选择插件和子功能后，这里会显示功能说明和参数配置。"));
+        if (functionMetaLabel_) {
+            functionMetaLabel_->setText(QStringLiteral("当前状态：等待选择主功能"));
+        }
         if (statusAlgorithmLabel_) {
             statusAlgorithmLabel_->setText(QStringLiteral("当前算法：未选择"));
         }
@@ -615,6 +653,11 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
 
     functionTitleLabel_->setText(QString::fromUtf8(currentPlugin_->displayName()));
     functionDescLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
+    if (functionMetaLabel_) {
+        functionMetaLabel_->setText(
+            QStringLiteral("当前主功能：%1  |  子功能数：载入中")
+                .arg(QString::fromUtf8(currentPlugin_->displayName())));
+    }
     if (statusAlgorithmLabel_) {
         statusAlgorithmLabel_->setText(
             QStringLiteral("当前算法：%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
@@ -632,9 +675,20 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
         break;
     }
     navPanel_->setSubFunctions(actions, displayNames);
+    navPanel_->setCurrentPluginSelection(currentPlugin_->name());
+    if (functionMetaLabel_) {
+        functionMetaLabel_->setText(
+            QStringLiteral("当前主功能：%1  |  子功能数：%2")
+                .arg(QString::fromUtf8(currentPlugin_->displayName()))
+                .arg(static_cast<int>(actions.size())));
+    }
 
     currentActionKey_.clear();
     paramWidget_->clear();
+    if (resultSummaryLabel_) {
+        resultSummaryLabel_->setStyleSheet(QString());
+        resultSummaryLabel_->setText(QStringLiteral("请选择该主功能下的子功能，然后补全参数。"));
+    }
     refreshExecuteButtonState();
     statusBar()->showMessage(QStringLiteral("当前主功能：%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
 }
@@ -647,23 +701,35 @@ void MainWindow::onSubFunctionSelected(const std::string& actionKey) {
     }
 
     currentActionKey_ = QString::fromStdString(actionKey);
+    navPanel_->setCurrentSubFunctionSelection(actionKey);
 
     QString displayName = actionDisplayName(currentPlugin_->name(), currentActionKey_);
-    functionTitleLabel_->setText(
-        QString::fromUtf8(currentPlugin_->displayName()) + QStringLiteral(" \342\206\222 ") + displayName);
+    functionTitleLabel_->setText(displayName);
 
     QString desc = actionDescription(currentPlugin_->name(), currentActionKey_);
     functionDescLabel_->setText(desc.isEmpty()
         ? QString::fromUtf8(currentPlugin_->description()) : desc);
+    if (functionMetaLabel_) {
+        functionMetaLabel_->setText(
+            QStringLiteral("当前主功能：%1  |  当前子功能：%2")
+                .arg(QString::fromUtf8(currentPlugin_->displayName()))
+                .arg(displayName));
+    }
 
     paramWidget_->setParamSpecs(effectiveParamSpecs());
+    if (resultSummaryLabel_) {
+        resultSummaryLabel_->setStyleSheet(QString());
+        resultSummaryLabel_->setText(QStringLiteral("参数面板已刷新，补全必填项后即可执行当前子功能。"));
+    }
     syncDerivedParams();
     refreshExecuteButtonState();
     refreshParamValidationState();
 
     if (statusExecutionLabel_) {
-        statusExecutionLabel_->setText(
-            QStringLiteral("执行状态：已选择 %1").arg(displayName));
+        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeReady"));
+        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
+        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
+        statusExecutionLabel_->setText(QStringLiteral("待执行"));
     }
     statusBar()->showMessage(QStringLiteral("当前子功能：%1").arg(displayName));
 }
@@ -710,6 +776,12 @@ void MainWindow::refreshExecuteButtonState() {
     if (!currentPlugin_ || currentActionKey_.isEmpty()) {
         executeButton_->setEnabled(false);
         executeButton_->setToolTip(QStringLiteral("请先选择主功能和子功能"));
+        if (statusExecutionLabel_) {
+            statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeReady"));
+            statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
+            statusExecutionLabel_->style()->polish(statusExecutionLabel_);
+            statusExecutionLabel_->setText(QStringLiteral("就绪"));
+        }
         return;
     }
 
@@ -724,11 +796,23 @@ void MainWindow::refreshExecuteButtonState() {
     if (!validationMessage.empty()) {
         executeButton_->setEnabled(false);
         executeButton_->setToolTip(QString::fromUtf8(validationMessage));
+        if (statusExecutionLabel_) {
+            statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeWarning"));
+            statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
+            statusExecutionLabel_->style()->polish(statusExecutionLabel_);
+            statusExecutionLabel_->setText(QStringLiteral("待补充"));
+        }
         return;
     }
 
     executeButton_->setEnabled(true);
     executeButton_->setToolTip(QStringLiteral("参数已就绪，可以执行当前功能"));
+    if (statusExecutionLabel_) {
+        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeReady"));
+        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
+        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
+        statusExecutionLabel_->setText(QStringLiteral("可执行"));
+    }
 }
 
 void MainWindow::refreshParamValidationState() {
@@ -783,12 +867,19 @@ void MainWindow::syncDerivedParams() {
 void MainWindow::runPluginWithParams(
     const std::map<std::string, gis::framework::ParamValue>& params) {
     reporter_->reset();
+    if (resultSummaryLabel_) {
+        resultSummaryLabel_->setStyleSheet(QString());
+        resultSummaryLabel_->setText(QStringLiteral("正在执行，请稍候..."));
+    }
     if (statusExecutionLabel_) {
-        statusExecutionLabel_->setText(QStringLiteral("执行状态：运行中"));
+        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeRunning"));
+        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
+        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
+        statusExecutionLabel_->setText(QStringLiteral("运行中"));
     }
     if (progressBar_) {
         progressBar_->setRange(0, 0);
-        progressBar_->setFormat(QStringLiteral("处理中..."));
+        progressBar_->setFormat(QStringLiteral("处理中"));
     }
     if (statusProgressBar_) {
         statusProgressBar_->setRange(0, 0);
@@ -816,42 +907,48 @@ void MainWindow::runPluginWithParams(
                     QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result));
                     resultSummaryLabel_->setText(
                         QStringLiteral("✓ 执行成功\n%1").arg(summary));
-                    resultSummaryLabel_->setStyleSheet(
-                        QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
+                    resultSummaryLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
                     if (progressBar_) {
                         progressBar_->setRange(0, 100);
                         progressBar_->setValue(100);
                         progressBar_->setFormat(QStringLiteral("完成 100%"));
                     }
                     if (statusExecutionLabel_) {
-                        statusExecutionLabel_->setText(QStringLiteral("执行状态：成功"));
+                        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeSuccess"));
+                        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
+                        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
+                        statusExecutionLabel_->setText(QStringLiteral("成功"));
                     }
                     statusBar()->showMessage(QStringLiteral("执行成功"));
                 } else if (cancelled) {
                     resultSummaryLabel_->setText(QStringLiteral("✖ 已取消"));
-                    resultSummaryLabel_->setStyleSheet(
-                        QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
+                    resultSummaryLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
                     if (progressBar_) {
                         progressBar_->setRange(0, 100);
                         progressBar_->setValue(0);
                         progressBar_->setFormat(QStringLiteral("已取消"));
                     }
                     if (statusExecutionLabel_) {
-                        statusExecutionLabel_->setText(QStringLiteral("执行状态：已取消"));
+                        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeWarning"));
+                        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
+                        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
+                        statusExecutionLabel_->setText(QStringLiteral("已取消"));
                     }
                     statusBar()->showMessage(QStringLiteral("执行已取消"));
                 } else {
                     resultSummaryLabel_->setText(
                         QStringLiteral("✖ 执行失败\n%1").arg(message));
-                    resultSummaryLabel_->setStyleSheet(
-                        QStringLiteral("color: %1;").arg(gis::style::Color::kError));
+                    resultSummaryLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(gis::style::Color::kError));
                     if (progressBar_) {
                         progressBar_->setRange(0, 100);
                         progressBar_->setValue(0);
                         progressBar_->setFormat(QStringLiteral("失败"));
                     }
                     if (statusExecutionLabel_) {
-                        statusExecutionLabel_->setText(QStringLiteral("执行状态：失败"));
+                        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeError"));
+                        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
+                        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
+                        statusExecutionLabel_->setText(QStringLiteral("失败"));
                     }
                     statusBar()->showMessage(QStringLiteral("执行失败：") + message);
                 }
