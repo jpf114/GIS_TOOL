@@ -11,7 +11,7 @@
 - `Visual Studio 2022 + C++17 + 全局 vcpkg` 可稳定配置与编译
 - `GIS_BUILD_GUI=OFF/ON` 两种模式均可构建
 - 标准构建目录为 `build`，标准安装目录为 `install`
-- `ctest -C Debug --output-on-failure` 为 `106/106` 通过
+- `ctest --test-dir build -C Release --output-on-failure` 为 `125/125` 通过
 - `gis-cli.exe --list` 可正常列出全部主插件
 - `gis-gui.exe -platform offscreen --self-test` 可正常启动并退出
 - GUI 进程级离屏启动检查通过，可稳定进入事件循环
