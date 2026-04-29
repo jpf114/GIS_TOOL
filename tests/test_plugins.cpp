@@ -4,10 +4,12 @@
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
 #include <gis/core/gdal_wrapper.h>
+#include <gis/core/opencv_wrapper.h>
 #include <gis/core/progress.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_error.h>
+#include <opencv2/opencv.hpp>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -130,6 +132,28 @@ static std::string createConstantRaster(const std::string& name,
     auto* band = ds->GetRasterBand(1);
     band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
     band->FlushCache();
+    return path;
+}
+
+static std::string createMultiBandConstantRaster(const std::string& name,
+                                                 int w,
+                                                 int h,
+                                                 const std::vector<float>& values,
+                                                 double originX = 116.0,
+                                                 double originY = 40.0,
+                                                 double pixelSize = 0.001) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, static_cast<int>(values.size()), GDT_Float32);
+    double adfGT[6] = {originX, pixelSize, 0.0, originY, 0.0, -pixelSize};
+    ds->SetGeoTransform(adfGT);
+
+    for (size_t bandIndex = 0; bandIndex < values.size(); ++bandIndex) {
+        std::vector<float> data(w * h, values[bandIndex]);
+        auto* band = ds->GetRasterBand(static_cast<int>(bandIndex) + 1);
+        band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+        band->FlushCache();
+    }
+
     return path;
 }
 
@@ -417,6 +441,57 @@ TEST_F(PluginTest, ProcessingContourExecution) {
     EXPECT_TRUE(fs::exists(output));
 }
 
+TEST_F(PluginTest, ProcessingTemplateMatchExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createPatternRaster("e2e_template_match_input.tif");
+    const std::string templatePath = utf8PathString(getTestDir() / "e2e_template_match_template.tif");
+    const std::string output = utf8PathString(getTestDir() / "e2e_template_match_output.tif");
+
+    auto inputDs = gis::core::openRaster(input, true);
+    ASSERT_NE(inputDs, nullptr);
+    cv::Mat src = gis::core::gdalBandToMat(inputDs.get(), 1);
+    cv::Mat tpl = src(cv::Rect(18, 18, 16, 16)).clone();
+    gis::core::matToGdalTiff(tpl, input, templatePath, 1);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("template_match");
+    params["input"] = input;
+    params["template_file"] = templatePath;
+    params["output"] = output;
+    params["match_method"] = std::string("ccoeff_normed");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    ASSERT_TRUE(result.metadata.count("match_x"));
+    ASSERT_TRUE(result.metadata.count("match_y"));
+}
+
+TEST_F(PluginTest, ProcessingPansharpenExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createMultiBandConstantRaster(
+        "e2e_pansharpen_ms_input.tif", 30, 30, {30.0f, 50.0f, 70.0f});
+    const std::string pan = createConstantRaster("e2e_pansharpen_pan_input.tif", 30, 30, 120.0f);
+    const std::string output = utf8PathString(getTestDir() / "e2e_pansharpen_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("pansharpen");
+    params["input"] = input;
+    params["pan_file"] = pan;
+    params["output"] = output;
+    params["pan_method"] = std::string("brovey");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    EXPECT_EQ(ds->GetRasterCount(), 3);
+}
+
 TEST_F(PluginTest, ProcessingMissingInput) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -452,6 +527,175 @@ TEST_F(PluginTest, UtilityInfoExecution) {
 
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Utility info failed: " << result.message;
+}
+
+TEST_F(PluginTest, UtilityOverviewsExecution) {
+    auto* p = mgr_.find("utility");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("e2e_util_overviews_input.tif", 128, 128);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("overviews");
+    params["input"] = input;
+    params["levels"] = std::string("2 4");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+
+    auto ds = gis::core::openRaster(input, true);
+    ASSERT_NE(ds, nullptr);
+    EXPECT_GE(ds->GetRasterBand(1)->GetOverviewCount(), 1);
+}
+
+TEST_F(PluginTest, UtilityNoDataExecution) {
+    auto* p = mgr_.find("utility");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("e2e_util_nodata_input.tif", 32, 32);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("nodata");
+    params["input"] = input;
+    params["band"] = 1;
+    params["nodata_value"] = -99.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+
+    auto ds = gis::core::openRaster(input, true);
+    ASSERT_NE(ds, nullptr);
+    bool hasNoData = false;
+    const double noDataValue = gis::core::getNoDataValue(ds.get(), 1, &hasNoData);
+    EXPECT_TRUE(hasNoData);
+    EXPECT_DOUBLE_EQ(noDataValue, -99.0);
+}
+
+TEST_F(PluginTest, UtilityHistogramExecution) {
+    auto* p = mgr_.find("utility");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("e2e_util_hist_input.tif", 32, 32);
+    const std::string output = utf8PathString(getTestDir() / "e2e_util_hist_output.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("histogram");
+    params["input"] = input;
+    params["output"] = output;
+    params["bins"] = 16;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("bins"), "16");
+}
+
+TEST_F(PluginTest, UtilityColormapExecution) {
+    auto* p = mgr_.find("utility");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("e2e_util_colormap_input.tif", 40, 40);
+    const std::string output = utf8PathString(getTestDir() / "e2e_util_colormap_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("colormap");
+    params["input"] = input;
+    params["output"] = output;
+    params["cmap"] = std::string("jet");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    EXPECT_EQ(ds->GetRasterCount(), 3);
+}
+
+TEST_F(PluginTest, UtilityNdviExecution) {
+    auto* p = mgr_.find("utility");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createMultiBandConstantRaster(
+        "e2e_util_ndvi_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
+    const std::string output = utf8PathString(getTestDir() / "e2e_util_ndvi_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("ndvi");
+    params["input"] = input;
+    params["output"] = output;
+    params["red_band"] = 3;
+    params["nir_band"] = 4;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_TRUE(result.metadata.count("ndvi_min") > 0);
+    EXPECT_TRUE(result.metadata.count("ndvi_max") > 0);
+}
+
+TEST_F(PluginTest, ProjectionInfoExecution) {
+    auto* p = mgr_.find("projection");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("projection_info_input.tif", 20, 10);
+    {
+        auto ds = gis::core::openRaster(input, false);
+        ASSERT_NE(ds, nullptr);
+        OGRSpatialReference srs;
+        ASSERT_EQ(srs.SetFromUserInput("EPSG:4326"), OGRERR_NONE);
+        char* wkt = nullptr;
+        ASSERT_EQ(srs.exportToWkt(&wkt), OGRERR_NONE);
+        ASSERT_NE(wkt, nullptr);
+        ASSERT_EQ(ds->SetProjection(wkt), CE_None);
+        CPLFree(wkt);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("info");
+    params["input"] = input;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("width"), "20");
+    EXPECT_EQ(result.metadata.at("height"), "10");
+    EXPECT_EQ(result.metadata.at("bands"), "1");
+}
+
+TEST_F(PluginTest, ProjectionTransformExecution) {
+    auto* p = mgr_.find("projection");
+    ASSERT_NE(p, nullptr);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("transform");
+    params["src_srs"] = std::string("EPSG:4326");
+    params["dst_srs"] = std::string("EPSG:3857");
+    params["x"] = 116.0;
+    params["y"] = 40.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(result.metadata.count("dst_x"));
+    ASSERT_TRUE(result.metadata.count("dst_y"));
+    EXPECT_GT(std::abs(std::stod(result.metadata.at("dst_x"))), 1000.0);
+    EXPECT_GT(std::abs(std::stod(result.metadata.at("dst_y"))), 1000.0);
+}
+
+TEST_F(PluginTest, ProjectionAssignSrsExecution) {
+    auto* p = mgr_.find("projection");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("projection_assign_input.tif", 16, 16);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("assign_srs");
+    params["input"] = input;
+    params["srs"] = std::string("EPSG:3857");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+
+    auto ds = gis::core::openRaster(input, true);
+    ASSERT_NE(ds, nullptr);
+    EXPECT_FALSE(gis::core::getSRSWKT(ds.get()).empty());
 }
 
 TEST_F(PluginTest, VectorInfoExecution) {
@@ -530,10 +774,10 @@ TEST_F(PluginTest, VectorBufferExecutionReportsMetadata) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Buffer failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata["feature_count"], "200");
-    EXPECT_EQ(result.metadata["distance"], "25");
-    EXPECT_EQ(result.metadata["srs_type"], "projected");
-    EXPECT_EQ(result.metadata["output_format"], "GPKG");
+    EXPECT_EQ(result.metadata.at("feature_count"), "200");
+    EXPECT_EQ(result.metadata.at("distance"), "25");
+    EXPECT_EQ(result.metadata.at("srs_type"), "projected");
+    EXPECT_EQ(result.metadata.at("output_format"), "GPKG");
     EXPECT_TRUE(result.metadata.count("elapsed_ms") > 0);
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
@@ -1558,7 +1802,7 @@ TEST_F(PluginTest, VectorBufferSupportsChinesePath) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Buffer failed: " << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata["feature_count"], "3");
+    EXPECT_EQ(result.metadata.at("feature_count"), "3");
 }
 
 TEST_F(PluginTest, VectorDissolveRejectsGeographicSrs) {
@@ -1948,6 +2192,52 @@ TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {
     const std::string content((std::istreambuf_iterator<char>(ifs)),
         std::istreambuf_iterator<char>());
     EXPECT_NE(content.find("\"count\":"), std::string::npos);
+}
+
+TEST_F(PluginTest, MatchingMatchExecutionWritesJsonAndMetadata) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    const std::string reference = createPatternRaster("matching_match_ref.tif");
+    const std::string input = reference;
+    const std::string output = utf8PathString(getTestDir() / "matching_match_output.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("match");
+    params["reference"] = reference;
+    params["input"] = input;
+    params["output"] = output;
+    params["method"] = std::string("orb");
+    params["match_method"] = std::string("bf");
+    params["max_points"] = 200;
+    params["ratio_test"] = 0.95;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    ASSERT_TRUE(result.metadata.count("match_count"));
+    EXPECT_GT(std::stoi(result.metadata.at("match_count")), 0);
+}
+
+TEST_F(PluginTest, MatchingCornerExecutionWritesJsonAndMetadata) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createPatternRaster("matching_corner_input.tif");
+    const std::string output = utf8PathString(getTestDir() / "matching_corner_output.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("corner");
+    params["input"] = input;
+    params["output"] = output;
+    params["corner_method"] = std::string("shi_tomasi");
+    params["max_corners"] = 50;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    ASSERT_TRUE(result.metadata.count("corner_count"));
+    EXPECT_GT(std::stoi(result.metadata.at("corner_count")), 0);
 }
 
 TEST_F(PluginTest, MatchingChangeRejectsMismatchedRasterSizes) {

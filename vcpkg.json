@@ -1,6 +1,6 @@
 {
   "name": "gis-tool",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "GIS toolset based on GDAL and OpenCV with plugin architecture",
   "dependencies": [
     {

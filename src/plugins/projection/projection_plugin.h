@@ -8,7 +8,7 @@ public:
     std::string name() const override { return "projection"; }
     std::string displayName() const override { return "投影转换"; }
     std::string version() const override { return "1.0.0"; }
-    std::string description() const override { return "坐标系投影转换、重投影、坐标变换"; }
+    std::string description() const override { return "坐标系投影转换、重投影、坐标变换、坐标系赋值"; }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
 

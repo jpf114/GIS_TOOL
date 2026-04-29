@@ -36,8 +36,14 @@ jobs:
         shell: pwsh
         run: |
           cmake --build build --config Debug
+          cmake --build build --config Release
 
-      - name: 执行测试
+      - name: 执行 Debug 测试
         shell: pwsh
         run: |
           ctest --test-dir build -C Debug --output-on-failure
+
+      - name: 执行 Release 关键测试
+        shell: pwsh
+        run: |
+          ctest --test-dir build -C Release --output-on-failure -R "FrameworkTest\.CliListLoadsRealPlugins|PluginTest\.(Matching|Projection|Utility|ProcessingTemplateMatch|ProcessingPansharpen)"

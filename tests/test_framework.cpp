@@ -84,6 +84,45 @@ TEST(FrameworkTest, ParamValueExtent) {
     EXPECT_DOUBLE_EQ(result[3], 4.0);
 }
 
+TEST(FrameworkTest, TryParseParamValueRejectsInvalidInteger) {
+    gis::framework::ParamSpec spec;
+    spec.key = "band";
+    spec.displayName = "波段";
+    spec.type = gis::framework::ParamType::Int;
+
+    gis::framework::ParamValue value;
+    std::string error;
+    EXPECT_FALSE(gis::framework::tryParseParamValue(spec, "abc", value, error));
+    EXPECT_NE(error.find("不是有效整数"), std::string::npos);
+}
+
+TEST(FrameworkTest, TryParseParamValueRejectsInvalidExtent) {
+    gis::framework::ParamSpec spec;
+    spec.key = "extent";
+    spec.displayName = "范围";
+    spec.type = gis::framework::ParamType::Extent;
+
+    gis::framework::ParamValue value;
+    std::string error;
+    EXPECT_FALSE(gis::framework::tryParseParamValue(spec, "1,2,3", value, error));
+    EXPECT_NE(error.find("格式应为"), std::string::npos);
+}
+
+TEST(FrameworkTest, ValidateParamsRejectsInvalidEnumValue) {
+    gis::framework::ParamSpec spec;
+    spec.key = "action";
+    spec.displayName = "动作";
+    spec.type = gis::framework::ParamType::Enum;
+    spec.required = true;
+    spec.enumValues = {"stats", "threshold"};
+
+    const std::map<std::string, gis::framework::ParamValue> params = {
+        {"action", std::string("bogus")}
+    };
+    const auto issue = gis::framework::validateParams({spec}, params);
+    EXPECT_NE(issue.find("取值无效"), std::string::npos);
+}
+
 TEST(FrameworkTest, PluginManagerEmpty) {
     gis::framework::PluginManager mgr;
     EXPECT_TRUE(mgr.plugins().empty());
@@ -152,4 +191,70 @@ TEST(FrameworkTest, CliListLoadsRealPlugins) {
     EXPECT_NE(output.find("Available plugins:"), std::string::npos) << output;
     EXPECT_NE(output.find("vector - "), std::string::npos) << output;
     EXPECT_NE(output.find("processing - "), std::string::npos) << output;
+}
+
+TEST(FrameworkTest, CliRejectsInvalidTypedParam) {
+    const auto exeDir = gis::tests::testExecutableDir();
+    const auto buildRoot = exeDir.parent_path().parent_path();
+    const auto cliPath = buildRoot / "src" / "cli" / exeDir.filename() / "gis-cli.exe";
+
+    ASSERT_TRUE(std::filesystem::exists(cliPath)) << cliPath.string();
+
+    const std::string command = "\"" + cliPath.string()
+        + "\" processing stats --input=dummy.tif --band=abc 2>&1";
+    std::array<char, 512> buffer{};
+    std::string output;
+
+#ifdef _WIN32
+    FILE* pipe = _popen(command.c_str(), "r");
+#else
+    FILE* pipe = popen(command.c_str(), "r");
+#endif
+    ASSERT_NE(pipe, nullptr);
+
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+        output += buffer.data();
+    }
+
+#ifdef _WIN32
+    const int exitCode = _pclose(pipe);
+#else
+    const int exitCode = pclose(pipe);
+#endif
+
+    EXPECT_NE(exitCode, 0);
+    EXPECT_NE(output.find("不是有效整数"), std::string::npos) << output;
+}
+
+TEST(FrameworkTest, CliRejectsInvalidEnumAction) {
+    const auto exeDir = gis::tests::testExecutableDir();
+    const auto buildRoot = exeDir.parent_path().parent_path();
+    const auto cliPath = buildRoot / "src" / "cli" / exeDir.filename() / "gis-cli.exe";
+
+    ASSERT_TRUE(std::filesystem::exists(cliPath)) << cliPath.string();
+
+    const std::string command = "\"" + cliPath.string()
+        + "\" processing bogus --input=dummy.tif 2>&1";
+    std::array<char, 512> buffer{};
+    std::string output;
+
+#ifdef _WIN32
+    FILE* pipe = _popen(command.c_str(), "r");
+#else
+    FILE* pipe = popen(command.c_str(), "r");
+#endif
+    ASSERT_NE(pipe, nullptr);
+
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+        output += buffer.data();
+    }
+
+#ifdef _WIN32
+    const int exitCode = _pclose(pipe);
+#else
+    const int exitCode = pclose(pipe);
+#endif
+
+    EXPECT_NE(exitCode, 0);
+    EXPECT_NE(output.find("取值无效"), std::string::npos) << output;
 }

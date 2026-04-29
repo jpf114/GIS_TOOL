@@ -63,42 +63,19 @@ static void printPluginHelp(gis::framework::IGisPlugin* plugin) {
     }
 }
 
-static std::array<double, 4> parseExtent(const std::string& s) {
-    std::array<double, 4> arr{0, 0, 0, 0};
-    char sep;
-    std::istringstream iss(s);
-    iss >> arr[0] >> sep >> arr[1] >> sep >> arr[2] >> sep >> arr[3];
-    return arr;
-}
-
-static gis::framework::ParamValue convertParam(
+static bool convertParam(
     const std::string& key, const std::string& value,
-    const std::vector<gis::framework::ParamSpec>& specs)
+    const std::vector<gis::framework::ParamSpec>& specs,
+    gis::framework::ParamValue& outValue,
+    std::string& error)
 {
     for (auto& spec : specs) {
         if (spec.key == key) {
-            switch (spec.type) {
-                case gis::framework::ParamType::Int:
-                    try { return std::stoi(value); }
-                    catch (...) { return value; }
-                case gis::framework::ParamType::Double:
-                    try { return std::stod(value); }
-                    catch (...) { return value; }
-                case gis::framework::ParamType::Bool:
-                    return (value == "true" || value == "1" || value == "yes");
-                case gis::framework::ParamType::Extent:
-                    return parseExtent(value);
-                case gis::framework::ParamType::FilePath:
-                case gis::framework::ParamType::DirPath:
-                case gis::framework::ParamType::String:
-                case gis::framework::ParamType::Enum:
-                case gis::framework::ParamType::CRS:
-                default:
-                    return value;
-            }
+            return gis::framework::tryParseParamValue(spec, value, outValue, error);
         }
     }
-    return value;
+    outValue = value;
+    return true;
 }
 
 #ifdef _WIN32
@@ -194,10 +171,28 @@ int main(int argc, char* argv[]) {
 
     std::map<std::string, gis::framework::ParamValue> params;
     for (auto& [key, val] : args.params) {
-        params[key] = convertParam(key, val, specs);
+        gis::framework::ParamValue converted;
+        std::string error;
+        if (!convertParam(key, val, specs, converted, error)) {
+            std::cerr << "Error: " << error << std::endl;
+            return 1;
+        }
+        params[key] = converted;
     }
     if (!args.positional.empty()) {
-        params["action"] = convertParam("action", args.positional[0], specs);
+        gis::framework::ParamValue actionValue;
+        std::string error;
+        if (!convertParam("action", args.positional[0], specs, actionValue, error)) {
+            std::cerr << "Error: " << error << std::endl;
+            return 1;
+        }
+        params["action"] = actionValue;
+    }
+
+    const std::string validationError = gis::framework::validateParams(specs, params);
+    if (!validationError.empty()) {
+        std::cerr << "Error: " << validationError << std::endl;
+        return 1;
     }
 
     gis::core::CliProgress progress;
