@@ -26,8 +26,133 @@
 #include <QStyle>
 
 #include <array>
+#include <map>
 
 namespace {
+
+QString enumDisplayText(const std::string& key, const std::string& value) {
+    static const std::map<std::string, std::map<std::string, QString>> kLabels = {
+        {"method", {
+            {"binary", QStringLiteral("二值化")},
+            {"binary_inv", QStringLiteral("反向二值化")},
+            {"truncate", QStringLiteral("截断")},
+            {"tozero", QStringLiteral("低值置零")},
+            {"otsu", QStringLiteral("大津法")},
+            {"adaptive_gaussian", QStringLiteral("自适应高斯")},
+            {"adaptive_mean", QStringLiteral("自适应均值")},
+            {"sift", QStringLiteral("SIFT 特征")},
+            {"orb", QStringLiteral("ORB 特征")},
+            {"akaze", QStringLiteral("AKAZE 特征")}
+        }},
+        {"match_method", {
+            {"bf", QStringLiteral("暴力匹配")},
+            {"flann", QStringLiteral("FLANN 近邻匹配")},
+            {"sqdiff", QStringLiteral("平方差")},
+            {"sqdiff_normed", QStringLiteral("归一化平方差")},
+            {"ccorr", QStringLiteral("相关性")},
+            {"ccorr_normed", QStringLiteral("归一化相关性")},
+            {"ccoeff", QStringLiteral("相关系数")},
+            {"ccoeff_normed", QStringLiteral("归一化相关系数")}
+        }},
+        {"transform", {
+            {"affine", QStringLiteral("仿射")},
+            {"projective", QStringLiteral("投影")},
+            {"similarity", QStringLiteral("相似")},
+            {"translation", QStringLiteral("平移")}
+        }},
+        {"resample", {
+            {"nearest", QStringLiteral("最近邻")},
+            {"bilinear", QStringLiteral("双线性")},
+            {"cubic", QStringLiteral("三次卷积")},
+            {"cubicspline", QStringLiteral("三次样条")},
+            {"lanczos", QStringLiteral("Lanczos")},
+            {"average", QStringLiteral("均值")},
+            {"mode", QStringLiteral("众数")},
+            {"gaussian", QStringLiteral("高斯")}
+        }},
+        {"change_method", {
+            {"differencing", QStringLiteral("差值法")},
+            {"ratio", QStringLiteral("比值法")},
+            {"pcd", QStringLiteral("主成分差分")}
+        }},
+        {"ecc_motion", {
+            {"translation", QStringLiteral("平移")},
+            {"euclidean", QStringLiteral("欧式")},
+            {"affine", QStringLiteral("仿射")},
+            {"homography", QStringLiteral("单应")}
+        }},
+        {"corner_method", {
+            {"harris", QStringLiteral("Harris")},
+            {"shi_tomasi", QStringLiteral("Shi-Tomasi")}
+        }},
+        {"filter_type", {
+            {"gaussian", QStringLiteral("高斯滤波")},
+            {"median", QStringLiteral("中值滤波")},
+            {"bilateral", QStringLiteral("双边滤波")},
+            {"morph_open", QStringLiteral("开运算")},
+            {"morph_close", QStringLiteral("闭运算")},
+            {"morph_dilate", QStringLiteral("膨胀")},
+            {"morph_erode", QStringLiteral("腐蚀")}
+        }},
+        {"enhance_type", {
+            {"equalize", QStringLiteral("直方图均衡化")},
+            {"clahe", QStringLiteral("CLAHE")},
+            {"normalize", QStringLiteral("归一化")},
+            {"log", QStringLiteral("对数增强")},
+            {"gamma", QStringLiteral("Gamma 校正")}
+        }},
+        {"edge_method", {
+            {"canny", QStringLiteral("Canny 边缘")},
+            {"sobel", QStringLiteral("Sobel 边缘")},
+            {"laplacian", QStringLiteral("Laplacian 边缘")},
+            {"scharr", QStringLiteral("Scharr 边缘")}
+        }},
+        {"pan_method", {
+            {"brovey", QStringLiteral("Brovey 融合")},
+            {"simple_mean", QStringLiteral("简单均值")},
+            {"ihs", QStringLiteral("IHS 融合")}
+        }},
+        {"hough_type", {
+            {"lines", QStringLiteral("直线检测")},
+            {"circles", QStringLiteral("圆检测")}
+        }},
+        {"cmap", {
+            {"jet", QStringLiteral("伪彩虹")},
+            {"viridis", QStringLiteral("Viridis")},
+            {"hot", QStringLiteral("热度")},
+            {"cool", QStringLiteral("冷色")},
+            {"spring", QStringLiteral("春季")},
+            {"summer", QStringLiteral("夏季")},
+            {"autumn", QStringLiteral("秋季")},
+            {"winter", QStringLiteral("冬季")},
+            {"bone", QStringLiteral("骨架")},
+            {"hsv", QStringLiteral("HSV 色环")},
+            {"rainbow", QStringLiteral("彩虹")},
+            {"ocean", QStringLiteral("海洋")}
+        }},
+        {"format", {
+            {"GeoJSON", QStringLiteral("GeoJSON 格式")},
+            {"ESRI Shapefile", QStringLiteral("Shapefile 格式")},
+            {"GPKG", QStringLiteral("GeoPackage 格式")},
+            {"KML", QStringLiteral("KML 格式")},
+            {"CSV", QStringLiteral("CSV 表格")}
+        }}
+    };
+
+    const auto keyIt = kLabels.find(key);
+    if (keyIt == kLabels.end()) {
+        return QString::fromUtf8(value);
+    }
+
+    const auto valueIt = keyIt->second.find(value);
+    if (valueIt == keyIt->second.end()) {
+        return QString::fromUtf8(value);
+    }
+
+    return QStringLiteral("%1 (%2)")
+        .arg(QString::fromUtf8(value))
+        .arg(valueIt->second);
+}
 
 class ComboPopupItemDelegate : public QStyledItemDelegate {
 public:
@@ -334,10 +459,10 @@ QWidget* ParamCardWidget::createEnumWidget(const gis::framework::ParamSpec& spec
         .arg(gis::style::Color::kInputBorder));
     comboBox->setView(listView);
     for (const auto& val : spec.enumValues) {
-        comboBox->addItem(QString::fromUtf8(val));
+        comboBox->addItem(enumDisplayText(spec.key, val), QString::fromUtf8(val));
     }
     if (auto* defStr = std::get_if<std::string>(&spec.defaultValue); defStr && !defStr->empty()) {
-        int idx = comboBox->findText(QString::fromUtf8(*defStr));
+        int idx = comboBox->findData(QString::fromUtf8(*defStr));
         if (idx >= 0) comboBox->setCurrentIndex(idx);
     }
     entry.comboBox = comboBox;
@@ -458,7 +583,7 @@ QMap<std::string, gis::framework::ParamValue> ParamCardWidget::collectValues() c
         if (entry.lineEdit) {
             result[key] = gis::framework::ParamValue(entry.lineEdit->text().toUtf8().constData());
         } else if (entry.comboBox) {
-            result[key] = gis::framework::ParamValue(entry.comboBox->currentText().toUtf8().constData());
+            result[key] = gis::framework::ParamValue(entry.comboBox->currentData().toString().toUtf8().constData());
         } else if (entry.spinBox) {
             result[key] = gis::framework::ParamValue(entry.spinBox->value());
         } else if (entry.intSpinBox) {
@@ -546,7 +671,10 @@ void ParamCardWidget::setStringValue(const std::string& key, const std::string& 
 
     if (entry.comboBox) {
         const QString text = QString::fromUtf8(value);
-        const int index = entry.comboBox->findText(text);
+        int index = entry.comboBox->findData(text);
+        if (index < 0) {
+            index = entry.comboBox->findText(text);
+        }
         if (index >= 0) {
             entry.comboBox->setCurrentIndex(index);
         }
@@ -567,7 +695,10 @@ bool ParamCardWidget::setValueFromString(const std::string& key, const std::stri
 
     if (entry.comboBox) {
         const QString text = QString::fromUtf8(value);
-        int index = entry.comboBox->findText(text);
+        int index = entry.comboBox->findData(text);
+        if (index < 0) {
+            index = entry.comboBox->findText(text);
+        }
         if (index < 0) {
             index = entry.comboBox->findText(text, Qt::MatchContains);
         }

@@ -264,7 +264,6 @@ void NavPanel::setPlugins(const std::vector<gis::framework::IGisPlugin*>& plugin
         btn->setText(collapsedPluginText(plugin->name(), displayName));
         btn->setIcon(makeSidebarIcon(plugin->name(), QColor("#2F7CF6"), QColor("#FFFFFF")));
         btn->setIconSize(QSize(18, 18));
-        btn->setToolTip(QString::fromUtf8(plugin->description()));
         connect(btn, &QPushButton::clicked, this, [this, name = plugin->name()]() {
             onPluginButtonClicked(name);
         });
