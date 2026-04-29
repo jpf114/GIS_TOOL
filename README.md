@@ -131,6 +131,10 @@ GUI 当前适合：
 
 - 后续工作计划见：[后续工作计划](D:/Code/MyProject/GIS_TOOL/docs/后续工作计划.md)
 
+## 开源许可
+
+本项目以 `MIT License` 开源发布，详见 [LICENSE](D:/Code/MyProject/GIS_TOOL/LICENSE)。
+
 ## 说明
 
 - 文档统一使用中文
