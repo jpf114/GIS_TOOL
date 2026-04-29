@@ -157,6 +157,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesPluginAndActionSuffix) {
         gis::gui::buildSuggestedOutputPath(
             "D:/data/scene.tif", "", ""),
         "D:/data/scene_result.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/a.tif, D:/data/b.tif", "cutting", "mosaic"),
+        "D:/data/a_cutting_mosaic.tif");
 }
 
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {
@@ -215,6 +219,31 @@ TEST(GuiSupportTest, InspectVectorAutoFillInfoReadsLayerCrsAndExtent) {
     EXPECT_TRUE(info.hasExtent);
     EXPECT_EQ(info.layerName, std::string("roads"));
     EXPECT_TRUE(info.extent == (std::array<double, 4>{120.0, 30.0, 121.5, 31.5}));
+}
+
+TEST(GuiSupportTest, InspectRasterAutoFillInfoUsesFirstPathFromMultiInputString) {
+    GDALAllRegister();
+    gis::tests::ensureDirectory(guiSupportTestDir());
+
+    const fs::path rasterPath = guiSupportTestDir() / "autofill_multi_raster.tif";
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    ASSERT_NE(driver, nullptr);
+
+    std::unique_ptr<GDALDataset, DatasetCloser> ds(
+        driver->Create(rasterPath.string().c_str(), 12, 8, 1, GDT_Byte, nullptr));
+    ASSERT_NE(ds, nullptr);
+
+    const double geotransform[6] = {10.0, 0.5, 0.0, 20.0, 0.0, -0.5};
+    ASSERT_EQ(ds->SetGeoTransform(const_cast<double*>(geotransform)), CE_None);
+    const std::string wkt = exportWktFromEpsg(4326);
+    ASSERT_EQ(ds->SetProjection(wkt.c_str()), CE_None);
+    ds.reset();
+
+    const auto info = gis::gui::inspectDataForAutoFill(
+        rasterPath.string() + ", D:/data/another.tif");
+    EXPECT_EQ(info.crs, std::string("EPSG:4326"));
+    EXPECT_TRUE(info.hasExtent);
+    EXPECT_TRUE(info.extent == (std::array<double, 4>{10.0, 16.0, 16.0, 20.0}));
 }
 
 TEST(GuiSupportTest, BuildResultSummaryTextUsesChineseLabels) {

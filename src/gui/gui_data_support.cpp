@@ -33,6 +33,23 @@ std::string lowerExtension(const std::string& path) {
     return ext;
 }
 
+std::string trim(const std::string& value) {
+    const auto begin = value.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return {};
+    }
+    const auto end = value.find_last_not_of(" \t\r\n");
+    return value.substr(begin, end - begin + 1);
+}
+
+std::string firstInputPath(const std::string& rawPath) {
+    const auto pos = rawPath.find(',');
+    if (pos == std::string::npos) {
+        return trim(rawPath);
+    }
+    return trim(rawPath.substr(0, pos));
+}
+
 std::string sanitizeSuffixPart(const std::string& value) {
     std::string sanitized;
     sanitized.reserve(value.size());
@@ -238,7 +255,7 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
                                      const std::string& action) {
     namespace fs = std::filesystem;
 
-    fs::path input = fs::path(inputPath);
+    fs::path input = fs::path(firstInputPath(inputPath));
     if (input.empty()) {
         return {};
     }
@@ -263,11 +280,12 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
 
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
     DataAutoFillInfo info;
-    const DataKind kind = detectDataKind(path);
+    const std::string normalizedPath = firstInputPath(path);
+    const DataKind kind = detectDataKind(normalizedPath);
 
     if (kind == DataKind::Raster) {
         std::unique_ptr<GDALDataset, DatasetCloser> ds(
-            static_cast<GDALDataset*>(GDALOpen(path.c_str(), GA_ReadOnly)));
+            static_cast<GDALDataset*>(GDALOpen(normalizedPath.c_str(), GA_ReadOnly)));
         if (!ds) {
             return info;
         }
@@ -293,7 +311,7 @@ DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
 
     if (kind == DataKind::Vector) {
         std::unique_ptr<GDALDataset, DatasetCloser> ds(
-            static_cast<GDALDataset*>(GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
+            static_cast<GDALDataset*>(GDALOpenEx(normalizedPath.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                                                  nullptr, nullptr, nullptr)));
         if (!ds) {
             return info;
@@ -304,7 +322,7 @@ DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
             return info;
         }
 
-        if (lowerExtension(path) != ".shp") {
+        if (lowerExtension(normalizedPath) != ".shp") {
             info.layerName = layer->GetName();
         }
         info.crs = spatialReferenceText(layer->GetSpatialRef());
