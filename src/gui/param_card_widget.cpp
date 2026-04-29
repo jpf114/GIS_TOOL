@@ -22,11 +22,49 @@
 #include <QListView>
 #include <QPalette>
 #include <QSizePolicy>
+#include <QStyledItemDelegate>
 #include <QStyle>
 
 #include <array>
 
 namespace {
+
+class ComboPopupItemDelegate : public QStyledItemDelegate {
+public:
+    explicit ComboPopupItemDelegate(QObject* parent = nullptr)
+        : QStyledItemDelegate(parent) {}
+
+    void paint(QPainter* painter,
+               const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override {
+        painter->save();
+
+        const bool selected = (option.state & QStyle::State_Selected) != 0;
+        const bool hovered = (option.state & QStyle::State_MouseOver) != 0;
+        const QColor background = selected
+            ? QColor(gis::style::Color::kPrimaryLight)
+            : (hovered ? QColor("#F3F7FC") : QColor(gis::style::Color::kCardBg));
+
+        painter->fillRect(option.rect, background);
+
+        QRect textRect = option.rect.adjusted(12, 0, -12, 0);
+        painter->setPen(QColor(gis::style::Color::kTextPrimary));
+        painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                          QFontMetrics(option.font).elidedText(
+                              index.data(Qt::DisplayRole).toString(),
+                              Qt::ElideRight,
+                              textRect.width()));
+
+        painter->restore();
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem& option,
+                   const QModelIndex& index) const override {
+        QSize size = QStyledItemDelegate::sizeHint(option, index);
+        size.setHeight(std::max(size.height(), 32));
+        return size;
+    }
+};
 
 QString cardIconText(ParamCardWidget::CardType type) {
     switch (type) {
@@ -275,6 +313,7 @@ QWidget* ParamCardWidget::createEnumWidget(const gis::framework::ParamSpec& spec
                                             ParamWidgetEntry& entry) {
     auto* comboBox = new QComboBox;
     auto* listView = new QListView(comboBox);
+    listView->setItemDelegate(new ComboPopupItemDelegate(listView));
     QPalette palette = listView->palette();
     palette.setColor(QPalette::Base, QColor(gis::style::Color::kCardBg));
     palette.setColor(QPalette::Text, QColor(gis::style::Color::kTextPrimary));
@@ -287,23 +326,12 @@ QWidget* ParamCardWidget::createEnumWidget(const gis::framework::ParamSpec& spec
         "  color: %2;"
         "  border: 1px solid %3;"
         "  outline: none;"
+        "  padding: 4px 0;"
         "}"
-        "QListView::item {"
-        "  min-height: 28px;"
-        "  padding: 4px 10px;"
-        "}"
-        "QListView::item:selected {"
-        "  background: %4;"
-        "  color: %2;"
-        "}"
-        "QListView::item:hover {"
-        "  background: #F3F7FC;"
-        "  color: %2;"
-        "}")
+        "QListView::item { min-height: 28px; }")
         .arg(gis::style::Color::kCardBg)
         .arg(gis::style::Color::kTextPrimary)
-        .arg(gis::style::Color::kInputBorder)
-        .arg(gis::style::Color::kPrimaryLight));
+        .arg(gis::style::Color::kInputBorder));
     comboBox->setView(listView);
     for (const auto& val : spec.enumValues) {
         comboBox->addItem(QString::fromUtf8(val));
