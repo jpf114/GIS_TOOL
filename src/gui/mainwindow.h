@@ -2,7 +2,9 @@
 
 #include <QMainWindow>
 #include <gis/framework/plugin_manager.h>
+#include <array>
 #include <map>
+#include <optional>
 #include <string>
 #include <set>
 #include <vector>
@@ -43,6 +45,7 @@ private:
     void refreshExecuteButtonState();
     void refreshParamValidationState();
     void runPluginWithParams(const std::map<std::string, gis::framework::ParamValue>& params);
+    void resetDerivedParamTracking();
 
     static const std::map<std::string, std::map<std::string, std::set<std::string>>>& actionParamVisibilityMap();
     static std::set<std::string> visibleParamsForAction(
@@ -71,4 +74,7 @@ private:
     gis::framework::IGisPlugin* currentPlugin_ = nullptr;
     QString currentActionKey_;
     bool isSyncingParams_ = false;
+    std::string lastAutoOutputPath_;
+    std::string lastAutoLayerName_;
+    std::optional<std::array<double, 4>> lastAutoExtent_;
 };

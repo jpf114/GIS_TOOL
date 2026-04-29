@@ -628,10 +628,10 @@ void MainWindow::setupUi() {
     setWindowTitle(QStringLiteral("GIS 工具台"));
     resize(gis::style::Size::kWindowDefaultWidth, gis::style::Size::kWindowDefaultHeight);
     setMinimumSize(gis::style::Size::kWindowMinWidth, gis::style::Size::kWindowMinHeight);
+    setStyleSheet(gis::style::globalStyleSheet());
 
     auto* centralWidget = new QWidget;
     setCentralWidget(centralWidget);
-    centralWidget->setStyleSheet(gis::style::globalStyleSheet());
 
     auto* mainLayout = new QHBoxLayout(centralWidget);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -880,6 +880,7 @@ void MainWindow::triggerExecute() {
 }
 
 void MainWindow::onPluginSelected(const std::string& pluginName) {
+    resetDerivedParamTracking();
     currentPlugin_ = pluginManager_.find(pluginName);
     if (!currentPlugin_) {
         paramWidget_->clear();
@@ -952,6 +953,7 @@ void MainWindow::onSubFunctionSelected(const std::string& actionKey) {
         return;
     }
 
+    resetDerivedParamTracking();
     currentActionKey_ = QString::fromStdString(actionKey);
     navPanel_->setCurrentSubFunctionSelection(actionKey);
     if (functionIconLabel_) {
@@ -1097,30 +1099,48 @@ void MainWindow::syncDerivedParams() {
 
     isSyncingParams_ = true;
 
-    if (paramWidget_->hasParam("output") && paramWidget_->stringValue("output").empty() && !primaryPath.empty()) {
-        paramWidget_->setStringValue(
-            "output",
-            gis::gui::buildSuggestedOutputPath(primaryPath, currentPlugin_->name(), actionKey));
+    if (paramWidget_->hasParam("output") && !primaryPath.empty()) {
+        const std::string currentOutput = paramWidget_->stringValue("output");
+        const std::string suggestedOutput =
+            gis::gui::buildSuggestedOutputPath(primaryPath, currentPlugin_->name(), actionKey);
+        const bool outputWasAuto = !lastAutoOutputPath_.empty() && currentOutput == lastAutoOutputPath_;
+        if ((currentOutput.empty() || outputWasAuto) && currentOutput != suggestedOutput) {
+            paramWidget_->setStringValue("output", suggestedOutput);
+        }
+        lastAutoOutputPath_ = suggestedOutput;
     }
 
     if (!inputPath.empty()) {
         const auto info = gis::gui::inspectDataForAutoFill(inputPath);
         const QString inputPathLower = QString::fromStdString(inputPath).toLower();
+        const std::string currentLayer = paramWidget_->stringValue("layer");
         if (paramWidget_->hasParam("layer")
-            && paramWidget_->stringValue("layer").empty()
             && !info.layerName.empty()
             && !inputPathLower.endsWith(QStringLiteral(".shp"))) {
-            paramWidget_->setStringValue("layer", info.layerName);
+            const bool layerWasAuto = !lastAutoLayerName_.empty() && currentLayer == lastAutoLayerName_;
+            if ((currentLayer.empty() || layerWasAuto) && currentLayer != info.layerName) {
+                paramWidget_->setStringValue("layer", info.layerName);
+            }
+            lastAutoLayerName_ = info.layerName;
         }
         if (paramWidget_->hasParam("extent")) {
             const auto extent = extentParamValue(params, "extent");
-            if ((!extent.has_value() || isZeroExtent(*extent)) && info.hasExtent) {
+            const bool extentWasAuto = extent.has_value() && lastAutoExtent_.has_value()
+                && *extent == *lastAutoExtent_;
+            if (((!extent.has_value() || isZeroExtent(*extent)) || extentWasAuto) && info.hasExtent) {
                 paramWidget_->setExtentValue("extent", info.extent);
+                lastAutoExtent_ = info.extent;
             }
         }
     }
 
     isSyncingParams_ = false;
+}
+
+void MainWindow::resetDerivedParamTracking() {
+    lastAutoOutputPath_.clear();
+    lastAutoLayerName_.clear();
+    lastAutoExtent_.reset();
 }
 
 void MainWindow::runPluginWithParams(
