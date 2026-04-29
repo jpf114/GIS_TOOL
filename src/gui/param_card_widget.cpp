@@ -19,6 +19,8 @@
 #include <QHBoxLayout>
 #include <QFrame>
 #include <QFileDialog>
+#include <QListView>
+#include <QPalette>
 #include <QSizePolicy>
 #include <QStyle>
 
@@ -272,6 +274,37 @@ QWidget* ParamCardWidget::createFileWidget(const gis::framework::ParamSpec& spec
 QWidget* ParamCardWidget::createEnumWidget(const gis::framework::ParamSpec& spec,
                                             ParamWidgetEntry& entry) {
     auto* comboBox = new QComboBox;
+    auto* listView = new QListView(comboBox);
+    QPalette palette = listView->palette();
+    palette.setColor(QPalette::Base, QColor(gis::style::Color::kCardBg));
+    palette.setColor(QPalette::Text, QColor(gis::style::Color::kTextPrimary));
+    palette.setColor(QPalette::Highlight, QColor(gis::style::Color::kPrimaryLight));
+    palette.setColor(QPalette::HighlightedText, QColor(gis::style::Color::kTextPrimary));
+    listView->setPalette(palette);
+    listView->setStyleSheet(QStringLiteral(
+        "QListView {"
+        "  background: %1;"
+        "  color: %2;"
+        "  border: 1px solid %3;"
+        "  outline: none;"
+        "}"
+        "QListView::item {"
+        "  min-height: 28px;"
+        "  padding: 4px 10px;"
+        "}"
+        "QListView::item:selected {"
+        "  background: %4;"
+        "  color: %2;"
+        "}"
+        "QListView::item:hover {"
+        "  background: #F3F7FC;"
+        "  color: %2;"
+        "}")
+        .arg(gis::style::Color::kCardBg)
+        .arg(gis::style::Color::kTextPrimary)
+        .arg(gis::style::Color::kInputBorder)
+        .arg(gis::style::Color::kPrimaryLight));
+    comboBox->setView(listView);
     for (const auto& val : spec.enumValues) {
         comboBox->addItem(QString::fromUtf8(val));
     }
