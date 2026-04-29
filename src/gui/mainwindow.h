@@ -53,6 +53,7 @@ private:
                                      const QString& actionKey);
 
     NavPanel* navPanel_ = nullptr;
+    QLabel* functionIconLabel_ = nullptr;
     QLabel* functionTitleLabel_ = nullptr;
     QLabel* functionDescLabel_ = nullptr;
     QLabel* functionMetaLabel_ = nullptr;

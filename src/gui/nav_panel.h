@@ -39,12 +39,16 @@ private:
     QLabel* titleLabel_ = nullptr;
     QLabel* subFunctionHeader_ = nullptr;
     QVBoxLayout* pluginLayout_ = nullptr;
-    QVBoxLayout* subFunctionLayout_ = nullptr;
     QVBoxLayout* sidebarLayout_ = nullptr;
     QScrollArea* scrollArea_ = nullptr;
 
+    std::map<std::string, QWidget*> pluginGroupMap_;
+    std::map<std::string, QWidget*> pluginSubContainerMap_;
+    std::map<std::string, QVBoxLayout*> pluginSubLayoutMap_;
+    std::map<std::string, QString> pluginDisplayNameMap_;
     std::map<QPushButton*, std::string> pluginButtonMap_;
     std::map<QPushButton*, std::string> subFunctionButtonMap_;
+    std::map<QPushButton*, QString> subFunctionDisplayNameMap_;
     QPushButton* currentPluginButton_ = nullptr;
     QPushButton* currentSubFunctionButton_ = nullptr;
 };

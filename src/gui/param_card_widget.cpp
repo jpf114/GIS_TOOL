@@ -4,6 +4,9 @@
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
 
+#include <QApplication>
+#include <QPainter>
+#include <QPixmap>
 #include <QLabel>
 #include <QLineEdit>
 #include <QComboBox>
@@ -17,8 +20,74 @@
 #include <QFrame>
 #include <QFileDialog>
 #include <QSizePolicy>
+#include <QStyle>
 
 #include <array>
+
+namespace {
+
+QString cardIconText(ParamCardWidget::CardType type) {
+    switch (type) {
+    case ParamCardWidget::CardType::Input:
+        return QStringLiteral("I");
+    case ParamCardWidget::CardType::Output:
+        return QStringLiteral("O");
+    case ParamCardWidget::CardType::Advanced:
+        return QStringLiteral("A");
+    }
+    return QStringLiteral("P");
+}
+
+QPixmap cardIconPixmap(const QString& text) {
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(QColor("#2F7CF6"));
+    pen.setWidthF(1.5);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(pen);
+    if (text == QStringLiteral("I")) {
+        painter.drawRect(QRectF(3.5, 3.5, 9, 9));
+        painter.drawLine(QPointF(5, 10.5), QPointF(7.5, 8));
+        painter.drawLine(QPointF(7.5, 8), QPointF(9.2, 9.5));
+        painter.drawLine(QPointF(9.2, 9.5), QPointF(11.2, 6.5));
+    } else if (text == QStringLiteral("O")) {
+        painter.drawLine(QPointF(4, 8), QPointF(12, 8));
+        painter.drawLine(QPointF(9, 5), QPointF(12, 8));
+        painter.drawLine(QPointF(9, 11), QPointF(12, 8));
+    } else if (text == QStringLiteral("A")) {
+        painter.drawLine(QPointF(4, 5), QPointF(12, 5));
+        painter.drawLine(QPointF(4, 8), QPointF(12, 8));
+        painter.drawLine(QPointF(4, 11), QPointF(12, 11));
+        painter.drawEllipse(QRectF(6.5, 4, 3, 3));
+        painter.drawEllipse(QRectF(9, 7, 3, 3));
+        painter.drawEllipse(QRectF(5, 10, 3, 3));
+    }
+    return pixmap;
+}
+
+QIcon browseIcon() {
+    QPixmap pixmap(14, 14);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(QColor("#7E92A8"));
+    pen.setWidthF(1.5);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(QRectF(1.5, 1.5, 11, 11), 2.2, 2.2);
+    painter.drawLine(QPointF(7, 4), QPointF(7, 10));
+    painter.drawLine(QPointF(4, 7), QPointF(10, 7));
+    return QIcon(pixmap);
+}
+
+}
 
 ParamCardWidget::ParamCardWidget(CardType type, QWidget* parent)
     : QWidget(parent), cardType_(type) {
@@ -48,6 +117,11 @@ void ParamCardWidget::setupUi() {
     accentBar->setObjectName(QStringLiteral("accentBar"));
     accentBar->setFixedHeight(20);
     headerLayout->addWidget(accentBar, 0, Qt::AlignTop);
+
+    iconLabel_ = new QLabel;
+    iconLabel_->setObjectName(QStringLiteral("cardIcon"));
+    iconLabel_->setPixmap(cardIconPixmap(cardIconText(cardType_)));
+    headerLayout->addWidget(iconLabel_, 0, Qt::AlignTop);
 
     static const QMap<CardType, QString> kDefaultTitles = {
         {CardType::Input,    QStringLiteral("输入参数")},
@@ -166,11 +240,10 @@ QWidget* ParamCardWidget::createFileWidget(const gis::framework::ParamSpec& spec
     layout->addWidget(lineEdit, 1);
 
     if (spec.type != gis::framework::ParamType::CRS) {
-        auto* browseBtn = new QPushButton(
-            spec.type == gis::framework::ParamType::DirPath
-                ? QStringLiteral("浏览")
-                : QStringLiteral("浏览"));
+        auto* browseBtn = new QPushButton(QStringLiteral("浏览"));
         browseBtn->setObjectName(QStringLiteral("browseButton"));
+        browseBtn->setIcon(browseIcon());
+        browseBtn->setIconSize(QSize(14, 14));
         entry.browseButton = browseBtn;
 
         bool isOutput = (spec.key == "output" || spec.key.find("output") != std::string::npos);

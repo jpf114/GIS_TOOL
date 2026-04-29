@@ -6,23 +6,23 @@ namespace gis::style {
 
 namespace Color {
 
-constexpr const char* kWindowBg          = "#EEF3F9";
-constexpr const char* kPagePanelBg       = "#F7FAFC";
+constexpr const char* kWindowBg          = "#E8ECF1";
+constexpr const char* kPagePanelBg       = "#F5F6F8";
 constexpr const char* kCardBg            = "#FFFFFF";
-constexpr const char* kCardBorder        = "#D9E2EC";
+constexpr const char* kCardBorder        = "#E2E5EA";
 constexpr const char* kCardShadow        = "rgba(15, 23, 42, 0.08)";
-constexpr const char* kSidebarBg         = "#0F1B2D";
-constexpr const char* kSidebarPanel      = "#14243A";
+constexpr const char* kSidebarBg         = "#1E2A36";
+constexpr const char* kSidebarPanel      = "#1E2A36";
 constexpr const char* kSidebarSelected   = "#1E3A5F";
-constexpr const char* kSidebarHover      = "#1A2F4D";
-constexpr const char* kSidebarIndicator  = "#4DA3FF";
-constexpr const char* kSidebarText       = "#D6E2F1";
-constexpr const char* kSidebarMuted      = "#89A0BC";
-constexpr const char* kPrimary           = "#2F7CF6";
-constexpr const char* kPrimaryHover      = "#1967E3";
-constexpr const char* kPrimaryPressed    = "#1254BC";
-constexpr const char* kPrimaryLight      = "#EAF3FF";
-constexpr const char* kPrimaryDeep       = "#0B4DBB";
+constexpr const char* kSidebarHover      = "#263544";
+constexpr const char* kSidebarIndicator  = "#2E7EC9";
+constexpr const char* kSidebarText       = "#BCC4CF";
+constexpr const char* kSidebarMuted      = "#8B9099";
+constexpr const char* kPrimary           = "#2E7EC9";
+constexpr const char* kPrimaryHover      = "#1F6AB5";
+constexpr const char* kPrimaryPressed    = "#1A5B98";
+constexpr const char* kPrimaryLight      = "#E8F2FB";
+constexpr const char* kPrimaryDeep       = "#1F6AB5";
 constexpr const char* kSuccess           = "#1F9D68";
 constexpr const char* kSuccessBg         = "#E8F7F0";
 constexpr const char* kWarning           = "#D97706";
@@ -47,23 +47,23 @@ constexpr const char* kDisabledText      = "#90A0B2";
 
 namespace Size {
 
-constexpr int kSidebarWidth         = 272;
+constexpr int kSidebarWidth         = 250;
 constexpr int kSidebarMinWidth      = 240;
 constexpr int kWindowMinWidth       = 1080;
 constexpr int kWindowMinHeight      = 720;
 constexpr int kWindowDefaultWidth   = 1380;
 constexpr int kWindowDefaultHeight  = 880;
-constexpr int kCardRadius           = 18;
+constexpr int kCardRadius           = 10;
 constexpr int kCardPadding          = 18;
-constexpr int kCardSpacing          = 14;
-constexpr int kInputRadius          = 10;
-constexpr int kInputMinHeight       = 40;
+constexpr int kCardSpacing          = 16;
+constexpr int kInputRadius          = 6;
+constexpr int kInputMinHeight       = 36;
 constexpr int kInputPaddingH        = 14;
-constexpr int kButtonRadius         = 10;
-constexpr int kButtonMinHeight      = 42;
-constexpr int kButtonMinWidth       = 128;
-constexpr int kProgressHeight       = 10;
-constexpr int kProgressRadius       = 5;
+constexpr int kButtonRadius         = 6;
+constexpr int kButtonMinHeight      = 40;
+constexpr int kButtonMinWidth       = 118;
+constexpr int kProgressHeight       = 8;
+constexpr int kProgressRadius       = 4;
 constexpr int kLabelInputRatio      = 2;
 
 }
@@ -78,17 +78,24 @@ inline QString globalStyleSheet() {
         "QFrame#card, QFrame#heroCard, QFrame#execCard {"
         "  background: %4; border: 1px solid %5; border-radius: %6px;"
         "}"
-        "QFrame#heroCard { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDFEFF, stop:1 #F4F8FD); }"
+        "QFrame#heroCard { background: %4; }"
         "QLabel#heroBadge {"
-        "  color: %7; background: %8; border: 1px solid #CFE2FF; border-radius: 12px;"
-        "  padding: 4px 10px; font-size: 12px; font-weight: 600;"
+        "  color: %7; background: %8; border: 1px solid #D7E6F5; border-radius: 12px;"
+        "  padding: 3px 10px; font-size: 11px; font-weight: 600;"
         "}"
-        "QLabel#heroTitle { font-size: 24px; font-weight: 700; color: %2; }"
-        "QLabel#heroDesc { font-size: 13px; color: %9; line-height: 1.5; }"
+        "QLabel#heroIconBadge {"
+        "  min-width: 38px; max-width: 38px; min-height: 38px; max-height: 38px;"
+        "  background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #E8F2FB, stop:1 #D4E6F8);"
+        "  border: 1px solid #D8E7F6; border-radius: 6px;"
+        "  color: %7; font-size: 16px; font-weight: 700;"
+        "}"
+        "QLabel#heroTitle { font-size: 17px; font-weight: 700; color: %2; }"
+        "QLabel#heroDesc { font-size: 12px; color: %9; line-height: 1.4; }"
         "QLabel#heroMeta { font-size: 12px; color: %10; }"
-        "QLabel#cardTitle { font-size: 15px; font-weight: 700; color: %2; }"
+        "QLabel#cardTitle { font-size: 11px; font-weight: 700; color: %10; letter-spacing: 1px; }"
+        "QLabel#cardIcon { color: %7; font-size: 14px; font-weight: 700; min-width: 16px; }"
         "QLabel#cardDesc { font-size: 12px; color: %9; }"
-        "QFrame#accentBar { background: %7; border-radius: 2px; min-width: 4px; max-width: 4px; }"
+        "QFrame#accentBar { background: %7; border-radius: 2px; min-width: 3px; max-width: 3px; }"
         "QLabel#paramLabel { font-size: 13px; font-weight: 600; color: %2; }"
         "QLabel#paramKey {"
         "  font-size: 11px; color: %10; background: %8; border: 1px solid #D7E6FB;"
@@ -120,10 +127,11 @@ inline QString globalStyleSheet() {
         "  selection-background-color: %8; selection-color: %2; padding: 6px;"
         "}"
         "QPushButton#primaryButton {"
-        "  background: %7; color: white; border: none; border-radius: %23px;"
+        "  background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2E7EC9, stop:1 #1F6AB5);"
+        "  color: white; border: none; border-radius: %23px;"
         "  min-height: %24px; min-width: %25px; font-weight: 700; padding: 0 18px;"
         "}"
-        "QPushButton#primaryButton:hover { background: %26; }"
+        "QPushButton#primaryButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3590DA, stop:1 #2575C0); }"
         "QPushButton#primaryButton:pressed { background: %27; }"
         "QPushButton#primaryButton:disabled { background: %28; color: %29; }"
         "QPushButton#secondaryButton {"
@@ -135,17 +143,18 @@ inline QString globalStyleSheet() {
         "QPushButton#browseButton {"
         "  min-width: 72px; max-width: 88px; min-height: %17px;"
         "  border: 1px solid %18; border-radius: %19px;"
-        "  background: %30; color: %2; font-weight: 600; padding: 0 12px;"
+        "  background: white; color: %9; font-weight: 600; padding: 0 12px;"
         "}"
-        "QPushButton#browseButton:hover { background: %31; }"
+        "QPushButton#browseButton:hover { background: #F3F5F7; border-color: #C8CDD4; color: %2; }"
+        "QPushButton#navItem::menu-indicator, QPushButton#subNavItem::menu-indicator { image: none; width: 0; }"
         "QCheckBox { color: %2; spacing: 8px; }"
         "QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px; border: 1px solid %18; background: white; }"
         "QCheckBox::indicator:checked { background: %7; border-color: %7; }"
         "QProgressBar {"
-        "  border: none; border-radius: %32px; background: %33; height: %34px; text-align: center;"
-        "  color: %9; font-weight: 600;"
+          "  border: none; border-radius: %32px; background: #E5E9EE; height: %34px; text-align: center;"
+        "  color: %9; font-weight: 600; font-size: 11px;"
         "}"
-        "QProgressBar::chunk { background: %35; border-radius: %32px; }"
+        "QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #5CB8FF, stop:1 #2E7EC9); border-radius: %32px; }"
         "QScrollArea { border: none; background: transparent; }"
         "QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }"
         "QScrollBar::handle:vertical { background: #CBD6E2; border-radius: 5px; min-height: 28px; }"
@@ -198,29 +207,29 @@ inline QString sidebarStyleSheet() {
     return QString(
         "QFrame#sidebar { background: %1; border-right: 1px solid #1E3048; }"
         "QFrame#sidebarTopCard, QFrame#sidebarFooterCard {"
-        "  background: %2; border: 1px solid #223753; border-radius: 16px;"
+        "  background: transparent; border: none; border-radius: 0px;"
         "}"
         "QLabel#sidebarEyebrow { font-size: 11px; font-weight: 700; color: %3; letter-spacing: 1px; }"
-        "QLabel#sidebarTitle { font-size: 20px; font-weight: 700; color: white; }"
+        "QLabel#sidebarTitle { font-size: 18px; font-weight: 700; color: white; }"
         "QLabel#sidebarDesc { font-size: 12px; color: %4; line-height: 1.5; }"
-        "QLabel#sidebarSection { font-size: 11px; font-weight: 700; color: %3; padding: 0 4px; }"
-        "QFrame#sidebarDivider { background: #20324C; min-height: 1px; max-height: 1px; }"
+        "QLabel#sidebarSection { font-size: 10.5px; font-weight: 700; color: #5C6E80; padding: 12px 4px 8px 4px; letter-spacing: 1.8px; }"
+        "QFrame#sidebarDivider { background: rgba(255, 255, 255, 0.06); min-height: 1px; max-height: 1px; }"
         "QPushButton#navItem {"
-        "  text-align: left; padding: 12px 16px; border: 1px solid transparent; border-radius: 12px;"
-        "  background: transparent; color: %5; font-size: 13px; font-weight: 600;"
+        "  text-align: left; padding: 9px 14px; border: none; border-left: 3px solid transparent;"
+        "  border-radius: 0px; background: transparent; color: %5; font-size: 13px; font-weight: 500;"
         "}"
-        "QPushButton#navItem:hover, QPushButton#subNavItem:hover { background: %6; }"
+        "QPushButton#navItem:hover { background: %6; color: #DDE3EA; }"
         "QPushButton#navItem:checked {"
-        "  background: #23456D; color: white; border-color: #38689C; padding-left: 18px;"
+        "  background: #1A3A52; color: white; border-left-color: %3; font-weight: 600;"
         "}"
         "QPushButton#subNavItem {"
-          "  text-align: left; padding: 10px 14px 10px 18px; border: 1px solid transparent; border-radius: 10px;"
-          "  background: transparent; color: %4; font-size: 12px; font-weight: 500;"
+          "  text-align: left; padding: 7px 14px 7px 12px; border: 1px solid transparent; border-radius: 4px;"
+          "  background: transparent; color: #9AA8B8; font-size: 12.5px; font-weight: 500;"
         "}"
+        "QPushButton#subNavItem:hover { background: rgba(255, 255, 255, 0.03); color: #C8D4E0; }"
         "QPushButton#subNavItem:checked {"
-        "  background: rgba(77, 163, 255, 0.22); color: white; border-color: rgba(77, 163, 255, 0.42);"
+        "  background: rgba(46, 126, 201, 0.25); color: white; border-color: rgba(46, 126, 201, 0.20);"
         "}"
-        "QLabel#subFunctionHeader { font-size: 11px; font-weight: 700; color: %3; padding: 0 4px; }"
         "QLabel#sidebarFooterTitle { font-size: 12px; font-weight: 700; color: white; }"
         "QLabel#sidebarFooterDesc { font-size: 11px; color: %4; line-height: 1.5; }"
         "QScrollArea { background: transparent; border: none; }"

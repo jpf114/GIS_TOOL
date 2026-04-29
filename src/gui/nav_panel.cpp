@@ -4,10 +4,139 @@
 #include <gis/framework/plugin.h>
 
 #include <QFrame>
+#include <QIcon>
 #include <QLabel>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
+
+namespace {
+
+QString collapsedPluginText(const std::string& pluginName, const QString& displayName) {
+    Q_UNUSED(pluginName);
+    return QStringLiteral("%1   >").arg(displayName);
+}
+
+QString expandedPluginText(const std::string& pluginName, const QString& displayName) {
+    Q_UNUSED(pluginName);
+    return QStringLiteral("%1   v").arg(displayName);
+}
+
+QString subFunctionText(const QString& displayName, bool active) {
+    Q_UNUSED(active);
+    return displayName;
+}
+
+QIcon makeSidebarIcon(const std::string& kind, const QColor& bg, const QColor& fg) {
+    QPixmap pixmap(18, 18);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(bg);
+    painter.drawRoundedRect(QRectF(0.5, 0.5, 17, 17), 5, 5);
+
+    QPen pen(fg);
+    pen.setWidthF(1.4);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(pen);
+
+    if (kind == "processing") {
+        painter.drawRect(QRectF(4.2, 4.2, 9.6, 9.6));
+        painter.drawLine(QPointF(5.6, 11.8), QPointF(8.2, 9.2));
+        painter.drawLine(QPointF(8.2, 9.2), QPointF(10.2, 10.8));
+        painter.drawLine(QPointF(10.2, 10.8), QPointF(12.4, 7.4));
+    } else if (kind == "projection") {
+        painter.drawEllipse(QRectF(4, 4, 10, 10));
+        painter.drawLine(QPointF(9, 4), QPointF(9, 14));
+        painter.drawLine(QPointF(4, 9), QPointF(14, 9));
+    } else if (kind == "cutting") {
+        painter.drawLine(QPointF(5.2, 5.2), QPointF(12.8, 12.8));
+        painter.drawLine(QPointF(12.8, 5.2), QPointF(5.2, 12.8));
+        painter.drawEllipse(QRectF(3.9, 3.9, 2.8, 2.8));
+        painter.drawEllipse(QRectF(11.3, 3.9, 2.8, 2.8));
+    } else if (kind == "matching") {
+        painter.drawEllipse(QRectF(4.2, 4.2, 9.6, 9.6));
+        painter.drawLine(QPointF(9, 4.6), QPointF(9, 13.4));
+        painter.drawLine(QPointF(4.6, 9), QPointF(13.4, 9));
+        painter.drawEllipse(QRectF(7.3, 7.3, 3.4, 3.4));
+    } else if (kind == "utility") {
+        painter.drawLine(QPointF(5, 12.8), QPointF(5, 9.4));
+        painter.drawLine(QPointF(9, 12.8), QPointF(9, 6.6));
+        painter.drawLine(QPointF(13, 12.8), QPointF(13, 4.4));
+    } else if (kind == "vector") {
+        painter.drawEllipse(QRectF(4.2, 4.2, 2.6, 2.6));
+        painter.drawEllipse(QRectF(10.8, 4.8, 2.6, 2.6));
+        painter.drawEllipse(QRectF(8.0, 10.8, 2.6, 2.6));
+        painter.drawLine(QPointF(6.4, 6.4), QPointF(10.8, 6.8));
+        painter.drawLine(QPointF(11.2, 7.4), QPointF(9.6, 10.8));
+        painter.drawLine(QPointF(8.4, 10.8), QPointF(6.0, 6.8));
+    } else {
+        painter.drawEllipse(QRectF(6, 6, 6, 6));
+    }
+    return QIcon(pixmap);
+}
+
+QIcon makeSubFunctionIcon(const std::string& actionKey, bool active) {
+    const QColor stroke = active ? QColor("#FFFFFF") : QColor("#9AA8B8");
+    const QColor fill = active ? QColor("#5CB8FF") : QColor(Qt::transparent);
+
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(stroke);
+    pen.setWidthF(1.2);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(fill);
+
+    if (actionKey == "threshold") {
+        painter.drawRect(QRectF(2.6, 2.6, 10.8, 10.8));
+        painter.drawLine(QPointF(4.0, 11.8), QPointF(6.8, 8.9));
+        painter.drawLine(QPointF(6.8, 8.9), QPointF(9.0, 10.3));
+        painter.drawLine(QPointF(9.0, 10.3), QPointF(11.8, 5.5));
+    } else if (actionKey == "transform" || actionKey == "reproject") {
+        painter.drawEllipse(QRectF(2.6, 2.6, 10.8, 10.8));
+        painter.drawLine(QPointF(8, 2.8), QPointF(8, 13.2));
+        painter.drawLine(QPointF(2.8, 8), QPointF(13.2, 8));
+    } else if (actionKey == "info" || actionKey == "stats" || actionKey == "histogram") {
+        painter.drawLine(QPointF(4.0, 12.2), QPointF(4.0, 8.0));
+        painter.drawLine(QPointF(8.0, 12.2), QPointF(8.0, 6.0));
+        painter.drawLine(QPointF(12.0, 12.2), QPointF(12.0, 4.0));
+    } else if (actionKey == "clip" || actionKey == "buffer") {
+        painter.drawEllipse(QRectF(2.8, 2.8, 3.2, 3.2));
+        painter.drawEllipse(QRectF(10.0, 2.8, 3.2, 3.2));
+        painter.drawLine(QPointF(5.0, 5.0), QPointF(11.0, 11.0));
+        painter.drawLine(QPointF(11.0, 5.0), QPointF(5.0, 11.0));
+    } else if (actionKey == "filter" || actionKey == "enhance" || actionKey == "band_math") {
+        painter.drawEllipse(QRectF(2.6, 2.6, 10.8, 10.8));
+        painter.drawLine(QPointF(3.2, 8), QPointF(12.8, 8));
+    } else if (actionKey == "match" || actionKey == "register" || actionKey == "ecc_register") {
+        painter.drawEllipse(QRectF(2.6, 2.6, 4.4, 4.4));
+        painter.drawEllipse(QRectF(9.0, 9.0, 4.4, 4.4));
+        painter.drawLine(QPointF(6.2, 6.2), QPointF(9.8, 9.8));
+    } else if (actionKey == "vector" || actionKey == "polygonize" || actionKey == "dissolve") {
+        painter.drawEllipse(QRectF(2.8, 2.8, 2.8, 2.8));
+        painter.drawEllipse(QRectF(10.2, 3.4, 2.8, 2.8));
+        painter.drawEllipse(QRectF(6.6, 10.0, 2.8, 2.8));
+        painter.drawLine(QPointF(5.4, 5.4), QPointF(10.2, 5.8));
+        painter.drawLine(QPointF(11.2, 6.6), QPointF(8.6, 10.4));
+        painter.drawLine(QPointF(7.4, 10.2), QPointF(4.8, 6.0));
+    } else {
+        painter.drawEllipse(QRectF(4.6, 4.6, 6.8, 6.8));
+    }
+
+    return QIcon(pixmap);
+}
+
+}
 
 NavPanel::NavPanel(QWidget* parent)
     : QWidget(parent) {
@@ -26,16 +155,15 @@ void NavPanel::setupUi() {
     sidebarFrame_->setMinimumWidth(gis::style::Size::kSidebarMinWidth);
 
     auto* sidebarLayout = new QVBoxLayout(sidebarFrame_);
-    sidebarLayout->setContentsMargins(16, 16, 16, 16);
-    sidebarLayout->setSpacing(14);
-
+    sidebarLayout->setContentsMargins(14, 10, 14, 10);
+    sidebarLayout->setSpacing(8);
     sidebarLayout_ = sidebarLayout;
 
     auto* topCard = new QFrame;
     topCard->setObjectName(QStringLiteral("sidebarTopCard"));
     auto* topLayout = new QVBoxLayout(topCard);
-    topLayout->setContentsMargins(16, 16, 16, 16);
-    topLayout->setSpacing(6);
+    topLayout->setContentsMargins(4, 6, 4, 6);
+    topLayout->setSpacing(3);
 
     auto* eyebrowLabel = new QLabel(QStringLiteral("GIS TOOLKIT"));
     eyebrowLabel->setObjectName(QStringLiteral("sidebarEyebrow"));
@@ -45,66 +173,60 @@ void NavPanel::setupUi() {
     titleLabel_->setObjectName(QStringLiteral("sidebarTitle"));
     topLayout->addWidget(titleLabel_);
 
-    auto* descLabel = new QLabel(QStringLiteral("按主功能与子功能组织常用算法，保持参数配置和执行反馈都在同一界面完成。"));
+    auto* descLabel = new QLabel(QStringLiteral("点击主功能后在原位展开子功能，参数配置与执行反馈集中在同一界面。"));
     descLabel->setObjectName(QStringLiteral("sidebarDesc"));
     descLabel->setWordWrap(true);
     topLayout->addWidget(descLabel);
-
     sidebarLayout->addWidget(topCard);
 
     scrollArea_ = new QScrollArea;
     scrollArea_->setWidgetResizable(true);
     scrollArea_->setFrameShape(QFrame::NoFrame);
+    scrollArea_->viewport()->setStyleSheet(QStringLiteral("background: transparent;"));
 
     auto* middleContainer = new QWidget;
+    middleContainer->setStyleSheet(QStringLiteral("background: transparent;"));
     auto* middleLayout = new QVBoxLayout(middleContainer);
     middleLayout->setContentsMargins(0, 0, 4, 0);
-    middleLayout->setSpacing(12);
+    middleLayout->setSpacing(10);
 
-    auto* sectionLabel = new QLabel(QStringLiteral("主功能分组"));
+    auto* sectionLabel = new QLabel(QStringLiteral("功能分类"));
     sectionLabel->setObjectName(QStringLiteral("sidebarSection"));
     middleLayout->addWidget(sectionLabel);
 
     auto* pluginContainer = new QWidget;
+    pluginContainer->setStyleSheet(QStringLiteral("background: transparent;"));
     pluginLayout_ = new QVBoxLayout(pluginContainer);
     pluginLayout_->setContentsMargins(0, 0, 0, 0);
-    pluginLayout_->setSpacing(8);
+    pluginLayout_->setSpacing(6);
     middleLayout->addWidget(pluginContainer);
 
     auto* separator = new QFrame;
     separator->setObjectName(QStringLiteral("sidebarDivider"));
     middleLayout->addWidget(separator);
 
-    subFunctionHeader_ = new QLabel(QStringLiteral("子功能"));
-    subFunctionHeader_->setObjectName(QStringLiteral("subFunctionHeader"));
-    subFunctionHeader_->hide();
-    middleLayout->addWidget(subFunctionHeader_);
+    auto* moreLabel = new QLabel(QStringLiteral("更多工具"));
+    moreLabel->setObjectName(QStringLiteral("sidebarSection"));
+    middleLayout->addWidget(moreLabel);
 
-    auto* subFunctionContainer = new QWidget;
-    subFunctionLayout_ = new QVBoxLayout(subFunctionContainer);
-    subFunctionLayout_->setContentsMargins(0, 0, 0, 0);
-    subFunctionLayout_->setSpacing(8);
-    middleLayout->addWidget(subFunctionContainer);
     middleLayout->addStretch();
-
     scrollArea_->setWidget(middleContainer);
     sidebarLayout->addWidget(scrollArea_, 1);
 
     auto* footerCard = new QFrame;
     footerCard->setObjectName(QStringLiteral("sidebarFooterCard"));
     auto* footerLayout = new QVBoxLayout(footerCard);
-    footerLayout->setContentsMargins(14, 14, 14, 14);
-    footerLayout->setSpacing(4);
+    footerLayout->setContentsMargins(4, 6, 4, 4);
+    footerLayout->setSpacing(3);
 
     auto* footerTitle = new QLabel(QStringLiteral("更多工具"));
     footerTitle->setObjectName(QStringLiteral("sidebarFooterTitle"));
     footerLayout->addWidget(footerTitle);
 
-    auto* footerDesc = new QLabel(QStringLiteral("当前界面优先服务算法执行与调试，后续可以继续补充批处理、预览和结果检查能力。"));
+    auto* footerDesc = new QLabel(QStringLiteral("当前先聚焦算法执行，后续可继续补结果预览、批处理和检查能力。"));
     footerDesc->setObjectName(QStringLiteral("sidebarFooterDesc"));
     footerDesc->setWordWrap(true);
     footerLayout->addWidget(footerDesc);
-
     sidebarLayout->addWidget(footerCard);
 
     rootLayout->addWidget(sidebarFrame_);
@@ -116,93 +238,193 @@ void NavPanel::setPlugins(const std::vector<gis::framework::IGisPlugin*>& plugin
         delete item->widget();
         delete item;
     }
+
+    pluginGroupMap_.clear();
+    pluginSubContainerMap_.clear();
+    pluginSubLayoutMap_.clear();
+    pluginDisplayNameMap_.clear();
     pluginButtonMap_.clear();
+    subFunctionButtonMap_.clear();
+    subFunctionDisplayNameMap_.clear();
     currentPluginButton_ = nullptr;
+    currentSubFunctionButton_ = nullptr;
 
     for (auto* plugin : plugins) {
+        auto* groupWidget = new QWidget;
+        groupWidget->setStyleSheet(QStringLiteral("background: transparent;"));
+        auto* groupLayout = new QVBoxLayout(groupWidget);
+        groupLayout->setContentsMargins(0, 0, 0, 0);
+        groupLayout->setSpacing(2);
+
+        const QString displayName = QString::fromUtf8(plugin->displayName());
+
         auto* btn = new QPushButton;
         btn->setObjectName(QStringLiteral("navItem"));
         btn->setCheckable(true);
-        btn->setText(QString::fromUtf8(plugin->displayName()));
+        btn->setText(collapsedPluginText(plugin->name(), displayName));
+        btn->setIcon(makeSidebarIcon(plugin->name(), QColor("#2F7CF6"), QColor("#FFFFFF")));
+        btn->setIconSize(QSize(18, 18));
         btn->setToolTip(QString::fromUtf8(plugin->description()));
-
         connect(btn, &QPushButton::clicked, this, [this, name = plugin->name()]() {
             onPluginButtonClicked(name);
         });
+        groupLayout->addWidget(btn);
 
-        pluginLayout_->addWidget(btn);
+        auto* subContainer = new QWidget;
+        subContainer->setObjectName(QStringLiteral("subFunctionContainer"));
+        subContainer->setStyleSheet(QStringLiteral("background: transparent;"));
+        auto* subLayout = new QVBoxLayout(subContainer);
+        subLayout->setContentsMargins(10, 0, 0, 0);
+        subLayout->setSpacing(4);
+        subContainer->hide();
+        groupLayout->addWidget(subContainer);
+
+        pluginLayout_->addWidget(groupWidget);
+        pluginGroupMap_[plugin->name()] = groupWidget;
+        pluginSubContainerMap_[plugin->name()] = subContainer;
+        pluginSubLayoutMap_[plugin->name()] = subLayout;
+        pluginDisplayNameMap_[plugin->name()] = displayName;
         pluginButtonMap_[btn] = plugin->name();
     }
 }
 
 void NavPanel::clearSubFunctions() {
-    QLayoutItem* item = nullptr;
-    while ((item = subFunctionLayout_->takeAt(0)) != nullptr) {
-        delete item->widget();
-        delete item;
+    for (auto& entry : pluginSubLayoutMap_) {
+        QLayoutItem* item = nullptr;
+        while ((item = entry.second->takeAt(0)) != nullptr) {
+            delete item->widget();
+            delete item;
+        }
     }
     subFunctionButtonMap_.clear();
+    subFunctionDisplayNameMap_.clear();
     currentSubFunctionButton_ = nullptr;
-    subFunctionHeader_->hide();
 }
 
 void NavPanel::setSubFunctions(const std::vector<std::string>& actions,
-                                const std::vector<std::string>& displayNames) {
+                               const std::vector<std::string>& displayNames) {
+    if (!currentPluginButton_) {
+        clearSubFunctions();
+        return;
+    }
+
+    const auto pluginIt = pluginButtonMap_.find(currentPluginButton_);
+    if (pluginIt == pluginButtonMap_.end()) {
+        clearSubFunctions();
+        return;
+    }
+
+    const auto subLayoutIt = pluginSubLayoutMap_.find(pluginIt->second);
+    const auto subContainerIt = pluginSubContainerMap_.find(pluginIt->second);
+    if (subLayoutIt == pluginSubLayoutMap_.end() || subContainerIt == pluginSubContainerMap_.end()) {
+        clearSubFunctions();
+        return;
+    }
+
     clearSubFunctions();
-    subFunctionHeader_->show();
 
     for (size_t i = 0; i < actions.size(); ++i) {
+        const QString displayText = QString::fromUtf8(i < displayNames.size() ? displayNames[i] : actions[i]);
+
         auto* btn = new QPushButton;
         btn->setObjectName(QStringLiteral("subNavItem"));
         btn->setCheckable(true);
-        btn->setText(QString::fromUtf8(i < displayNames.size() ? displayNames[i] : actions[i]));
+        btn->setText(subFunctionText(displayText, false));
+        btn->setIcon(makeSubFunctionIcon(actions[i], false));
+        btn->setIconSize(QSize(16, 16));
 
         connect(btn, &QPushButton::clicked, this, [this, action = actions[i]]() {
             onSubFunctionButtonClicked(action);
         });
 
-        subFunctionLayout_->addWidget(btn);
+        subLayoutIt->second->addWidget(btn);
         subFunctionButtonMap_[btn] = actions[i];
+        subFunctionDisplayNameMap_[btn] = displayText;
     }
+
+    subContainerIt->second->setVisible(!actions.empty());
 }
 
 void NavPanel::setCurrentPluginSelection(const std::string& pluginName) {
-    if (currentPluginButton_) {
-        currentPluginButton_->setChecked(false);
+    if (pluginName.empty()) {
+        for (auto& entry : pluginButtonMap_) {
+            entry.first->setChecked(false);
+            const QString displayName = pluginDisplayNameMap_[entry.second];
+            entry.first->setText(collapsedPluginText(entry.second, displayName));
+            const auto subContainerIt = pluginSubContainerMap_.find(entry.second);
+            if (subContainerIt != pluginSubContainerMap_.end()) {
+                subContainerIt->second->setVisible(false);
+            }
+        }
         currentPluginButton_ = nullptr;
+        return;
     }
 
-    for (auto it = pluginButtonMap_.begin(); it != pluginButtonMap_.end(); ++it) {
-        if (it->second == pluginName) {
-            currentPluginButton_ = it->first;
-            currentPluginButton_->setChecked(true);
-            if (scrollArea_) {
-                scrollArea_->ensureWidgetVisible(currentPluginButton_, 0, 32);
-            }
-            break;
+    for (auto& entry : pluginButtonMap_) {
+        const bool active = entry.second == pluginName;
+        entry.first->setChecked(active);
+        const QString displayName = pluginDisplayNameMap_[entry.second];
+        entry.first->setText(active
+            ? expandedPluginText(entry.second, displayName)
+            : collapsedPluginText(entry.second, displayName));
+
+        const auto subContainerIt = pluginSubContainerMap_.find(entry.second);
+        if (subContainerIt != pluginSubContainerMap_.end()) {
+            subContainerIt->second->setVisible(active && subContainerIt->second->layout() && subContainerIt->second->layout()->count() > 0);
         }
+
+        if (active) {
+            currentPluginButton_ = entry.first;
+        }
+    }
+
+    if (scrollArea_ && currentPluginButton_) {
+        scrollArea_->ensureWidgetVisible(currentPluginButton_, 0, 24);
     }
 }
 
 void NavPanel::setCurrentSubFunctionSelection(const std::string& actionKey) {
-    if (currentSubFunctionButton_) {
-        currentSubFunctionButton_->setChecked(false);
+    if (actionKey.empty()) {
+        for (auto& entry : subFunctionButtonMap_) {
+            entry.first->setChecked(false);
+            const QString displayName = subFunctionDisplayNameMap_[entry.first];
+            entry.first->setText(subFunctionText(displayName, false));
+            entry.first->setIcon(makeSubFunctionIcon(entry.second, false));
+        }
         currentSubFunctionButton_ = nullptr;
+        return;
     }
 
-    for (auto it = subFunctionButtonMap_.begin(); it != subFunctionButtonMap_.end(); ++it) {
-        if (it->second == actionKey) {
-            currentSubFunctionButton_ = it->first;
-            currentSubFunctionButton_->setChecked(true);
-            if (scrollArea_) {
-                scrollArea_->ensureWidgetVisible(currentSubFunctionButton_, 0, 48);
-            }
-            break;
+    for (auto& entry : subFunctionButtonMap_) {
+        const bool active = entry.second == actionKey;
+        entry.first->setChecked(active);
+        const QString displayName = subFunctionDisplayNameMap_[entry.first];
+        entry.first->setText(subFunctionText(displayName, active));
+        entry.first->setIcon(makeSubFunctionIcon(entry.second, active));
+        if (active) {
+            currentSubFunctionButton_ = entry.first;
         }
+    }
+
+    if (scrollArea_ && currentSubFunctionButton_) {
+        scrollArea_->ensureWidgetVisible(currentSubFunctionButton_, 0, 36);
     }
 }
 
 void NavPanel::onPluginButtonClicked(const std::string& pluginName) {
+    auto* clickedButton = qobject_cast<QPushButton*>(sender());
+    if (clickedButton) {
+        const auto clickedIt = pluginButtonMap_.find(clickedButton);
+        if (clickedIt != pluginButtonMap_.end() &&
+            clickedIt->second == pluginName &&
+            !clickedButton->isChecked()) {
+            setCurrentPluginSelection(std::string{});
+            setCurrentSubFunctionSelection(std::string{});
+            emit pluginSelected(std::string{});
+            return;
+        }
+    }
+
     setCurrentPluginSelection(pluginName);
     emit pluginSelected(pluginName);
 }
