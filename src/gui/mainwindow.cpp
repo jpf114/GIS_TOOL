@@ -775,17 +775,20 @@ void MainWindow::setupUi() {
 
     mainLayout->addWidget(splitter);
 
+    statusPluginCountLabel_ = new QLabel(QStringLiteral("已加载主功能：0"));
     statusAlgorithmLabel_ = new QLabel(QStringLiteral("当前算法：未选择"));
-    statusPluginCountLabel_ = new QLabel(QStringLiteral("插件数：0"));
+    statusSubFunctionCountLabel_ = new QLabel(QStringLiteral("已加载子功能：0"));
     statusProgressBar_ = new QProgressBar;
     statusProgressBar_->setRange(0, 100);
     statusProgressBar_->setValue(0);
     statusProgressBar_->setFixedWidth(180);
     statusProgressBar_->setTextVisible(false);
-    statusAlgorithmLabel_->setObjectName(QStringLiteral("statusBarLabel"));
     statusPluginCountLabel_->setObjectName(QStringLiteral("statusBarLabel"));
-    statusBar()->addPermanentWidget(statusAlgorithmLabel_);
+    statusAlgorithmLabel_->setObjectName(QStringLiteral("statusBarLabel"));
+    statusSubFunctionCountLabel_->setObjectName(QStringLiteral("statusBarLabel"));
     statusBar()->addPermanentWidget(statusPluginCountLabel_);
+    statusBar()->addPermanentWidget(statusAlgorithmLabel_);
+    statusBar()->addPermanentWidget(statusSubFunctionCountLabel_);
     statusBar()->addPermanentWidget(statusProgressBar_);
     statusBar()->showMessage(QStringLiteral("就绪"));
 }
@@ -815,13 +818,19 @@ void MainWindow::loadPlugins() {
     if (plugins.empty()) {
         statusBar()->showMessage(QStringLiteral("未找到插件，请检查 plugins 目录"));
         if (statusPluginCountLabel_) {
-            statusPluginCountLabel_->setText(QStringLiteral("插件数：0"));
+            statusPluginCountLabel_->setText(QStringLiteral("已加载主功能：0"));
+        }
+        if (statusSubFunctionCountLabel_) {
+            statusSubFunctionCountLabel_->setText(QStringLiteral("已加载子功能：0"));
         }
         return;
     }
 
     if (statusPluginCountLabel_) {
-        statusPluginCountLabel_->setText(QStringLiteral("插件数：%1").arg(plugins.size()));
+        statusPluginCountLabel_->setText(QStringLiteral("已加载主功能：%1").arg(plugins.size()));
+    }
+    if (statusSubFunctionCountLabel_) {
+        statusSubFunctionCountLabel_->setText(QStringLiteral("已加载子功能：0"));
     }
     statusBar()->showMessage(QStringLiteral("已加载 %1 个插件").arg(plugins.size()));
 }
@@ -896,6 +905,9 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
         if (statusAlgorithmLabel_) {
             statusAlgorithmLabel_->setText(QStringLiteral("当前算法：未选择"));
         }
+        if (statusSubFunctionCountLabel_) {
+            statusSubFunctionCountLabel_->setText(QStringLiteral("已加载子功能：0"));
+        }
         navPanel_->clearSubFunctions();
         refreshExecuteButtonState();
         return;
@@ -929,6 +941,10 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     }
     navPanel_->setSubFunctions(actions, displayNames);
     navPanel_->setCurrentPluginSelection(currentPlugin_->name());
+    if (statusSubFunctionCountLabel_) {
+        statusSubFunctionCountLabel_->setText(
+            QStringLiteral("已加载子功能：%1").arg(static_cast<int>(actions.size())));
+    }
     if (functionMetaLabel_) {
         functionMetaLabel_->setText(
             QStringLiteral("当前主功能：%1  |  子功能数：%2")
