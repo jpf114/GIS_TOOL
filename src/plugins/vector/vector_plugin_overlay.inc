@@ -31,9 +31,10 @@
         return failCrsMismatch("Union");
     }
 
+    const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     auto overlayEntries = collectNormalizedGeometries(overlayLayer);
     const bool usePracticalMixedUnion =
-        isLinearGeometryType(srcLayer->GetGeomType()) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
+        isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
     GDALClose(overlayDS);
 
     if (overlayEntries.empty()) {
@@ -71,7 +72,7 @@
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const auto outputGeomType = usePracticalMixedUnion
-        ? resultLayerGeometryType(srcLayer->GetGeomType())
+        ? resultLayerGeometryType(srcEffectiveType)
         : wkbUnknown;
     const bool useTransactions = outFormat == "GPKG";
     std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
@@ -128,16 +129,14 @@
         } else {
             std::unique_ptr<OGRGeometry> candidateOverlay(buildCandidateOverlayGeometry(overlayEntries, geom));
             if (geom && candidateOverlay && geom->Intersects(candidateOverlay.get())) {
-            OGRGeometry* unionGeom = geom->Union(candidateOverlay.get());
+            std::unique_ptr<OGRGeometry> unionGeom(geom->Union(candidateOverlay.get()));
             if (unionGeom && !unionGeom->IsEmpty()) {
                 if (!writeUnionFeatureOwned(
-                        dstLayer, std::unique_ptr<OGRGeometry>(unionGeom), "union")) {
-                    unionGeom = nullptr;
+                        dstLayer, std::move(unionGeom), "union")) {
                     OGRFeature::DestroyFeature(feat);
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete unionGeom;
                     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
                     return gis::framework::Result::fail("Failed to write union feature");
                 }
@@ -147,7 +146,6 @@
                     dstLayer->StartTransaction();
                 }
             }
-            delete unionGeom;
             } else if (geom) {
                 OGRGeometry* cloned = geom->clone();
                 if (!writeUnionFeature(dstLayer, cloned, "input")) {
@@ -214,9 +212,10 @@ gis::framework::Result VectorPlugin::doDifference(
         return failCrsMismatch("Difference");
     }
 
+    const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     auto overlayEntries = collectNormalizedGeometries(overlayLayer);
     const bool useLinearPolygonSegmentation =
-        isLinearGeometryType(srcLayer->GetGeomType()) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
+        isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
     GDALClose(overlayDS);
 
     if (overlayEntries.empty()) {
@@ -257,7 +256,7 @@ gis::framework::Result VectorPlugin::doDifference(
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "difference",
         srcSRS,
-        resultLayerGeometryType(srcLayer->GetGeomType()),
+        resultLayerGeometryType(srcEffectiveType),
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;

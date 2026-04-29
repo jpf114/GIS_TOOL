@@ -304,7 +304,9 @@ DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
             return info;
         }
 
-        info.layerName = layer->GetName();
+        if (lowerExtension(path) != ".shp") {
+            info.layerName = layer->GetName();
+        }
         info.crs = spatialReferenceText(layer->GetSpatialRef());
 
         OGREnvelope envelope{};

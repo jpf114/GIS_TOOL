@@ -227,7 +227,13 @@ static GDALDataset* openVector(const std::string& path, bool readOnly = true) {
 
 static OGRLayer* getLayer(GDALDataset* ds, const std::string& layerName) {
     if (!layerName.empty()) {
-        return ds->GetLayerByName(layerName.c_str());
+        if (auto* layer = ds->GetLayerByName(layerName.c_str())) {
+            return layer;
+        }
+        if (ds->GetLayerCount() == 1) {
+            return ds->GetLayer(0);
+        }
+        return nullptr;
     }
     return ds->GetLayer(0);
 }
@@ -586,6 +592,32 @@ static int geometryDimensionRank(OGRwkbGeometryType type) {
 static bool isLinearGeometryType(OGRwkbGeometryType type) {
     const auto flatType = wkbFlatten(type);
     return flatType == wkbLineString || flatType == wkbMultiLineString;
+}
+
+static OGRwkbGeometryType effectiveLayerGeometryType(OGRLayer* layer) {
+    if (!layer) {
+        return wkbUnknown;
+    }
+
+    const OGRwkbGeometryType declaredType = layer->GetGeomType();
+    if (geometryDimensionRank(declaredType) >= 0) {
+        return declaredType;
+    }
+
+    layer->ResetReading();
+    OGRFeature* feature = nullptr;
+    while ((feature = layer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feature->GetGeometryRef();
+        if (geom && !geom->IsEmpty()) {
+            const OGRwkbGeometryType detectedType = geom->getGeometryType();
+            OGRFeature::DestroyFeature(feature);
+            layer->ResetReading();
+            return detectedType;
+        }
+        OGRFeature::DestroyFeature(feature);
+    }
+    layer->ResetReading();
+    return declaredType;
 }
 
 static void collectLinearGeometryParts(const OGRGeometry* geom, std::vector<OGRGeometry*>& parts) {
@@ -1264,9 +1296,10 @@ gis::framework::Result VectorPlugin::doClip(
         return failCrsMismatch("Clip");
     }
 
+    const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     auto clipEntries = collectNormalizedGeometries(clipLayer);
     const bool useLinearPolygonSegmentation =
-        isLinearGeometryType(srcLayer->GetGeomType()) && detectOverlayGeometryDimensionRank(clipEntries) == 2;
+        isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(clipEntries) == 2;
     GDALClose(clipDS);
 
     if (clipEntries.empty()) {
@@ -1310,7 +1343,7 @@ gis::framework::Result VectorPlugin::doClip(
     OGRLayer* dstLayer = dstDS->CreateLayer(
         srcLayer->GetName(),
         srcSRS,
-        resultLayerGeometryType(srcLayer->GetGeomType()),
+        resultLayerGeometryType(srcEffectiveType),
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
         GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
@@ -1555,10 +1588,28 @@ gis::framework::Result VectorPlugin::doPolygonize(
 
     progress.onProgress(0.3);
 
-    GDALPolygonize(GDALRasterBand::ToHandle(rasterBand),
-        nullptr, OGRLayer::ToHandle(dstLayer), 0, nullptr, nullptr, nullptr);
+    const CPLErr polygonizeErr = GDALPolygonize(
+        GDALRasterBand::ToHandle(rasterBand),
+        nullptr,
+        OGRLayer::ToHandle(dstLayer),
+        0,
+        nullptr,
+        nullptr,
+        nullptr);
+    if (polygonizeErr != CE_None) {
+        if (srs) delete srs;
+        GDALClose(dstDS);
+        return gis::framework::Result::fail(
+            "Polygonize failed: " + std::string(CPLGetLastErrorMsg()));
+    }
 
-    GIntBig featureCount = dstLayer->GetFeatureCount(FALSE);
+    GIntBig featureCount = 0;
+    dstLayer->ResetReading();
+    while (auto* feature = dstLayer->GetNextFeature()) {
+        ++featureCount;
+        OGRFeature::DestroyFeature(feature);
+    }
+    dstLayer->ResetReading();
 
     if (srs) delete srs;
     GDALClose(dstDS);

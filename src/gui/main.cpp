@@ -70,42 +70,38 @@ int main(int argc, char* argv[])
         }
     }
 
-    const bool selfTestMode = std::any_of(argv, argv + argc, [](const char* arg) {
-        return arg != nullptr && std::string(arg) == "--self-test";
-    });
+    const QStringList arguments = QCoreApplication::arguments();
+    const bool selfTestMode = arguments.contains(QStringLiteral("--self-test"));
     std::optional<QString> screenshotPath;
     std::optional<std::string> selectedPlugin;
     std::optional<std::string> selectedAction;
     std::vector<std::pair<std::string, std::string>> paramAssignments;
-    const bool autoExecute = std::any_of(argv, argv + argc, [](const char* arg) {
-        return arg != nullptr && std::string(arg) == "--auto-execute";
-    });
-    const bool quitOnFinish = std::any_of(argv, argv + argc, [](const char* arg) {
-        return arg != nullptr && std::string(arg) == "--quit-on-finish";
-    });
-    for (int i = 1; i < argc; ++i) {
-        if (argv[i] != nullptr && std::string(argv[i]) == "--screenshot" && (i + 1) < argc && argv[i + 1] != nullptr) {
-            screenshotPath = QString::fromLocal8Bit(argv[i + 1]);
+    const bool autoExecute = arguments.contains(QStringLiteral("--auto-execute"));
+    const bool quitOnFinish = arguments.contains(QStringLiteral("--quit-on-finish"));
+    for (int i = 1; i < arguments.size(); ++i) {
+        const QString arg = arguments.at(i);
+        if (arg == QStringLiteral("--screenshot") && (i + 1) < arguments.size()) {
+            screenshotPath = arguments.at(i + 1);
             ++i;
             continue;
         }
-        if (argv[i] != nullptr && std::string(argv[i]) == "--select-plugin" && (i + 1) < argc && argv[i + 1] != nullptr) {
-            selectedPlugin = argv[i + 1];
+        if (arg == QStringLiteral("--select-plugin") && (i + 1) < arguments.size()) {
+            selectedPlugin = arguments.at(i + 1).toUtf8().toStdString();
             ++i;
             continue;
         }
-        if (argv[i] != nullptr && std::string(argv[i]) == "--select-action" && (i + 1) < argc && argv[i + 1] != nullptr) {
-            selectedAction = argv[i + 1];
+        if (arg == QStringLiteral("--select-action") && (i + 1) < arguments.size()) {
+            selectedAction = arguments.at(i + 1).toUtf8().toStdString();
             ++i;
             continue;
         }
-        if (argv[i] != nullptr && std::string(argv[i]) == "--set-param" && (i + 1) < argc && argv[i + 1] != nullptr) {
-            const std::string assignment = argv[i + 1];
-            const size_t pos = assignment.find('=');
-            if (pos != std::string::npos && pos > 0) {
+        if (arg == QStringLiteral("--set-param") && (i + 1) < arguments.size()) {
+            const QString assignment = arguments.at(i + 1);
+            const int pos = assignment.indexOf('=');
+            if (pos >= 0) {
                 paramAssignments.emplace_back(
-                    assignment.substr(0, pos),
-                    assignment.substr(pos + 1));
+                    assignment.left(pos).toUtf8().toStdString(),
+                    assignment.mid(pos + 1).toUtf8().toStdString());
             }
             ++i;
         }

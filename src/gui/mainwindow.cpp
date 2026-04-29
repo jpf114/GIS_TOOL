@@ -1105,7 +1105,11 @@ void MainWindow::syncDerivedParams() {
 
     if (!inputPath.empty()) {
         const auto info = gis::gui::inspectDataForAutoFill(inputPath);
-        if (paramWidget_->hasParam("layer") && paramWidget_->stringValue("layer").empty() && !info.layerName.empty()) {
+        const QString inputPathLower = QString::fromStdString(inputPath).toLower();
+        if (paramWidget_->hasParam("layer")
+            && paramWidget_->stringValue("layer").empty()
+            && !info.layerName.empty()
+            && !inputPathLower.endsWith(QStringLiteral(".shp"))) {
             paramWidget_->setStringValue("layer", info.layerName);
         }
         if (paramWidget_->hasParam("extent")) {
