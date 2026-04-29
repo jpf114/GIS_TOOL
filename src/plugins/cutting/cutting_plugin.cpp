@@ -321,10 +321,13 @@ gis::framework::Result CuttingPlugin::doMergeBands(
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
     std::vector<std::string> bandFiles;
+    if (!input.empty()) {
+        auto inputFiles = splitString(input, ',');
+        bandFiles.insert(bandFiles.end(), inputFiles.begin(), inputFiles.end());
+    }
     if (!bandsStr.empty()) {
-        bandFiles = splitString(bandsStr, ',');
-    } else if (!input.empty()) {
-        bandFiles = splitString(input, ',');
+        auto extraBandFiles = splitString(bandsStr, ',');
+        bandFiles.insert(bandFiles.end(), extraBandFiles.begin(), extraBandFiles.end());
     }
 
     if (bandFiles.empty()) {

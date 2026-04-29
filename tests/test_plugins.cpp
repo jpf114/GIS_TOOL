@@ -2167,6 +2167,29 @@ TEST_F(PluginTest, CuttingMergeBandsCreatesMultiBandRaster) {
     EXPECT_EQ(outDs->GetRasterCount(), 2);
 }
 
+TEST_F(PluginTest, CuttingMergeBandsCombinesInputAndBandsList) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input1 = createTestRaster("cutting_merge_mixed_band1.tif", 24, 24, 1);
+    const std::string input2 = createTestRaster("cutting_merge_mixed_band2.tif", 24, 24, 1);
+    const std::string input3 = createTestRaster("cutting_merge_mixed_band3.tif", 24, 24, 1);
+    const std::string output = utf8PathString(getTestDir() / "cutting_merge_mixed_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("merge_bands");
+    params["input"] = input1;
+    params["bands"] = input2 + "," + input3;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterCount(), 3);
+}
+
 TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {
     auto* p = mgr_.find("matching");
     ASSERT_NE(p, nullptr);
