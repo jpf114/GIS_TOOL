@@ -150,21 +150,122 @@ function Ensure-BenchmarkData {
     New-Item -ItemType Directory -Force -Path $benchmarkRoot | Out-Null
 
     $vectorDataRoot = Join-Path $ResolvedWorkspaceRoot "data\vector"
-    $roadsRawFile = Get-ChildItem $vectorDataRoot -Filter "*.shp" |
-        Sort-Object Length |
-        Select-Object -First 1
-    $chinaRawFile = Get-ChildItem $vectorDataRoot -Filter "*.geojson" |
-        Select-Object -First 1
+    $roadsRaw = $null
+    $chinaRaw = $null
 
-    if ($null -eq $roadsRawFile) {
-        throw ("raw roads missing under: " + $vectorDataRoot)
-    }
-    if ($null -eq $chinaRawFile) {
-        throw ("raw china missing under: " + $vectorDataRoot)
+    if (Test-Path $vectorDataRoot) {
+        $roadsRawFile = Get-ChildItem $vectorDataRoot -Filter "*.shp" |
+            Sort-Object Length |
+            Select-Object -First 1
+        $chinaRawFile = Get-ChildItem $vectorDataRoot -Filter "*.geojson" |
+            Select-Object -First 1
+        if ($null -ne $roadsRawFile) {
+            $roadsRaw = $roadsRawFile.FullName
+        }
+        if ($null -ne $chinaRawFile) {
+            $chinaRaw = $chinaRawFile.FullName
+        }
     }
 
-    $roadsRaw = $roadsRawFile.FullName
-    $chinaRaw = $chinaRawFile.FullName
+    if ([string]::IsNullOrWhiteSpace($roadsRaw) -or [string]::IsNullOrWhiteSpace($chinaRaw)) {
+        $sampleDataRoot = Join-Path $benchmarkRoot "generated_data"
+        New-Item -ItemType Directory -Force -Path $sampleDataRoot | Out-Null
+
+        $roadsRaw = Join-Path $sampleDataRoot "roads_sample.geojson"
+        $chinaRaw = Join-Path $sampleDataRoot "china_sample.geojson"
+
+        @'
+{
+  "type": "FeatureCollection",
+  "name": "roads_sample",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "road_primary",
+        "fclass": "primary"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [116.20, 39.60],
+          [116.55, 39.92],
+          [116.95, 40.20]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "road_secondary",
+        "fclass": "secondary"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [115.60, 40.00],
+          [116.40, 40.05],
+          [117.20, 40.10]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "road_residential",
+        "fclass": "residential"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [118.20, 39.10],
+          [118.50, 39.30]
+        ]
+      }
+    }
+  ]
+}
+'@ | Set-Content -Path $roadsRaw -Encoding UTF8
+
+        @'
+{
+  "type": "FeatureCollection",
+  "name": "china_sample",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "north_china_focus"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [115.00, 39.20],
+            [117.80, 39.20],
+            [117.80, 41.20],
+            [115.00, 41.20],
+            [115.00, 39.20]
+          ]
+        ]
+      }
+    }
+  ]
+}
+'@ | Set-Content -Path $chinaRaw -Encoding UTF8
+    }
 
     $roadsCore = Join-Path $benchmarkRoot "bj_roads_core.gpkg"
     $roadsCore3857 = Join-Path $benchmarkRoot "bj_roads_core_3857.gpkg"

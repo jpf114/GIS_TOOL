@@ -75,6 +75,16 @@ if(TARGET gis-gui)
     set_tests_properties(gui_smoke_startup PROPERTIES
         PASS_REGULAR_EXPRESSION ""
     )
+
+    add_test(
+        NAME gui_vector_convert_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_input.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/convert/output.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/convert/gui_convert.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_regression.cmake
+    )
 endif()
 
 find_program(GIS_POWERSHELL_EXECUTABLE NAMES powershell pwsh)

@@ -1,0 +1,54 @@
+if(POLICY CMP0207)
+    cmake_policy(SET CMP0207 NEW)
+endif()
+
+set(_gis_install_bin_dir "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@")
+set(_gis_install_plugin_dir "${CMAKE_INSTALL_PREFIX}/@GIS_INSTALL_PLUGIN_DIR@")
+
+set(_gis_runtime_executables
+    "${_gis_install_bin_dir}/gis-cli.exe"
+)
+
+if(EXISTS "${_gis_install_bin_dir}/gis-gui.exe")
+    list(APPEND _gis_runtime_executables "${_gis_install_bin_dir}/gis-gui.exe")
+endif()
+
+set(_gis_runtime_libraries
+    "${_gis_install_plugin_dir}/plugin_projection.dll"
+    "${_gis_install_plugin_dir}/plugin_cutting.dll"
+    "${_gis_install_plugin_dir}/plugin_matching.dll"
+    "${_gis_install_plugin_dir}/plugin_processing.dll"
+    "${_gis_install_plugin_dir}/plugin_classification.dll"
+    "${_gis_install_plugin_dir}/plugin_vector.dll"
+    "${_gis_install_plugin_dir}/plugin_utility.dll"
+)
+
+file(GET_RUNTIME_DEPENDENCIES
+    EXECUTABLES ${_gis_runtime_executables}
+    LIBRARIES ${_gis_runtime_libraries}
+    RESOLVED_DEPENDENCIES_VAR _gis_resolved_deps
+    UNRESOLVED_DEPENDENCIES_VAR _gis_unresolved_deps
+    DIRECTORIES
+        "@GIS_VCPKG_RELEASE_BIN_DIR@"
+        "@GIS_VCPKG_DEBUG_BIN_DIR@"
+    PRE_EXCLUDE_REGEXES
+        "api-ms-"
+        "ext-ms-"
+        "HvsiFileTrust\\.dll"
+    POST_EXCLUDE_REGEXES
+        ".*/[Ww]indows/.*"
+        ".*/[Ss]ystem32/.*"
+)
+
+if(_gis_unresolved_deps)
+    list(JOIN _gis_unresolved_deps "\n  " _gis_unresolved_text)
+    message(FATAL_ERROR "Unresolved runtime dependencies:\n  ${_gis_unresolved_text}")
+endif()
+
+foreach(_gis_dep IN LISTS _gis_resolved_deps)
+    file(INSTALL
+        DESTINATION "${_gis_install_bin_dir}"
+        TYPE SHARED_LIBRARY
+        FILES "${_gis_dep}"
+    )
+endforeach()

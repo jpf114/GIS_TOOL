@@ -46,6 +46,16 @@ TEST_F(CoreTest, CreateAndOpenRaster) {
     EXPECT_EQ(ds2->GetRasterXSize(), 100);
 }
 
+TEST_F(CoreTest, CreateRasterCreatesParentDirectories) {
+    std::string path = (getTestDir() / "nested" / "auto_created" / "create_parent_test.tif").string();
+    {
+        auto ds = gis::core::createRaster(path, 16, 12, 1, GDT_Float32);
+        ASSERT_NE(ds, nullptr);
+    }
+
+    EXPECT_TRUE(fs::exists(path));
+}
+
 TEST_F(CoreTest, GdalBandToMat) {
     std::string path = (getTestDir() / "band_test.tif").string();
     {

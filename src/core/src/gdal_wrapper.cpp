@@ -3,8 +3,22 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
+#include <filesystem>
 
 namespace gis::core {
+
+namespace {
+
+void ensureParentDirectoryForFile(const std::string& path) {
+    const std::filesystem::path fsPath(path);
+    if (!fsPath.has_parent_path()) {
+        return;
+    }
+
+    std::filesystem::create_directories(fsPath.parent_path());
+}
+
+} // namespace
 
 void initGDAL() {
     static bool initialized = false;
@@ -31,6 +45,7 @@ GdalDatasetPtr openRaster(const std::string& path, bool readOnly) {
 GdalDatasetPtr createRaster(const std::string& path, int width, int height,
                             int bands, int gdalType, const std::string& driver) {
     initGDAL();
+    ensureParentDirectoryForFile(path);
     auto* drv = GetGDALDriverManager()->GetDriverByName(driver.c_str());
     if (!drv) {
         throw GisError("Cannot get driver: " + driver);

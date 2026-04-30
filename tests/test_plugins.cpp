@@ -2360,6 +2360,43 @@ TEST_F(PluginTest, VectorConvertExecution) {
     EXPECT_TRUE(result.success) << "Convert failed: " << result.message;
 }
 
+TEST_F(PluginTest, VectorConvertCreatesMissingParentDirectory) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    std::string shpPath = (getTestDir() / "e2e_convert_parent_input.shp").string();
+    const fs::path outputDir = getTestDir() / "nested_convert_output";
+    const std::string output = utf8PathString(outputDir / "roads.geojson");
+    fs::remove_all(outputDir);
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(4326);
+        auto* layer = ds->CreateLayer("test", srs.get(), wkbPoint);
+        ASSERT_NE(layer, nullptr);
+        auto* featDefn = layer->GetLayerDefn();
+        auto* feat = OGRFeature::CreateFeature(featDefn);
+        OGRPoint pt(116.3, 39.9);
+        feat->SetGeometry(&pt);
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("convert");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["format"] = std::string("GeoJSON");
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+}
+
 TEST_F(PluginTest, ProcessingBandMathExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

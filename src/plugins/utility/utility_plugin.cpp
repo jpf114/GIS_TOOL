@@ -10,8 +10,22 @@
 #include <cmath>
 #include <iomanip>
 #include <algorithm>
+#include <filesystem>
 
 namespace gis::plugins {
+
+namespace {
+
+void ensureParentDirectoryForFile(const std::string& path) {
+    const std::filesystem::path fsPath(path);
+    if (!fsPath.has_parent_path()) {
+        return;
+    }
+
+    std::filesystem::create_directories(fsPath.parent_path());
+}
+
+} // namespace
 
 std::vector<gis::framework::ParamSpec> UtilityPlugin::paramSpecs() const {
     return {
@@ -224,6 +238,7 @@ gis::framework::Result UtilityPlugin::doHistogram(
     delete[] histogram;
 
     if (!output.empty()) {
+        ensureParentDirectoryForFile(output);
         std::ofstream ofs(output);
         if (ofs.is_open()) {
             ofs << oss.str();
@@ -397,6 +412,7 @@ gis::framework::Result UtilityPlugin::doColormap(
 
     auto srcDS = gis::core::openRaster(input, true);
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
+    ensureParentDirectoryForFile(output);
     GDALDataset* dstDS = drv->Create(output.c_str(),
         colored.cols, colored.rows, 3, GDT_Byte, nullptr);
     if (!dstDS) {

@@ -508,6 +508,15 @@ static void removeExistingVectorOutput(const std::string& output, const std::str
     fs::remove(output);
 }
 
+static void ensureParentDirectoryForFile(const std::string& output) {
+    const fs::path outputPath = fs::u8path(output);
+    if (!outputPath.has_parent_path()) {
+        return;
+    }
+
+    fs::create_directories(outputPath.parent_path());
+}
+
 static std::string escapeSqlLiteral(const std::string& value) {
     std::string escaped;
     escaped.reserve(value.size());
@@ -1053,6 +1062,7 @@ gis::framework::Result VectorPlugin::doFilter(
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
+    ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
@@ -1151,6 +1161,7 @@ gis::framework::Result VectorPlugin::doBuffer(
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
+    ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
@@ -1328,6 +1339,7 @@ gis::framework::Result VectorPlugin::doClip(
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
+    ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
@@ -1467,6 +1479,7 @@ gis::framework::Result VectorPlugin::doRasterize(
     progress.onProgress(0.2);
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
+    ensureParentDirectoryForFile(output);
     GDALDataset* dstDS = drv->Create(output.c_str(), xSize, ySize, 1, GDT_Float32, nullptr);
     if (!dstDS) {
         GDALClose(srcDS);
@@ -1567,6 +1580,7 @@ gis::framework::Result VectorPlugin::doPolygonize(
         }
     }
 
+    ensureParentDirectoryForFile(output);
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
     if (!dstDS) return gis::framework::Result::fail("Cannot create output file: " + output);
 
@@ -1655,6 +1669,7 @@ gis::framework::Result VectorPlugin::doConvert(
         }
     }
 
+    ensureParentDirectoryForFile(output);
     GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
     if (!dstDS) {
         GDALClose(srcDS);

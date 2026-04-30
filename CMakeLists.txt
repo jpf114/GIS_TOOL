@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 
 # vcpkg toolchain integration must happen before project()
 if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
@@ -13,6 +13,10 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif()
 
 include(GNUInstallDirs)
+
+if(POLICY CMP0207)
+    cmake_policy(SET CMP0207 NEW)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -60,6 +64,12 @@ file(TO_CMAKE_PATH "${GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR}" GIS_VCPKG_DEBUG_QT_PLAT
 
 set(GIS_VCPKG_RUNTIME_BIN_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_BIN_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_BIN_DIR}>")
 set(GIS_VCPKG_QT_PLATFORMS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}>")
+
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/install_runtime_deps.cmake.in"
+    "${CMAKE_BINARY_DIR}/install_runtime_deps.cmake"
+    @ONLY
+)
 
 if(NOT EXISTS "${GIS_VCPKG_INSTALLED_DIR}")
     message(FATAL_ERROR "未找到全局 vcpkg 安装目录: ${GIS_VCPKG_INSTALLED_DIR}")
@@ -115,14 +125,6 @@ install(DIRECTORY
     DESTINATION "${CMAKE_INSTALL_DATADIR}/gdal"
 )
 
-install(DIRECTORY
-    "${GIS_VCPKG_RELEASE_BIN_DIR}/"
-    DESTINATION "${CMAKE_INSTALL_BINDIR}"
-    CONFIGURATIONS Release
-    FILES_MATCHING
-    PATTERN "*.dll"
-)
-
 if(GIS_BUILD_GUI)
     find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
     add_subdirectory(src/gui)
@@ -132,3 +134,5 @@ if(GIS_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+install(SCRIPT "${CMAKE_BINARY_DIR}/install_runtime_deps.cmake")

@@ -144,6 +144,15 @@ std::string detectVectorFormatFromOutput(const std::string& output) {
     return "GeoJSON";
 }
 
+void ensureParentDirectoryForFile(const std::string& path) {
+    const fs::path fsPath = fs::u8path(path);
+    if (!fsPath.has_parent_path()) {
+        return;
+    }
+
+    fs::create_directories(fsPath.parent_path());
+}
+
 void removeExistingVectorOutput(const std::string& output, const std::string& format) {
     if (!fs::exists(output)) {
         return;
@@ -249,6 +258,7 @@ gis::framework::Result ProjectionPlugin::doReproject(
         progress.onMessage("Setting up vector translate options...");
 
         const std::string outputFormat = detectVectorFormatFromOutput(output);
+        ensureParentDirectoryForFile(output);
         removeExistingVectorOutput(output, outputFormat);
 
         std::vector<std::string> argStorage;
@@ -303,6 +313,7 @@ gis::framework::Result ProjectionPlugin::doReproject(
     auto srcDS = gis::core::openRaster(input, true);
 
     progress.onMessage("Setting up warp options...");
+    ensureParentDirectoryForFile(output);
 
     std::vector<std::string> argStorage;
     argStorage.push_back("-t_srs");

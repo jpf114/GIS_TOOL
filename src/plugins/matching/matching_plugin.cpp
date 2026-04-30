@@ -8,10 +8,24 @@
 #include <sstream>
 #include <fstream>
 #include <algorithm>
+#include <filesystem>
 #include <numeric>
 #include <cmath>
 
 namespace gis::plugins {
+
+namespace {
+
+void ensureParentDirectoryForFile(const std::string& path) {
+    const std::filesystem::path fsPath(path);
+    if (!fsPath.has_parent_path()) {
+        return;
+    }
+
+    std::filesystem::create_directories(fsPath.parent_path());
+}
+
+} // namespace
 
 static std::vector<std::string> splitString(const std::string& s, char delim) {
     std::vector<std::string> tokens;
@@ -175,6 +189,7 @@ static cv::Mat readBandAsMat(const std::string& path, int band,
 
 static bool writeKeyPointsJSON(const std::string& path,
                                 const std::vector<cv::KeyPoint>& kps) {
+    ensureParentDirectoryForFile(path);
     std::ofstream ofs(path);
     if (!ofs.is_open()) return false;
     ofs << "{\"keypoints\":[\n";
@@ -196,6 +211,7 @@ static bool writeMatchesJSON(const std::string& path,
                               const std::vector<cv::DMatch>& matches,
                               const std::vector<cv::KeyPoint>& kps1,
                               const std::vector<cv::KeyPoint>& kps2) {
+    ensureParentDirectoryForFile(path);
     std::ofstream ofs(path);
     if (!ofs.is_open()) return false;
     ofs << "{\"matches\":[\n";

@@ -1,0 +1,42 @@
+{
+  "type": "FeatureCollection",
+  "name": "gui_vector_input",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "road_a",
+        "fclass": "primary"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [116.20, 39.60],
+          [116.55, 39.92],
+          [116.95, 40.20]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "road_b",
+        "fclass": "secondary"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [115.60, 40.00],
+          [116.40, 40.05],
+          [117.20, 40.10]
+        ]
+      }
+    }
+  ]
+}
