@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QString>
 #include <gis/framework/plugin_manager.h>
 #include <array>
 #include <map>
@@ -25,6 +26,10 @@ public:
     void selectActionByKey(const std::string& actionKey);
     bool setParamValue(const std::string& key, const std::string& value);
     void triggerExecute();
+    bool lastExecutionSuccess() const;
+    bool lastExecutionCancelled() const;
+    QString lastExecutionMessage() const;
+    QString lastExecutionRawMessage() const;
 
 signals:
     void executionFinished(bool success);
@@ -80,4 +85,8 @@ private:
     std::string lastAutoRasterOutputPath_;
     std::string lastAutoLayerName_;
     std::optional<std::array<double, 4>> lastAutoExtent_;
+    bool lastExecutionSuccess_ = false;
+    bool lastExecutionCancelled_ = false;
+    QString lastExecutionMessage_;
+    QString lastExecutionRawMessage_;
 };

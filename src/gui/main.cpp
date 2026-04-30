@@ -1,10 +1,13 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFont>
 #include <QFontDatabase>
 #include <QFile>
 #include <QPixmap>
+#include <QSaveFile>
 #include <QTimer>
 #include "mainwindow.h"
 #include <gis/core/gdal_wrapper.h>
@@ -73,6 +76,7 @@ int main(int argc, char* argv[])
     const QStringList arguments = QCoreApplication::arguments();
     const bool selfTestMode = arguments.contains(QStringLiteral("--self-test"));
     std::optional<QString> screenshotPath;
+    std::optional<QString> statusFilePath;
     std::optional<std::string> selectedPlugin;
     std::optional<std::string> selectedAction;
     std::vector<std::pair<std::string, std::string>> paramAssignments;
@@ -82,6 +86,11 @@ int main(int argc, char* argv[])
         const QString arg = arguments.at(i);
         if (arg == QStringLiteral("--screenshot") && (i + 1) < arguments.size()) {
             screenshotPath = arguments.at(i + 1);
+            ++i;
+            continue;
+        }
+        if (arg == QStringLiteral("--status-file") && (i + 1) < arguments.size()) {
+            statusFilePath = arguments.at(i + 1);
             ++i;
             continue;
         }
@@ -137,9 +146,27 @@ int main(int argc, char* argv[])
         });
     }
 
-    if (autoExecute && (quitOnFinish || screenshotPath.has_value())) {
+    if (autoExecute && (quitOnFinish || screenshotPath.has_value() || statusFilePath.has_value())) {
         QObject::connect(&window, &MainWindow::executionFinished, &app,
-            [&app, &window, screenshotPath, quitOnFinish](bool) {
+            [&app, &window, screenshotPath, statusFilePath, quitOnFinish](bool) {
+                if (statusFilePath.has_value()) {
+                    const QFileInfo info(statusFilePath.value());
+                    if (!info.absoluteDir().exists()) {
+                        info.absoluteDir().mkpath(QStringLiteral("."));
+                    }
+
+                    QJsonObject status;
+                    status.insert(QStringLiteral("success"), window.lastExecutionSuccess());
+                    status.insert(QStringLiteral("cancelled"), window.lastExecutionCancelled());
+                    status.insert(QStringLiteral("message"), window.lastExecutionMessage());
+                    status.insert(QStringLiteral("raw_message"), window.lastExecutionRawMessage());
+
+                    QSaveFile statusFile(statusFilePath.value());
+                    if (statusFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                        statusFile.write(QJsonDocument(status).toJson(QJsonDocument::Indented));
+                        statusFile.commit();
+                    }
+                }
                 if (screenshotPath.has_value()) {
                     const QFileInfo info(screenshotPath.value());
                     if (!info.absoluteDir().exists()) {
@@ -147,7 +174,7 @@ int main(int argc, char* argv[])
                     }
                     window.grab().save(screenshotPath.value());
                 }
-                if (quitOnFinish || screenshotPath.has_value()) {
+                if (quitOnFinish || screenshotPath.has_value() || statusFilePath.has_value()) {
                     QTimer::singleShot(150, &app, &QApplication::quit);
                 }
             });

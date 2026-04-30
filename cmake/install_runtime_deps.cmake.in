@@ -36,6 +36,7 @@ file(GET_RUNTIME_DEPENDENCIES
         "ext-ms-"
         "HvsiFileTrust\\.dll"
     POST_EXCLUDE_REGEXES
+        ".*/install/bin/.*"
         ".*/[Ww]indows/.*"
         ".*/[Ss]ystem32/.*"
 )
@@ -45,7 +46,20 @@ if(_gis_unresolved_deps)
     message(FATAL_ERROR "Unresolved runtime dependencies:\n  ${_gis_unresolved_text}")
 endif()
 
+set(_gis_filtered_resolved_deps)
 foreach(_gis_dep IN LISTS _gis_resolved_deps)
+    get_filename_component(_gis_dep_dir "${_gis_dep}" DIRECTORY)
+    file(TO_CMAKE_PATH "${_gis_dep_dir}" _gis_dep_dir_norm)
+    file(TO_CMAKE_PATH "${_gis_install_bin_dir}" _gis_install_bin_dir_norm)
+    if(_gis_dep_dir_norm STREQUAL _gis_install_bin_dir_norm)
+        continue()
+    endif()
+    list(APPEND _gis_filtered_resolved_deps "${_gis_dep}")
+endforeach()
+
+list(REMOVE_DUPLICATES _gis_filtered_resolved_deps)
+
+foreach(_gis_dep IN LISTS _gis_filtered_resolved_deps)
     file(INSTALL
         DESTINATION "${_gis_install_bin_dir}"
         TYPE SHARED_LIBRARY

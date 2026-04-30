@@ -27,8 +27,17 @@ add_library(plugin_test_lifecycle SHARED
     plugins/test_lifecycle_plugin.cpp
 )
 
+add_executable(gui_test_data_helper
+    gui_test_data_helper.cpp
+)
+
 target_link_libraries(plugin_test_lifecycle PRIVATE
     gis_framework
+)
+
+target_link_libraries(gui_test_data_helper PRIVATE
+    gis_core
+    GDAL::GDAL
 )
 
 set_target_properties(plugin_test_lifecycle PROPERTIES
@@ -38,9 +47,11 @@ set_target_properties(plugin_test_lifecycle PROPERTIES
 
 if(MSVC)
     target_compile_options(plugin_test_lifecycle PRIVATE /utf-8)
+    target_compile_options(gui_test_data_helper PRIVATE /utf-8)
 endif()
 
 add_dependencies(gis_tests
+    gui_test_data_helper
     plugin_test_lifecycle
     plugin_projection
     plugin_cutting
@@ -84,6 +95,455 @@ if(TARGET gis-gui)
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/convert/output.geojson
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/convert/gui_convert.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_buffer_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_projected_input.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/buffer/output.gpkg
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/buffer/gui_buffer.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_buffer_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_buffer_geographic_failure_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_input.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/buffer_geographic_failure/output.gpkg
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/buffer_geographic_failure/gui_buffer_failure.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_buffer_failure_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_dissolve_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_dissolve_input.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/dissolve/output.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/dissolve/gui_dissolve.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_dissolve_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_union_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DACTION=union
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_overlay_input.geojson
+            -DOVERLAY_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_overlay_mask.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/union/output.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/union/gui_union.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_overlay_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_difference_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DACTION=difference
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_overlay_input.geojson
+            -DOVERLAY_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_overlay_mask.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/difference/output.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/difference/gui_difference.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_overlay_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_filter_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_input.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_filter/output.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_filter/gui_vector_filter.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_filter_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_clip_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_overlay_input.geojson
+            -DCLIP_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_overlay_mask.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_clip/output.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_clip/gui_vector_clip.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_clip_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_rasterize_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_overlay_input.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_rasterize/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_rasterize/gui_vector_rasterize.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_rasterize_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_polygonize_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_polygonize/output.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_polygonize/gui_vector_polygonize.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_polygonize_regression.cmake
+    )
+
+    add_test(
+        NAME gui_vector_info_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_input.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_info/gui_vector_info.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_info_regression.cmake
+    )
+
+    add_test(
+        NAME gui_projection_reproject_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_input.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/projection_reproject/output.gpkg
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/projection_reproject/gui_projection_reproject.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_projection_reproject_regression.cmake
+    )
+
+    add_test(
+        NAME gui_projection_info_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/projection_info/gui_projection_info.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_projection_info_regression.cmake
+    )
+
+    add_test(
+        NAME gui_projection_transform_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/projection_transform/gui_projection_transform.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_projection_transform_regression.cmake
+    )
+
+    add_test(
+        NAME gui_projection_assign_srs_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/projection_assign_srs/gui_projection_assign_srs.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_projection_assign_srs_regression.cmake
+    )
+
+    add_test(
+        NAME gui_utility_histogram_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_histogram/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_histogram/gui_utility_histogram.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_histogram_regression.cmake
+    )
+
+    add_test(
+        NAME gui_utility_histogram_invalid_band_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_histogram_invalid_band/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_histogram_invalid_band/gui_utility_histogram_invalid_band.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_histogram_invalid_band_regression.cmake
+    )
+
+    add_test(
+        NAME gui_utility_colormap_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_colormap/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_colormap/gui_utility_colormap.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_colormap_regression.cmake
+    )
+
+    add_test(
+        NAME gui_utility_ndvi_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_ndvi/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_ndvi/gui_utility_ndvi.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_ndvi_regression.cmake
+    )
+
+    add_test(
+        NAME gui_utility_nodata_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_nodata/gui_utility_nodata.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_nodata_regression.cmake
+    )
+
+    add_test(
+        NAME gui_utility_overviews_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_overviews/gui_utility_overviews.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_overviews_regression.cmake
+    )
+
+    add_test(
+        NAME gui_utility_info_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_info/gui_utility_info.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_info_regression.cmake
+    )
+
+    add_test(
+        NAME gui_classification_feature_stats_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/classification_feature_stats/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/classification_feature_stats/gui_classification_feature_stats.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_classification_feature_stats_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_threshold_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_threshold/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_threshold/gui_processing_threshold.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_threshold_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_threshold_invalid_band_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_threshold_invalid_band/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_threshold_invalid_band/gui_processing_threshold_invalid_band.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_threshold_invalid_band_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_filter_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_filter/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_filter/gui_processing_filter.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_filter_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_filter_invalid_band_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_filter_invalid_band/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_filter_invalid_band/gui_processing_filter_invalid_band.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_filter_invalid_band_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_enhance_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_enhance/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_enhance/gui_processing_enhance.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_enhance_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_edge_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_edge/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_edge/gui_processing_edge.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_edge_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_contour_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_contour/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_contour/gui_processing_contour.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_contour_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_stats_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_stats/gui_processing_stats.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_stats_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_band_math_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_band_math/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_band_math/gui_processing_band_math.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_band_math_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_hough_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_hough/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_hough/gui_processing_hough.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_hough_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_watershed_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_watershed/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_watershed/gui_processing_watershed.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_watershed_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_kmeans_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_kmeans/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_kmeans/gui_processing_kmeans.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_kmeans_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_template_match_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_template_match/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_template_match/gui_processing_template_match.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_template_match_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_pansharpen_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_pansharpen/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_pansharpen/gui_processing_pansharpen.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_pansharpen_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_corner_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_corner/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_corner/gui_matching_corner.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_corner_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_corner_invalid_band_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_corner_invalid_band/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_corner_invalid_band/gui_matching_corner_invalid_band.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_corner_invalid_band_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_detect_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_detect/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_detect/gui_matching_detect.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_detect_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_detect_invalid_band_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_detect_invalid_band/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_detect_invalid_band/gui_matching_detect_invalid_band.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_detect_invalid_band_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_match_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_match/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_match/gui_matching_match.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_match_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_change_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_change/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_change/gui_matching_change.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_change_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_register_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_register/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_register/gui_matching_register.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_register_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_ecc_register_debug_failure_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_ecc_register_debug_failure/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_ecc_register_debug_failure/gui_matching_ecc_register_debug_failure.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_ecc_register_debug_failure_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_stitch_debug_failure_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_stitch_debug_failure/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_stitch_debug_failure/gui_matching_stitch_debug_failure.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_stitch_debug_failure_regression.cmake
+    )
+
+    add_test(
+        NAME gui_cutting_clip_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_clip/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_clip/gui_cutting_clip.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_cutting_clip_regression.cmake
+    )
+
+    add_test(
+        NAME gui_cutting_mosaic_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_mosaic/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_mosaic/gui_cutting_mosaic.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_cutting_mosaic_regression.cmake
+    )
+
+    add_test(
+        NAME gui_cutting_split_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_split/output_tiles
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_split/gui_cutting_split.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_cutting_split_regression.cmake
+    )
+
+    add_test(
+        NAME gui_cutting_merge_bands_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_merge_bands/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_merge_bands/gui_cutting_merge_bands.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_cutting_merge_bands_regression.cmake
     )
 endif()
 

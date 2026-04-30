@@ -13,13 +13,14 @@
 - `Visual Studio 2022 + C++17 + 全局 vcpkg` 可稳定配置与编译
 - `GIS_BUILD_GUI=OFF/ON` 两种模式均可构建
 - 标准构建目录为 `build`，标准安装目录为 `install`
-- `ctest --test-dir build -C Release --output-on-failure` 为 `136/136` 通过
+- `ctest --test-dir build -C Debug --output-on-failure` 为 `201/201` 通过
 - `gis-cli.exe --list` 可正常列出全部主插件
 - `gis-gui.exe -platform offscreen --self-test` 可正常启动并退出
-- GUI 已验证离屏自动执行链路，可完成 `vector -> convert` 并输出结果
+- GUI 已验证较完整的离屏自动执行链路，覆盖 `vector / projection / utility / classification / processing / matching / cutting` 主功能动作
 - 矢量回归 `quick / full` 可运行；存在本地 `data/vector` 时优先使用本地数据，否则自动生成可复现样例数据
 - Windows 下 `gis-cli.exe` 已验证可直接处理中文路径输入
 - `vector filter` 已用真实 GeoJSON 数据验证中文属性条件可正常过滤
+- 当前收口状态与边界说明见 [GUI_CLI_底层对齐验证清单](D:\Code\MyProject\GIS_TOOL\docs\GUI_CLI_底层对齐验证清单.md)
 
 需要特别说明：
 
@@ -99,14 +100,17 @@ ctest --test-dir build -C Debug --output-on-failure
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
 cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
-cmake --install build --config Debug
+cmake --build build --config Release
+cmake --install build --config Release
 ```
 
 建议：
 
 - 使用 `build` 作为标准构建与验证目录
 - 使用 `install` 作为标准安装目录
-- 发布前至少完整执行一次 `build + test + install`
+- 建议开发验证使用 `Debug`
+- 默认安装与交付使用 `Release`
+- 发布前至少完整执行一次 `Debug build + Debug test + Release install`
 
 ## 使用
 

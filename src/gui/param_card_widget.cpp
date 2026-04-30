@@ -528,11 +528,24 @@ QWidget* ParamCardWidget::createIntWidget(const gis::framework::ParamSpec& spec,
                                            ParamWidgetEntry& entry) {
     auto* spinBox = new QSpinBox;
     spinBox->setRange(-2147483647, 2147483647);
-    if (auto* minInt = std::get_if<int>(&spec.minValue)) {
-        spinBox->setMinimum(*minInt);
-    }
-    if (auto* maxInt = std::get_if<int>(&spec.maxValue)) {
-        spinBox->setMaximum(*maxInt);
+
+    const auto* minInt = std::get_if<int>(&spec.minValue);
+    const auto* maxInt = std::get_if<int>(&spec.maxValue);
+    if (minInt && maxInt) {
+        if (*maxInt > *minInt) {
+            spinBox->setRange(*minInt, *maxInt);
+        } else if (*minInt != 0) {
+            spinBox->setMinimum(*minInt);
+        } else if (*maxInt != 0) {
+            spinBox->setMaximum(*maxInt);
+        }
+    } else {
+        if (minInt && *minInt != 0) {
+            spinBox->setMinimum(*minInt);
+        }
+        if (maxInt && *maxInt != 0) {
+            spinBox->setMaximum(*maxInt);
+        }
     }
     if (auto* defInt = std::get_if<int>(&spec.defaultValue)) {
         spinBox->setValue(*defInt);

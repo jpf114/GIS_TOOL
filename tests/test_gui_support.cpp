@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "../src/gui/gui_data_support.h"
@@ -190,6 +191,39 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/roads_vector_convert.geojson");
 }
 
+TEST(GuiSupportTest, ComputeDerivedOutputUpdateAppliesSuggestedValueForEmptyOutput) {
+    const auto update = gis::gui::computeDerivedOutputUpdate(
+        "", "", "D:/data/roads.shp", "vector", "buffer");
+    EXPECT_TRUE(update.shouldApply);
+    EXPECT_EQ(update.value, "D:/data/roads_vector_buffer.gpkg");
+    EXPECT_EQ(update.autoValue, "D:/data/roads_vector_buffer.gpkg");
+}
+
+TEST(GuiSupportTest, ComputeDerivedOutputUpdateRespectsManualOutputOverride) {
+    const auto update = gis::gui::computeDerivedOutputUpdate(
+        "D:/manual/custom.geojson",
+        "D:/data/roads_vector_buffer.gpkg",
+        "D:/data/roads.shp",
+        "vector",
+        "buffer");
+    EXPECT_FALSE(update.shouldApply);
+    EXPECT_EQ(update.value, "D:/data/roads_vector_buffer.gpkg");
+    EXPECT_EQ(update.autoValue, "D:/data/roads_vector_buffer.gpkg");
+}
+
+TEST(GuiSupportTest, ComputeDerivedOutputUpdateAdjustsVectorConvertSuffixFromFormat) {
+    const auto update = gis::gui::computeDerivedOutputUpdate(
+        "",
+        "",
+        "D:/data/roads.shp",
+        "vector",
+        "convert",
+        "output",
+        "CSV");
+    EXPECT_TRUE(update.shouldApply);
+    EXPECT_EQ(update.value, "D:/data/roads_vector_convert.csv");
+}
+
 TEST(GuiSupportTest, BuildFileParamUiConfigProvidesSpecializedHints) {
     const auto classMapConfig = gis::gui::buildFileParamUiConfig(
         "classification", "feature_stats", "class_map", gis::framework::ParamType::FilePath);
@@ -362,6 +396,29 @@ TEST(GuiSupportTest, InspectRasterAutoFillInfoUsesFirstPathFromMultiInputString)
     EXPECT_TRUE(info.extent == (std::array<double, 4>{10.0, 16.0, 16.0, 20.0}));
 }
 
+TEST(GuiSupportTest, ShouldAutoFillLayerValueAppliesForEmptyOrPreviousAutoValue) {
+    EXPECT_TRUE(gis::gui::shouldAutoFillLayerValue("", "", "roads"));
+    EXPECT_TRUE(gis::gui::shouldAutoFillLayerValue("roads_old", "roads_old", "roads_new"));
+    EXPECT_FALSE(gis::gui::shouldAutoFillLayerValue("manual_layer", "roads_old", "roads_new"));
+}
+
+TEST(GuiSupportTest, ShouldAutoFillExtentValueAppliesForUnsetZeroOrPreviousAutoValue) {
+    EXPECT_TRUE(gis::gui::shouldAutoFillExtentValue(std::nullopt, std::nullopt, true));
+    EXPECT_TRUE(gis::gui::shouldAutoFillExtentValue(
+        std::array<double, 4>{0.0, 0.0, 0.0, 0.0},
+        std::nullopt,
+        true));
+    EXPECT_TRUE(gis::gui::shouldAutoFillExtentValue(
+        std::array<double, 4>{1.0, 2.0, 3.0, 4.0},
+        std::array<double, 4>{1.0, 2.0, 3.0, 4.0},
+        true));
+    EXPECT_FALSE(gis::gui::shouldAutoFillExtentValue(
+        std::array<double, 4>{9.0, 9.0, 9.0, 9.0},
+        std::array<double, 4>{1.0, 2.0, 3.0, 4.0},
+        true));
+    EXPECT_FALSE(gis::gui::shouldAutoFillExtentValue(std::nullopt, std::nullopt, false));
+}
+
 TEST(GuiSupportTest, BuildResultSummaryTextUsesChineseLabels) {
     gis::framework::Result result;
     result.success = true;
@@ -427,6 +484,58 @@ TEST(GuiSupportTest, ValidateExecutionParamsAcceptsValidValues) {
     EXPECT_TRUE(gis::gui::validateExecutionParams(specs, params).empty());
 }
 
+TEST(GuiSupportTest, ValidateActionSpecificParamsRequiresCutlineOrExtentForClip) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["cutline"] = std::string();
+    params["extent"] = std::array<double, 4>{0.0, 0.0, 0.0, 0.0};
+
+    const auto issue = gis::gui::validateActionSpecificParams("cutting", "clip", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "extent");
+    EXPECT_EQ(issue->message, "参数“裁切范围”或“裁切矢量”至少填写一个");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsMismatchedVectorConvertOutputExtension) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["output"] = std::string("D:/data/result.shp");
+    params["format"] = std::string("GeoJSON");
+
+    const auto issue = gis::gui::validateActionSpecificParams("vector", "convert", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "output");
+    EXPECT_EQ(issue->message, "参数“输出文件”应与“输出格式”一致：GeoJSON 应使用 .geojson 或 .json");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsMismatchedFeatureStatsBandsCount) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["rasters"] = std::string("D:/a.tif,D:/b.tif");
+    params["bands"] = std::string("1");
+
+    const auto issue = gis::gui::validateActionSpecificParams("classification", "feature_stats", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "bands");
+    EXPECT_EQ(issue->message, "参数“波段列表”数量必须与“分类栅格列表”一致");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsEvenKernelSizeForProcessingFilter) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["kernel_size"] = 4;
+
+    const auto issue = gis::gui::validateActionSpecificParams("processing", "filter", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "kernel_size");
+    EXPECT_EQ(issue->message, "参数“核大小”建议填写奇数，例如 3、5、7");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsAcceptsValidVectorConvertCombination) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["output"] = std::string("D:/data/result.geojson");
+    params["format"] = std::string("GeoJSON");
+
+    const auto issue = gis::gui::validateActionSpecificParams("vector", "convert", params);
+    EXPECT_FALSE(issue.has_value());
+}
+
 TEST(GuiSupportTest, FindFirstInvalidParamKeyReturnsMissingRequiredField) {
     std::vector<gis::framework::ParamSpec> specs;
     specs.push_back(gis::framework::ParamSpec{
@@ -475,6 +584,172 @@ TEST(GuiSupportTest, CollectBindableParamOptionsKeepsGenericFileParams) {
     ASSERT_EQ(rasterOptions.size(), 2);
     EXPECT_EQ(rasterOptions[0].key, "template_file");
     EXPECT_EQ(rasterOptions[1].key, "pan_file");
+}
+
+TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsFiltersVisibleAndRequiredKeys) {
+    std::vector<gis::framework::ParamSpec> specs = {
+        {"input", "输入", "", gis::framework::ParamType::FilePath, true},
+        {"output", "输出", "", gis::framework::ParamType::FilePath, true},
+        {"method", "方法", "", gis::framework::ParamType::Enum, false},
+        {"hidden", "隐藏", "", gis::framework::ParamType::String, true}
+    };
+
+    const auto filtered = gis::gui::buildEffectiveGuiParamSpecs(
+        "processing",
+        "threshold",
+        specs,
+        {"input", "output", "method"},
+        {"input", "output"});
+
+    ASSERT_EQ(filtered.size(), 3u);
+    EXPECT_EQ(filtered[0].key, "input");
+    EXPECT_TRUE(filtered[0].required);
+    EXPECT_EQ(filtered[1].key, "output");
+    EXPECT_TRUE(filtered[1].required);
+    EXPECT_EQ(filtered[2].key, "method");
+    EXPECT_FALSE(filtered[2].required);
+    EXPECT_EQ(std::get<std::string>(filtered[2].defaultValue), "otsu");
+}
+
+TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesProjectionTransformDefaultSrs) {
+    std::vector<gis::framework::ParamSpec> specs = {
+        {"src_srs", "源坐标系", "", gis::framework::ParamType::CRS, false},
+        {"dst_srs", "目标坐标系", "", gis::framework::ParamType::CRS, true}
+    };
+
+    const auto filtered = gis::gui::buildEffectiveGuiParamSpecs(
+        "projection",
+        "transform",
+        specs,
+        {"src_srs", "dst_srs"},
+        {"dst_srs"});
+
+    ASSERT_EQ(filtered.size(), 2u);
+    EXPECT_EQ(std::get<std::string>(filtered[0].defaultValue), "EPSG:4326");
+    EXPECT_FALSE(filtered[0].required);
+    EXPECT_TRUE(filtered[1].required);
+}
+
+TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesMatchingRanges) {
+    std::vector<gis::framework::ParamSpec> specs = {
+        {"ratio_test", "比率阈值", "", gis::framework::ParamType::Double, false},
+        {"quality_level", "质量阈值", "", gis::framework::ParamType::Double, false},
+        {"min_distance", "最小间距", "", gis::framework::ParamType::Double, false},
+        {"stitch_confidence", "拼接置信度", "", gis::framework::ParamType::Double, false}
+    };
+
+    const auto filtered = gis::gui::buildEffectiveGuiParamSpecs(
+        "matching",
+        "corner",
+        specs,
+        {"ratio_test", "quality_level", "min_distance", "stitch_confidence"},
+        {});
+
+    ASSERT_EQ(filtered.size(), 4u);
+    EXPECT_DOUBLE_EQ(std::get<double>(filtered[0].minValue), 0.000001);
+    EXPECT_DOUBLE_EQ(std::get<double>(filtered[0].maxValue), 1.0);
+    EXPECT_DOUBLE_EQ(std::get<double>(filtered[1].minValue), 0.000001);
+    EXPECT_DOUBLE_EQ(std::get<double>(filtered[1].maxValue), 1.0);
+    EXPECT_DOUBLE_EQ(std::get<double>(filtered[2].minValue), 0.0);
+    EXPECT_DOUBLE_EQ(std::get<double>(filtered[3].minValue), 0.0);
+    EXPECT_DOUBLE_EQ(std::get<double>(filtered[3].maxValue), 1.0);
+}
+
+TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBounds) {
+    std::vector<gis::framework::ParamSpec> utilitySpecs = {
+        {"band", "波段", "", gis::framework::ParamType::Int, false},
+        {"bins", "分箱数", "", gis::framework::ParamType::Int, false},
+        {"red_band", "红光波段", "", gis::framework::ParamType::Int, false},
+        {"nir_band", "近红外波段", "", gis::framework::ParamType::Int, false}
+    };
+    const auto utilityFiltered = gis::gui::buildEffectiveGuiParamSpecs(
+        "utility",
+        "nodata",
+        utilitySpecs,
+        {"band", "bins", "red_band", "nir_band"},
+        {});
+
+    ASSERT_EQ(utilityFiltered.size(), 4u);
+    EXPECT_EQ(std::get<int>(utilityFiltered[0].defaultValue), 0);
+    EXPECT_EQ(std::get<int>(utilityFiltered[0].minValue), 0);
+    EXPECT_EQ(std::get<int>(utilityFiltered[1].minValue), 1);
+    EXPECT_EQ(std::get<int>(utilityFiltered[2].minValue), 1);
+    EXPECT_EQ(std::get<int>(utilityFiltered[3].minValue), 1);
+
+    std::vector<gis::framework::ParamSpec> processingSpecs = {
+        {"gamma", "Gamma", "", gis::framework::ParamType::Double, false},
+        {"k", "聚类数", "", gis::framework::ParamType::Int, false},
+        {"clip_limit", "CLAHE", "", gis::framework::ParamType::Double, false},
+        {"kernel_size", "核大小", "", gis::framework::ParamType::Int, false}
+    };
+    const auto processingFiltered = gis::gui::buildEffectiveGuiParamSpecs(
+        "processing",
+        "enhance",
+        processingSpecs,
+        {"gamma", "k", "clip_limit", "kernel_size"},
+        {});
+
+    ASSERT_EQ(processingFiltered.size(), 4u);
+    EXPECT_DOUBLE_EQ(std::get<double>(processingFiltered[0].minValue), 0.000001);
+    EXPECT_EQ(std::get<int>(processingFiltered[1].minValue), 1);
+    EXPECT_DOUBLE_EQ(std::get<double>(processingFiltered[2].minValue), 0.0);
+    EXPECT_EQ(std::get<int>(processingFiltered[3].minValue), 3);
+}
+
+TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
+    const auto noSelection = gis::gui::buildExecuteButtonState(false, "");
+    EXPECT_FALSE(noSelection.enabled);
+    EXPECT_EQ(noSelection.tooltip, "请先选择主功能和子功能");
+    EXPECT_EQ(noSelection.statusText, "就绪");
+    EXPECT_EQ(noSelection.statusObjectName, "statusBadgeReady");
+
+    const auto invalid = gis::gui::buildExecuteButtonState(true, "参数“输入文件”不能为空");
+    EXPECT_FALSE(invalid.enabled);
+    EXPECT_EQ(invalid.tooltip, "参数“输入文件”不能为空");
+    EXPECT_EQ(invalid.statusText, "待补充");
+    EXPECT_EQ(invalid.statusObjectName, "statusBadgeWarning");
+
+    const auto ready = gis::gui::buildExecuteButtonState(true, "");
+    EXPECT_TRUE(ready.enabled);
+    EXPECT_EQ(ready.tooltip, "参数已就绪，可以执行当前功能");
+    EXPECT_EQ(ready.statusText, "可执行");
+    EXPECT_EQ(ready.statusObjectName, "statusBadgeReady");
+}
+
+TEST(GuiSupportTest, ResolveHighlightedParamKeyPrefersFrameworkValidationThenActionIssue) {
+    std::vector<gis::framework::ParamSpec> specs = {
+        {"input", "输入文件", "", gis::framework::ParamType::FilePath, true},
+        {"output", "输出文件", "", gis::framework::ParamType::FilePath, true}
+    };
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string();
+    params["output"] = std::string("D:/data/out.tif");
+
+    EXPECT_EQ(
+        gis::gui::resolveHighlightedParamKey(
+            true,
+            specs,
+            params,
+            std::optional<gis::gui::ActionValidationIssue>{
+                gis::gui::ActionValidationIssue{"output", "动作级问题"}
+            }),
+        "input");
+
+    params["input"] = std::string("D:/data/in.tif");
+    EXPECT_EQ(
+        gis::gui::resolveHighlightedParamKey(
+            true,
+            specs,
+            params,
+            std::optional<gis::gui::ActionValidationIssue>{
+                gis::gui::ActionValidationIssue{"output", "动作级问题"}
+            }),
+        "output");
+
+    EXPECT_TRUE(
+        gis::gui::resolveHighlightedParamKey(true, specs, params, std::nullopt).empty());
+    EXPECT_TRUE(
+        gis::gui::resolveHighlightedParamKey(false, specs, params, std::nullopt).empty());
 }
 
 

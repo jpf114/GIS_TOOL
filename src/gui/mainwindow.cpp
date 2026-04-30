@@ -49,11 +49,6 @@ struct ParamText {
     QString description;
 };
 
-struct ValidationIssue {
-    std::string key;
-    std::string message;
-};
-
 QString genericActionDisplayName(const QString& actionKey) {
     static const std::map<QString, QString> kLabels = {
         {QStringLiteral("reproject"), QStringLiteral("\351\207\215\346\212\225\345\275\261")},
@@ -674,239 +669,11 @@ std::optional<int> intParamValue(
     return std::nullopt;
 }
 
-std::optional<ValidationIssue> actionSpecificValidationIssue(
+std::optional<gis::gui::ActionValidationIssue> actionSpecificValidationIssue(
     const std::string& pluginName,
     const std::string& actionKey,
     const std::map<std::string, gis::framework::ParamValue>& params) {
-    auto stringParam = [&](const std::string& key) {
-        auto it = params.find(key);
-        if (it == params.end()) {
-            return std::string{};
-        }
-        if (const auto* value = std::get_if<std::string>(&it->second)) {
-            return *value;
-        }
-        return std::string{};
-    };
-
-    if (pluginName == "cutting" && actionKey == "clip") {
-        const auto extent = extentParamValue(params, "extent");
-        if ((!extent.has_value() || isZeroExtent(*extent)) && stringParam("cutline").empty()) {
-            return ValidationIssue{"extent", "参数“裁切范围”或“裁切矢量”至少填写一个"};
-        }
-    }
-
-    if (pluginName == "cutting" && actionKey == "merge_bands") {
-        if (stringParam("input").empty() && stringParam("bands").empty()) {
-            return ValidationIssue{"input", "参数“输入文件”或“波段列表”至少填写一个"};
-        }
-    }
-
-    if (pluginName == "cutting" && actionKey == "mosaic") {
-        if (splitCommaList(stringParam("input")).size() < 2) {
-            return ValidationIssue{"input", "参数“输入文件”至少需要 2 个影像路径"};
-        }
-    }
-
-    if (pluginName == "cutting" && actionKey == "split") {
-        const std::string outputPath = stringParam("output");
-        if (endsWithOneOf(outputPath, {".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"})) {
-            return ValidationIssue{"output", "参数“输出目录”应填写目录，不应填写单个栅格文件名"};
-        }
-    }
-
-    if (pluginName == "vector" && actionKey == "filter") {
-        const auto extent = extentParamValue(params, "extent");
-        if (stringParam("where").empty() && (!extent.has_value() || isZeroExtent(*extent))) {
-            return ValidationIssue{"where", "参数“属性过滤”或“空间范围”至少填写一个"};
-        }
-    }
-
-    if (pluginName == "matching" && actionKey == "stitch") {
-        if (splitCommaList(stringParam("input")).size() < 2) {
-            return ValidationIssue{"input", "参数“输入文件”至少需要 2 个影像路径"};
-        }
-    }
-
-    if (pluginName == "projection" && actionKey == "reproject") {
-        const std::string inputPath = stringParam("input");
-        const std::string outputPath = stringParam("output");
-        const bool inputLooksVector = endsWithOneOf(inputPath, {".shp", ".gpkg", ".geojson", ".json", ".kml", ".csv"});
-        const bool outputLooksVector = endsWithOneOf(outputPath, {".shp", ".gpkg", ".geojson", ".json", ".kml", ".csv"});
-        const bool outputLooksRaster = endsWithOneOf(outputPath, {".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"});
-
-        if (inputLooksVector && !outputLooksVector) {
-            return ValidationIssue{"output", "矢量重投影输出应使用 .gpkg、.geojson、.shp、.kml 或 .csv"};
-        }
-        if (!inputLooksVector && !outputLooksRaster) {
-            return ValidationIssue{"output", "栅格重投影输出应使用 .tif、.tiff、.img 或 .vrt"};
-        }
-    }
-
-    if (pluginName == "utility" && actionKey == "overviews") {
-        const std::string levelsText = stringParam("levels");
-        std::istringstream iss(levelsText);
-        int level = 0;
-        bool hasValidLevel = false;
-        while (iss >> level) {
-            if (level > 1) {
-                hasValidLevel = true;
-                break;
-            }
-        }
-        if (!hasValidLevel) {
-            return ValidationIssue{"levels", "参数“金字塔层级”至少应包含一个大于 1 的整数，例如 2 4 8 16"};
-        }
-    }
-
-    if (pluginName == "utility" && actionKey == "histogram") {
-        const auto bins = intParamValue(params, "bins");
-        if (bins.has_value() && *bins <= 0) {
-            return ValidationIssue{"bins", "参数“分箱数”必须大于 0"};
-        }
-    }
-
-    if (pluginName == "utility" && actionKey == "ndvi") {
-        const auto redBand = intParamValue(params, "red_band");
-        const auto nirBand = intParamValue(params, "nir_band");
-        if (redBand.has_value() && *redBand <= 0) {
-            return ValidationIssue{"red_band", "参数“红光波段”必须大于 0"};
-        }
-        if (nirBand.has_value() && *nirBand <= 0) {
-            return ValidationIssue{"nir_band", "参数“近红外波段”必须大于 0"};
-        }
-    }
-
-    if (pluginName == "classification" && actionKey == "feature_stats") {
-        const std::string rastersText = stringParam("rasters");
-        const std::string bandsText = stringParam("bands");
-        const std::string nodatasText = stringParam("nodatas");
-        const std::string outputPath = stringParam("output");
-        const std::string classMapPath = stringParam("class_map");
-
-        const auto rasterItems = splitCommaList(rastersText);
-        if (rasterItems.empty()) {
-            return ValidationIssue{"rasters", "参数“分类栅格列表”至少填写一个栅格路径"};
-        }
-        if (!bandsText.empty() && splitCommaList(bandsText).size() != rasterItems.size()) {
-            return ValidationIssue{"bands", "参数“波段列表”数量必须与“分类栅格列表”一致"};
-        }
-        if (!nodatasText.empty() && splitCommaList(nodatasText).size() != rasterItems.size()) {
-            return ValidationIssue{"nodatas", "参数“NoData 列表”数量必须与“分类栅格列表”一致"};
-        }
-        if (!classMapPath.empty() && !endsWithOneOf(classMapPath, {".json"})) {
-            return ValidationIssue{"class_map", "参数“分类映射”应选择 .json 文件"};
-        }
-        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".json", ".csv"})) {
-            return ValidationIssue{"output", "参数“统计输出”目前只支持 .json 或 .csv"};
-        }
-        const std::string vectorOutputPath = stringParam("vector_output");
-        if (!vectorOutputPath.empty() && !endsWithOneOf(vectorOutputPath, {".gpkg"})) {
-            return ValidationIssue{"vector_output", "参数“分类面输出”当前实际仅支持 .gpkg"};
-        }
-        const std::string rasterOutputPath = stringParam("raster_output");
-        if (!rasterOutputPath.empty() && !endsWithOneOf(rasterOutputPath, {".tif", ".tiff"})) {
-            return ValidationIssue{"raster_output", "参数“分类栅格输出”当前实际仅支持 .tif 或 .tiff"};
-        }
-    }
-
-    if (pluginName == "vector" && actionKey == "convert") {
-        const std::string outputPath = stringParam("output");
-        const std::string formatValue = stringParam("format");
-        if (!outputPath.empty() && !formatValue.empty()) {
-            if (formatValue == "GeoJSON" && !endsWithOneOf(outputPath, {".geojson", ".json"})) {
-                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：GeoJSON 应使用 .geojson 或 .json"};
-            }
-            if (formatValue == "ESRI Shapefile" && !endsWithOneOf(outputPath, {".shp"})) {
-                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：Shapefile 应使用 .shp"};
-            }
-            if (formatValue == "GPKG" && !endsWithOneOf(outputPath, {".gpkg"})) {
-                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：GPKG 应使用 .gpkg"};
-            }
-            if (formatValue == "KML" && !endsWithOneOf(outputPath, {".kml"})) {
-                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：KML 应使用 .kml"};
-            }
-            if (formatValue == "CSV" && !endsWithOneOf(outputPath, {".csv"})) {
-                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：CSV 应使用 .csv"};
-            }
-        }
-    }
-
-    if (pluginName == "vector" && actionKey == "polygonize") {
-        const std::string outputPath = stringParam("output");
-        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp"})) {
-            return ValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg 或 .shp"};
-        }
-    }
-
-    if (pluginName == "vector" &&
-        (actionKey == "filter" || actionKey == "buffer" || actionKey == "clip")) {
-        const std::string outputPath = stringParam("output");
-        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp", ".kml"})) {
-            return ValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg、.shp 或 .kml"};
-        }
-    }
-
-    if (pluginName == "vector" &&
-        (actionKey == "union" || actionKey == "difference" || actionKey == "dissolve")) {
-        const std::string outputPath = stringParam("output");
-        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp"})) {
-            return ValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg 或 .shp"};
-        }
-    }
-
-    if (pluginName == "vector" && actionKey == "rasterize") {
-        const auto resolution = doubleParamValue(params, "resolution");
-        if (resolution.has_value() && *resolution <= 0.0) {
-            return ValidationIssue{"resolution", "参数“分辨率”必须大于 0"};
-        }
-    }
-
-    if (pluginName == "matching") {
-        if (const auto ratio = doubleParamValue(params, "ratio_test");
-            ratio.has_value() && (*ratio <= 0.0 || *ratio > 1.0)) {
-            return ValidationIssue{"ratio_test", "参数“比率阈值”应落在 (0, 1] 范围内"};
-        }
-        if (const auto quality = doubleParamValue(params, "quality_level");
-            quality.has_value() && (*quality <= 0.0 || *quality > 1.0)) {
-            return ValidationIssue{"quality_level", "参数“质量阈值”应落在 (0, 1] 范围内"};
-        }
-        if (const auto minDistance = doubleParamValue(params, "min_distance");
-            minDistance.has_value() && *minDistance < 0.0) {
-            return ValidationIssue{"min_distance", "参数“最小间距”不能小于 0"};
-        }
-    }
-
-    if (pluginName == "processing") {
-        if (actionKey == "filter") {
-            const auto kernelSize = intParamValue(params, "kernel_size");
-            if (kernelSize.has_value()) {
-                if (*kernelSize < 3) {
-                    return ValidationIssue{"kernel_size", "参数“核大小”必须大于等于 3"};
-                }
-                if ((*kernelSize % 2) == 0) {
-                    return ValidationIssue{"kernel_size", "参数“核大小”建议填写奇数，例如 3、5、7"};
-                }
-            }
-        }
-        if (actionKey == "enhance") {
-            const std::string enhanceType = stringParam("enhance_type");
-            if (enhanceType == "gamma") {
-                const auto gamma = doubleParamValue(params, "gamma");
-                if (gamma.has_value() && *gamma <= 0.0) {
-                    return ValidationIssue{"gamma", "参数“Gamma”必须大于 0"};
-                }
-            }
-        }
-        if (actionKey == "kmeans") {
-            const auto k = intParamValue(params, "k");
-            if (k.has_value() && *k <= 0) {
-                return ValidationIssue{"k", "参数“聚类数”必须大于 0"};
-            }
-        }
-    }
-
-    return std::nullopt;
+    return gis::gui::validateActionSpecificParams(pluginName, actionKey, params);
 }
 
 }
@@ -1200,70 +967,22 @@ std::vector<gis::framework::ParamSpec> MainWindow::effectiveParamSpecs() const {
         currentPlugin_->name(), currentActionKey_.toStdString());
     auto visibleKeys = visibleParamsForAction(
         currentPlugin_->name(), currentActionKey_.toStdString());
-
-    std::vector<gis::framework::ParamSpec> filtered;
-    for (const auto& spec : currentPlugin_->paramSpecs()) {
-        if (spec.key == "action") continue;
-        if (visibleKeys.empty() || visibleKeys.count(spec.key)) {
-            auto adjustedSpec = spec;
-            if (config) {
-                adjustedSpec.required = config->requiredKeys.count(spec.key) > 0;
-            }
-            if (currentPlugin_->name() == "processing" &&
-                currentActionKey_ == QStringLiteral("threshold") &&
-                spec.key == "method") {
-                adjustedSpec.defaultValue = std::string("otsu");
-            }
-            if (currentPlugin_->name() == "matching") {
-                if (spec.key == "ratio_test" || spec.key == "quality_level") {
-                    adjustedSpec.minValue = 0.000001;
-                    adjustedSpec.maxValue = 1.0;
-                } else if (spec.key == "min_distance") {
-                    adjustedSpec.minValue = 0.0;
-                } else if (spec.key == "stitch_confidence") {
-                    adjustedSpec.minValue = 0.0;
-                    adjustedSpec.maxValue = 1.0;
-                }
-            }
-            if (currentPlugin_->name() == "utility") {
-                if (currentActionKey_ == QStringLiteral("nodata") && spec.key == "band") {
-                    adjustedSpec.defaultValue = int{0};
-                    adjustedSpec.minValue = 0;
-                } else if (spec.key == "bins") {
-                    adjustedSpec.minValue = 1;
-                } else if (spec.key == "red_band" || spec.key == "nir_band") {
-                    adjustedSpec.minValue = 1;
-                }
-            }
-            if (currentPlugin_->name() == "vector" && spec.key == "resolution") {
-                adjustedSpec.minValue = 0.000001;
-            }
-            if (currentPlugin_->name() == "processing") {
-                if (spec.key == "gamma") {
-                    adjustedSpec.minValue = 0.000001;
-                } else if (spec.key == "k") {
-                    adjustedSpec.minValue = 1;
-                } else if (spec.key == "clip_limit") {
-                    adjustedSpec.minValue = 0.0;
-                } else if (spec.key == "kernel_size") {
-                    adjustedSpec.minValue = 3;
-                }
-            }
-            if (currentPlugin_->name() == "projection" &&
-                currentActionKey_ == QStringLiteral("transform") &&
-                spec.key == "src_srs") {
-                adjustedSpec.defaultValue = std::string("EPSG:4326");
-            }
-            if (const auto it = commonParamTextStorage().find(spec.key); it != commonParamTextStorage().end()) {
-                adjustedSpec.displayName = it->second.displayName.toUtf8().toStdString();
-                adjustedSpec.description = it->second.description.toUtf8().toStdString();
-            }
-            if (const auto* actionText = findActionSpecificParamText(
-                    currentPlugin_->name(), currentActionKey_.toStdString(), spec.key)) {
-                adjustedSpec.displayName = actionText->displayName.toUtf8().toStdString();
-                adjustedSpec.description = actionText->description.toUtf8().toStdString();
-            }
-            filtered.push_back(std::move(adjustedSpec));
+    const std::set<std::string> requiredKeys = config ? config->requiredKeys : std::set<std::string>{};
+    auto filtered = gis::gui::buildEffectiveGuiParamSpecs(
+        currentPlugin_->name(),
+        currentActionKey_.toStdString(),
+        currentPlugin_->paramSpecs(),
+        visibleKeys,
+        requiredKeys);
+    for (auto& adjustedSpec : filtered) {
+        if (const auto it = commonParamTextStorage().find(adjustedSpec.key); it != commonParamTextStorage().end()) {
+            adjustedSpec.displayName = it->second.displayName.toUtf8().toStdString();
+            adjustedSpec.description = it->second.description.toUtf8().toStdString();
+        }
+        if (const auto* actionText = findActionSpecificParamText(
+                currentPlugin_->name(), currentActionKey_.toStdString(), adjustedSpec.key)) {
+            adjustedSpec.displayName = actionText->displayName.toUtf8().toStdString();
+            adjustedSpec.description = actionText->description.toUtf8().toStdString();
         }
     }
     return filtered;
@@ -1292,6 +1011,22 @@ bool MainWindow::setParamValue(const std::string& key, const std::string& value)
 
 void MainWindow::triggerExecute() {
     onExecute();
+}
+
+bool MainWindow::lastExecutionSuccess() const {
+    return lastExecutionSuccess_;
+}
+
+bool MainWindow::lastExecutionCancelled() const {
+    return lastExecutionCancelled_;
+}
+
+QString MainWindow::lastExecutionMessage() const {
+    return lastExecutionMessage_;
+}
+
+QString MainWindow::lastExecutionRawMessage() const {
+    return lastExecutionRawMessage_;
 }
 
 void MainWindow::onPluginSelected(const std::string& pluginName) {
@@ -1455,73 +1190,50 @@ void MainWindow::onParamValuesChanged() {
 void MainWindow::refreshExecuteButtonState() {
     if (!executeButton_) return;
 
-    if (!currentPlugin_ || currentActionKey_.isEmpty()) {
-        executeButton_->setEnabled(false);
-        executeButton_->setToolTip(QStringLiteral("请先选择主功能和子功能"));
-        if (statusExecutionLabel_) {
-            statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeReady"));
-            statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
-            statusExecutionLabel_->style()->polish(statusExecutionLabel_);
-            statusExecutionLabel_->setText(QStringLiteral("就绪"));
+    const bool hasSelection = currentPlugin_ && !currentActionKey_.isEmpty();
+    std::string validationMessage;
+    if (hasSelection) {
+        const auto params = collectExecutionParams();
+        validationMessage = gis::gui::validateExecutionParams(
+            effectiveParamSpecs(),
+            params);
+        if (validationMessage.empty()) {
+            if (const auto issue = actionSpecificValidationIssue(
+                    currentPlugin_->name(), currentActionKey_.toStdString(), params)) {
+                validationMessage = issue->message;
+            }
         }
-        return;
     }
 
-    const auto params = collectExecutionParams();
-    std::string validationMessage = gis::gui::validateExecutionParams(
-        effectiveParamSpecs(),
-        params);
-    if (validationMessage.empty()) {
-        if (const auto issue = actionSpecificValidationIssue(
-                currentPlugin_->name(), currentActionKey_.toStdString(), params)) {
-            validationMessage = issue->message;
-        }
-    }
-    if (!validationMessage.empty()) {
-        executeButton_->setEnabled(false);
-        executeButton_->setToolTip(QString::fromUtf8(validationMessage));
-        if (statusExecutionLabel_) {
-            statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeWarning"));
-            statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
-            statusExecutionLabel_->style()->polish(statusExecutionLabel_);
-            statusExecutionLabel_->setText(QStringLiteral("待补充"));
-        }
-        return;
-    }
-
-    executeButton_->setEnabled(true);
-    executeButton_->setToolTip(QStringLiteral("参数已就绪，可以执行当前功能"));
+    const auto state = gis::gui::buildExecuteButtonState(hasSelection, validationMessage);
+    executeButton_->setEnabled(state.enabled);
+    executeButton_->setToolTip(QString::fromUtf8(state.tooltip));
     if (statusExecutionLabel_) {
-        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeReady"));
+        statusExecutionLabel_->setObjectName(QString::fromUtf8(state.statusObjectName));
         statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
         statusExecutionLabel_->style()->polish(statusExecutionLabel_);
-        statusExecutionLabel_->setText(QStringLiteral("可执行"));
+        statusExecutionLabel_->setText(QString::fromUtf8(state.statusText));
     }
 }
 
 void MainWindow::refreshParamValidationState() {
-    if (!paramWidget_ || !currentPlugin_ || currentActionKey_.isEmpty()) {
+    if (!paramWidget_) {
+        return;
+    }
+    const bool hasSelection = currentPlugin_ && !currentActionKey_.isEmpty();
+    if (!hasSelection) {
         if (paramWidget_) {
             paramWidget_->setHighlightedParam({});
         }
         return;
     }
 
-    const std::string invalidKey = gis::gui::findFirstInvalidParamKey(
-        effectiveParamSpecs(),
-        collectExecutionParams());
-    if (!invalidKey.empty()) {
-        paramWidget_->setHighlightedParam(invalidKey);
-        return;
-    }
-
-    if (const auto issue = actionSpecificValidationIssue(
-            currentPlugin_->name(), currentActionKey_.toStdString(), collectExecutionParams())) {
-        paramWidget_->setHighlightedParam(issue->key);
-        return;
-    }
-
-    paramWidget_->setHighlightedParam({});
+    const auto specs = effectiveParamSpecs();
+    const auto params = collectExecutionParams();
+    const auto issue = actionSpecificValidationIssue(
+        currentPlugin_->name(), currentActionKey_.toStdString(), params);
+    paramWidget_->setHighlightedParam(
+        gis::gui::resolveHighlightedParamKey(hasSelection, specs, params, issue));
 }
 
 void MainWindow::syncDerivedParams() {
@@ -1542,25 +1254,19 @@ void MainWindow::syncDerivedParams() {
             return;
         }
         const std::string currentValue = paramWidget_->stringValue(key);
-        std::string suggestedValue =
-            gis::gui::buildSuggestedOutputPath(primaryPath, currentPlugin_->name(), actionKey, key);
-        if (currentPlugin_->name() == "vector" && actionKey == "convert" && key == "output") {
-            const std::string formatValue = paramWidget_->stringValue("format");
-            std::string preferredSuffix = ".geojson";
-            if (formatValue == "ESRI Shapefile") preferredSuffix = ".shp";
-            else if (formatValue == "GPKG") preferredSuffix = ".gpkg";
-            else if (formatValue == "KML") preferredSuffix = ".kml";
-            else if (formatValue == "CSV") preferredSuffix = ".csv";
-
-            std::filesystem::path suggestedPath = std::filesystem::path(suggestedValue);
-            suggestedPath.replace_extension(preferredSuffix);
-            suggestedValue = suggestedPath.generic_string();
+        const std::string formatValue = key == "output" ? paramWidget_->stringValue("format") : std::string{};
+        const auto update = gis::gui::computeDerivedOutputUpdate(
+            currentValue,
+            lastAutoPath,
+            primaryPath,
+            currentPlugin_->name(),
+            actionKey,
+            key,
+            formatValue);
+        if (update.shouldApply) {
+            paramWidget_->setStringValue(key, update.value);
         }
-        const bool valueWasAuto = !lastAutoPath.empty() && currentValue == lastAutoPath;
-        if ((currentValue.empty() || valueWasAuto) && currentValue != suggestedValue) {
-            paramWidget_->setStringValue(key, suggestedValue);
-        }
-        lastAutoPath = suggestedValue;
+        lastAutoPath = update.autoValue;
     };
 
     syncOutputField("output", lastAutoOutputPath_);
@@ -1574,17 +1280,14 @@ void MainWindow::syncDerivedParams() {
         if (paramWidget_->hasParam("layer")
             && !info.layerName.empty()
             && !inputPathLower.endsWith(QStringLiteral(".shp"))) {
-            const bool layerWasAuto = !lastAutoLayerName_.empty() && currentLayer == lastAutoLayerName_;
-            if ((currentLayer.empty() || layerWasAuto) && currentLayer != info.layerName) {
+            if (gis::gui::shouldAutoFillLayerValue(currentLayer, lastAutoLayerName_, info.layerName)) {
                 paramWidget_->setStringValue("layer", info.layerName);
             }
             lastAutoLayerName_ = info.layerName;
         }
         if (paramWidget_->hasParam("extent")) {
             const auto extent = extentParamValue(params, "extent");
-            const bool extentWasAuto = extent.has_value() && lastAutoExtent_.has_value()
-                && *extent == *lastAutoExtent_;
-            if (((!extent.has_value() || isZeroExtent(*extent)) || extentWasAuto) && info.hasExtent) {
+            if (gis::gui::shouldAutoFillExtentValue(extent, lastAutoExtent_, info.hasExtent)) {
                 paramWidget_->setExtentValue("extent", info.extent);
                 lastAutoExtent_ = info.extent;
             }
@@ -1605,6 +1308,10 @@ void MainWindow::resetDerivedParamTracking() {
 void MainWindow::runPluginWithParams(
     const std::map<std::string, gis::framework::ParamValue>& params) {
     reporter_->reset();
+    lastExecutionSuccess_ = false;
+    lastExecutionCancelled_ = false;
+    lastExecutionMessage_.clear();
+    lastExecutionRawMessage_.clear();
     if (resultSummaryLabel_) {
         resultSummaryLabel_->setStyleSheet(QString());
         resultSummaryLabel_->setText(QStringLiteral("正在执行，请稍候..."));
@@ -1639,6 +1346,10 @@ void MainWindow::runPluginWithParams(
                     QString::fromUtf8(gis::gui::localizeResultMessage(result.message));
                 QString message = localizedMessage;
                 const bool cancelled = result.message == "\345\267\262\345\217\226\346\266\210\346\211\247\350\241\214";
+                lastExecutionSuccess_ = result.success;
+                lastExecutionCancelled_ = cancelled;
+                lastExecutionMessage_ = localizedMessage;
+                lastExecutionRawMessage_ = QString::fromUtf8(result.message);
                 progressDialog->setFinished(message, result.success, cancelled);
 
                 if (result.success) {

@@ -43,8 +43,25 @@ function Sync-PluginDlls {
     $pluginDir = Join-Path $cliDir "plugins"
     New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
 
-    $buildRoot = Resolve-Path (Join-Path $cliDir "..\..")
-    $pluginDlls = Get-ChildItem (Join-Path $buildRoot "plugins") -Recurse -Filter "plugin_*.dll" -ErrorAction SilentlyContinue
+    $buildRoot = Resolve-Path (Join-Path $cliDir "..\..\..")
+    $configName = Split-Path $cliDir -Leaf
+    $pluginBuildRoot = Join-Path $buildRoot "src\plugins"
+    $pluginDlls = @()
+
+    if (Test-Path $pluginBuildRoot) {
+        $pluginDlls = Get-ChildItem $pluginBuildRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $candidate = Join-Path $_.FullName $configName
+                if (Test-Path $candidate) {
+                    Get-ChildItem $candidate -Filter "plugin_*.dll" -ErrorAction SilentlyContinue
+                }
+            }
+    }
+
+    if ($pluginDlls.Count -eq 0) {
+        $pluginDlls = Get-ChildItem (Join-Path $buildRoot "plugins") -Recurse -Filter "plugin_*.dll" -ErrorAction SilentlyContinue
+    }
+
     foreach ($dll in $pluginDlls) {
         Copy-Item $dll.FullName $pluginDir -Force
     }

@@ -10,6 +10,7 @@
 #include <cctype>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -227,6 +228,84 @@ bool isLikelyRasterParamKey(const std::string& key) {
     return false;
 }
 
+std::string lowerString(const std::string& value) {
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return lowered;
+}
+
+bool isZeroExtent(const std::array<double, 4>& extent) {
+    return extent[0] == 0.0 && extent[1] == 0.0 && extent[2] == 0.0 && extent[3] == 0.0;
+}
+
+std::vector<std::string> splitCommaList(const std::string& rawText) {
+    std::vector<std::string> items;
+    std::istringstream iss(rawText);
+    std::string item;
+    while (std::getline(iss, item, ',')) {
+        item = trim(item);
+        if (!item.empty()) {
+            items.push_back(item);
+        }
+    }
+    return items;
+}
+
+bool endsWithOneOf(const std::string& path, const std::vector<std::string>& suffixes) {
+    const std::string lowerPath = lowerString(path);
+    for (const auto& suffix : suffixes) {
+        if (lowerPath.size() >= suffix.size() &&
+            lowerPath.compare(lowerPath.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<std::array<double, 4>> extentParamValue(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const std::string& key) {
+    const auto it = params.find(key);
+    if (it == params.end()) {
+        return std::nullopt;
+    }
+    if (const auto* arr = std::get_if<std::array<double, 4>>(&it->second)) {
+        return *arr;
+    }
+    return std::nullopt;
+}
+
+std::optional<double> doubleParamValue(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const std::string& key) {
+    const auto it = params.find(key);
+    if (it == params.end()) {
+        return std::nullopt;
+    }
+    if (const auto* value = std::get_if<double>(&it->second)) {
+        return *value;
+    }
+    if (const auto* value = std::get_if<int>(&it->second)) {
+        return static_cast<double>(*value);
+    }
+    return std::nullopt;
+}
+
+std::optional<int> intParamValue(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const std::string& key) {
+    const auto it = params.find(key);
+    if (it == params.end()) {
+        return std::nullopt;
+    }
+    if (const auto* value = std::get_if<int>(&it->second)) {
+        return *value;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 namespace gis::gui {
@@ -399,6 +478,60 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
         return (input.parent_path() / fs::path(input.stem().string() + "_" + suffix)).generic_string();
     }
     return replaceExtensionIfNeeded(suggested, resolvedSuffix);
+}
+
+DerivedOutputUpdate computeDerivedOutputUpdate(const std::string& currentValue,
+                                               const std::string& lastAutoValue,
+                                               const std::string& primaryPath,
+                                               const std::string& pluginName,
+                                               const std::string& action,
+                                               const std::string& paramKey,
+                                               const std::string& formatValue) {
+    DerivedOutputUpdate update;
+    if (primaryPath.empty()) {
+        return update;
+    }
+
+    std::string suggestedValue =
+        buildSuggestedOutputPath(primaryPath, pluginName, action, paramKey);
+    if (pluginName == "vector" && action == "convert" && paramKey == "output") {
+        std::string preferredSuffix = ".geojson";
+        if (formatValue == "ESRI Shapefile") preferredSuffix = ".shp";
+        else if (formatValue == "GPKG") preferredSuffix = ".gpkg";
+        else if (formatValue == "KML") preferredSuffix = ".kml";
+        else if (formatValue == "CSV") preferredSuffix = ".csv";
+
+        std::filesystem::path suggestedPath = std::filesystem::path(suggestedValue);
+        suggestedPath.replace_extension(preferredSuffix);
+        suggestedValue = suggestedPath.generic_string();
+    }
+
+    const bool valueWasAuto = !lastAutoValue.empty() && currentValue == lastAutoValue;
+    update.value = suggestedValue;
+    update.autoValue = suggestedValue;
+    update.shouldApply = (currentValue.empty() || valueWasAuto) && currentValue != suggestedValue;
+    return update;
+}
+
+bool shouldAutoFillLayerValue(const std::string& currentValue,
+                              const std::string& lastAutoValue,
+                              const std::string& suggestedValue) {
+    if (suggestedValue.empty()) {
+        return false;
+    }
+    const bool valueWasAuto = !lastAutoValue.empty() && currentValue == lastAutoValue;
+    return (currentValue.empty() || valueWasAuto) && currentValue != suggestedValue;
+}
+
+bool shouldAutoFillExtentValue(const std::optional<std::array<double, 4>>& currentValue,
+                               const std::optional<std::array<double, 4>>& lastAutoValue,
+                               bool hasSuggestedExtent) {
+    if (!hasSuggestedExtent) {
+        return false;
+    }
+    const bool extentWasAuto = currentValue.has_value() && lastAutoValue.has_value()
+        && *currentValue == *lastAutoValue;
+    return (!currentValue.has_value() || isZeroExtent(*currentValue)) || extentWasAuto;
 }
 
 FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
@@ -705,6 +838,241 @@ std::string validateExecutionParams(
     return gis::framework::validateParams(specs, params);
 }
 
+std::optional<ActionValidationIssue> validateActionSpecificParams(
+    const std::string& pluginName,
+    const std::string& actionKey,
+    const std::map<std::string, gis::framework::ParamValue>& params) {
+    auto stringParam = [&](const std::string& key) {
+        const auto it = params.find(key);
+        if (it == params.end()) {
+            return std::string{};
+        }
+        if (const auto* value = std::get_if<std::string>(&it->second)) {
+            return *value;
+        }
+        return std::string{};
+    };
+
+    if (pluginName == "cutting" && actionKey == "clip") {
+        const auto extent = extentParamValue(params, "extent");
+        if ((!extent.has_value() || isZeroExtent(*extent)) && stringParam("cutline").empty()) {
+            return ActionValidationIssue{"extent", "参数“裁切范围”或“裁切矢量”至少填写一个"};
+        }
+    }
+
+    if (pluginName == "cutting" && actionKey == "merge_bands") {
+        if (stringParam("input").empty() && stringParam("bands").empty()) {
+            return ActionValidationIssue{"input", "参数“输入文件”或“波段列表”至少填写一个"};
+        }
+    }
+
+    if (pluginName == "cutting" && actionKey == "mosaic") {
+        if (splitCommaList(stringParam("input")).size() < 2) {
+            return ActionValidationIssue{"input", "参数“输入文件”至少需要 2 个影像路径"};
+        }
+    }
+
+    if (pluginName == "cutting" && actionKey == "split") {
+        const std::string outputPath = stringParam("output");
+        if (endsWithOneOf(outputPath, {".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"})) {
+            return ActionValidationIssue{"output", "参数“输出目录”应填写目录，不应填写单个栅格文件名"};
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "filter") {
+        const auto extent = extentParamValue(params, "extent");
+        if (stringParam("where").empty() && (!extent.has_value() || isZeroExtent(*extent))) {
+            return ActionValidationIssue{"where", "参数“属性过滤”或“空间范围”至少填写一个"};
+        }
+    }
+
+    if (pluginName == "matching" && actionKey == "stitch") {
+        if (splitCommaList(stringParam("input")).size() < 2) {
+            return ActionValidationIssue{"input", "参数“输入文件”至少需要 2 个影像路径"};
+        }
+    }
+
+    if (pluginName == "projection" && actionKey == "reproject") {
+        const std::string inputPath = stringParam("input");
+        const std::string outputPath = stringParam("output");
+        const bool inputLooksVector = endsWithOneOf(inputPath, {".shp", ".gpkg", ".geojson", ".json", ".kml", ".csv"});
+        const bool outputLooksVector = endsWithOneOf(outputPath, {".shp", ".gpkg", ".geojson", ".json", ".kml", ".csv"});
+        const bool outputLooksRaster = endsWithOneOf(outputPath, {".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"});
+
+        if (inputLooksVector && !outputLooksVector) {
+            return ActionValidationIssue{"output", "矢量重投影输出应使用 .gpkg、.geojson、.shp、.kml 或 .csv"};
+        }
+        if (!inputLooksVector && !outputLooksRaster) {
+            return ActionValidationIssue{"output", "栅格重投影输出应使用 .tif、.tiff、.img 或 .vrt"};
+        }
+    }
+
+    if (pluginName == "utility" && actionKey == "overviews") {
+        const std::string levelsText = stringParam("levels");
+        std::istringstream iss(levelsText);
+        int level = 0;
+        bool hasValidLevel = false;
+        while (iss >> level) {
+            if (level > 1) {
+                hasValidLevel = true;
+                break;
+            }
+        }
+        if (!hasValidLevel) {
+            return ActionValidationIssue{"levels", "参数“金字塔层级”至少应包含一个大于 1 的整数，例如 2 4 8 16"};
+        }
+    }
+
+    if (pluginName == "utility" && actionKey == "histogram") {
+        const auto bins = intParamValue(params, "bins");
+        if (bins.has_value() && *bins <= 0) {
+            return ActionValidationIssue{"bins", "参数“分箱数”必须大于 0"};
+        }
+    }
+
+    if (pluginName == "utility" && actionKey == "ndvi") {
+        const auto redBand = intParamValue(params, "red_band");
+        const auto nirBand = intParamValue(params, "nir_band");
+        if (redBand.has_value() && *redBand <= 0) {
+            return ActionValidationIssue{"red_band", "参数“红光波段”必须大于 0"};
+        }
+        if (nirBand.has_value() && *nirBand <= 0) {
+            return ActionValidationIssue{"nir_band", "参数“近红外波段”必须大于 0"};
+        }
+    }
+
+    if (pluginName == "classification" && actionKey == "feature_stats") {
+        const std::string rastersText = stringParam("rasters");
+        const std::string bandsText = stringParam("bands");
+        const std::string nodatasText = stringParam("nodatas");
+        const std::string outputPath = stringParam("output");
+        const std::string classMapPath = stringParam("class_map");
+
+        const auto rasterItems = splitCommaList(rastersText);
+        if (rasterItems.empty()) {
+            return ActionValidationIssue{"rasters", "参数“分类栅格列表”至少填写一个栅格路径"};
+        }
+        if (!bandsText.empty() && splitCommaList(bandsText).size() != rasterItems.size()) {
+            return ActionValidationIssue{"bands", "参数“波段列表”数量必须与“分类栅格列表”一致"};
+        }
+        if (!nodatasText.empty() && splitCommaList(nodatasText).size() != rasterItems.size()) {
+            return ActionValidationIssue{"nodatas", "参数“NoData 列表”数量必须与“分类栅格列表”一致"};
+        }
+        if (!classMapPath.empty() && !endsWithOneOf(classMapPath, {".json"})) {
+            return ActionValidationIssue{"class_map", "参数“分类映射”应选择 .json 文件"};
+        }
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".json", ".csv"})) {
+            return ActionValidationIssue{"output", "参数“统计输出”目前只支持 .json 或 .csv"};
+        }
+        const std::string vectorOutputPath = stringParam("vector_output");
+        if (!vectorOutputPath.empty() && !endsWithOneOf(vectorOutputPath, {".gpkg"})) {
+            return ActionValidationIssue{"vector_output", "参数“分类面输出”当前实际仅支持 .gpkg"};
+        }
+        const std::string rasterOutputPath = stringParam("raster_output");
+        if (!rasterOutputPath.empty() && !endsWithOneOf(rasterOutputPath, {".tif", ".tiff"})) {
+            return ActionValidationIssue{"raster_output", "参数“分类栅格输出”当前实际仅支持 .tif 或 .tiff"};
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "convert") {
+        const std::string outputPath = stringParam("output");
+        const std::string formatValue = stringParam("format");
+        if (!outputPath.empty() && !formatValue.empty()) {
+            if (formatValue == "GeoJSON" && !endsWithOneOf(outputPath, {".geojson", ".json"})) {
+                return ActionValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：GeoJSON 应使用 .geojson 或 .json"};
+            }
+            if (formatValue == "ESRI Shapefile" && !endsWithOneOf(outputPath, {".shp"})) {
+                return ActionValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：Shapefile 应使用 .shp"};
+            }
+            if (formatValue == "GPKG" && !endsWithOneOf(outputPath, {".gpkg"})) {
+                return ActionValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：GPKG 应使用 .gpkg"};
+            }
+            if (formatValue == "KML" && !endsWithOneOf(outputPath, {".kml"})) {
+                return ActionValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：KML 应使用 .kml"};
+            }
+            if (formatValue == "CSV" && !endsWithOneOf(outputPath, {".csv"})) {
+                return ActionValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：CSV 应使用 .csv"};
+            }
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "polygonize") {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp"})) {
+            return ActionValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg 或 .shp"};
+        }
+    }
+
+    if (pluginName == "vector" &&
+        (actionKey == "filter" || actionKey == "buffer" || actionKey == "clip")) {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp", ".kml"})) {
+            return ActionValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg、.shp 或 .kml"};
+        }
+    }
+
+    if (pluginName == "vector" &&
+        (actionKey == "union" || actionKey == "difference" || actionKey == "dissolve")) {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp"})) {
+            return ActionValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg 或 .shp"};
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "rasterize") {
+        const auto resolution = doubleParamValue(params, "resolution");
+        if (resolution.has_value() && *resolution <= 0.0) {
+            return ActionValidationIssue{"resolution", "参数“分辨率”必须大于 0"};
+        }
+    }
+
+    if (pluginName == "matching") {
+        if (const auto ratio = doubleParamValue(params, "ratio_test");
+            ratio.has_value() && (*ratio <= 0.0 || *ratio > 1.0)) {
+            return ActionValidationIssue{"ratio_test", "参数“比率阈值”应落在 (0, 1] 范围内"};
+        }
+        if (const auto quality = doubleParamValue(params, "quality_level");
+            quality.has_value() && (*quality <= 0.0 || *quality > 1.0)) {
+            return ActionValidationIssue{"quality_level", "参数“质量阈值”应落在 (0, 1] 范围内"};
+        }
+        if (const auto minDistance = doubleParamValue(params, "min_distance");
+            minDistance.has_value() && *minDistance < 0.0) {
+            return ActionValidationIssue{"min_distance", "参数“最小间距”不能小于 0"};
+        }
+    }
+
+    if (pluginName == "processing") {
+        if (actionKey == "filter") {
+            const auto kernelSize = intParamValue(params, "kernel_size");
+            if (kernelSize.has_value()) {
+                if (*kernelSize < 3) {
+                    return ActionValidationIssue{"kernel_size", "参数“核大小”必须大于等于 3"};
+                }
+                if ((*kernelSize % 2) == 0) {
+                    return ActionValidationIssue{"kernel_size", "参数“核大小”建议填写奇数，例如 3、5、7"};
+                }
+            }
+        }
+        if (actionKey == "enhance") {
+            const std::string enhanceType = stringParam("enhance_type");
+            if (enhanceType == "gamma") {
+                const auto gamma = doubleParamValue(params, "gamma");
+                if (gamma.has_value() && *gamma <= 0.0) {
+                    return ActionValidationIssue{"gamma", "参数“Gamma”必须大于 0"};
+                }
+            }
+        }
+        if (actionKey == "kmeans") {
+            const auto k = intParamValue(params, "k");
+            if (k.has_value() && *k <= 0) {
+                return ActionValidationIssue{"k", "参数“聚类数”必须大于 0"};
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
 std::string findFirstInvalidParamKey(
     const std::vector<gis::framework::ParamSpec>& specs,
     const std::map<std::string, gis::framework::ParamValue>& params) {
@@ -735,6 +1103,116 @@ std::vector<BindableParamOption> collectBindableParamOptions(
         options.push_back({spec.key, spec.displayName.empty() ? spec.key : spec.displayName});
     }
     return options;
+}
+
+std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
+    const std::string& pluginName,
+    const std::string& action,
+    const std::vector<gis::framework::ParamSpec>& specs,
+    const std::set<std::string>& visibleKeys,
+    const std::set<std::string>& requiredKeys) {
+    std::vector<gis::framework::ParamSpec> filtered;
+    for (const auto& spec : specs) {
+        if (spec.key == "action") {
+            continue;
+        }
+        if (!visibleKeys.empty() && visibleKeys.count(spec.key) == 0) {
+            continue;
+        }
+
+        auto adjustedSpec = spec;
+        adjustedSpec.required = requiredKeys.count(spec.key) > 0;
+
+        if (pluginName == "processing" && action == "threshold" && spec.key == "method") {
+            adjustedSpec.defaultValue = std::string("otsu");
+        }
+        if (pluginName == "matching") {
+            if (spec.key == "ratio_test" || spec.key == "quality_level") {
+                adjustedSpec.minValue = 0.000001;
+                adjustedSpec.maxValue = 1.0;
+            } else if (spec.key == "min_distance") {
+                adjustedSpec.minValue = 0.0;
+            } else if (spec.key == "stitch_confidence") {
+                adjustedSpec.minValue = 0.0;
+                adjustedSpec.maxValue = 1.0;
+            }
+        }
+        if (pluginName == "utility") {
+            if (action == "nodata" && spec.key == "band") {
+                adjustedSpec.defaultValue = int{0};
+                adjustedSpec.minValue = 0;
+            } else if (spec.key == "bins") {
+                adjustedSpec.minValue = 1;
+            } else if (spec.key == "red_band" || spec.key == "nir_band") {
+                adjustedSpec.minValue = 1;
+            }
+        }
+        if (pluginName == "vector" && spec.key == "resolution") {
+            adjustedSpec.minValue = 0.000001;
+        }
+        if (pluginName == "processing") {
+            if (spec.key == "gamma") {
+                adjustedSpec.minValue = 0.000001;
+            } else if (spec.key == "k") {
+                adjustedSpec.minValue = 1;
+            } else if (spec.key == "clip_limit") {
+                adjustedSpec.minValue = 0.0;
+            } else if (spec.key == "kernel_size") {
+                adjustedSpec.minValue = 3;
+            }
+        }
+        if (pluginName == "projection" && action == "transform" && spec.key == "src_srs") {
+            adjustedSpec.defaultValue = std::string("EPSG:4326");
+        }
+
+        filtered.push_back(std::move(adjustedSpec));
+    }
+
+    return filtered;
+}
+
+ExecuteButtonState buildExecuteButtonState(bool hasSelection,
+                                           const std::string& validationMessage) {
+    if (!hasSelection) {
+        return ExecuteButtonState{
+            false,
+            "请先选择主功能和子功能",
+            "就绪",
+            "statusBadgeReady"
+        };
+    }
+    if (!validationMessage.empty()) {
+        return ExecuteButtonState{
+            false,
+            validationMessage,
+            "待补充",
+            "statusBadgeWarning"
+        };
+    }
+    return ExecuteButtonState{
+        true,
+        "参数已就绪，可以执行当前功能",
+        "可执行",
+        "statusBadgeReady"
+    };
+}
+
+std::string resolveHighlightedParamKey(
+    bool hasSelection,
+    const std::vector<gis::framework::ParamSpec>& specs,
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const std::optional<ActionValidationIssue>& actionIssue) {
+    if (!hasSelection) {
+        return {};
+    }
+    const std::string invalidKey = gis::gui::findFirstInvalidParamKey(specs, params);
+    if (!invalidKey.empty()) {
+        return invalidKey;
+    }
+    if (actionIssue.has_value()) {
+        return actionIssue->key;
+    }
+    return {};
 }
 
 } // namespace gis::gui
