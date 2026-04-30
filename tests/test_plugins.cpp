@@ -157,6 +157,110 @@ static std::string createMultiBandConstantRaster(const std::string& name,
     return path;
 }
 
+static std::string createProjectedClassRaster(const std::string& name,
+                                              int w,
+                                              int h,
+                                              int value,
+                                              int epsg,
+                                              double originX,
+                                              double originY,
+                                              double pixelSize) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Int16);
+    double adfGT[6] = {originX, pixelSize, 0.0, originY, 0.0, -pixelSize};
+    ds->SetGeoTransform(adfGT);
+
+    OGRSpatialReference srs;
+    EXPECT_EQ(srs.importFromEPSG(epsg), OGRERR_NONE);
+    char* wkt = nullptr;
+    EXPECT_EQ(srs.exportToWkt(&wkt), OGRERR_NONE);
+    EXPECT_NE(wkt, nullptr);
+    if (wkt) {
+        ds->SetProjection(wkt);
+        CPLFree(wkt);
+    }
+
+    std::vector<int16_t> data(w * h, static_cast<int16_t>(value));
+    auto* band = ds->GetRasterBand(1);
+    EXPECT_NE(band, nullptr);
+    if (band) {
+        EXPECT_EQ(band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Int16, 0, 0), CE_None);
+        band->SetNoDataValue(0);
+        band->FlushCache();
+    }
+    return path;
+}
+
+static std::string createPolygonVectorDataset(const std::string& name, int epsg) {
+    const std::string path = utf8PathString(getTestDir() / name);
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    EXPECT_NE(driver, nullptr);
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    EXPECT_NE(ds, nullptr);
+
+    OGRSpatialReference srs;
+    EXPECT_EQ(srs.importFromEPSG(epsg), OGRERR_NONE);
+    auto* layer = ds->CreateLayer("features", &srs, wkbPolygon, nullptr);
+    EXPECT_NE(layer, nullptr);
+
+    OGRFieldDefn idField("id", OFTString);
+    OGRFieldDefn nameField("name", OFTString);
+    EXPECT_EQ(layer->CreateField(&idField), OGRERR_NONE);
+    EXPECT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+
+    auto* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    EXPECT_NE(feature, nullptr);
+    feature->SetField("id", "f1");
+    feature->SetField("name", "area1");
+
+    OGRPolygon polygon;
+    OGRLinearRing ring;
+    ring.addPoint(0, 0);
+    ring.addPoint(0, 100);
+    ring.addPoint(100, 100);
+    ring.addPoint(100, 0);
+    ring.addPoint(0, 0);
+    polygon.addRing(&ring);
+    feature->SetGeometry(&polygon);
+
+    EXPECT_EQ(layer->CreateFeature(feature), OGRERR_NONE);
+    OGRFeature::DestroyFeature(feature);
+    GDALClose(ds);
+    return path;
+}
+
+static std::string createClassMapJson(const std::string& name) {
+    const std::string path = utf8PathString(getTestDir() / name);
+    std::ofstream ofs(path, std::ios::binary);
+    ofs << "{\n"
+        << "  \"1\": \"class1\",\n"
+        << "  \"2\": \"class2\"\n"
+        << "}\n";
+    return path;
+}
+
+static void fillIntRasterRect(const std::string& path,
+                              int xOff,
+                              int yOff,
+                              int width,
+                              int height,
+                              int16_t value) {
+    auto ds = gis::core::openRaster(path, false);
+    ASSERT_NE(ds, nullptr);
+
+    std::vector<int16_t> data(width * height, value);
+    auto* band = ds->GetRasterBand(1);
+    ASSERT_NE(band, nullptr);
+    ASSERT_EQ(band->RasterIO(GF_Write, xOff, yOff, width, height,
+        data.data(), width, height, GDT_Int16, 0, 0), CE_None);
+    band->FlushCache();
+}
+
+static std::string readTextFile(const std::string& path) {
+    std::ifstream ifs(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+}
+
 static void fillRasterRect(const std::string& path,
                            int xOff,
                            int yOff,
@@ -299,6 +403,36 @@ TEST_F(PluginTest, UtilityPluginParams) {
     }
 }
 
+TEST_F(PluginTest, FeatureStatsPluginParams) {
+    auto* p = mgr_.find("feature_stats");
+    ASSERT_NE(p, nullptr);
+
+    const auto specs = p->paramSpecs();
+    bool hasRasters = false;
+    bool hasTargetEpsg = false;
+    bool hasVectorOutput = false;
+    bool hasRasterOutput = false;
+    for (const auto& spec : specs) {
+        if (spec.key == "rasters") {
+            hasRasters = true;
+        }
+        if (spec.key == "target_epsg") {
+            hasTargetEpsg = true;
+        }
+        if (spec.key == "vector_output") {
+            hasVectorOutput = true;
+        }
+        if (spec.key == "raster_output") {
+            hasRasterOutput = true;
+        }
+    }
+
+    EXPECT_TRUE(hasRasters);
+    EXPECT_TRUE(hasTargetEpsg);
+    EXPECT_TRUE(hasVectorOutput);
+    EXPECT_TRUE(hasRasterOutput);
+}
+
 TEST_F(PluginTest, ProcessingPluginParams) {
     auto* p = mgr_.find("processing");
     if (p) {
@@ -309,6 +443,195 @@ TEST_F(PluginTest, ProcessingPluginParams) {
         }
         EXPECT_TRUE(hasEdgeAction);
     }
+}
+
+TEST_F(PluginTest, FeatureStatsRunResolvesProjectedTargetSrsAndFinestGrid) {
+    auto* p = mgr_.find("feature_stats");
+    ASSERT_NE(p, nullptr);
+
+    const std::string vectorPath = createPolygonVectorDataset("feature_stats_projected_vector.gpkg", 3857);
+    const std::string classMapPath = createClassMapJson("feature_stats_projected_class_map.json");
+    const std::string raster1 = createProjectedClassRaster(
+        "feature_stats_projected_raster_30m.tif", 10, 10, 1, 3857, 0.0, 100.0, 30.0);
+    const std::string raster2 = createProjectedClassRaster(
+        "feature_stats_projected_raster_10m.tif", 10, 10, 2, 3857, 0.0, 100.0, 10.0);
+    const std::string output = utf8PathString(getTestDir() / "feature_stats_projected_result.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("run");
+    params["vector"] = vectorPath;
+    params["feature_id_field"] = std::string("id");
+    params["feature_name_field"] = std::string("name");
+    params["class_map"] = classMapPath;
+    params["rasters"] = raster1 + "," + raster2;
+    params["nodatas"] = std::string("0,0");
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("resolved_target_epsg"), "3857");
+    EXPECT_EQ(result.metadata.at("feature_count"), "1");
+    EXPECT_NEAR(std::stod(result.metadata.at("grid_pixel_width")), 10.0, 1e-6);
+    EXPECT_NEAR(std::stod(result.metadata.at("grid_pixel_height")), 10.0, 1e-6);
+
+    const std::string content = readTextFile(output);
+    EXPECT_NE(content.find("\"class_value\": 1"), std::string::npos);
+    EXPECT_NE(content.find("\"pixel_count\": 100"), std::string::npos);
+}
+
+TEST_F(PluginTest, FeatureStatsRunRejectsGeographicInputsWithoutTargetEpsg) {
+    auto* p = mgr_.find("feature_stats");
+    ASSERT_NE(p, nullptr);
+
+    const std::string vectorPath = createPolygonVectorDataset("feature_stats_geo_vector.gpkg", 4326);
+    const std::string classMapPath = createClassMapJson("feature_stats_geo_class_map.json");
+    const std::string raster = createProjectedClassRaster(
+        "feature_stats_geo_raster.tif", 10, 10, 1, 4326, 110.0, 40.0, 0.01);
+    const std::string output = utf8PathString(getTestDir() / "feature_stats_geo_result.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("run");
+    params["vector"] = vectorPath;
+    params["class_map"] = classMapPath;
+    params["rasters"] = raster;
+    params["nodatas"] = std::string("0");
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("必须显式提供 target_epsg"), std::string::npos);
+}
+
+TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {
+    auto* p = mgr_.find("feature_stats");
+    ASSERT_NE(p, nullptr);
+
+    const std::string vectorPath = createPolygonVectorDataset("feature_stats_priority_vector.gpkg", 3857);
+    const std::string classMapPath = createClassMapJson("feature_stats_priority_class_map.json");
+    const std::string highPriority = createProjectedClassRaster(
+        "feature_stats_priority_high.tif", 10, 10, 0, 3857, 0.0, 100.0, 10.0);
+    const std::string lowPriority = createProjectedClassRaster(
+        "feature_stats_priority_low.tif", 10, 10, 2, 3857, 0.0, 100.0, 10.0);
+    const std::string output = utf8PathString(getTestDir() / "feature_stats_priority_result.json");
+
+    fillIntRasterRect(highPriority, 0, 0, 4, 4, 1);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("run");
+    params["vector"] = vectorPath;
+    params["feature_id_field"] = std::string("id");
+    params["feature_name_field"] = std::string("name");
+    params["class_map"] = classMapPath;
+    params["rasters"] = highPriority + "," + lowPriority;
+    params["nodatas"] = std::string("0,0");
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("record_count"), "4");
+
+    const std::string content = readTextFile(output);
+    EXPECT_NE(content.find("\"class_value\": 1"), std::string::npos);
+    EXPECT_NE(content.find("\"class_value\": 2"), std::string::npos);
+    EXPECT_NE(content.find("\"pixel_count\": 16"), std::string::npos);
+    EXPECT_NE(content.find("\"pixel_count\": 84"), std::string::npos);
+    EXPECT_NE(content.find("\"feature_id\": \"__summary__\""), std::string::npos);
+}
+
+TEST_F(PluginTest, FeatureStatsRunWritesVectorAndRasterOutputs) {
+    auto* p = mgr_.find("feature_stats");
+    ASSERT_NE(p, nullptr);
+
+    const std::string vectorPath = createPolygonVectorDataset("feature_stats_output_vector.gpkg", 3857);
+    const std::string classMapPath = createClassMapJson("feature_stats_output_class_map.json");
+    const std::string highPriority = createProjectedClassRaster(
+        "feature_stats_output_high.tif", 10, 10, 0, 3857, 0.0, 100.0, 10.0);
+    const std::string lowPriority = createProjectedClassRaster(
+        "feature_stats_output_low.tif", 10, 10, 2, 3857, 0.0, 100.0, 10.0);
+    const std::string output = utf8PathString(getTestDir() / "feature_stats_output_result.json");
+    const std::string vectorOutput = utf8PathString(getTestDir() / "feature_stats_output_classes.gpkg");
+    const std::string rasterOutput = utf8PathString(getTestDir() / "feature_stats_output_classes.tif");
+
+    fillIntRasterRect(highPriority, 0, 0, 4, 4, 1);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("run");
+    params["vector"] = vectorPath;
+    params["feature_id_field"] = std::string("id");
+    params["feature_name_field"] = std::string("name");
+    params["class_map"] = classMapPath;
+    params["rasters"] = highPriority + "," + lowPriority;
+    params["nodatas"] = std::string("0,0");
+    params["output"] = output;
+    params["vector_output"] = vectorOutput;
+    params["raster_output"] = rasterOutput;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(vectorOutput));
+    EXPECT_TRUE(fs::exists(rasterOutput));
+    EXPECT_EQ(result.metadata.at("vector_output"), vectorOutput);
+    EXPECT_EQ(result.metadata.at("raster_output"), rasterOutput);
+
+    GDALDataset* vectorDs = static_cast<GDALDataset*>(GDALOpenEx(
+        vectorOutput.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(vectorDs, nullptr);
+    auto* layer = vectorDs->GetLayer(0);
+    ASSERT_NE(layer, nullptr);
+    EXPECT_GE(layer->GetFeatureCount(), 2);
+
+    const int featureIdIndex = layer->GetLayerDefn()->GetFieldIndex("feature_id");
+    const int classValueIndex = layer->GetLayerDefn()->GetFieldIndex("class_value");
+    const int classNameIndex = layer->GetLayerDefn()->GetFieldIndex("class_name");
+    const int pixelCountIndex = layer->GetLayerDefn()->GetFieldIndex("pixel_count");
+    const int areaIndex = layer->GetLayerDefn()->GetFieldIndex("area");
+    ASSERT_GE(featureIdIndex, 0);
+    ASSERT_GE(classValueIndex, 0);
+    ASSERT_GE(classNameIndex, 0);
+    ASSERT_GE(pixelCountIndex, 0);
+    ASSERT_GE(areaIndex, 0);
+
+    std::map<int, long long> pixelCountsByClass;
+    layer->ResetReading();
+    OGRFeature* feature = nullptr;
+    while ((feature = layer->GetNextFeature()) != nullptr) {
+        EXPECT_STREQ(feature->GetFieldAsString(featureIdIndex), "f1");
+        const int classValue = feature->GetFieldAsInteger(classValueIndex);
+        const long long pixelCount = feature->GetFieldAsInteger64(pixelCountIndex);
+        pixelCountsByClass[classValue] += pixelCount;
+        EXPECT_GT(feature->GetFieldAsDouble(areaIndex), 0.0);
+        EXPECT_FALSE(std::string(feature->GetFieldAsString(classNameIndex)).empty());
+        OGRFeature::DestroyFeature(feature);
+    }
+
+    EXPECT_EQ(pixelCountsByClass[1], 16);
+    EXPECT_EQ(pixelCountsByClass[2], 84);
+    GDALClose(vectorDs);
+
+    auto rasterDs = gis::core::openRaster(rasterOutput, false);
+    ASSERT_NE(rasterDs, nullptr);
+    EXPECT_EQ(rasterDs->GetRasterXSize(), 10);
+    EXPECT_EQ(rasterDs->GetRasterYSize(), 10);
+
+    auto* band = rasterDs->GetRasterBand(1);
+    ASSERT_NE(band, nullptr);
+    std::vector<int> rasterValues(100, 0);
+    ASSERT_EQ(band->RasterIO(GF_Read, 0, 0, 10, 10, rasterValues.data(), 10, 10, GDT_Int32, 0, 0, nullptr), CE_None);
+
+    int class1Count = 0;
+    int class2Count = 0;
+    for (int value : rasterValues) {
+        if (value == 1) {
+            ++class1Count;
+        } else if (value == 2) {
+            ++class2Count;
+        }
+    }
+
+    EXPECT_EQ(class1Count, 16);
+    EXPECT_EQ(class2Count, 84);
 }
 
 TEST_F(PluginTest, AllPluginsHaveActions) {

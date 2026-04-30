@@ -40,7 +40,16 @@ if(MSVC)
     target_compile_options(plugin_test_lifecycle PRIVATE /utf-8)
 endif()
 
-add_dependencies(gis_tests plugin_test_lifecycle)
+add_dependencies(gis_tests
+    plugin_test_lifecycle
+    plugin_projection
+    plugin_cutting
+    plugin_matching
+    plugin_processing
+    plugin_feature_stats
+    plugin_utility
+    plugin_vector
+)
 
 add_custom_command(TARGET gis_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
