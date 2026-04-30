@@ -736,10 +736,10 @@ std::optional<ValidationIssue> actionSpecificValidationIssue(
         const bool outputLooksRaster = endsWithOneOf(outputPath, {".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"});
 
         if (inputLooksVector && !outputLooksVector) {
-            return ValidationIssue{"output", "矢量重投影输出建议使用 .gpkg、.geojson、.shp、.kml 或 .csv"};
+            return ValidationIssue{"output", "矢量重投影输出应使用 .gpkg、.geojson、.shp、.kml 或 .csv"};
         }
         if (!inputLooksVector && !outputLooksRaster) {
-            return ValidationIssue{"output", "栅格重投影输出建议使用 .tif、.tiff、.img 或 .vrt"};
+            return ValidationIssue{"output", "栅格重投影输出应使用 .tif、.tiff、.img 或 .vrt"};
         }
     }
 
@@ -815,19 +815,19 @@ std::optional<ValidationIssue> actionSpecificValidationIssue(
         const std::string formatValue = stringParam("format");
         if (!outputPath.empty() && !formatValue.empty()) {
             if (formatValue == "GeoJSON" && !endsWithOneOf(outputPath, {".geojson", ".json"})) {
-                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：GeoJSON 请使用 .geojson 或 .json"};
+                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：GeoJSON 应使用 .geojson 或 .json"};
             }
             if (formatValue == "ESRI Shapefile" && !endsWithOneOf(outputPath, {".shp"})) {
-                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：Shapefile 请使用 .shp"};
+                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：Shapefile 应使用 .shp"};
             }
             if (formatValue == "GPKG" && !endsWithOneOf(outputPath, {".gpkg"})) {
-                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：GPKG 请使用 .gpkg"};
+                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：GPKG 应使用 .gpkg"};
             }
             if (formatValue == "KML" && !endsWithOneOf(outputPath, {".kml"})) {
-                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：KML 请使用 .kml"};
+                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：KML 应使用 .kml"};
             }
             if (formatValue == "CSV" && !endsWithOneOf(outputPath, {".csv"})) {
-                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：CSV 请使用 .csv"};
+                return ValidationIssue{"output", "参数“输出文件”应与“输出格式”一致：CSV 应使用 .csv"};
             }
         }
     }
@@ -835,7 +835,7 @@ std::optional<ValidationIssue> actionSpecificValidationIssue(
     if (pluginName == "vector" && actionKey == "polygonize") {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp"})) {
-            return ValidationIssue{"output", "参数“输出文件”当前建议使用 .geojson、.gpkg 或 .shp"};
+            return ValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg 或 .shp"};
         }
     }
 
@@ -843,7 +843,7 @@ std::optional<ValidationIssue> actionSpecificValidationIssue(
         (actionKey == "filter" || actionKey == "buffer" || actionKey == "clip")) {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp", ".kml"})) {
-            return ValidationIssue{"output", "参数“输出文件”当前建议使用 .geojson、.gpkg、.shp 或 .kml"};
+            return ValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg、.shp 或 .kml"};
         }
     }
 
@@ -851,7 +851,7 @@ std::optional<ValidationIssue> actionSpecificValidationIssue(
         (actionKey == "union" || actionKey == "difference" || actionKey == "dissolve")) {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp"})) {
-            return ValidationIssue{"output", "参数“输出文件”当前建议使用 .geojson、.gpkg 或 .shp"};
+            return ValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg 或 .shp"};
         }
     }
 
