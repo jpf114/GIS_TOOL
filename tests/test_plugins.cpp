@@ -404,7 +404,7 @@ TEST_F(PluginTest, UtilityPluginParams) {
 }
 
 TEST_F(PluginTest, FeatureStatsPluginParams) {
-    auto* p = mgr_.find("feature_stats");
+    auto* p = mgr_.find("classification");
     ASSERT_NE(p, nullptr);
 
     const auto specs = p->paramSpecs();
@@ -446,7 +446,7 @@ TEST_F(PluginTest, ProcessingPluginParams) {
 }
 
 TEST_F(PluginTest, FeatureStatsRunResolvesProjectedTargetSrsAndFinestGrid) {
-    auto* p = mgr_.find("feature_stats");
+    auto* p = mgr_.find("classification");
     ASSERT_NE(p, nullptr);
 
     const std::string vectorPath = createPolygonVectorDataset("feature_stats_projected_vector.gpkg", 3857);
@@ -458,7 +458,7 @@ TEST_F(PluginTest, FeatureStatsRunResolvesProjectedTargetSrsAndFinestGrid) {
     const std::string output = utf8PathString(getTestDir() / "feature_stats_projected_result.json");
 
     std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("run");
+    params["action"] = std::string("feature_stats");
     params["vector"] = vectorPath;
     params["feature_id_field"] = std::string("id");
     params["feature_name_field"] = std::string("name");
@@ -481,7 +481,7 @@ TEST_F(PluginTest, FeatureStatsRunResolvesProjectedTargetSrsAndFinestGrid) {
 }
 
 TEST_F(PluginTest, FeatureStatsRunRejectsGeographicInputsWithoutTargetEpsg) {
-    auto* p = mgr_.find("feature_stats");
+    auto* p = mgr_.find("classification");
     ASSERT_NE(p, nullptr);
 
     const std::string vectorPath = createPolygonVectorDataset("feature_stats_geo_vector.gpkg", 4326);
@@ -491,7 +491,7 @@ TEST_F(PluginTest, FeatureStatsRunRejectsGeographicInputsWithoutTargetEpsg) {
     const std::string output = utf8PathString(getTestDir() / "feature_stats_geo_result.json");
 
     std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("run");
+    params["action"] = std::string("feature_stats");
     params["vector"] = vectorPath;
     params["class_map"] = classMapPath;
     params["rasters"] = raster;
@@ -504,7 +504,7 @@ TEST_F(PluginTest, FeatureStatsRunRejectsGeographicInputsWithoutTargetEpsg) {
 }
 
 TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {
-    auto* p = mgr_.find("feature_stats");
+    auto* p = mgr_.find("classification");
     ASSERT_NE(p, nullptr);
 
     const std::string vectorPath = createPolygonVectorDataset("feature_stats_priority_vector.gpkg", 3857);
@@ -518,7 +518,7 @@ TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {
     fillIntRasterRect(highPriority, 0, 0, 4, 4, 1);
 
     std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("run");
+    params["action"] = std::string("feature_stats");
     params["vector"] = vectorPath;
     params["feature_id_field"] = std::string("id");
     params["feature_name_field"] = std::string("name");
@@ -541,7 +541,7 @@ TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {
 }
 
 TEST_F(PluginTest, FeatureStatsRunWritesVectorAndRasterOutputs) {
-    auto* p = mgr_.find("feature_stats");
+    auto* p = mgr_.find("classification");
     ASSERT_NE(p, nullptr);
 
     const std::string vectorPath = createPolygonVectorDataset("feature_stats_output_vector.gpkg", 3857);
@@ -557,7 +557,7 @@ TEST_F(PluginTest, FeatureStatsRunWritesVectorAndRasterOutputs) {
     fillIntRasterRect(highPriority, 0, 0, 4, 4, 1);
 
     std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("run");
+    params["action"] = std::string("feature_stats");
     params["vector"] = vectorPath;
     params["feature_id_field"] = std::string("id");
     params["feature_name_field"] = std::string("name");

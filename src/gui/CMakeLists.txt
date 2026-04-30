@@ -19,6 +19,7 @@ set(GIS_PLUGIN_TARGETS
     plugin_cutting
     plugin_matching
     plugin_processing
+    plugin_classification
     plugin_utility
     plugin_vector
 )
@@ -119,6 +120,7 @@ if(GIS_COPY_QT_PLATFORM_DLL)
     install(FILES
         "${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}/qwindows.dll"
         "${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}/qoffscreen.dll"
+        CONFIGURATIONS Release
         DESTINATION ${GIS_INSTALL_PLATFORM_DIR}
     )
 endif()

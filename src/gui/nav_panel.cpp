@@ -64,6 +64,13 @@ QIcon makeSidebarIcon(const std::string& kind, const QColor& bg, const QColor& f
         painter.drawLine(QPointF(9, 4.6), QPointF(9, 13.4));
         painter.drawLine(QPointF(4.6, 9), QPointF(13.4, 9));
         painter.drawEllipse(QRectF(7.3, 7.3, 3.4, 3.4));
+    } else if (kind == "classification") {
+        painter.drawRect(QRectF(4.0, 4.0, 10.0, 10.0));
+        painter.drawLine(QPointF(9.0, 4.0), QPointF(9.0, 14.0));
+        painter.drawLine(QPointF(4.0, 9.0), QPointF(14.0, 9.0));
+        painter.drawPoint(QPointF(6.5, 6.5));
+        painter.drawPoint(QPointF(11.5, 6.5));
+        painter.drawPoint(QPointF(6.5, 11.5));
     } else if (kind == "utility") {
         painter.drawLine(QPointF(5, 12.8), QPointF(5, 9.4));
         painter.drawLine(QPointF(9, 12.8), QPointF(9, 6.6));
@@ -106,29 +113,166 @@ QIcon makeSubFunctionIcon(const std::string& actionKey, bool active) {
         painter.drawEllipse(QRectF(2.6, 2.6, 10.8, 10.8));
         painter.drawLine(QPointF(8, 2.8), QPointF(8, 13.2));
         painter.drawLine(QPointF(2.8, 8), QPointF(13.2, 8));
+        if (actionKey == "reproject") {
+            painter.drawLine(QPointF(4.4, 4.4), QPointF(11.6, 11.6));
+        } else {
+            painter.drawEllipse(QRectF(6.1, 6.1, 3.8, 3.8));
+        }
+    } else if (actionKey == "assign_srs") {
+        painter.drawRoundedRect(QRectF(2.8, 4.0, 10.4, 8.4), 2, 2);
+        painter.drawLine(QPointF(5.0, 6.4), QPointF(11.0, 6.4));
+        painter.drawLine(QPointF(5.0, 9.2), QPointF(9.6, 9.2));
+        painter.drawLine(QPointF(8.0, 2.4), QPointF(8.0, 4.0));
     } else if (actionKey == "info" || actionKey == "stats" || actionKey == "histogram") {
         painter.drawLine(QPointF(4.0, 12.2), QPointF(4.0, 8.0));
         painter.drawLine(QPointF(8.0, 12.2), QPointF(8.0, 6.0));
         painter.drawLine(QPointF(12.0, 12.2), QPointF(12.0, 4.0));
+        if (actionKey != "histogram") {
+            painter.drawEllipse(QRectF(3.2, 5.4, 1.8, 1.8));
+            painter.drawEllipse(QRectF(7.2, 7.2, 1.8, 1.8));
+            painter.drawEllipse(QRectF(11.2, 3.8, 1.8, 1.8));
+        }
     } else if (actionKey == "clip" || actionKey == "buffer") {
-        painter.drawEllipse(QRectF(2.8, 2.8, 3.2, 3.2));
-        painter.drawEllipse(QRectF(10.0, 2.8, 3.2, 3.2));
-        painter.drawLine(QPointF(5.0, 5.0), QPointF(11.0, 11.0));
-        painter.drawLine(QPointF(11.0, 5.0), QPointF(5.0, 11.0));
+        if (actionKey == "clip") {
+            painter.drawEllipse(QRectF(2.8, 2.8, 3.2, 3.2));
+            painter.drawEllipse(QRectF(10.0, 2.8, 3.2, 3.2));
+            painter.drawLine(QPointF(5.0, 5.0), QPointF(11.0, 11.0));
+            painter.drawLine(QPointF(11.0, 5.0), QPointF(5.0, 11.0));
+        } else {
+            painter.drawEllipse(QRectF(5.0, 5.0, 6.0, 6.0));
+            painter.drawEllipse(QRectF(2.8, 2.8, 10.4, 10.4));
+        }
+    } else if (actionKey == "mosaic" || actionKey == "split" || actionKey == "rasterize") {
+        painter.drawRect(QRectF(2.8, 2.8, 10.4, 10.4));
+        painter.drawLine(QPointF(8.0, 2.8), QPointF(8.0, 13.2));
+        painter.drawLine(QPointF(2.8, 8.0), QPointF(13.2, 8.0));
+        if (actionKey == "mosaic") {
+            painter.drawLine(QPointF(2.8, 2.8), QPointF(13.2, 13.2));
+        }
+    } else if (actionKey == "merge_bands") {
+        painter.drawRect(QRectF(3.2, 5.0, 7.6, 6.0));
+        painter.drawRect(QRectF(5.0, 3.4, 7.6, 6.0));
+        painter.drawRect(QRectF(6.8, 2.2, 5.0, 5.0));
+    } else if (actionKey == "detect") {
+        painter.drawEllipse(QRectF(3.4, 3.4, 9.2, 9.2));
+        painter.drawLine(QPointF(8.0, 1.8), QPointF(8.0, 4.2));
+        painter.drawLine(QPointF(8.0, 11.8), QPointF(8.0, 14.2));
+        painter.drawLine(QPointF(1.8, 8.0), QPointF(4.2, 8.0));
+        painter.drawLine(QPointF(11.8, 8.0), QPointF(14.2, 8.0));
     } else if (actionKey == "filter" || actionKey == "enhance" || actionKey == "band_math") {
-        painter.drawEllipse(QRectF(2.6, 2.6, 10.8, 10.8));
-        painter.drawLine(QPointF(3.2, 8), QPointF(12.8, 8));
+        if (actionKey == "filter") {
+            painter.drawEllipse(QRectF(2.6, 2.6, 10.8, 10.8));
+            painter.drawLine(QPointF(3.2, 8), QPointF(12.8, 8));
+        } else if (actionKey == "enhance") {
+            painter.drawLine(QPointF(8.0, 2.8), QPointF(8.0, 13.2));
+            painter.drawLine(QPointF(2.8, 8.0), QPointF(13.2, 8.0));
+            painter.drawLine(QPointF(4.4, 4.4), QPointF(11.6, 11.6));
+        } else {
+            painter.drawLine(QPointF(8.0, 2.8), QPointF(8.0, 13.2));
+            painter.drawLine(QPointF(2.8, 8.0), QPointF(13.2, 8.0));
+            painter.drawLine(QPointF(4.4, 4.4), QPointF(5.9, 5.9));
+            painter.drawLine(QPointF(5.9, 4.4), QPointF(4.4, 5.9));
+        }
     } else if (actionKey == "match" || actionKey == "register" || actionKey == "ecc_register") {
-        painter.drawEllipse(QRectF(2.6, 2.6, 4.4, 4.4));
-        painter.drawEllipse(QRectF(9.0, 9.0, 4.4, 4.4));
-        painter.drawLine(QPointF(6.2, 6.2), QPointF(9.8, 9.8));
-    } else if (actionKey == "vector" || actionKey == "polygonize" || actionKey == "dissolve") {
+        if (actionKey == "match") {
+            painter.drawEllipse(QRectF(2.6, 2.6, 4.4, 4.4));
+            painter.drawEllipse(QRectF(9.0, 9.0, 4.4, 4.4));
+            painter.drawLine(QPointF(6.2, 6.2), QPointF(9.8, 9.8));
+        } else {
+            painter.drawRect(QRectF(2.8, 4.0, 5.2, 5.2));
+            painter.drawRect(QRectF(7.8, 6.6, 5.2, 5.2));
+            painter.drawLine(QPointF(6.0, 2.4), QPointF(10.0, 2.4));
+            painter.drawLine(QPointF(10.0, 2.4), QPointF(8.8, 1.4));
+            painter.drawLine(QPointF(10.0, 2.4), QPointF(8.8, 3.4));
+        }
+    } else if (actionKey == "change") {
+        painter.drawRect(QRectF(2.8, 4.0, 4.4, 4.4));
+        painter.drawRect(QRectF(8.8, 7.6, 4.4, 4.4));
+        painter.drawLine(QPointF(6.8, 6.8), QPointF(9.4, 9.4));
+    } else if (actionKey == "corner") {
+        painter.drawLine(QPointF(3.2, 3.2), QPointF(3.2, 12.8));
+        painter.drawLine(QPointF(3.2, 12.8), QPointF(12.8, 12.8));
+        painter.drawEllipse(QRectF(6.6, 6.6, 2.8, 2.8));
+    } else if (actionKey == "stitch") {
+        painter.drawRoundedRect(QRectF(2.8, 4.6, 5.2, 6.0), 1.5, 1.5);
+        painter.drawRoundedRect(QRectF(7.8, 3.2, 5.2, 6.0), 1.5, 1.5);
+        painter.drawLine(QPointF(7.8, 7.6), QPointF(7.8, 7.6));
+    } else if (actionKey == "feature_stats") {
+        painter.drawRect(QRectF(2.8, 2.8, 10.4, 10.4));
+        painter.drawLine(QPointF(8.0, 2.8), QPointF(8.0, 13.2));
+        painter.drawLine(QPointF(2.8, 8.0), QPointF(13.2, 8.0));
+        painter.drawPoint(QPointF(5.0, 5.0));
+        painter.drawPoint(QPointF(11.0, 5.0));
+        painter.drawPoint(QPointF(5.0, 11.0));
+    } else if (actionKey == "edge") {
+        painter.drawPolyline(QPolygonF() << QPointF(3.0, 11.5) << QPointF(6.0, 4.5) << QPointF(8.4, 9.8) << QPointF(13.0, 3.2));
+    } else if (actionKey == "contour") {
+        painter.drawEllipse(QRectF(2.8, 2.8, 10.4, 10.4));
+        painter.drawEllipse(QRectF(5.2, 5.2, 5.6, 5.6));
+    } else if (actionKey == "template_match") {
+        painter.drawRect(QRectF(2.8, 2.8, 10.4, 10.4));
+        painter.drawRect(QRectF(5.6, 5.6, 4.8, 4.8));
+    } else if (actionKey == "pansharpen") {
+        painter.drawEllipse(QRectF(3.6, 3.6, 4.8, 4.8));
+        painter.drawLine(QPointF(11.0, 4.0), QPointF(11.0, 12.8));
+        painter.drawLine(QPointF(9.2, 8.4), QPointF(12.8, 8.4));
+    } else if (actionKey == "hough") {
+        painter.drawLine(QPointF(3.0, 12.6), QPointF(13.0, 2.6));
+        painter.drawEllipse(QRectF(7.6, 5.2, 4.8, 4.8));
+    } else if (actionKey == "watershed") {
+        painter.drawEllipse(QRectF(5.0, 3.0, 6.0, 8.4));
+        painter.drawLine(QPointF(8.0, 11.4), QPointF(8.0, 13.4));
+    } else if (actionKey == "kmeans") {
         painter.drawEllipse(QRectF(2.8, 2.8, 2.8, 2.8));
         painter.drawEllipse(QRectF(10.2, 3.4, 2.8, 2.8));
         painter.drawEllipse(QRectF(6.6, 10.0, 2.8, 2.8));
         painter.drawLine(QPointF(5.4, 5.4), QPointF(10.2, 5.8));
         painter.drawLine(QPointF(11.2, 6.6), QPointF(8.6, 10.4));
         painter.drawLine(QPointF(7.4, 10.2), QPointF(4.8, 6.0));
+    } else if (actionKey == "overviews") {
+        painter.drawRect(QRectF(2.8, 2.8, 10.4, 10.4));
+        painter.drawRect(QRectF(4.6, 4.6, 6.8, 6.8));
+        painter.drawRect(QRectF(6.4, 6.4, 3.2, 3.2));
+    } else if (actionKey == "nodata") {
+        painter.drawEllipse(QRectF(3.2, 3.2, 9.6, 9.6));
+        painter.drawLine(QPointF(4.0, 12.0), QPointF(12.0, 4.0));
+    } else if (actionKey == "colormap") {
+        painter.drawRoundedRect(QRectF(2.8, 4.0, 10.4, 8.0), 2.5, 2.5);
+        painter.drawLine(QPointF(5.4, 6.4), QPointF(5.4, 9.8));
+        painter.drawLine(QPointF(8.0, 5.2), QPointF(8.0, 10.8));
+        painter.drawLine(QPointF(10.6, 6.4), QPointF(10.6, 9.8));
+    } else if (actionKey == "ndvi") {
+        painter.drawEllipse(QRectF(4.2, 2.8, 7.0, 10.4));
+        painter.drawLine(QPointF(7.8, 4.0), QPointF(7.8, 12.0));
+        painter.drawLine(QPointF(7.8, 7.4), QPointF(11.6, 4.0));
+    } else if (actionKey == "convert") {
+        painter.drawLine(QPointF(3.2, 5.2), QPointF(12.8, 5.2));
+        painter.drawLine(QPointF(9.8, 3.2), QPointF(12.8, 5.2));
+        painter.drawLine(QPointF(9.8, 7.2), QPointF(12.8, 5.2));
+        painter.drawLine(QPointF(12.8, 10.8), QPointF(3.2, 10.8));
+        painter.drawLine(QPointF(6.2, 8.8), QPointF(3.2, 10.8));
+        painter.drawLine(QPointF(6.2, 12.8), QPointF(3.2, 10.8));
+    } else if (actionKey == "union") {
+        painter.drawEllipse(QRectF(2.8, 4.0, 5.6, 5.6));
+        painter.drawEllipse(QRectF(7.6, 4.0, 5.6, 5.6));
+    } else if (actionKey == "difference") {
+        painter.drawEllipse(QRectF(2.8, 4.0, 6.4, 6.4));
+        painter.drawLine(QPointF(11.0, 7.2), QPointF(13.2, 7.2));
+    } else if (actionKey == "vector" || actionKey == "polygonize" || actionKey == "dissolve") {
+        if (actionKey == "polygonize") {
+            painter.drawPolygon(QPolygonF() << QPointF(3.6, 5.6) << QPointF(7.8, 3.0) << QPointF(13.0, 6.2) << QPointF(11.2, 11.8) << QPointF(5.0, 13.0));
+        } else if (actionKey == "dissolve") {
+            painter.drawEllipse(QRectF(2.8, 4.0, 4.2, 4.2));
+            painter.drawEllipse(QRectF(8.2, 4.0, 4.2, 4.2));
+            painter.drawEllipse(QRectF(5.4, 8.2, 4.2, 4.2));
+        } else {
+            painter.drawEllipse(QRectF(2.8, 2.8, 2.8, 2.8));
+            painter.drawEllipse(QRectF(10.2, 3.4, 2.8, 2.8));
+            painter.drawEllipse(QRectF(6.6, 10.0, 2.8, 2.8));
+            painter.drawLine(QPointF(5.4, 5.4), QPointF(10.2, 5.8));
+            painter.drawLine(QPointF(11.2, 6.6), QPointF(8.6, 10.4));
+            painter.drawLine(QPointF(7.4, 10.2), QPointF(4.8, 6.0));
+        }
     } else {
         painter.drawEllipse(QRectF(4.6, 4.6, 6.8, 6.8));
     }

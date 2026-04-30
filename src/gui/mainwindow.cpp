@@ -192,6 +192,11 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawLine(QPointF(19, 11.5), QPointF(19, 26.5));
         painter.drawLine(QPointF(11.5, 19), QPointF(26.5, 19));
         painter.drawEllipse(QRectF(16.2, 16.2, 5.6, 5.6));
+    } else if (text == QStringLiteral("classification")) {
+        drawGrid();
+        painter.drawPoint(QPointF(14.0, 14.0));
+        painter.drawPoint(QPointF(24.0, 14.0));
+        painter.drawPoint(QPointF(14.0, 24.0));
     } else if (text == QStringLiteral("detect")) {
         painter.drawEllipse(QRectF(11, 11, 16, 16));
         painter.drawLine(QPointF(19, 8.5), QPointF(19, 13));
@@ -220,6 +225,11 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawRoundedRect(QRectF(10, 13, 9, 11), 2, 2);
         painter.drawRoundedRect(QRectF(19, 13, 9, 11), 2, 2);
         painter.drawLine(QPointF(19, 18.5), QPointF(19, 18.5));
+    } else if (text == QStringLiteral("feature_stats")) {
+        drawGrid();
+        painter.drawPoint(QPointF(14.0, 14.0));
+        painter.drawPoint(QPointF(24.0, 14.0));
+        painter.drawPoint(QPointF(14.0, 24.0));
     } else if (text == QStringLiteral("info") || text == QStringLiteral("stats")) {
         drawBars();
         painter.drawEllipse(QRectF(12.4, 8.5, 3.2, 3.2));
@@ -398,6 +408,14 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"cmap", {QStringLiteral("颜色映射"), QStringLiteral("伪彩色映射方案。")}},
         {"red_band", {QStringLiteral("红光波段"), QStringLiteral("计算 NDVI 的红光波段序号。")}},
         {"nir_band", {QStringLiteral("近红外波段"), QStringLiteral("计算 NDVI 的近红外波段序号。")}},
+        {"vector", {QStringLiteral("输入面矢量"), QStringLiteral("参与统计的面矢量文件路径。")}},
+        {"feature_id_field", {QStringLiteral("要素 ID 字段"), QStringLiteral("可选，用于标识每个面要素的唯一字段名。")}},
+        {"feature_name_field", {QStringLiteral("要素名称字段"), QStringLiteral("可选，用于读取面要素名称的字段名。")}},
+        {"class_map", {QStringLiteral("分类映射"), QStringLiteral("分类值到分类名称的 JSON 映射文件。")}},
+        {"rasters", {QStringLiteral("分类栅格列表"), QStringLiteral("多个分类栅格路径，使用逗号分隔，顺序即优先级。")}},
+        {"target_epsg", {QStringLiteral("目标 EPSG"), QStringLiteral("可选，显式指定统计时使用的目标投影坐标系。")}},
+        {"vector_output", {QStringLiteral("分类面输出"), QStringLiteral("可选，输出分类面结果，建议使用 .gpkg。")}},
+        {"raster_output", {QStringLiteral("分类栅格输出"), QStringLiteral("可选，输出分类栅格结果，建议使用 .tif。")}},
     };
     return kTexts;
 }
@@ -437,6 +455,9 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"hough", {QStringLiteral("霍夫变换"), QStringLiteral("检测直线或圆形结构。"), {"input", "output", "band", "hough_type", "hough_threshold", "min_line_length", "max_line_gap", "min_radius", "max_radius", "circle_param2"}, {"input", "output"}}},
             {"watershed", {QStringLiteral("分水岭分割"), QStringLiteral("执行分水岭分割，可选外部标记输入。"), {"input", "output", "band", "marker_input"}, {"input", "output"}}},
             {"kmeans", {QStringLiteral("K-Means 分割"), QStringLiteral("按聚类数对影像执行 K-Means 分割。"), {"input", "output", "band", "k", "max_iter", "epsilon_kmeans"}, {"input", "output"}}},
+        }},
+        {"classification", {
+            {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
         }},
         {"utility", {
             {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
@@ -803,7 +824,7 @@ void MainWindow::loadPlugins() {
     }
 
     static const std::vector<std::string> preferredOrder = {
-        "projection", "cutting", "matching", "processing", "utility", "vector"
+        "projection", "cutting", "matching", "processing", "classification", "utility", "vector"
     };
 
     std::vector<gis::framework::IGisPlugin*> plugins = pluginManager_.plugins();

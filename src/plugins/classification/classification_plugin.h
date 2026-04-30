@@ -4,12 +4,12 @@
 
 namespace gis::plugins {
 
-class FeatureStatsPlugin : public gis::framework::IGisPlugin {
+class ClassificationPlugin : public gis::framework::IGisPlugin {
 public:
-    std::string name() const override { return "feature_stats"; }
-    std::string displayName() const override { return "面域分类统计"; }
+    std::string name() const override { return "classification"; }
+    std::string displayName() const override { return "分类统计"; }
     std::string version() const override { return "0.1.0"; }
-    std::string description() const override { return "对面要素范围内的多源分类栅格执行优先级统计，输出像元数、面积和占比。"; }
+    std::string description() const override { return "提供面向分类结果的统计分析能力，当前支持地物分类统计。"; }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
 
@@ -18,10 +18,9 @@ public:
         gis::core::ProgressReporter& progress) override;
 
 private:
-    gis::framework::Result doRun(
+    gis::framework::Result doFeatureStats(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
 };
 
 } // namespace gis::plugins
-

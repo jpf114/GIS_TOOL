@@ -8,7 +8,7 @@ set(GIS_PLUGIN_TARGETS
     plugin_cutting
     plugin_matching
     plugin_processing
-    plugin_feature_stats
+    plugin_classification
     plugin_utility
     plugin_vector
 )

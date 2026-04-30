@@ -83,7 +83,7 @@ add_subdirectory(src/plugins/projection)
 add_subdirectory(src/plugins/cutting)
 add_subdirectory(src/plugins/matching)
 add_subdirectory(src/plugins/processing)
-add_subdirectory(src/plugins/feature_stats)
+add_subdirectory(src/plugins/classification)
 add_subdirectory(src/plugins/vector)
 add_subdirectory(src/plugins/utility)
 add_subdirectory(src/cli)
@@ -118,6 +118,7 @@ install(DIRECTORY
 install(DIRECTORY
     "${GIS_VCPKG_RELEASE_BIN_DIR}/"
     DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    CONFIGURATIONS Release
     FILES_MATCHING
     PATTERN "*.dll"
 )

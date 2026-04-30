@@ -1,4 +1,4 @@
-#include "feature_stats_plugin.h"
+﻿#include "classification_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
 
@@ -1173,12 +1173,12 @@ gis::framework::Result buildTaskFromParams(
 
 } // namespace
 
-std::vector<gis::framework::ParamSpec> FeatureStatsPlugin::paramSpecs() const {
+std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "当前固定为 run",
+            "action", "子功能", "当前固定为 feature_stats",
             gis::framework::ParamType::Enum, true, std::string{},
-            int{0}, int{0}, {"run"}
+            int{0}, int{0}, {"feature_stats"}
         },
         gis::framework::ParamSpec{
             "vector", "输入面矢量", "参与统计的面矢量文件路径",
@@ -1227,13 +1227,13 @@ std::vector<gis::framework::ParamSpec> FeatureStatsPlugin::paramSpecs() const {
     };
 }
 
-gis::framework::Result FeatureStatsPlugin::execute(
+gis::framework::Result ClassificationPlugin::execute(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
     try {
         const std::string action = gis::framework::getParam<std::string>(params, "action", "");
-        if (action == "run") {
-            return doRun(params, progress);
+        if (action == "feature_stats") {
+            return doFeatureStats(params, progress);
         }
         return gis::framework::Result::fail("Unknown action: " + action);
     } catch (const std::exception& ex) {
@@ -1241,10 +1241,10 @@ gis::framework::Result FeatureStatsPlugin::execute(
     }
 }
 
-gis::framework::Result FeatureStatsPlugin::doRun(
+gis::framework::Result ClassificationPlugin::doFeatureStats(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
-    progress.onMessage("正在准备 feature_stats 任务...");
+    progress.onMessage("正在准备地物分类统计任务...");
     progress.onProgress(0.05);
 
     FeatureStatsTask task;
@@ -1314,7 +1314,7 @@ gis::framework::Result FeatureStatsPlugin::doRun(
             globalWindow.geotransform);
     }
 
-    progress.onMessage("正在执行面域分类统计...");
+    progress.onMessage("正在执行地物分类统计...");
     FeatureStatsResultData resultData;
     resultData.actualSrs = targetSrs.epsgText;
 
@@ -1385,7 +1385,8 @@ gis::framework::Result FeatureStatsPlugin::doRun(
     writeResult(task, resultData);
     progress.onProgress(1.0);
 
-    auto result = gis::framework::Result::ok("feature_stats 统计完成", task.outputPath);
+    auto result = gis::framework::Result::ok("地物分类统计完成", task.outputPath);
+    result.metadata["action"] = "feature_stats";
     result.metadata["vector"] = task.vectorPath;
     result.metadata["class_map"] = task.classMapPath;
     result.metadata["raster_count"] = std::to_string(task.rasters.size());
@@ -1403,4 +1404,6 @@ gis::framework::Result FeatureStatsPlugin::doRun(
 
 } // namespace gis::plugins
 
-GIS_PLUGIN_EXPORT(gis::plugins::FeatureStatsPlugin)
+GIS_PLUGIN_EXPORT(gis::plugins::ClassificationPlugin)
+
+
