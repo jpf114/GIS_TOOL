@@ -76,6 +76,8 @@ private:
     QString currentActionKey_;
     bool isSyncingParams_ = false;
     std::string lastAutoOutputPath_;
+    std::string lastAutoVectorOutputPath_;
+    std::string lastAutoRasterOutputPath_;
     std::string lastAutoLayerName_;
     std::optional<std::array<double, 4>> lastAutoExtent_;
 };

@@ -27,9 +27,11 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -45,6 +47,11 @@ struct ActionUiConfig {
 struct ParamText {
     QString displayName;
     QString description;
+};
+
+struct ValidationIssue {
+    std::string key;
+    std::string message;
 };
 
 QString genericActionDisplayName(const QString& actionKey) {
@@ -334,8 +341,8 @@ QIcon executeIcon() {
 
 const std::map<std::string, ParamText>& commonParamTextStorage() {
     static const std::map<std::string, ParamText> kTexts = {
-        {"input", {QStringLiteral("输入文件"), QStringLiteral("输入数据路径，可按功能填写单文件或逗号分隔的多文件。")}},
-        {"output", {QStringLiteral("输出文件"), QStringLiteral("输出结果路径。")}},
+        {"input", {QStringLiteral("输入文件"), QStringLiteral("输入数据路径；多文件场景请使用英文逗号分隔。")}},
+        {"output", {QStringLiteral("输出文件"), QStringLiteral("输出结果路径；建议按功能选择正确后缀。")}},
         {"reference", {QStringLiteral("参考文件"), QStringLiteral("参考数据路径，常用于匹配、配准或变化检测。")}},
         {"dst_srs", {QStringLiteral("目标坐标系"), QStringLiteral("目标坐标参考系，例如 EPSG:3857。")}},
         {"src_srs", {QStringLiteral("源坐标系"), QStringLiteral("源坐标参考系，留空时尽量使用数据自带坐标系。")}},
@@ -347,7 +354,7 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"cutline", {QStringLiteral("裁切矢量"), QStringLiteral("用于裁切影像的矢量文件。")}},
         {"tile_size", {QStringLiteral("分块大小"), QStringLiteral("切块时每块的像素尺寸。")}},
         {"overlap", {QStringLiteral("重叠像素"), QStringLiteral("相邻分块之间的重叠像素数。")}},
-        {"bands", {QStringLiteral("波段列表"), QStringLiteral("用于合并波段的文件列表，多个文件用逗号分隔。")}},
+        {"bands", {QStringLiteral("波段列表"), QStringLiteral("按功能填写逗号分隔列表，例如 1,1,1 或 band1.tif,band2.tif。")}},
         {"layer", {QStringLiteral("图层名"), QStringLiteral("要处理的图层名称，留空时通常使用第一个图层。")}},
         {"where", {QStringLiteral("属性过滤"), QStringLiteral("SQL WHERE 条件表达式。")}},
         {"distance", {QStringLiteral("距离"), QStringLiteral("缓冲区或相关分析的距离值。")}},
@@ -388,7 +395,7 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"sobel_dx", {QStringLiteral("Sobel dx"), QStringLiteral("Sobel 的 x 方向导数阶数。")}},
         {"sobel_dy", {QStringLiteral("Sobel dy"), QStringLiteral("Sobel 的 y 方向导数阶数。")}},
         {"min_area", {QStringLiteral("最小面积"), QStringLiteral("轮廓筛选的最小面积。")}},
-        {"template_file", {QStringLiteral("模板文件"), QStringLiteral("用于模板匹配的模板影像。")}},
+        {"template_file", {QStringLiteral("模板文件"), QStringLiteral("用于模板匹配的模板影像，建议使用栅格文件。")}},
         {"pan_file", {QStringLiteral("全色影像"), QStringLiteral("全色锐化所需的高分辨率全色影像。")}},
         {"pan_method", {QStringLiteral("融合方法"), QStringLiteral("全色锐化采用的融合方法。")}},
         {"hough_type", {QStringLiteral("霍夫类型"), QStringLiteral("霍夫检测类型，例如直线或圆。")}},
@@ -411,21 +418,90 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"vector", {QStringLiteral("输入面矢量"), QStringLiteral("参与统计的面矢量文件路径。")}},
         {"feature_id_field", {QStringLiteral("要素 ID 字段"), QStringLiteral("可选，用于标识每个面要素的唯一字段名。")}},
         {"feature_name_field", {QStringLiteral("要素名称字段"), QStringLiteral("可选，用于读取面要素名称的字段名。")}},
-        {"class_map", {QStringLiteral("分类映射"), QStringLiteral("分类值到分类名称的 JSON 映射文件。")}},
-        {"rasters", {QStringLiteral("分类栅格列表"), QStringLiteral("多个分类栅格路径，使用逗号分隔，顺序即优先级。")}},
+        {"class_map", {QStringLiteral("分类映射"), QStringLiteral("分类值到分类名称的 JSON 映射文件，例如 {\"1\":\"耕地\",\"2\":\"林地\"}。")}},
+        {"rasters", {QStringLiteral("分类栅格列表"), QStringLiteral("多个分类栅格路径，使用英文逗号分隔，例如 a.tif,b.tif。")}},
+        {"nodatas", {QStringLiteral("NoData 列表"), QStringLiteral("与分类栅格一一对应的 NoData 列表，使用英文逗号分隔，例如 0,0,255。")}},
         {"target_epsg", {QStringLiteral("目标 EPSG"), QStringLiteral("可选，显式指定统计时使用的目标投影坐标系。")}},
         {"vector_output", {QStringLiteral("分类面输出"), QStringLiteral("可选，输出分类面结果，建议使用 .gpkg。")}},
         {"raster_output", {QStringLiteral("分类栅格输出"), QStringLiteral("可选，输出分类栅格结果，建议使用 .tif。")}},
     };
     return kTexts;
 }
+
+const ParamText* findActionSpecificParamText(const std::string& pluginName,
+                                             const std::string& actionKey,
+                                             const std::string& paramKey) {
+    static const std::map<std::string, std::map<std::string, std::map<std::string, ParamText>>> kTexts = {
+        {"cutting", {
+            {"split", {
+                {"output", {QStringLiteral("输出目录"), QStringLiteral("分块输出目录，图块会自动命名为 tile_x_y.tif。")}},
+            }},
+            {"merge_bands", {
+                {"input", {QStringLiteral("输入文件"), QStringLiteral("可填写一个或多个单波段栅格路径，使用英文逗号分隔。")}},
+                {"bands", {QStringLiteral("波段列表"), QStringLiteral("补充更多单波段栅格路径，使用英文逗号分隔。")}},
+            }},
+        }},
+        {"projection", {
+            {"reproject", {
+                {"input", {QStringLiteral("输入文件"), QStringLiteral("支持栅格或矢量数据，输出格式由输出后缀决定。")}},
+            }},
+            {"transform", {
+                {"src_srs", {QStringLiteral("源坐标系"), QStringLiteral("源坐标系，留空时默认按 EPSG:4326 解释输入坐标。")}},
+            }},
+        }},
+        {"processing", {
+            {"filter", {
+                {"kernel_size", {QStringLiteral("核大小"), QStringLiteral("滤波核大小，建议填写大于等于 3 的奇数。")}},
+            }},
+            {"template_match", {
+                {"template_file", {QStringLiteral("模板文件"), QStringLiteral("模板影像路径，尺寸需小于等于输入影像。")}},
+            }},
+            {"watershed", {
+                {"marker_input", {QStringLiteral("标记输入"), QStringLiteral("可选外部标记栅格，0 表示背景，1/2/3 表示不同种子区域。")}},
+            }},
+        }},
+        {"utility", {
+            {"nodata", {
+                {"band", {QStringLiteral("波段序号"), QStringLiteral("填写 0 表示对全部波段设置 NoData；填写 1、2、3... 表示单个波段。")}},
+            }},
+        }},
+        {"classification", {
+            {"feature_stats", {
+                {"output", {QStringLiteral("统计输出"), QStringLiteral("统计结果输出路径，仅支持 .json 或 .csv。")}},
+                {"class_map", {QStringLiteral("分类映射"), QStringLiteral("JSON 文件，例如 {\"1\":\"耕地\",\"2\":\"林地\"}。")}},
+                {"rasters", {QStringLiteral("分类栅格列表"), QStringLiteral("多个分类栅格路径，使用英文逗号分隔，顺序即优先级。")}},
+                {"bands", {QStringLiteral("波段列表"), QStringLiteral("与分类栅格一一对应，使用英文逗号分隔，默认全部为 1。")}},
+                {"nodatas", {QStringLiteral("NoData 列表"), QStringLiteral("与分类栅格一一对应，使用英文逗号分隔，默认全部为 0。")}},
+            }},
+        }},
+        {"vector", {
+            {"convert", {
+                {"output", {QStringLiteral("输出文件"), QStringLiteral("输出路径应与输出格式一致，例如 .geojson、.gpkg、.shp。")}},
+            }},
+        }},
+    };
+
+    const auto pluginIt = kTexts.find(pluginName);
+    if (pluginIt == kTexts.end()) {
+        return nullptr;
+    }
+    const auto actionIt = pluginIt->second.find(actionKey);
+    if (actionIt == pluginIt->second.end()) {
+        return nullptr;
+    }
+    const auto paramIt = actionIt->second.find(paramKey);
+    if (paramIt == actionIt->second.end()) {
+        return nullptr;
+    }
+    return &paramIt->second;
+}
 const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConfigStorage() {
     static const std::map<std::string, std::map<std::string, ActionUiConfig>> kConfigs = {
         {"projection", {
             {"reproject", {QStringLiteral("重投影"), QStringLiteral("将栅格或矢量数据重投影到目标坐标系。"), {"input", "output", "dst_srs", "src_srs", "resample"}, {"input", "output", "dst_srs"}}},
-            {"info", {QStringLiteral("坐标信息"), QStringLiteral("查看影像坐标参考、范围和分辨率信息。"), {"input"}, {"input"}}},
+            {"info", {QStringLiteral("栅格坐标信息"), QStringLiteral("查看栅格坐标参考、范围和分辨率信息。"), {"input"}, {"input"}}},
             {"transform", {QStringLiteral("坐标转换"), QStringLiteral("将单个坐标点从源坐标系转换到目标坐标系。"), {"src_srs", "dst_srs", "x", "y"}, {"dst_srs"}}},
-            {"assign_srs", {QStringLiteral("赋予坐标系"), QStringLiteral("为没有坐标参考的数据直接写入坐标系定义。"), {"input", "srs"}, {"input", "srs"}}},
+            {"assign_srs", {QStringLiteral("赋予栅格坐标系"), QStringLiteral("为没有坐标参考的栅格数据直接写入坐标系定义。"), {"input", "srs"}, {"input", "srs"}}},
         }},
         {"cutting", {
             {"clip", {QStringLiteral("裁切"), QStringLiteral("按范围或裁切矢量裁切影像，范围和裁切矢量至少填写一个。"), {"input", "output", "extent", "cutline"}, {"input", "output"}}},
@@ -454,7 +530,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"pansharpen", {QStringLiteral("全色锐化"), QStringLiteral("将多光谱影像与全色影像进行融合。"), {"input", "output", "pan_file", "pan_method"}, {"input", "output", "pan_file"}}},
             {"hough", {QStringLiteral("霍夫变换"), QStringLiteral("检测直线或圆形结构。"), {"input", "output", "band", "hough_type", "hough_threshold", "min_line_length", "max_line_gap", "min_radius", "max_radius", "circle_param2"}, {"input", "output"}}},
             {"watershed", {QStringLiteral("分水岭分割"), QStringLiteral("执行分水岭分割，可选外部标记输入。"), {"input", "output", "band", "marker_input"}, {"input", "output"}}},
-            {"kmeans", {QStringLiteral("K-Means 分割"), QStringLiteral("按聚类数对影像执行 K-Means 分割。"), {"input", "output", "band", "k", "max_iter", "epsilon_kmeans"}, {"input", "output"}}},
+            {"kmeans", {QStringLiteral("K-Means 分割"), QStringLiteral("按聚类数对影像全部波段执行 K-Means 分割。"), {"input", "output", "k", "max_iter", "epsilon_kmeans"}, {"input", "output"}}},
         }},
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
@@ -523,6 +599,39 @@ bool isZeroExtent(const std::array<double, 4>& extent) {
     return extent[0] == 0.0 && extent[1] == 0.0 && extent[2] == 0.0 && extent[3] == 0.0;
 }
 
+std::string lowerString(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::vector<std::string> splitCommaList(const std::string& text) {
+    std::vector<std::string> items;
+    std::istringstream iss(text);
+    std::string item;
+    while (std::getline(iss, item, ',')) {
+        const auto begin = item.find_first_not_of(" \t\r\n");
+        if (begin == std::string::npos) {
+            continue;
+        }
+        const auto end = item.find_last_not_of(" \t\r\n");
+        items.push_back(item.substr(begin, end - begin + 1));
+    }
+    return items;
+}
+
+bool endsWithOneOf(const std::string& path, const std::vector<std::string>& suffixes) {
+    const std::string lowerPath = lowerString(path);
+    for (const auto& suffix : suffixes) {
+        if (lowerPath.size() >= suffix.size() &&
+            lowerPath.compare(lowerPath.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<std::array<double, 4>> extentParamValue(
     const std::map<std::string, gis::framework::ParamValue>& params,
     const std::string& key) {
@@ -536,7 +645,36 @@ std::optional<std::array<double, 4>> extentParamValue(
     return std::nullopt;
 }
 
-std::string actionSpecificValidation(
+std::optional<double> doubleParamValue(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const std::string& key) {
+    const auto it = params.find(key);
+    if (it == params.end()) {
+        return std::nullopt;
+    }
+    if (const auto* value = std::get_if<double>(&it->second)) {
+        return *value;
+    }
+    if (const auto* value = std::get_if<int>(&it->second)) {
+        return static_cast<double>(*value);
+    }
+    return std::nullopt;
+}
+
+std::optional<int> intParamValue(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const std::string& key) {
+    const auto it = params.find(key);
+    if (it == params.end()) {
+        return std::nullopt;
+    }
+    if (const auto* value = std::get_if<int>(&it->second)) {
+        return *value;
+    }
+    return std::nullopt;
+}
+
+std::optional<ValidationIssue> actionSpecificValidationIssue(
     const std::string& pluginName,
     const std::string& actionKey,
     const std::map<std::string, gis::framework::ParamValue>& params) {
@@ -554,24 +692,221 @@ std::string actionSpecificValidation(
     if (pluginName == "cutting" && actionKey == "clip") {
         const auto extent = extentParamValue(params, "extent");
         if ((!extent.has_value() || isZeroExtent(*extent)) && stringParam("cutline").empty()) {
-            return "参数“裁切范围”或“裁切矢量”至少填写一个";
+            return ValidationIssue{"extent", "参数“裁切范围”或“裁切矢量”至少填写一个"};
         }
     }
 
     if (pluginName == "cutting" && actionKey == "merge_bands") {
         if (stringParam("input").empty() && stringParam("bands").empty()) {
-            return "参数“输入文件”或“波段列表”至少填写一个";
+            return ValidationIssue{"input", "参数“输入文件”或“波段列表”至少填写一个"};
+        }
+    }
+
+    if (pluginName == "cutting" && actionKey == "mosaic") {
+        if (splitCommaList(stringParam("input")).size() < 2) {
+            return ValidationIssue{"input", "参数“输入文件”至少需要 2 个影像路径"};
+        }
+    }
+
+    if (pluginName == "cutting" && actionKey == "split") {
+        const std::string outputPath = stringParam("output");
+        if (endsWithOneOf(outputPath, {".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"})) {
+            return ValidationIssue{"output", "参数“输出目录”应填写目录，不应填写单个栅格文件名"};
         }
     }
 
     if (pluginName == "vector" && actionKey == "filter") {
         const auto extent = extentParamValue(params, "extent");
         if (stringParam("where").empty() && (!extent.has_value() || isZeroExtent(*extent))) {
-            return "参数“属性过滤”或“空间范围”至少填写一个";
+            return ValidationIssue{"where", "参数“属性过滤”或“空间范围”至少填写一个"};
         }
     }
 
-    return {};
+    if (pluginName == "matching" && actionKey == "stitch") {
+        if (splitCommaList(stringParam("input")).size() < 2) {
+            return ValidationIssue{"input", "参数“输入文件”至少需要 2 个影像路径"};
+        }
+    }
+
+    if (pluginName == "projection" && actionKey == "reproject") {
+        const std::string inputPath = stringParam("input");
+        const std::string outputPath = stringParam("output");
+        const bool inputLooksVector = endsWithOneOf(inputPath, {".shp", ".gpkg", ".geojson", ".json", ".kml", ".csv"});
+        const bool outputLooksVector = endsWithOneOf(outputPath, {".shp", ".gpkg", ".geojson", ".json", ".kml", ".csv"});
+        const bool outputLooksRaster = endsWithOneOf(outputPath, {".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"});
+
+        if (inputLooksVector && !outputLooksVector) {
+            return ValidationIssue{"output", "矢量重投影输出建议使用 .gpkg、.geojson、.shp、.kml 或 .csv"};
+        }
+        if (!inputLooksVector && !outputLooksRaster) {
+            return ValidationIssue{"output", "栅格重投影输出建议使用 .tif、.tiff、.img 或 .vrt"};
+        }
+    }
+
+    if (pluginName == "utility" && actionKey == "overviews") {
+        const std::string levelsText = stringParam("levels");
+        std::istringstream iss(levelsText);
+        int level = 0;
+        bool hasValidLevel = false;
+        while (iss >> level) {
+            if (level > 1) {
+                hasValidLevel = true;
+                break;
+            }
+        }
+        if (!hasValidLevel) {
+            return ValidationIssue{"levels", "参数“金字塔层级”至少应包含一个大于 1 的整数，例如 2 4 8 16"};
+        }
+    }
+
+    if (pluginName == "utility" && actionKey == "histogram") {
+        const auto bins = intParamValue(params, "bins");
+        if (bins.has_value() && *bins <= 0) {
+            return ValidationIssue{"bins", "参数“分箱数”必须大于 0"};
+        }
+    }
+
+    if (pluginName == "utility" && actionKey == "ndvi") {
+        const auto redBand = intParamValue(params, "red_band");
+        const auto nirBand = intParamValue(params, "nir_band");
+        if (redBand.has_value() && *redBand <= 0) {
+            return ValidationIssue{"red_band", "参数“红光波段”必须大于 0"};
+        }
+        if (nirBand.has_value() && *nirBand <= 0) {
+            return ValidationIssue{"nir_band", "参数“近红外波段”必须大于 0"};
+        }
+    }
+
+    if (pluginName == "classification" && actionKey == "feature_stats") {
+        const std::string rastersText = stringParam("rasters");
+        const std::string bandsText = stringParam("bands");
+        const std::string nodatasText = stringParam("nodatas");
+        const std::string outputPath = stringParam("output");
+        const std::string classMapPath = stringParam("class_map");
+
+        const auto rasterItems = splitCommaList(rastersText);
+        if (rasterItems.empty()) {
+            return ValidationIssue{"rasters", "参数“分类栅格列表”至少填写一个栅格路径"};
+        }
+        if (!bandsText.empty() && splitCommaList(bandsText).size() != rasterItems.size()) {
+            return ValidationIssue{"bands", "参数“波段列表”数量必须与“分类栅格列表”一致"};
+        }
+        if (!nodatasText.empty() && splitCommaList(nodatasText).size() != rasterItems.size()) {
+            return ValidationIssue{"nodatas", "参数“NoData 列表”数量必须与“分类栅格列表”一致"};
+        }
+        if (!classMapPath.empty() && !endsWithOneOf(classMapPath, {".json"})) {
+            return ValidationIssue{"class_map", "参数“分类映射”应选择 .json 文件"};
+        }
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".json", ".csv"})) {
+            return ValidationIssue{"output", "参数“统计输出”目前只支持 .json 或 .csv"};
+        }
+        const std::string vectorOutputPath = stringParam("vector_output");
+        if (!vectorOutputPath.empty() && !endsWithOneOf(vectorOutputPath, {".gpkg"})) {
+            return ValidationIssue{"vector_output", "参数“分类面输出”当前实际仅支持 .gpkg"};
+        }
+        const std::string rasterOutputPath = stringParam("raster_output");
+        if (!rasterOutputPath.empty() && !endsWithOneOf(rasterOutputPath, {".tif", ".tiff"})) {
+            return ValidationIssue{"raster_output", "参数“分类栅格输出”当前实际仅支持 .tif 或 .tiff"};
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "convert") {
+        const std::string outputPath = stringParam("output");
+        const std::string formatValue = stringParam("format");
+        if (!outputPath.empty() && !formatValue.empty()) {
+            if (formatValue == "GeoJSON" && !endsWithOneOf(outputPath, {".geojson", ".json"})) {
+                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：GeoJSON 请使用 .geojson 或 .json"};
+            }
+            if (formatValue == "ESRI Shapefile" && !endsWithOneOf(outputPath, {".shp"})) {
+                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：Shapefile 请使用 .shp"};
+            }
+            if (formatValue == "GPKG" && !endsWithOneOf(outputPath, {".gpkg"})) {
+                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：GPKG 请使用 .gpkg"};
+            }
+            if (formatValue == "KML" && !endsWithOneOf(outputPath, {".kml"})) {
+                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：KML 请使用 .kml"};
+            }
+            if (formatValue == "CSV" && !endsWithOneOf(outputPath, {".csv"})) {
+                return ValidationIssue{"output", "参数“输出文件”建议与“输出格式”一致：CSV 请使用 .csv"};
+            }
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "polygonize") {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp"})) {
+            return ValidationIssue{"output", "参数“输出文件”当前建议使用 .geojson、.gpkg 或 .shp"};
+        }
+    }
+
+    if (pluginName == "vector" &&
+        (actionKey == "filter" || actionKey == "buffer" || actionKey == "clip")) {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp", ".kml"})) {
+            return ValidationIssue{"output", "参数“输出文件”当前建议使用 .geojson、.gpkg、.shp 或 .kml"};
+        }
+    }
+
+    if (pluginName == "vector" &&
+        (actionKey == "union" || actionKey == "difference" || actionKey == "dissolve")) {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp"})) {
+            return ValidationIssue{"output", "参数“输出文件”当前建议使用 .geojson、.gpkg 或 .shp"};
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "rasterize") {
+        const auto resolution = doubleParamValue(params, "resolution");
+        if (resolution.has_value() && *resolution <= 0.0) {
+            return ValidationIssue{"resolution", "参数“分辨率”必须大于 0"};
+        }
+    }
+
+    if (pluginName == "matching") {
+        if (const auto ratio = doubleParamValue(params, "ratio_test");
+            ratio.has_value() && (*ratio <= 0.0 || *ratio > 1.0)) {
+            return ValidationIssue{"ratio_test", "参数“比率阈值”应落在 (0, 1] 范围内"};
+        }
+        if (const auto quality = doubleParamValue(params, "quality_level");
+            quality.has_value() && (*quality <= 0.0 || *quality > 1.0)) {
+            return ValidationIssue{"quality_level", "参数“质量阈值”应落在 (0, 1] 范围内"};
+        }
+        if (const auto minDistance = doubleParamValue(params, "min_distance");
+            minDistance.has_value() && *minDistance < 0.0) {
+            return ValidationIssue{"min_distance", "参数“最小间距”不能小于 0"};
+        }
+    }
+
+    if (pluginName == "processing") {
+        if (actionKey == "filter") {
+            const auto kernelSize = intParamValue(params, "kernel_size");
+            if (kernelSize.has_value()) {
+                if (*kernelSize < 3) {
+                    return ValidationIssue{"kernel_size", "参数“核大小”必须大于等于 3"};
+                }
+                if ((*kernelSize % 2) == 0) {
+                    return ValidationIssue{"kernel_size", "参数“核大小”建议填写奇数，例如 3、5、7"};
+                }
+            }
+        }
+        if (actionKey == "enhance") {
+            const std::string enhanceType = stringParam("enhance_type");
+            if (enhanceType == "gamma") {
+                const auto gamma = doubleParamValue(params, "gamma");
+                if (gamma.has_value() && *gamma <= 0.0) {
+                    return ValidationIssue{"gamma", "参数“Gamma”必须大于 0"};
+                }
+            }
+        }
+        if (actionKey == "kmeans") {
+            const auto k = intParamValue(params, "k");
+            if (k.has_value() && *k <= 0) {
+                return ValidationIssue{"k", "参数“聚类数”必须大于 0"};
+            }
+        }
+    }
+
+    return std::nullopt;
 }
 
 }
@@ -874,9 +1209,59 @@ std::vector<gis::framework::ParamSpec> MainWindow::effectiveParamSpecs() const {
             if (config) {
                 adjustedSpec.required = config->requiredKeys.count(spec.key) > 0;
             }
+            if (currentPlugin_->name() == "processing" &&
+                currentActionKey_ == QStringLiteral("threshold") &&
+                spec.key == "method") {
+                adjustedSpec.defaultValue = std::string("otsu");
+            }
+            if (currentPlugin_->name() == "matching") {
+                if (spec.key == "ratio_test" || spec.key == "quality_level") {
+                    adjustedSpec.minValue = 0.000001;
+                    adjustedSpec.maxValue = 1.0;
+                } else if (spec.key == "min_distance") {
+                    adjustedSpec.minValue = 0.0;
+                } else if (spec.key == "stitch_confidence") {
+                    adjustedSpec.minValue = 0.0;
+                    adjustedSpec.maxValue = 1.0;
+                }
+            }
+            if (currentPlugin_->name() == "utility") {
+                if (currentActionKey_ == QStringLiteral("nodata") && spec.key == "band") {
+                    adjustedSpec.defaultValue = int{0};
+                    adjustedSpec.minValue = 0;
+                } else if (spec.key == "bins") {
+                    adjustedSpec.minValue = 1;
+                } else if (spec.key == "red_band" || spec.key == "nir_band") {
+                    adjustedSpec.minValue = 1;
+                }
+            }
+            if (currentPlugin_->name() == "vector" && spec.key == "resolution") {
+                adjustedSpec.minValue = 0.000001;
+            }
+            if (currentPlugin_->name() == "processing") {
+                if (spec.key == "gamma") {
+                    adjustedSpec.minValue = 0.000001;
+                } else if (spec.key == "k") {
+                    adjustedSpec.minValue = 1;
+                } else if (spec.key == "clip_limit") {
+                    adjustedSpec.minValue = 0.0;
+                } else if (spec.key == "kernel_size") {
+                    adjustedSpec.minValue = 3;
+                }
+            }
+            if (currentPlugin_->name() == "projection" &&
+                currentActionKey_ == QStringLiteral("transform") &&
+                spec.key == "src_srs") {
+                adjustedSpec.defaultValue = std::string("EPSG:4326");
+            }
             if (const auto it = commonParamTextStorage().find(spec.key); it != commonParamTextStorage().end()) {
                 adjustedSpec.displayName = it->second.displayName.toUtf8().toStdString();
                 adjustedSpec.description = it->second.description.toUtf8().toStdString();
+            }
+            if (const auto* actionText = findActionSpecificParamText(
+                    currentPlugin_->name(), currentActionKey_.toStdString(), spec.key)) {
+                adjustedSpec.displayName = actionText->displayName.toUtf8().toStdString();
+                adjustedSpec.description = actionText->description.toUtf8().toStdString();
             }
             filtered.push_back(std::move(adjustedSpec));
         }
@@ -1010,6 +1395,7 @@ void MainWindow::onSubFunctionSelected(const std::string& actionKey) {
                 .arg(displayName));
     }
 
+    paramWidget_->setUiContext(currentPlugin_->name(), actionKey);
     paramWidget_->setParamSpecs(effectiveParamSpecs());
     if (resultSummaryLabel_) {
         resultSummaryLabel_->setStyleSheet(QString());
@@ -1044,8 +1430,10 @@ void MainWindow::onExecute() {
     auto params = collectExecutionParams();
     std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
     if (validationMessage.empty()) {
-        validationMessage = actionSpecificValidation(
-            currentPlugin_->name(), currentActionKey_.toStdString(), params);
+        if (const auto issue = actionSpecificValidationIssue(
+                currentPlugin_->name(), currentActionKey_.toStdString(), params)) {
+            validationMessage = issue->message;
+        }
     }
     if (!validationMessage.empty()) {
         refreshParamValidationState();
@@ -1084,8 +1472,10 @@ void MainWindow::refreshExecuteButtonState() {
         effectiveParamSpecs(),
         params);
     if (validationMessage.empty()) {
-        validationMessage = actionSpecificValidation(
-            currentPlugin_->name(), currentActionKey_.toStdString(), params);
+        if (const auto issue = actionSpecificValidationIssue(
+                currentPlugin_->name(), currentActionKey_.toStdString(), params)) {
+            validationMessage = issue->message;
+        }
     }
     if (!validationMessage.empty()) {
         executeButton_->setEnabled(false);
@@ -1120,7 +1510,18 @@ void MainWindow::refreshParamValidationState() {
     const std::string invalidKey = gis::gui::findFirstInvalidParamKey(
         effectiveParamSpecs(),
         collectExecutionParams());
-    paramWidget_->setHighlightedParam(invalidKey);
+    if (!invalidKey.empty()) {
+        paramWidget_->setHighlightedParam(invalidKey);
+        return;
+    }
+
+    if (const auto issue = actionSpecificValidationIssue(
+            currentPlugin_->name(), currentActionKey_.toStdString(), collectExecutionParams())) {
+        paramWidget_->setHighlightedParam(issue->key);
+        return;
+    }
+
+    paramWidget_->setHighlightedParam({});
 }
 
 void MainWindow::syncDerivedParams() {
@@ -1136,16 +1537,35 @@ void MainWindow::syncDerivedParams() {
 
     isSyncingParams_ = true;
 
-    if (paramWidget_->hasParam("output") && !primaryPath.empty()) {
-        const std::string currentOutput = paramWidget_->stringValue("output");
-        const std::string suggestedOutput =
-            gis::gui::buildSuggestedOutputPath(primaryPath, currentPlugin_->name(), actionKey);
-        const bool outputWasAuto = !lastAutoOutputPath_.empty() && currentOutput == lastAutoOutputPath_;
-        if ((currentOutput.empty() || outputWasAuto) && currentOutput != suggestedOutput) {
-            paramWidget_->setStringValue("output", suggestedOutput);
+    auto syncOutputField = [&](const std::string& key, std::string& lastAutoPath) {
+        if (!paramWidget_->hasParam(key) || primaryPath.empty()) {
+            return;
         }
-        lastAutoOutputPath_ = suggestedOutput;
-    }
+        const std::string currentValue = paramWidget_->stringValue(key);
+        std::string suggestedValue =
+            gis::gui::buildSuggestedOutputPath(primaryPath, currentPlugin_->name(), actionKey, key);
+        if (currentPlugin_->name() == "vector" && actionKey == "convert" && key == "output") {
+            const std::string formatValue = paramWidget_->stringValue("format");
+            std::string preferredSuffix = ".geojson";
+            if (formatValue == "ESRI Shapefile") preferredSuffix = ".shp";
+            else if (formatValue == "GPKG") preferredSuffix = ".gpkg";
+            else if (formatValue == "KML") preferredSuffix = ".kml";
+            else if (formatValue == "CSV") preferredSuffix = ".csv";
+
+            std::filesystem::path suggestedPath = std::filesystem::path(suggestedValue);
+            suggestedPath.replace_extension(preferredSuffix);
+            suggestedValue = suggestedPath.generic_string();
+        }
+        const bool valueWasAuto = !lastAutoPath.empty() && currentValue == lastAutoPath;
+        if ((currentValue.empty() || valueWasAuto) && currentValue != suggestedValue) {
+            paramWidget_->setStringValue(key, suggestedValue);
+        }
+        lastAutoPath = suggestedValue;
+    };
+
+    syncOutputField("output", lastAutoOutputPath_);
+    syncOutputField("vector_output", lastAutoVectorOutputPath_);
+    syncOutputField("raster_output", lastAutoRasterOutputPath_);
 
     if (!inputPath.empty()) {
         const auto info = gis::gui::inspectDataForAutoFill(inputPath);
@@ -1176,6 +1596,8 @@ void MainWindow::syncDerivedParams() {
 
 void MainWindow::resetDerivedParamTracking() {
     lastAutoOutputPath_.clear();
+    lastAutoVectorOutputPath_.clear();
+    lastAutoRasterOutputPath_.clear();
     lastAutoLayerName_.clear();
     lastAutoExtent_.reset();
 }

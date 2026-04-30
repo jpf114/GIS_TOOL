@@ -15,6 +15,7 @@ class ParamWidget : public QWidget {
 public:
     explicit ParamWidget(QWidget* parent = nullptr);
 
+    void setUiContext(const std::string& pluginName, const std::string& actionKey);
     void setParamSpecs(const std::vector<gis::framework::ParamSpec>& specs);
     std::map<std::string, gis::framework::ParamValue> collectParams() const;
     void clear();
@@ -40,4 +41,6 @@ private:
     ParamCardWidget* advancedCard_ = nullptr;
 
     std::vector<gis::framework::ParamSpec> specs_;
+    std::string pluginName_;
+    std::string actionKey_;
 };

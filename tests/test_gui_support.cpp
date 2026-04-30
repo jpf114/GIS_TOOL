@@ -152,7 +152,7 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesPluginAndActionSuffix) {
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
             "D:/data/roads.shp", "vector", "buffer"),
-        "D:/data/roads_vector_buffer.shp");
+        "D:/data/roads_vector_buffer.gpkg");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
             "D:/data/scene.tif", "", ""),
@@ -161,6 +161,122 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesPluginAndActionSuffix) {
         gis::gui::buildSuggestedOutputPath(
             "D:/data/a.tif, D:/data/b.tif", "cutting", "mosaic"),
         "D:/data/a_cutting_mosaic.tif");
+}
+
+TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "matching", "detect"),
+        "D:/data/image_matching_detect.json");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "utility", "histogram"),
+        "D:/data/image_utility_histogram.json");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/scene.tif", "classification", "feature_stats", "vector_output"),
+        "D:/data/scene_classification_feature_stats.gpkg");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/scene.tif", "classification", "feature_stats", "raster_output"),
+        "D:/data/scene_classification_feature_stats.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/scene.tif", "cutting", "split"),
+        "D:/data/scene_cutting_split");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/roads.shp", "vector", "convert"),
+        "D:/data/roads_vector_convert.geojson");
+}
+
+TEST(GuiSupportTest, BuildFileParamUiConfigProvidesSpecializedHints) {
+    const auto classMapConfig = gis::gui::buildFileParamUiConfig(
+        "classification", "feature_stats", "class_map", gis::framework::ParamType::FilePath);
+    EXPECT_NE(classMapConfig.openFilter.find("*.json"), std::string::npos);
+    EXPECT_NE(classMapConfig.placeholder.find("JSON"), std::string::npos);
+
+    const auto splitOutputConfig = gis::gui::buildFileParamUiConfig(
+        "cutting", "split", "output", gis::framework::ParamType::FilePath);
+    EXPECT_TRUE(splitOutputConfig.selectDirectory);
+    EXPECT_TRUE(splitOutputConfig.isOutput);
+
+    const auto detectOutputConfig = gis::gui::buildFileParamUiConfig(
+        "matching", "detect", "output", gis::framework::ParamType::FilePath);
+    EXPECT_EQ(detectOutputConfig.suggestedSuffix, ".json");
+    EXPECT_NE(detectOutputConfig.saveFilter.find("*.json"), std::string::npos);
+
+    const auto statsOutputConfig = gis::gui::buildFileParamUiConfig(
+        "classification", "feature_stats", "output", gis::framework::ParamType::FilePath);
+    EXPECT_NE(statsOutputConfig.saveFilter.find("*.json"), std::string::npos);
+    EXPECT_NE(statsOutputConfig.saveFilter.find("*.csv"), std::string::npos);
+    EXPECT_NE(statsOutputConfig.placeholder.find(".csv"), std::string::npos);
+
+    const auto classVectorOutputConfig = gis::gui::buildFileParamUiConfig(
+        "classification", "feature_stats", "vector_output", gis::framework::ParamType::FilePath);
+    EXPECT_NE(classVectorOutputConfig.saveFilter.find("*.gpkg"), std::string::npos);
+    EXPECT_EQ(classVectorOutputConfig.saveFilter.find("*.shp"), std::string::npos);
+    EXPECT_EQ(classVectorOutputConfig.saveFilter.find("*.csv"), std::string::npos);
+
+    const auto projectionInputConfig = gis::gui::buildFileParamUiConfig(
+        "projection", "reproject", "input", gis::framework::ParamType::FilePath);
+    EXPECT_NE(projectionInputConfig.openFilter.find("*.tif"), std::string::npos);
+    EXPECT_NE(projectionInputConfig.openFilter.find("*.gpkg"), std::string::npos);
+
+    const auto splitDirConfig = gis::gui::buildFileParamUiConfig(
+        "cutting", "split", "output", gis::framework::ParamType::FilePath);
+    EXPECT_NE(splitDirConfig.placeholder.find("tile_x_y.tif"), std::string::npos);
+
+    const auto mosaicInputConfig = gis::gui::buildFileParamUiConfig(
+        "cutting", "mosaic", "input", gis::framework::ParamType::FilePath);
+    EXPECT_TRUE(mosaicInputConfig.allowMultiSelect);
+
+    const auto stitchInputConfig = gis::gui::buildFileParamUiConfig(
+        "matching", "stitch", "input", gis::framework::ParamType::FilePath);
+    EXPECT_TRUE(stitchInputConfig.allowMultiSelect);
+
+    const auto vectorFilterOutputConfig = gis::gui::buildFileParamUiConfig(
+        "vector", "filter", "output", gis::framework::ParamType::FilePath);
+    EXPECT_NE(vectorFilterOutputConfig.saveFilter.find("*.gpkg"), std::string::npos);
+    EXPECT_NE(vectorFilterOutputConfig.saveFilter.find("*.kml"), std::string::npos);
+    EXPECT_EQ(vectorFilterOutputConfig.saveFilter.find("*.csv"), std::string::npos);
+
+    const auto polygonizeOutputConfig = gis::gui::buildFileParamUiConfig(
+        "vector", "polygonize", "output", gis::framework::ParamType::FilePath);
+    EXPECT_NE(polygonizeOutputConfig.saveFilter.find("*.shp"), std::string::npos);
+    EXPECT_EQ(polygonizeOutputConfig.saveFilter.find("*.kml"), std::string::npos);
+
+    const auto unionOutputConfig = gis::gui::buildFileParamUiConfig(
+        "vector", "union", "output", gis::framework::ParamType::FilePath);
+    EXPECT_NE(unionOutputConfig.saveFilter.find("*.gpkg"), std::string::npos);
+    EXPECT_EQ(unionOutputConfig.saveFilter.find("*.kml"), std::string::npos);
+    EXPECT_EQ(unionOutputConfig.saveFilter.find("*.csv"), std::string::npos);
+}
+
+TEST(GuiSupportTest, BuildTextParamPlaceholderProvidesFormatExamples) {
+    gis::framework::ParamSpec rastersSpec{
+        "rasters", "分类栅格列表", "", gis::framework::ParamType::String, true
+    };
+    EXPECT_NE(
+        gis::gui::buildTextParamPlaceholder("classification", "feature_stats", rastersSpec)
+            .find("D:/a.tif,D:/b.tif"),
+        std::string::npos);
+
+    gis::framework::ParamSpec nodatasSpec{
+        "nodatas", "NoData 列表", "", gis::framework::ParamType::String, false
+    };
+    EXPECT_NE(
+        gis::gui::buildTextParamPlaceholder("classification", "feature_stats", nodatasSpec)
+            .find("0,0,255"),
+        std::string::npos);
+
+    gis::framework::ParamSpec whereSpec{
+        "where", "属性过滤", "", gis::framework::ParamType::String, false
+    };
+    EXPECT_NE(
+        gis::gui::buildTextParamPlaceholder("vector", "filter", whereSpec)
+            .find("population > 10000"),
+        std::string::npos);
 }
 
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {

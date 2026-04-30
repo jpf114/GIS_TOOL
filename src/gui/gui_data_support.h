@@ -33,6 +33,16 @@ struct BindableParamOption {
     std::string displayName;
 };
 
+struct FileParamUiConfig {
+    bool isOutput = false;
+    bool selectDirectory = false;
+    bool allowMultiSelect = false;
+    std::string placeholder;
+    std::string openFilter;
+    std::string saveFilter;
+    std::string suggestedSuffix;
+};
+
 DataKind detectDataKind(const std::string& path);
 bool isSupportedDataPath(const std::string& path);
 std::vector<std::string> collectSupportedDataPaths(const std::vector<std::string>& paths);
@@ -47,7 +57,15 @@ std::string buildDataDisplayLabel(const std::string& path,
                                   bool isActive = false);
 std::string buildSuggestedOutputPath(const std::string& inputPath,
                                      const std::string& pluginName,
-                                     const std::string& action);
+                                     const std::string& action,
+                                     const std::string& paramKey = "output");
+FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
+                                         const std::string& action,
+                                         const std::string& paramKey,
+                                         gis::framework::ParamType paramType);
+std::string buildTextParamPlaceholder(const std::string& pluginName,
+                                      const std::string& action,
+                                      const gis::framework::ParamSpec& spec);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
 std::string localizeResultMessage(const std::string& message);
 std::string buildResultSummaryText(const gis::framework::Result& result);

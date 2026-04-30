@@ -42,6 +42,120 @@ std::string trim(const std::string& value) {
     return value.substr(begin, end - begin + 1);
 }
 
+bool startsWithOutputKey(const std::string& key) {
+    return key == "output" || key.find("output") != std::string::npos;
+}
+
+std::string normalizedLower(const std::string& value) {
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return lowered;
+}
+
+std::string replaceExtensionIfNeeded(const std::filesystem::path& path, const std::string& suffix) {
+    if (suffix.empty()) {
+        return path.generic_string();
+    }
+    std::filesystem::path rewritten = path;
+    rewritten.replace_extension(suffix);
+    return rewritten.generic_string();
+}
+
+std::string defaultSuffixForOutput(const std::string& pluginName,
+                                   const std::string& action,
+                                   const std::string& paramKey,
+                                   const std::string& inputExt) {
+    if (pluginName == "classification") {
+        if (paramKey == "output") return ".json";
+        if (paramKey == "vector_output") return ".gpkg";
+        if (paramKey == "raster_output") return ".tif";
+    }
+
+    if (pluginName == "matching") {
+        if (action == "detect" || action == "match" || action == "corner") {
+            return ".json";
+        }
+        return ".tif";
+    }
+
+    if (pluginName == "utility") {
+        if (action == "histogram") return ".json";
+        if (action == "colormap" || action == "ndvi") return ".tif";
+        return inputExt;
+    }
+
+    if (pluginName == "vector") {
+        if (action == "rasterize") return ".tif";
+        if (action == "polygonize") return ".gpkg";
+        if (action == "convert") return ".geojson";
+        return ".gpkg";
+    }
+
+    if (pluginName == "projection") {
+        if (action == "reproject") {
+            if (inputExt == ".shp" || inputExt == ".gpkg" || inputExt == ".geojson" ||
+                inputExt == ".json" || inputExt == ".kml" || inputExt == ".csv") {
+                return inputExt.empty() ? ".gpkg" : inputExt;
+            }
+            return ".tif";
+        }
+        return inputExt;
+    }
+
+    if (pluginName == "cutting") {
+        if (action == "split") return {};
+        return ".tif";
+    }
+
+    if (pluginName == "processing") {
+        return ".tif";
+    }
+
+    return inputExt;
+}
+
+std::string filterForVectorOutputs() {
+    return "GeoPackage (*.gpkg);;GeoJSON (*.geojson *.json);;Shapefile (*.shp);;KML (*.kml);;CSV (*.csv);;所有文件 (*)";
+}
+
+std::string filterForVectorOutputsWithoutCsv() {
+    return "GeoPackage (*.gpkg);;GeoJSON (*.geojson *.json);;Shapefile (*.shp);;KML (*.kml);;所有文件 (*)";
+}
+
+std::string filterForVectorOutputsWithoutCsvOrKml() {
+    return "GeoPackage (*.gpkg);;GeoJSON (*.geojson *.json);;Shapefile (*.shp);;所有文件 (*)";
+}
+
+std::string filterForPolygonizeOutputs() {
+    return "GeoPackage (*.gpkg);;GeoJSON (*.geojson *.json);;Shapefile (*.shp);;所有文件 (*)";
+}
+
+std::string filterForClassificationVectorOutputs() {
+    return "GeoPackage (*.gpkg);;所有文件 (*)";
+}
+
+std::string filterForVectorInputs() {
+    return "矢量文件 (*.gpkg *.shp *.geojson *.json *.kml *.csv);;GeoPackage (*.gpkg);;Shapefile (*.shp);;GeoJSON (*.geojson *.json);;KML (*.kml);;CSV (*.csv);;所有文件 (*)";
+}
+
+std::string filterForRasterOutputs() {
+    return "GeoTIFF (*.tif *.tiff);;所有文件 (*)";
+}
+
+std::string filterForRasterInputs() {
+    return "栅格文件 (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp);;GeoTIFF (*.tif *.tiff);;IMG (*.img);;VRT (*.vrt);;JPEG (*.jpg *.jpeg);;PNG (*.png);;BMP (*.bmp);;所有文件 (*)";
+}
+
+std::string filterForProjectionInputs() {
+    return "支持的数据 (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp *.gpkg *.shp *.geojson *.json *.kml *.csv);;栅格文件 (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp);;矢量文件 (*.gpkg *.shp *.geojson *.json *.kml *.csv);;所有文件 (*)";
+}
+
+std::string filterForProjectionOutputs() {
+    return "GeoTIFF (*.tif *.tiff);;GeoPackage (*.gpkg);;GeoJSON (*.geojson *.json);;Shapefile (*.shp);;KML (*.kml);;CSV (*.csv);;所有文件 (*)";
+}
+
 std::string firstInputPath(const std::string& rawPath) {
     const auto pos = rawPath.find(',');
     if (pos == std::string::npos) {
@@ -252,7 +366,8 @@ std::string buildDataDisplayLabel(const std::string& path,
 
 std::string buildSuggestedOutputPath(const std::string& inputPath,
                                      const std::string& pluginName,
-                                     const std::string& action) {
+                                     const std::string& action,
+                                     const std::string& paramKey) {
     namespace fs = std::filesystem;
 
     fs::path input = fs::path(firstInputPath(inputPath));
@@ -275,7 +390,204 @@ std::string buildSuggestedOutputPath(const std::string& inputPath,
 
     const fs::path suggested = input.parent_path() /
         fs::path(input.stem().string() + "_" + suffix + input.extension().string());
-    return suggested.generic_string();
+    const std::string resolvedSuffix = defaultSuffixForOutput(
+        pluginName,
+        action,
+        paramKey,
+        normalizedLower(input.extension().string()));
+    if (resolvedSuffix.empty()) {
+        return (input.parent_path() / fs::path(input.stem().string() + "_" + suffix)).generic_string();
+    }
+    return replaceExtensionIfNeeded(suggested, resolvedSuffix);
+}
+
+FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
+                                         const std::string& action,
+                                         const std::string& paramKey,
+                                         gis::framework::ParamType paramType) {
+    FileParamUiConfig config;
+    config.isOutput = startsWithOutputKey(paramKey);
+
+    if (paramType == gis::framework::ParamType::CRS) {
+        config.placeholder = "请输入 EPSG 代码，例如 EPSG:3857";
+        return config;
+    }
+
+    if (pluginName == "classification" && paramKey == "class_map") {
+        config.placeholder = "请选择 JSON 分类映射文件，例如 class_map.json";
+        config.openFilter = "JSON 文件 (*.json);;所有文件 (*)";
+        return config;
+    }
+
+    if (pluginName == "classification" && paramKey == "rasters") {
+        config.placeholder = "请输入多个分类栅格路径，使用英文逗号分隔，例如 a.tif,b.tif";
+        config.openFilter = filterForRasterInputs();
+        return config;
+    }
+
+    if (pluginName == "cutting" && action == "split" && paramKey == "output") {
+        config.placeholder = "请选择输出目录，图块会自动命名为 tile_x_y.tif";
+        config.selectDirectory = true;
+        config.isOutput = true;
+        return config;
+    }
+
+    if (pluginName == "matching" && action == "stitch" && paramKey == "input") {
+        config.placeholder = "请输入多个影像路径，使用英文逗号分隔，例如 a.tif,b.tif";
+        config.openFilter = filterForRasterInputs();
+        config.allowMultiSelect = true;
+        return config;
+    }
+
+    if (pluginName == "cutting" &&
+        (action == "mosaic" || action == "merge_bands") &&
+        paramKey == "input") {
+        config.placeholder = "请输入多个栅格路径，使用英文逗号分隔，例如 a.tif,b.tif";
+        config.openFilter = filterForRasterInputs();
+        config.allowMultiSelect = true;
+        return config;
+    }
+
+    if (paramKey == "bands" || paramKey == "nodatas") {
+        return config;
+    }
+
+    if (config.isOutput) {
+        config.suggestedSuffix = defaultSuffixForOutput(pluginName, action, paramKey, ".tif");
+
+        if (pluginName == "classification" && paramKey == "output") {
+            config.placeholder = "请选择统计输出文件，支持 .json 或 .csv，默认建议 .json";
+            config.saveFilter = "JSON 文件 (*.json);;CSV 文件 (*.csv);;所有文件 (*)";
+        } else if (pluginName == "classification" && paramKey == "vector_output") {
+            config.placeholder = "请选择分类面输出文件，当前实际仅支持 .gpkg";
+            config.saveFilter = filterForClassificationVectorOutputs();
+        } else if (pluginName == "projection" && action == "reproject") {
+            config.placeholder = "请选择重投影输出文件；栅格建议 .tif，矢量建议 .gpkg 或 .geojson";
+            config.saveFilter = filterForProjectionOutputs();
+        } else if (config.suggestedSuffix == ".json") {
+            config.placeholder = "请选择输出文件，建议使用 .json";
+            config.saveFilter = "JSON 文件 (*.json);;所有文件 (*)";
+        } else if (config.suggestedSuffix == ".csv") {
+            config.placeholder = "请选择输出文件，建议使用 .csv";
+            config.saveFilter = "CSV 文件 (*.csv);;所有文件 (*)";
+        } else if (config.suggestedSuffix == ".gpkg" || config.suggestedSuffix == ".geojson" ||
+                   config.suggestedSuffix == ".shp" || config.suggestedSuffix == ".kml") {
+            config.placeholder = "请选择输出矢量文件，建议使用 .gpkg";
+            if (pluginName == "vector" && action == "convert") {
+                config.saveFilter = filterForVectorOutputs();
+            } else if (pluginName == "vector" &&
+                       (action == "union" || action == "difference" || action == "dissolve")) {
+                config.saveFilter = filterForVectorOutputsWithoutCsvOrKml();
+            } else if (pluginName == "vector" && action == "polygonize") {
+                config.saveFilter = filterForPolygonizeOutputs();
+            } else {
+                config.saveFilter = filterForVectorOutputsWithoutCsv();
+            }
+        } else {
+            config.placeholder = "请选择输出文件，建议使用 .tif";
+            config.saveFilter = filterForRasterOutputs();
+        }
+        return config;
+    }
+
+    if (paramType == gis::framework::ParamType::DirPath) {
+        config.selectDirectory = true;
+        config.placeholder = "请选择目录";
+        return config;
+    }
+
+    if (paramKey == "vector" || paramKey.find("vector") != std::string::npos ||
+        paramKey == "cutline" || paramKey == "clip_vector" || paramKey == "overlay_vector") {
+        config.placeholder = "请选择矢量文件，例如 .gpkg、.shp、.geojson";
+        config.openFilter = filterForVectorInputs();
+        return config;
+    }
+
+    if (pluginName == "projection" && action == "reproject" && paramKey == "input") {
+        config.placeholder = "请选择待重投影数据，支持栅格或矢量";
+        config.openFilter = filterForProjectionInputs();
+        return config;
+    }
+
+    if (paramKey == "input" || paramKey == "reference" || paramKey == "template_file" ||
+        paramKey == "pan_file" || paramKey == "marker_input") {
+        if (pluginName == "vector" && action != "polygonize") {
+            config.placeholder = "请选择矢量文件，例如 .gpkg、.shp、.geojson";
+            config.openFilter = filterForVectorInputs();
+            return config;
+        }
+        if (paramKey == "template_file") {
+            config.placeholder = "请选择模板影像，尺寸需小于等于输入影像";
+        } else if (paramKey == "marker_input") {
+            config.placeholder = "请选择标记栅格，0 表示背景，1/2/3 表示不同种子区域";
+        } else if (paramKey == "pan_file") {
+            config.placeholder = "请选择全色影像，建议与输入多光谱影像覆盖同一区域";
+        } else if (paramKey == "reference") {
+            config.placeholder = "请选择参考影像";
+        } else {
+            config.placeholder = "请选择栅格文件，例如 .tif、.img、.vrt";
+        }
+        config.openFilter = filterForRasterInputs();
+        return config;
+    }
+
+    config.placeholder = "请选择文件或输入路径";
+    return config;
+}
+
+std::string buildTextParamPlaceholder(const std::string& pluginName,
+                                      const std::string& action,
+                                      const gis::framework::ParamSpec& spec) {
+    if (pluginName == "classification") {
+        if (spec.key == "rasters") {
+            return "请输入多个分类栅格路径，英文逗号分隔，例如 D:/a.tif,D:/b.tif";
+        }
+        if (spec.key == "bands") {
+            return "与分类栅格一一对应，英文逗号分隔，例如 1,1,1";
+        }
+        if (spec.key == "nodatas") {
+            return "与分类栅格一一对应，英文逗号分隔，例如 0,0,255";
+        }
+    }
+
+    if (pluginName == "cutting" && action == "merge_bands") {
+        if (spec.key == "input") {
+            return "可输入一个或多个单波段栅格路径，英文逗号分隔";
+        }
+        if (spec.key == "bands") {
+            return "补充更多单波段栅格路径，英文逗号分隔，例如 band1.tif,band2.tif";
+        }
+    }
+
+    if (pluginName == "vector" && action == "filter" && spec.key == "where") {
+        return "请输入 SQL WHERE 条件，例如 population > 10000";
+    }
+
+    if (pluginName == "projection" && action == "transform") {
+        if (spec.key == "x") {
+            return "请输入待转换点的 X 坐标";
+        }
+        if (spec.key == "y") {
+            return "请输入待转换点的 Y 坐标";
+        }
+    }
+
+    if (pluginName == "utility" && action == "overviews" && spec.key == "levels") {
+        return "请输入空格分隔层级，例如 2 4 8 16";
+    }
+
+    if (pluginName == "processing" && action == "band_math" && spec.key == "expression") {
+        return "请输入表达式，例如 B1+B2 或 B1*0.5+B2*0.5";
+    }
+
+    if (spec.key == "bands") {
+        return "请输入英文逗号分隔列表，例如 1,1,1";
+    }
+    if (spec.key == "nodatas") {
+        return "请输入英文逗号分隔列表，例如 0,0,255";
+    }
+
+    return spec.description;
 }
 
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {

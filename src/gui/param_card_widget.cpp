@@ -1,5 +1,6 @@
 ﻿#include "param_card_widget.h"
 #include "style_constants.h"
+#include "gui_data_support.h"
 
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
@@ -24,6 +25,7 @@
 #include <QSizePolicy>
 #include <QStyledItemDelegate>
 #include <QStyle>
+#include <QStringList>
 
 #include <array>
 #include <map>
@@ -252,11 +254,35 @@ QIcon browseIcon() {
     return QIcon(pixmap);
 }
 
+bool usesMultiFileTextPicker(const std::string& pluginName,
+                             const std::string& actionKey,
+                             const std::string& paramKey) {
+    return (pluginName == "classification" && actionKey == "feature_stats" && paramKey == "rasters")
+        || (pluginName == "cutting" && actionKey == "merge_bands" && paramKey == "bands");
+}
+
+QString multiFileTextPickerFilter(const std::string& pluginName,
+                                  const std::string& actionKey,
+                                  const std::string& paramKey) {
+    Q_UNUSED(pluginName);
+    Q_UNUSED(actionKey);
+    Q_UNUSED(paramKey);
+    return QStringLiteral(
+        "栅格文件 (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp);;"
+        "GeoTIFF (*.tif *.tiff);;IMG (*.img);;VRT (*.vrt);;"
+        "JPEG (*.jpg *.jpeg);;PNG (*.png);;BMP (*.bmp);;所有文件 (*)");
+}
+
 }
 
 ParamCardWidget::ParamCardWidget(CardType type, QWidget* parent)
     : QWidget(parent), cardType_(type) {
     setupUi();
+}
+
+void ParamCardWidget::setUiContext(const std::string& pluginName, const std::string& actionKey) {
+    pluginName_ = pluginName;
+    actionKey_ = actionKey;
 }
 
 void ParamCardWidget::setupUi() {
@@ -393,10 +419,15 @@ QWidget* ParamCardWidget::createFileWidget(const gis::framework::ParamSpec& spec
     layout->setSpacing(4);
 
     auto* lineEdit = new QLineEdit;
-    lineEdit->setPlaceholderText(
-        spec.type == gis::framework::ParamType::CRS
-            ? QStringLiteral("请输入 EPSG 代码，例如 EPSG:3857")
-            : QStringLiteral("请选择文件或输入路径"));
+    const auto uiConfig = gis::gui::buildFileParamUiConfig(pluginName_, actionKey_, spec.key, spec.type);
+    if (!uiConfig.placeholder.empty()) {
+        lineEdit->setPlaceholderText(QString::fromUtf8(uiConfig.placeholder));
+    } else {
+        lineEdit->setPlaceholderText(
+            spec.type == gis::framework::ParamType::CRS
+                ? QStringLiteral("请输入 EPSG 代码，例如 EPSG:3857")
+                : QStringLiteral("请选择文件或输入路径"));
+    }
     if (auto* defStr = std::get_if<std::string>(&spec.defaultValue); defStr && !defStr->empty()) {
         lineEdit->setText(QString::fromUtf8(*defStr));
     }
@@ -411,18 +442,41 @@ QWidget* ParamCardWidget::createFileWidget(const gis::framework::ParamSpec& spec
         browseBtn->setIconSize(QSize(14, 14));
         entry.browseButton = browseBtn;
 
-        bool isOutput = (spec.key == "output" || spec.key.find("output") != std::string::npos);
-        bool isDir = (spec.type == gis::framework::ParamType::DirPath);
-        connect(browseBtn, &QPushButton::clicked, this, [lineEdit, isOutput, isDir]() {
+        bool isOutput = uiConfig.isOutput || (spec.key == "output" || spec.key.find("output") != std::string::npos);
+        bool isDir = uiConfig.selectDirectory || (spec.type == gis::framework::ParamType::DirPath);
+        const QString openFilter = uiConfig.openFilter.empty()
+            ? QStringLiteral("所有文件 (*);;GeoTIFF (*.tif *.tiff);;Shapefile (*.shp);;JPEG (*.jpg *.jpeg);;PNG (*.png)")
+            : QString::fromUtf8(uiConfig.openFilter);
+        const QString saveFilter = uiConfig.saveFilter.empty()
+            ? QStringLiteral("所有文件 (*);;GeoTIFF (*.tif *.tiff);;Shapefile (*.shp)")
+            : QString::fromUtf8(uiConfig.saveFilter);
+        const QString defaultSuffix = QString::fromUtf8(uiConfig.suggestedSuffix);
+        const bool allowMultiSelect = uiConfig.allowMultiSelect;
+        connect(browseBtn, &QPushButton::clicked, this, [lineEdit, isOutput, isDir, allowMultiSelect, openFilter, saveFilter, defaultSuffix]() {
             QString filePath;
             if (isDir) {
                 filePath = QFileDialog::getExistingDirectory(nullptr, QStringLiteral("选择目录"));
             } else if (isOutput) {
-                filePath = QFileDialog::getSaveFileName(nullptr, QStringLiteral("保存文件"), QString(),
-                    QStringLiteral("所有文件 (*);;GeoTIFF (*.tif *.tiff);;Shapefile (*.shp)"));
+                QFileDialog dialog(nullptr, QStringLiteral("保存文件"));
+                dialog.setAcceptMode(QFileDialog::AcceptSave);
+                dialog.setNameFilter(saveFilter);
+                dialog.selectNameFilter(saveFilter.section(QStringLiteral(";;"), 0, 0));
+                if (!defaultSuffix.isEmpty()) {
+                    dialog.setDefaultSuffix(defaultSuffix);
+                }
+                if (dialog.exec() == QDialog::Accepted && !dialog.selectedFiles().isEmpty()) {
+                    filePath = dialog.selectedFiles().front();
+                }
             } else {
-                filePath = QFileDialog::getOpenFileName(nullptr, QStringLiteral("选择文件"), QString(),
-                    QStringLiteral("所有文件 (*);;GeoTIFF (*.tif *.tiff);;Shapefile (*.shp);;JPEG (*.jpg *.jpeg);;PNG (*.png)"));
+                if (allowMultiSelect) {
+                    const QStringList files = QFileDialog::getOpenFileNames(
+                        nullptr, QStringLiteral("选择文件"), QString(), openFilter);
+                    if (!files.isEmpty()) {
+                        filePath = files.join(QStringLiteral(","));
+                    }
+                } else {
+                    filePath = QFileDialog::getOpenFileName(nullptr, QStringLiteral("选择文件"), QString(), openFilter);
+                }
             }
             if (!filePath.isEmpty()) {
                 lineEdit->setText(filePath);
@@ -474,13 +528,14 @@ QWidget* ParamCardWidget::createIntWidget(const gis::framework::ParamSpec& spec,
                                            ParamWidgetEntry& entry) {
     auto* spinBox = new QSpinBox;
     spinBox->setRange(-2147483647, 2147483647);
+    if (auto* minInt = std::get_if<int>(&spec.minValue)) {
+        spinBox->setMinimum(*minInt);
+    }
+    if (auto* maxInt = std::get_if<int>(&spec.maxValue)) {
+        spinBox->setMaximum(*maxInt);
+    }
     if (auto* defInt = std::get_if<int>(&spec.defaultValue)) {
         spinBox->setValue(*defInt);
-    }
-    auto* minInt = std::get_if<int>(&spec.minValue);
-    auto* maxInt = std::get_if<int>(&spec.maxValue);
-    if (minInt && maxInt && *maxInt > *minInt) {
-        spinBox->setRange(*minInt, *maxInt);
     }
     entry.intSpinBox = spinBox;
     entry.widget = spinBox;
@@ -494,6 +549,12 @@ QWidget* ParamCardWidget::createNumberWidget(const gis::framework::ParamSpec& sp
     spinBox->setRange(-1e15, 1e15);
     spinBox->setDecimals(6);
     spinBox->setSingleStep(0.1);
+    if (auto* minDouble = std::get_if<double>(&spec.minValue)) {
+        spinBox->setMinimum(*minDouble);
+    }
+    if (auto* maxDouble = std::get_if<double>(&spec.maxValue)) {
+        spinBox->setMaximum(*maxDouble);
+    }
     if (auto* defDouble = std::get_if<double>(&spec.defaultValue)) {
         spinBox->setValue(*defDouble);
     }
@@ -515,10 +576,48 @@ QWidget* ParamCardWidget::createBoolWidget(const gis::framework::ParamSpec& spec
 
 QWidget* ParamCardWidget::createTextWidget(const gis::framework::ParamSpec& spec,
                                             ParamWidgetEntry& entry) {
+    if (usesMultiFileTextPicker(pluginName_, actionKey_, spec.key)) {
+        auto* container = new QWidget;
+        auto* layout = new QHBoxLayout(container);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(4);
+
+        auto* lineEdit = new QLineEdit;
+        const std::string placeholder =
+            gis::gui::buildTextParamPlaceholder(pluginName_, actionKey_, spec);
+        lineEdit->setPlaceholderText(
+            !placeholder.empty()
+                ? QString::fromUtf8(placeholder)
+                : QStringLiteral("请输入参数值"));
+        if (auto* defStr = std::get_if<std::string>(&spec.defaultValue); defStr && !defStr->empty()) {
+            lineEdit->setText(QString::fromUtf8(*defStr));
+        }
+        entry.lineEdit = lineEdit;
+        connect(lineEdit, &QLineEdit::textChanged, this, &ParamCardWidget::paramChanged);
+        layout->addWidget(lineEdit, 1);
+
+        auto* browseBtn = new QPushButton(QStringLiteral("浏览"));
+        browseBtn->setObjectName(QStringLiteral("browseButton"));
+        browseBtn->setIcon(browseIcon());
+        browseBtn->setIconSize(QSize(14, 14));
+        const QString filter = multiFileTextPickerFilter(pluginName_, actionKey_, spec.key);
+        connect(browseBtn, &QPushButton::clicked, this, [lineEdit, filter]() {
+            const QStringList files = QFileDialog::getOpenFileNames(
+                nullptr, QStringLiteral("选择文件"), QString(), filter);
+            if (!files.isEmpty()) {
+                lineEdit->setText(files.join(QStringLiteral(",")));
+            }
+        });
+        layout->addWidget(browseBtn);
+        return container;
+    }
+
     auto* lineEdit = new QLineEdit;
+    const std::string placeholder =
+        gis::gui::buildTextParamPlaceholder(pluginName_, actionKey_, spec);
     lineEdit->setPlaceholderText(
-        !spec.description.empty()
-            ? QString::fromUtf8(spec.description)
+        !placeholder.empty()
+            ? QString::fromUtf8(placeholder)
             : QStringLiteral("请输入参数值"));
     if (auto* defStr = std::get_if<std::string>(&spec.defaultValue); defStr && !defStr->empty()) {
         lineEdit->setText(QString::fromUtf8(*defStr));

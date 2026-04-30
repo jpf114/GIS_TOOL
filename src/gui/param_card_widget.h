@@ -10,6 +10,7 @@
 #include <string>
 
 #include <gis/framework/param_spec.h>
+#include "gui_data_support.h"
 
 class QLineEdit;
 class QComboBox;
@@ -37,6 +38,7 @@ public:
     explicit ParamCardWidget(CardType type, QWidget* parent = nullptr);
 
     void setTitle(const QString& title);
+    void setUiContext(const std::string& pluginName, const std::string& actionKey);
     void addParam(const gis::framework::ParamSpec& spec);
     void clearParams();
 
@@ -70,6 +72,8 @@ private:
     QGridLayout* paramsLayout_ = nullptr;
     QVBoxLayout* cardContentLayout_ = nullptr;
     int paramsRow_ = 0;
+    std::string pluginName_;
+    std::string actionKey_;
 
     QMap<std::string, ParamWidgetEntry> entries_;
     QMap<std::string, bool> requiredMap_;

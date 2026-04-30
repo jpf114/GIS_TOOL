@@ -48,17 +48,19 @@ ParamWidget::ParamWidget(QWidget* parent)
     outerLayout->addWidget(scrollArea);
 }
 
+void ParamWidget::setUiContext(const std::string& pluginName, const std::string& actionKey) {
+    pluginName_ = pluginName;
+    actionKey_ = actionKey;
+}
+
 bool ParamWidget::isInputParam(const gis::framework::ParamSpec& spec) const {
     if (spec.key == "action") return false;
-    if (spec.key == "output" || spec.key.find("output_") == 0) return false;
-    if (spec.key == "dst_srs" || spec.key == "format" || spec.key == "dst_crs") return false;
+    if (spec.key == "output" || spec.key.find("output") != std::string::npos) return false;
     return spec.required;
 }
 
 bool ParamWidget::isOutputParam(const gis::framework::ParamSpec& spec) const {
-    if (spec.key == "output" || spec.key.find("output_") == 0) return true;
-    if (spec.key == "dst_srs" || spec.key == "dst_crs") return true;
-    if (spec.key == "format" && !spec.required) return true;
+    if (spec.key == "output" || spec.key.find("output") != std::string::npos) return true;
     return false;
 }
 
@@ -102,6 +104,7 @@ void ParamWidget::buildCards() {
 
     if (hasInput) {
         inputCard_ = new ParamCardWidget(ParamCardWidget::CardType::Input);
+        inputCard_->setUiContext(pluginName_, actionKey_);
         for (const auto& spec : specs_) {
             if (spec.key == "action") continue;
             if (isInputParam(spec)) inputCard_->addParam(spec);
@@ -112,6 +115,7 @@ void ParamWidget::buildCards() {
 
     if (hasOutput) {
         outputCard_ = new ParamCardWidget(ParamCardWidget::CardType::Output);
+        outputCard_->setUiContext(pluginName_, actionKey_);
         for (const auto& spec : specs_) {
             if (isOutputParam(spec)) outputCard_->addParam(spec);
         }
@@ -121,6 +125,7 @@ void ParamWidget::buildCards() {
 
     if (hasAdvanced) {
         advancedCard_ = new ParamCardWidget(ParamCardWidget::CardType::Advanced);
+        advancedCard_->setUiContext(pluginName_, actionKey_);
         for (const auto& spec : specs_) {
             if (spec.key == "action") continue;
             if (!isInputParam(spec) && !isOutputParam(spec)) advancedCard_->addParam(spec);
