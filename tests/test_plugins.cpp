@@ -1094,7 +1094,16 @@ TEST_F(PluginTest, VectorBufferExecutionReportsMetadata) {
     params["output"] = output;
     params["distance"] = 25.0;
 
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        g_gdalWarnings.clear();
+        g_gdalErrors.clear();
+    }
+
+    CPLPushErrorHandler(captureGdalWarning);
     auto result = p->execute(params, progress_);
+    CPLPopErrorHandler();
+
     EXPECT_TRUE(result.success) << "Buffer failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("feature_count"), "200");
@@ -1102,6 +1111,18 @@ TEST_F(PluginTest, VectorBufferExecutionReportsMetadata) {
     EXPECT_EQ(result.metadata.at("srs_type"), "projected");
     EXPECT_EQ(result.metadata.at("output_format"), "GPKG");
     EXPECT_TRUE(result.metadata.count("elapsed_ms") > 0);
+
+    bool hasMissingExtensionsError = false;
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        for (const auto& error : g_gdalErrors) {
+            if (error.find("gpkg_extensions") != std::string::npos) {
+                hasMissingExtensionsError = true;
+                break;
+            }
+        }
+    }
+    EXPECT_FALSE(hasMissingExtensionsError);
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
@@ -1112,6 +1133,7 @@ TEST_F(PluginTest, VectorBufferExecutionReportsMetadata) {
     ASSERT_NE(outFeat, nullptr);
     EXPECT_STREQ(outFeat->GetFieldAsString("name"), "road");
     OGRFeature::DestroyFeature(outFeat);
+
     GDALClose(outDs);
 }
 

@@ -546,6 +546,25 @@ static std::vector<char*> buildLayerOptionPointers(std::vector<std::string>& opt
     return pointers;
 }
 
+static void ensureGpkgExtensionsTable(GDALDataset* dataset) {
+    if (!dataset) {
+        return;
+    }
+
+    const char* createExtensionsSql =
+        "CREATE TABLE IF NOT EXISTS gpkg_extensions ("
+        "table_name TEXT,"
+        "column_name TEXT,"
+        "extension_name TEXT NOT NULL,"
+        "definition TEXT NOT NULL,"
+        "scope TEXT NOT NULL,"
+        "CONSTRAINT ge_tce UNIQUE (table_name, column_name, extension_name)"
+        ")";
+    if (OGRLayer* sqlResult = dataset->ExecuteSQL(createExtensionsSql, nullptr, "SQLITE")) {
+        dataset->ReleaseResultSet(sqlResult);
+    }
+}
+
 static void addSpatialIndexIfNeeded(
     GDALDataset* dataset,
     OGRLayer* layer,
@@ -558,10 +577,11 @@ static void addSpatialIndexIfNeeded(
     const char* geometryColumn = layer->GetGeometryColumn();
     const std::string geometryColumnName =
         (geometryColumn && *geometryColumn) ? geometryColumn : "geom";
+    ensureGpkgExtensionsTable(dataset);
     const std::string addSpatialIndexSql =
         "SELECT gpkgAddSpatialIndex('" + escapeSqlLiteral(layerName) +
         "', '" + escapeSqlLiteral(geometryColumnName) + "')";
-    if (OGRLayer* sqlResult = dataset->ExecuteSQL(addSpatialIndexSql.c_str(), nullptr, nullptr)) {
+    if (OGRLayer* sqlResult = dataset->ExecuteSQL(addSpatialIndexSql.c_str(), nullptr, "SQLITE")) {
         dataset->ReleaseResultSet(sqlResult);
     }
 }
@@ -1171,7 +1191,9 @@ gis::framework::Result VectorPlugin::doBuffer(
     }
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
-    const bool useTransactions = outFormat == "GPKG";
+    // Buffer output is user-facing analysis data; prefer the driver's native
+    // GeoPackage spatial index creation path over the fragile deferred SQL path.
+    const bool useTransactions = false;
     std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
 
