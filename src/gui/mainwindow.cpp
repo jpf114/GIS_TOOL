@@ -422,8 +422,8 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"rasters", {QStringLiteral("分类栅格列表"), QStringLiteral("多个分类栅格路径，使用英文逗号分隔，例如 a.tif,b.tif。")}},
         {"nodatas", {QStringLiteral("NoData 列表"), QStringLiteral("与分类栅格一一对应的 NoData 列表，使用英文逗号分隔，例如 0,0,255。")}},
         {"target_epsg", {QStringLiteral("目标 EPSG"), QStringLiteral("可选，显式指定统计时使用的目标投影坐标系。")}},
-        {"vector_output", {QStringLiteral("分类面输出"), QStringLiteral("可选，输出分类面结果，建议使用 .gpkg。")}},
-        {"raster_output", {QStringLiteral("分类栅格输出"), QStringLiteral("可选，输出分类栅格结果，建议使用 .tif。")}},
+        {"vector_output", {QStringLiteral("分类面输出"), QStringLiteral("可选，输出分类面结果，当前仅支持 .gpkg。")}},
+        {"raster_output", {QStringLiteral("分类栅格输出"), QStringLiteral("可选，输出分类栅格结果，当前仅支持 .tif 或 .tiff。")}},
     };
     return kTexts;
 }

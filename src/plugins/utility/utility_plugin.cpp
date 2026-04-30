@@ -184,7 +184,9 @@ gis::framework::Result UtilityPlugin::doHistogram(
     int bins = gis::framework::getParam<int>(params, "bins", 256);
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
-    if (bins <= 0) bins = 256;
+    if (bins <= 0) {
+        return gis::framework::Result::fail("bins must be > 0");
+    }
 
     progress.onProgress(0.1);
 

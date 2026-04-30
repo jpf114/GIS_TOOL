@@ -1217,11 +1217,11 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "vector_output", "分类面输出", "可选，输出分类面结果，当前建议使用 .gpkg",
+            "vector_output", "分类面输出", "可选，输出分类面结果，当前仅支持 .gpkg",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "raster_output", "分类栅格输出", "可选，输出分类栅格结果，当前建议使用 .tif",
+            "raster_output", "分类栅格输出", "可选，输出分类栅格结果，当前仅支持 .tif 或 .tiff",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
     };
