@@ -278,6 +278,12 @@ QIcon makeSubFunctionIcon(const std::string& actionKey, bool active) {
         painter.drawPolyline(QPolygonF() << QPointF(2.8, 12.0) << QPointF(5.4, 7.4) << QPointF(8.0, 9.4) << QPointF(10.8, 5.8) << QPointF(13.2, 8.6));
     } else if (actionKey == "roughness") {
         painter.drawPolyline(QPolygonF() << QPointF(2.8, 12.0) << QPointF(5.0, 5.2) << QPointF(8.0, 11.0) << QPointF(10.4, 4.6) << QPointF(13.2, 9.8));
+    } else if (actionKey == "fill_sinks") {
+        painter.drawPolyline(QPolygonF() << QPointF(2.8, 8.0) << QPointF(5.0, 11.8) << QPointF(8.0, 13.2) << QPointF(10.8, 10.2) << QPointF(13.2, 5.4));
+    } else if (actionKey == "flow_direction") {
+        painter.drawLine(QPointF(3.4, 12.0), QPointF(12.2, 4.8));
+        painter.drawLine(QPointF(12.2, 4.8), QPointF(9.6, 4.8));
+        painter.drawLine(QPointF(12.2, 4.8), QPointF(12.2, 7.4));
     } else if (actionKey == "ndvi") {
         painter.drawEllipse(QRectF(4.2, 2.8, 7.0, 10.4));
         painter.drawLine(QPointF(7.8, 4.0), QPointF(7.8, 12.0));

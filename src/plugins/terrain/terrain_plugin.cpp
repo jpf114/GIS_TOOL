@@ -9,6 +9,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -184,6 +185,142 @@ gis::framework::Result runLocalTerrainProcess(
     return terrainResult;
 }
 
+gis::framework::Result runHydrologyTerrainProcess(
+    const std::string& action,
+    const std::string& successLabel,
+    const std::string& input,
+    const std::string& output,
+    int band,
+    double zFactor,
+    gis::core::ProgressReporter& progress) {
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+    if (zFactor <= 0.0) return gis::framework::Result::fail("z_factor must be greater than 0");
+
+    progress.onProgress(0.1);
+    auto srcDs = gis::core::openRaster(input, true);
+    if (!srcDs) {
+        return gis::framework::Result::fail("Cannot open DEM raster: " + input);
+    }
+
+    auto* srcBand = srcDs->GetRasterBand(band);
+    if (!srcBand) {
+        return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
+    }
+
+    cv::Mat elevation = gis::core::gdalBandToMat(srcDs.get(), band);
+    if (zFactor != 1.0) {
+        elevation *= static_cast<float>(zFactor);
+    }
+    progress.onProgress(0.3);
+
+    int hasNoData = 0;
+    const double noDataValue = srcBand->GetNoDataValue(&hasNoData);
+    cv::Mat noDataMask;
+    if (hasNoData) {
+        cv::compare(elevation, static_cast<float>(noDataValue * zFactor), noDataMask, cv::CMP_EQ);
+    }
+
+    cv::Mat result;
+    if (action == "fill_sinks") {
+        result = elevation.clone();
+        cv::Mat kernel = cv::Mat::ones(3, 3, CV_8U);
+        kernel.at<unsigned char>(1, 1) = 0;
+
+        for (int iteration = 0; iteration < 256; ++iteration) {
+            cv::Mat neighborMin;
+            cv::erode(result, neighborMin, kernel, cv::Point(-1, -1), 1, cv::BORDER_REPLICATE);
+            if (hasNoData) {
+                neighborMin.setTo(result, noDataMask);
+            }
+
+            cv::Mat updated = cv::max(result, neighborMin);
+            if (hasNoData) {
+                updated.setTo(static_cast<float>(noDataValue), noDataMask);
+            }
+
+            cv::Mat changedMask;
+            cv::compare(updated, result, changedMask, cv::CMP_NE);
+            if (cv::countNonZero(changedMask) == 0) {
+                result = updated;
+                break;
+            }
+
+            result = updated;
+            progress.onProgress(0.3 + 0.4 * static_cast<double>(iteration + 1) / 256.0);
+        }
+    } else if (action == "flow_direction") {
+        result = cv::Mat::zeros(elevation.size(), CV_32F);
+
+        struct DirectionStep {
+            int dx;
+            int dy;
+            float distance;
+            float code;
+        };
+        static const DirectionStep kDirections[] = {
+            {1, 0, 1.0f, 1.0f},
+            {1, 1, 1.41421356f, 2.0f},
+            {0, 1, 1.0f, 4.0f},
+            {-1, 1, 1.41421356f, 8.0f},
+            {-1, 0, 1.0f, 16.0f},
+            {-1, -1, 1.41421356f, 32.0f},
+            {0, -1, 1.0f, 64.0f},
+            {1, -1, 1.41421356f, 128.0f},
+        };
+
+        for (int y = 1; y < elevation.rows - 1; ++y) {
+            for (int x = 1; x < elevation.cols - 1; ++x) {
+                if (hasNoData && noDataMask.at<unsigned char>(y, x) != 0) {
+                    continue;
+                }
+
+                const float center = elevation.at<float>(y, x);
+                float bestSlope = 0.0f;
+                float bestCode = 0.0f;
+                for (const auto& step : kDirections) {
+                    const int nx = x + step.dx;
+                    const int ny = y + step.dy;
+                    if (hasNoData && noDataMask.at<unsigned char>(ny, nx) != 0) {
+                        continue;
+                    }
+
+                    const float neighbor = elevation.at<float>(ny, nx);
+                    const float slope = (center - neighbor) / step.distance;
+                    if (slope > bestSlope) {
+                        bestSlope = slope;
+                        bestCode = step.code;
+                    }
+                }
+                result.at<float>(y, x) = bestCode;
+            }
+
+            if ((y % 64) == 0) {
+                progress.onProgress(0.3 + 0.4 * static_cast<double>(y) / elevation.rows);
+            }
+        }
+
+        if (hasNoData) {
+            result.setTo(static_cast<float>(noDataValue), noDataMask);
+        }
+    } else {
+        return gis::framework::Result::fail("Unknown hydrology terrain action: " + action);
+    }
+
+    progress.onProgress(0.8);
+    progress.onMessage("Writing terrain output: " + output);
+    gis::core::matToGdalTiff(result, srcDs.get(), output, band);
+    progress.onProgress(1.0);
+
+    auto terrainResult = gis::framework::Result::ok(successLabel + " completed", output);
+    terrainResult.metadata["action"] = action;
+    terrainResult.metadata["band"] = std::to_string(band);
+    terrainResult.metadata["z_factor"] = std::to_string(zFactor);
+    return terrainResult;
+}
+
 } // namespace
 
 std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
@@ -192,7 +329,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的地形分析子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness"}
+            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入 DEM 栅格路径",
@@ -230,6 +367,8 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "hillshade") return doHillshade(params, progress);
     if (action == "tpi") return doTpi(params, progress);
     if (action == "roughness") return doRoughness(params, progress);
+    if (action == "fill_sinks") return doFillSinks(params, progress);
+    if (action == "flow_direction") return doFlowDirection(params, progress);
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
@@ -297,6 +436,32 @@ gis::framework::Result TerrainPlugin::doRoughness(
     return runLocalTerrainProcess(
         "roughness",
         "Roughness",
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doFillSinks(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runHydrologyTerrainProcess(
+        "fill_sinks",
+        "FillSinks",
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doFlowDirection(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runHydrologyTerrainProcess(
+        "flow_direction",
+        "FlowDirection",
         gis::framework::getParam<std::string>(params, "input", ""),
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),

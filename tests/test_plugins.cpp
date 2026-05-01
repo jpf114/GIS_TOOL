@@ -176,6 +176,40 @@ static std::string createTerrainRaster(const std::string& name, int w = 48, int 
     return path;
 }
 
+static std::string createSinkRaster(const std::string& name, int w = 9, int h = 9) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+    double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+    ds->SetGeoTransform(adfGT);
+
+    std::vector<float> data(w * h, 10.0f);
+    data[(h / 2) * w + (w / 2)] = 2.0f;
+
+    auto* band = ds->GetRasterBand(1);
+    band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+    band->FlushCache();
+    return path;
+}
+
+static std::string createEastDownhillRaster(const std::string& name, int w = 9, int h = 9) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+    double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+    ds->SetGeoTransform(adfGT);
+
+    std::vector<float> data(w * h, 0.0f);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            data[y * w + x] = static_cast<float>(w - x);
+        }
+    }
+
+    auto* band = ds->GetRasterBand(1);
+    band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+    band->FlushCache();
+    return path;
+}
+
 static std::string createProjectedClassRaster(const std::string& name,
                                               int w,
                                               int h,
@@ -2756,6 +2790,40 @@ TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
     EXPECT_TRUE(fs::exists(roughnessOutput));
     EXPECT_TRUE(std::isfinite(readRasterPixel(tpiOutput, 24, 24)));
     EXPECT_GT(readRasterPixel(roughnessOutput, 24, 24), 0.01f);
+}
+
+TEST_F(PluginTest, TerrainFillSinksAndFlowDirectionExecution) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string sinkInput = createSinkRaster("terrain_sink_input.tif");
+    const std::string flowInput = createEastDownhillRaster("terrain_flow_input.tif");
+    const std::string fillOutput = utf8PathString(getTestDir() / "terrain_fill_sinks_output.tif");
+    const std::string flowOutput = utf8PathString(getTestDir() / "terrain_flow_direction_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> fillParams;
+    fillParams["action"] = std::string("fill_sinks");
+    fillParams["input"] = sinkInput;
+    fillParams["output"] = fillOutput;
+    fillParams["band"] = 1;
+    fillParams["z_factor"] = 1.0;
+
+    std::map<std::string, gis::framework::ParamValue> flowParams;
+    flowParams["action"] = std::string("flow_direction");
+    flowParams["input"] = flowInput;
+    flowParams["output"] = flowOutput;
+    flowParams["band"] = 1;
+    flowParams["z_factor"] = 1.0;
+
+    const auto fillResult = p->execute(fillParams, progress_);
+    const auto flowResult = p->execute(flowParams, progress_);
+
+    EXPECT_TRUE(fillResult.success) << fillResult.message;
+    EXPECT_TRUE(flowResult.success) << flowResult.message;
+    EXPECT_TRUE(fs::exists(fillOutput));
+    EXPECT_TRUE(fs::exists(flowOutput));
+    EXPECT_NEAR(readRasterPixel(fillOutput, 4, 4), 10.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(flowOutput, 4, 4), 1.0f, 1e-4f);
 }
 
 TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {

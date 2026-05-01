@@ -87,6 +87,8 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("hillshade"), QStringLiteral("\345\261\261\344\275\223\351\230\264\345\275\261")},
         {QStringLiteral("tpi"), QStringLiteral("TPI")},
         {QStringLiteral("roughness"), QStringLiteral("\347\262\227\347\263\231\345\272\246")},
+        {QStringLiteral("fill_sinks"), QStringLiteral("\345\241\253\346\264\274")},
+        {QStringLiteral("flow_direction"), QStringLiteral("\346\265\201\345\220\221")},
         {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
         {QStringLiteral("evi"), QStringLiteral("EVI")},
         {QStringLiteral("savi"), QStringLiteral("SAVI")},
@@ -331,6 +333,12 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(15, 18) << QPointF(19, 21) << QPointF(24, 14) << QPointF(28, 18));
     } else if (text == QStringLiteral("roughness")) {
         painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(14, 14) << QPointF(18, 22) << QPointF(22, 12) << QPointF(28, 20));
+    } else if (text == QStringLiteral("fill_sinks")) {
+        painter.drawPolyline(QPolygonF() << QPointF(10, 16) << QPointF(15, 22) << QPointF(20, 24) << QPointF(24, 18) << QPointF(28, 12));
+    } else if (text == QStringLiteral("flow_direction")) {
+        painter.drawLine(QPointF(11, 26), QPointF(27, 12));
+        painter.drawLine(QPointF(27, 12), QPointF(22, 12));
+        painter.drawLine(QPointF(27, 12), QPointF(27, 17));
     } else if (text == QStringLiteral("ndvi")) {
         painter.drawEllipse(QRectF(12, 10, 12, 18));
         painter.drawLine(QPointF(18, 12), QPointF(18, 26));
@@ -526,6 +534,12 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
             {"roughness", {
                 {"z_factor", {QStringLiteral("高程缩放"), QStringLiteral("用于在计算局部起伏前统一缩放 DEM 高程值。")}},
             }},
+            {"fill_sinks", {
+                {"z_factor", {QStringLiteral("高程缩放"), QStringLiteral("用于在填洼前统一缩放 DEM 高程值。")}},
+            }},
+            {"flow_direction", {
+                {"z_factor", {QStringLiteral("高程缩放"), QStringLiteral("用于在计算 D8 流向前统一缩放 DEM 高程值。")}},
+            }},
         }},
         {"classification", {
             {"feature_stats", {
@@ -610,6 +624,8 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"hillshade", {QStringLiteral("山体阴影"), QStringLiteral("根据 DEM 生成山体阴影效果图。"), {"input", "output", "band", "z_factor", "azimuth", "altitude"}, {"input", "output"}}},
             {"tpi", {QStringLiteral("TPI"), QStringLiteral("按 3x3 邻域计算地形位置指数。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
             {"roughness", {QStringLiteral("粗糙度"), QStringLiteral("按 3x3 邻域计算地表粗糙度。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
+            {"fill_sinks", {QStringLiteral("填洼"), QStringLiteral("按 3x3 邻域迭代填平局部洼地。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
+            {"flow_direction", {QStringLiteral("流向"), QStringLiteral("按 D8 规则输出每个像元的主流向编码。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
         }},
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},

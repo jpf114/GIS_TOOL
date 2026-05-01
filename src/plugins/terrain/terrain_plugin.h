@@ -33,6 +33,12 @@ private:
     gis::framework::Result doRoughness(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
+    gis::framework::Result doFillSinks(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
+    gis::framework::Result doFlowDirection(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
 };
 
 } // namespace gis::plugins

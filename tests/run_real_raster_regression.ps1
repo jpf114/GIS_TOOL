@@ -457,6 +457,26 @@ $cases += New-Case -Name "terrain_roughness" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "terrain_roughness_output.tif")
 )
 
+$cases += New-Case -Name "terrain_fill_sinks" -CaseArgs @(
+    "terrain", "fill_sinks",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_fill_sinks_output.tif")),
+    "--band=1",
+    "--z_factor=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_fill_sinks_output.tif")
+)
+
+$cases += New-Case -Name "terrain_flow_direction" -CaseArgs @(
+    "terrain", "flow_direction",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_flow_direction_output.tif")),
+    "--band=1",
+    "--z_factor=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_flow_direction_output.tif")
+)
+
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
     "processing", "pansharpen",
     ("--input=" + $data.PansharpenMs),
