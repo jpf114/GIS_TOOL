@@ -7,6 +7,7 @@ add_executable(gis_tests
     test_plugins.cpp
     test_gui_support.cpp
     test_support.cpp
+    ../src/gui/custom_index_preset_store.cpp
     ../src/gui/gui_data_support.cpp
 )
 
@@ -16,6 +17,7 @@ target_link_libraries(gis_tests PRIVATE
     GDAL::GDAL
     opencv_core
     opencv_imgproc
+    Qt6::Core
     GTest::gtest
 )
 

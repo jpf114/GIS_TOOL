@@ -1,5 +1,7 @@
 ﻿#include "gui_data_support.h"
 
+#include "custom_index_preset_store.h"
+
 #include <gis/core/gdal_wrapper.h>
 
 #include <gdal_priv.h>
@@ -749,7 +751,11 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
 }
 
 std::vector<std::string> spindexCustomIndexPresetValues() {
-    return spindexPresetStorage();
+    auto values = spindexPresetStorage();
+    for (const auto& preset : loadCustomIndexUserPresets()) {
+        values.push_back(preset.key);
+    }
+    return values;
 }
 
 std::string spindexCustomIndexPresetExpression(const std::string& presetKey) {
@@ -760,7 +766,7 @@ std::string spindexCustomIndexPresetExpression(const std::string& presetKey) {
     if (presetKey == "gndvi_alias") return "(NIR-GREEN)/(NIR+GREEN)";
     if (presetKey == "savi_alias") return "((NIR-RED)/(NIR+RED+0.5))*(1+0.5)";
     if (presetKey == "evi_alias") return "2.5*(NIR-RED)/(NIR+6*RED-7.5*BLUE+1)";
-    return {};
+    return findCustomIndexUserPresetExpression(presetKey);
 }
 
 DerivedOutputUpdate computeDerivedExpressionUpdate(const std::string& currentValue,

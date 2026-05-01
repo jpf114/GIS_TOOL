@@ -6,12 +6,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
 
+#include "../src/gui/custom_index_preset_store.h"
 #include "../src/gui/gui_data_support.h"
 #include "test_support.h"
 
@@ -40,6 +42,34 @@ std::string exportWktFromEpsg(int epsg) {
     CPLFree(wkt);
     return result;
 }
+
+void setCustomIndexPresetFileForTest(const fs::path& path) {
+#ifdef _WIN32
+    _putenv_s("GIS_CUSTOM_INDEX_PRESET_FILE", path.string().c_str());
+#else
+    setenv("GIS_CUSTOM_INDEX_PRESET_FILE", path.string().c_str(), 1);
+#endif
+}
+
+void clearCustomIndexPresetFileForTest() {
+#ifdef _WIN32
+    _putenv_s("GIS_CUSTOM_INDEX_PRESET_FILE", "");
+#else
+    unsetenv("GIS_CUSTOM_INDEX_PRESET_FILE");
+#endif
+}
+
+struct CustomIndexPresetFileGuard {
+    explicit CustomIndexPresetFileGuard(const fs::path& path) : path_(path) {
+        setCustomIndexPresetFileForTest(path_);
+    }
+
+    ~CustomIndexPresetFileGuard() {
+        clearCustomIndexPresetFileForTest();
+    }
+
+    fs::path path_;
+};
 
 } // namespace
 
@@ -257,6 +287,53 @@ TEST(GuiSupportTest, ComputeDerivedExpressionUpdateRespectsManualExpression) {
         "ndwi_alias");
     EXPECT_FALSE(update.shouldApply);
     EXPECT_EQ(update.value, "(GREEN-NIR)/(GREEN+NIR)");
+}
+
+TEST(GuiSupportTest, CustomIndexUserPresetStoreSavesLoadsAndRemoves) {
+    gis::tests::ensureDirectory(guiSupportTestDir());
+    const fs::path presetPath = guiSupportTestDir() / "custom_index_presets.json";
+    fs::remove(presetPath);
+    CustomIndexPresetFileGuard guard(presetPath);
+
+    std::string errorMessage;
+    const std::string presetKey = gis::gui::saveCustomIndexUserPreset(
+        "土壤测试",
+        "(SWIR1-RED)/(SWIR1+RED)",
+        &errorMessage);
+    ASSERT_FALSE(presetKey.empty()) << errorMessage;
+    EXPECT_TRUE(gis::gui::isCustomIndexUserPresetKey(presetKey));
+
+    const auto presets = gis::gui::loadCustomIndexUserPresets();
+    ASSERT_EQ(presets.size(), 1u);
+    EXPECT_EQ(presets.front().name, "土壤测试");
+    EXPECT_EQ(presets.front().expression, "(SWIR1-RED)/(SWIR1+RED)");
+    EXPECT_EQ(
+        gis::gui::findCustomIndexUserPresetExpression(presetKey),
+        "(SWIR1-RED)/(SWIR1+RED)");
+
+    EXPECT_TRUE(gis::gui::removeCustomIndexUserPreset(presetKey, &errorMessage)) << errorMessage;
+    EXPECT_TRUE(gis::gui::loadCustomIndexUserPresets().empty());
+}
+
+TEST(GuiSupportTest, SpindexCustomIndexPresetValuesIncludeUserPresets) {
+    gis::tests::ensureDirectory(guiSupportTestDir());
+    const fs::path presetPath = guiSupportTestDir() / "custom_index_presets_for_values.json";
+    fs::remove(presetPath);
+    CustomIndexPresetFileGuard guard(presetPath);
+
+    std::string errorMessage;
+    const std::string presetKey = gis::gui::saveCustomIndexUserPreset(
+        "水体测试",
+        "(GREEN-SWIR1)/(GREEN+SWIR1)",
+        &errorMessage);
+    ASSERT_FALSE(presetKey.empty()) << errorMessage;
+
+    const auto values = gis::gui::spindexCustomIndexPresetValues();
+    EXPECT_NE(std::find(values.begin(), values.end(), "ndvi_alias"), values.end());
+    EXPECT_NE(std::find(values.begin(), values.end(), presetKey), values.end());
+    EXPECT_EQ(
+        gis::gui::spindexCustomIndexPresetExpression(presetKey),
+        "(GREEN-SWIR1)/(GREEN+SWIR1)");
 }
 
 TEST(GuiSupportTest, BuildFileParamUiConfigProvidesSpecializedHints) {

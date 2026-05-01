@@ -28,6 +28,8 @@ struct ParamWidgetEntry {
     QSpinBox* intSpinBox = nullptr;
     QCheckBox* checkBox = nullptr;
     QPushButton* browseButton = nullptr;
+    QPushButton* auxButton = nullptr;
+    QPushButton* secondaryAuxButton = nullptr;
 };
 
 class ParamCardWidget : public QWidget {

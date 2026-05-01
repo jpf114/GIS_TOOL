@@ -1,4 +1,5 @@
 ﻿#include "param_card_widget.h"
+#include "custom_index_preset_store.h"
 #include "style_constants.h"
 #include "gui_data_support.h"
 
@@ -25,6 +26,8 @@
 #include <QSizePolicy>
 #include <QStyledItemDelegate>
 #include <QStyle>
+#include <QInputDialog>
+#include <QMessageBox>
 #include <QStringList>
 
 #include <array>
@@ -283,6 +286,24 @@ QString multiFileTextPickerFilter(const std::string& pluginName,
         "JPEG (*.jpg *.jpeg);;PNG (*.png);;BMP (*.bmp);;所有文件 (*)");
 }
 
+bool isCustomIndexPresetEnum(const std::string& pluginName,
+                             const std::string& actionKey,
+                             const std::string& paramKey) {
+    return pluginName == "spindex" && actionKey == "custom_index" && paramKey == "preset";
+}
+
+void populateCustomIndexPresetCombo(QComboBox* comboBox) {
+    comboBox->clear();
+    for (const auto& value : gis::gui::spindexCustomIndexPresetValues()) {
+        QString label = enumDisplayText("preset", value);
+        if (gis::gui::isCustomIndexUserPresetKey(value)) {
+            label = QStringLiteral("%1 (自定义)")
+                        .arg(QString::fromUtf8(gis::gui::findCustomIndexUserPresetName(value)));
+        }
+        comboBox->addItem(label, QString::fromUtf8(value));
+    }
+}
+
 }
 
 ParamCardWidget::ParamCardWidget(CardType type, QWidget* parent)
@@ -522,8 +543,12 @@ QWidget* ParamCardWidget::createEnumWidget(const gis::framework::ParamSpec& spec
         .arg(gis::style::Color::kTextPrimary)
         .arg(gis::style::Color::kInputBorder));
     comboBox->setView(listView);
-    for (const auto& val : spec.enumValues) {
-        comboBox->addItem(enumDisplayText(spec.key, val), QString::fromUtf8(val));
+    if (isCustomIndexPresetEnum(pluginName_, actionKey_, spec.key)) {
+        populateCustomIndexPresetCombo(comboBox);
+    } else {
+        for (const auto& val : spec.enumValues) {
+            comboBox->addItem(enumDisplayText(spec.key, val), QString::fromUtf8(val));
+        }
     }
     if (auto* defStr = std::get_if<std::string>(&spec.defaultValue); defStr && !defStr->empty()) {
         int idx = comboBox->findData(QString::fromUtf8(*defStr));
@@ -531,7 +556,108 @@ QWidget* ParamCardWidget::createEnumWidget(const gis::framework::ParamSpec& spec
     }
     entry.comboBox = comboBox;
     connect(comboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ParamCardWidget::paramChanged);
-    return comboBox;
+    if (!isCustomIndexPresetEnum(pluginName_, actionKey_, spec.key)) {
+        return comboBox;
+    }
+
+    auto* container = new QWidget;
+    auto* layout = new QHBoxLayout(container);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    layout->addWidget(comboBox, 1);
+
+    auto* saveButton = new QPushButton(QStringLiteral("保存当前"));
+    saveButton->setObjectName(QStringLiteral("browseButton"));
+    entry.auxButton = saveButton;
+    layout->addWidget(saveButton);
+
+    auto* deleteButton = new QPushButton(QStringLiteral("删除预设"));
+    deleteButton->setObjectName(QStringLiteral("browseButton"));
+    entry.secondaryAuxButton = deleteButton;
+    layout->addWidget(deleteButton);
+
+    connect(saveButton, &QPushButton::clicked, this, [this, comboBox]() {
+        const auto expressionIt = entries_.find("expression");
+        if (expressionIt == entries_.end() || !expressionIt.value().lineEdit) {
+            QMessageBox::warning(this, QStringLiteral("保存预设"), QStringLiteral("当前界面没有可保存的表达式"));
+            return;
+        }
+
+        const QString expression = expressionIt.value().lineEdit->text().trimmed();
+        if (expression.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("保存预设"), QStringLiteral("请先填写表达式"));
+            return;
+        }
+
+        QString defaultName;
+        const std::string currentKey = comboBox->currentData().toString().toUtf8().constData();
+        if (gis::gui::isCustomIndexUserPresetKey(currentKey)) {
+            defaultName = QString::fromUtf8(gis::gui::findCustomIndexUserPresetName(currentKey));
+        }
+
+        bool accepted = false;
+        const QString name = QInputDialog::getText(
+            this,
+            QStringLiteral("保存预设"),
+            QStringLiteral("请输入预设名称"),
+            QLineEdit::Normal,
+            defaultName,
+            &accepted).trimmed();
+        if (!accepted) {
+            return;
+        }
+        if (name.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("保存预设"), QStringLiteral("预设名称不能为空"));
+            return;
+        }
+
+        std::string errorMessage;
+        const std::string savedKey = gis::gui::saveCustomIndexUserPreset(
+            name.toUtf8().constData(),
+            expression.toUtf8().constData(),
+            &errorMessage);
+        if (savedKey.empty()) {
+            QMessageBox::warning(this, QStringLiteral("保存预设"), QString::fromUtf8(errorMessage));
+            return;
+        }
+
+        populateCustomIndexPresetCombo(comboBox);
+        const int index = comboBox->findData(QString::fromUtf8(savedKey));
+        if (index >= 0) {
+            comboBox->setCurrentIndex(index);
+        }
+        emit paramChanged();
+    });
+
+    connect(deleteButton, &QPushButton::clicked, this, [this, comboBox]() {
+        const std::string currentKey = comboBox->currentData().toString().toUtf8().constData();
+        if (!gis::gui::isCustomIndexUserPresetKey(currentKey)) {
+            QMessageBox::warning(this, QStringLiteral("删除预设"), QStringLiteral("当前预设不是自定义预设"));
+            return;
+        }
+
+        if (QMessageBox::question(
+                this,
+                QStringLiteral("删除预设"),
+                QStringLiteral("确定删除当前自定义预设吗？")) != QMessageBox::Yes) {
+            return;
+        }
+
+        std::string errorMessage;
+        if (!gis::gui::removeCustomIndexUserPreset(currentKey, &errorMessage)) {
+            QMessageBox::warning(this, QStringLiteral("删除预设"), QString::fromUtf8(errorMessage));
+            return;
+        }
+
+        populateCustomIndexPresetCombo(comboBox);
+        const int noneIndex = comboBox->findData(QStringLiteral("none"));
+        if (noneIndex >= 0) {
+            comboBox->setCurrentIndex(noneIndex);
+        }
+        emit paramChanged();
+    });
+
+    return container;
 }
 
 QWidget* ParamCardWidget::createIntWidget(const gis::framework::ParamSpec& spec,
