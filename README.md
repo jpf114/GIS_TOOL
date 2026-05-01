@@ -12,8 +12,8 @@
 
 - `Visual Studio 2022 + C++17 + 全局 vcpkg` 可稳定配置与编译
 - `GIS_BUILD_GUI=OFF/ON` 两种模式均可构建
-- 标准构建目录为 `build`，标准安装目录为 `install`
-- `ctest --test-dir build -C Debug --output-on-failure` 为 `201/201` 通过
+- 标准构建目录为 `build/debug` 与 `build/release`，标准安装目录为 `install`
+- `ctest --test-dir build/debug -C Debug --output-on-failure` 为 `201/201` 通过
 - `gis-cli.exe --list` 可正常列出全部主插件
 - `gis-gui.exe -platform offscreen --self-test` 可正常启动并退出
 - GUI 已验证较完整的离屏自动执行链路，覆盖 `vector / projection / utility / classification / processing / matching / cutting` 主功能动作
@@ -89,24 +89,26 @@
 仅构建 CLI 与测试：
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=OFF -DGIS_BUILD_TESTS=ON
-cmake --build build --config Debug
-ctest --test-dir build -C Debug --output-on-failure
+cmake -S . -B build/debug -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=OFF -DGIS_BUILD_TESTS=ON
+cmake --build build/debug --config Debug
+ctest --test-dir build/debug -C Debug --output-on-failure
 ```
 
 构建 GUI、CLI 与测试：
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
-cmake --build build --config Debug
-ctest --test-dir build -C Debug --output-on-failure
-cmake --build build --config Release
-cmake --install build --config Release
+cmake -S . -B build/debug -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
+cmake --build build/debug --config Debug
+ctest --test-dir build/debug -C Debug --output-on-failure
+cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
+cmake --build build/release --config Release
+cmake --install build/release --config Release
 ```
 
 建议：
 
-- 使用 `build` 作为标准构建与验证目录
+- 使用 `build/debug` 作为标准 Debug 构建与验证目录
+- 使用 `build/release` 作为标准 Release 构建与安装目录
 - 使用 `install` 作为标准安装目录
 - 建议开发验证使用 `Debug`
 - 默认安装与交付使用 `Release`

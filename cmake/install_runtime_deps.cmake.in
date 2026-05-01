@@ -34,7 +34,7 @@ file(GET_RUNTIME_DEPENDENCIES
     PRE_EXCLUDE_REGEXES
         "api-ms-"
         "ext-ms-"
-        "HvsiFileTrust\\.dll"
+        "[Hh][Vv][Ss][Ii][Ff]ile[Tt]rust\\.dll"
     POST_EXCLUDE_REGEXES
         ".*/install/bin/.*"
         ".*/[Ww]indows/.*"

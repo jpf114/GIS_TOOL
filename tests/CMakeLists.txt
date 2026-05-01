@@ -23,6 +23,60 @@ if(MSVC)
     target_compile_options(gis_tests PRIVATE /utf-8)
 endif()
 
+if(MSVC AND FALSE)
+    target_compile_options(gis_tests PRIVATE /utf-8)
+    add_custom_target(real_raster_regression
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=quick
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_raster_regression.cmake
+        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_utility copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "运行真实栅格回归脚本"
+    )
+
+    add_custom_target(real_raster_regression_full
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=full
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_raster_regression.cmake
+        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_utility copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "运行完整真实栅格回归脚本"
+    )
+    add_custom_target(real_matching_regression
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=quick
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_matching_regression.cmake
+        DEPENDS gis-cli gui_test_data_helper plugin_matching copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "运行真实匹配回归脚本"
+    )
+
+    add_custom_target(real_matching_regression_full
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=full
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_matching_regression.cmake
+        DEPENDS gis-cli gui_test_data_helper plugin_matching copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "运行完整真实匹配回归脚本"
+    )
+endif()
+
 add_library(plugin_test_lifecycle SHARED
     plugins/test_lifecycle_plugin.cpp
 )
@@ -549,6 +603,58 @@ endif()
 
 find_program(GIS_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
 if(GIS_POWERSHELL_EXECUTABLE)
+    add_custom_target(real_raster_regression
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=quick
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_raster_regression.cmake
+        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_utility copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "杩愯鐪熷疄鏍呮牸鍥炲綊鑴氭湰"
+    )
+
+    add_custom_target(real_raster_regression_full
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=full
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_raster_regression.cmake
+        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_utility copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "杩愯瀹屾暣鐪熷疄鏍呮牸鍥炲綊鑴氭湰"
+    )
+
+    add_custom_target(real_matching_regression
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=quick
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_matching_regression.cmake
+        DEPENDS gis-cli gui_test_data_helper plugin_matching copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "杩愯鐪熷疄鍖归厤鍥炲綊鑴氭湰"
+    )
+
+    add_custom_target(real_matching_regression_full
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI_PATH=$<TARGET_FILE:gis-cli>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+            -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
+            -DMODE=full
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_matching_regression.cmake
+        DEPENDS gis-cli gui_test_data_helper plugin_matching copy_runtime_dlls
+        USES_TERMINAL
+        COMMENT "杩愯瀹屾暣鐪熷疄鍖归厤鍥炲綊鑴氭湰"
+    )
+
     add_custom_target(real_vector_regression
         COMMAND ${CMAKE_COMMAND}
             -DCLI_PATH=$<TARGET_FILE:gis-cli>

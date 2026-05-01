@@ -28,7 +28,7 @@
 执行命令：
 
 ```powershell
-ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build/debug -C Debug --output-on-failure
 ```
 
 结果：
@@ -59,7 +59,7 @@ ctest --test-dir build -C Debug --output-on-failure
 已重新验证：
 
 ```powershell
-build\src\cli\Debug\gis-cli.exe --list
+build\debug\src\cli\Debug\gis-cli.exe --list
 ```
 
 结果：
@@ -72,9 +72,9 @@ build\src\cli\Debug\gis-cli.exe --list
 已重新执行：
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps1 -CliPath build\src\cli\Debug\gis-cli.exe -WorkspaceRoot . -OutputRoot tmp\vector_regression -Mode quick
+powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps1 -CliPath build\debug\src\cli\Debug\gis-cli.exe -WorkspaceRoot . -OutputRoot tmp\vector_regression -Mode quick
 
-powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps1 -CliPath build\src\cli\Debug\gis-cli.exe -WorkspaceRoot . -OutputRoot tmp\vector_regression_full -Mode full
+powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps1 -CliPath build\debug\src\cli\Debug\gis-cli.exe -WorkspaceRoot . -OutputRoot tmp\vector_regression_full -Mode full
 ```
 
 结果：
