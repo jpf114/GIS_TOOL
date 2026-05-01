@@ -118,6 +118,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("difference"), QStringLiteral("\345\267\256\351\233\206")},
         {QStringLiteral("dissolve"), QStringLiteral("\350\236\215\345\220\210")},
         {QStringLiteral("simplify"), QStringLiteral("简化")},
+        {QStringLiteral("repair"), QStringLiteral("修复")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -754,6 +755,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"difference", {QStringLiteral("差集"), QStringLiteral("从输入矢量中扣除叠加矢量区域。"), {"input", "output", "layer", "overlay_vector"}, {"input", "output", "overlay_vector"}}},
             {"dissolve", {QStringLiteral("融合"), QStringLiteral("按字段或整体融合相邻要素。"), {"input", "output", "layer", "dissolve_field"}, {"input", "output"}}},
             {"simplify", {QStringLiteral("简化"), QStringLiteral("按 Douglas-Peucker 算法简化线或面要素。"), {"input", "output", "layer", "tolerance"}, {"input", "output", "tolerance"}}},
+            {"repair", {QStringLiteral("修复"), QStringLiteral("尝试修复无效几何并输出新的矢量数据。"), {"input", "output", "layer"}, {"input", "output"}}},
         }},
     };
     return kConfigs;

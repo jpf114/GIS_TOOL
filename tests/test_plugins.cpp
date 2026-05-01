@@ -2648,6 +2648,68 @@ TEST_F(PluginTest, VectorSimplifyExecution) {
     GDALClose(outDs);
 }
 
+TEST_F(PluginTest, VectorRepairExecution) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_repair_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_repair_output.gpkg");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("parcels", srs.get(), wkbPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(0, 0);
+        ring.addPoint(50, 50);
+        ring.addPoint(50, 0);
+        ring.addPoint(0, 50);
+        ring.addPoint(0, 0);
+        poly.addRing(&ring);
+        feat->SetGeometry(&poly);
+        feat->SetField("name", "invalid");
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("repair");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("repaired_count"), "1");
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "invalid");
+    OGRGeometry* outGeom = outFeat->GetGeometryRef();
+    ASSERT_NE(outGeom, nullptr);
+    EXPECT_TRUE(outGeom->IsValid());
+    EXPECT_FALSE(outGeom->IsEmpty());
+    OGRFeature::DestroyFeature(outFeat);
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);
