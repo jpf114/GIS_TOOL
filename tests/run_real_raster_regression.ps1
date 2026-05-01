@@ -318,6 +318,15 @@ $cases += New-Case -Name "spindex_ndbi" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "ndbi_output.tif")
 )
 
+$cases += New-Case -Name "spindex_custom_index" -CaseArgs @(
+    "spindex", "custom_index",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "custom_index_output.tif")),
+    "--expression=(B4-B1)/(B4+B1)"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "custom_index_output.tif")
+)
+
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
     "processing", "pansharpen",
     ("--input=" + $data.PansharpenMs),

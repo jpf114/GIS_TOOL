@@ -90,6 +90,7 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
     if (pluginName == "spindex") {
         if (action == "ndvi" || action == "evi" || action == "savi" ||
             action == "gndvi" || action == "ndwi" || action == "mndwi" ||
+            action == "custom_index" ||
             action == "ndbi") return ".tif";
         return inputExt;
     }
@@ -718,6 +719,9 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
 
     if (pluginName == "processing" && action == "band_math" && spec.key == "expression") {
         return "请输入表达式，例如 B1+B2 或 B1*0.5+B2*0.5";
+    }
+    if (pluginName == "spindex" && action == "custom_index" && spec.key == "expression") {
+        return "请输入指数表达式，例如 (B4-B1)/(B4+B1)";
     }
 
     if (spec.key == "bands") {

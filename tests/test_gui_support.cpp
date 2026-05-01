@@ -183,6 +183,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_spindex_ndwi.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "spindex", "custom_index"),
+        "D:/data/image_spindex_custom_index.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/scene.tif", "classification", "feature_stats", "vector_output"),
         "D:/data/scene_classification_feature_stats.gpkg");
     EXPECT_EQ(
@@ -704,6 +708,14 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
     EXPECT_EQ(std::get<int>(spindexFiltered[2].minValue), 1);
     EXPECT_EQ(std::get<int>(spindexFiltered[3].minValue), 1);
     EXPECT_EQ(std::get<int>(spindexFiltered[4].minValue), 1);
+
+    gis::framework::ParamSpec expressionSpec{
+        "expression", "表达式", "", gis::framework::ParamType::String, false
+    };
+    EXPECT_NE(
+        gis::gui::buildTextParamPlaceholder("spindex", "custom_index", expressionSpec)
+            .find("(B4-B1)/(B4+B1)"),
+        std::string::npos);
 
     std::vector<gis::framework::ParamSpec> processingSpecs = {
         {"gamma", "Gamma", "", gis::framework::ParamType::Double, false},

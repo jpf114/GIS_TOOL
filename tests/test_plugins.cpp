@@ -995,6 +995,27 @@ TEST_F(PluginTest, SpindexOtherIndicesExecution) {
     }
 }
 
+TEST_F(PluginTest, SpindexCustomIndexExecution) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createMultiBandConstantRaster(
+        "e2e_spindex_custom_index_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
+    const std::string output = utf8PathString(getTestDir() / "e2e_spindex_custom_index_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("custom_index");
+    params["input"] = input;
+    params["output"] = output;
+    params["expression"] = std::string("(B4-B1)/(B4+B1)");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("expression"), "(B4-B1)/(B4+B1)");
+    EXPECT_NEAR(readRasterPixel(output, 5, 5), 60.0f / 80.0f, 1e-4f);
+}
+
 TEST_F(PluginTest, ProjectionInfoExecution) {
     auto* p = mgr_.find("projection");
     ASSERT_NE(p, nullptr);

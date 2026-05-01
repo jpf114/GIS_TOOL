@@ -89,6 +89,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("ndwi"), QStringLiteral("NDWI")},
         {QStringLiteral("mndwi"), QStringLiteral("MNDWI")},
         {QStringLiteral("ndbi"), QStringLiteral("NDBI")},
+        {QStringLiteral("custom_index"), QStringLiteral("自定义指数")},
         {QStringLiteral("buffer"), QStringLiteral("\347\274\223\345\206\262\345\214\272")},
         {QStringLiteral("rasterize"), QStringLiteral("\346\240\205\346\240\274\345\214\226")},
         {QStringLiteral("polygonize"), QStringLiteral("\351\235\242\347\237\242\351\207\217\345\214\226")},
@@ -555,6 +556,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"ndwi", {QStringLiteral("NDWI"), QStringLiteral("根据绿光与近红外波段计算 NDWI。"), {"input", "output", "green_band", "nir_band"}, {"input", "output"}}},
             {"mndwi", {QStringLiteral("MNDWI"), QStringLiteral("根据绿光与短波红外1波段计算 MNDWI。"), {"input", "output", "green_band", "swir1_band"}, {"input", "output"}}},
             {"ndbi", {QStringLiteral("NDBI"), QStringLiteral("根据短波红外1与近红外波段计算 NDBI。"), {"input", "output", "swir1_band", "nir_band"}, {"input", "output"}}},
+            {"custom_index", {QStringLiteral("自定义指数"), QStringLiteral("按表达式组合多波段并输出自定义指数结果。"), {"input", "output", "expression"}, {"input", "output", "expression"}}},
         }},
         {"utility", {
             {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},

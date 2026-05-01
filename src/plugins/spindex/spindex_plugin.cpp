@@ -1,11 +1,19 @@
 #include "spindex_plugin.h"
 
+#include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
-#include <gis/core/error.h>
 
 #include <gdal_priv.h>
 #include <opencv2/opencv.hpp>
+
+#include <cctype>
+#include <cmath>
+#include <map>
+#include <stack>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace gis::plugins {
 
@@ -47,11 +55,159 @@ gis::framework::Result buildIndexResult(const std::string& indexName,
     cv::minMaxLoc(indexMat, &minValue, &maxValue);
 
     auto result = gis::framework::Result::ok(
-        indexName + " computed: range [" + std::to_string(minValue) + ", " + std::to_string(maxValue) + "]",
+        indexName + " computed: range [" + std::to_string(minValue) + ", " +
+            std::to_string(maxValue) + "]",
         output);
     result.metadata["index"] = indexName;
     result.metadata["index_min"] = std::to_string(minValue);
     result.metadata["index_max"] = std::to_string(maxValue);
+    return result;
+}
+
+double evalExpression(const std::string& expr,
+                      const std::map<std::string, double>& bandValues) {
+    std::string resolved = expr;
+    for (const auto& [key, value] : bandValues) {
+        const std::string replacement = std::to_string(value);
+        size_t pos = 0;
+        while ((pos = resolved.find(key, pos)) != std::string::npos) {
+            resolved.replace(pos, key.length(), replacement);
+            pos += replacement.length();
+        }
+    }
+
+    try {
+        std::stack<double> values;
+        std::stack<char> ops;
+        auto precedence = [](char op) -> int {
+            if (op == '+' || op == '-') return 1;
+            if (op == '*' || op == '/') return 2;
+            return 0;
+        };
+        auto applyOp = [](double a, double b, char op) -> double {
+            switch (op) {
+                case '+': return a + b;
+                case '-': return a - b;
+                case '*': return a * b;
+                case '/': return std::abs(b) < 1e-15 ? 0.0 : a / b;
+                default: return 0.0;
+            }
+        };
+
+        size_t i = 0;
+        while (i < resolved.size()) {
+            if (std::isspace(static_cast<unsigned char>(resolved[i]))) {
+                ++i;
+                continue;
+            }
+
+            if (std::isdigit(static_cast<unsigned char>(resolved[i])) || resolved[i] == '.') {
+                const size_t start = i;
+                while (i < resolved.size() &&
+                       (std::isdigit(static_cast<unsigned char>(resolved[i])) || resolved[i] == '.')) {
+                    ++i;
+                }
+                values.push(std::stod(resolved.substr(start, i - start)));
+                continue;
+            }
+
+            if (resolved[i] == '(') {
+                ops.push('(');
+                ++i;
+                continue;
+            }
+
+            if (resolved[i] == ')') {
+                while (!ops.empty() && ops.top() != '(') {
+                    const double b = values.top();
+                    values.pop();
+                    const double a = values.top();
+                    values.pop();
+                    values.push(applyOp(a, b, ops.top()));
+                    ops.pop();
+                }
+                if (!ops.empty()) {
+                    ops.pop();
+                }
+                ++i;
+                continue;
+            }
+
+            if (resolved[i] == '+' || resolved[i] == '-' ||
+                resolved[i] == '*' || resolved[i] == '/') {
+                while (!ops.empty() && precedence(ops.top()) >= precedence(resolved[i])) {
+                    const double b = values.top();
+                    values.pop();
+                    const double a = values.top();
+                    values.pop();
+                    values.push(applyOp(a, b, ops.top()));
+                    ops.pop();
+                }
+                ops.push(resolved[i]);
+            }
+            ++i;
+        }
+
+        while (!ops.empty()) {
+            const double b = values.top();
+            values.pop();
+            const double a = values.top();
+            values.pop();
+            values.push(applyOp(a, b, ops.top()));
+            ops.pop();
+        }
+
+        return values.empty() ? 0.0 : values.top();
+    } catch (...) {
+        return 0.0;
+    }
+}
+
+gis::framework::Result doCustomIndex(const std::string& input,
+                                     const std::string& output,
+                                     const std::string& expression,
+                                     gis::core::ProgressReporter& progress) {
+    if (expression.empty()) {
+        return gis::framework::Result::fail(
+            "expression is required (e.g., B4-B1, (B4-B1)/(B4+B1))");
+    }
+
+    auto ds = gis::core::openRaster(input, true);
+    const int width = ds->GetRasterXSize();
+    const int height = ds->GetRasterYSize();
+    const int bandCount = ds->GetRasterCount();
+
+    progress.onMessage("Reading " + std::to_string(bandCount) + " bands...");
+    std::vector<cv::Mat> bandMats;
+    bandMats.reserve(bandCount);
+    for (int band = 1; band <= bandCount; ++band) {
+        bandMats.push_back(gis::core::gdalBandToMat(ds.get(), band));
+    }
+    progress.onProgress(0.4);
+
+    progress.onMessage("Evaluating expression: " + expression);
+    cv::Mat indexMat(height, width, CV_32F);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            std::map<std::string, double> bandValues;
+            for (int band = 0; band < bandCount; ++band) {
+                bandValues["B" + std::to_string(band + 1)] = bandMats[band].at<float>(y, x);
+            }
+            indexMat.at<float>(y, x) =
+                static_cast<float>(evalExpression(expression, bandValues));
+        }
+        if ((y % 100) == 0) {
+            progress.onProgress(0.4 + 0.4 * static_cast<double>(y) / height);
+        }
+    }
+
+    progress.onProgress(0.85);
+    gis::core::matToGdalTiff(indexMat, input, output, 1);
+    progress.onProgress(1.0);
+
+    auto result = buildIndexResult("CUSTOM_INDEX", output, indexMat);
+    result.metadata["expression"] = expression;
+    result.metadata["band_count"] = std::to_string(bandCount);
     return result;
 }
 
@@ -63,7 +219,7 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi"}
+            {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi", "custom_index"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -74,40 +230,44 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "red_band", "红波段", "NDVI计算的红波段序号",
+            "red_band", "红光波段", "NDVI 计算的红光波段序号",
             gis::framework::ParamType::Int, false, int{3}
         },
         gis::framework::ParamSpec{
-            "nir_band", "近红外波段", "NDVI计算的近红外波段序号",
+            "nir_band", "近红外波段", "NDVI 计算的近红外波段序号",
             gis::framework::ParamType::Int, false, int{4}
         },
         gis::framework::ParamSpec{
-            "blue_band", "蓝波段", "EVI计算的蓝波段序号",
+            "blue_band", "蓝光波段", "EVI 计算的蓝光波段序号",
             gis::framework::ParamType::Int, false, int{1}
         },
         gis::framework::ParamSpec{
-            "green_band", "绿波段", "GNDVI/NDWI/MNDWI计算的绿波段序号",
+            "green_band", "绿光波段", "GNDVI/NDWI/MNDWI 计算的绿光波段序号",
             gis::framework::ParamType::Int, false, int{2}
         },
         gis::framework::ParamSpec{
-            "swir1_band", "短波红外1波段", "MNDWI/NDBI计算的短波红外1波段序号",
+            "swir1_band", "短波红外1波段", "MNDWI/NDBI 计算的短波红外1波段序号",
             gis::framework::ParamType::Int, false, int{5}
         },
         gis::framework::ParamSpec{
-            "l_value", "L参数", "SAVI或EVI使用的L参数",
+            "l_value", "L 参数", "SAVI 或 EVI 使用的 L 参数",
             gis::framework::ParamType::Double, false, double{0.5}
         },
         gis::framework::ParamSpec{
-            "g_value", "G参数", "EVI使用的增益参数G",
+            "g_value", "G 参数", "EVI 使用的增益参数 G",
             gis::framework::ParamType::Double, false, double{2.5}
         },
         gis::framework::ParamSpec{
-            "c1", "C1参数", "EVI使用的C1参数",
+            "c1", "C1 参数", "EVI 使用的 C1 参数",
             gis::framework::ParamType::Double, false, double{6.0}
         },
         gis::framework::ParamSpec{
-            "c2", "C2参数", "EVI使用的C2参数",
+            "c2", "C2 参数", "EVI 使用的 C2 参数",
             gis::framework::ParamType::Double, false, double{7.5}
+        },
+        gis::framework::ParamSpec{
+            "expression", "表达式", "自定义指数表达式，例如 (B4-B1)/(B4+B1)",
+            gis::framework::ParamType::String, false, std::string{}
         },
     };
 }
@@ -119,7 +279,7 @@ gis::framework::Result SpindexPlugin::execute(
     const std::string action = gis::framework::getParam<std::string>(params, "action", "");
     if (action == "ndvi" || action == "evi" || action == "savi" ||
         action == "gndvi" || action == "ndwi" || action == "mndwi" ||
-        action == "ndbi") {
+        action == "ndbi" || action == "custom_index") {
         return doExecuteAction(action, params, progress);
     }
 
@@ -133,6 +293,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
 
     const std::string input = gis::framework::getParam<std::string>(params, "input", "");
     const std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    const std::string expression = gis::framework::getParam<std::string>(params, "expression", "");
     const int redBand = gis::framework::getParam<int>(params, "red_band", 3);
     const int nirBand = gis::framework::getParam<int>(params, "nir_band", 4);
 
@@ -144,6 +305,10 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
     auto ds = gis::core::openRaster(input, true);
     const int bands = ds.get()->GetRasterCount();
     try {
+        if (action == "custom_index") {
+            return doCustomIndex(input, output, expression, progress);
+        }
+
         if (action == "ndvi") {
             const int resolvedRedBand = getBandIndex(params, "red_band", redBand, bands);
             const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
