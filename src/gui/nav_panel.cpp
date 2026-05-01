@@ -314,6 +314,12 @@ QIcon makeSubFunctionIcon(const std::string& actionKey, bool active) {
         painter.drawLine(QPointF(7.0, 4.0), QPointF(7.0, 13.8));
         painter.drawLine(QPointF(5.2, 5.8), QPointF(7.0, 4.0));
         painter.drawLine(QPointF(8.8, 5.8), QPointF(7.0, 4.0));
+    } else if (actionKey == "reservoir_volume") {
+        painter.drawLine(QPointF(2.6, 12.2), QPointF(13.0, 12.2));
+        painter.drawArc(QRectF(2.6, 8.6, 3.2, 3.2), 180 * 16, 180 * 16);
+        painter.drawArc(QRectF(5.8, 8.6, 3.2, 3.2), 180 * 16, 180 * 16);
+        painter.drawArc(QRectF(9.0, 8.6, 3.2, 3.2), 180 * 16, 180 * 16);
+        painter.drawLine(QPointF(7.8, 3.2), QPointF(7.8, 8.8));
     } else if (actionKey == "ndvi") {
         painter.drawEllipse(QRectF(4.2, 2.8, 7.0, 10.4));
         painter.drawLine(QPointF(7.8, 4.0), QPointF(7.8, 12.0));

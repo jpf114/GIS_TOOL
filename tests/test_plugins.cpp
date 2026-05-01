@@ -2974,6 +2974,30 @@ TEST_F(PluginTest, TerrainCutFillExecution) {
     EXPECT_NEAR(std::stod(result.metadata.at("net_volume")), 200.0, 1e-6);
 }
 
+TEST_F(PluginTest, TerrainReservoirVolumeExecution) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createConstantRaster("terrain_reservoir_input.tif", 10, 10, 10.0f, 116.0, 40.0, 1.0);
+    const std::string output = utf8PathString(getTestDir() / "terrain_reservoir_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("reservoir_volume");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["water_level"] = 13.0;
+
+    const auto result = p->execute(params, progress_);
+
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "reservoir_volume");
+    EXPECT_NEAR(readRasterPixel(output, 5, 5), 3.0f, 1e-4f);
+    EXPECT_NEAR(std::stod(result.metadata.at("reservoir_area")), 100.0, 1e-6);
+    EXPECT_NEAR(std::stod(result.metadata.at("reservoir_volume")), 300.0, 1e-6);
+}
+
 TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {
     auto* p = mgr_.find("matching");
     ASSERT_NE(p, nullptr);

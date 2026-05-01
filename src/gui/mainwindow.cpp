@@ -95,6 +95,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("profile_extract"), QStringLiteral("\345\211\226\351\235\242\346\217\220\345\217\226")},
         {QStringLiteral("viewshed"), QStringLiteral("\350\247\206\345\237\237\345\210\206\346\236\220")},
         {QStringLiteral("cut_fill"), QStringLiteral("\345\241\253\346\214\226\346\226\271")},
+        {QStringLiteral("reservoir_volume"), QStringLiteral("\345\272\223\345\256\271\350\256\241\347\256\227")},
         {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
         {QStringLiteral("evi"), QStringLiteral("EVI")},
         {QStringLiteral("savi"), QStringLiteral("SAVI")},
@@ -375,6 +376,12 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawLine(QPointF(18, 10), QPointF(18, 28));
         painter.drawLine(QPointF(14, 14), QPointF(18, 10));
         painter.drawLine(QPointF(22, 14), QPointF(18, 10));
+    } else if (text == QStringLiteral("reservoir_volume")) {
+        painter.drawLine(QPointF(9, 24), QPointF(27, 24));
+        painter.drawArc(QRectF(9, 18, 6, 6), 180 * 16, 180 * 16);
+        painter.drawArc(QRectF(15, 18, 6, 6), 180 * 16, 180 * 16);
+        painter.drawArc(QRectF(21, 18, 6, 6), 180 * 16, 180 * 16);
+        painter.drawLine(QPointF(18, 10), QPointF(18, 18));
     } else if (text == QStringLiteral("ndvi")) {
         painter.drawEllipse(QRectF(12, 10, 12, 18));
         painter.drawLine(QPointF(18, 12), QPointF(18, 26));
@@ -595,6 +602,9 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
             {"cut_fill", {
                 {"reference", {QStringLiteral("参考 DEM"), QStringLiteral("填写基准地表 DEM，系统将输出 input - reference 的高差结果。")}},
             }},
+            {"reservoir_volume", {
+                {"water_level", {QStringLiteral("水位高程"), QStringLiteral("填写目标蓄水水位，系统将输出对应水深栅格并统计面积与库容。")}},
+            }},
         }},
         {"classification", {
             {"feature_stats", {
@@ -687,6 +697,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"profile_extract", {QStringLiteral("剖面提取"), QStringLiteral("沿折线路径采样 DEM 高程并导出 CSV。"), {"input", "output", "band", "profile_path"}, {"input", "output", "profile_path"}}},
             {"viewshed", {QStringLiteral("视域分析"), QStringLiteral("以单个观察点为中心计算可视域范围。"), {"input", "output", "band", "observer_x", "observer_y", "observer_height", "target_height", "max_distance"}, {"input", "output", "observer_x", "observer_y"}}},
             {"cut_fill", {QStringLiteral("填挖方"), QStringLiteral("比较当前 DEM 与参考 DEM，输出高差并统计填挖体积。"), {"reference", "input", "output", "band"}, {"reference", "input", "output"}}},
+            {"reservoir_volume", {QStringLiteral("库容计算"), QStringLiteral("按指定水位计算蓄水深度，并统计淹没面积和库容。"), {"input", "output", "band", "water_level"}, {"input", "output", "water_level"}}},
         }},
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},

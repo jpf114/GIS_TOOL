@@ -824,6 +824,66 @@ gis::framework::Result runCutFillProcess(
     return result;
 }
 
+gis::framework::Result runReservoirVolumeProcess(
+    const std::string& input,
+    const std::string& output,
+    int band,
+    double waterLevel,
+    gis::core::ProgressReporter& progress) {
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+
+    progress.onProgress(0.1);
+    auto srcDs = gis::core::openRaster(input, true);
+    if (!srcDs) {
+        return gis::framework::Result::fail("Cannot open DEM raster: " + input);
+    }
+    if (!srcDs->GetRasterBand(band)) {
+        return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
+    }
+
+    progress.onMessage("Reading terrain raster band");
+    cv::Mat elevation = gis::core::gdalBandToMat(srcDs.get(), band);
+    progress.onProgress(0.45);
+
+    cv::Mat depth = waterLevel - elevation;
+    cv::max(depth, 0.0f, depth);
+
+    double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    srcDs->GetGeoTransform(gt);
+    const double pixelArea = std::abs(gt[1] * gt[5] - gt[2] * gt[4]);
+    double reservoirArea = 0.0;
+    double reservoirVolume = 0.0;
+    for (int y = 0; y < depth.rows; ++y) {
+        const float* row = depth.ptr<float>(y);
+        for (int x = 0; x < depth.cols; ++x) {
+            const double value = row[x];
+            if (value > 0.0) {
+                reservoirArea += pixelArea;
+                reservoirVolume += value * pixelArea;
+            }
+        }
+    }
+
+    const auto parent = std::filesystem::path(output).parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+    progress.onMessage("Writing terrain output: " + output);
+    gis::core::matToGdalTiff(depth, srcDs.get(), output, band);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("ReservoirVolume completed", output);
+    result.metadata["action"] = "reservoir_volume";
+    result.metadata["band"] = std::to_string(band);
+    result.metadata["water_level"] = std::to_string(waterLevel);
+    result.metadata["reservoir_area"] = std::to_string(reservoirArea);
+    result.metadata["reservoir_volume"] = std::to_string(reservoirVolume);
+    return result;
+}
+
 } // namespace
 
 std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
@@ -832,7 +892,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "???", "?????????????",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "cut_fill"}
+            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "cut_fill", "reservoir_volume"}
         },
         gis::framework::ParamSpec{
             "input", "????", "?? DEM ????",
@@ -890,8 +950,13 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "max_distance", "????", "?????????0 ?????",
             gis::framework::ParamType::Double, false, double{0.0}
         },
+        gis::framework::ParamSpec{
+            "water_level", "????", "?????????????",
+            gis::framework::ParamType::Double, false, double{0.0}
+        },
     };
 }
+
 gis::framework::Result TerrainPlugin::execute(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -909,6 +974,7 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "profile_extract") return doProfileExtract(params, progress);
     if (action == "viewshed") return doViewshed(params, progress);
     if (action == "cut_fill") return doCutFill(params, progress);
+    if (action == "reservoir_volume") return doReservoirVolume(params, progress);
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
@@ -1087,6 +1153,17 @@ gis::framework::Result TerrainPlugin::doCutFill(
         gis::framework::getParam<std::string>(params, "reference", ""),
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doReservoirVolume(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runReservoirVolumeProcess(
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "water_level", 0.0),
         progress);
 }
 

@@ -542,6 +542,16 @@ $cases += New-Case -Name "terrain_cut_fill" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "terrain_cut_fill_output.tif")
 )
 
+$cases += New-Case -Name "terrain_reservoir_volume" -CaseArgs @(
+    "terrain", "reservoir_volume",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_reservoir_output.tif")),
+    "--band=1",
+    "--water_level=60.0"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_reservoir_output.tif")
+)
+
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
     "processing", "pansharpen",
     ("--input=" + $data.PansharpenMs),
