@@ -955,6 +955,46 @@ TEST_F(PluginTest, SpindexNdviExecution) {
     EXPECT_TRUE(result.metadata.count("ndvi_max") > 0);
 }
 
+TEST_F(PluginTest, SpindexOtherIndicesExecution) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createMultiBandConstantRaster(
+        "e2e_spindex_multi_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f, 90.0f});
+
+    struct CaseSpec {
+        std::string action;
+        std::string outputName;
+        std::vector<std::pair<std::string, gis::framework::ParamValue>> extraParams;
+        float expectedValue;
+    };
+
+    const std::vector<CaseSpec> cases = {
+        {"gndvi", "e2e_spindex_gndvi_output.tif", {{"green_band", 2}, {"nir_band", 4}}, 50.0f / 90.0f},
+        {"ndwi", "e2e_spindex_ndwi_output.tif", {{"green_band", 2}, {"nir_band", 4}}, -50.0f / 90.0f},
+        {"mndwi", "e2e_spindex_mndwi_output.tif", {{"green_band", 2}, {"swir1_band", 5}}, -70.0f / 110.0f},
+        {"ndbi", "e2e_spindex_ndbi_output.tif", {{"swir1_band", 5}, {"nir_band", 4}}, 20.0f / 160.0f},
+        {"savi", "e2e_spindex_savi_output.tif", {{"red_band", 3}, {"nir_band", 4}, {"l_value", 0.5}}, 60.0f / 100.5f},
+        {"evi", "e2e_spindex_evi_output.tif", {{"blue_band", 1}, {"red_band", 3}, {"nir_band", 4}, {"g_value", 2.5}, {"c1", 6.0}, {"c2", 7.5}, {"l_value", 1.0}}, 100.0f / 176.0f},
+    };
+
+    for (const auto& testCase : cases) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = testCase.action;
+        params["input"] = input;
+        const std::string output = utf8PathString(getTestDir() / testCase.outputName);
+        params["output"] = output;
+        for (const auto& [key, value] : testCase.extraParams) {
+            params[key] = value;
+        }
+
+        const auto result = p->execute(params, progress_);
+        EXPECT_TRUE(result.success) << testCase.action << ": " << result.message;
+        EXPECT_TRUE(fs::exists(output)) << testCase.action;
+        EXPECT_NEAR(readRasterPixel(output, 5, 5), testCase.expectedValue, 1e-4f) << testCase.action;
+    }
+}
+
 TEST_F(PluginTest, ProjectionInfoExecution) {
     auto* p = mgr_.find("projection");
     ASSERT_NE(p, nullptr);

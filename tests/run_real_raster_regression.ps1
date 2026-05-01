@@ -257,6 +257,67 @@ $cases += New-Case -Name "spindex_ndvi" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "ndvi_output.tif")
 )
 
+$cases += New-Case -Name "spindex_evi" -CaseArgs @(
+    "spindex", "evi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "evi_output.tif")),
+    "--blue_band=3",
+    "--red_band=1",
+    "--nir_band=4"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "evi_output.tif")
+)
+
+$cases += New-Case -Name "spindex_savi" -CaseArgs @(
+    "spindex", "savi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "savi_output.tif")),
+    "--red_band=1",
+    "--nir_band=4"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "savi_output.tif")
+)
+
+$cases += New-Case -Name "spindex_gndvi" -CaseArgs @(
+    "spindex", "gndvi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "gndvi_output.tif")),
+    "--green_band=2",
+    "--nir_band=4"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "gndvi_output.tif")
+)
+
+$cases += New-Case -Name "spindex_ndwi" -CaseArgs @(
+    "spindex", "ndwi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "ndwi_output.tif")),
+    "--green_band=2",
+    "--nir_band=4"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "ndwi_output.tif")
+)
+
+$cases += New-Case -Name "spindex_mndwi" -CaseArgs @(
+    "spindex", "mndwi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "mndwi_output.tif")),
+    "--green_band=2",
+    "--swir1_band=4"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "mndwi_output.tif")
+)
+
+$cases += New-Case -Name "spindex_ndbi" -CaseArgs @(
+    "spindex", "ndbi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "ndbi_output.tif")),
+    "--swir1_band=4",
+    "--nir_band=2"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "ndbi_output.tif")
+)
+
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
     "processing", "pansharpen",
     ("--input=" + $data.PansharpenMs),

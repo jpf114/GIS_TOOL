@@ -88,7 +88,9 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
     }
 
     if (pluginName == "spindex") {
-        if (action == "ndvi") return ".tif";
+        if (action == "ndvi" || action == "evi" || action == "savi" ||
+            action == "gndvi" || action == "ndwi" || action == "mndwi" ||
+            action == "ndbi") return ".tif";
         return inputExt;
     }
 
@@ -935,14 +937,25 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
-    if (pluginName == "spindex" && actionKey == "ndvi") {
-        const auto redBand = intParamValue(params, "red_band");
-        const auto nirBand = intParamValue(params, "nir_band");
-        if (redBand.has_value() && *redBand <= 0) {
-            return ActionValidationIssue{"red_band", "参数“红光波段”必须大于 0"};
-        }
-        if (nirBand.has_value() && *nirBand <= 0) {
-            return ActionValidationIssue{"nir_band", "参数“近红外波段”必须大于 0"};
+    if (pluginName == "spindex") {
+        const auto validatePositiveBand = [&](const std::string& key, const char* displayName)
+            -> std::optional<ActionValidationIssue> {
+            const auto bandValue = intParamValue(params, key);
+            if (bandValue.has_value() && *bandValue <= 0) {
+                return ActionValidationIssue{key, std::string("参数“") + displayName + "”必须大于 0"};
+            }
+            return std::nullopt;
+        };
+
+        for (const auto& [key, displayName] : std::vector<std::pair<std::string, const char*>>{
+                 {"blue_band", "蓝光波段"},
+                 {"green_band", "绿光波段"},
+                 {"red_band", "红光波段"},
+                 {"nir_band", "近红外波段"},
+                 {"swir1_band", "短波红外1波段"}}) {
+            if (const auto issue = validatePositiveBand(key, displayName)) {
+                return issue;
+            }
         }
     }
 
@@ -1151,7 +1164,9 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
             }
         }
         if (pluginName == "spindex" &&
-            (spec.key == "red_band" || spec.key == "nir_band")) {
+            (spec.key == "blue_band" || spec.key == "green_band" ||
+             spec.key == "red_band" || spec.key == "nir_band" ||
+             spec.key == "swir1_band")) {
             adjustedSpec.minValue = 1;
         }
         if (pluginName == "vector" && spec.key == "resolution") {

@@ -179,6 +179,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_spindex_ndvi.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "spindex", "ndwi"),
+        "D:/data/image_spindex_ndwi.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/scene.tif", "classification", "feature_stats", "vector_output"),
         "D:/data/scene_classification_feature_stats.gpkg");
     EXPECT_EQ(
@@ -681,19 +685,25 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
     EXPECT_EQ(std::get<int>(utilityFiltered[3].minValue), 0);
 
     std::vector<gis::framework::ParamSpec> spindexSpecs = {
+        {"blue_band", "蓝波段", "", gis::framework::ParamType::Int, false},
+        {"green_band", "绿波段", "", gis::framework::ParamType::Int, false},
         {"red_band", "红光波段", "", gis::framework::ParamType::Int, false},
-        {"nir_band", "近红外波段", "", gis::framework::ParamType::Int, false}
+        {"nir_band", "近红外波段", "", gis::framework::ParamType::Int, false},
+        {"swir1_band", "短波红外1波段", "", gis::framework::ParamType::Int, false}
     };
     const auto spindexFiltered = gis::gui::buildEffectiveGuiParamSpecs(
         "spindex",
-        "ndvi",
+        "evi",
         spindexSpecs,
-        {"red_band", "nir_band"},
+        {"blue_band", "green_band", "red_band", "nir_band", "swir1_band"},
         {});
 
-    ASSERT_EQ(spindexFiltered.size(), 2u);
+    ASSERT_EQ(spindexFiltered.size(), 5u);
     EXPECT_EQ(std::get<int>(spindexFiltered[0].minValue), 1);
     EXPECT_EQ(std::get<int>(spindexFiltered[1].minValue), 1);
+    EXPECT_EQ(std::get<int>(spindexFiltered[2].minValue), 1);
+    EXPECT_EQ(std::get<int>(spindexFiltered[3].minValue), 1);
+    EXPECT_EQ(std::get<int>(spindexFiltered[4].minValue), 1);
 
     std::vector<gis::framework::ParamSpec> processingSpecs = {
         {"gamma", "Gamma", "", gis::framework::ParamType::Double, false},

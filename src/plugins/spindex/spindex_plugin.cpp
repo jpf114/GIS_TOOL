@@ -9,13 +9,61 @@
 
 namespace gis::plugins {
 
+namespace {
+
+int getBandIndex(const std::map<std::string, gis::framework::ParamValue>& params,
+                 const char* key,
+                 int defaultValue,
+                 int bandCount) {
+    const int bandIndex = gis::framework::getParam<int>(params, key, defaultValue);
+    if (bandIndex < 1 || bandIndex > bandCount) {
+        throw std::runtime_error(
+            std::string(key) + " " + std::to_string(bandIndex) +
+            " out of range (1-" + std::to_string(bandCount) + ")");
+    }
+    return bandIndex;
+}
+
+cv::Mat readBandMat(const gis::core::GdalDatasetPtr& ds,
+                    int bandIndex,
+                    const std::string& bandLabel,
+                    gis::core::ProgressReporter& progress) {
+    progress.onMessage("Reading " + bandLabel + " band " + std::to_string(bandIndex));
+    return gis::core::gdalBandToMat(ds.get(), bandIndex);
+}
+
+cv::Mat safeDivide(const cv::Mat& numerator, cv::Mat denominator) {
+    denominator += 1e-10f;
+    cv::Mat result;
+    cv::divide(numerator, denominator, result);
+    return result;
+}
+
+gis::framework::Result buildIndexResult(const std::string& indexName,
+                                        const std::string& output,
+                                        const cv::Mat& indexMat) {
+    double minValue = 0.0;
+    double maxValue = 0.0;
+    cv::minMaxLoc(indexMat, &minValue, &maxValue);
+
+    auto result = gis::framework::Result::ok(
+        indexName + " computed: range [" + std::to_string(minValue) + ", " + std::to_string(maxValue) + "]",
+        output);
+    result.metadata["index"] = indexName;
+    result.metadata["index_min"] = std::to_string(minValue);
+    result.metadata["index_max"] = std::to_string(maxValue);
+    return result;
+}
+
+} // namespace
+
 std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"ndvi"}
+            {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -33,6 +81,34 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
             "nir_band", "近红外波段", "NDVI计算的近红外波段序号",
             gis::framework::ParamType::Int, false, int{4}
         },
+        gis::framework::ParamSpec{
+            "blue_band", "蓝波段", "EVI计算的蓝波段序号",
+            gis::framework::ParamType::Int, false, int{1}
+        },
+        gis::framework::ParamSpec{
+            "green_band", "绿波段", "GNDVI/NDWI/MNDWI计算的绿波段序号",
+            gis::framework::ParamType::Int, false, int{2}
+        },
+        gis::framework::ParamSpec{
+            "swir1_band", "短波红外1波段", "MNDWI/NDBI计算的短波红外1波段序号",
+            gis::framework::ParamType::Int, false, int{5}
+        },
+        gis::framework::ParamSpec{
+            "l_value", "L参数", "SAVI或EVI使用的L参数",
+            gis::framework::ParamType::Double, false, double{0.5}
+        },
+        gis::framework::ParamSpec{
+            "g_value", "G参数", "EVI使用的增益参数G",
+            gis::framework::ParamType::Double, false, double{2.5}
+        },
+        gis::framework::ParamSpec{
+            "c1", "C1参数", "EVI使用的C1参数",
+            gis::framework::ParamType::Double, false, double{6.0}
+        },
+        gis::framework::ParamSpec{
+            "c2", "C2参数", "EVI使用的C2参数",
+            gis::framework::ParamType::Double, false, double{7.5}
+        },
     };
 }
 
@@ -41,14 +117,17 @@ gis::framework::Result SpindexPlugin::execute(
     gis::core::ProgressReporter& progress) {
 
     const std::string action = gis::framework::getParam<std::string>(params, "action", "");
-    if (action == "ndvi") {
-        return doComputeNdvi(params, progress);
+    if (action == "ndvi" || action == "evi" || action == "savi" ||
+        action == "gndvi" || action == "ndwi" || action == "mndwi" ||
+        action == "ndbi") {
+        return doExecuteAction(action, params, progress);
     }
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
-gis::framework::Result SpindexPlugin::doComputeNdvi(
+gis::framework::Result SpindexPlugin::doExecuteAction(
+    const std::string& action,
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
 
@@ -64,52 +143,140 @@ gis::framework::Result SpindexPlugin::doComputeNdvi(
 
     auto ds = gis::core::openRaster(input, true);
     const int bands = ds.get()->GetRasterCount();
-    if (redBand < 1 || redBand > bands) {
-        return gis::framework::Result::fail(
-            "red_band " + std::to_string(redBand) +
-            " out of range (1-" + std::to_string(bands) + ")");
+    try {
+        if (action == "ndvi") {
+            const int resolvedRedBand = getBandIndex(params, "red_band", redBand, bands);
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            cv::Mat red = readBandMat(ds, resolvedRedBand, "Red", progress);
+            progress.onProgress(0.25);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing NDVI = (NIR - Red) / (NIR + Red)...");
+            cv::Mat indexMat = safeDivide(nir - red, nir + red);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+
+            auto result = buildIndexResult("NDVI", output, indexMat);
+            result.metadata["ndvi_min"] = result.metadata["index_min"];
+            result.metadata["ndvi_max"] = result.metadata["index_max"];
+            result.metadata["red_band"] = std::to_string(resolvedRedBand);
+            result.metadata["nir_band"] = std::to_string(resolvedNirBand);
+            return result;
+        }
+
+        if (action == "gndvi") {
+            const int greenBand = getBandIndex(params, "green_band", 2, bands);
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            cv::Mat green = readBandMat(ds, greenBand, "Green", progress);
+            progress.onProgress(0.25);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing GNDVI = (NIR - Green) / (NIR + Green)...");
+            cv::Mat indexMat = safeDivide(nir - green, nir + green);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("GNDVI", output, indexMat);
+        }
+
+        if (action == "ndwi") {
+            const int greenBand = getBandIndex(params, "green_band", 2, bands);
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            cv::Mat green = readBandMat(ds, greenBand, "Green", progress);
+            progress.onProgress(0.25);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing NDWI = (Green - NIR) / (Green + NIR)...");
+            cv::Mat indexMat = safeDivide(green - nir, green + nir);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("NDWI", output, indexMat);
+        }
+
+        if (action == "mndwi") {
+            const int greenBand = getBandIndex(params, "green_band", 2, bands);
+            const int swir1Band = getBandIndex(params, "swir1_band", 5, bands);
+            cv::Mat green = readBandMat(ds, greenBand, "Green", progress);
+            progress.onProgress(0.25);
+            cv::Mat swir1 = readBandMat(ds, swir1Band, "SWIR1", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing MNDWI = (Green - SWIR1) / (Green + SWIR1)...");
+            cv::Mat indexMat = safeDivide(green - swir1, green + swir1);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("MNDWI", output, indexMat);
+        }
+
+        if (action == "ndbi") {
+            const int swir1Band = getBandIndex(params, "swir1_band", 5, bands);
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            cv::Mat swir1 = readBandMat(ds, swir1Band, "SWIR1", progress);
+            progress.onProgress(0.25);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing NDBI = (SWIR1 - NIR) / (SWIR1 + NIR)...");
+            cv::Mat indexMat = safeDivide(swir1 - nir, swir1 + nir);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("NDBI", output, indexMat);
+        }
+
+        if (action == "savi") {
+            const int resolvedRedBand = getBandIndex(params, "red_band", redBand, bands);
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            const float lValue = static_cast<float>(gis::framework::getParam<double>(params, "l_value", 0.5));
+            cv::Mat red = readBandMat(ds, resolvedRedBand, "Red", progress);
+            progress.onProgress(0.25);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing SAVI = ((NIR - Red) / (NIR + Red + L)) * (1 + L)...");
+            cv::Mat denominator = nir + red + lValue;
+            cv::Mat indexMat = safeDivide((nir - red) * (1.0f + lValue), denominator);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("SAVI", output, indexMat);
+        }
+
+        if (action == "evi") {
+            const int blueBand = getBandIndex(params, "blue_band", 1, bands);
+            const int resolvedRedBand = getBandIndex(params, "red_band", redBand, bands);
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            const float gValue = static_cast<float>(gis::framework::getParam<double>(params, "g_value", 2.5));
+            const float c1 = static_cast<float>(gis::framework::getParam<double>(params, "c1", 6.0));
+            const float c2 = static_cast<float>(gis::framework::getParam<double>(params, "c2", 7.5));
+            const float lValue = static_cast<float>(gis::framework::getParam<double>(params, "l_value", 1.0));
+
+            cv::Mat blue = readBandMat(ds, blueBand, "Blue", progress);
+            progress.onProgress(0.2);
+            cv::Mat red = readBandMat(ds, resolvedRedBand, "Red", progress);
+            progress.onProgress(0.35);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing EVI = G * (NIR - Red) / (NIR + C1 * Red - C2 * Blue + L)...");
+            cv::Mat denominator = nir + c1 * red - c2 * blue + lValue;
+            cv::Mat indexMat = safeDivide(gValue * (nir - red), denominator);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("EVI", output, indexMat);
+        }
+    } catch (const std::exception& ex) {
+        return gis::framework::Result::fail(ex.what());
     }
-    if (nirBand < 1 || nirBand > bands) {
-        return gis::framework::Result::fail(
-            "nir_band " + std::to_string(nirBand) +
-            " out of range (1-" + std::to_string(bands) + ")");
-    }
 
-    progress.onMessage(
-        "Reading Red band " + std::to_string(redBand) +
-        " and NIR band " + std::to_string(nirBand));
-
-    cv::Mat red = gis::core::gdalBandToMat(ds.get(), redBand);
-    progress.onProgress(0.25);
-    cv::Mat nir = gis::core::gdalBandToMat(ds.get(), nirBand);
-    progress.onProgress(0.5);
-
-    progress.onMessage("Computing NDVI = (NIR - Red) / (NIR + Red)...");
-
-    cv::Mat diff;
-    cv::Mat sum;
-    cv::Mat ndvi;
-    cv::subtract(nir, red, diff);
-    cv::add(nir, red, sum);
-    sum += 1e-10f;
-    cv::divide(diff, sum, ndvi);
-    progress.onProgress(0.8);
-
-    gis::core::matToGdalTiff(ndvi, input, output, 1);
-    progress.onProgress(1.0);
-
-    double ndviMin = 0.0;
-    double ndviMax = 0.0;
-    cv::minMaxLoc(ndvi, &ndviMin, &ndviMax);
-
-    auto result = gis::framework::Result::ok(
-        "NDVI computed: range [" + std::to_string(ndviMin) + ", " + std::to_string(ndviMax) + "]",
-        output);
-    result.metadata["ndvi_min"] = std::to_string(ndviMin);
-    result.metadata["ndvi_max"] = std::to_string(ndviMax);
-    result.metadata["red_band"] = std::to_string(redBand);
-    result.metadata["nir_band"] = std::to_string(nirBand);
-    return result;
+    return gis::framework::Result::fail("Unknown action: " + action);
 }
 
 } // namespace gis::plugins

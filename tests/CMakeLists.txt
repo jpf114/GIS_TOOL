@@ -272,6 +272,15 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_spindex_ndwi_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/spindex_ndwi/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/spindex_ndwi/gui_spindex_ndwi.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_spindex_ndwi_regression.cmake
+    )
+
+    add_test(
         NAME gui_utility_nodata_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
