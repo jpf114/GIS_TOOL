@@ -388,7 +388,7 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"stitch_confidence", {QStringLiteral("拼接置信度"), QStringLiteral("图像拼接的置信度阈值。")}},
         {"threshold_value", {QStringLiteral("阈值值"), QStringLiteral("阈值分割时使用的数值阈值。")}},
         {"max_value", {QStringLiteral("最大值"), QStringLiteral("阈值分割输出的最大像素值。")}},
-        {"preset", {QStringLiteral("内置示例"), QStringLiteral("选择一个常用指数表达式示例，并自动带入表达式框。")}},
+        {"preset", {QStringLiteral("表达式预设"), QStringLiteral("可选择内置或自定义表达式预设，并自动带入表达式框。")}},
         {"filter_type", {QStringLiteral("滤波类型"), QStringLiteral("空间滤波算法类型。")}},
         {"kernel_size", {QStringLiteral("核大小"), QStringLiteral("滤波核或结构元素大小。")}},
         {"sigma", {QStringLiteral("Sigma"), QStringLiteral("高斯等滤波的 sigma 参数。")}},

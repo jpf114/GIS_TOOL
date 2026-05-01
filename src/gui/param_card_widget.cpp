@@ -920,6 +920,10 @@ void ParamCardWidget::setStringValue(const std::string& key, const std::string& 
     if (entry.comboBox) {
         const QString text = QString::fromUtf8(value);
         int index = entry.comboBox->findData(text);
+        if (index < 0 && isCustomIndexPresetEnum(pluginName_, actionKey_, key)) {
+            populateCustomIndexPresetCombo(entry.comboBox);
+            index = entry.comboBox->findData(text);
+        }
         if (index < 0) {
             index = entry.comboBox->findText(text);
         }
@@ -944,6 +948,10 @@ bool ParamCardWidget::setValueFromString(const std::string& key, const std::stri
     if (entry.comboBox) {
         const QString text = QString::fromUtf8(value);
         int index = entry.comboBox->findData(text);
+        if (index < 0 && isCustomIndexPresetEnum(pluginName_, actionKey_, key)) {
+            populateCustomIndexPresetCombo(entry.comboBox);
+            index = entry.comboBox->findData(text);
+        }
         if (index < 0) {
             index = entry.comboBox->findText(text);
         }

@@ -80,6 +80,7 @@ int main(int argc, char* argv[])
     std::optional<std::string> selectedPlugin;
     std::optional<std::string> selectedAction;
     std::vector<std::pair<std::string, std::string>> paramAssignments;
+    std::vector<std::string> failedParamAssignments;
     const bool autoExecute = arguments.contains(QStringLiteral("--auto-execute"));
     const bool quitOnFinish = arguments.contains(QStringLiteral("--quit-on-finish"));
     for (int i = 1; i < arguments.size(); ++i) {
@@ -124,9 +125,58 @@ int main(int argc, char* argv[])
         window.selectActionByKey(selectedAction.value());
     }
     for (const auto& [key, value] : paramAssignments) {
-        window.setParamValue(key, value);
+        if (!window.setParamValue(key, value)) {
+            failedParamAssignments.push_back(key);
+        }
     }
     window.show();
+
+    if (autoExecute && !failedParamAssignments.empty()) {
+        QTimer::singleShot(100, &app, [&app, &window, screenshotPath, statusFilePath, failedParamAssignments]() {
+            const QString failedKeys = QString::fromUtf8(
+                [&failedParamAssignments]() {
+                    std::string joined;
+                    for (size_t i = 0; i < failedParamAssignments.size(); ++i) {
+                        if (i > 0) {
+                            joined += ",";
+                        }
+                        joined += failedParamAssignments[i];
+                    }
+                    return joined;
+                }().c_str());
+
+            if (statusFilePath.has_value()) {
+                const QFileInfo info(statusFilePath.value());
+                if (!info.absoluteDir().exists()) {
+                    info.absoluteDir().mkpath(QStringLiteral("."));
+                }
+
+                QJsonObject status;
+                status.insert(QStringLiteral("success"), false);
+                status.insert(QStringLiteral("cancelled"), false);
+                status.insert(QStringLiteral("message"),
+                    QStringLiteral("以下参数未能应用到当前界面：%1").arg(failedKeys));
+                status.insert(QStringLiteral("raw_message"),
+                    QStringLiteral("failed_to_apply_param:%1").arg(failedKeys));
+
+                QSaveFile statusFile(statusFilePath.value());
+                if (statusFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                    statusFile.write(QJsonDocument(status).toJson(QJsonDocument::Indented));
+                    statusFile.commit();
+                }
+            }
+
+            if (screenshotPath.has_value()) {
+                const QFileInfo info(screenshotPath.value());
+                if (!info.absoluteDir().exists()) {
+                    info.absoluteDir().mkpath(QStringLiteral("."));
+                }
+                window.grab().save(screenshotPath.value());
+            }
+
+            app.exit(2);
+        });
+    }
 
     if (screenshotPath.has_value() && !autoExecute) {
         const QString targetPath = screenshotPath.value();
