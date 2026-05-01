@@ -354,6 +354,28 @@ $cases += New-Case -Name "spindex_nbr" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "nbr_output.tif")
 )
 
+$cases += New-Case -Name "spindex_awei" -CaseArgs @(
+    "spindex", "awei",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "awei_output.tif")),
+    "--green_band=2",
+    "--nir_band=4",
+    "--swir1_band=5",
+    "--swir2_band=6"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "awei_output.tif")
+)
+
+$cases += New-Case -Name "spindex_ui" -CaseArgs @(
+    "spindex", "ui",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "ui_output.tif")),
+    "--nir_band=4",
+    "--swir2_band=6"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "ui_output.tif")
+)
+
 $cases += New-Case -Name "spindex_custom_index" -CaseArgs @(
     "spindex", "custom_index",
     ("--input=" + $data.NdviInput),

@@ -276,7 +276,7 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
             "action", "操作", "选择要执行的光谱指数算法",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi", "arvi", "nbr", "custom_index"}
+            {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi", "arvi", "nbr", "awei", "ui", "custom_index"}
         },
         gis::framework::ParamSpec{
             "preset", "预设表达式", "选择内置的指数表达式预设，仅自定义指数时使用",
@@ -347,6 +347,7 @@ gis::framework::Result SpindexPlugin::execute(
     if (action == "ndvi" || action == "evi" || action == "savi" ||
         action == "gndvi" || action == "ndwi" || action == "mndwi" ||
         action == "ndbi" || action == "arvi" || action == "nbr" ||
+        action == "awei" || action == "ui" ||
         action == "custom_index") {
         return doExecuteAction(action, params, progress);
     }
@@ -512,6 +513,44 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
             progress.onProgress(1.0);
             return buildIndexResult("NBR", output, indexMat);
+        }
+
+        if (action == "awei") {
+            const int greenBand = getBandIndex(params, "green_band", 2, bands);
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            const int swir1Band = getBandIndex(params, "swir1_band", 5, bands);
+            const int swir2Band = getBandIndex(params, "swir2_band", 6, bands);
+            cv::Mat green = readBandMat(ds, greenBand, "Green", progress);
+            progress.onProgress(0.2);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.35);
+            cv::Mat swir1 = readBandMat(ds, swir1Band, "SWIR1", progress);
+            progress.onProgress(0.5);
+            cv::Mat swir2 = readBandMat(ds, swir2Band, "SWIR2", progress);
+            progress.onProgress(0.65);
+
+            progress.onMessage("Computing AWEI = 4 * (Green - SWIR1) - (0.25 * NIR + 2.75 * SWIR2)...");
+            cv::Mat indexMat = 4.0f * (green - swir1) - (0.25f * nir + 2.75f * swir2);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("AWEI", output, indexMat);
+        }
+
+        if (action == "ui") {
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            const int swir2Band = getBandIndex(params, "swir2_band", 6, bands);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.25);
+            cv::Mat swir2 = readBandMat(ds, swir2Band, "SWIR2", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing UI = (SWIR2 - NIR) / (SWIR2 + NIR)...");
+            cv::Mat indexMat = safeDivide(swir2 - nir, swir2 + nir);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("UI", output, indexMat);
         }
 
         if (action == "savi") {

@@ -109,6 +109,7 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
         if (action == "ndvi" || action == "evi" || action == "savi" ||
             action == "gndvi" || action == "ndwi" || action == "mndwi" ||
             action == "ndbi" || action == "arvi" || action == "nbr" ||
+            action == "awei" || action == "ui" ||
             action == "custom_index") return ".tif";
         return inputExt;
     }
