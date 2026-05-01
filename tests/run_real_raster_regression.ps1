@@ -508,6 +508,16 @@ $cases += New-Case -Name "terrain_watershed" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "terrain_watershed_output.tif")
 )
 
+$cases += New-Case -Name "terrain_profile_extract" -CaseArgs @(
+    "terrain", "profile_extract",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_profile_output.csv")),
+    "--band=1",
+    "--profile_path=116.001,39.999;116.010,39.992;116.020,39.985"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_profile_output.csv")
+)
+
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
     "processing", "pansharpen",
     ("--input=" + $data.PansharpenMs),

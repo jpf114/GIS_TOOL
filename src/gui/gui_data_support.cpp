@@ -94,6 +94,9 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
     }
 
     if (pluginName == "terrain") {
+        if (action == "profile_extract") {
+            return ".csv";
+        }
         return ".tif";
     }
 
@@ -1007,6 +1010,16 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
             if (const auto threshold = doubleParamValue(params, "accum_threshold");
                 threshold.has_value() && *threshold <= 0.0) {
                 return ActionValidationIssue{"accum_threshold", "参数“汇流阈值”必须大于 0"};
+            }
+        }
+        if (actionKey == "profile_extract") {
+            const std::string pathValue = stringParam("profile_path");
+            if (trim(pathValue).empty()) {
+                return ActionValidationIssue{"profile_path", "参数“剖面路径”不能为空"};
+            }
+            const std::string outputPath = stringParam("output");
+            if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
+                return ActionValidationIssue{"output", "参数“输出文件”应使用 .csv"};
             }
         }
         if (actionKey == "hillshade") {

@@ -92,6 +92,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("flow_accumulation"), QStringLiteral("\346\261\207\346\265\201\347\264\257\347\247\257")},
         {QStringLiteral("stream_extract"), QStringLiteral("\346\262\263\347\275\221\346\217\220\345\217\226")},
         {QStringLiteral("watershed"), QStringLiteral("\346\265\201\345\237\237\345\210\222\345\210\206")},
+        {QStringLiteral("profile_extract"), QStringLiteral("\345\211\226\351\235\242\346\217\220\345\217\226")},
         {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
         {QStringLiteral("evi"), QStringLiteral("EVI")},
         {QStringLiteral("savi"), QStringLiteral("SAVI")},
@@ -356,6 +357,11 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawLine(QPointF(27, 13), QPointF(19, 21));
         painter.drawLine(QPointF(19, 21), QPointF(19, 27));
         painter.drawRect(QRectF(15, 23, 8, 6));
+    } else if (text == QStringLiteral("profile_extract")) {
+        painter.drawLine(QPointF(10, 25), QPointF(15, 17));
+        painter.drawLine(QPointF(15, 17), QPointF(20, 21));
+        painter.drawLine(QPointF(20, 21), QPointF(28, 11));
+        painter.drawLine(QPointF(12, 10), QPointF(26, 10));
     } else if (text == QStringLiteral("ndvi")) {
         painter.drawEllipse(QRectF(12, 10, 12, 18));
         painter.drawLine(QPointF(18, 12), QPointF(18, 26));
@@ -563,6 +569,9 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
             {"stream_extract", {
                 {"accum_threshold", {QStringLiteral("汇流阈值"), QStringLiteral("累计上游像元数量达到该阈值时输出为河网像元。")}},
             }},
+            {"profile_extract", {
+                {"profile_path", {QStringLiteral("剖面路径"), QStringLiteral("填写折线路径，格式示例：116.0,40.0;116.01,39.99。")}},
+            }},
         }},
         {"classification", {
             {"feature_stats", {
@@ -652,6 +661,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"flow_accumulation", {QStringLiteral("汇流累积"), QStringLiteral("沿 D8 主流向累计上游像元数量。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
             {"stream_extract", {QStringLiteral("河网提取"), QStringLiteral("基于汇流累积量阈值提取河网栅格。"), {"input", "output", "band", "z_factor", "accum_threshold"}, {"input", "output"}}},
             {"watershed", {QStringLiteral("流域划分"), QStringLiteral("按 D8 主流向自动生成流域编号栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
+            {"profile_extract", {QStringLiteral("剖面提取"), QStringLiteral("沿折线路径采样 DEM 高程并导出 CSV。"), {"input", "output", "band", "profile_path"}, {"input", "output", "profile_path"}}},
         }},
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},

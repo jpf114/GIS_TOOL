@@ -233,6 +233,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/dem.tif", "terrain", "profile_extract"),
+        "D:/data/dem_terrain_profile_extract.csv");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/scene.tif", "cutting", "split"),
         "D:/data/scene_cutting_split");
     EXPECT_EQ(
@@ -405,6 +409,11 @@ TEST(GuiSupportTest, BuildFileParamUiConfigProvidesSpecializedHints) {
     EXPECT_NE(unionOutputConfig.saveFilter.find("*.gpkg"), std::string::npos);
     EXPECT_EQ(unionOutputConfig.saveFilter.find("*.kml"), std::string::npos);
     EXPECT_EQ(unionOutputConfig.saveFilter.find("*.csv"), std::string::npos);
+
+    const auto terrainProfileOutputConfig = gis::gui::buildFileParamUiConfig(
+        "terrain", "profile_extract", "output", gis::framework::ParamType::FilePath);
+    EXPECT_EQ(terrainProfileOutputConfig.suggestedSuffix, ".csv");
+    EXPECT_NE(terrainProfileOutputConfig.saveFilter.find("*.csv"), std::string::npos);
 }
 
 TEST(GuiSupportTest, BuildTextParamPlaceholderProvidesFormatExamples) {
@@ -680,6 +689,19 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {
     const auto thresholdIssue = gis::gui::validateActionSpecificParams("terrain", "stream_extract", params);
     ASSERT_TRUE(thresholdIssue.has_value());
     EXPECT_EQ(thresholdIssue->key, "accum_threshold");
+
+    params.clear();
+    params["band"] = 1;
+    params["profile_path"] = std::string("");
+    const auto profilePathIssue = gis::gui::validateActionSpecificParams("terrain", "profile_extract", params);
+    ASSERT_TRUE(profilePathIssue.has_value());
+    EXPECT_EQ(profilePathIssue->key, "profile_path");
+
+    params["profile_path"] = std::string("116.0,40.0;116.1,39.9");
+    params["output"] = std::string("D:/data/profile.json");
+    const auto profileOutputIssue = gis::gui::validateActionSpecificParams("terrain", "profile_extract", params);
+    ASSERT_TRUE(profileOutputIssue.has_value());
+    EXPECT_EQ(profileOutputIssue->key, "output");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsAcceptsValidVectorConvertCombination) {

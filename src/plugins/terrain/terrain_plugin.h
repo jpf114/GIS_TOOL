@@ -48,6 +48,9 @@ private:
     gis::framework::Result doWatershed(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
+    gis::framework::Result doProfileExtract(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
 };
 
 } // namespace gis::plugins

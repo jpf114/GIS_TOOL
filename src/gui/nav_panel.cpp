@@ -298,6 +298,11 @@ QIcon makeSubFunctionIcon(const std::string& actionKey, bool active) {
         painter.drawLine(QPointF(12.4, 4.8), QPointF(8.0, 9.2));
         painter.drawLine(QPointF(8.0, 9.2), QPointF(8.0, 13.0));
         painter.drawRect(QRectF(6.4, 10.6, 3.2, 2.6));
+    } else if (actionKey == "profile_extract") {
+        painter.drawLine(QPointF(3.0, 12.2), QPointF(5.8, 7.8));
+        painter.drawLine(QPointF(5.8, 7.8), QPointF(8.6, 10.2));
+        painter.drawLine(QPointF(8.6, 10.2), QPointF(13.0, 4.4));
+        painter.drawLine(QPointF(3.2, 3.6), QPointF(12.8, 3.6));
     } else if (actionKey == "ndvi") {
         painter.drawEllipse(QRectF(4.2, 2.8, 7.0, 10.4));
         painter.drawLine(QPointF(7.8, 4.0), QPointF(7.8, 12.0));

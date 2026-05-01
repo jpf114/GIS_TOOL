@@ -10,8 +10,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <queue>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -44,6 +47,20 @@ static const DirectionStep kD8Directions[] = {
     {0, -1, 1.0f, 64.0f},
     {1, -1, 1.41421356f, 128.0f},
 };
+
+struct ProfilePoint {
+    double x = 0.0;
+    double y = 0.0;
+};
+
+std::string trim(const std::string& value) {
+    const auto begin = value.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return {};
+    }
+    const auto end = value.find_last_not_of(" \t\r\n");
+    return value.substr(begin, end - begin + 1);
+}
 
 gis::framework::Result runDemProcess(
     const char* processName,
@@ -514,6 +531,135 @@ gis::framework::Result runHydrologyTerrainProcess(
     return terrainResult;
 }
 
+std::vector<ProfilePoint> parseProfilePath(const std::string& text) {
+    std::vector<ProfilePoint> points;
+    std::stringstream ss(text);
+    std::string token;
+    while (std::getline(ss, token, ';')) {
+        token = trim(token);
+        if (token.empty()) {
+            continue;
+        }
+        const auto comma = token.find(',');
+        if (comma == std::string::npos) {
+            throw std::runtime_error("profile_path 格式应为 x1,y1;x2,y2;...");
+        }
+        const std::string xText = trim(token.substr(0, comma));
+        const std::string yText = trim(token.substr(comma + 1));
+        points.push_back(ProfilePoint{std::stod(xText), std::stod(yText)});
+    }
+    if (points.size() < 2) {
+        throw std::runtime_error("profile_path 至少需要两个点");
+    }
+    return points;
+}
+
+double segmentLength(const ProfilePoint& start, const ProfilePoint& end) {
+    const double dx = end.x - start.x;
+    const double dy = end.y - start.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+gis::framework::Result runProfileExtractProcess(
+    const std::string& input,
+    const std::string& output,
+    int band,
+    const std::string& profilePath,
+    gis::core::ProgressReporter& progress) {
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+    if (profilePath.empty()) return gis::framework::Result::fail("profile_path is required");
+
+    progress.onProgress(0.1);
+    auto srcDs = gis::core::openRaster(input, true);
+    if (!srcDs) {
+        return gis::framework::Result::fail("Cannot open DEM raster: " + input);
+    }
+    auto* srcBand = srcDs->GetRasterBand(band);
+    if (!srcBand) {
+        return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
+    }
+
+    double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    if (srcDs->GetGeoTransform(gt) != CE_None) {
+        return gis::framework::Result::fail("Cannot read raster geotransform");
+    }
+    double invGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    if (!GDALInvGeoTransform(gt, invGt)) {
+        return gis::framework::Result::fail("Cannot invert raster geotransform");
+    }
+
+    std::vector<ProfilePoint> profilePoints;
+    try {
+        profilePoints = parseProfilePath(profilePath);
+    } catch (const std::exception& ex) {
+        return gis::framework::Result::fail(ex.what());
+    }
+    const double pixelStep = std::max(
+        1e-9,
+        std::min(
+            std::hypot(gt[1], gt[2]),
+            std::hypot(gt[4], gt[5])));
+
+    const auto parent = std::filesystem::path(output).parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+    std::ofstream out(output, std::ios::binary);
+    if (!out) {
+        return gis::framework::Result::fail("Cannot write profile output: " + output);
+    }
+    out << "distance,x,y,elevation\n";
+
+    double cumulativeDistance = 0.0;
+    std::size_t sampleCount = 0;
+    for (std::size_t segmentIndex = 0; segmentIndex + 1 < profilePoints.size(); ++segmentIndex) {
+        const auto& start = profilePoints[segmentIndex];
+        const auto& end = profilePoints[segmentIndex + 1];
+        const double length = segmentLength(start, end);
+        const int steps = std::max(1, static_cast<int>(std::ceil(length / pixelStep)));
+
+        for (int step = 0; step <= steps; ++step) {
+            if (segmentIndex > 0 && step == 0) {
+                continue;
+            }
+
+            const double t = static_cast<double>(step) / steps;
+            const double x = start.x + (end.x - start.x) * t;
+            const double y = start.y + (end.y - start.y) * t;
+            const double distance = cumulativeDistance + length * t;
+
+            double pixel = 0.0;
+            double line = 0.0;
+            GDALApplyGeoTransform(invGt, x, y, &pixel, &line);
+            const int px = static_cast<int>(std::lround(pixel));
+            const int py = static_cast<int>(std::lround(line));
+            if (px < 0 || px >= srcDs->GetRasterXSize() || py < 0 || py >= srcDs->GetRasterYSize()) {
+                continue;
+            }
+
+            float elevation = 0.0f;
+            if (srcBand->RasterIO(GF_Read, px, py, 1, 1, &elevation, 1, 1, GDT_Float32, 0, 0) != CE_None) {
+                return gis::framework::Result::fail("Cannot sample profile raster");
+            }
+
+            out << distance << ',' << x << ',' << y << ',' << elevation << '\n';
+            ++sampleCount;
+        }
+
+        cumulativeDistance += length;
+        progress.onProgress(0.2 + 0.7 * static_cast<double>(segmentIndex + 1) / (profilePoints.size() - 1));
+    }
+
+    auto result = gis::framework::Result::ok("ProfileExtract completed", output);
+    result.metadata["action"] = "profile_extract";
+    result.metadata["band"] = std::to_string(band);
+    result.metadata["sample_count"] = std::to_string(sampleCount);
+    return result;
+}
+
 } // namespace
 
 std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
@@ -522,7 +668,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的地形分析子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed"}
+            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入 DEM 栅格路径",
@@ -552,6 +698,10 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "accum_threshold", "汇流阈值", "河网提取时使用的汇流累积量阈值",
             gis::framework::ParamType::Double, false, double{10.0}
         },
+        gis::framework::ParamSpec{
+            "profile_path", "剖面路径", "路径字符串，格式为 x1,y1;x2,y2;...",
+            gis::framework::ParamType::String, false, std::string{}
+        },
     };
 }
 
@@ -569,6 +719,7 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "flow_accumulation") return doFlowAccumulation(params, progress);
     if (action == "stream_extract") return doStreamExtract(params, progress);
     if (action == "watershed") return doWatershed(params, progress);
+    if (action == "profile_extract") return doProfileExtract(params, progress);
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
@@ -710,6 +861,17 @@ gis::framework::Result TerrainPlugin::doFlowAccumulation(
         gis::framework::getParam<int>(params, "band", 1),
         gis::framework::getParam<double>(params, "z_factor", 1.0),
         0.0,
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doProfileExtract(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runProfileExtractProcess(
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<std::string>(params, "profile_path", ""),
         progress);
 }
 

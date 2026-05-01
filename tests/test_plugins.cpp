@@ -2895,6 +2895,32 @@ TEST_F(PluginTest, TerrainWatershedExecution) {
     EXPECT_NE(readRasterPixel(output, 4, 3), readRasterPixel(output, 4, 4));
 }
 
+TEST_F(PluginTest, TerrainProfileExtractExecution) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTerrainRaster("terrain_profile_input.tif");
+    const std::string output = utf8PathString(getTestDir() / "terrain_profile_output.csv");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("profile_extract");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["profile_path"] = std::string("116.001,39.999;116.010,39.992;116.020,39.985");
+
+    const auto result = p->execute(params, progress_);
+
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    ASSERT_TRUE(result.metadata.count("sample_count"));
+    EXPECT_GT(std::stoi(result.metadata.at("sample_count")), 2);
+
+    const std::string content = readTextFile(output);
+    EXPECT_NE(content.find("distance,x,y,elevation"), std::string::npos);
+    EXPECT_NE(content.find("116.001"), std::string::npos);
+}
+
 TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {
     auto* p = mgr_.find("matching");
     ASSERT_NE(p, nullptr);
