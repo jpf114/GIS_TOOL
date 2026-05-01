@@ -1,23 +1,23 @@
 if(NOT DEFINED GUI_PATH OR NOT DEFINED SCREENSHOT_PATH)
-    message(FATAL_ERROR "Missing required GUI utility overviews regression arguments.")
+    message(FATAL_ERROR "Missing required GUI raster manage nodata regression arguments.")
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
 get_filename_component(SCREENSHOT_DIR "${SCREENSHOT_PATH}" DIRECTORY)
 set(OUTPUT_DIR "${SCREENSHOT_DIR}")
 set(STATUS_PATH "${OUTPUT_DIR}/status.json")
-set(INPUT_PATH "${OUTPUT_DIR}/overviews_input.tif")
+set(INPUT_PATH "${OUTPUT_DIR}/nodata_input.tif")
 gis_gui_prepare_aux_paths("${SCREENSHOT_PATH}" "${STATUS_PATH}")
 gis_gui_generate_test_tiff("${INPUT_PATH}")
 
 execute_process(
     COMMAND "${GUI_PATH}"
         -platform offscreen
-        --select-plugin utility
-        --select-action overviews
+        --select-plugin raster_manage
+        --select-action nodata
         --set-param "input=${INPUT_PATH}"
-        --set-param "levels=2 4"
-        --set-param "resample=nearest"
+        --set-param "band=1"
+        --set-param "nodata_value=255"
         --auto-execute
         --quit-on-finish
         --screenshot "${SCREENSHOT_PATH}"
@@ -28,7 +28,7 @@ execute_process(
 )
 
 gis_gui_assert_status_only_success(
-    "GUI utility overviews regression"
+    "GUI raster manage nodata regression"
     "${GUI_EXIT_CODE}"
     "${GUI_STDOUT}"
     "${GUI_STDERR}"

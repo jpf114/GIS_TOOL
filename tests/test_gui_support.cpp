@@ -768,25 +768,35 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesMatchingRanges) {
 }
 
 TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBounds) {
-    std::vector<gis::framework::ParamSpec> utilitySpecs = {
+    std::vector<gis::framework::ParamSpec> rasterManageSpecs = {
         {"band", "波段", "", gis::framework::ParamType::Int, false},
-        {"bins", "分箱数", "", gis::framework::ParamType::Int, false},
         {"red_band", "红光波段", "", gis::framework::ParamType::Int, false},
         {"nir_band", "近红外波段", "", gis::framework::ParamType::Int, false}
     };
-    const auto utilityFiltered = gis::gui::buildEffectiveGuiParamSpecs(
-        "utility",
+    const auto rasterManageFiltered = gis::gui::buildEffectiveGuiParamSpecs(
+        "raster_manage",
         "nodata",
-        utilitySpecs,
-        {"band", "bins", "red_band", "nir_band"},
+        rasterManageSpecs,
+        {"band", "red_band", "nir_band"},
         {});
 
-    ASSERT_EQ(utilityFiltered.size(), 4u);
-    EXPECT_EQ(std::get<int>(utilityFiltered[0].defaultValue), 0);
-    EXPECT_EQ(std::get<int>(utilityFiltered[0].minValue), 0);
-    EXPECT_EQ(std::get<int>(utilityFiltered[1].minValue), 1);
-    EXPECT_EQ(std::get<int>(utilityFiltered[2].minValue), 0);
-    EXPECT_EQ(std::get<int>(utilityFiltered[3].minValue), 0);
+    ASSERT_EQ(rasterManageFiltered.size(), 3u);
+    EXPECT_EQ(std::get<int>(rasterManageFiltered[0].defaultValue), 0);
+    EXPECT_EQ(std::get<int>(rasterManageFiltered[0].minValue), 0);
+    EXPECT_EQ(std::get<int>(rasterManageFiltered[1].minValue), 0);
+    EXPECT_EQ(std::get<int>(rasterManageFiltered[2].minValue), 0);
+
+    std::vector<gis::framework::ParamSpec> rasterInspectSpecs = {
+        {"bins", "分箱数", "", gis::framework::ParamType::Int, false},
+    };
+    const auto rasterInspectFiltered = gis::gui::buildEffectiveGuiParamSpecs(
+        "raster_inspect",
+        "histogram",
+        rasterInspectSpecs,
+        {"bins"},
+        {});
+    ASSERT_EQ(rasterInspectFiltered.size(), 1u);
+    EXPECT_EQ(std::get<int>(rasterInspectFiltered[0].minValue), 1);
 
     std::vector<gis::framework::ParamSpec> spindexSpecs = {
         {"blue_band", "蓝波段", "", gis::framework::ParamType::Int, false},

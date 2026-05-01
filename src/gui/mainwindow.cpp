@@ -194,6 +194,10 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawEllipse(QRectF(12.4, 8.5, 3.2, 3.2));
         painter.drawEllipse(QRectF(17.4, 12.5, 3.2, 3.2));
         painter.drawEllipse(QRectF(22.4, 6.5, 3.2, 3.2));
+    } else if (text == QStringLiteral("raster_manage")) {
+        painter.drawRect(QRectF(10, 10, 18, 18));
+        painter.drawLine(QPointF(13, 19), QPointF(25, 19));
+        painter.drawLine(QPointF(19, 13), QPointF(19, 25));
     } else if (text == QStringLiteral("cutting") || text == QStringLiteral("clip")) {
         drawScissors();
     } else if (text == QStringLiteral("mosaic")) {
@@ -563,6 +567,10 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"histogram", {QStringLiteral("直方图"), QStringLiteral("统计指定波段的直方图，可选输出为 JSON。"), {"input", "output", "band", "bins"}, {"input"}}},
             {"info", {QStringLiteral("栅格信息"), QStringLiteral("查看栅格驱动、范围、波段和统计信息。"), {"input"}, {"input"}}},
         }},
+        {"raster_manage", {
+            {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
+            {"nodata", {QStringLiteral("NoData 设置"), QStringLiteral("为单波段或全部波段写入 NoData 值。"), {"input", "band", "nodata_value"}, {"input"}}},
+        }},
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
         }},
@@ -577,8 +585,6 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"custom_index", {QStringLiteral("自定义指数"), QStringLiteral("按表达式组合多波段并输出自定义指数结果，可直接使用 B1/B2 或 RED/NIR/GREEN 等别名。"), {"input", "output", "preset", "expression", "blue_band", "green_band", "red_band", "nir_band", "swir1_band"}, {"input", "output", "expression"}}},
         }},
         {"utility", {
-            {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
-            {"nodata", {QStringLiteral("NoData 设置"), QStringLiteral("为单波段或全部波段写入 NoData 值。"), {"input", "band", "nodata_value"}, {"input"}}},
             {"colormap", {QStringLiteral("伪彩色"), QStringLiteral("对单波段影像应用伪彩色映射。"), {"input", "output", "band", "cmap"}, {"input", "output"}}},
         }},
         {"vector", {
@@ -969,7 +975,7 @@ void MainWindow::loadPlugins() {
     }
 
     static const std::vector<std::string> preferredOrder = {
-        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "classification", "utility", "vector"
+        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "raster_manage", "classification", "utility", "vector"
     };
 
     std::vector<gis::framework::IGisPlugin*> plugins = pluginManager_.plugins();

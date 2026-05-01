@@ -61,6 +61,7 @@ add_dependencies(gis_tests
     plugin_processing
     plugin_raster_math
     plugin_raster_inspect
+    plugin_raster_manage
     plugin_classification
     plugin_spindex
     plugin_utility
@@ -304,19 +305,19 @@ if(TARGET gis-gui)
     )
 
     add_test(
-        NAME gui_utility_nodata_offscreen
+        NAME gui_raster_manage_nodata_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
-            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_nodata/gui_utility_nodata.png
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_nodata_regression.cmake
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_manage_nodata/gui_raster_manage_nodata.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_manage_nodata_regression.cmake
     )
 
     add_test(
-        NAME gui_utility_overviews_offscreen
+        NAME gui_raster_manage_overviews_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
-            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_overviews/gui_utility_overviews.png
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_overviews_regression.cmake
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_manage_overviews/gui_raster_manage_overviews.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_manage_overviews_regression.cmake
     )
 
     add_test(

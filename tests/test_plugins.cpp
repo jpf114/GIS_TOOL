@@ -852,8 +852,8 @@ TEST_F(PluginTest, RasterInspectInfoExecution) {
     EXPECT_TRUE(result.success) << "Raster inspect info failed: " << result.message;
 }
 
-TEST_F(PluginTest, UtilityOverviewsExecution) {
-    auto* p = mgr_.find("utility");
+TEST_F(PluginTest, RasterManageOverviewsExecution) {
+    auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);
 
     const std::string input = createTestRaster("e2e_util_overviews_input.tif", 128, 128);
@@ -871,8 +871,8 @@ TEST_F(PluginTest, UtilityOverviewsExecution) {
     EXPECT_GE(ds->GetRasterBand(1)->GetOverviewCount(), 1);
 }
 
-TEST_F(PluginTest, UtilityNoDataExecution) {
-    auto* p = mgr_.find("utility");
+TEST_F(PluginTest, RasterManageNoDataExecution) {
+    auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);
 
     const std::string input = createTestRaster("e2e_util_nodata_input.tif", 32, 32);

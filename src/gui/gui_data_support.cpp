@@ -89,6 +89,10 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
         return inputExt;
     }
 
+    if (pluginName == "raster_manage") {
+        return inputExt;
+    }
+
     if (pluginName == "raster_inspect") {
         if (action == "histogram") return ".json";
         return inputExt;
@@ -720,7 +724,7 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
         }
     }
 
-    if (pluginName == "utility" && action == "overviews" && spec.key == "levels") {
+    if (pluginName == "raster_manage" && action == "overviews" && spec.key == "levels") {
         return "请输入空格分隔层级，例如 2 4 8 16";
     }
 
@@ -963,7 +967,7 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
-    if (pluginName == "utility" && actionKey == "overviews") {
+    if (pluginName == "raster_manage" && actionKey == "overviews") {
         const std::string levelsText = stringParam("levels");
         std::istringstream iss(levelsText);
         int level = 0;
@@ -1205,10 +1209,10 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
             }
         }
         if (pluginName == "utility") {
-            if (action == "nodata" && spec.key == "band") {
-                adjustedSpec.defaultValue = int{0};
-                adjustedSpec.minValue = 0;
-            }
+        }
+        if (pluginName == "raster_manage" && action == "nodata" && spec.key == "band") {
+            adjustedSpec.defaultValue = int{0};
+            adjustedSpec.minValue = 0;
         }
         if (pluginName == "raster_inspect" && spec.key == "bins") {
             adjustedSpec.minValue = 1;
