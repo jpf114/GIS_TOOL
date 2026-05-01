@@ -187,7 +187,7 @@ function Ensure-RasterRegressionData {
     New-Item -ItemType Directory -Force -Path $generatedRoot | Out-Null
 
     $rasterDataRoot = Join-Path $ResolvedWorkspaceRoot "data\raster"
-    $ndviInput = Join-Path $rasterDataRoot "ndvi_input.tif"
+    $ndviInput = Join-Path $generatedRoot "ndvi_input.tif"
     $panMs = Join-Path $rasterDataRoot "pansharpen_ms.tif"
     $panPan = Join-Path $rasterDataRoot "pansharpen_pan.tif"
     $classVector = Join-Path $rasterDataRoot "classification_vector.gpkg"
@@ -196,12 +196,7 @@ function Ensure-RasterRegressionData {
     $analysisRaster = Join-Path $generatedRoot "analysis_input.tif"
     $terrainRaster = Join-Path $generatedRoot "terrain_input.tif"
 
-    if (-not (Test-Path $ndviInput)) {
-        $ndviInput = Join-Path $generatedRoot "ndvi_input.tif"
-        if (-not (Test-Path $ndviInput)) {
-            Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("ndvi-raster", $ndviInput)
-        }
-    }
+    Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("ndvi-raster", $ndviInput)
 
     if ((-not (Test-Path $panMs)) -or (-not (Test-Path $panPan))) {
         $panMs = Join-Path $generatedRoot "pansharpen_ms.tif"
@@ -336,6 +331,27 @@ $cases += New-Case -Name "spindex_ndbi" -CaseArgs @(
     "--nir_band=2"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "ndbi_output.tif")
+)
+
+$cases += New-Case -Name "spindex_arvi" -CaseArgs @(
+    "spindex", "arvi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "arvi_output.tif")),
+    "--blue_band=1",
+    "--red_band=3",
+    "--nir_band=4"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "arvi_output.tif")
+)
+
+$cases += New-Case -Name "spindex_nbr" -CaseArgs @(
+    "spindex", "nbr",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "nbr_output.tif")),
+    "--nir_band=4",
+    "--swir2_band=6"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "nbr_output.tif")
 )
 
 $cases += New-Case -Name "spindex_custom_index" -CaseArgs @(

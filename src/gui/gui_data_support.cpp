@@ -108,8 +108,8 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
     if (pluginName == "spindex") {
         if (action == "ndvi" || action == "evi" || action == "savi" ||
             action == "gndvi" || action == "ndwi" || action == "mndwi" ||
-            action == "custom_index" ||
-            action == "ndbi") return ".tif";
+            action == "ndbi" || action == "arvi" || action == "nbr" ||
+            action == "custom_index") return ".tif";
         return inputExt;
     }
 
@@ -1069,7 +1069,8 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
                  {"green_band", "绿光波段"},
                  {"red_band", "红光波段"},
                  {"nir_band", "近红外波段"},
-                 {"swir1_band", "短波红外1波段"}}) {
+                 {"swir1_band", "短波红外1波段"},
+                 {"swir2_band", "短波红外2波段"}}) {
             if (const auto issue = validatePositiveBand(key, displayName)) {
                 return issue;
             }
@@ -1299,7 +1300,7 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
         if (pluginName == "spindex" &&
             (spec.key == "blue_band" || spec.key == "green_band" ||
              spec.key == "red_band" || spec.key == "nir_band" ||
-             spec.key == "swir1_band")) {
+             spec.key == "swir1_band" || spec.key == "swir2_band")) {
             adjustedSpec.minValue = 1;
         }
         if (pluginName == "vector" && spec.key == "resolution") {

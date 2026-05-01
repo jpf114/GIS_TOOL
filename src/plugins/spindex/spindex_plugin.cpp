@@ -273,47 +273,51 @@ gis::framework::Result doCustomIndex(const std::string& input,
 std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "选择要执行的子功能",
+            "action", "操作", "选择要执行的光谱指数算法",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi", "custom_index"}
+            {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi", "arvi", "nbr", "custom_index"}
         },
         gis::framework::ParamSpec{
-            "preset", "表达式预设", "可选择内置或自定义表达式预设",
+            "preset", "预设表达式", "选择内置的指数表达式预设，仅自定义指数时使用",
             gis::framework::ParamType::Enum, false, std::string{"none"},
             int{0}, int{0},
             gis::core::spindexCustomIndexPresetValues()
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入影像文件路径",
+            "input", "输入栅格", "待计算指数的多波段栅格",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "输出文件路径",
+            "output", "输出栅格", "指数计算结果输出路径",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "red_band", "红光波段", "NDVI 计算的红光波段序号",
+            "red_band", "红光波段", "红光波段序号",
             gis::framework::ParamType::Int, false, int{3}
         },
         gis::framework::ParamSpec{
-            "nir_band", "近红外波段", "NDVI 计算的近红外波段序号",
+            "nir_band", "近红外波段", "近红外波段序号",
             gis::framework::ParamType::Int, false, int{4}
         },
         gis::framework::ParamSpec{
-            "blue_band", "蓝光波段", "EVI 计算的蓝光波段序号",
+            "blue_band", "蓝光波段", "蓝光波段序号",
             gis::framework::ParamType::Int, false, int{1}
         },
         gis::framework::ParamSpec{
-            "green_band", "绿光波段", "GNDVI/NDWI/MNDWI 计算的绿光波段序号",
+            "green_band", "绿光波段", "绿光波段序号",
             gis::framework::ParamType::Int, false, int{2}
         },
         gis::framework::ParamSpec{
-            "swir1_band", "短波红外1波段", "MNDWI/NDBI 计算的短波红外1波段序号",
+            "swir1_band", "短波红外1波段", "短波红外1波段序号",
             gis::framework::ParamType::Int, false, int{5}
         },
         gis::framework::ParamSpec{
-            "l_value", "L 参数", "SAVI 或 EVI 使用的 L 参数",
+            "swir2_band", "短波红外2波段", "短波红外2波段序号",
+            gis::framework::ParamType::Int, false, int{6}
+        },
+        gis::framework::ParamSpec{
+            "l_value", "L 参数", "SAVI 与 EVI 使用的 L 参数",
             gis::framework::ParamType::Double, false, double{0.5}
         },
         gis::framework::ParamSpec{
@@ -342,7 +346,8 @@ gis::framework::Result SpindexPlugin::execute(
     const std::string action = gis::framework::getParam<std::string>(params, "action", "");
     if (action == "ndvi" || action == "evi" || action == "savi" ||
         action == "gndvi" || action == "ndwi" || action == "mndwi" ||
-        action == "ndbi" || action == "custom_index") {
+        action == "ndbi" || action == "arvi" || action == "nbr" ||
+        action == "custom_index") {
         return doExecuteAction(action, params, progress);
     }
 
@@ -471,6 +476,42 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
             progress.onProgress(1.0);
             return buildIndexResult("NDBI", output, indexMat);
+        }
+
+        if (action == "arvi") {
+            const int blueBand = getBandIndex(params, "blue_band", 1, bands);
+            const int resolvedRedBand = getBandIndex(params, "red_band", redBand, bands);
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            cv::Mat blue = readBandMat(ds, blueBand, "Blue", progress);
+            progress.onProgress(0.2);
+            cv::Mat red = readBandMat(ds, resolvedRedBand, "Red", progress);
+            progress.onProgress(0.35);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing ARVI = (NIR - (2 * Red - Blue)) / (NIR + (2 * Red - Blue))...");
+            cv::Mat rb = 2.0f * red - blue;
+            cv::Mat indexMat = safeDivide(nir - rb, nir + rb);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("ARVI", output, indexMat);
+        }
+
+        if (action == "nbr") {
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            const int swir2Band = getBandIndex(params, "swir2_band", 6, bands);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.25);
+            cv::Mat swir2 = readBandMat(ds, swir2Band, "SWIR2", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing NBR = (NIR - SWIR2) / (NIR + SWIR2)...");
+            cv::Mat indexMat = safeDivide(nir - swir2, nir + swir2);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("NBR", output, indexMat);
         }
 
         if (action == "savi") {

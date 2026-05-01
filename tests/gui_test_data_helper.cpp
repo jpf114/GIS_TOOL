@@ -46,7 +46,7 @@ int makeNdviRaster(const std::string& outputPath) {
         return 1;
     }
 
-    GDALDataset* ds = driver->Create(outputPath.c_str(), 24, 24, 4, GDT_Float32, nullptr);
+    GDALDataset* ds = driver->Create(outputPath.c_str(), 24, 24, 6, GDT_Float32, nullptr);
     if (!ds) {
         std::cerr << "Failed to create NDVI raster: " << outputPath << "\n";
         return 1;
@@ -62,9 +62,11 @@ int makeNdviRaster(const std::string& outputPath) {
     std::vector<float> band2(24 * 24, 20.0f);
     std::vector<float> band3(24 * 24, 30.0f);
     std::vector<float> band4(24 * 24, 70.0f);
-    const std::vector<std::vector<float>*> bands = {&band1, &band2, &band3, &band4};
+    std::vector<float> band5(24 * 24, 90.0f);
+    std::vector<float> band6(24 * 24, 110.0f);
+    const std::vector<std::vector<float>*> bands = {&band1, &band2, &band3, &band4, &band5, &band6};
 
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 6; ++i) {
         GDALRasterBand* band = ds->GetRasterBand(i + 1);
         if (!band) {
             GDALClose(ds);
