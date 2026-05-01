@@ -17,7 +17,11 @@ function Get-DefaultWorkspaceRoot {
 
 function Get-DefaultCliPath {
     param([string]$Root)
-    return Join-Path $Root "build\src\cli\Debug\gis-cli.exe"
+    $debugCli = Join-Path $Root "build\debug\src\cli\Debug\gis-cli.exe"
+    if (Test-Path $debugCli) {
+        return $debugCli
+    }
+    return Join-Path $Root "build\release\src\cli\Release\gis-cli.exe"
 }
 
 function Get-DefaultOutputRoot {

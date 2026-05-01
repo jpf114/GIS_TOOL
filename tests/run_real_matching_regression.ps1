@@ -18,12 +18,20 @@ function Get-DefaultWorkspaceRoot {
 
 function Get-DefaultCliPath {
     param([string]$Root)
-    return Join-Path $Root "build\src\cli\Debug\gis-cli.exe"
+    $debugCli = Join-Path $Root "build\debug\src\cli\Debug\gis-cli.exe"
+    if (Test-Path $debugCli) {
+        return $debugCli
+    }
+    return Join-Path $Root "build\release\src\cli\Release\gis-cli.exe"
 }
 
 function Get-DefaultHelperPath {
     param([string]$Root)
-    return Join-Path $Root "build\debug\tests\Debug\gui_test_data_helper.exe"
+    $debugHelper = Join-Path $Root "build\debug\tests\Debug\gui_test_data_helper.exe"
+    if (Test-Path $debugHelper) {
+        return $debugHelper
+    }
+    return Join-Path $Root "build\release\tests\Release\gui_test_data_helper.exe"
 }
 
 function Get-DefaultOutputRoot {
