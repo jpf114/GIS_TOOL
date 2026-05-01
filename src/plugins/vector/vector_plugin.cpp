@@ -138,7 +138,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -194,6 +194,10 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "dissolve_field", "融合字段", "融合操作按该字段值合并相邻多边形(不指定则全部合并)",
             gis::framework::ParamType::String, false, std::string{}
         },
+        gis::framework::ParamSpec{
+            "tolerance", "简化容差", "Douglas-Peucker 简化容差，单位与图层坐标单位一致",
+            gis::framework::ParamType::Double, false, double{10.0}
+        },
     };
 }
 
@@ -213,6 +217,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "union")      return doUnion(params, progress);
     if (action == "difference") return doDifference(params, progress);
     if (action == "dissolve")   return doDissolve(params, progress);
+    if (action == "simplify")   return doSimplify(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -230,6 +235,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_overlay.inc"
 
 #include "vector_plugin_dissolve.inc"
+
+#include "vector_plugin_simplify.inc"
 
 } // namespace gis::plugins
 

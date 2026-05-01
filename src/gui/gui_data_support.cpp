@@ -1141,7 +1141,8 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "vector" &&
-        (actionKey == "filter" || actionKey == "buffer" || actionKey == "clip")) {
+        (actionKey == "filter" || actionKey == "buffer" || actionKey == "clip" ||
+         actionKey == "simplify")) {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp", ".kml"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg、.shp 或 .kml"};
@@ -1160,6 +1161,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         const auto resolution = doubleParamValue(params, "resolution");
         if (resolution.has_value() && *resolution <= 0.0) {
             return ActionValidationIssue{"resolution", "参数“分辨率”必须大于 0"};
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "simplify") {
+        const auto tolerance = doubleParamValue(params, "tolerance");
+        if (tolerance.has_value() && *tolerance <= 0.0) {
+            return ActionValidationIssue{"tolerance", "参数“简化容差”必须大于 0"};
         }
     }
 
@@ -1304,7 +1312,7 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
              spec.key == "swir1_band" || spec.key == "swir2_band")) {
             adjustedSpec.minValue = 1;
         }
-        if (pluginName == "vector" && spec.key == "resolution") {
+        if (pluginName == "vector" && (spec.key == "resolution" || spec.key == "tolerance")) {
             adjustedSpec.minValue = 0.000001;
         }
         if (pluginName == "processing") {

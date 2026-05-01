@@ -2588,6 +2588,66 @@ TEST_F(PluginTest, VectorConvertCreatesMissingParentDirectory) {
     EXPECT_TRUE(fs::exists(output));
 }
 
+TEST_F(PluginTest, VectorSimplifyExecution) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_simplify_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_simplify_output.gpkg");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("roads", srs.get(), wkbLineString, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRLineString line;
+        line.addPoint(0, 0);
+        line.addPoint(10, 0.5);
+        line.addPoint(20, -0.5);
+        line.addPoint(30, 0.4);
+        line.addPoint(40, 0);
+        feat->SetGeometry(&line);
+        feat->SetField("name", "main_road");
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("simplify");
+    params["input"] = input;
+    params["output"] = output;
+    params["tolerance"] = 2.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("feature_count"), "1");
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "main_road");
+    auto* outLine = outFeat->GetGeometryRef()->toLineString();
+    ASSERT_NE(outLine, nullptr);
+    EXPECT_LT(outLine->getNumPoints(), 5);
+    OGRFeature::DestroyFeature(outFeat);
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);

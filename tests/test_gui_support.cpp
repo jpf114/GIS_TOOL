@@ -918,6 +918,19 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
             .find("(NIR-RED)/(NIR+RED)"),
         std::string::npos);
 
+    std::vector<gis::framework::ParamSpec> vectorSpecs = {
+        {"tolerance", "简化容差", "", gis::framework::ParamType::Double, false}
+    };
+    const auto vectorFiltered = gis::gui::buildEffectiveGuiParamSpecs(
+        "vector",
+        "simplify",
+        vectorSpecs,
+        {"tolerance"},
+        {"tolerance"});
+    ASSERT_EQ(vectorFiltered.size(), 1u);
+    EXPECT_DOUBLE_EQ(std::get<double>(vectorFiltered[0].minValue), 0.000001);
+    EXPECT_TRUE(vectorFiltered[0].required);
+
     std::vector<gis::framework::ParamSpec> processingSpecs = {
         {"gamma", "Gamma", "", gis::framework::ParamType::Double, false},
         {"k", "聚类数", "", gis::framework::ParamType::Int, false},

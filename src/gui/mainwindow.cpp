@@ -117,6 +117,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("union"), QStringLiteral("\345\271\266\351\233\206")},
         {QStringLiteral("difference"), QStringLiteral("\345\267\256\351\233\206")},
         {QStringLiteral("dissolve"), QStringLiteral("\350\236\215\345\220\210")},
+        {QStringLiteral("simplify"), QStringLiteral("简化")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -470,6 +471,7 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"format", {QStringLiteral("输出格式"), QStringLiteral("输出数据格式。")}},
         {"overlay_vector", {QStringLiteral("叠加矢量"), QStringLiteral("用于并集或差集分析的第二个矢量文件。")}},
         {"dissolve_field", {QStringLiteral("融合字段"), QStringLiteral("按该字段值对相邻要素进行融合。")}},
+        {"tolerance", {QStringLiteral("简化容差"), QStringLiteral("Douglas-Peucker 简化容差，单位与图层坐标单位一致。")}},
         {"method", {QStringLiteral("方法"), QStringLiteral("当前算法使用的主要处理方法。")}},
         {"match_method", {QStringLiteral("匹配方法"), QStringLiteral("特征或模板匹配所采用的方法。")}},
         {"max_points", {QStringLiteral("最大特征点数"), QStringLiteral("允许检测的最大特征点数量。")}},
@@ -751,6 +753,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"union", {QStringLiteral("并集"), QStringLiteral("对输入矢量和叠加矢量执行并集分析。"), {"input", "output", "layer", "overlay_vector"}, {"input", "output", "overlay_vector"}}},
             {"difference", {QStringLiteral("差集"), QStringLiteral("从输入矢量中扣除叠加矢量区域。"), {"input", "output", "layer", "overlay_vector"}, {"input", "output", "overlay_vector"}}},
             {"dissolve", {QStringLiteral("融合"), QStringLiteral("按字段或整体融合相邻要素。"), {"input", "output", "layer", "dissolve_field"}, {"input", "output"}}},
+            {"simplify", {QStringLiteral("简化"), QStringLiteral("按 Douglas-Peucker 算法简化线或面要素。"), {"input", "output", "layer", "tolerance"}, {"input", "output", "tolerance"}}},
         }},
     };
     return kConfigs;

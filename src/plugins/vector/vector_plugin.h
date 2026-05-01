@@ -1,4 +1,5 @@
 #pragma once
+
 #include <gis/framework/plugin.h>
 
 namespace gis::plugins {
@@ -8,7 +9,9 @@ public:
     std::string name() const override { return "vector"; }
     std::string displayName() const override { return "矢量数据处理"; }
     std::string version() const override { return "1.1.0"; }
-    std::string description() const override { return "矢量读取、查询、过滤、空间分析、矢栅互转、并集、差集、融合"; }
+    std::string description() const override {
+        return "矢量读取、查询、过滤、空间分析、矢栅互转、并集、差集、融合与简化。";
+    }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
 
@@ -54,6 +57,10 @@ private:
         gis::core::ProgressReporter& progress);
 
     gis::framework::Result doDissolve(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
+
+    gis::framework::Result doSimplify(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
 };
