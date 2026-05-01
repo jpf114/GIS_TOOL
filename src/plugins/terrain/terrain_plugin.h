@@ -9,7 +9,7 @@ public:
     std::string name() const override { return "terrain"; }
     std::string displayName() const override { return "地形分析"; }
     std::string version() const override { return "1.0.0"; }
-    std::string description() const override { return "基于 DEM 生成坡度、坡向与山体阴影结果。"; }
+    std::string description() const override { return "基于 DEM 生成坡度、坡向、山体阴影与基础地形因子结果。"; }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
 
@@ -25,6 +25,12 @@ private:
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
     gis::framework::Result doHillshade(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
+    gis::framework::Result doTpi(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
+    gis::framework::Result doRoughness(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
 };
