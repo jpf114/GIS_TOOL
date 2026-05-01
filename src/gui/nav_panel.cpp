@@ -284,6 +284,10 @@ QIcon makeSubFunctionIcon(const std::string& actionKey, bool active) {
         painter.drawLine(QPointF(3.4, 12.0), QPointF(12.2, 4.8));
         painter.drawLine(QPointF(12.2, 4.8), QPointF(9.6, 4.8));
         painter.drawLine(QPointF(12.2, 4.8), QPointF(12.2, 7.4));
+    } else if (actionKey == "flow_accumulation") {
+        painter.drawLine(QPointF(3.6, 4.8), QPointF(8.0, 9.2));
+        painter.drawLine(QPointF(12.4, 4.8), QPointF(8.0, 9.2));
+        painter.drawLine(QPointF(8.0, 9.2), QPointF(8.0, 13.0));
     } else if (actionKey == "ndvi") {
         painter.drawEllipse(QRectF(4.2, 2.8, 7.0, 10.4));
         painter.drawLine(QPointF(7.8, 4.0), QPointF(7.8, 12.0));

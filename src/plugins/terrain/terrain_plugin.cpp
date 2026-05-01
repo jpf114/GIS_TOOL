@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <queue>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,6 +25,24 @@ struct DemOptionsDeleter {
             GDALDEMProcessingOptionsFree(options);
         }
     }
+};
+
+struct DirectionStep {
+    int dx;
+    int dy;
+    float distance;
+    float code;
+};
+
+static const DirectionStep kD8Directions[] = {
+    {1, 0, 1.0f, 1.0f},
+    {1, 1, 1.41421356f, 2.0f},
+    {0, 1, 1.0f, 4.0f},
+    {-1, 1, 1.41421356f, 8.0f},
+    {-1, 0, 1.0f, 16.0f},
+    {-1, -1, 1.41421356f, 32.0f},
+    {0, -1, 1.0f, 64.0f},
+    {1, -1, 1.41421356f, 128.0f},
 };
 
 gis::framework::Result runDemProcess(
@@ -223,6 +242,37 @@ gis::framework::Result runHydrologyTerrainProcess(
         cv::compare(elevation, static_cast<float>(noDataValue * zFactor), noDataMask, cv::CMP_EQ);
     }
 
+    auto buildFlowDirectionMat = [&]() {
+        cv::Mat direction = cv::Mat::zeros(elevation.size(), CV_32F);
+        for (int y = 1; y < elevation.rows - 1; ++y) {
+            for (int x = 1; x < elevation.cols - 1; ++x) {
+                if (hasNoData && noDataMask.at<unsigned char>(y, x) != 0) {
+                    continue;
+                }
+
+                const float center = elevation.at<float>(y, x);
+                float bestSlope = 0.0f;
+                float bestCode = 0.0f;
+                for (const auto& step : kD8Directions) {
+                    const int nx = x + step.dx;
+                    const int ny = y + step.dy;
+                    if (hasNoData && noDataMask.at<unsigned char>(ny, nx) != 0) {
+                        continue;
+                    }
+
+                    const float neighbor = elevation.at<float>(ny, nx);
+                    const float slope = (center - neighbor) / step.distance;
+                    if (slope > bestSlope) {
+                        bestSlope = slope;
+                        bestCode = step.code;
+                    }
+                }
+                direction.at<float>(y, x) = bestCode;
+            }
+        }
+        return direction;
+    };
+
     cv::Mat result;
     if (action == "fill_sinks") {
         result = elevation.clone();
@@ -252,53 +302,67 @@ gis::framework::Result runHydrologyTerrainProcess(
             progress.onProgress(0.3 + 0.4 * static_cast<double>(iteration + 1) / 256.0);
         }
     } else if (action == "flow_direction") {
-        result = cv::Mat::zeros(elevation.size(), CV_32F);
+        result = buildFlowDirectionMat();
+    } else if (action == "flow_accumulation") {
+        const cv::Mat direction = buildFlowDirectionMat();
+        cv::Mat indegree = cv::Mat::zeros(elevation.size(), CV_32S);
+        result = cv::Mat::ones(elevation.size(), CV_32F);
 
-        struct DirectionStep {
-            int dx;
-            int dy;
-            float distance;
-            float code;
-        };
-        static const DirectionStep kDirections[] = {
-            {1, 0, 1.0f, 1.0f},
-            {1, 1, 1.41421356f, 2.0f},
-            {0, 1, 1.0f, 4.0f},
-            {-1, 1, 1.41421356f, 8.0f},
-            {-1, 0, 1.0f, 16.0f},
-            {-1, -1, 1.41421356f, 32.0f},
-            {0, -1, 1.0f, 64.0f},
-            {1, -1, 1.41421356f, 128.0f},
+        auto findDirectionStep = [](float code) -> const DirectionStep* {
+            for (const auto& step : kD8Directions) {
+                if (step.code == code) {
+                    return &step;
+                }
+            }
+            return static_cast<const DirectionStep*>(nullptr);
         };
 
-        for (int y = 1; y < elevation.rows - 1; ++y) {
-            for (int x = 1; x < elevation.cols - 1; ++x) {
+        for (int y = 1; y < direction.rows - 1; ++y) {
+            for (int x = 1; x < direction.cols - 1; ++x) {
+                if (hasNoData && noDataMask.at<unsigned char>(y, x) != 0) {
+                    result.at<float>(y, x) = 0.0f;
+                    continue;
+                }
+                const auto* step = findDirectionStep(direction.at<float>(y, x));
+                if (!step) {
+                    continue;
+                }
+                indegree.at<int>(y + step->dy, x + step->dx) += 1;
+            }
+        }
+
+        std::queue<cv::Point> queue;
+        for (int y = 1; y < direction.rows - 1; ++y) {
+            for (int x = 1; x < direction.cols - 1; ++x) {
                 if (hasNoData && noDataMask.at<unsigned char>(y, x) != 0) {
                     continue;
                 }
-
-                const float center = elevation.at<float>(y, x);
-                float bestSlope = 0.0f;
-                float bestCode = 0.0f;
-                for (const auto& step : kDirections) {
-                    const int nx = x + step.dx;
-                    const int ny = y + step.dy;
-                    if (hasNoData && noDataMask.at<unsigned char>(ny, nx) != 0) {
-                        continue;
-                    }
-
-                    const float neighbor = elevation.at<float>(ny, nx);
-                    const float slope = (center - neighbor) / step.distance;
-                    if (slope > bestSlope) {
-                        bestSlope = slope;
-                        bestCode = step.code;
-                    }
+                if (indegree.at<int>(y, x) == 0) {
+                    queue.emplace(x, y);
                 }
-                result.at<float>(y, x) = bestCode;
+            }
+        }
+
+        int processed = 0;
+        while (!queue.empty()) {
+            const cv::Point cell = queue.front();
+            queue.pop();
+            const auto* step = findDirectionStep(direction.at<float>(cell.y, cell.x));
+            if (!step) {
+                continue;
             }
 
-            if ((y % 64) == 0) {
-                progress.onProgress(0.3 + 0.4 * static_cast<double>(y) / elevation.rows);
+            const cv::Point downstream(cell.x + step->dx, cell.y + step->dy);
+            result.at<float>(downstream.y, downstream.x) += result.at<float>(cell.y, cell.x);
+            const int nextDegree = --indegree.at<int>(downstream.y, downstream.x);
+            if (nextDegree == 0) {
+                queue.push(downstream);
+            }
+
+            ++processed;
+            if ((processed % 256) == 0) {
+                progress.onProgress(0.3 + 0.4 * static_cast<double>(processed) /
+                    std::max(1, (direction.rows - 2) * (direction.cols - 2)));
             }
         }
 
@@ -329,7 +393,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的地形分析子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction"}
+            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入 DEM 栅格路径",
@@ -369,6 +433,7 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "roughness") return doRoughness(params, progress);
     if (action == "fill_sinks") return doFillSinks(params, progress);
     if (action == "flow_direction") return doFlowDirection(params, progress);
+    if (action == "flow_accumulation") return doFlowAccumulation(params, progress);
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
@@ -462,6 +527,19 @@ gis::framework::Result TerrainPlugin::doFlowDirection(
     return runHydrologyTerrainProcess(
         "flow_direction",
         "FlowDirection",
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doFlowAccumulation(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runHydrologyTerrainProcess(
+        "flow_accumulation",
+        "FlowAccumulation",
         gis::framework::getParam<std::string>(params, "input", ""),
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),
