@@ -489,6 +489,11 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"marker_input", {QStringLiteral("标记输入"), QStringLiteral("可选外部标记栅格，0 表示背景，1/2/3 表示不同种子区域。")}},
             }},
         }},
+        {"raster_manage", {
+            {"nodata", {
+                {"band", {QStringLiteral("波段序号"), QStringLiteral("填写 0 表示对全部波段设置 NoData；填写 1、2、3... 表示单个波段。")}},
+            }},
+        }},
         {"classification", {
             {"feature_stats", {
                 {"output", {QStringLiteral("统计输出"), QStringLiteral("统计结果输出路径，仅支持 .json 或 .csv。")}},
