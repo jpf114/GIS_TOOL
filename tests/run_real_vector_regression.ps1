@@ -70,12 +70,14 @@ function Sync-PluginDlls {
 function New-Case {
     param(
         [string]$Name,
-        [string[]]$CaseArgs
+        [string[]]$CaseArgs,
+        [string[]]$ExpectedOutputs
     )
 
     return [pscustomobject]@{
         Name = $Name
         Args = [string[]]$CaseArgs
+        ExpectedOutputs = [string[]]$ExpectedOutputs
     }
 }
 
@@ -116,6 +118,16 @@ function Invoke-Case {
 
     if ($code -ne 0) {
         throw ($Case.Name + " failed`n" + $result.Output)
+    }
+
+    foreach ($outputPath in [string[]]$Case.ExpectedOutputs) {
+        if (-not (Test-Path $outputPath)) {
+            throw ($Case.Name + " did not produce output: " + $outputPath)
+        }
+        $item = Get-Item $outputPath
+        if (-not $item.PSIsContainer -and $item.Length -le 0) {
+            throw ($Case.Name + " produced empty file: " + $outputPath)
+        }
     }
 
     return $result
@@ -402,29 +414,63 @@ $cases += New-Case -Name "buffer_quick" -CaseArgs @(
     ("--input=" + $roadsCore3857),
     ("--output=" + (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")),
     "--distance=100"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")
 )
 $cases += New-Case -Name "clip_focus" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
     ("--clip_vector=" + $chinaBbox),
     ("--output=" + (Join-Path $ResolvedOutputRoot "clip_focus.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "clip_focus.gpkg")
 )
 $cases += New-Case -Name "difference_focus" -CaseArgs @(
     "vector", "difference",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $chinaBbox),
     ("--output=" + (Join-Path $ResolvedOutputRoot "difference_focus.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "difference_focus.gpkg")
 )
 $cases += New-Case -Name "union_focus" -CaseArgs @(
     "vector", "union",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $chinaBbox),
     ("--output=" + (Join-Path $ResolvedOutputRoot "union_focus.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "union_focus.gpkg")
 )
 $cases += New-Case -Name "dissolve_bbox" -CaseArgs @(
     "vector", "dissolve",
     ("--input=" + $chinaBbox3857),
     ("--output=" + (Join-Path $ResolvedOutputRoot "dissolve_bbox.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "dissolve_bbox.gpkg")
+)
+$cases += New-Case -Name "convert_roads_geojson" -CaseArgs @(
+    "vector", "convert",
+    ("--input=" + $roadsCore),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "roads_core.geojson")),
+    "--format=GeoJSON"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "roads_core.geojson")
+)
+$rasterizeOutput = Join-Path $ResolvedOutputRoot "bbox_rasterized.tif"
+$cases += New-Case -Name "rasterize_bbox" -CaseArgs @(
+    "vector", "rasterize",
+    ("--input=" + $chinaBbox),
+    ("--output=" + $rasterizeOutput),
+    "--resolution=0.05"
+) -ExpectedOutputs @(
+    $rasterizeOutput
+)
+$cases += New-Case -Name "polygonize_bbox_raster" -CaseArgs @(
+    "vector", "polygonize",
+    ("--input=" + $rasterizeOutput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "bbox_polygonized.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "bbox_polygonized.gpkg")
 )
 
 if ($Mode -eq "full") {
@@ -433,12 +479,16 @@ if ($Mode -eq "full") {
         ("--input=" + $roadsCore),
         ("--clip_vector=" + $chinaBbox),
         ("--output=" + (Join-Path $ResolvedOutputRoot "clip_stress.gpkg"))
+    ) -ExpectedOutputs @(
+        (Join-Path $ResolvedOutputRoot "clip_stress.gpkg")
     )
     $cases += New-Case -Name "difference_stress" -CaseArgs @(
         "vector", "difference",
         ("--input=" + $roadsCore),
         ("--overlay_vector=" + $chinaBbox),
         ("--output=" + (Join-Path $ResolvedOutputRoot "difference_stress.gpkg"))
+    ) -ExpectedOutputs @(
+        (Join-Path $ResolvedOutputRoot "difference_stress.gpkg")
     )
 }
 

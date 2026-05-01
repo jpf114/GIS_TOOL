@@ -246,6 +246,95 @@ int makeMatchingInputs(const std::string& referencePath, const std::string& chan
     return 0;
 }
 
+int makeMatchingStitchInputs(const std::string& firstPath, const std::string& secondPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(firstPath);
+    ensureParentDir(secondPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* firstDs = driver->Create(firstPath.c_str(), 96, 96, 1, GDT_Byte, nullptr);
+    if (!firstDs) {
+        std::cerr << "Failed to create first stitch raster: " << firstPath << "\n";
+        return 1;
+    }
+
+    GDALDataset* secondDs = driver->Create(secondPath.c_str(), 96, 96, 1, GDT_Byte, nullptr);
+    if (!secondDs) {
+        GDALClose(firstDs);
+        std::cerr << "Failed to create second stitch raster: " << secondPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.0005, 0.0,
+        40.0, 0.0, -0.0005
+    };
+    firstDs->SetGeoTransform(geotransform);
+    secondDs->SetGeoTransform(geotransform);
+
+    std::vector<unsigned char> canvas(128 * 128, 0);
+    for (int y = 0; y < 128; ++y) {
+        for (int x = 0; x < 128; ++x) {
+            unsigned char value = static_cast<unsigned char>((x * 9 + y * 7) % 180);
+            if ((x >= 18 && x <= 42 && y >= 18 && y <= 44) ||
+                (x >= 70 && x <= 104 && y >= 26 && y <= 38) ||
+                (x >= 58 && x <= 66 && y >= 18 && y <= 92) ||
+                ((x + y) % 17 == 0) ||
+                ((x - 2 * y + 256) % 23 == 0) ||
+                (std::abs(x - y) <= 1)) {
+                value = 255;
+            }
+            canvas[y * 128 + x] = value;
+        }
+    }
+
+    auto extractWindow = [&](int startX, int startY) {
+        std::vector<unsigned char> out(96 * 96, 0);
+        for (int y = 0; y < 96; ++y) {
+            for (int x = 0; x < 96; ++x) {
+                out[y * 96 + x] = canvas[(startY + y) * 128 + (startX + x)];
+            }
+        }
+        return out;
+    };
+
+    std::vector<unsigned char> first = extractWindow(0, 0);
+    std::vector<unsigned char> second = extractWindow(24, 8);
+
+    GDALRasterBand* firstBand = firstDs->GetRasterBand(1);
+    GDALRasterBand* secondBand = secondDs->GetRasterBand(1);
+    if (!firstBand || !secondBand) {
+        GDALClose(firstDs);
+        GDALClose(secondDs);
+        std::cerr << "Failed to get stitch raster bands\n";
+        return 1;
+    }
+
+    if (firstBand->RasterIO(
+            GF_Write, 0, 0, 96, 96,
+            first.data(), 96, 96, GDT_Byte,
+            0, 0, nullptr) != CE_None ||
+        secondBand->RasterIO(
+            GF_Write, 0, 0, 96, 96,
+            second.data(), 96, 96, GDT_Byte,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(firstDs);
+        GDALClose(secondDs);
+        std::cerr << "Failed to write stitch raster data\n";
+        return 1;
+    }
+
+    GDALClose(firstDs);
+    GDALClose(secondDs);
+    return 0;
+}
+
 int makeClassRaster(const std::string& outputPath) {
     gis::core::initRuntimeEnvironment();
     GDALAllRegister();
@@ -469,6 +558,13 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         return makeMatchingInputs(argv[2], argv[3]);
+    }
+    if (command == "matching-stitch-inputs") {
+        if (argc < 4) {
+            std::cerr << "Usage: gui_test_data_helper matching-stitch-inputs <first_output> <second_output>\n";
+            return 1;
+        }
+        return makeMatchingStitchInputs(argv[2], argv[3]);
     }
     if (command == "classification-inputs") {
         if (argc < 5) {

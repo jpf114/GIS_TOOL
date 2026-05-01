@@ -162,6 +162,13 @@ function Save-RegressionResults {
     $Results | Select-Object Name,ExitCode,Seconds | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
 }
 
+function Test-DebugCliBuild {
+    param([string]$ResolvedCliPath)
+
+    $cliDirName = Split-Path (Split-Path $ResolvedCliPath -Parent) -Leaf
+    return $cliDirName -ieq "Debug"
+}
+
 function Ensure-MatchingRegressionData {
     param(
         [string]$ResolvedWorkspaceRoot,
@@ -177,6 +184,8 @@ function Ensure-MatchingRegressionData {
     $reference = Join-Path $matchingDataRoot "reference.tif"
     $input = Join-Path $matchingDataRoot "input.tif"
     $changed = Join-Path $matchingDataRoot "change_input.tif"
+    $stitchFirst = Join-Path $generatedRoot "stitch_first.tif"
+    $stitchSecond = Join-Path $generatedRoot "stitch_second.tif"
 
     if ((-not (Test-Path $reference)) -or (-not (Test-Path $input)) -or (-not (Test-Path $changed))) {
         $reference = Join-Path $generatedRoot "reference.tif"
@@ -187,10 +196,16 @@ function Ensure-MatchingRegressionData {
         }
     }
 
+    if ((-not (Test-Path $stitchFirst)) -or (-not (Test-Path $stitchSecond))) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("matching-stitch-inputs", $stitchFirst, $stitchSecond)
+    }
+
     return [pscustomobject]@{
         Reference = $reference
         Input = $input
         Changed = $changed
+        StitchFirst = $stitchFirst
+        StitchSecond = $stitchSecond
     }
 }
 
@@ -219,6 +234,7 @@ New-Item -ItemType Directory -Force -Path $ResolvedOutputRoot | Out-Null
 
 Sync-PluginDlls -ResolvedCliPath $ResolvedCliPath
 $data = Ensure-MatchingRegressionData -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -ResolvedHelperPath $ResolvedHelperPath
+$isDebugCliBuild = Test-DebugCliBuild -ResolvedCliPath $ResolvedCliPath
 
 $cases = @()
 $cases += New-Case -Name "matching_detect" -CaseArgs @(
@@ -278,6 +294,29 @@ $cases += New-Case -Name "matching_change" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "change_output.tif")
 )
+
+if (-not $isDebugCliBuild) {
+    $cases += New-Case -Name "matching_ecc_register" -CaseArgs @(
+        "matching", "ecc_register",
+        ("--reference=" + $data.Reference),
+        ("--input=" + $data.Input),
+        ("--output=" + (Join-Path $ResolvedOutputRoot "ecc_register_output.tif")),
+        "--ecc_motion=affine",
+        "--ecc_iterations=100",
+        "--ecc_epsilon=1e-5"
+    ) -ExpectedOutputs @(
+        (Join-Path $ResolvedOutputRoot "ecc_register_output.tif")
+    )
+
+    $cases += New-Case -Name "matching_stitch" -CaseArgs @(
+        "matching", "stitch",
+        ("--input=" + $data.StitchFirst + "," + $data.StitchSecond),
+        ("--output=" + (Join-Path $ResolvedOutputRoot "stitch_output.tif")),
+        "--stitch_confidence=0.3"
+    ) -ExpectedOutputs @(
+        (Join-Path $ResolvedOutputRoot "stitch_output.tif")
+    )
+}
 
 if ($Mode -eq "full") {
     $cases += New-Case -Name "matching_detect_sift" -CaseArgs @(

@@ -643,7 +643,7 @@ if(GIS_POWERSHELL_EXECUTABLE)
             -DMODE=quick
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
         USES_TERMINAL
-        DEPENDS gis-cli plugin_vector copy_runtime_dlls
+        DEPENDS gis-cli plugin_vector plugin_projection copy_runtime_dlls
         COMMENT "Run real vector regression (quick)"
     )
 
@@ -655,7 +655,7 @@ if(GIS_POWERSHELL_EXECUTABLE)
             -DMODE=full
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
         USES_TERMINAL
-        DEPENDS gis-cli plugin_vector copy_runtime_dlls
+        DEPENDS gis-cli plugin_vector plugin_projection copy_runtime_dlls
         COMMENT "Run real vector regression (full)"
     )
 endif()
