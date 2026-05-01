@@ -2,6 +2,7 @@
 
 #include "custom_index_preset_store.h"
 
+#include <gis/core/spindex_presets.h>
 #include <gis/core/gdal_wrapper.h>
 
 #include <gdal_priv.h>
@@ -165,20 +166,6 @@ std::string filterForProjectionInputs() {
 
 std::string filterForProjectionOutputs() {
     return "GeoTIFF (*.tif *.tiff);;GeoPackage (*.gpkg);;GeoJSON (*.geojson *.json);;Shapefile (*.shp);;KML (*.kml);;CSV (*.csv);;所有文件 (*)";
-}
-
-const std::vector<std::string>& spindexPresetStorage() {
-    static const std::vector<std::string> kPresets = {
-        "none",
-        "ndvi_alias",
-        "ndwi_alias",
-        "mndwi_alias",
-        "ndbi_alias",
-        "gndvi_alias",
-        "savi_alias",
-        "evi_alias"
-    };
-    return kPresets;
 }
 
 std::string firstInputPath(const std::string& rawPath) {
@@ -751,7 +738,7 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
 }
 
 std::vector<std::string> spindexCustomIndexPresetValues() {
-    auto values = spindexPresetStorage();
+    auto values = gis::core::spindexCustomIndexPresetValues();
     for (const auto& preset : loadCustomIndexUserPresets()) {
         values.push_back(preset.key);
     }
@@ -759,13 +746,10 @@ std::vector<std::string> spindexCustomIndexPresetValues() {
 }
 
 std::string spindexCustomIndexPresetExpression(const std::string& presetKey) {
-    if (presetKey == "ndvi_alias") return "(NIR-RED)/(NIR+RED)";
-    if (presetKey == "ndwi_alias") return "(GREEN-NIR)/(GREEN+NIR)";
-    if (presetKey == "mndwi_alias") return "(GREEN-SWIR1)/(GREEN+SWIR1)";
-    if (presetKey == "ndbi_alias") return "(SWIR1-NIR)/(SWIR1+NIR)";
-    if (presetKey == "gndvi_alias") return "(NIR-GREEN)/(NIR+GREEN)";
-    if (presetKey == "savi_alias") return "((NIR-RED)/(NIR+RED+0.5))*(1+0.5)";
-    if (presetKey == "evi_alias") return "2.5*(NIR-RED)/(NIR+6*RED-7.5*BLUE+1)";
+    const std::string builtinExpression = gis::core::spindexCustomIndexPresetExpression(presetKey);
+    if (!builtinExpression.empty()) {
+        return builtinExpression;
+    }
     return findCustomIndexUserPresetExpression(presetKey);
 }
 

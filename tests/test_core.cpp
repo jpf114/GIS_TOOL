@@ -5,6 +5,7 @@
 #include <gis/core/error.h>
 #include <gis/core/progress.h>
 #include <gis/core/runtime_env.h>
+#include <gis/core/spindex_presets.h>
 #include <gdal_priv.h>
 #include <opencv2/opencv.hpp>
 #include <filesystem>
@@ -29,6 +30,20 @@ protected:
 
 TEST_F(CoreTest, InitGDAL) {
     EXPECT_NO_THROW(gis::core::initGDAL());
+}
+
+TEST_F(CoreTest, SpindexPresetCatalogIsStable) {
+    const auto values = gis::core::spindexCustomIndexPresetValues();
+    ASSERT_EQ(values.size(), 8u);
+    EXPECT_EQ(values.front(), "none");
+    EXPECT_EQ(values.back(), "evi_alias");
+    EXPECT_EQ(
+        gis::core::spindexCustomIndexPresetExpression("ndvi_alias"),
+        "(NIR-RED)/(NIR+RED)");
+    EXPECT_EQ(
+        gis::core::spindexCustomIndexPresetExpression("mndwi_alias"),
+        "(GREEN-SWIR1)/(GREEN+SWIR1)");
+    EXPECT_TRUE(gis::core::spindexCustomIndexPresetExpression("missing").empty());
 }
 
 TEST_F(CoreTest, CreateAndOpenRaster) {

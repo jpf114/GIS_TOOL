@@ -3,6 +3,7 @@
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
+#include <gis/core/spindex_presets.h>
 
 #include <gdal_priv.h>
 #include <opencv2/opencv.hpp>
@@ -18,30 +19,6 @@
 namespace gis::plugins {
 
 namespace {
-
-std::vector<std::string> customIndexPresetValues() {
-    return {
-        "none",
-        "ndvi_alias",
-        "ndwi_alias",
-        "mndwi_alias",
-        "ndbi_alias",
-        "gndvi_alias",
-        "savi_alias",
-        "evi_alias"
-    };
-}
-
-std::string customIndexPresetExpression(const std::string& presetKey) {
-    if (presetKey == "ndvi_alias") return "(NIR-RED)/(NIR+RED)";
-    if (presetKey == "ndwi_alias") return "(GREEN-NIR)/(GREEN+NIR)";
-    if (presetKey == "mndwi_alias") return "(GREEN-SWIR1)/(GREEN+SWIR1)";
-    if (presetKey == "ndbi_alias") return "(SWIR1-NIR)/(SWIR1+NIR)";
-    if (presetKey == "gndvi_alias") return "(NIR-GREEN)/(NIR+GREEN)";
-    if (presetKey == "savi_alias") return "((NIR-RED)/(NIR+RED+0.5))*(1+0.5)";
-    if (presetKey == "evi_alias") return "2.5*(NIR-RED)/(NIR+6*RED-7.5*BLUE+1)";
-    return {};
-}
 
 int getBandIndex(const std::map<std::string, gis::framework::ParamValue>& params,
                  const char* key,
@@ -242,7 +219,7 @@ gis::framework::Result doCustomIndex(const std::string& input,
                                      int swir1Band,
                                      gis::core::ProgressReporter& progress) {
     const std::string resolvedExpression =
-        expression.empty() ? customIndexPresetExpression(preset) : expression;
+        expression.empty() ? gis::core::spindexCustomIndexPresetExpression(preset) : expression;
     if (resolvedExpression.empty()) {
         return gis::framework::Result::fail(
             "expression or preset is required (e.g., ndvi_alias, (B4-B1)/(B4+B1))");
@@ -305,7 +282,7 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
             "preset", "内置示例", "选择一个常用指数表达式示例",
             gis::framework::ParamType::Enum, false, std::string{"none"},
             int{0}, int{0},
-            customIndexPresetValues()
+            gis::core::spindexCustomIndexPresetValues()
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -382,7 +359,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
     const std::string preset = gis::framework::getParam<std::string>(params, "preset", "none");
     const std::string expression = gis::framework::getParam<std::string>(params, "expression", "");
     const std::string effectiveExpression =
-        expression.empty() ? customIndexPresetExpression(preset) : expression;
+        expression.empty() ? gis::core::spindexCustomIndexPresetExpression(preset) : expression;
     const int blueBand = gis::framework::getParam<int>(params, "blue_band", 1);
     const int greenBand = gis::framework::getParam<int>(params, "green_band", 2);
     const int redBand = gis::framework::getParam<int>(params, "red_band", 3);

@@ -4,6 +4,7 @@ add_library(gis_core
     src/gdal_wrapper.cpp
     src/opencv_wrapper.cpp
     src/runtime_env.cpp
+    src/spindex_presets.cpp
 )
 
 target_include_directories(gis_core PUBLIC
