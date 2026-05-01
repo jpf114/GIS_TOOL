@@ -376,6 +376,16 @@ $cases += New-Case -Name "spindex_ui" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "ui_output.tif")
 )
 
+$cases += New-Case -Name "spindex_bi" -CaseArgs @(
+    "spindex", "bi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "bi_output.tif")),
+    "--red_band=3",
+    "--nir_band=4"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "bi_output.tif")
+)
+
 $cases += New-Case -Name "spindex_custom_index" -CaseArgs @(
     "spindex", "custom_index",
     ("--input=" + $data.NdviInput),

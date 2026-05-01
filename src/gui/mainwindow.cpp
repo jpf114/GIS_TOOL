@@ -108,6 +108,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("nbr"), QStringLiteral("NBR")},
         {QStringLiteral("awei"), QStringLiteral("AWEI")},
         {QStringLiteral("ui"), QStringLiteral("UI")},
+        {QStringLiteral("bi"), QStringLiteral("BI")},
         {QStringLiteral("custom_index"), QStringLiteral("自定义指数")},
         {QStringLiteral("buffer"), QStringLiteral("\347\274\223\345\206\262\345\214\272")},
         {QStringLiteral("rasterize"), QStringLiteral("\346\240\205\346\240\274\345\214\226")},
@@ -733,6 +734,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"nbr", {QStringLiteral("NBR"), QStringLiteral("根据近红外与短波红外2波段计算归一化烧毁比 NBR。"), {"input", "output", "nir_band", "swir2_band"}, {"input", "output"}}},
             {"awei", {QStringLiteral("AWEI"), QStringLiteral("根据绿光、近红外、短波红外1和短波红外2波段计算自动水体提取指数 AWEI。"), {"input", "output", "green_band", "nir_band", "swir1_band", "swir2_band"}, {"input", "output"}}},
             {"ui", {QStringLiteral("UI"), QStringLiteral("根据近红外与短波红外2波段计算城市指数 UI。"), {"input", "output", "nir_band", "swir2_band"}, {"input", "output"}}},
+            {"bi", {QStringLiteral("BI"), QStringLiteral("根据红光与近红外波段计算烧焦指数 BI。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},
             {"custom_index", {QStringLiteral("自定义指数"), QStringLiteral("按表达式组合多波段并输出自定义指数结果，可直接使用 B1/B2 或 RED/NIR/GREEN 等别名。"), {"input", "output", "preset", "expression", "blue_band", "green_band", "red_band", "nir_band", "swir1_band", "swir2_band"}, {"input", "output", "expression"}}},
         }},
         {"raster_render", {

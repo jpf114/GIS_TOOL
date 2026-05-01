@@ -276,7 +276,7 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
             "action", "操作", "选择要执行的光谱指数算法",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi", "arvi", "nbr", "awei", "ui", "custom_index"}
+            {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi", "arvi", "nbr", "awei", "ui", "bi", "custom_index"}
         },
         gis::framework::ParamSpec{
             "preset", "预设表达式", "选择内置的指数表达式预设，仅自定义指数时使用",
@@ -347,7 +347,7 @@ gis::framework::Result SpindexPlugin::execute(
     if (action == "ndvi" || action == "evi" || action == "savi" ||
         action == "gndvi" || action == "ndwi" || action == "mndwi" ||
         action == "ndbi" || action == "arvi" || action == "nbr" ||
-        action == "awei" || action == "ui" ||
+        action == "awei" || action == "ui" || action == "bi" ||
         action == "custom_index") {
         return doExecuteAction(action, params, progress);
     }
@@ -551,6 +551,26 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
             progress.onProgress(1.0);
             return buildIndexResult("UI", output, indexMat);
+        }
+
+        if (action == "bi") {
+            const int resolvedRedBand = getBandIndex(params, "red_band", redBand, bands);
+            const int resolvedNirBand = getBandIndex(params, "nir_band", nirBand, bands);
+            cv::Mat red = readBandMat(ds, resolvedRedBand, "Red", progress);
+            progress.onProgress(0.25);
+            cv::Mat nir = readBandMat(ds, resolvedNirBand, "NIR", progress);
+            progress.onProgress(0.5);
+
+            progress.onMessage("Computing BI = 1 / ((0.1 - Red)^2 + (0.06 - NIR)^2)...");
+            cv::Mat deltaRed = 0.1f - red;
+            cv::Mat deltaNir = 0.06f - nir;
+            cv::Mat denominator = deltaRed.mul(deltaRed) + deltaNir.mul(deltaNir) + 1e-10f;
+            cv::Mat indexMat;
+            cv::divide(1.0f, denominator, indexMat);
+            progress.onProgress(0.8);
+            gis::core::matToGdalTiff(indexMat, input, output, 1);
+            progress.onProgress(1.0);
+            return buildIndexResult("BI", output, indexMat);
         }
 
         if (action == "savi") {
