@@ -322,7 +322,7 @@ $cases += New-Case -Name "spindex_custom_index" -CaseArgs @(
     "spindex", "custom_index",
     ("--input=" + $data.NdviInput),
     ("--output=" + (Join-Path $ResolvedOutputRoot "custom_index_output.tif")),
-    "--expression=(NIR-RED)/(NIR+RED)",
+    "--preset=ndvi_alias",
     "--red_band=1",
     "--nir_band=4"
 ) -ExpectedOutputs @(

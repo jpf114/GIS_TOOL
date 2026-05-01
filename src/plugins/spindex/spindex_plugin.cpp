@@ -32,6 +32,17 @@ std::vector<std::string> customIndexPresetValues() {
     };
 }
 
+std::string customIndexPresetExpression(const std::string& presetKey) {
+    if (presetKey == "ndvi_alias") return "(NIR-RED)/(NIR+RED)";
+    if (presetKey == "ndwi_alias") return "(GREEN-NIR)/(GREEN+NIR)";
+    if (presetKey == "mndwi_alias") return "(GREEN-SWIR1)/(GREEN+SWIR1)";
+    if (presetKey == "ndbi_alias") return "(SWIR1-NIR)/(SWIR1+NIR)";
+    if (presetKey == "gndvi_alias") return "(NIR-GREEN)/(NIR+GREEN)";
+    if (presetKey == "savi_alias") return "((NIR-RED)/(NIR+RED+0.5))*(1+0.5)";
+    if (presetKey == "evi_alias") return "2.5*(NIR-RED)/(NIR+6*RED-7.5*BLUE+1)";
+    return {};
+}
+
 int getBandIndex(const std::map<std::string, gis::framework::ParamValue>& params,
                  const char* key,
                  int defaultValue,
@@ -223,15 +234,18 @@ std::map<std::string, double> buildCustomExpressionValues(
 gis::framework::Result doCustomIndex(const std::string& input,
                                      const std::string& output,
                                      const std::string& expression,
+                                     const std::string& preset,
                                      int blueBand,
                                      int greenBand,
                                      int redBand,
                                      int nirBand,
                                      int swir1Band,
                                      gis::core::ProgressReporter& progress) {
-    if (expression.empty()) {
+    const std::string resolvedExpression =
+        expression.empty() ? customIndexPresetExpression(preset) : expression;
+    if (resolvedExpression.empty()) {
         return gis::framework::Result::fail(
-            "expression is required (e.g., B4-B1, (B4-B1)/(B4+B1))");
+            "expression or preset is required (e.g., ndvi_alias, (B4-B1)/(B4+B1))");
     }
 
     auto ds = gis::core::openRaster(input, true);
@@ -247,14 +261,14 @@ gis::framework::Result doCustomIndex(const std::string& input,
     }
     progress.onProgress(0.4);
 
-    progress.onMessage("Evaluating expression: " + expression);
+    progress.onMessage("Evaluating expression: " + resolvedExpression);
     cv::Mat indexMat(height, width, CV_32F);
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const auto bandValues = buildCustomExpressionValues(
                 bandMats, x, y, blueBand, greenBand, redBand, nirBand, swir1Band);
             indexMat.at<float>(y, x) =
-                static_cast<float>(evalExpression(expression, bandValues));
+                static_cast<float>(evalExpression(resolvedExpression, bandValues));
         }
         if ((y % 100) == 0) {
             progress.onProgress(0.4 + 0.4 * static_cast<double>(y) / height);
@@ -266,7 +280,8 @@ gis::framework::Result doCustomIndex(const std::string& input,
     progress.onProgress(1.0);
 
     auto result = buildIndexResult("CUSTOM_INDEX", output, indexMat);
-    result.metadata["expression"] = expression;
+    result.metadata["expression"] = resolvedExpression;
+    result.metadata["preset"] = preset;
     result.metadata["band_count"] = std::to_string(bandCount);
     result.metadata["blue_band"] = std::to_string(blueBand);
     result.metadata["green_band"] = std::to_string(greenBand);
@@ -364,7 +379,10 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
 
     const std::string input = gis::framework::getParam<std::string>(params, "input", "");
     const std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    const std::string preset = gis::framework::getParam<std::string>(params, "preset", "none");
     const std::string expression = gis::framework::getParam<std::string>(params, "expression", "");
+    const std::string effectiveExpression =
+        expression.empty() ? customIndexPresetExpression(preset) : expression;
     const int blueBand = gis::framework::getParam<int>(params, "blue_band", 1);
     const int greenBand = gis::framework::getParam<int>(params, "green_band", 2);
     const int redBand = gis::framework::getParam<int>(params, "red_band", 3);
@@ -383,11 +401,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
                 input,
                 output,
                 expression,
-                resolveOptionalAliasBand(params, "blue_band", blueBand, bands, expression, "BLUE"),
-                resolveOptionalAliasBand(params, "green_band", greenBand, bands, expression, "GREEN"),
-                resolveOptionalAliasBand(params, "red_band", redBand, bands, expression, "RED"),
-                resolveOptionalAliasBand(params, "nir_band", nirBand, bands, expression, "NIR"),
-                resolveOptionalAliasBand(params, "swir1_band", 5, bands, expression, "SWIR1"),
+                preset,
+                resolveOptionalAliasBand(params, "blue_band", blueBand, bands, effectiveExpression, "BLUE"),
+                resolveOptionalAliasBand(params, "green_band", greenBand, bands, effectiveExpression, "GREEN"),
+                resolveOptionalAliasBand(params, "red_band", redBand, bands, effectiveExpression, "RED"),
+                resolveOptionalAliasBand(params, "nir_band", nirBand, bands, effectiveExpression, "NIR"),
+                resolveOptionalAliasBand(params, "swir1_band", 5, bands, effectiveExpression, "SWIR1"),
                 progress);
         }
 
