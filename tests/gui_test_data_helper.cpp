@@ -384,6 +384,63 @@ int makeClassificationInputs(const std::string& vectorPath,
     return makeClassRaster(rasterPath);
 }
 
+int makeAnalysisRaster(const std::string& outputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(outputPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(outputPath.c_str(), 32, 32, 3, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create analysis raster: " << outputPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.0005, 0.0,
+        40.0, 0.0, -0.0005
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<float> band1(32 * 32, 0.0f);
+    std::vector<float> band2(32 * 32, 0.0f);
+    std::vector<float> band3(32 * 32, 0.0f);
+    for (int y = 0; y < 32; ++y) {
+        for (int x = 0; x < 32; ++x) {
+            const size_t index = static_cast<size_t>(y * 32 + x);
+            band1[index] = static_cast<float>(x + y);
+            band2[index] = static_cast<float>(x * 2 - y);
+            band3[index] = static_cast<float>((x * y) % 17);
+        }
+    }
+
+    const std::vector<std::vector<float>*> bands = {&band1, &band2, &band3};
+    for (int i = 0; i < 3; ++i) {
+        GDALRasterBand* band = ds->GetRasterBand(i + 1);
+        if (!band) {
+            GDALClose(ds);
+            std::cerr << "Failed to get analysis raster band\n";
+            return 1;
+        }
+        if (band->RasterIO(
+                GF_Write, 0, 0, 32, 32,
+                bands[i]->data(), 32, 32, GDT_Float32,
+                0, 0, nullptr) != CE_None) {
+            GDALClose(ds);
+            std::cerr << "Failed to write analysis raster band\n";
+            return 1;
+        }
+    }
+
+    GDALClose(ds);
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -419,6 +476,9 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         return makeClassificationInputs(argv[2], argv[3], argv[4]);
+    }
+    if (command == "analysis-raster") {
+        return makeAnalysisRaster(argv[2]);
     }
 
     std::cerr << "Unknown command: " << command << "\n";

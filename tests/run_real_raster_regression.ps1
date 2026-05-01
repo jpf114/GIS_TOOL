@@ -185,6 +185,7 @@ function Ensure-RasterRegressionData {
     $classVector = Join-Path $rasterDataRoot "classification_vector.gpkg"
     $classMap = Join-Path $rasterDataRoot "classification_class_map.json"
     $classRaster = Join-Path $rasterDataRoot "classification_raster.tif"
+    $analysisRaster = Join-Path $generatedRoot "analysis_input.tif"
 
     if (-not (Test-Path $ndviInput)) {
         $ndviInput = Join-Path $generatedRoot "ndvi_input.tif"
@@ -210,6 +211,10 @@ function Ensure-RasterRegressionData {
         }
     }
 
+    if (-not (Test-Path $analysisRaster)) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("analysis-raster", $analysisRaster)
+    }
+
     return [pscustomobject]@{
         NdviInput = $ndviInput
         PansharpenMs = $panMs
@@ -217,6 +222,7 @@ function Ensure-RasterRegressionData {
         ClassificationVector = $classVector
         ClassificationClassMap = $classMap
         ClassificationRaster = $classRaster
+        AnalysisRaster = $analysisRaster
     }
 }
 
@@ -327,6 +333,62 @@ $cases += New-Case -Name "spindex_custom_index" -CaseArgs @(
     "--nir_band=4"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "custom_index_output.tif")
+)
+
+$cases += New-Case -Name "raster_math_band_math" -CaseArgs @(
+    "raster_math", "band_math",
+    ("--input=" + $data.PansharpenMs),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "band_math_output.tif")),
+    "--expression=B1+B2"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "band_math_output.tif")
+)
+
+$cases += New-Case -Name "raster_inspect_histogram" -CaseArgs @(
+    "raster_inspect", "histogram",
+    ("--input=" + $data.AnalysisRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "histogram_output.json")),
+    "--band=1",
+    "--bins=16"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "histogram_output.json")
+)
+
+$cases += New-Case -Name "raster_inspect_info" -CaseArgs @(
+    "raster_inspect", "info",
+    ("--input=" + $data.AnalysisRaster)
+) -ExpectedOutputs @()
+
+$rasterManageOverviewsInput = Join-Path $ResolvedOutputRoot "manage_overviews_input.tif"
+Copy-Item $data.AnalysisRaster $rasterManageOverviewsInput -Force
+$cases += New-Case -Name "raster_manage_overviews" -CaseArgs @(
+    "raster_manage", "overviews",
+    ("--input=" + $rasterManageOverviewsInput),
+    "--levels=2 4",
+    "--resample=nearest"
+) -ExpectedOutputs @(
+    $rasterManageOverviewsInput
+)
+
+$rasterManageNoDataInput = Join-Path $ResolvedOutputRoot "manage_nodata_input.tif"
+Copy-Item $data.AnalysisRaster $rasterManageNoDataInput -Force
+$cases += New-Case -Name "raster_manage_nodata" -CaseArgs @(
+    "raster_manage", "nodata",
+    ("--input=" + $rasterManageNoDataInput),
+    "--band=1",
+    "--nodata_value=255"
+) -ExpectedOutputs @(
+    $rasterManageNoDataInput
+)
+
+$cases += New-Case -Name "raster_render_colormap" -CaseArgs @(
+    "raster_render", "colormap",
+    ("--input=" + $data.AnalysisRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "colormap_output.tif")),
+    "--band=1",
+    "--cmap=jet"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "colormap_output.tif")
 )
 
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
