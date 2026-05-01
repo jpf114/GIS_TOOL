@@ -96,10 +96,10 @@ add_subdirectory(src/plugins/processing)
 add_subdirectory(src/plugins/raster_math)
 add_subdirectory(src/plugins/raster_inspect)
 add_subdirectory(src/plugins/raster_manage)
+add_subdirectory(src/plugins/raster_render)
 add_subdirectory(src/plugins/classification)
 add_subdirectory(src/plugins/spindex)
 add_subdirectory(src/plugins/vector)
-add_subdirectory(src/plugins/utility)
 add_subdirectory(src/cli)
 
 # Copy vcpkg runtime DLLs to plugins directory so plugin DLLs can find their dependencies

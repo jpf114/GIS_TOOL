@@ -62,9 +62,9 @@ add_dependencies(gis_tests
     plugin_raster_math
     plugin_raster_inspect
     plugin_raster_manage
+    plugin_raster_render
     plugin_classification
     plugin_spindex
-    plugin_utility
     plugin_vector
 )
 
@@ -269,12 +269,12 @@ if(TARGET gis-gui)
     )
 
     add_test(
-        NAME gui_utility_colormap_offscreen
+        NAME gui_raster_render_colormap_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
-            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_colormap/output.tif
-            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_colormap/gui_utility_colormap.png
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_colormap_regression.cmake
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_render_colormap/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_render_colormap/gui_raster_render_colormap.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_render_colormap_regression.cmake
     )
 
     add_test(
@@ -591,7 +591,7 @@ if(GIS_POWERSHELL_EXECUTABLE)
             -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
             -DMODE=quick
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_raster_regression.cmake
-        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_spindex plugin_utility copy_runtime_dlls
+        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_spindex plugin_raster_render copy_runtime_dlls
         USES_TERMINAL
         COMMENT "Run real raster regression (quick)"
     )
@@ -604,7 +604,7 @@ if(GIS_POWERSHELL_EXECUTABLE)
             -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
             -DMODE=full
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_raster_regression.cmake
-        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_spindex plugin_utility copy_runtime_dlls
+        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_spindex plugin_raster_render copy_runtime_dlls
         USES_TERMINAL
         COMMENT "Run real raster regression (full)"
     )

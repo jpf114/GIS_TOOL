@@ -3,12 +3,12 @@
 
 namespace gis::plugins {
 
-class UtilityPlugin : public gis::framework::IGisPlugin {
+class RasterRenderPlugin : public gis::framework::IGisPlugin {
 public:
-    std::string name() const override { return "utility"; }
-    std::string displayName() const override { return "栅格工具"; }
+    std::string name() const override { return "raster_render"; }
+    std::string displayName() const override { return "栅格渲染"; }
     std::string version() const override { return "1.0.0"; }
-    std::string description() const override { return "金字塔构建、NoData 设置、直方图、栅格信息、色彩映射"; }
+    std::string description() const override { return "伪彩色渲染"; }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
 
@@ -20,7 +20,6 @@ private:
     gis::framework::Result doColormap(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
-
 };
 
 } // namespace gis::plugins

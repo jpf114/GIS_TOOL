@@ -205,6 +205,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_raster_inspect_histogram.json");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "raster_render", "colormap"),
+        "D:/data/image_raster_render_colormap.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/image.tif", "spindex", "ndvi"),
         "D:/data/image_spindex_ndvi.tif");
     EXPECT_EQ(

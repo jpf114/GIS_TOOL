@@ -84,7 +84,7 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
         return ".tif";
     }
 
-    if (pluginName == "utility") {
+    if (pluginName == "raster_render") {
         if (action == "colormap") return ".tif";
         return inputExt;
     }
@@ -1207,8 +1207,6 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 adjustedSpec.minValue = 0.0;
                 adjustedSpec.maxValue = 1.0;
             }
-        }
-        if (pluginName == "utility") {
         }
         if (pluginName == "raster_manage" && action == "nodata" && spec.key == "band") {
             adjustedSpec.defaultValue = int{0};

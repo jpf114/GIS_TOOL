@@ -292,7 +292,7 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawLine(QPointF(19, 25), QPointF(19, 28));
     } else if (text == QStringLiteral("kmeans")) {
         drawNodes();
-    } else if (text == QStringLiteral("utility")) {
+    } else if (text == QStringLiteral("raster_render")) {
         drawBars();
     } else if (text == QStringLiteral("vector")) {
         drawNodes();
@@ -489,11 +489,6 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"marker_input", {QStringLiteral("标记输入"), QStringLiteral("可选外部标记栅格，0 表示背景，1/2/3 表示不同种子区域。")}},
             }},
         }},
-        {"utility", {
-            {"nodata", {
-                {"band", {QStringLiteral("波段序号"), QStringLiteral("填写 0 表示对全部波段设置 NoData；填写 1、2、3... 表示单个波段。")}},
-            }},
-        }},
         {"classification", {
             {"feature_stats", {
                 {"output", {QStringLiteral("统计输出"), QStringLiteral("统计结果输出路径，仅支持 .json 或 .csv。")}},
@@ -584,7 +579,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"ndbi", {QStringLiteral("NDBI"), QStringLiteral("根据短波红外1与近红外波段计算 NDBI。"), {"input", "output", "swir1_band", "nir_band"}, {"input", "output"}}},
             {"custom_index", {QStringLiteral("自定义指数"), QStringLiteral("按表达式组合多波段并输出自定义指数结果，可直接使用 B1/B2 或 RED/NIR/GREEN 等别名。"), {"input", "output", "preset", "expression", "blue_band", "green_band", "red_band", "nir_band", "swir1_band"}, {"input", "output", "expression"}}},
         }},
-        {"utility", {
+        {"raster_render", {
             {"colormap", {QStringLiteral("伪彩色"), QStringLiteral("对单波段影像应用伪彩色映射。"), {"input", "output", "band", "cmap"}, {"input", "output"}}},
         }},
         {"vector", {
@@ -975,7 +970,7 @@ void MainWindow::loadPlugins() {
     }
 
     static const std::vector<std::string> preferredOrder = {
-        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "raster_manage", "classification", "utility", "vector"
+        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "raster_manage", "raster_render", "classification", "vector"
     };
 
     std::vector<gis::framework::IGisPlugin*> plugins = pluginManager_.plugins();

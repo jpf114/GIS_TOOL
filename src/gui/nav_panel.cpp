@@ -88,7 +88,7 @@ QIcon makeSidebarIcon(const std::string& kind, const QColor& bg, const QColor& f
         painter.drawPoint(QPointF(6.5, 6.5));
         painter.drawPoint(QPointF(11.5, 6.5));
         painter.drawPoint(QPointF(6.5, 11.5));
-    } else if (kind == "utility") {
+    } else if (kind == "raster_render") {
         painter.drawLine(QPointF(5, 12.8), QPointF(5, 9.4));
         painter.drawLine(QPointF(9, 12.8), QPointF(9, 6.6));
         painter.drawLine(QPointF(13, 12.8), QPointF(13, 4.4));

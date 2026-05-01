@@ -391,8 +391,8 @@ TEST_F(PluginTest, VectorPluginParams) {
     }
 }
 
-TEST_F(PluginTest, UtilityPluginParams) {
-    auto* p = mgr_.find("utility");
+TEST_F(PluginTest, RasterRenderPluginParams) {
+    auto* p = mgr_.find("raster_render");
     if (p) {
         auto specs = p->paramSpecs();
         bool hasAction = false;
@@ -913,8 +913,8 @@ TEST_F(PluginTest, RasterInspectHistogramExecution) {
     EXPECT_EQ(result.metadata.at("bins"), "16");
 }
 
-TEST_F(PluginTest, UtilityColormapExecution) {
-    auto* p = mgr_.find("utility");
+TEST_F(PluginTest, RasterRenderColormapExecution) {
+    auto* p = mgr_.find("raster_render");
     ASSERT_NE(p, nullptr);
 
     const std::string input = createTestRaster("e2e_util_colormap_input.tif", 40, 40);
