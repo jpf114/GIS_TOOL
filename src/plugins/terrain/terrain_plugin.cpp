@@ -555,6 +555,29 @@ std::vector<ProfilePoint> parseProfilePath(const std::string& text) {
     return points;
 }
 
+std::vector<ProfilePoint> parseObserverPoints(const std::string& text) {
+    std::vector<ProfilePoint> points;
+    std::stringstream ss(text);
+    std::string token;
+    while (std::getline(ss, token, ';')) {
+        token = trim(token);
+        if (token.empty()) {
+            continue;
+        }
+        const auto comma = token.find(',');
+        if (comma == std::string::npos) {
+            throw std::runtime_error("observer_points 格式应为 x1,y1;x2,y2;...");
+        }
+        const std::string xText = trim(token.substr(0, comma));
+        const std::string yText = trim(token.substr(comma + 1));
+        points.push_back(ProfilePoint{std::stod(xText), std::stod(yText)});
+    }
+    if (points.empty()) {
+        throw std::runtime_error("observer_points 至少需要一个点");
+    }
+    return points;
+}
+
 double segmentLength(const ProfilePoint& start, const ProfilePoint& end) {
     const double dx = end.x - start.x;
     const double dy = end.y - start.y;
@@ -742,6 +765,100 @@ gis::framework::Result runViewshedProcess(
     return result;
 }
 
+gis::framework::Result runViewshedMultiProcess(
+    const std::string& input,
+    const std::string& output,
+    int band,
+    const std::string& observerPointsText,
+    double observerHeight,
+    double targetHeight,
+    double maxDistance,
+    gis::core::ProgressReporter& progress) {
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+    if (observerPointsText.empty()) return gis::framework::Result::fail("observer_points is required");
+    if (observerHeight < 0.0) return gis::framework::Result::fail("observer_height must be greater than or equal to 0");
+    if (targetHeight < 0.0) return gis::framework::Result::fail("target_height must be greater than or equal to 0");
+    if (maxDistance < 0.0) return gis::framework::Result::fail("max_distance must be greater than or equal to 0");
+
+    std::vector<ProfilePoint> observerPoints;
+    try {
+        observerPoints = parseObserverPoints(observerPointsText);
+    } catch (const std::exception& ex) {
+        return gis::framework::Result::fail(ex.what());
+    }
+
+    progress.onProgress(0.1);
+    auto srcDs = gis::core::openRaster(input, true);
+    if (!srcDs) {
+        return gis::framework::Result::fail("Cannot open DEM raster: " + input);
+    }
+
+    auto* srcBand = srcDs->GetRasterBand(band);
+    if (!srcBand) {
+        return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
+    }
+
+    cv::Mat merged(srcDs->GetRasterYSize(), srcDs->GetRasterXSize(), CV_32F, cv::Scalar(0.0f));
+    progress.onMessage("Running terrain action: MultiViewshed");
+    for (std::size_t index = 0; index < observerPoints.size(); ++index) {
+        const auto& point = observerPoints[index];
+        int usageError = FALSE;
+        GDALDatasetH outHandle = GDALViewshedGenerate(
+            GDALRasterBand::ToHandle(srcBand),
+            "MEM",
+            "",
+            nullptr,
+            point.x,
+            point.y,
+            observerHeight,
+            targetHeight,
+            255.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            GVM_Edge,
+            maxDistance,
+            nullptr,
+            nullptr,
+            GVOT_NORMAL,
+            nullptr);
+
+        if (!outHandle || usageError) {
+            if (outHandle) {
+                GDALClose(outHandle);
+            }
+            return gis::framework::Result::fail(
+                "Multi viewshed processing failed: " + std::string(CPLGetLastErrorMsg()));
+        }
+
+        gis::core::GdalDatasetPtr viewshedDs(reinterpret_cast<GDALDataset*>(outHandle));
+        cv::Mat viewshedMat = gis::core::gdalBandToMat(viewshedDs.get(), 1);
+        cv::max(merged, viewshedMat, merged);
+        progress.onProgress(0.2 + 0.7 * static_cast<double>(index + 1) / observerPoints.size());
+    }
+
+    const auto parent = std::filesystem::path(output).parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+    progress.onMessage("Writing terrain output: " + output);
+    gis::core::matToGdalTiff(merged, srcDs.get(), output, band);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("MultiViewshed completed", output);
+    result.metadata["action"] = "viewshed_multi";
+    result.metadata["band"] = std::to_string(band);
+    result.metadata["observer_count"] = std::to_string(observerPoints.size());
+    result.metadata["observer_height"] = std::to_string(observerHeight);
+    result.metadata["target_height"] = std::to_string(targetHeight);
+    result.metadata["max_distance"] = std::to_string(maxDistance);
+    return result;
+}
+
 gis::framework::Result runCutFillProcess(
     const std::string& input,
     const std::string& reference,
@@ -892,7 +1009,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "???", "?????????????",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "cut_fill", "reservoir_volume"}
+            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "viewshed_multi", "cut_fill", "reservoir_volume"}
         },
         gis::framework::ParamSpec{
             "input", "????", "?? DEM ????",
@@ -939,6 +1056,10 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             gis::framework::ParamType::Double, false, double{0.0}
         },
         gis::framework::ParamSpec{
+            "observer_points", "?????", "??????????? x1,y1;x2,y2;...",
+            gis::framework::ParamType::String, false, std::string{}
+        },
+        gis::framework::ParamSpec{
             "observer_height", "?????", "??????????",
             gis::framework::ParamType::Double, false, double{2.0}
         },
@@ -973,6 +1094,7 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "watershed") return doWatershed(params, progress);
     if (action == "profile_extract") return doProfileExtract(params, progress);
     if (action == "viewshed") return doViewshed(params, progress);
+    if (action == "viewshed_multi") return doViewshedMulti(params, progress);
     if (action == "cut_fill") return doCutFill(params, progress);
     if (action == "reservoir_volume") return doReservoirVolume(params, progress);
     return gis::framework::Result::fail("Unknown action: " + action);
@@ -1139,6 +1261,20 @@ gis::framework::Result TerrainPlugin::doViewshed(
         gis::framework::getParam<int>(params, "band", 1),
         gis::framework::getParam<double>(params, "observer_x", 0.0),
         gis::framework::getParam<double>(params, "observer_y", 0.0),
+        gis::framework::getParam<double>(params, "observer_height", 2.0),
+        gis::framework::getParam<double>(params, "target_height", 0.0),
+        gis::framework::getParam<double>(params, "max_distance", 0.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doViewshedMulti(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runViewshedMultiProcess(
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<std::string>(params, "observer_points", ""),
         gis::framework::getParam<double>(params, "observer_height", 2.0),
         gis::framework::getParam<double>(params, "target_height", 0.0),
         gis::framework::getParam<double>(params, "max_distance", 0.0),

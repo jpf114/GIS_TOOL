@@ -54,6 +54,9 @@ private:
     gis::framework::Result doViewshed(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
+    gis::framework::Result doViewshedMulti(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
     gis::framework::Result doCutFill(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);

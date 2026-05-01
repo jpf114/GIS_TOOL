@@ -532,6 +532,19 @@ $cases += New-Case -Name "terrain_viewshed" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "terrain_viewshed_output.tif")
 )
 
+$cases += New-Case -Name "terrain_viewshed_multi" -CaseArgs @(
+    "terrain", "viewshed_multi",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_viewshed_multi_output.tif")),
+    "--band=1",
+    "--observer_points=116.006,39.994;116.020,39.980",
+    "--observer_height=2.0",
+    "--target_height=0.0",
+    "--max_distance=0.0"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_viewshed_multi_output.tif")
+)
+
 $cases += New-Case -Name "terrain_cut_fill" -CaseArgs @(
     "terrain", "cut_fill",
     ("--reference=" + $data.TerrainRaster),

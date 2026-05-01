@@ -2948,6 +2948,33 @@ TEST_F(PluginTest, TerrainViewshedExecution) {
     EXPECT_NEAR(readRasterPixel(output, 0, 0), 255.0f, 1e-4f);
 }
 
+TEST_F(PluginTest, TerrainViewshedMultiExecution) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createConstantRaster("terrain_viewshed_multi_input.tif", 32, 32, 10.0f);
+    const std::string output = utf8PathString(getTestDir() / "terrain_viewshed_multi_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("viewshed_multi");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["observer_points"] = std::string("116.006,39.994;116.026,39.974");
+    params["observer_height"] = 2.0;
+    params["target_height"] = 0.0;
+    params["max_distance"] = 0.0;
+
+    const auto result = p->execute(params, progress_);
+
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "viewshed_multi");
+    EXPECT_EQ(result.metadata.at("observer_count"), "2");
+    EXPECT_NEAR(readRasterPixel(output, 5, 5), 255.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 25, 25), 255.0f, 1e-4f);
+}
+
 TEST_F(PluginTest, TerrainCutFillExecution) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);

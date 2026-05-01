@@ -94,6 +94,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("watershed"), QStringLiteral("\346\265\201\345\237\237\345\210\222\345\210\206")},
         {QStringLiteral("profile_extract"), QStringLiteral("\345\211\226\351\235\242\346\217\220\345\217\226")},
         {QStringLiteral("viewshed"), QStringLiteral("\350\247\206\345\237\237\345\210\206\346\236\220")},
+        {QStringLiteral("viewshed_multi"), QStringLiteral("\345\244\232\347\202\271\350\247\206\345\237\237")},
         {QStringLiteral("cut_fill"), QStringLiteral("\345\241\253\346\214\226\346\226\271")},
         {QStringLiteral("reservoir_volume"), QStringLiteral("\345\272\223\345\256\271\350\256\241\347\256\227")},
         {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
@@ -370,6 +371,12 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawArc(QRectF(8, 8, 12, 12), 30 * 16, 120 * 16);
         painter.drawArc(QRectF(5, 5, 18, 18), 25 * 16, 130 * 16);
         painter.drawArc(QRectF(2, 2, 24, 24), 20 * 16, 140 * 16);
+    } else if (text == QStringLiteral("viewshed_multi")) {
+        painter.drawEllipse(QRectF(8, 10, 5, 5));
+        painter.drawEllipse(QRectF(18, 18, 5, 5));
+        painter.drawArc(QRectF(5, 7, 12, 12), 30 * 16, 120 * 16);
+        painter.drawArc(QRectF(15, 15, 12, 12), 30 * 16, 120 * 16);
+        painter.drawLine(QPointF(13, 14), QPointF(18, 18));
     } else if (text == QStringLiteral("cut_fill")) {
         painter.drawLine(QPointF(10, 24), QPointF(18, 14));
         painter.drawLine(QPointF(18, 14), QPointF(28, 24));
@@ -599,6 +606,12 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"target_height", {QStringLiteral("目标高度"), QStringLiteral("目标相对地表的离地高度，默认 0。")}},
                 {"max_distance", {QStringLiteral("最大距离"), QStringLiteral("填写 0 表示不限制；否则按数据坐标单位限制计算范围。")}},
             }},
+            {"viewshed_multi", {
+                {"observer_points", {QStringLiteral("观察点列表"), QStringLiteral("填写多个观察点，格式示例：116.0,40.0;116.01,39.99。")}},
+                {"observer_height", {QStringLiteral("观察点高度"), QStringLiteral("所有观察点共用同一离地高度，常用 1.5 或 2。")}},
+                {"target_height", {QStringLiteral("目标高度"), QStringLiteral("目标相对地表的离地高度，默认 0。")}},
+                {"max_distance", {QStringLiteral("最大距离"), QStringLiteral("填写 0 表示不限制；否则按数据坐标单位限制计算范围。")}},
+            }},
             {"cut_fill", {
                 {"reference", {QStringLiteral("参考 DEM"), QStringLiteral("填写基准地表 DEM，系统将输出 input - reference 的高差结果。")}},
             }},
@@ -696,6 +709,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"watershed", {QStringLiteral("流域划分"), QStringLiteral("按 D8 主流向自动生成流域编号栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
             {"profile_extract", {QStringLiteral("剖面提取"), QStringLiteral("沿折线路径采样 DEM 高程并导出 CSV。"), {"input", "output", "band", "profile_path"}, {"input", "output", "profile_path"}}},
             {"viewshed", {QStringLiteral("视域分析"), QStringLiteral("以单个观察点为中心计算可视域范围。"), {"input", "output", "band", "observer_x", "observer_y", "observer_height", "target_height", "max_distance"}, {"input", "output", "observer_x", "observer_y"}}},
+            {"viewshed_multi", {QStringLiteral("多点视域"), QStringLiteral("以多个观察点为中心合并可视域范围。"), {"input", "output", "band", "observer_points", "observer_height", "target_height", "max_distance"}, {"input", "output", "observer_points"}}},
             {"cut_fill", {QStringLiteral("填挖方"), QStringLiteral("比较当前 DEM 与参考 DEM，输出高差并统计填挖体积。"), {"reference", "input", "output", "band"}, {"reference", "input", "output"}}},
             {"reservoir_volume", {QStringLiteral("库容计算"), QStringLiteral("按指定水位计算蓄水深度，并统计淹没面积和库容。"), {"input", "output", "band", "water_level"}, {"input", "output", "water_level"}}},
         }},

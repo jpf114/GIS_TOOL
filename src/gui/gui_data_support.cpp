@@ -1022,7 +1022,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
                 return ActionValidationIssue{"output", "参数“输出文件”应使用 .csv"};
             }
         }
-        if (actionKey == "viewshed") {
+        if (actionKey == "viewshed_multi") {
+            const std::string pointsValue = stringParam("observer_points");
+            if (trim(pointsValue).empty()) {
+                return ActionValidationIssue{"observer_points", "参数“观察点列表”不能为空"};
+            }
+        }
+        if (actionKey == "viewshed" || actionKey == "viewshed_multi") {
             if (const auto observerHeight = doubleParamValue(params, "observer_height");
                 observerHeight.has_value() && *observerHeight < 0.0) {
                 return ActionValidationIssue{"observer_height", "参数“观察点高度”必须大于等于 0"};

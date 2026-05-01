@@ -308,6 +308,12 @@ QIcon makeSubFunctionIcon(const std::string& actionKey, bool active) {
         painter.drawArc(QRectF(3.6, 3.6, 4.8, 4.8), 30 * 16, 120 * 16);
         painter.drawArc(QRectF(2.0, 2.0, 8.0, 8.0), 25 * 16, 130 * 16);
         painter.drawArc(QRectF(0.8, 0.8, 10.4, 10.4), 20 * 16, 140 * 16);
+    } else if (actionKey == "viewshed_multi") {
+        painter.drawEllipse(QRectF(3.4, 4.4, 2.0, 2.0));
+        painter.drawEllipse(QRectF(8.4, 8.4, 2.0, 2.0));
+        painter.drawArc(QRectF(2.0, 3.0, 4.8, 4.8), 30 * 16, 120 * 16);
+        painter.drawArc(QRectF(7.0, 7.0, 4.8, 4.8), 30 * 16, 120 * 16);
+        painter.drawLine(QPointF(5.3, 6.1), QPointF(8.3, 8.5));
     } else if (actionKey == "cut_fill") {
         painter.drawLine(QPointF(3.0, 12.4), QPointF(7.0, 7.0));
         painter.drawLine(QPointF(7.0, 7.0), QPointF(12.6, 12.4));

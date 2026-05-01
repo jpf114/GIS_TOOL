@@ -710,14 +710,22 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {
     EXPECT_EQ(observerHeightIssue->key, "observer_height");
 
     params.clear();
+    params["observer_points"] = std::string("");
+    const auto observerPointsIssue = gis::gui::validateActionSpecificParams("terrain", "viewshed_multi", params);
+    ASSERT_TRUE(observerPointsIssue.has_value());
+    EXPECT_EQ(observerPointsIssue->key, "observer_points");
+
+    params.clear();
+    params["observer_points"] = std::string("116.0,40.0;116.1,39.9");
     params["target_height"] = -1.0;
-    const auto targetHeightIssue = gis::gui::validateActionSpecificParams("terrain", "viewshed", params);
+    const auto targetHeightIssue = gis::gui::validateActionSpecificParams("terrain", "viewshed_multi", params);
     ASSERT_TRUE(targetHeightIssue.has_value());
     EXPECT_EQ(targetHeightIssue->key, "target_height");
 
     params.clear();
+    params["observer_points"] = std::string("116.0,40.0;116.1,39.9");
     params["max_distance"] = -1.0;
-    const auto maxDistanceIssue = gis::gui::validateActionSpecificParams("terrain", "viewshed", params);
+    const auto maxDistanceIssue = gis::gui::validateActionSpecificParams("terrain", "viewshed_multi", params);
     ASSERT_TRUE(maxDistanceIssue.has_value());
     EXPECT_EQ(maxDistanceIssue->key, "max_distance");
 }
