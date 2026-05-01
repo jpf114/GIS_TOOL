@@ -702,6 +702,24 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {
     const auto profileOutputIssue = gis::gui::validateActionSpecificParams("terrain", "profile_extract", params);
     ASSERT_TRUE(profileOutputIssue.has_value());
     EXPECT_EQ(profileOutputIssue->key, "output");
+
+    params.clear();
+    params["observer_height"] = -1.0;
+    const auto observerHeightIssue = gis::gui::validateActionSpecificParams("terrain", "viewshed", params);
+    ASSERT_TRUE(observerHeightIssue.has_value());
+    EXPECT_EQ(observerHeightIssue->key, "observer_height");
+
+    params.clear();
+    params["target_height"] = -1.0;
+    const auto targetHeightIssue = gis::gui::validateActionSpecificParams("terrain", "viewshed", params);
+    ASSERT_TRUE(targetHeightIssue.has_value());
+    EXPECT_EQ(targetHeightIssue->key, "target_height");
+
+    params.clear();
+    params["max_distance"] = -1.0;
+    const auto maxDistanceIssue = gis::gui::validateActionSpecificParams("terrain", "viewshed", params);
+    ASSERT_TRUE(maxDistanceIssue.has_value());
+    EXPECT_EQ(maxDistanceIssue->key, "max_distance");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsAcceptsValidVectorConvertCombination) {

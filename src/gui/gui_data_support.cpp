@@ -1022,6 +1022,20 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
                 return ActionValidationIssue{"output", "参数“输出文件”应使用 .csv"};
             }
         }
+        if (actionKey == "viewshed") {
+            if (const auto observerHeight = doubleParamValue(params, "observer_height");
+                observerHeight.has_value() && *observerHeight < 0.0) {
+                return ActionValidationIssue{"observer_height", "参数“观察点高度”必须大于等于 0"};
+            }
+            if (const auto targetHeight = doubleParamValue(params, "target_height");
+                targetHeight.has_value() && *targetHeight < 0.0) {
+                return ActionValidationIssue{"target_height", "参数“目标高度”必须大于等于 0"};
+            }
+            if (const auto maxDistance = doubleParamValue(params, "max_distance");
+                maxDistance.has_value() && *maxDistance < 0.0) {
+                return ActionValidationIssue{"max_distance", "参数“最大距离”必须大于等于 0"};
+            }
+        }
         if (actionKey == "hillshade") {
             if (const auto azimuth = doubleParamValue(params, "azimuth");
                 azimuth.has_value() && (*azimuth < 0.0 || *azimuth > 360.0)) {
@@ -1272,6 +1286,8 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 adjustedSpec.maxValue = 90.0;
             } else if (spec.key == "accum_threshold") {
                 adjustedSpec.minValue = 0.000001;
+            } else if (spec.key == "observer_height" || spec.key == "target_height" || spec.key == "max_distance") {
+                adjustedSpec.minValue = 0.0;
             }
         }
         if (pluginName == "spindex" &&

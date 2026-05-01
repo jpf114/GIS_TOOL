@@ -4,6 +4,7 @@
 #include <gis/core/opencv_wrapper.h>
 
 #include <cpl_conv.h>
+#include <gdal_alg.h>
 #include <gdal_priv.h>
 #include <gdal_utils.h>
 #include <opencv2/imgproc.hpp>
@@ -660,6 +661,87 @@ gis::framework::Result runProfileExtractProcess(
     return result;
 }
 
+gis::framework::Result runViewshedProcess(
+    const std::string& input,
+    const std::string& output,
+    int band,
+    double observerX,
+    double observerY,
+    double observerHeight,
+    double targetHeight,
+    double maxDistance,
+    gis::core::ProgressReporter& progress) {
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+    if (observerHeight < 0.0) return gis::framework::Result::fail("observer_height must be greater than or equal to 0");
+    if (targetHeight < 0.0) return gis::framework::Result::fail("target_height must be greater than or equal to 0");
+    if (maxDistance < 0.0) return gis::framework::Result::fail("max_distance must be greater than or equal to 0");
+
+    progress.onProgress(0.1);
+    auto srcDs = gis::core::openRaster(input, true);
+    if (!srcDs) {
+        return gis::framework::Result::fail("Cannot open DEM raster: " + input);
+    }
+
+    auto* srcBand = srcDs->GetRasterBand(band);
+    if (!srcBand) {
+        return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
+    }
+
+    const auto parent = std::filesystem::path(output).parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+
+    progress.onMessage("Running terrain action: Viewshed");
+    progress.onProgress(0.45);
+
+    int usageError = FALSE;
+    GDALDatasetH outHandle = GDALViewshedGenerate(
+        GDALRasterBand::ToHandle(srcBand),
+        "GTiff",
+        output.c_str(),
+        nullptr,
+        observerX,
+        observerY,
+        observerHeight,
+        targetHeight,
+        255.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        GVM_Edge,
+        maxDistance,
+        nullptr,
+        nullptr,
+        GVOT_NORMAL,
+        nullptr);
+
+    if (!outHandle || usageError) {
+        if (outHandle) {
+            GDALClose(outHandle);
+        }
+        return gis::framework::Result::fail(
+            "Viewshed processing failed: " + std::string(CPLGetLastErrorMsg()));
+    }
+
+    GDALClose(outHandle);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("Viewshed completed", output);
+    result.metadata["action"] = "viewshed";
+    result.metadata["band"] = std::to_string(band);
+    result.metadata["observer_x"] = std::to_string(observerX);
+    result.metadata["observer_y"] = std::to_string(observerY);
+    result.metadata["observer_height"] = std::to_string(observerHeight);
+    result.metadata["target_height"] = std::to_string(targetHeight);
+    result.metadata["max_distance"] = std::to_string(maxDistance);
+    return result;
+}
+
 } // namespace
 
 std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
@@ -668,7 +750,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的地形分析子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract"}
+            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入 DEM 栅格路径",
@@ -702,6 +784,26 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "profile_path", "剖面路径", "路径字符串，格式为 x1,y1;x2,y2;...",
             gis::framework::ParamType::String, false, std::string{}
         },
+        gis::framework::ParamSpec{
+            "observer_x", "观察点 X", "观察点地理坐标 X",
+            gis::framework::ParamType::Double, false, double{0.0}
+        },
+        gis::framework::ParamSpec{
+            "observer_y", "观察点 Y", "观察点地理坐标 Y",
+            gis::framework::ParamType::Double, false, double{0.0}
+        },
+        gis::framework::ParamSpec{
+            "observer_height", "观察点高度", "相对地表的观察点高度",
+            gis::framework::ParamType::Double, false, double{2.0}
+        },
+        gis::framework::ParamSpec{
+            "target_height", "目标高度", "相对地表的目标高度",
+            gis::framework::ParamType::Double, false, double{0.0}
+        },
+        gis::framework::ParamSpec{
+            "max_distance", "最大距离", "视域分析最大距离，0 表示不限制",
+            gis::framework::ParamType::Double, false, double{0.0}
+        },
     };
 }
 
@@ -720,6 +822,7 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "stream_extract") return doStreamExtract(params, progress);
     if (action == "watershed") return doWatershed(params, progress);
     if (action == "profile_extract") return doProfileExtract(params, progress);
+    if (action == "viewshed") return doViewshed(params, progress);
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
@@ -872,6 +975,21 @@ gis::framework::Result TerrainPlugin::doProfileExtract(
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),
         gis::framework::getParam<std::string>(params, "profile_path", ""),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doViewshed(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runViewshedProcess(
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "observer_x", 0.0),
+        gis::framework::getParam<double>(params, "observer_y", 0.0),
+        gis::framework::getParam<double>(params, "observer_height", 2.0),
+        gis::framework::getParam<double>(params, "target_height", 0.0),
+        gis::framework::getParam<double>(params, "max_distance", 0.0),
         progress);
 }
 

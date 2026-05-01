@@ -2921,6 +2921,33 @@ TEST_F(PluginTest, TerrainProfileExtractExecution) {
     EXPECT_NE(content.find("116.001"), std::string::npos);
 }
 
+TEST_F(PluginTest, TerrainViewshedExecution) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createConstantRaster("terrain_viewshed_input.tif", 32, 32, 10.0f);
+    const std::string output = utf8PathString(getTestDir() / "terrain_viewshed_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("viewshed");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["observer_x"] = 116.016;
+    params["observer_y"] = 39.984;
+    params["observer_height"] = 2.0;
+    params["target_height"] = 0.0;
+    params["max_distance"] = 0.0;
+
+    const auto result = p->execute(params, progress_);
+
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "viewshed");
+    EXPECT_NEAR(readRasterPixel(output, 16, 16), 255.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 0, 0), 255.0f, 1e-4f);
+}
+
 TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {
     auto* p = mgr_.find("matching");
     ASSERT_NE(p, nullptr);

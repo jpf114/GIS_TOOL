@@ -518,6 +518,20 @@ $cases += New-Case -Name "terrain_profile_extract" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "terrain_profile_output.csv")
 )
 
+$cases += New-Case -Name "terrain_viewshed" -CaseArgs @(
+    "terrain", "viewshed",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_viewshed_output.tif")),
+    "--band=1",
+    "--observer_x=116.012",
+    "--observer_y=39.988",
+    "--observer_height=2.0",
+    "--target_height=0.0",
+    "--max_distance=0.0"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_viewshed_output.tif")
+)
+
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
     "processing", "pansharpen",
     ("--input=" + $data.PansharpenMs),
