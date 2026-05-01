@@ -20,7 +20,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"threshold", "filter", "enhance", "band_math", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "kmeans"}
+            {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "kmeans"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -75,10 +75,6 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
         gis::framework::ParamSpec{
             "gamma", "Gamma值", "Gamma校正参数",
             gis::framework::ParamType::Double, false, double{1.0}
-        },
-        gis::framework::ParamSpec{
-            "expression", "表达式", "波段运算表达式(如B1+B2, B1*0.5+B2*0.5)",
-            gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
             "edge_method", "边缘检测方法", "边缘检测算子",
@@ -184,7 +180,6 @@ gis::framework::Result ProcessingPlugin::execute(
     if (action == "threshold")       return doThreshold(params, progress);
     if (action == "filter")          return doFilter(params, progress);
     if (action == "enhance")         return doEnhance(params, progress);
-    if (action == "band_math")       return doBandMath(params, progress);
     if (action == "stats")           return doStats(params, progress);
     if (action == "edge")            return doEdge(params, progress);
     if (action == "contour")         return doContour(params, progress);
@@ -383,121 +378,6 @@ gis::framework::Result ProcessingPlugin::doEnhance(
 
     progress.onProgress(0.7);
     return writeMatOutput(result, input, output, band, progress);
-}
-
-static double evalExpression(const std::string& expr,
-                              const std::map<std::string, double>& bandValues) {
-    std::string e = expr;
-    for (auto& [key, val] : bandValues) {
-        std::string placeholder = key;
-        std::string replacement = std::to_string(val);
-        size_t pos = 0;
-        while ((pos = e.find(placeholder, pos)) != std::string::npos) {
-            e.replace(pos, placeholder.length(), replacement);
-            pos += replacement.length();
-        }
-    }
-
-    try {
-        std::stack<double> vals;
-        std::stack<char> ops;
-        auto precedence = [](char op) -> int {
-            if (op == '+' || op == '-') return 1;
-            if (op == '*' || op == '/') return 2;
-            return 0;
-        };
-        auto applyOp = [](double a, double b, char op) -> double {
-            switch (op) {
-                case '+': return a + b;
-                case '-': return a - b;
-                case '*': return a * b;
-                case '/': return (std::abs(b) < 1e-15) ? 0.0 : a / b;
-                default: return 0.0;
-            }
-        };
-
-        size_t i = 0;
-        while (i < e.size()) {
-            if (std::isspace(e[i])) { i++; continue; }
-            if (std::isdigit(e[i]) || e[i] == '.') {
-                size_t start = i;
-                while (i < e.size() && (std::isdigit(e[i]) || e[i] == '.')) i++;
-                vals.push(std::stod(e.substr(start, i - start)));
-            } else if (e[i] == '(') {
-                ops.push('('); i++;
-            } else if (e[i] == ')') {
-                while (!ops.empty() && ops.top() != '(') {
-                    double b = vals.top(); vals.pop();
-                    double a = vals.top(); vals.pop();
-                    vals.push(applyOp(a, b, ops.top())); ops.pop();
-                }
-                if (!ops.empty()) ops.pop();
-                i++;
-            } else if (e[i] == '+' || e[i] == '-' || e[i] == '*' || e[i] == '/') {
-                while (!ops.empty() && precedence(ops.top()) >= precedence(e[i])) {
-                    double b = vals.top(); vals.pop();
-                    double a = vals.top(); vals.pop();
-                    vals.push(applyOp(a, b, ops.top())); ops.pop();
-                }
-                ops.push(e[i]); i++;
-            } else {
-                i++;
-            }
-        }
-        while (!ops.empty()) {
-            double b = vals.top(); vals.pop();
-            double a = vals.top(); vals.pop();
-            vals.push(applyOp(a, b, ops.top())); ops.pop();
-        }
-        return vals.empty() ? 0.0 : vals.top();
-    } catch (...) {
-        return 0.0;
-    }
-}
-
-gis::framework::Result ProcessingPlugin::doBandMath(
-    const std::map<std::string, gis::framework::ParamValue>& params,
-    gis::core::ProgressReporter& progress) {
-
-    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
-    std::string output = gis::framework::getParam<std::string>(params, "output", "");
-    std::string expression = gis::framework::getParam<std::string>(params, "expression", "");
-
-    if (input.empty())     return gis::framework::Result::fail("input is required");
-    if (output.empty())    return gis::framework::Result::fail("output is required");
-    if (expression.empty()) return gis::framework::Result::fail("expression is required (e.g., B1+B2, B1*0.5+B2*0.5)");
-
-    progress.onProgress(0.1);
-    auto ds = gis::core::openRaster(input, true);
-    int width  = ds->GetRasterXSize();
-    int height = ds->GetRasterYSize();
-    int bands  = ds->GetRasterCount();
-
-    progress.onMessage("Reading " + std::to_string(bands) + " bands...");
-    std::vector<cv::Mat> bandMats;
-    for (int b = 1; b <= bands; ++b) {
-        bandMats.push_back(gis::core::gdalBandToMat(ds.get(), b));
-    }
-    progress.onProgress(0.4);
-
-    progress.onMessage("Evaluating expression: " + expression);
-    cv::Mat result(height, width, CV_32F);
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            std::map<std::string, double> bandValues;
-            for (int b = 0; b < bands; ++b) {
-                bandValues["B" + std::to_string(b + 1)] = bandMats[b].at<float>(y, x);
-            }
-            result.at<float>(y, x) = static_cast<float>(evalExpression(expression, bandValues));
-        }
-        if (y % 100 == 0) {
-            progress.onProgress(0.4 + 0.5 * static_cast<double>(y) / height);
-        }
-    }
-
-    progress.onProgress(0.9);
-    return writeMatOutput(result, input, output, 1, progress);
 }
 
 gis::framework::Result ProcessingPlugin::doStats(

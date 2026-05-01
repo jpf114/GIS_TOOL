@@ -2530,8 +2530,8 @@ TEST_F(PluginTest, VectorConvertCreatesMissingParentDirectory) {
     EXPECT_TRUE(fs::exists(output));
 }
 
-TEST_F(PluginTest, ProcessingBandMathExecution) {
-    auto* p = mgr_.find("processing");
+TEST_F(PluginTest, RasterMathBandMathExecution) {
+    auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);
 
     std::string input = createTestRaster("e2e_bandmath_input.tif", 30, 30, 2);

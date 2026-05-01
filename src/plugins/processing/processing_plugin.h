@@ -29,10 +29,6 @@ private:
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
 
-    gis::framework::Result doBandMath(
-        const std::map<std::string, gis::framework::ParamValue>& params,
-        gis::core::ProgressReporter& progress);
-
     gis::framework::Result doStats(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);

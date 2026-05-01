@@ -1,5 +1,5 @@
 if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
-    message(FATAL_ERROR "Missing required GUI processing band-math regression arguments.")
+    message(FATAL_ERROR "Missing required GUI raster-math band-math regression arguments.")
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
@@ -12,7 +12,7 @@ gis_gui_generate_test_tiff("${INPUT_PATH}")
 execute_process(
     COMMAND "${GUI_PATH}"
         -platform offscreen
-        --select-plugin processing
+        --select-plugin raster_math
         --select-action band_math
         --set-param "input=${INPUT_PATH}"
         --set-param "output=${OUTPUT_PATH}"
@@ -27,7 +27,7 @@ execute_process(
 )
 
 gis_gui_assert_regression_result(
-    "GUI processing band-math regression"
+    "GUI raster-math band-math regression"
     "${GUI_EXIT_CODE}"
     "${GUI_STDOUT}"
     "${GUI_STDERR}"

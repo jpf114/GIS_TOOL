@@ -8,6 +8,7 @@ set(GIS_PLUGIN_TARGETS
     plugin_cutting
     plugin_matching
     plugin_processing
+    plugin_raster_math
     plugin_classification
     plugin_spindex
     plugin_utility

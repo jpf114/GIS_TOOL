@@ -59,6 +59,7 @@ add_dependencies(gis_tests
     plugin_cutting
     plugin_matching
     plugin_processing
+    plugin_raster_math
     plugin_classification
     plugin_spindex
     plugin_utility
@@ -407,12 +408,12 @@ if(TARGET gis-gui)
     )
 
     add_test(
-        NAME gui_processing_band_math_offscreen
+        NAME gui_raster_math_band_math_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
-            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_band_math/output.tif
-            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_band_math/gui_processing_band_math.png
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_band_math_regression.cmake
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_math_band_math/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_math_band_math/gui_raster_math_band_math.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_math_band_math_regression.cmake
     )
 
     add_test(

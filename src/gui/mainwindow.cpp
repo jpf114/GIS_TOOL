@@ -183,6 +183,12 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawLine(QPointF(12, 24), QPointF(17, 18));
         painter.drawLine(QPointF(17, 18), QPointF(21, 21));
         painter.drawLine(QPointF(21, 21), QPointF(26, 14));
+    } else if (text == QStringLiteral("raster_math")) {
+        painter.drawRect(QRectF(10, 10, 18, 18));
+        painter.drawLine(QPointF(19, 10), QPointF(19, 28));
+        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
+        painter.drawLine(QPointF(12, 12), QPointF(15, 15));
+        painter.drawLine(QPointF(15, 12), QPointF(12, 15));
     } else if (text == QStringLiteral("cutting") || text == QStringLiteral("clip")) {
         drawScissors();
     } else if (text == QStringLiteral("mosaic")) {
@@ -536,7 +542,6 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"threshold", {QStringLiteral("阈值分割"), QStringLiteral("按指定阈值方法生成分割结果。"), {"input", "output", "band", "method", "threshold_value", "max_value"}, {"input", "output"}}},
             {"filter", {QStringLiteral("空间滤波"), QStringLiteral("对影像执行平滑、形态学等滤波操作。"), {"input", "output", "band", "filter_type", "kernel_size", "sigma"}, {"input", "output"}}},
             {"enhance", {QStringLiteral("影像增强"), QStringLiteral("执行均衡化、CLAHE、归一化、Gamma 等增强。"), {"input", "output", "band", "enhance_type", "clip_limit", "gamma"}, {"input", "output"}}},
-            {"band_math", {QStringLiteral("波段运算"), QStringLiteral("按表达式对多波段影像进行计算。"), {"input", "output", "expression"}, {"input", "output", "expression"}}},
             {"stats", {QStringLiteral("统计信息"), QStringLiteral("统计指定波段的基础数值信息。"), {"input", "band"}, {"input"}}},
             {"edge", {QStringLiteral("边缘检测"), QStringLiteral("执行 Canny、Sobel、Laplacian、Scharr 等边缘检测。"), {"input", "output", "band", "edge_method", "low_threshold", "high_threshold", "sobel_dx", "sobel_dy"}, {"input", "output"}}},
             {"contour", {QStringLiteral("轮廓提取"), QStringLiteral("根据轮廓面积阈值提取目标轮廓。"), {"input", "output", "band", "min_area"}, {"input", "output"}}},
@@ -545,6 +550,9 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"hough", {QStringLiteral("霍夫变换"), QStringLiteral("检测直线或圆形结构。"), {"input", "output", "band", "hough_type", "hough_threshold", "min_line_length", "max_line_gap", "min_radius", "max_radius", "circle_param2"}, {"input", "output"}}},
             {"watershed", {QStringLiteral("分水岭分割"), QStringLiteral("执行分水岭分割，可选外部标记输入。"), {"input", "output", "band", "marker_input"}, {"input", "output"}}},
             {"kmeans", {QStringLiteral("K-Means 分割"), QStringLiteral("按聚类数对影像全部波段执行 K-Means 分割。"), {"input", "output", "k", "max_iter", "epsilon_kmeans"}, {"input", "output"}}},
+        }},
+        {"raster_math", {
+            {"band_math", {QStringLiteral("波段运算"), QStringLiteral("按表达式对多波段影像进行计算。"), {"input", "output", "expression"}, {"input", "output", "expression"}}},
         }},
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
@@ -954,7 +962,7 @@ void MainWindow::loadPlugins() {
     }
 
     static const std::vector<std::string> preferredOrder = {
-        "projection", "cutting", "matching", "processing", "classification", "utility", "vector"
+        "projection", "cutting", "matching", "processing", "raster_math", "classification", "utility", "vector"
     };
 
     std::vector<gis::framework::IGisPlugin*> plugins = pluginManager_.plugins();

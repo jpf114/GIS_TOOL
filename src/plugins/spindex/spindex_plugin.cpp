@@ -279,7 +279,7 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
             {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi", "custom_index"}
         },
         gis::framework::ParamSpec{
-            "preset", "内置示例", "选择一个常用指数表达式示例",
+            "preset", "表达式预设", "可选择内置或自定义表达式预设",
             gis::framework::ParamType::Enum, false, std::string{"none"},
             int{0}, int{0},
             gis::core::spindexCustomIndexPresetValues()

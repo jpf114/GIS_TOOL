@@ -720,7 +720,7 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
         return "请输入空格分隔层级，例如 2 4 8 16";
     }
 
-    if (pluginName == "processing" && action == "band_math" && spec.key == "expression") {
+    if (pluginName == "raster_math" && action == "band_math" && spec.key == "expression") {
         return "请输入表达式，例如 B1+B2 或 B1*0.5+B2*0.5";
     }
     if (pluginName == "spindex" && action == "custom_index" && spec.key == "expression") {
