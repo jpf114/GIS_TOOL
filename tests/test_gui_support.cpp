@@ -672,6 +672,14 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {
     const auto altitudeIssue = gis::gui::validateActionSpecificParams("terrain", "hillshade", params);
     ASSERT_TRUE(altitudeIssue.has_value());
     EXPECT_EQ(altitudeIssue->key, "altitude");
+
+    params.clear();
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    params["accum_threshold"] = 0.0;
+    const auto thresholdIssue = gis::gui::validateActionSpecificParams("terrain", "stream_extract", params);
+    ASSERT_TRUE(thresholdIssue.has_value());
+    EXPECT_EQ(thresholdIssue->key, "accum_threshold");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsAcceptsValidVectorConvertCombination) {
@@ -885,22 +893,24 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
         {"band", "波段", "", gis::framework::ParamType::Int, false},
         {"z_factor", "高程缩放", "", gis::framework::ParamType::Double, false},
         {"azimuth", "方位角", "", gis::framework::ParamType::Double, false},
-        {"altitude", "高度角", "", gis::framework::ParamType::Double, false}
+        {"altitude", "高度角", "", gis::framework::ParamType::Double, false},
+        {"accum_threshold", "汇流阈值", "", gis::framework::ParamType::Double, false}
     };
     const auto terrainFiltered = gis::gui::buildEffectiveGuiParamSpecs(
         "terrain",
-        "hillshade",
+        "stream_extract",
         terrainSpecs,
-        {"band", "z_factor", "azimuth", "altitude"},
+        {"band", "z_factor", "azimuth", "altitude", "accum_threshold"},
         {});
 
-    ASSERT_EQ(terrainFiltered.size(), 4u);
+    ASSERT_EQ(terrainFiltered.size(), 5u);
     EXPECT_EQ(std::get<int>(terrainFiltered[0].minValue), 1);
     EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[1].minValue), 0.000001);
     EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[2].minValue), 0.0);
     EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[2].maxValue), 360.0);
     EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[3].minValue), 0.0);
     EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[3].maxValue), 90.0);
+    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[4].minValue), 0.000001);
 }
 
 TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {

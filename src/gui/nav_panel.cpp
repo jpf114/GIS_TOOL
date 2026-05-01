@@ -288,6 +288,11 @@ QIcon makeSubFunctionIcon(const std::string& actionKey, bool active) {
         painter.drawLine(QPointF(3.6, 4.8), QPointF(8.0, 9.2));
         painter.drawLine(QPointF(12.4, 4.8), QPointF(8.0, 9.2));
         painter.drawLine(QPointF(8.0, 9.2), QPointF(8.0, 13.0));
+    } else if (actionKey == "stream_extract") {
+        painter.drawLine(QPointF(3.6, 4.8), QPointF(8.0, 9.2));
+        painter.drawLine(QPointF(12.4, 4.8), QPointF(8.0, 9.2));
+        painter.drawLine(QPointF(8.0, 9.2), QPointF(8.0, 13.0));
+        painter.drawEllipse(QRectF(6.8, 11.0, 2.4, 2.4));
     } else if (actionKey == "ndvi") {
         painter.drawEllipse(QRectF(4.2, 2.8, 7.0, 10.4));
         painter.drawLine(QPointF(7.8, 4.0), QPointF(7.8, 12.0));

@@ -211,12 +211,16 @@ gis::framework::Result runHydrologyTerrainProcess(
     const std::string& output,
     int band,
     double zFactor,
+    double accumulationThreshold,
     gis::core::ProgressReporter& progress) {
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
     if (zFactor <= 0.0) return gis::framework::Result::fail("z_factor must be greater than 0");
+    if ((action == "stream_extract") && accumulationThreshold <= 0.0) {
+        return gis::framework::Result::fail("accum_threshold must be greater than 0");
+    }
 
     progress.onProgress(0.1);
     auto srcDs = gis::core::openRaster(input, true);
@@ -369,6 +373,33 @@ gis::framework::Result runHydrologyTerrainProcess(
         if (hasNoData) {
             result.setTo(static_cast<float>(noDataValue), noDataMask);
         }
+    } else if (action == "stream_extract") {
+        const auto accumulationResult = runHydrologyTerrainProcess(
+            "flow_accumulation",
+            "FlowAccumulation",
+            input,
+            output,
+            band,
+            zFactor,
+            0.0,
+            progress);
+        if (!accumulationResult.success) {
+            return accumulationResult;
+        }
+
+        auto accumulationDs = gis::core::openRaster(output, true);
+        if (!accumulationDs) {
+            return gis::framework::Result::fail("Cannot open accumulation output: " + output);
+        }
+
+        cv::Mat accumulation = gis::core::gdalBandToMat(accumulationDs.get(), 1);
+        cv::Mat streamMask;
+        cv::compare(accumulation, static_cast<float>(accumulationThreshold), streamMask, cv::CMP_GE);
+        result = cv::Mat::zeros(accumulation.size(), CV_32F);
+        result.setTo(1.0f, streamMask);
+        if (hasNoData) {
+            result.setTo(static_cast<float>(noDataValue), noDataMask);
+        }
     } else {
         return gis::framework::Result::fail("Unknown hydrology terrain action: " + action);
     }
@@ -382,6 +413,9 @@ gis::framework::Result runHydrologyTerrainProcess(
     terrainResult.metadata["action"] = action;
     terrainResult.metadata["band"] = std::to_string(band);
     terrainResult.metadata["z_factor"] = std::to_string(zFactor);
+    if (action == "stream_extract") {
+        terrainResult.metadata["accum_threshold"] = std::to_string(accumulationThreshold);
+    }
     return terrainResult;
 }
 
@@ -393,7 +427,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的地形分析子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation"}
+            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入 DEM 栅格路径",
@@ -419,6 +453,10 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "altitude", "高度角", "山体阴影光源高度角，单位为度",
             gis::framework::ParamType::Double, false, double{45.0}
         },
+        gis::framework::ParamSpec{
+            "accum_threshold", "汇流阈值", "河网提取时使用的汇流累积量阈值",
+            gis::framework::ParamType::Double, false, double{10.0}
+        },
     };
 }
 
@@ -434,6 +472,7 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "fill_sinks") return doFillSinks(params, progress);
     if (action == "flow_direction") return doFlowDirection(params, progress);
     if (action == "flow_accumulation") return doFlowAccumulation(params, progress);
+    if (action == "stream_extract") return doStreamExtract(params, progress);
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
@@ -518,6 +557,21 @@ gis::framework::Result TerrainPlugin::doFillSinks(
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),
         gis::framework::getParam<double>(params, "z_factor", 1.0),
+        0.0,
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doStreamExtract(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runHydrologyTerrainProcess(
+        "stream_extract",
+        "StreamExtract",
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        gis::framework::getParam<double>(params, "accum_threshold", 10.0),
         progress);
 }
 
@@ -531,6 +585,7 @@ gis::framework::Result TerrainPlugin::doFlowDirection(
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),
         gis::framework::getParam<double>(params, "z_factor", 1.0),
+        0.0,
         progress);
 }
 
@@ -544,6 +599,7 @@ gis::framework::Result TerrainPlugin::doFlowAccumulation(
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),
         gis::framework::getParam<double>(params, "z_factor", 1.0),
+        0.0,
         progress);
 }
 

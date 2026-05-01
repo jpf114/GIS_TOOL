@@ -1003,6 +1003,12 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
             zFactor.has_value() && *zFactor <= 0.0) {
             return ActionValidationIssue{"z_factor", "参数“高程缩放”必须大于 0"};
         }
+        if (actionKey == "stream_extract") {
+            if (const auto threshold = doubleParamValue(params, "accum_threshold");
+                threshold.has_value() && *threshold <= 0.0) {
+                return ActionValidationIssue{"accum_threshold", "参数“汇流阈值”必须大于 0"};
+            }
+        }
         if (actionKey == "hillshade") {
             if (const auto azimuth = doubleParamValue(params, "azimuth");
                 azimuth.has_value() && (*azimuth < 0.0 || *azimuth > 360.0)) {
@@ -1251,6 +1257,8 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
             } else if (spec.key == "altitude") {
                 adjustedSpec.minValue = 0.0;
                 adjustedSpec.maxValue = 90.0;
+            } else if (spec.key == "accum_threshold") {
+                adjustedSpec.minValue = 0.000001;
             }
         }
         if (pluginName == "spindex" &&

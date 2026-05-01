@@ -487,6 +487,17 @@ $cases += New-Case -Name "terrain_flow_accumulation" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "terrain_flow_accumulation_output.tif")
 )
 
+$cases += New-Case -Name "terrain_stream_extract" -CaseArgs @(
+    "terrain", "stream_extract",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_stream_extract_output.tif")),
+    "--band=1",
+    "--z_factor=1",
+    "--accum_threshold=10"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_stream_extract_output.tif")
+)
+
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
     "processing", "pansharpen",
     ("--input=" + $data.PansharpenMs),
