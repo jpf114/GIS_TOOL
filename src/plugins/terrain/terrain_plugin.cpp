@@ -742,71 +742,156 @@ gis::framework::Result runViewshedProcess(
     return result;
 }
 
+gis::framework::Result runCutFillProcess(
+    const std::string& input,
+    const std::string& reference,
+    const std::string& output,
+    int band,
+    gis::core::ProgressReporter& progress) {
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (reference.empty()) return gis::framework::Result::fail("reference is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+
+    progress.onProgress(0.1);
+    auto inputDs = gis::core::openRaster(input, true);
+    auto referenceDs = gis::core::openRaster(reference, true);
+    if (!inputDs) {
+        return gis::framework::Result::fail("Cannot open DEM raster: " + input);
+    }
+    if (!referenceDs) {
+        return gis::framework::Result::fail("Cannot open reference raster: " + reference);
+    }
+    if (!inputDs->GetRasterBand(band)) {
+        return gis::framework::Result::fail("Cannot get input band " + std::to_string(band));
+    }
+    if (!referenceDs->GetRasterBand(band)) {
+        return gis::framework::Result::fail("Cannot get reference band " + std::to_string(band));
+    }
+    if (inputDs->GetRasterXSize() != referenceDs->GetRasterXSize() ||
+        inputDs->GetRasterYSize() != referenceDs->GetRasterYSize()) {
+        return gis::framework::Result::fail("input and reference raster size must match");
+    }
+
+    double inputGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    double referenceGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    if (inputDs->GetGeoTransform(inputGt) == CE_None &&
+        referenceDs->GetGeoTransform(referenceGt) == CE_None) {
+        for (int i = 0; i < 6; ++i) {
+            if (std::abs(inputGt[i] - referenceGt[i]) > 1e-9) {
+                return gis::framework::Result::fail("input and reference geotransform must match");
+            }
+        }
+    }
+
+    progress.onMessage("Reading terrain raster bands");
+    cv::Mat inputMat = gis::core::gdalBandToMat(inputDs.get(), band);
+    cv::Mat referenceMat = gis::core::gdalBandToMat(referenceDs.get(), band);
+    progress.onProgress(0.45);
+
+    cv::Mat diff = inputMat - referenceMat;
+
+    const double pixelArea = std::abs(inputGt[1] * inputGt[5] - inputGt[2] * inputGt[4]);
+    double fillVolume = 0.0;
+    double cutVolume = 0.0;
+    for (int y = 0; y < diff.rows; ++y) {
+        const float* row = diff.ptr<float>(y);
+        for (int x = 0; x < diff.cols; ++x) {
+            const double value = row[x];
+            if (value > 0.0) {
+                fillVolume += value * pixelArea;
+            } else if (value < 0.0) {
+                cutVolume += (-value) * pixelArea;
+            }
+        }
+    }
+
+    const auto parent = std::filesystem::path(output).parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+    progress.onMessage("Writing terrain output: " + output);
+    gis::core::matToGdalTiff(diff, inputDs.get(), output, band);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("CutFill completed", output);
+    result.metadata["action"] = "cut_fill";
+    result.metadata["band"] = std::to_string(band);
+    result.metadata["fill_volume"] = std::to_string(fillVolume);
+    result.metadata["cut_volume"] = std::to_string(cutVolume);
+    result.metadata["net_volume"] = std::to_string(fillVolume - cutVolume);
+    return result;
+}
+
 } // namespace
 
 std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "选择要执行的地形分析子功能",
+            "action", "???", "?????????????",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed"}
+            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "cut_fill"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入 DEM 栅格路径",
+            "input", "????", "?? DEM ????",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "输出 GeoTIFF 路径",
+            "reference", "????", "?? DEM ????",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "output", "????", "??????",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "band", "波段序号", "参与计算的高程波段序号，从 1 开始",
+            "band", "????", "????????????? 1 ??",
             gis::framework::ParamType::Int, false, int{1}
         },
         gis::framework::ParamSpec{
-            "z_factor", "高程缩放", "高程与平面单位换算系数",
+            "z_factor", "????", "???????????",
             gis::framework::ParamType::Double, false, double{1.0}
         },
         gis::framework::ParamSpec{
-            "azimuth", "方位角", "山体阴影光源方位角，单位为度",
+            "azimuth", "???", "??????????????",
             gis::framework::ParamType::Double, false, double{315.0}
         },
         gis::framework::ParamSpec{
-            "altitude", "高度角", "山体阴影光源高度角，单位为度",
+            "altitude", "???", "??????????????",
             gis::framework::ParamType::Double, false, double{45.0}
         },
         gis::framework::ParamSpec{
-            "accum_threshold", "汇流阈值", "河网提取时使用的汇流累积量阈值",
+            "accum_threshold", "????", "???????????????",
             gis::framework::ParamType::Double, false, double{10.0}
         },
         gis::framework::ParamSpec{
-            "profile_path", "剖面路径", "路径字符串，格式为 x1,y1;x2,y2;...",
+            "profile_path", "????", "????????? x1,y1;x2,y2;...",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "observer_x", "观察点 X", "观察点地理坐标 X",
+            "observer_x", "??? X", "??????? X",
             gis::framework::ParamType::Double, false, double{0.0}
         },
         gis::framework::ParamSpec{
-            "observer_y", "观察点 Y", "观察点地理坐标 Y",
+            "observer_y", "??? Y", "??????? Y",
             gis::framework::ParamType::Double, false, double{0.0}
         },
         gis::framework::ParamSpec{
-            "observer_height", "观察点高度", "相对地表的观察点高度",
+            "observer_height", "?????", "??????????",
             gis::framework::ParamType::Double, false, double{2.0}
         },
         gis::framework::ParamSpec{
-            "target_height", "目标高度", "相对地表的目标高度",
+            "target_height", "????", "?????????",
             gis::framework::ParamType::Double, false, double{0.0}
         },
         gis::framework::ParamSpec{
-            "max_distance", "最大距离", "视域分析最大距离，0 表示不限制",
+            "max_distance", "????", "?????????0 ?????",
             gis::framework::ParamType::Double, false, double{0.0}
         },
     };
 }
-
 gis::framework::Result TerrainPlugin::execute(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -823,6 +908,7 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "watershed") return doWatershed(params, progress);
     if (action == "profile_extract") return doProfileExtract(params, progress);
     if (action == "viewshed") return doViewshed(params, progress);
+    if (action == "cut_fill") return doCutFill(params, progress);
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
@@ -990,6 +1076,17 @@ gis::framework::Result TerrainPlugin::doViewshed(
         gis::framework::getParam<double>(params, "observer_height", 2.0),
         gis::framework::getParam<double>(params, "target_height", 0.0),
         gis::framework::getParam<double>(params, "max_distance", 0.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doCutFill(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runCutFillProcess(
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "reference", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
         progress);
 }
 
