@@ -99,6 +99,13 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
 std::string buildTextParamPlaceholder(const std::string& pluginName,
                                       const std::string& action,
                                       const gis::framework::ParamSpec& spec);
+std::vector<std::string> spindexCustomIndexPresetValues();
+std::string spindexCustomIndexPresetExpression(const std::string& presetKey);
+DerivedOutputUpdate computeDerivedExpressionUpdate(const std::string& currentValue,
+                                                   const std::string& lastAutoValue,
+                                                   const std::string& pluginName,
+                                                   const std::string& action,
+                                                   const std::string& presetKey);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
 std::string localizeResultMessage(const std::string& message);
 std::string buildResultSummaryText(const gis::framework::Result& result);

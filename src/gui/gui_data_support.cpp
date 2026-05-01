@@ -165,6 +165,20 @@ std::string filterForProjectionOutputs() {
     return "GeoTIFF (*.tif *.tiff);;GeoPackage (*.gpkg);;GeoJSON (*.geojson *.json);;Shapefile (*.shp);;KML (*.kml);;CSV (*.csv);;所有文件 (*)";
 }
 
+const std::vector<std::string>& spindexPresetStorage() {
+    static const std::vector<std::string> kPresets = {
+        "none",
+        "ndvi_alias",
+        "ndwi_alias",
+        "mndwi_alias",
+        "ndbi_alias",
+        "gndvi_alias",
+        "savi_alias",
+        "evi_alias"
+    };
+    return kPresets;
+}
+
 std::string firstInputPath(const std::string& rawPath) {
     const auto pos = rawPath.find(',');
     if (pos == std::string::npos) {
@@ -732,6 +746,43 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
     }
 
     return spec.description;
+}
+
+std::vector<std::string> spindexCustomIndexPresetValues() {
+    return spindexPresetStorage();
+}
+
+std::string spindexCustomIndexPresetExpression(const std::string& presetKey) {
+    if (presetKey == "ndvi_alias") return "(NIR-RED)/(NIR+RED)";
+    if (presetKey == "ndwi_alias") return "(GREEN-NIR)/(GREEN+NIR)";
+    if (presetKey == "mndwi_alias") return "(GREEN-SWIR1)/(GREEN+SWIR1)";
+    if (presetKey == "ndbi_alias") return "(SWIR1-NIR)/(SWIR1+NIR)";
+    if (presetKey == "gndvi_alias") return "(NIR-GREEN)/(NIR+GREEN)";
+    if (presetKey == "savi_alias") return "((NIR-RED)/(NIR+RED+0.5))*(1+0.5)";
+    if (presetKey == "evi_alias") return "2.5*(NIR-RED)/(NIR+6*RED-7.5*BLUE+1)";
+    return {};
+}
+
+DerivedOutputUpdate computeDerivedExpressionUpdate(const std::string& currentValue,
+                                                   const std::string& lastAutoValue,
+                                                   const std::string& pluginName,
+                                                   const std::string& action,
+                                                   const std::string& presetKey) {
+    DerivedOutputUpdate update;
+    if (pluginName != "spindex" || action != "custom_index") {
+        return update;
+    }
+
+    const std::string suggestedValue = spindexCustomIndexPresetExpression(presetKey);
+    if (suggestedValue.empty()) {
+        return update;
+    }
+
+    const bool valueWasAuto = !lastAutoValue.empty() && currentValue == lastAutoValue;
+    update.value = suggestedValue;
+    update.autoValue = suggestedValue;
+    update.shouldApply = (currentValue.empty() || valueWasAuto) && currentValue != suggestedValue;
+    return update;
 }
 
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {

@@ -236,6 +236,29 @@ TEST(GuiSupportTest, ComputeDerivedOutputUpdateAdjustsVectorConvertSuffixFromFor
     EXPECT_EQ(update.value, "D:/data/roads_vector_convert.csv");
 }
 
+TEST(GuiSupportTest, ComputeDerivedExpressionUpdateAppliesPresetExpression) {
+    const auto update = gis::gui::computeDerivedExpressionUpdate(
+        "",
+        "",
+        "spindex",
+        "custom_index",
+        "ndvi_alias");
+    EXPECT_TRUE(update.shouldApply);
+    EXPECT_EQ(update.value, "(NIR-RED)/(NIR+RED)");
+    EXPECT_EQ(update.autoValue, "(NIR-RED)/(NIR+RED)");
+}
+
+TEST(GuiSupportTest, ComputeDerivedExpressionUpdateRespectsManualExpression) {
+    const auto update = gis::gui::computeDerivedExpressionUpdate(
+        "(B4-B1)/(B4+B1)",
+        "(NIR-RED)/(NIR+RED)",
+        "spindex",
+        "custom_index",
+        "ndwi_alias");
+    EXPECT_FALSE(update.shouldApply);
+    EXPECT_EQ(update.value, "(GREEN-NIR)/(GREEN+NIR)");
+}
+
 TEST(GuiSupportTest, BuildFileParamUiConfigProvidesSpecializedHints) {
     const auto classMapConfig = gis::gui::buildFileParamUiConfig(
         "classification", "feature_stats", "class_map", gis::framework::ParamType::FilePath);

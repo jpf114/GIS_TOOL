@@ -138,6 +138,16 @@ QString enumDisplayText(const std::string& key, const std::string& value) {
             {"GPKG", QStringLiteral("GeoPackage 格式")},
             {"KML", QStringLiteral("KML 格式")},
             {"CSV", QStringLiteral("CSV 表格")}
+        }},
+        {"preset", {
+            {"none", QStringLiteral("手动输入")},
+            {"ndvi_alias", QStringLiteral("NDVI 示例")},
+            {"ndwi_alias", QStringLiteral("NDWI 示例")},
+            {"mndwi_alias", QStringLiteral("MNDWI 示例")},
+            {"ndbi_alias", QStringLiteral("NDBI 示例")},
+            {"gndvi_alias", QStringLiteral("GNDVI 示例")},
+            {"savi_alias", QStringLiteral("SAVI 示例")},
+            {"evi_alias", QStringLiteral("EVI 示例")}
         }}
     };
 

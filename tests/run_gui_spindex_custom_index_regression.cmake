@@ -16,7 +16,7 @@ execute_process(
         --select-action custom_index
         --set-param "input=${INPUT_PATH}"
         --set-param "output=${OUTPUT_PATH}"
-        --set-param "expression=(NIR-RED)/(NIR+RED)"
+        --set-param "preset=ndvi_alias"
         --set-param "red_band=1"
         --set-param "nir_band=4"
         --auto-execute

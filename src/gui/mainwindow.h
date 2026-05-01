@@ -83,6 +83,7 @@ private:
     std::string lastAutoOutputPath_;
     std::string lastAutoVectorOutputPath_;
     std::string lastAutoRasterOutputPath_;
+    std::string lastAutoExpressionValue_;
     std::string lastAutoLayerName_;
     std::optional<std::array<double, 4>> lastAutoExtent_;
     bool lastExecutionSuccess_ = false;

@@ -19,6 +19,19 @@ namespace gis::plugins {
 
 namespace {
 
+std::vector<std::string> customIndexPresetValues() {
+    return {
+        "none",
+        "ndvi_alias",
+        "ndwi_alias",
+        "mndwi_alias",
+        "ndbi_alias",
+        "gndvi_alias",
+        "savi_alias",
+        "evi_alias"
+    };
+}
+
 int getBandIndex(const std::map<std::string, gis::framework::ParamValue>& params,
                  const char* key,
                  int defaultValue,
@@ -272,6 +285,12 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"ndvi", "evi", "savi", "gndvi", "ndwi", "mndwi", "ndbi", "custom_index"}
+        },
+        gis::framework::ParamSpec{
+            "preset", "内置示例", "选择一个常用指数表达式示例",
+            gis::framework::ParamType::Enum, false, std::string{"none"},
+            int{0}, int{0},
+            customIndexPresetValues()
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",

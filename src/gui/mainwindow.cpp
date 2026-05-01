@@ -388,6 +388,7 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"stitch_confidence", {QStringLiteral("拼接置信度"), QStringLiteral("图像拼接的置信度阈值。")}},
         {"threshold_value", {QStringLiteral("阈值值"), QStringLiteral("阈值分割时使用的数值阈值。")}},
         {"max_value", {QStringLiteral("最大值"), QStringLiteral("阈值分割输出的最大像素值。")}},
+        {"preset", {QStringLiteral("内置示例"), QStringLiteral("选择一个常用指数表达式示例，并自动带入表达式框。")}},
         {"filter_type", {QStringLiteral("滤波类型"), QStringLiteral("空间滤波算法类型。")}},
         {"kernel_size", {QStringLiteral("核大小"), QStringLiteral("滤波核或结构元素大小。")}},
         {"sigma", {QStringLiteral("Sigma"), QStringLiteral("高斯等滤波的 sigma 参数。")}},
@@ -556,7 +557,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"ndwi", {QStringLiteral("NDWI"), QStringLiteral("根据绿光与近红外波段计算 NDWI。"), {"input", "output", "green_band", "nir_band"}, {"input", "output"}}},
             {"mndwi", {QStringLiteral("MNDWI"), QStringLiteral("根据绿光与短波红外1波段计算 MNDWI。"), {"input", "output", "green_band", "swir1_band"}, {"input", "output"}}},
             {"ndbi", {QStringLiteral("NDBI"), QStringLiteral("根据短波红外1与近红外波段计算 NDBI。"), {"input", "output", "swir1_band", "nir_band"}, {"input", "output"}}},
-            {"custom_index", {QStringLiteral("自定义指数"), QStringLiteral("按表达式组合多波段并输出自定义指数结果，可直接使用 B1/B2 或 RED/NIR/GREEN 等别名。"), {"input", "output", "expression", "blue_band", "green_band", "red_band", "nir_band", "swir1_band"}, {"input", "output", "expression"}}},
+            {"custom_index", {QStringLiteral("自定义指数"), QStringLiteral("按表达式组合多波段并输出自定义指数结果，可直接使用 B1/B2 或 RED/NIR/GREEN 等别名。"), {"input", "output", "preset", "expression", "blue_band", "green_band", "red_band", "nir_band", "swir1_band"}, {"input", "output", "expression"}}},
         }},
         {"utility", {
             {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
@@ -1300,6 +1301,21 @@ void MainWindow::syncDerivedParams() {
     syncOutputField("vector_output", lastAutoVectorOutputPath_);
     syncOutputField("raster_output", lastAutoRasterOutputPath_);
 
+    if (paramWidget_->hasParam("expression") && paramWidget_->hasParam("preset")) {
+        const std::string currentExpression = paramWidget_->stringValue("expression");
+        const std::string presetKey = paramWidget_->stringValue("preset");
+        const auto update = gis::gui::computeDerivedExpressionUpdate(
+            currentExpression,
+            lastAutoExpressionValue_,
+            currentPlugin_->name(),
+            actionKey,
+            presetKey);
+        if (update.shouldApply) {
+            paramWidget_->setStringValue("expression", update.value);
+        }
+        lastAutoExpressionValue_ = update.autoValue;
+    }
+
     if (!inputPath.empty()) {
         const auto info = gis::gui::inspectDataForAutoFill(inputPath);
         const QString inputPathLower = QString::fromStdString(inputPath).toLower();
@@ -1328,6 +1344,7 @@ void MainWindow::resetDerivedParamTracking() {
     lastAutoOutputPath_.clear();
     lastAutoVectorOutputPath_.clear();
     lastAutoRasterOutputPath_.clear();
+    lastAutoExpressionValue_.clear();
     lastAutoLayerName_.clear();
     lastAutoExtent_.reset();
 }
