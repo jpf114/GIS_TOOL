@@ -1016,6 +1016,32 @@ TEST_F(PluginTest, SpindexCustomIndexExecution) {
     EXPECT_NEAR(readRasterPixel(output, 5, 5), 60.0f / 80.0f, 1e-4f);
 }
 
+TEST_F(PluginTest, SpindexCustomIndexAliasExecution) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createMultiBandConstantRaster(
+        "e2e_spindex_custom_index_alias_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f, 90.0f});
+    const std::string output = utf8PathString(getTestDir() / "e2e_spindex_custom_index_alias_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("custom_index");
+    params["input"] = input;
+    params["output"] = output;
+    params["expression"] = std::string("(NIR-RED)/(NIR+RED) + (SWIR1-GREEN)/(SWIR1+GREEN)");
+    params["green_band"] = 2;
+    params["red_band"] = 3;
+    params["nir_band"] = 4;
+    params["swir1_band"] = 5;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("nir_band"), "4");
+    const float expected = (40.0f / 100.0f) + (70.0f / 110.0f);
+    EXPECT_NEAR(readRasterPixel(output, 5, 5), expected, 1e-4f);
+}
+
 TEST_F(PluginTest, ProjectionInfoExecution) {
     auto* p = mgr_.find("projection");
     ASSERT_NE(p, nullptr);

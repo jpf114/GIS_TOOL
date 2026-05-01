@@ -16,7 +16,9 @@ execute_process(
         --select-action custom_index
         --set-param "input=${INPUT_PATH}"
         --set-param "output=${OUTPUT_PATH}"
-        --set-param "expression=(B4-B1)/(B4+B1)"
+        --set-param "expression=(NIR-RED)/(NIR+RED)"
+        --set-param "red_band=1"
+        --set-param "nir_band=4"
         --auto-execute
         --quit-on-finish
         --screenshot "${SCREENSHOT_PATH}"

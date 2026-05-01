@@ -714,7 +714,7 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
     };
     EXPECT_NE(
         gis::gui::buildTextParamPlaceholder("spindex", "custom_index", expressionSpec)
-            .find("(B4-B1)/(B4+B1)"),
+            .find("(NIR-RED)/(NIR+RED)"),
         std::string::npos);
 
     std::vector<gis::framework::ParamSpec> processingSpecs = {

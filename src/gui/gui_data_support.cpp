@@ -721,7 +721,7 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
         return "请输入表达式，例如 B1+B2 或 B1*0.5+B2*0.5";
     }
     if (pluginName == "spindex" && action == "custom_index" && spec.key == "expression") {
-        return "请输入指数表达式，例如 (B4-B1)/(B4+B1)";
+        return "请输入指数表达式，例如 (NIR-RED)/(NIR+RED) 或 (B4-B1)/(B4+B1)";
     }
 
     if (spec.key == "bands") {
