@@ -838,9 +838,9 @@ TEST_F(PluginTest, ProcessingUnknownAction) {
     EXPECT_FALSE(result.success);
 }
 
-TEST_F(PluginTest, UtilityInfoExecution) {
-    auto* p = mgr_.find("utility");
-    if (!p) GTEST_SKIP() << "utility plugin not loaded";
+TEST_F(PluginTest, RasterInspectInfoExecution) {
+    auto* p = mgr_.find("raster_inspect");
+    if (!p) GTEST_SKIP() << "raster_inspect plugin not loaded";
 
     std::string input = createTestRaster("e2e_util_info_input.tif", 30, 30);
 
@@ -849,7 +849,7 @@ TEST_F(PluginTest, UtilityInfoExecution) {
     params["input"] = input;
 
     auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "Utility info failed: " << result.message;
+    EXPECT_TRUE(result.success) << "Raster inspect info failed: " << result.message;
 }
 
 TEST_F(PluginTest, UtilityOverviewsExecution) {
@@ -894,8 +894,8 @@ TEST_F(PluginTest, UtilityNoDataExecution) {
     EXPECT_DOUBLE_EQ(noDataValue, -99.0);
 }
 
-TEST_F(PluginTest, UtilityHistogramExecution) {
-    auto* p = mgr_.find("utility");
+TEST_F(PluginTest, RasterInspectHistogramExecution) {
+    auto* p = mgr_.find("raster_inspect");
     ASSERT_NE(p, nullptr);
 
     const std::string input = createTestRaster("e2e_util_hist_input.tif", 32, 32);

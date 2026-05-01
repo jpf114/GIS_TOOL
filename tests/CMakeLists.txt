@@ -60,6 +60,7 @@ add_dependencies(gis_tests
     plugin_matching
     plugin_processing
     plugin_raster_math
+    plugin_raster_inspect
     plugin_classification
     plugin_spindex
     plugin_utility
@@ -249,21 +250,21 @@ if(TARGET gis-gui)
     )
 
     add_test(
-        NAME gui_utility_histogram_offscreen
+        NAME gui_raster_inspect_histogram_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
-            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_histogram/output.json
-            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_histogram/gui_utility_histogram.png
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_histogram_regression.cmake
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_inspect_histogram/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_inspect_histogram/gui_raster_inspect_histogram.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_inspect_histogram_regression.cmake
     )
 
     add_test(
-        NAME gui_utility_histogram_invalid_band_offscreen
+        NAME gui_raster_inspect_histogram_invalid_band_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
-            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_histogram_invalid_band/output.json
-            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_histogram_invalid_band/gui_utility_histogram_invalid_band.png
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_histogram_invalid_band_regression.cmake
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_inspect_histogram_invalid_band/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_inspect_histogram_invalid_band/gui_raster_inspect_histogram_invalid_band.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_inspect_histogram_invalid_band_regression.cmake
     )
 
     add_test(
@@ -319,11 +320,11 @@ if(TARGET gis-gui)
     )
 
     add_test(
-        NAME gui_utility_info_offscreen
+        NAME gui_raster_inspect_info_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
-            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/utility_info/gui_utility_info.png
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_utility_info_regression.cmake
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_inspect_info/gui_raster_inspect_info.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_inspect_info_regression.cmake
     )
 
     add_test(

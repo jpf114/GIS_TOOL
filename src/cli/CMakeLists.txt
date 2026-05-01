@@ -9,6 +9,7 @@ set(GIS_PLUGIN_TARGETS
     plugin_matching
     plugin_processing
     plugin_raster_math
+    plugin_raster_inspect
     plugin_classification
     plugin_spindex
     plugin_utility

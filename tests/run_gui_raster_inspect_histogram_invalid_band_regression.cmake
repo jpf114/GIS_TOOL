@@ -1,5 +1,5 @@
 if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
-    message(FATAL_ERROR "Missing required GUI utility histogram invalid-band regression arguments.")
+    message(FATAL_ERROR "Missing required GUI raster inspect histogram invalid-band regression arguments.")
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
@@ -12,7 +12,7 @@ gis_gui_generate_test_bmp("${INPUT_PATH}")
 execute_process(
     COMMAND "${GUI_PATH}"
         -platform offscreen
-        --select-plugin utility
+        --select-plugin raster_inspect
         --select-action histogram
         --set-param "input=${INPUT_PATH}"
         --set-param "output=${OUTPUT_PATH}"
@@ -28,7 +28,7 @@ execute_process(
 )
 
 gis_gui_assert_failure_result(
-    "GUI utility histogram invalid-band regression"
+    "GUI raster inspect histogram invalid-band regression"
     "${GUI_EXIT_CODE}"
     "${GUI_STDOUT}"
     "${GUI_STDERR}"

@@ -189,6 +189,11 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawLine(QPointF(10, 19), QPointF(28, 19));
         painter.drawLine(QPointF(12, 12), QPointF(15, 15));
         painter.drawLine(QPointF(15, 12), QPointF(12, 15));
+    } else if (text == QStringLiteral("raster_inspect")) {
+        drawBars();
+        painter.drawEllipse(QRectF(12.4, 8.5, 3.2, 3.2));
+        painter.drawEllipse(QRectF(17.4, 12.5, 3.2, 3.2));
+        painter.drawEllipse(QRectF(22.4, 6.5, 3.2, 3.2));
     } else if (text == QStringLiteral("cutting") || text == QStringLiteral("clip")) {
         drawScissors();
     } else if (text == QStringLiteral("mosaic")) {
@@ -554,6 +559,10 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         {"raster_math", {
             {"band_math", {QStringLiteral("波段运算"), QStringLiteral("按表达式对多波段影像进行计算。"), {"input", "output", "expression"}, {"input", "output", "expression"}}},
         }},
+        {"raster_inspect", {
+            {"histogram", {QStringLiteral("直方图"), QStringLiteral("统计指定波段的直方图，可选输出为 JSON。"), {"input", "output", "band", "bins"}, {"input"}}},
+            {"info", {QStringLiteral("栅格信息"), QStringLiteral("查看栅格驱动、范围、波段和统计信息。"), {"input"}, {"input"}}},
+        }},
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
         }},
@@ -570,8 +579,6 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         {"utility", {
             {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
             {"nodata", {QStringLiteral("NoData 设置"), QStringLiteral("为单波段或全部波段写入 NoData 值。"), {"input", "band", "nodata_value"}, {"input"}}},
-            {"histogram", {QStringLiteral("直方图"), QStringLiteral("计算波段直方图，可选输出为 JSON。"), {"input", "output", "band", "bins"}, {"input"}}},
-            {"info", {QStringLiteral("栅格信息"), QStringLiteral("查看栅格驱动、范围、波段和统计信息。"), {"input"}, {"input"}}},
             {"colormap", {QStringLiteral("伪彩色"), QStringLiteral("对单波段影像应用伪彩色映射。"), {"input", "output", "band", "cmap"}, {"input", "output"}}},
         }},
         {"vector", {
@@ -962,7 +969,7 @@ void MainWindow::loadPlugins() {
     }
 
     static const std::vector<std::string> preferredOrder = {
-        "projection", "cutting", "matching", "processing", "raster_math", "classification", "utility", "vector"
+        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "classification", "utility", "vector"
     };
 
     std::vector<gis::framework::IGisPlugin*> plugins = pluginManager_.plugins();

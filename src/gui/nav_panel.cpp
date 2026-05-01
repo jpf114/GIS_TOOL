@@ -56,6 +56,13 @@ QIcon makeSidebarIcon(const std::string& kind, const QColor& bg, const QColor& f
         painter.drawLine(QPointF(4.2, 9.0), QPointF(13.8, 9.0));
         painter.drawLine(QPointF(5.4, 5.4), QPointF(6.8, 6.8));
         painter.drawLine(QPointF(6.8, 5.4), QPointF(5.4, 6.8));
+    } else if (kind == "raster_inspect") {
+        painter.drawLine(QPointF(5, 12.8), QPointF(5, 9.4));
+        painter.drawLine(QPointF(9, 12.8), QPointF(9, 6.6));
+        painter.drawLine(QPointF(13, 12.8), QPointF(13, 4.4));
+        painter.drawEllipse(QRectF(4.0, 7.4, 1.8, 1.8));
+        painter.drawEllipse(QRectF(8.0, 5.2, 1.8, 1.8));
+        painter.drawEllipse(QRectF(12.0, 3.0, 1.8, 1.8));
     } else if (kind == "projection") {
         painter.drawEllipse(QRectF(4, 4, 10, 10));
         painter.drawLine(QPointF(9, 4), QPointF(9, 14));

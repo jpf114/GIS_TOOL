@@ -85,8 +85,12 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
     }
 
     if (pluginName == "utility") {
-        if (action == "histogram") return ".json";
         if (action == "colormap") return ".tif";
+        return inputExt;
+    }
+
+    if (pluginName == "raster_inspect") {
+        if (action == "histogram") return ".json";
         return inputExt;
     }
 
@@ -975,7 +979,7 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
-    if (pluginName == "utility" && actionKey == "histogram") {
+    if (pluginName == "raster_inspect" && actionKey == "histogram") {
         const auto bins = intParamValue(params, "bins");
         if (bins.has_value() && *bins <= 0) {
             return ActionValidationIssue{"bins", "参数“分箱数”必须大于 0"};
@@ -1204,9 +1208,10 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
             if (action == "nodata" && spec.key == "band") {
                 adjustedSpec.defaultValue = int{0};
                 adjustedSpec.minValue = 0;
-            } else if (spec.key == "bins") {
-                adjustedSpec.minValue = 1;
             }
+        }
+        if (pluginName == "raster_inspect" && spec.key == "bins") {
+            adjustedSpec.minValue = 1;
         }
         if (pluginName == "spindex" &&
             (spec.key == "blue_band" || spec.key == "green_band" ||

@@ -33,7 +33,7 @@ std::vector<gis::framework::ParamSpec> UtilityPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"overviews", "nodata", "histogram", "info", "colormap"}
+            {"overviews", "nodata", "colormap"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -82,8 +82,6 @@ gis::framework::Result UtilityPlugin::execute(
 
     if (action == "overviews") return doBuildOverviews(params, progress);
     if (action == "nodata")    return doSetNoData(params, progress);
-    if (action == "histogram") return doHistogram(params, progress);
-    if (action == "info")      return doRasterInfo(params, progress);
     if (action == "colormap")  return doColormap(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
