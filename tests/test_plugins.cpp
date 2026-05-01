@@ -2873,6 +2873,28 @@ TEST_F(PluginTest, TerrainStreamExtractExecution) {
     EXPECT_NEAR(readRasterPixel(output, 7, 4), 1.0f, 1e-4f);
 }
 
+TEST_F(PluginTest, TerrainWatershedExecution) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createEastDownhillRaster("terrain_watershed_input.tif");
+    const std::string output = utf8PathString(getTestDir() / "terrain_watershed_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("watershed");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+
+    const auto result = p->execute(params, progress_);
+
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_NEAR(readRasterPixel(output, 1, 4), readRasterPixel(output, 7, 4), 1e-4f);
+    EXPECT_NE(readRasterPixel(output, 4, 3), readRasterPixel(output, 4, 4));
+}
+
 TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {
     auto* p = mgr_.find("matching");
     ASSERT_NE(p, nullptr);

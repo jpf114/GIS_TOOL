@@ -400,6 +400,101 @@ gis::framework::Result runHydrologyTerrainProcess(
         if (hasNoData) {
             result.setTo(static_cast<float>(noDataValue), noDataMask);
         }
+    } else if (action == "watershed") {
+        const cv::Mat direction = buildFlowDirectionMat();
+        cv::Mat indegree = cv::Mat::zeros(elevation.size(), CV_32S);
+        cv::Mat basinIds = cv::Mat::zeros(elevation.size(), CV_32S);
+
+        auto findDirectionStep = [](float code) -> const DirectionStep* {
+            for (const auto& step : kD8Directions) {
+                if (step.code == code) {
+                    return &step;
+                }
+            }
+            return static_cast<const DirectionStep*>(nullptr);
+        };
+
+        for (int y = 1; y < direction.rows - 1; ++y) {
+            for (int x = 1; x < direction.cols - 1; ++x) {
+                if (hasNoData && noDataMask.at<unsigned char>(y, x) != 0) {
+                    continue;
+                }
+                const auto* step = findDirectionStep(direction.at<float>(y, x));
+                if (!step) {
+                    continue;
+                }
+                indegree.at<int>(y + step->dy, x + step->dx) += 1;
+            }
+        }
+
+        int nextBasinId = 1;
+        for (int y = 1; y < direction.rows - 1; ++y) {
+            for (int x = 1; x < direction.cols - 1; ++x) {
+                if (hasNoData && noDataMask.at<unsigned char>(y, x) != 0) {
+                    continue;
+                }
+
+                const auto* step = findDirectionStep(direction.at<float>(y, x));
+                bool isOutlet = !step;
+                if (step) {
+                    const int nx = x + step->dx;
+                    const int ny = y + step->dy;
+                    isOutlet = (nx <= 0 || nx >= direction.cols - 1 || ny <= 0 || ny >= direction.rows - 1);
+                }
+                if (isOutlet) {
+                    basinIds.at<int>(y, x) = nextBasinId++;
+                }
+            }
+        }
+
+        std::vector<cv::Point> topoOrder;
+        topoOrder.reserve((direction.rows - 2) * (direction.cols - 2));
+        std::queue<cv::Point> queue;
+        for (int y = 1; y < direction.rows - 1; ++y) {
+            for (int x = 1; x < direction.cols - 1; ++x) {
+                if (hasNoData && noDataMask.at<unsigned char>(y, x) != 0) {
+                    continue;
+                }
+                if (indegree.at<int>(y, x) == 0) {
+                    queue.emplace(x, y);
+                }
+            }
+        }
+
+        while (!queue.empty()) {
+            const cv::Point cell = queue.front();
+            queue.pop();
+            topoOrder.push_back(cell);
+            const auto* step = findDirectionStep(direction.at<float>(cell.y, cell.x));
+            if (!step) {
+                continue;
+            }
+            const cv::Point downstream(cell.x + step->dx, cell.y + step->dy);
+            const int nextDegree = --indegree.at<int>(downstream.y, downstream.x);
+            if (nextDegree == 0 &&
+                downstream.x > 0 && downstream.x < direction.cols - 1 &&
+                downstream.y > 0 && downstream.y < direction.rows - 1) {
+                queue.push(downstream);
+            }
+        }
+
+        for (auto it = topoOrder.rbegin(); it != topoOrder.rend(); ++it) {
+            const cv::Point cell = *it;
+            if (basinIds.at<int>(cell.y, cell.x) != 0) {
+                continue;
+            }
+            const auto* step = findDirectionStep(direction.at<float>(cell.y, cell.x));
+            if (!step) {
+                continue;
+            }
+            const cv::Point downstream(cell.x + step->dx, cell.y + step->dy);
+            basinIds.at<int>(cell.y, cell.x) = basinIds.at<int>(downstream.y, downstream.x);
+        }
+
+        basinIds.convertTo(result, CV_32F);
+        if (hasNoData) {
+            result.setTo(static_cast<float>(noDataValue), noDataMask);
+        }
     } else {
         return gis::framework::Result::fail("Unknown hydrology terrain action: " + action);
     }
@@ -427,7 +522,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的地形分析子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract"}
+            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入 DEM 栅格路径",
@@ -473,6 +568,7 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "flow_direction") return doFlowDirection(params, progress);
     if (action == "flow_accumulation") return doFlowAccumulation(params, progress);
     if (action == "stream_extract") return doStreamExtract(params, progress);
+    if (action == "watershed") return doWatershed(params, progress);
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
@@ -572,6 +668,20 @@ gis::framework::Result TerrainPlugin::doStreamExtract(
         gis::framework::getParam<int>(params, "band", 1),
         gis::framework::getParam<double>(params, "z_factor", 1.0),
         gis::framework::getParam<double>(params, "accum_threshold", 10.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doWatershed(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runHydrologyTerrainProcess(
+        "watershed",
+        "Watershed",
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        0.0,
         progress);
 }
 
