@@ -82,6 +82,9 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("nodata"), QStringLiteral("NoData \350\256\276\347\275\256")},
         {QStringLiteral("histogram"), QStringLiteral("\347\233\264\346\226\271\345\233\276")},
         {QStringLiteral("colormap"), QStringLiteral("\344\274\252\345\275\251\350\211\262")},
+        {QStringLiteral("slope"), QStringLiteral("\345\235\241\345\272\246")},
+        {QStringLiteral("aspect"), QStringLiteral("\345\235\241\345\220\221")},
+        {QStringLiteral("hillshade"), QStringLiteral("\345\261\261\344\275\223\351\230\264\345\275\261")},
         {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
         {QStringLiteral("evi"), QStringLiteral("EVI")},
         {QStringLiteral("savi"), QStringLiteral("SAVI")},
@@ -198,6 +201,8 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawRect(QRectF(10, 10, 18, 18));
         painter.drawLine(QPointF(13, 19), QPointF(25, 19));
         painter.drawLine(QPointF(19, 13), QPointF(19, 25));
+    } else if (text == QStringLiteral("terrain")) {
+        painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(16, 17) << QPointF(22, 20) << QPointF(28, 11));
     } else if (text == QStringLiteral("cutting") || text == QStringLiteral("clip")) {
         drawScissors();
     } else if (text == QStringLiteral("mosaic")) {
@@ -310,6 +315,16 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawLine(QPointF(15, 16), QPointF(15, 22));
         painter.drawLine(QPointF(19, 14), QPointF(19, 24));
         painter.drawLine(QPointF(23, 16), QPointF(23, 22));
+    } else if (text == QStringLiteral("slope")) {
+        painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(16, 17) << QPointF(22, 19) << QPointF(28, 11));
+    } else if (text == QStringLiteral("aspect")) {
+        painter.drawEllipse(QRectF(10, 10, 18, 18));
+        painter.drawLine(QPointF(19, 19), QPointF(25, 13));
+        painter.drawLine(QPointF(25, 13), QPointF(22, 13));
+        painter.drawLine(QPointF(25, 13), QPointF(25, 16));
+    } else if (text == QStringLiteral("hillshade")) {
+        painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(16, 17) << QPointF(22, 19) << QPointF(28, 11));
+        painter.drawEllipse(QRectF(10, 8, 5, 5));
     } else if (text == QStringLiteral("ndvi")) {
         painter.drawEllipse(QRectF(12, 10, 12, 18));
         painter.drawLine(QPointF(18, 12), QPointF(18, 26));
@@ -494,6 +509,12 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"band", {QStringLiteral("波段序号"), QStringLiteral("填写 0 表示对全部波段设置 NoData；填写 1、2、3... 表示单个波段。")}},
             }},
         }},
+        {"terrain", {
+            {"hillshade", {
+                {"azimuth", {QStringLiteral("方位角"), QStringLiteral("常用 315 度，表示西北方向照射。")}},
+                {"altitude", {QStringLiteral("高度角"), QStringLiteral("常用 45 度，值越小阴影越长。")}},
+            }},
+        }},
         {"classification", {
             {"feature_stats", {
                 {"output", {QStringLiteral("统计输出"), QStringLiteral("统计结果输出路径，仅支持 .json 或 .csv。")}},
@@ -570,6 +591,11 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         {"raster_manage", {
             {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
             {"nodata", {QStringLiteral("NoData 设置"), QStringLiteral("为单波段或全部波段写入 NoData 值。"), {"input", "band", "nodata_value"}, {"input"}}},
+        }},
+        {"terrain", {
+            {"slope", {QStringLiteral("坡度"), QStringLiteral("根据 DEM 计算坡度栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
+            {"aspect", {QStringLiteral("坡向"), QStringLiteral("根据 DEM 计算坡向栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
+            {"hillshade", {QStringLiteral("山体阴影"), QStringLiteral("根据 DEM 生成山体阴影效果图。"), {"input", "output", "band", "z_factor", "azimuth", "altitude"}, {"input", "output"}}},
         }},
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
@@ -975,7 +1001,7 @@ void MainWindow::loadPlugins() {
     }
 
     static const std::vector<std::string> preferredOrder = {
-        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "raster_manage", "raster_render", "classification", "vector"
+        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "raster_manage", "raster_render", "terrain", "classification", "vector"
     };
 
     std::vector<gis::framework::IGisPlugin*> plugins = pluginManager_.plugins();

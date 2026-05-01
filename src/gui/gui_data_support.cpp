@@ -93,6 +93,10 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
         return inputExt;
     }
 
+    if (pluginName == "terrain") {
+        return ".tif";
+    }
+
     if (pluginName == "raster_inspect") {
         if (action == "histogram") return ".json";
         return inputExt;
@@ -990,6 +994,27 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
+    if (pluginName == "terrain") {
+        if (const auto band = intParamValue(params, "band");
+            band.has_value() && *band <= 0) {
+            return ActionValidationIssue{"band", "参数“波段号”必须大于 0"};
+        }
+        if (const auto zFactor = doubleParamValue(params, "z_factor");
+            zFactor.has_value() && *zFactor <= 0.0) {
+            return ActionValidationIssue{"z_factor", "参数“高程缩放”必须大于 0"};
+        }
+        if (actionKey == "hillshade") {
+            if (const auto azimuth = doubleParamValue(params, "azimuth");
+                azimuth.has_value() && (*azimuth < 0.0 || *azimuth > 360.0)) {
+                return ActionValidationIssue{"azimuth", "参数“方位角”应落在 [0, 360] 范围内"};
+            }
+            if (const auto altitude = doubleParamValue(params, "altitude");
+                altitude.has_value() && (*altitude < 0.0 || *altitude > 90.0)) {
+                return ActionValidationIssue{"altitude", "参数“高度角”应落在 [0, 90] 范围内"};
+            }
+        }
+    }
+
     if (pluginName == "spindex") {
         const auto validatePositiveBand = [&](const std::string& key, const char* displayName)
             -> std::optional<ActionValidationIssue> {
@@ -1214,6 +1239,19 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
         }
         if (pluginName == "raster_inspect" && spec.key == "bins") {
             adjustedSpec.minValue = 1;
+        }
+        if (pluginName == "terrain") {
+            if (spec.key == "band") {
+                adjustedSpec.minValue = 1;
+            } else if (spec.key == "z_factor") {
+                adjustedSpec.minValue = 0.000001;
+            } else if (spec.key == "azimuth") {
+                adjustedSpec.minValue = 0.0;
+                adjustedSpec.maxValue = 360.0;
+            } else if (spec.key == "altitude") {
+                adjustedSpec.minValue = 0.0;
+                adjustedSpec.maxValue = 90.0;
+            }
         }
         if (pluginName == "spindex" &&
             (spec.key == "blue_band" || spec.key == "green_band" ||

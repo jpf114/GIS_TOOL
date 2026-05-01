@@ -157,6 +157,25 @@ static std::string createMultiBandConstantRaster(const std::string& name,
     return path;
 }
 
+static std::string createTerrainRaster(const std::string& name, int w = 48, int h = 48) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+    double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+    ds->SetGeoTransform(adfGT);
+
+    std::vector<float> data(w * h, 0.0f);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            data[y * w + x] = static_cast<float>(x * 1.5 + y * 0.8 + ((x * y) % 11) * 0.2);
+        }
+    }
+
+    auto* band = ds->GetRasterBand(1);
+    band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+    band->FlushCache();
+    return path;
+}
+
 static std::string createProjectedClassRaster(const std::string& name,
                                               int w,
                                               int h,
@@ -2681,6 +2700,44 @@ TEST_F(PluginTest, CuttingMergeBandsCombinesInputAndBandsList) {
     auto outDs = gis::core::openRaster(output, true);
     ASSERT_NE(outDs, nullptr);
     EXPECT_EQ(outDs->GetRasterCount(), 3);
+}
+
+TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTerrainRaster("terrain_input.tif");
+    const std::string slopeOutput = utf8PathString(getTestDir() / "terrain_slope_output.tif");
+    const std::string aspectOutput = utf8PathString(getTestDir() / "terrain_aspect_output.tif");
+    const std::string hillshadeOutput = utf8PathString(getTestDir() / "terrain_hillshade_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> slopeParams;
+    slopeParams["action"] = std::string("slope");
+    slopeParams["input"] = input;
+    slopeParams["output"] = slopeOutput;
+    slopeParams["band"] = 1;
+    slopeParams["z_factor"] = 1.0;
+
+    std::map<std::string, gis::framework::ParamValue> aspectParams = slopeParams;
+    aspectParams["action"] = std::string("aspect");
+    aspectParams["output"] = aspectOutput;
+
+    std::map<std::string, gis::framework::ParamValue> hillshadeParams = slopeParams;
+    hillshadeParams["action"] = std::string("hillshade");
+    hillshadeParams["output"] = hillshadeOutput;
+    hillshadeParams["azimuth"] = 315.0;
+    hillshadeParams["altitude"] = 45.0;
+
+    const auto slopeResult = p->execute(slopeParams, progress_);
+    const auto aspectResult = p->execute(aspectParams, progress_);
+    const auto hillshadeResult = p->execute(hillshadeParams, progress_);
+
+    EXPECT_TRUE(slopeResult.success) << slopeResult.message;
+    EXPECT_TRUE(aspectResult.success) << aspectResult.message;
+    EXPECT_TRUE(hillshadeResult.success) << hillshadeResult.message;
+    EXPECT_TRUE(fs::exists(slopeOutput));
+    EXPECT_TRUE(fs::exists(aspectOutput));
+    EXPECT_TRUE(fs::exists(hillshadeOutput));
 }
 
 TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {

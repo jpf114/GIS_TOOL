@@ -12,6 +12,7 @@ set(GIS_PLUGIN_TARGETS
     plugin_raster_inspect
     plugin_raster_manage
     plugin_raster_render
+    plugin_terrain
     plugin_classification
     plugin_spindex
     plugin_vector

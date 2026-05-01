@@ -530,6 +530,56 @@ int makeAnalysisRaster(const std::string& outputPath) {
     return 0;
 }
 
+int makeTerrainRaster(const std::string& outputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(outputPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(outputPath.c_str(), 48, 48, 1, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create terrain raster: " << outputPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.0005, 0.0,
+        40.0, 0.0, -0.0005
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<float> dem(48 * 48, 0.0f);
+    for (int y = 0; y < 48; ++y) {
+        for (int x = 0; x < 48; ++x) {
+            const size_t index = static_cast<size_t>(y * 48 + x);
+            dem[index] = static_cast<float>(x * 1.5 + y * 0.8 + ((x * y) % 11) * 0.2);
+        }
+    }
+
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band) {
+        GDALClose(ds);
+        std::cerr << "Failed to get terrain raster band\n";
+        return 1;
+    }
+    if (band->RasterIO(
+            GF_Write, 0, 0, 48, 48,
+            dem.data(), 48, 48, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write terrain raster band\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -575,6 +625,9 @@ int main(int argc, char* argv[]) {
     }
     if (command == "analysis-raster") {
         return makeAnalysisRaster(argv[2]);
+    }
+    if (command == "terrain-raster") {
+        return makeTerrainRaster(argv[2]);
     }
 
     std::cerr << "Unknown command: " << command << "\n";

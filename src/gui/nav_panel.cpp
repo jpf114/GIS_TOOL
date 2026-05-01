@@ -67,6 +67,8 @@ QIcon makeSidebarIcon(const std::string& kind, const QColor& bg, const QColor& f
         painter.drawRect(QRectF(4.2, 4.2, 9.6, 9.6));
         painter.drawLine(QPointF(6.0, 9.0), QPointF(12.0, 9.0));
         painter.drawLine(QPointF(9.0, 6.0), QPointF(9.0, 12.0));
+    } else if (kind == "terrain") {
+        painter.drawPolyline(QPolygonF() << QPointF(3.4, 12.4) << QPointF(6.8, 8.0) << QPointF(9.4, 9.8) << QPointF(13.6, 4.6));
     } else if (kind == "projection") {
         painter.drawEllipse(QRectF(4, 4, 10, 10));
         painter.drawLine(QPointF(9, 4), QPointF(9, 14));
@@ -262,6 +264,16 @@ QIcon makeSubFunctionIcon(const std::string& actionKey, bool active) {
         painter.drawLine(QPointF(5.4, 6.4), QPointF(5.4, 9.8));
         painter.drawLine(QPointF(8.0, 5.2), QPointF(8.0, 10.8));
         painter.drawLine(QPointF(10.6, 6.4), QPointF(10.6, 9.8));
+    } else if (actionKey == "slope") {
+        painter.drawPolyline(QPolygonF() << QPointF(2.8, 12.0) << QPointF(6.0, 7.4) << QPointF(9.2, 8.8) << QPointF(13.2, 3.8));
+    } else if (actionKey == "aspect") {
+        painter.drawEllipse(QRectF(2.8, 2.8, 10.4, 10.4));
+        painter.drawLine(QPointF(8.0, 8.0), QPointF(11.6, 4.4));
+        painter.drawLine(QPointF(11.6, 4.4), QPointF(9.6, 4.4));
+        painter.drawLine(QPointF(11.6, 4.4), QPointF(11.6, 6.4));
+    } else if (actionKey == "hillshade") {
+        painter.drawPolyline(QPolygonF() << QPointF(2.8, 12.0) << QPointF(6.0, 7.4) << QPointF(9.2, 8.8) << QPointF(13.2, 3.8));
+        painter.drawEllipse(QRectF(2.6, 2.6, 2.4, 2.4));
     } else if (actionKey == "ndvi") {
         painter.drawEllipse(QRectF(4.2, 2.8, 7.0, 10.4));
         painter.drawLine(QPointF(7.8, 4.0), QPointF(7.8, 12.0));

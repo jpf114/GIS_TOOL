@@ -194,6 +194,7 @@ function Ensure-RasterRegressionData {
     $classMap = Join-Path $rasterDataRoot "classification_class_map.json"
     $classRaster = Join-Path $rasterDataRoot "classification_raster.tif"
     $analysisRaster = Join-Path $generatedRoot "analysis_input.tif"
+    $terrainRaster = Join-Path $generatedRoot "terrain_input.tif"
 
     if (-not (Test-Path $ndviInput)) {
         $ndviInput = Join-Path $generatedRoot "ndvi_input.tif"
@@ -223,6 +224,10 @@ function Ensure-RasterRegressionData {
         Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("analysis-raster", $analysisRaster)
     }
 
+    if (-not (Test-Path $terrainRaster)) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("terrain-raster", $terrainRaster)
+    }
+
     return [pscustomobject]@{
         NdviInput = $ndviInput
         PansharpenMs = $panMs
@@ -231,6 +236,7 @@ function Ensure-RasterRegressionData {
         ClassificationClassMap = $classMap
         ClassificationRaster = $classRaster
         AnalysisRaster = $analysisRaster
+        TerrainRaster = $terrainRaster
     }
 }
 
@@ -397,6 +403,38 @@ $cases += New-Case -Name "raster_render_colormap" -CaseArgs @(
     "--cmap=jet"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "colormap_output.tif")
+)
+
+$cases += New-Case -Name "terrain_slope" -CaseArgs @(
+    "terrain", "slope",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_slope_output.tif")),
+    "--band=1",
+    "--z_factor=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_slope_output.tif")
+)
+
+$cases += New-Case -Name "terrain_aspect" -CaseArgs @(
+    "terrain", "aspect",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_aspect_output.tif")),
+    "--band=1",
+    "--z_factor=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_aspect_output.tif")
+)
+
+$cases += New-Case -Name "terrain_hillshade" -CaseArgs @(
+    "terrain", "hillshade",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_hillshade_output.tif")),
+    "--band=1",
+    "--z_factor=1",
+    "--azimuth=315",
+    "--altitude=45"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_hillshade_output.tif")
 )
 
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(

@@ -63,6 +63,7 @@ add_dependencies(gis_tests
     plugin_raster_inspect
     plugin_raster_manage
     plugin_raster_render
+    plugin_terrain
     plugin_classification
     plugin_spindex
     plugin_vector
@@ -329,6 +330,15 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_terrain_slope_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_slope/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_slope/gui_terrain_slope.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_slope_regression.cmake
+    )
+
+    add_test(
         NAME gui_classification_feature_stats_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
@@ -591,7 +601,7 @@ if(GIS_POWERSHELL_EXECUTABLE)
             -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
             -DMODE=quick
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_raster_regression.cmake
-        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_spindex plugin_raster_math plugin_raster_inspect plugin_raster_manage plugin_raster_render copy_runtime_dlls
+        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_spindex plugin_raster_math plugin_raster_inspect plugin_raster_manage plugin_raster_render plugin_terrain copy_runtime_dlls
         USES_TERMINAL
         COMMENT "Run real raster regression (quick)"
     )
@@ -604,7 +614,7 @@ if(GIS_POWERSHELL_EXECUTABLE)
             -DPOWERSHELL_EXECUTABLE=${GIS_POWERSHELL_EXECUTABLE}
             -DMODE=full
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_raster_regression.cmake
-        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_spindex plugin_raster_math plugin_raster_inspect plugin_raster_manage plugin_raster_render copy_runtime_dlls
+        DEPENDS gis-cli gui_test_data_helper plugin_processing plugin_classification plugin_spindex plugin_raster_math plugin_raster_inspect plugin_raster_manage plugin_raster_render plugin_terrain copy_runtime_dlls
         USES_TERMINAL
         COMMENT "Run real raster regression (full)"
     )

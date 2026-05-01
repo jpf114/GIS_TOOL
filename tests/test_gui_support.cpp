@@ -229,6 +229,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/scene_classification_feature_stats.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/dem.tif", "terrain", "slope"),
+        "D:/data/dem_terrain_slope.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/scene.tif", "cutting", "split"),
         "D:/data/scene_cutting_split");
     EXPECT_EQ(
@@ -643,6 +647,33 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsEvenKernelSizeForProcess
     EXPECT_EQ(issue->message, "参数“核大小”建议填写奇数，例如 3、5、7");
 }
 
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["band"] = 0;
+    params["z_factor"] = 0.0;
+    params["azimuth"] = 400.0;
+    params["altitude"] = 100.0;
+
+    const auto bandIssue = gis::gui::validateActionSpecificParams("terrain", "hillshade", params);
+    ASSERT_TRUE(bandIssue.has_value());
+    EXPECT_EQ(bandIssue->key, "band");
+
+    params["band"] = 1;
+    const auto zIssue = gis::gui::validateActionSpecificParams("terrain", "hillshade", params);
+    ASSERT_TRUE(zIssue.has_value());
+    EXPECT_EQ(zIssue->key, "z_factor");
+
+    params["z_factor"] = 1.0;
+    const auto azimuthIssue = gis::gui::validateActionSpecificParams("terrain", "hillshade", params);
+    ASSERT_TRUE(azimuthIssue.has_value());
+    EXPECT_EQ(azimuthIssue->key, "azimuth");
+
+    params["azimuth"] = 315.0;
+    const auto altitudeIssue = gis::gui::validateActionSpecificParams("terrain", "hillshade", params);
+    ASSERT_TRUE(altitudeIssue.has_value());
+    EXPECT_EQ(altitudeIssue->key, "altitude");
+}
+
 TEST(GuiSupportTest, ValidateActionSpecificParamsAcceptsValidVectorConvertCombination) {
     std::map<std::string, gis::framework::ParamValue> params;
     params["output"] = std::string("D:/data/result.geojson");
@@ -849,6 +880,27 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
     EXPECT_EQ(std::get<int>(processingFiltered[1].minValue), 1);
     EXPECT_DOUBLE_EQ(std::get<double>(processingFiltered[2].minValue), 0.0);
     EXPECT_EQ(std::get<int>(processingFiltered[3].minValue), 3);
+
+    std::vector<gis::framework::ParamSpec> terrainSpecs = {
+        {"band", "波段", "", gis::framework::ParamType::Int, false},
+        {"z_factor", "高程缩放", "", gis::framework::ParamType::Double, false},
+        {"azimuth", "方位角", "", gis::framework::ParamType::Double, false},
+        {"altitude", "高度角", "", gis::framework::ParamType::Double, false}
+    };
+    const auto terrainFiltered = gis::gui::buildEffectiveGuiParamSpecs(
+        "terrain",
+        "hillshade",
+        terrainSpecs,
+        {"band", "z_factor", "azimuth", "altitude"},
+        {});
+
+    ASSERT_EQ(terrainFiltered.size(), 4u);
+    EXPECT_EQ(std::get<int>(terrainFiltered[0].minValue), 1);
+    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[1].minValue), 0.000001);
+    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[2].minValue), 0.0);
+    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[2].maxValue), 360.0);
+    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[3].minValue), 0.0);
+    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[3].maxValue), 90.0);
 }
 
 TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
