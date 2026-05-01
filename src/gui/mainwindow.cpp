@@ -199,6 +199,10 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawPoint(QPointF(14.0, 14.0));
         painter.drawPoint(QPointF(24.0, 14.0));
         painter.drawPoint(QPointF(14.0, 24.0));
+    } else if (text == QStringLiteral("spindex")) {
+        painter.drawEllipse(QRectF(12, 10, 12, 18));
+        painter.drawLine(QPointF(18, 12), QPointF(18, 26));
+        painter.drawLine(QPointF(18, 18), QPointF(24, 12));
     } else if (text == QStringLiteral("detect")) {
         painter.drawEllipse(QRectF(11, 11, 16, 16));
         painter.drawLine(QPointF(19, 8.5), QPointF(19, 13));
@@ -530,13 +534,15 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
         }},
+        {"spindex", {
+            {"ndvi", {QStringLiteral("NDVI"), QStringLiteral("根据红光与近红外波段计算 NDVI。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},
+        }},
         {"utility", {
             {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
             {"nodata", {QStringLiteral("NoData 设置"), QStringLiteral("为单波段或全部波段写入 NoData 值。"), {"input", "band", "nodata_value"}, {"input"}}},
             {"histogram", {QStringLiteral("直方图"), QStringLiteral("计算波段直方图，可选输出为 JSON。"), {"input", "output", "band", "bins"}, {"input"}}},
             {"info", {QStringLiteral("栅格信息"), QStringLiteral("查看栅格驱动、范围、波段和统计信息。"), {"input"}, {"input"}}},
             {"colormap", {QStringLiteral("伪彩色"), QStringLiteral("对单波段影像应用伪彩色映射。"), {"input", "output", "band", "cmap"}, {"input", "output"}}},
-            {"ndvi", {QStringLiteral("NDVI"), QStringLiteral("根据红光与近红外波段计算 NDVI。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},
         }},
         {"vector", {
             {"info", {QStringLiteral("矢量信息"), QStringLiteral("查看矢量图层、字段和空间参考信息。"), {"input", "layer"}, {"input"}}},

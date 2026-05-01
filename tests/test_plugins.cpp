@@ -933,13 +933,13 @@ TEST_F(PluginTest, UtilityColormapExecution) {
     EXPECT_EQ(ds->GetRasterCount(), 3);
 }
 
-TEST_F(PluginTest, UtilityNdviExecution) {
-    auto* p = mgr_.find("utility");
+TEST_F(PluginTest, SpindexNdviExecution) {
+    auto* p = mgr_.find("spindex");
     ASSERT_NE(p, nullptr);
 
     const std::string input = createMultiBandConstantRaster(
-        "e2e_util_ndvi_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
-    const std::string output = utf8PathString(getTestDir() / "e2e_util_ndvi_output.tif");
+        "e2e_spindex_ndvi_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
+    const std::string output = utf8PathString(getTestDir() / "e2e_spindex_ndvi_output.tif");
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("ndvi");

@@ -247,8 +247,8 @@ Sync-PluginDlls -ResolvedCliPath $ResolvedCliPath
 $data = Ensure-RasterRegressionData -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -ResolvedHelperPath $ResolvedHelperPath
 
 $cases = @()
-$cases += New-Case -Name "utility_ndvi" -CaseArgs @(
-    "utility", "ndvi",
+$cases += New-Case -Name "spindex_ndvi" -CaseArgs @(
+    "spindex", "ndvi",
     ("--input=" + $data.NdviInput),
     ("--output=" + (Join-Path $ResolvedOutputRoot "ndvi_output.tif")),
     "--red_band=1",

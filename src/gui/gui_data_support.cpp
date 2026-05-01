@@ -83,7 +83,12 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
 
     if (pluginName == "utility") {
         if (action == "histogram") return ".json";
-        if (action == "colormap" || action == "ndvi") return ".tif";
+        if (action == "colormap") return ".tif";
+        return inputExt;
+    }
+
+    if (pluginName == "spindex") {
+        if (action == "ndvi") return ".tif";
         return inputExt;
     }
 
@@ -930,7 +935,7 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
-    if (pluginName == "utility" && actionKey == "ndvi") {
+    if (pluginName == "spindex" && actionKey == "ndvi") {
         const auto redBand = intParamValue(params, "red_band");
         const auto nirBand = intParamValue(params, "nir_band");
         if (redBand.has_value() && *redBand <= 0) {
@@ -1143,9 +1148,11 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 adjustedSpec.minValue = 0;
             } else if (spec.key == "bins") {
                 adjustedSpec.minValue = 1;
-            } else if (spec.key == "red_band" || spec.key == "nir_band") {
-                adjustedSpec.minValue = 1;
             }
+        }
+        if (pluginName == "spindex" &&
+            (spec.key == "red_band" || spec.key == "nir_band")) {
+            adjustedSpec.minValue = 1;
         }
         if (pluginName == "vector" && spec.key == "resolution") {
             adjustedSpec.minValue = 0.000001;

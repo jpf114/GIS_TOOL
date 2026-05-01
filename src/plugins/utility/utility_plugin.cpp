@@ -33,7 +33,7 @@ std::vector<gis::framework::ParamSpec> UtilityPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"overviews", "nodata", "histogram", "info", "colormap", "ndvi"}
+            {"overviews", "nodata", "histogram", "info", "colormap"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -71,14 +71,6 @@ std::vector<gis::framework::ParamSpec> UtilityPlugin::paramSpecs() const {
             int{0}, int{0},
             {"jet", "viridis", "hot", "cool", "spring", "summer", "autumn", "winter", "bone", "hsv", "rainbow", "ocean"}
         },
-        gis::framework::ParamSpec{
-            "red_band", "红波段", "NDVI计算的红波段序号",
-            gis::framework::ParamType::Int, false, int{3}
-        },
-        gis::framework::ParamSpec{
-            "nir_band", "近红外波段", "NDVI计算的近红外波段序号",
-            gis::framework::ParamType::Int, false, int{4}
-        },
     };
 }
 
@@ -93,7 +85,6 @@ gis::framework::Result UtilityPlugin::execute(
     if (action == "histogram") return doHistogram(params, progress);
     if (action == "info")      return doRasterInfo(params, progress);
     if (action == "colormap")  return doColormap(params, progress);
-    if (action == "ndvi")      return doComputeNdvi(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -443,66 +434,6 @@ gis::framework::Result UtilityPlugin::doColormap(
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok("Colormap applied: " + cmap, output);
-}
-
-gis::framework::Result UtilityPlugin::doComputeNdvi(
-    const std::map<std::string, gis::framework::ParamValue>& params,
-    gis::core::ProgressReporter& progress) {
-
-    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
-    std::string output = gis::framework::getParam<std::string>(params, "output", "");
-    int redBand = gis::framework::getParam<int>(params, "red_band", 3);
-    int nirBand = gis::framework::getParam<int>(params, "nir_band", 4);
-
-    if (input.empty())  return gis::framework::Result::fail("input is required");
-    if (output.empty()) return gis::framework::Result::fail("output is required");
-
-    progress.onProgress(0.05);
-
-    auto ds = gis::core::openRaster(input, true);
-    int bands = ds->GetRasterCount();
-    if (redBand < 1 || redBand > bands) {
-        return gis::framework::Result::fail("red_band " + std::to_string(redBand) +
-            " out of range (1-" + std::to_string(bands) + ")");
-    }
-    if (nirBand < 1 || nirBand > bands) {
-        return gis::framework::Result::fail("nir_band " + std::to_string(nirBand) +
-            " out of range (1-" + std::to_string(bands) + ")");
-    }
-
-    progress.onMessage("Reading Red band " + std::to_string(redBand) +
-                        " and NIR band " + std::to_string(nirBand));
-
-    cv::Mat red = gis::core::gdalBandToMat(ds.get(), redBand);
-    progress.onProgress(0.25);
-    cv::Mat nir = gis::core::gdalBandToMat(ds.get(), nirBand);
-    progress.onProgress(0.5);
-
-    progress.onMessage("Computing NDVI = (NIR - Red) / (NIR + Red)...");
-
-    cv::Mat diff, sum, ndvi;
-    cv::subtract(nir, red, diff);
-    cv::add(nir, red, sum);
-    sum += 1e-10f;
-    cv::divide(diff, sum, ndvi);
-    progress.onProgress(0.8);
-
-    gis::core::matToGdalTiff(ndvi, input, output, 1);
-    progress.onProgress(1.0);
-
-    double ndviMin, ndviMax;
-    cv::minMaxLoc(ndvi, &ndviMin, &ndviMax);
-    cv::Scalar ndviMean, ndviStd;
-    cv::meanStdDev(ndvi, ndviMean, ndviStd);
-
-    auto result = gis::framework::Result::ok(
-        "NDVI computed: range [" + std::to_string(ndviMin) + ", " + std::to_string(ndviMax) + "]",
-        output);
-    result.metadata["ndvi_min"] = std::to_string(ndviMin);
-    result.metadata["ndvi_max"] = std::to_string(ndviMax);
-    result.metadata["red_band"] = std::to_string(redBand);
-    result.metadata["nir_band"] = std::to_string(nirBand);
-    return result;
 }
 
 } // namespace gis::plugins
