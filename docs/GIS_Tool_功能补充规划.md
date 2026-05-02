@@ -69,6 +69,17 @@
 
 **依赖**：PDAL 库（可选）、GDAL 点云驱动。
 
+**当前可行性结论**：
+
+- 当前项目环境已通过 `tests/test_core.cpp` 中的 `GdalDriverCatalogProbe` 探针验证。
+- 当前 GDAL 版本为 `3.12.3`，探针结果为 `pointcloud_drivers=<none>`。
+- 当前 `D:\Develop\vcpkg\installed\x64-windows` 下也未发现可直接使用的 PDAL 头文件或运行库。
+- 因此，`pointcloud` 当前不适合作为“直接开始实现”的下一主模块。
+- 若后续继续推进，前置条件应是：
+  - 先确认是否允许引入 PDAL；
+  - 或先补齐具备 LAS/LAZ / COPC 能力的 GDAL 构建环境；
+  - 在依赖明确前，只适合做方案调研，不适合承诺完整功能实现。
+
 ---
 
 ### 2.4 新增插件：spindex（光谱指数）

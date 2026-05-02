@@ -10,6 +10,7 @@
 #include <opencv2/opencv.hpp>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include "test_support.h"
 
 namespace fs = std::filesystem;
@@ -30,6 +31,54 @@ protected:
 
 TEST_F(CoreTest, InitGDAL) {
     EXPECT_NO_THROW(gis::core::initGDAL());
+}
+
+TEST_F(CoreTest, GdalDriverCatalogProbe) {
+    auto* driverManager = GetGDALDriverManager();
+    ASSERT_NE(driverManager, nullptr);
+    ASSERT_GT(driverManager->GetDriverCount(), 0);
+
+    std::set<std::string> driverNames;
+    for (int i = 0; i < driverManager->GetDriverCount(); ++i) {
+        auto* driver = driverManager->GetDriver(i);
+        if (!driver) {
+            continue;
+        }
+
+        const char* name = driver->GetDescription();
+        if (name && *name) {
+            driverNames.insert(name);
+        }
+    }
+
+    EXPECT_TRUE(driverNames.count("GTiff") > 0);
+    EXPECT_TRUE(driverNames.count("GPKG") > 0);
+
+    const std::vector<std::string> pointCloudCandidates = {
+        "LAS", "LAZ", "COPC", "EPT", "E57", "TileDB"
+    };
+
+    std::vector<std::string> supportedPointCloudDrivers;
+    for (const auto& candidate : pointCloudCandidates) {
+        if (driverNames.count(candidate) > 0) {
+            supportedPointCloudDrivers.push_back(candidate);
+        }
+    }
+
+    std::ostringstream oss;
+    oss << "GDAL version=" << GDALVersionInfo("RELEASE_NAME")
+        << ", pointcloud_drivers=";
+    if (supportedPointCloudDrivers.empty()) {
+        oss << "<none>";
+    } else {
+        for (size_t i = 0; i < supportedPointCloudDrivers.size(); ++i) {
+            if (i > 0) {
+                oss << ",";
+            }
+            oss << supportedPointCloudDrivers[i];
+        }
+    }
+    std::cout << oss.str() << std::endl;
 }
 
 TEST_F(CoreTest, SpindexPresetCatalogIsStable) {
