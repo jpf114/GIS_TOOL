@@ -259,6 +259,24 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Size:   48 x 48 x 1 bands" -Message "terrain_slope raster size mismatch"
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_slope raster type mismatch"
         }
+        "terrain_tri" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_tri_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_tri raster type mismatch"
+        }
+        "terrain_profile_curvature" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_profile_curvature_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_profile_curvature raster type mismatch"
+        }
+        "terrain_plan_curvature" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_plan_curvature_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_plan_curvature raster type mismatch"
+        }
         "terrain_profile_extract" {
             $rows = Import-Csv (Join-Path $ResolvedOutputRoot "terrain_profile_output.csv")
             Assert-Condition -Condition ($rows.Count -ge 10) -Message "terrain_profile_extract should output at least 10 rows"
@@ -658,6 +676,36 @@ $cases += New-Case -Name "terrain_tpi" -CaseArgs @(
     "--z_factor=1"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "terrain_tpi_output.tif")
+)
+
+$cases += New-Case -Name "terrain_profile_curvature" -CaseArgs @(
+    "terrain", "profile_curvature",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_profile_curvature_output.tif")),
+    "--band=1",
+    "--z_factor=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_profile_curvature_output.tif")
+)
+
+$cases += New-Case -Name "terrain_plan_curvature" -CaseArgs @(
+    "terrain", "plan_curvature",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_plan_curvature_output.tif")),
+    "--band=1",
+    "--z_factor=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_plan_curvature_output.tif")
+)
+
+$cases += New-Case -Name "terrain_tri" -CaseArgs @(
+    "terrain", "tri",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_tri_output.tif")),
+    "--band=1",
+    "--z_factor=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_tri_output.tif")
 )
 
 $cases += New-Case -Name "terrain_roughness" -CaseArgs @(

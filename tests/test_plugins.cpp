@@ -4806,6 +4806,9 @@ TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
     const std::string hillshadeOutput = utf8PathString(getTestDir() / "terrain_hillshade_output.tif");
     const std::string tpiOutput = utf8PathString(getTestDir() / "terrain_tpi_output.tif");
     const std::string curvatureOutput = utf8PathString(getTestDir() / "terrain_curvature_output.tif");
+    const std::string profileCurvatureOutput = utf8PathString(getTestDir() / "terrain_profile_curvature_output.tif");
+    const std::string planCurvatureOutput = utf8PathString(getTestDir() / "terrain_plan_curvature_output.tif");
+    const std::string triOutput = utf8PathString(getTestDir() / "terrain_tri_output.tif");
     const std::string roughnessOutput = utf8PathString(getTestDir() / "terrain_roughness_output.tif");
 
     std::map<std::string, gis::framework::ParamValue> slopeParams;
@@ -4833,6 +4836,18 @@ TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
     curvatureParams["action"] = std::string("curvature");
     curvatureParams["output"] = curvatureOutput;
 
+    std::map<std::string, gis::framework::ParamValue> profileCurvatureParams = slopeParams;
+    profileCurvatureParams["action"] = std::string("profile_curvature");
+    profileCurvatureParams["output"] = profileCurvatureOutput;
+
+    std::map<std::string, gis::framework::ParamValue> planCurvatureParams = slopeParams;
+    planCurvatureParams["action"] = std::string("plan_curvature");
+    planCurvatureParams["output"] = planCurvatureOutput;
+
+    std::map<std::string, gis::framework::ParamValue> triParams = slopeParams;
+    triParams["action"] = std::string("tri");
+    triParams["output"] = triOutput;
+
     std::map<std::string, gis::framework::ParamValue> roughnessParams = slopeParams;
     roughnessParams["action"] = std::string("roughness");
     roughnessParams["output"] = roughnessOutput;
@@ -4842,6 +4857,9 @@ TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
     const auto hillshadeResult = p->execute(hillshadeParams, progress_);
     const auto tpiResult = p->execute(tpiParams, progress_);
     const auto curvatureResult = p->execute(curvatureParams, progress_);
+    const auto profileCurvatureResult = p->execute(profileCurvatureParams, progress_);
+    const auto planCurvatureResult = p->execute(planCurvatureParams, progress_);
+    const auto triResult = p->execute(triParams, progress_);
     const auto roughnessResult = p->execute(roughnessParams, progress_);
 
     EXPECT_TRUE(slopeResult.success) << slopeResult.message;
@@ -4849,15 +4867,24 @@ TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
     EXPECT_TRUE(hillshadeResult.success) << hillshadeResult.message;
     EXPECT_TRUE(tpiResult.success) << tpiResult.message;
     EXPECT_TRUE(curvatureResult.success) << curvatureResult.message;
+    EXPECT_TRUE(profileCurvatureResult.success) << profileCurvatureResult.message;
+    EXPECT_TRUE(planCurvatureResult.success) << planCurvatureResult.message;
+    EXPECT_TRUE(triResult.success) << triResult.message;
     EXPECT_TRUE(roughnessResult.success) << roughnessResult.message;
     EXPECT_TRUE(fs::exists(slopeOutput));
     EXPECT_TRUE(fs::exists(aspectOutput));
     EXPECT_TRUE(fs::exists(hillshadeOutput));
     EXPECT_TRUE(fs::exists(tpiOutput));
     EXPECT_TRUE(fs::exists(curvatureOutput));
+    EXPECT_TRUE(fs::exists(profileCurvatureOutput));
+    EXPECT_TRUE(fs::exists(planCurvatureOutput));
+    EXPECT_TRUE(fs::exists(triOutput));
     EXPECT_TRUE(fs::exists(roughnessOutput));
     EXPECT_TRUE(std::isfinite(readRasterPixel(tpiOutput, 24, 24)));
     EXPECT_TRUE(std::isfinite(readRasterPixel(curvatureOutput, 24, 24)));
+    EXPECT_TRUE(std::isfinite(readRasterPixel(profileCurvatureOutput, 24, 24)));
+    EXPECT_TRUE(std::isfinite(readRasterPixel(planCurvatureOutput, 24, 24)));
+    EXPECT_GT(readRasterPixel(triOutput, 24, 24), 0.01f);
     EXPECT_GT(readRasterPixel(roughnessOutput, 24, 24), 0.01f);
 }
 

@@ -118,7 +118,7 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 | `matching` | `detect` `corner` `match` `change` `register` | 有 | 有 | 有 | 主链路已对齐 |
 | `cutting` | `clip` `mosaic` `split` `merge_bands` | 有 | 有 | 有 | 主链路已对齐 |
 | `georef` | `dos_correction` `radiometric_calibration` `gcp_register` `cosine_correction` `minnaert_correction` `c_correction` `quac_correction` `rpc_orthorectify` | 有 | 有 | 有 | 主链路已对齐 |
-| `terrain` | `slope` `aspect` `hillshade` `tpi` `curvature` `roughness` `fill_sinks` `flow_direction` `flow_accumulation` `stream_extract` `watershed` `profile_extract` `viewshed` `viewshed_multi` `cut_fill` `reservoir_volume` | 有 | 有 | 有 | 主链路已对齐 |
+| `terrain` | `slope` `aspect` `hillshade` `tpi` `curvature` `profile_curvature` `plan_curvature` `tri` `roughness` `fill_sinks` `flow_direction` `flow_accumulation` `stream_extract` `watershed` `profile_extract` `viewshed` `viewshed_multi` `cut_fill` `reservoir_volume` | 有 | 有 | 有 | 主链路已对齐 |
 
 补充说明：
 
@@ -129,7 +129,7 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
   - `spindex.ndvi / ndmi / bsi / evi2` 校验关键输出统计
   - `classification.feature_stats` 校验 `actual_srs` 与 `__summary__` 汇总记录
   - `processing.pansharpen` 校验输出为 `30 x 30 x 3`，并校验三波段统计值
-  - `terrain.profile_extract / terrain.slope / terrain.viewshed_multi` 校验关键结构或统计结果
+  - `terrain.profile_extract / terrain.slope / terrain.viewshed_multi / terrain.profile_curvature / terrain.plan_curvature / terrain.tri` 校验关键结构或统计结果
 
 ## 6. GUI 当前回归覆盖说明
 

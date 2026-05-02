@@ -418,6 +418,36 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_terrain_profile_curvature_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_profile_curvature/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_profile_curvature/gui_terrain_profile_curvature.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_profile_curvature_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_plan_curvature_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_plan_curvature/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_plan_curvature/gui_terrain_plan_curvature.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_plan_curvature_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_tri_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_tri/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_tri/gui_terrain_tri.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_tri_regression.cmake
+    )
+
+    add_test(
         NAME gui_terrain_roughness_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>

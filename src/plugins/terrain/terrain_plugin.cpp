@@ -49,6 +49,14 @@ static const DirectionStep kD8Directions[] = {
     {1, -1, 1.41421356f, 128.0f},
 };
 
+struct SurfaceDerivatives {
+    cv::Mat zx;
+    cv::Mat zy;
+    cv::Mat zxx;
+    cv::Mat zyy;
+    cv::Mat zxy;
+};
+
 struct ProfilePoint {
     double x = 0.0;
     double y = 0.0;
@@ -61,6 +69,16 @@ std::string trim(const std::string& value) {
     }
     const auto end = value.find_last_not_of(" \t\r\n");
     return value.substr(begin, end - begin + 1);
+}
+
+SurfaceDerivatives computeSurfaceDerivatives(const cv::Mat& elevation) {
+    SurfaceDerivatives derivs;
+    cv::Sobel(elevation, derivs.zx, CV_32F, 1, 0, 3, 1.0 / 8.0, 0.0, cv::BORDER_REPLICATE);
+    cv::Sobel(elevation, derivs.zy, CV_32F, 0, 1, 3, 1.0 / 8.0, 0.0, cv::BORDER_REPLICATE);
+    cv::Sobel(elevation, derivs.zxx, CV_32F, 2, 0, 3, 1.0, 0.0, cv::BORDER_REPLICATE);
+    cv::Sobel(elevation, derivs.zyy, CV_32F, 0, 2, 3, 1.0, 0.0, cv::BORDER_REPLICATE);
+    cv::Sobel(elevation, derivs.zxy, CV_32F, 1, 1, 3, 1.0 / 4.0, 0.0, cv::BORDER_REPLICATE);
+    return derivs;
 }
 
 gis::framework::Result runDemProcess(
@@ -193,6 +211,58 @@ gis::framework::Result runLocalTerrainProcess(
         result = elevation - ((neighborhoodMean * 9.0f - elevation) / 8.0f);
     } else if (action == "curvature") {
         cv::Laplacian(elevation, result, CV_32F, 3, 1.0, 0.0, cv::BORDER_REPLICATE);
+    } else if (action == "profile_curvature" || action == "plan_curvature") {
+        const auto derivs = computeSurfaceDerivatives(elevation);
+        result = cv::Mat::zeros(elevation.size(), CV_32F);
+        for (int y = 0; y < elevation.rows; ++y) {
+            for (int x = 0; x < elevation.cols; ++x) {
+                const float zx = derivs.zx.at<float>(y, x);
+                const float zy = derivs.zy.at<float>(y, x);
+                const float zxx = derivs.zxx.at<float>(y, x);
+                const float zyy = derivs.zyy.at<float>(y, x);
+                const float zxy = derivs.zxy.at<float>(y, x);
+                const float slopeSq = zx * zx + zy * zy;
+                if (slopeSq < 1e-10f) {
+                    result.at<float>(y, x) = 0.0f;
+                    continue;
+                }
+
+                if (action == "profile_curvature") {
+                    const float numerator =
+                        zxx * zx * zx + 2.0f * zxy * zx * zy + zyy * zy * zy;
+                    const float denominator = slopeSq * std::pow(1.0f + slopeSq, 1.5f);
+                    result.at<float>(y, x) = -numerator / (denominator + 1e-10f);
+                } else {
+                    const float numerator =
+                        zxx * zy * zy - 2.0f * zxy * zx * zy + zyy * zx * zx;
+                    const float denominator = std::pow(slopeSq, 1.5f);
+                    result.at<float>(y, x) = -numerator / (denominator + 1e-10f);
+                }
+            }
+        }
+    } else if (action == "tri") {
+        result = cv::Mat::zeros(elevation.size(), CV_32F);
+        for (int y = 0; y < elevation.rows; ++y) {
+            for (int x = 0; x < elevation.cols; ++x) {
+                const float center = elevation.at<float>(y, x);
+                float sumSquares = 0.0f;
+                int neighborCount = 0;
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dx == 0 && dy == 0) {
+                            continue;
+                        }
+                        const int ny = std::clamp(y + dy, 0, elevation.rows - 1);
+                        const int nx = std::clamp(x + dx, 0, elevation.cols - 1);
+                        const float diff = elevation.at<float>(ny, nx) - center;
+                        sumSquares += diff * diff;
+                        ++neighborCount;
+                    }
+                }
+                result.at<float>(y, x) =
+                    neighborCount > 0 ? std::sqrt(sumSquares / static_cast<float>(neighborCount)) : 0.0f;
+            }
+        }
     } else if (action == "roughness") {
         cv::Mat neighborhoodMax;
         cv::Mat neighborhoodMin;
@@ -1011,7 +1081,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "???", "?????????????",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "curvature", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "viewshed_multi", "cut_fill", "reservoir_volume"}
+            {"slope", "aspect", "hillshade", "tpi", "curvature", "profile_curvature", "plan_curvature", "tri", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "viewshed_multi", "cut_fill", "reservoir_volume"}
         },
         gis::framework::ParamSpec{
             "input", "????", "?? DEM ????",
@@ -1089,6 +1159,9 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "hillshade") return doHillshade(params, progress);
     if (action == "tpi") return doTpi(params, progress);
     if (action == "curvature") return doCurvature(params, progress);
+    if (action == "profile_curvature") return doProfileCurvature(params, progress);
+    if (action == "plan_curvature") return doPlanCurvature(params, progress);
+    if (action == "tri") return doTri(params, progress);
     if (action == "roughness") return doRoughness(params, progress);
     if (action == "fill_sinks") return doFillSinks(params, progress);
     if (action == "flow_direction") return doFlowDirection(params, progress);
@@ -1167,6 +1240,45 @@ gis::framework::Result TerrainPlugin::doCurvature(
     return runLocalTerrainProcess(
         "curvature",
         "Curvature",
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doProfileCurvature(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runLocalTerrainProcess(
+        "profile_curvature",
+        "ProfileCurvature",
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doPlanCurvature(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runLocalTerrainProcess(
+        "plan_curvature",
+        "PlanCurvature",
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doTri(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runLocalTerrainProcess(
+        "tri",
+        "TRI",
         gis::framework::getParam<std::string>(params, "input", ""),
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),
