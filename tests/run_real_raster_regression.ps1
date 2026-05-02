@@ -298,6 +298,27 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   85" -Message "processing_pansharpen band2 mean mismatch"
             Assert-TextContains -Text $info -Expected "Mean:   95" -Message "processing_pansharpen band3 mean mismatch"
         }
+        "processing_gabor_filter" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "gabor_filter_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   32 x 32 x 1 bands" -Message "processing_gabor_filter raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_gabor_filter raster type mismatch"
+        }
+        "processing_glcm_texture" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "glcm_texture_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   32 x 32 x 1 bands" -Message "processing_glcm_texture raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_glcm_texture raster type mismatch"
+        }
+        "processing_mean_shift_segment" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "mean_shift_segment_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   32 x 32 x 1 bands" -Message "processing_mean_shift_segment raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_mean_shift_segment raster type mismatch"
+        }
         "classification_feature_stats" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "feature_stats_output.json")
             Assert-Condition -Condition ($payload.meta.actual_srs -eq "EPSG:3857") -Message "classification_feature_stats actual_srs mismatch"
@@ -834,6 +855,44 @@ $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
     "--pan_method=simple_mean"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "pansharpen_output.tif")
+)
+
+$cases += New-Case -Name "processing_gabor_filter" -CaseArgs @(
+    "processing", "gabor_filter",
+    ("--input=" + $data.AnalysisRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "gabor_filter_output.tif")),
+    "--band=1",
+    "--kernel_size=9",
+    "--sigma=2",
+    "--gabor_theta=0",
+    "--gabor_lambda=6",
+    "--gabor_gamma=0.5"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "gabor_filter_output.tif")
+)
+
+$cases += New-Case -Name "processing_glcm_texture" -CaseArgs @(
+    "processing", "glcm_texture",
+    ("--input=" + $data.AnalysisRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "glcm_texture_output.tif")),
+    "--band=1",
+    "--kernel_size=5",
+    "--glcm_metric=contrast",
+    "--glcm_levels=8"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "glcm_texture_output.tif")
+)
+
+$cases += New-Case -Name "processing_mean_shift_segment" -CaseArgs @(
+    "processing", "mean_shift_segment",
+    ("--input=" + $data.AnalysisRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "mean_shift_segment_output.tif")),
+    "--band=1",
+    "--spatial_radius=8",
+    "--color_radius=16",
+    "--pyramid_level=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "mean_shift_segment_output.tif")
 )
 
 $featureStatsOutput = Join-Path $ResolvedOutputRoot "feature_stats_output.json"
