@@ -9,7 +9,9 @@ public:
     std::string name() const override { return "terrain"; }
     std::string displayName() const override { return "地形分析"; }
     std::string version() const override { return "1.0.0"; }
-    std::string description() const override { return "基于 DEM 生成坡度、坡向、山体阴影与基础地形因子结果。"; }
+    std::string description() const override {
+        return "提供基于 DEM 的地形分析能力，当前支持坡度坡向、阴影、水文分析、视域分析和体积计算。";
+    }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
 

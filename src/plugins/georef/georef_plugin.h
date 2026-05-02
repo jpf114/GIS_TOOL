@@ -10,7 +10,7 @@ public:
     std::string displayName() const override { return "几何校正与辐射处理"; }
     std::string version() const override { return "0.1.0"; }
     std::string description() const override {
-        return "提供遥感辐射与几何预处理能力，当前支持 DOS 校正、辐射定标、控制点配准与基础地形校正。";
+        return "提供遥感辐射与几何预处理能力，当前支持 DOS、QUAC、辐射定标、控制点配准、RPC 正射和地形校正。";
     }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;

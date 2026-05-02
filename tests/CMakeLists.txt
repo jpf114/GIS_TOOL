@@ -340,6 +340,106 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_terrain_aspect_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_aspect/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_aspect/gui_terrain_aspect.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_aspect_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_hillshade_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_hillshade/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_hillshade/gui_terrain_hillshade.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_hillshade_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_tpi_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_tpi/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_tpi/gui_terrain_tpi.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_tpi_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_curvature_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_curvature/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_curvature/gui_terrain_curvature.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_curvature_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_roughness_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_roughness/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_roughness/gui_terrain_roughness.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_roughness_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_fill_sinks_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_fill_sinks/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_fill_sinks/gui_terrain_fill_sinks.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_fill_sinks_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_flow_direction_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_flow_direction/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_flow_direction/gui_terrain_flow_direction.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_flow_direction_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_flow_accumulation_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_flow_accumulation/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_flow_accumulation/gui_terrain_flow_accumulation.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_flow_accumulation_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_watershed_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_watershed/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_watershed/gui_terrain_watershed.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_watershed_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_viewshed_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_viewshed/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_viewshed/gui_terrain_viewshed.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_viewshed_regression.cmake
+    )
+
+    add_test(
         NAME gui_classification_feature_stats_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>

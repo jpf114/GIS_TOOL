@@ -582,6 +582,100 @@ int makeTerrainRaster(const std::string& outputPath) {
     return 0;
 }
 
+int makeTerrainSinkRaster(const std::string& outputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(outputPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(outputPath.c_str(), 9, 9, 1, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create terrain sink raster: " << outputPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.001, 0.0,
+        40.0, 0.0, -0.001
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<float> data(9 * 9, 10.0f);
+    data[4 * 9 + 4] = 2.0f;
+
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band) {
+        GDALClose(ds);
+        std::cerr << "Failed to get terrain sink band\n";
+        return 1;
+    }
+    if (band->RasterIO(
+            GF_Write, 0, 0, 9, 9,
+            data.data(), 9, 9, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write terrain sink raster\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+    return 0;
+}
+
+int makeTerrainEastDownhillRaster(const std::string& outputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(outputPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(outputPath.c_str(), 9, 9, 1, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create east downhill raster: " << outputPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.001, 0.0,
+        40.0, 0.0, -0.001
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<float> data(9 * 9, 0.0f);
+    for (int y = 0; y < 9; ++y) {
+        for (int x = 0; x < 9; ++x) {
+            data[y * 9 + x] = static_cast<float>(9 - x);
+        }
+    }
+
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band) {
+        GDALClose(ds);
+        std::cerr << "Failed to get east downhill band\n";
+        return 1;
+    }
+    if (band->RasterIO(
+            GF_Write, 0, 0, 9, 9,
+            data.data(), 9, 9, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write east downhill raster\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+    return 0;
+}
+
 int makeSupervisedClassificationInputs(const std::string& rasterPath, const std::string& csvPath) {
     gis::core::initRuntimeEnvironment();
     GDALAllRegister();
@@ -948,6 +1042,12 @@ int main(int argc, char* argv[]) {
     }
     if (command == "terrain-raster") {
         return makeTerrainRaster(argv[2]);
+    }
+    if (command == "terrain-sink-raster") {
+        return makeTerrainSinkRaster(argv[2]);
+    }
+    if (command == "terrain-east-downhill-raster") {
+        return makeTerrainEastDownhillRaster(argv[2]);
     }
     if (command == "classification-supervised-inputs") {
         if (argc < 4) {

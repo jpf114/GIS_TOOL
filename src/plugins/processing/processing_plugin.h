@@ -8,7 +8,9 @@ public:
     std::string name() const override { return "processing"; }
     std::string displayName() const override { return "影像处理与分析"; }
     std::string version() const override { return "1.3.0"; }
-    std::string description() const override { return "阈值分割、空间滤波、影像增强、波段运算、统计信息、边缘检测、轮廓提取、模板匹配、全色锐化、霍夫变换、分水岭分割、K-Means分割"; }
+    std::string description() const override {
+        return "提供通用影像处理能力，当前支持阈值、滤波、增强、纹理、分割、模板匹配、全色锐化和统计分析。";
+    }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
 
