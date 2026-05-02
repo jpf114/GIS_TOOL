@@ -191,6 +191,17 @@ static std::string createSvmTrainingCsv(const std::string& name) {
     return path;
 }
 
+static std::string createGcpCsv(const std::string& name) {
+    const std::string path = utf8PathString(getTestDir() / name);
+    std::ofstream ofs(path, std::ios::binary);
+    ofs << "pixel_x,pixel_y,map_x,map_y\n";
+    ofs << "0,0,120,30\n";
+    ofs << "9,0,129,30\n";
+    ofs << "0,5,120,25\n";
+    ofs << "9,5,129,25\n";
+    return path;
+}
+
 static std::string createTerrainRaster(const std::string& name, int w = 48, int h = 48) {
     std::string path = (getTestDir() / name).string();
     auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
@@ -705,6 +716,49 @@ TEST_F(PluginTest, GeorefRadiometricCalibrationExecution) {
     EXPECT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("action"), "radiometric_calibration");
     EXPECT_NEAR(readRasterPixel(output, 5, 0), 15.0f, 1e-4f);
+}
+
+TEST_F(PluginTest, GeorefGcpRegisterExecution) {
+    auto* p = mgr_.find("georef");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createConstantRaster("georef_gcp_input.tif", 10, 6, 7.0f, 120.0, 30.0, 1.0);
+    const std::string gcpFile = createGcpCsv("georef_gcps.csv");
+    const std::string output = utf8PathString(getTestDir() / "georef_gcp_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("gcp_register");
+    params["input"] = input;
+    params["output"] = output;
+    params["gcp_file"] = gcpFile;
+    params["dst_srs"] = std::string("EPSG:4326");
+    params["resample"] = std::string("nearest");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "gcp_register");
+    EXPECT_EQ(result.metadata.at("gcp_count"), "4");
+    EXPECT_NEAR(readRasterPixel(output, 2, 2), 7.0f, 1e-4f);
+
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+
+    double geotransform[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    ASSERT_EQ(ds->GetGeoTransform(geotransform), CE_None);
+    EXPECT_NEAR(geotransform[0], 120.0, 1e-6);
+    EXPECT_NEAR(geotransform[1], 1.0, 1e-6);
+    EXPECT_NEAR(geotransform[3], 30.0, 1e-6);
+    EXPECT_NEAR(geotransform[5], -1.0, 1e-6);
+
+    OGRSpatialReference srs;
+    ASSERT_EQ(srs.SetFromUserInput(ds->GetProjectionRef()), OGRERR_NONE);
+    const char* authName = srs.GetAuthorityName(nullptr);
+    const char* authCode = srs.GetAuthorityCode(nullptr);
+    ASSERT_NE(authName, nullptr);
+    ASSERT_NE(authCode, nullptr);
+    EXPECT_STREQ(authName, "EPSG");
+    EXPECT_STREQ(authCode, "4326");
 }
 
 TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {

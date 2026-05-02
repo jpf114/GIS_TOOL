@@ -277,6 +277,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_georef_radiometric_calibration.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "georef", "gcp_register"),
+        "D:/data/image_georef_gcp_register.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
@@ -777,6 +781,21 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefRadiometric
     params["band"] = 1;
     params["output"] = std::string("D:/data/result.json");
     issue = gis::gui::validateActionSpecificParams("georef", "radiometric_calibration", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "output");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefGcpRegisterValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["gcp_file"] = std::string("D:/data/points.json");
+
+    auto issue = gis::gui::validateActionSpecificParams("georef", "gcp_register", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "gcp_file");
+
+    params["gcp_file"] = std::string("D:/data/points.csv");
+    params["output"] = std::string("D:/data/result.json");
+    issue = gis::gui::validateActionSpecificParams("georef", "gcp_register", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "output");
 }

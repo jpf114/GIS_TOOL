@@ -91,6 +91,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("histogram_match"), QStringLiteral("\347\233\264\346\226\271\345\233\276\345\214\271\351\205\215")},
         {QStringLiteral("dos_correction"), QStringLiteral("DOS \346\240\241\346\255\243")},
         {QStringLiteral("radiometric_calibration"), QStringLiteral("\350\276\220\345\260\204\345\256\232\346\240\207")},
+        {QStringLiteral("gcp_register"), QStringLiteral("\346\216\247\345\210\266\347\202\271\351\205\215\345\207\206")},
         {QStringLiteral("slope"), QStringLiteral("\345\235\241\345\272\246")},
         {QStringLiteral("aspect"), QStringLiteral("\345\235\241\345\220\221")},
         {QStringLiteral("hillshade"), QStringLiteral("\345\261\261\344\275\223\351\230\264\345\275\261")},
@@ -487,6 +488,7 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"src_srs", {QStringLiteral("源坐标系"), QStringLiteral("源坐标参考系，留空时尽量使用数据自带坐标系。")}},
         {"srs", {QStringLiteral("坐标系"), QStringLiteral("要写入数据的坐标参考系。")}},
         {"resample", {QStringLiteral("重采样方式"), QStringLiteral("输出计算或重投影时采用的重采样算法。")}},
+        {"gcp_file", {QStringLiteral("控制点文件"), QStringLiteral("CSV 表头应包含 pixel_x,pixel_y,map_x,map_y，可选 map_z。")}},
         {"x", {QStringLiteral("X 坐标"), QStringLiteral("待转换点的 X 坐标。")}},
         {"y", {QStringLiteral("Y 坐标"), QStringLiteral("待转换点的 Y 坐标。")}},
         {"extent", {QStringLiteral("空间范围"), QStringLiteral("矩形范围 xmin, ymin, xmax, ymax。")}},
@@ -723,6 +725,11 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"gain", {QStringLiteral("增益"), QStringLiteral("按 output = input * gain + offset 执行辐射定标。")}},
                 {"offset", {QStringLiteral("偏移"), QStringLiteral("辐射定标偏移量，可为负值。")}},
             }},
+            {"gcp_register", {
+                {"gcp_file", {QStringLiteral("控制点文件"), QStringLiteral("CSV 表头应包含 pixel_x,pixel_y,map_x,map_y，可选 map_z。")}},
+                {"dst_srs", {QStringLiteral("目标坐标系"), QStringLiteral("控制点地图坐标对应的坐标系，例如 EPSG:4326。")}},
+                {"resample", {QStringLiteral("重采样方式"), QStringLiteral("配准输出时使用的重采样算法。")}},
+            }},
         }},
         {"vector", {
             {"convert", {
@@ -801,6 +808,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         {"georef", {
             {"dos_correction", {QStringLiteral("DOS 大气校正"), QStringLiteral("对单波段栅格执行简化暗像元大气校正。"), {"input", "output", "band", "dark_object_value"}, {"input", "output"}}},
             {"radiometric_calibration", {QStringLiteral("辐射定标"), QStringLiteral("按给定 gain/offset 对单波段栅格执行辐射定标。"), {"input", "output", "band", "gain", "offset"}, {"input", "output"}}},
+            {"gcp_register", {QStringLiteral("控制点配准"), QStringLiteral("根据控制点 CSV 对输入影像执行轻量几何配准。"), {"input", "output", "gcp_file", "dst_srs", "resample"}, {"input", "output", "gcp_file", "dst_srs"}}},
         }},
         {"terrain", {
             {"slope", {QStringLiteral("坡度"), QStringLiteral("根据 DEM 计算坡度栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},

@@ -3,24 +3,185 @@
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
 
+#include <cpl_conv.h>
 #include <gdal_priv.h>
+#include <gdal_utils.h>
 #include <opencv2/core.hpp>
 
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
 namespace gis::plugins {
+
+namespace {
+
+namespace fs = std::filesystem;
+
+std::string trim(const std::string& value) {
+    const auto begin = value.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return {};
+    }
+    const auto end = value.find_last_not_of(" \t\r\n");
+    return value.substr(begin, end - begin + 1);
+}
+
+std::string lowerString(const std::string& value) {
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return lowered;
+}
+
+std::vector<std::string> splitCsvLine(const std::string& line) {
+    std::vector<std::string> columns;
+    std::stringstream ss(line);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        columns.push_back(trim(item));
+    }
+    return columns;
+}
+
+bool tryParseDouble(const std::string& text, double& value) {
+    try {
+        std::size_t parsed = 0;
+        value = std::stod(text, &parsed);
+        return parsed == text.size();
+    } catch (...) {
+        return false;
+    }
+}
+
+struct ParsedGcps {
+    std::vector<GDAL_GCP> gcps;
+    bool hasZ = false;
+};
+
+bool loadGcpsFromCsv(const std::string& csvPath,
+                     ParsedGcps& parsedGcps,
+                     std::string& error) {
+    std::ifstream ifs(csvPath, std::ios::binary);
+    if (!ifs.is_open()) {
+        error = "Cannot open gcp_file: " + csvPath;
+        return false;
+    }
+
+    std::string headerLine;
+    if (!std::getline(ifs, headerLine)) {
+        error = "gcp_file is empty";
+        return false;
+    }
+
+    const auto headers = splitCsvLine(headerLine);
+    int pixelXIndex = -1;
+    int pixelYIndex = -1;
+    int mapXIndex = -1;
+    int mapYIndex = -1;
+    int mapZIndex = -1;
+    for (int i = 0; i < static_cast<int>(headers.size()); ++i) {
+        const std::string key = lowerString(headers[i]);
+        if (key == "pixel_x") pixelXIndex = i;
+        else if (key == "pixel_y") pixelYIndex = i;
+        else if (key == "map_x") mapXIndex = i;
+        else if (key == "map_y") mapYIndex = i;
+        else if (key == "map_z") mapZIndex = i;
+    }
+
+    if (pixelXIndex < 0 || pixelYIndex < 0 || mapXIndex < 0 || mapYIndex < 0) {
+        error = "gcp_file must contain header pixel_x,pixel_y,map_x,map_y";
+        return false;
+    }
+
+    std::string line;
+    int lineNumber = 1;
+    while (std::getline(ifs, line)) {
+        ++lineNumber;
+        if (trim(line).empty()) {
+            continue;
+        }
+
+        const auto columns = splitCsvLine(line);
+        const int requiredColumns = std::max({pixelXIndex, pixelYIndex, mapXIndex, mapYIndex, mapZIndex});
+        if (static_cast<int>(columns.size()) <= requiredColumns) {
+            error = "Invalid GCP row at line " + std::to_string(lineNumber);
+            return false;
+        }
+
+        double pixelX = 0.0;
+        double pixelY = 0.0;
+        double mapX = 0.0;
+        double mapY = 0.0;
+        double mapZ = 0.0;
+        if (!tryParseDouble(columns[pixelXIndex], pixelX) ||
+            !tryParseDouble(columns[pixelYIndex], pixelY) ||
+            !tryParseDouble(columns[mapXIndex], mapX) ||
+            !tryParseDouble(columns[mapYIndex], mapY)) {
+            error = "Invalid numeric value in gcp_file at line " + std::to_string(lineNumber);
+            return false;
+        }
+
+        if (mapZIndex >= 0 && !columns[mapZIndex].empty()) {
+            if (!tryParseDouble(columns[mapZIndex], mapZ)) {
+                error = "Invalid map_z value in gcp_file at line " + std::to_string(lineNumber);
+                return false;
+            }
+            parsedGcps.hasZ = true;
+        }
+
+        GDAL_GCP gcp;
+        GDALInitGCPs(1, &gcp);
+        gcp.dfGCPPixel = pixelX;
+        gcp.dfGCPLine = pixelY;
+        gcp.dfGCPX = mapX;
+        gcp.dfGCPY = mapY;
+        gcp.dfGCPZ = mapZ;
+        parsedGcps.gcps.push_back(gcp);
+    }
+
+    if (parsedGcps.gcps.size() < 3) {
+        error = "gcp_file must contain at least 3 control points";
+        return false;
+    }
+
+    return true;
+}
+
+void freeParsedGcps(ParsedGcps& parsedGcps) {
+    if (!parsedGcps.gcps.empty()) {
+        GDALDeinitGCPs(static_cast<int>(parsedGcps.gcps.size()), parsedGcps.gcps.data());
+        parsedGcps.gcps.clear();
+    }
+}
+
+std::string uniqueTempVrtPath(const std::string& outputPath) {
+    const fs::path basePath = fs::temp_directory_path() /
+        ("gis_tool_georef_" + std::to_string(std::hash<std::string>{}(outputPath)));
+    fs::create_directories(basePath);
+    return (basePath / "gcp_register_input.vrt").string();
+}
+
+} // namespace
 
 std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
             "action", "子功能", "几何校正与辐射处理功能",
             gis::framework::ParamType::Enum, true, std::string{},
-            int{0}, int{0}, {"dos_correction", "radiometric_calibration"}
+            int{0}, int{0}, {"dos_correction", "radiometric_calibration", "gcp_register"}
         },
         gis::framework::ParamSpec{
             "input", "输入栅格", "待处理栅格影像路径",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出栅格", "输出校正后栅格路径",
+            "output", "输出栅格", "输出结果栅格路径",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
@@ -39,6 +200,19 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
             "offset", "偏移", "辐射定标偏移量",
             gis::framework::ParamType::Double, false, double{0.0}
         },
+        gis::framework::ParamSpec{
+            "gcp_file", "控制点文件", "CSV 控制点文件，表头应包含 pixel_x,pixel_y,map_x,map_y",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "dst_srs", "目标坐标系", "控制点坐标对应的目标坐标系，例如 EPSG:4326",
+            gis::framework::ParamType::CRS, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "resample", "重采样方法", "控制点配准后的重采样算法",
+            gis::framework::ParamType::Enum, false, std::string{"nearest"},
+            int{0}, int{0}, {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average"}
+        },
     };
 }
 
@@ -51,6 +225,9 @@ gis::framework::Result GeorefPlugin::execute(
     }
     if (action == "radiometric_calibration") {
         return doRadiometricCalibration(params, progress);
+    }
+    if (action == "gcp_register") {
+        return doGcpRegister(params, progress);
     }
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -130,6 +307,115 @@ gis::framework::Result GeorefPlugin::doRadiometricCalibration(
     result.metadata["band"] = std::to_string(band);
     result.metadata["gain"] = std::to_string(gain);
     result.metadata["offset"] = std::to_string(offset);
+    return result;
+}
+
+gis::framework::Result GeorefPlugin::doGcpRegister(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    const std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    const std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    const std::string gcpFile = gis::framework::getParam<std::string>(params, "gcp_file", "");
+    const std::string dstSrs = gis::framework::getParam<std::string>(params, "dst_srs", "");
+    const std::string resample = gis::framework::getParam<std::string>(params, "resample", "nearest");
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (gcpFile.empty()) return gis::framework::Result::fail("gcp_file is required");
+    if (dstSrs.empty()) return gis::framework::Result::fail("dst_srs is required");
+
+    ParsedGcps parsedGcps;
+    std::string parseError;
+    if (!loadGcpsFromCsv(gcpFile, parsedGcps, parseError)) {
+        return gis::framework::Result::fail(parseError);
+    }
+
+    auto srcDs = gis::core::openRaster(input, true);
+    if (!srcDs) {
+        freeParsedGcps(parsedGcps);
+        return gis::framework::Result::fail("Cannot open input raster: " + input);
+    }
+
+    const std::string tempVrtPath = uniqueTempVrtPath(output);
+    GDALDriver* vrtDriver = GetGDALDriverManager()->GetDriverByName("VRT");
+    if (!vrtDriver) {
+        freeParsedGcps(parsedGcps);
+        return gis::framework::Result::fail("VRT driver is unavailable");
+    }
+
+    progress.onMessage("Preparing temporary dataset with control points");
+    progress.onProgress(0.2);
+
+    GDALDataset* vrtRaw = vrtDriver->CreateCopy(tempVrtPath.c_str(), srcDs.get(), FALSE, nullptr, nullptr, nullptr);
+    if (!vrtRaw) {
+        freeParsedGcps(parsedGcps);
+        return gis::framework::Result::fail("Failed to create temporary VRT dataset");
+    }
+    gis::core::GdalDatasetPtr vrtDs(vrtRaw);
+
+    std::unique_ptr<OGRSpatialReference> dstSrsRef(gis::core::parseSRS(dstSrs));
+    if (!dstSrsRef) {
+        freeParsedGcps(parsedGcps);
+        return gis::framework::Result::fail("Invalid dst_srs: " + dstSrs);
+    }
+
+    char* dstSrsWkt = nullptr;
+    if (dstSrsRef->exportToWkt(&dstSrsWkt) != OGRERR_NONE || !dstSrsWkt) {
+        freeParsedGcps(parsedGcps);
+        return gis::framework::Result::fail("Failed to export dst_srs to WKT");
+    }
+
+    if (vrtDs->SetGCPs(static_cast<int>(parsedGcps.gcps.size()), parsedGcps.gcps.data(), dstSrsWkt) != CE_None) {
+        CPLFree(dstSrsWkt);
+        freeParsedGcps(parsedGcps);
+        return gis::framework::Result::fail("Failed to apply GCPs: " + std::string(CPLGetLastErrorMsg()));
+    }
+    CPLFree(dstSrsWkt);
+
+    progress.onMessage("Warping raster with GCP transform");
+    progress.onProgress(0.55);
+
+    std::vector<std::string> argStorage = {
+        "-t_srs", dstSrs,
+        "-r", resample,
+        "-order", "1"
+    };
+
+    std::vector<const char*> warpArgs;
+    for (auto& arg : argStorage) {
+        warpArgs.push_back(arg.c_str());
+    }
+    warpArgs.push_back(nullptr);
+
+    GDALWarpAppOptions* warpOpts = GDALWarpAppOptionsNew(const_cast<char**>(warpArgs.data()), nullptr);
+    if (!warpOpts) {
+        freeParsedGcps(parsedGcps);
+        return gis::framework::Result::fail("Failed to create warp options: " + std::string(CPLGetLastErrorMsg()));
+    }
+
+    GDALDatasetH srcHandle = static_cast<GDALDatasetH>(vrtDs.get());
+    int errCode = 0;
+    GDALDatasetH dstHandle = GDALWarp(output.c_str(), nullptr, 1, &srcHandle, warpOpts, &errCode);
+    GDALWarpAppOptionsFree(warpOpts);
+    const std::size_t gcpCount = parsedGcps.gcps.size();
+    freeParsedGcps(parsedGcps);
+
+    if (!dstHandle || errCode) {
+        if (dstHandle) {
+            GDALClose(dstHandle);
+        }
+        return gis::framework::Result::fail("GCP registration failed: " + std::string(CPLGetLastErrorMsg()));
+    }
+
+    GDALClose(dstHandle);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("GCP registration completed", output);
+    result.metadata["action"] = "gcp_register";
+    result.metadata["gcp_file"] = gcpFile;
+    result.metadata["dst_srs"] = dstSrs;
+    result.metadata["gcp_count"] = std::to_string(gcpCount);
+    result.metadata["resample"] = resample;
     return result;
 }
 

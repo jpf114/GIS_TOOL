@@ -618,6 +618,12 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
         return config;
     }
 
+    if (pluginName == "georef" && paramKey == "gcp_file") {
+        config.placeholder = "请选择控制点 CSV，表头示例 pixel_x,pixel_y,map_x,map_y";
+        config.openFilter = "CSV 文件 (*.csv);;所有文件 (*)";
+        return config;
+    }
+
     if (pluginName == "classification" && paramKey == "rasters") {
         config.placeholder = "请输入多个分类栅格路径，使用英文逗号分隔，例如 a.tif,b.tif";
         config.openFilter = filterForRasterInputs();
@@ -1263,6 +1269,17 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
             return ActionValidationIssue{"band", "参数“波段序号”必须大于 0"};
         }
         const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
+            return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
+        }
+    }
+
+    if (pluginName == "georef" && actionKey == "gcp_register") {
+        const std::string gcpFile = stringParam("gcp_file");
+        const std::string outputPath = stringParam("output");
+        if (!gcpFile.empty() && !endsWithOneOf(gcpFile, {".csv"})) {
+            return ActionValidationIssue{"gcp_file", "参数“控制点文件”应选择 .csv 文件"};
+        }
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
             return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
         }
