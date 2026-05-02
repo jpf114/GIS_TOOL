@@ -1358,6 +1358,25 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
+    if (pluginName == "georef" && actionKey == "quac_correction") {
+        const auto darkPercentile = doubleParamValue(params, "dark_percentile");
+        const auto brightPercentile = doubleParamValue(params, "bright_percentile");
+        const std::string outputPath = stringParam("output");
+        if (darkPercentile.has_value() && (*darkPercentile < 0.0 || *darkPercentile >= 100.0)) {
+            return ActionValidationIssue{"dark_percentile", "参数“暗像元百分位”应落在 [0, 100) 范围内"};
+        }
+        if (brightPercentile.has_value() && (*brightPercentile <= 0.0 || *brightPercentile > 100.0)) {
+            return ActionValidationIssue{"bright_percentile", "参数“亮像元百分位”应落在 (0, 100] 范围内"};
+        }
+        if (darkPercentile.has_value() && brightPercentile.has_value() &&
+            *darkPercentile >= *brightPercentile) {
+            return ActionValidationIssue{"bright_percentile", "参数“亮像元百分位”必须大于“暗像元百分位”"};
+        }
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
+            return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
+        }
+    }
+
     if (pluginName == "vector" && actionKey == "adjacency") {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
@@ -1667,6 +1686,12 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
             adjustedSpec.minValue = 0.000001;
         } else if (pluginName == "georef" && spec.key == "c_value") {
             adjustedSpec.minValue = 0.0;
+        } else if (pluginName == "georef" && spec.key == "dark_percentile") {
+            adjustedSpec.minValue = 0.0;
+            adjustedSpec.maxValue = 99.999999;
+        } else if (pluginName == "georef" && spec.key == "bright_percentile") {
+            adjustedSpec.minValue = 0.000001;
+            adjustedSpec.maxValue = 100.0;
         }
         if (pluginName == "projection" && action == "transform" && spec.key == "src_srs") {
             adjustedSpec.defaultValue = std::string("EPSG:4326");

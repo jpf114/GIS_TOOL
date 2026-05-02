@@ -62,7 +62,6 @@ bool tryParseDouble(const std::string& text, double& value) {
 
 struct ParsedGcps {
     std::vector<GDAL_GCP> gcps;
-    bool hasZ = false;
 };
 
 bool loadGcpsFromCsv(const std::string& csvPath,
@@ -128,12 +127,10 @@ bool loadGcpsFromCsv(const std::string& csvPath,
             return false;
         }
 
-        if (mapZIndex >= 0 && !columns[mapZIndex].empty()) {
-            if (!tryParseDouble(columns[mapZIndex], mapZ)) {
-                error = "Invalid map_z value in gcp_file at line " + std::to_string(lineNumber);
-                return false;
-            }
-            parsedGcps.hasZ = true;
+        if (mapZIndex >= 0 && !columns[mapZIndex].empty() &&
+            !tryParseDouble(columns[mapZIndex], mapZ)) {
+            error = "Invalid map_z value in gcp_file at line " + std::to_string(lineNumber);
+            return false;
         }
 
         GDAL_GCP gcp;
@@ -168,6 +165,17 @@ std::string uniqueTempVrtPath(const std::string& outputPath) {
     return (basePath / "gcp_register_input.vrt").string();
 }
 
+float percentileValue(std::vector<float>& values, double percentile) {
+    if (values.empty()) {
+        return 0.0f;
+    }
+    const double clamped = std::clamp(percentile, 0.0, 100.0);
+    const std::size_t index = static_cast<std::size_t>(
+        std::round((clamped / 100.0) * static_cast<double>(values.size() - 1)));
+    std::nth_element(values.begin(), values.begin() + index, values.end());
+    return values[index];
+}
+
 } // namespace
 
 std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
@@ -175,7 +183,10 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
         gis::framework::ParamSpec{
             "action", "子功能", "几何校正与辐射处理功能",
             gis::framework::ParamType::Enum, true, std::string{},
-            int{0}, int{0}, {"dos_correction", "radiometric_calibration", "gcp_register", "cosine_correction", "minnaert_correction", "c_correction"}
+            int{0}, int{0}, {
+                "dos_correction", "radiometric_calibration", "gcp_register",
+                "cosine_correction", "minnaert_correction", "c_correction", "quac_correction"
+            }
         },
         gis::framework::ParamSpec{
             "input", "输入栅格", "待处理栅格影像路径",
@@ -238,6 +249,14 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
             "c_value", "C 系数", "C 地形校正系数",
             gis::framework::ParamType::Double, false, double{0.1}
         },
+        gis::framework::ParamSpec{
+            "dark_percentile", "暗像元百分位", "简化 QUAC 使用的暗像元百分位",
+            gis::framework::ParamType::Double, false, double{1.0}
+        },
+        gis::framework::ParamSpec{
+            "bright_percentile", "亮像元百分位", "简化 QUAC 使用的亮像元百分位",
+            gis::framework::ParamType::Double, false, double{99.0}
+        },
     };
 }
 
@@ -262,6 +281,9 @@ gis::framework::Result GeorefPlugin::execute(
     }
     if (action == "c_correction") {
         return doCCorrection(params, progress);
+    }
+    if (action == "quac_correction") {
+        return doQuacCorrection(params, progress);
     }
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -679,6 +701,76 @@ gis::framework::Result GeorefPlugin::doCCorrection(
     result.metadata["sun_zenith_deg"] = std::to_string(sunZenithDeg);
     result.metadata["sun_azimuth_deg"] = std::to_string(sunAzimuthDeg);
     result.metadata["c_value"] = std::to_string(cValue);
+    return result;
+}
+
+gis::framework::Result GeorefPlugin::doQuacCorrection(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    const std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    const std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    const double darkPercentile = gis::framework::getParam<double>(params, "dark_percentile", 1.0);
+    const double brightPercentile = gis::framework::getParam<double>(params, "bright_percentile", 99.0);
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (darkPercentile < 0.0 || darkPercentile >= 100.0) {
+        return gis::framework::Result::fail("dark_percentile must be in [0, 100)");
+    }
+    if (brightPercentile <= 0.0 || brightPercentile > 100.0) {
+        return gis::framework::Result::fail("bright_percentile must be in (0, 100]");
+    }
+    if (darkPercentile >= brightPercentile) {
+        return gis::framework::Result::fail("dark_percentile must be less than bright_percentile");
+    }
+
+    auto srcDs = gis::core::openRaster(input, true);
+    if (!srcDs) {
+        return gis::framework::Result::fail("Cannot open input raster: " + input);
+    }
+
+    const int bandCount = srcDs->GetRasterCount();
+    std::vector<cv::Mat> correctedBands;
+    correctedBands.reserve(bandCount);
+
+    progress.onMessage("Reading raster bands for QUAC correction");
+    progress.onProgress(0.15);
+
+    for (int bandIndex = 1; bandIndex <= bandCount; ++bandIndex) {
+        cv::Mat bandMat = gis::core::gdalBandToMat(srcDs.get(), bandIndex);
+        bandMat.convertTo(bandMat, CV_32F);
+
+        std::vector<float> darkPixels;
+        darkPixels.assign(reinterpret_cast<float*>(bandMat.data),
+                          reinterpret_cast<float*>(bandMat.data) + static_cast<std::size_t>(bandMat.total()));
+        std::vector<float> brightPixels = darkPixels;
+
+        const float darkValue = percentileValue(darkPixels, darkPercentile);
+        const float brightValue = percentileValue(brightPixels, brightPercentile);
+
+        cv::Mat corrected = bandMat - darkValue;
+        cv::max(corrected, 0.0, corrected);
+
+        const float denominator = brightValue - darkValue;
+        if (denominator > 1e-6f) {
+            corrected.convertTo(corrected, CV_32F, 1.0 / denominator);
+        } else {
+            corrected = cv::Mat::zeros(corrected.size(), CV_32F);
+        }
+        cv::min(corrected, 1.0, corrected);
+        correctedBands.push_back(corrected);
+    }
+
+    progress.onMessage("Writing QUAC correction result");
+    progress.onProgress(0.8);
+    gis::core::matsToGdalTiff(correctedBands, srcDs.get(), output);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("QUAC correction completed", output);
+    result.metadata["action"] = "quac_correction";
+    result.metadata["band_count"] = std::to_string(bandCount);
+    result.metadata["dark_percentile"] = std::to_string(darkPercentile);
+    result.metadata["bright_percentile"] = std::to_string(brightPercentile);
     return result;
 }
 

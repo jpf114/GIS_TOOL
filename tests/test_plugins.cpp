@@ -387,6 +387,17 @@ static float readRasterPixel(const std::string& path, int x, int y) {
     return value;
 }
 
+static float readRasterPixel(const std::string& path, int bandIndex, int x, int y) {
+    auto ds = gis::core::openRaster(path, true);
+    EXPECT_NE(ds, nullptr);
+    auto* band = ds->GetRasterBand(bandIndex);
+    EXPECT_NE(band, nullptr);
+
+    float value = 0.0f;
+    EXPECT_EQ(band->RasterIO(GF_Read, x, y, 1, 1, &value, 1, 1, GDT_Float32, 0, 0), CE_None);
+    return value;
+}
+
 TEST_F(PluginTest, PluginManagerScan) {
     EXPECT_GE(mgr_.plugins().size(), 4u);
 }
@@ -839,6 +850,35 @@ TEST_F(PluginTest, GeorefCCorrectionExecution) {
     EXPECT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("action"), "c_correction");
     EXPECT_NEAR(readRasterPixel(output, 3, 3), 10.0f * (0.8660254f + 0.1f) / (0.4330127f + 0.1f), 1e-3f);
+}
+
+TEST_F(PluginTest, GeorefQuacCorrectionExecution) {
+    auto* p = mgr_.find("georef");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createMultiBandConstantRaster(
+        "georef_quac_input.tif", 8, 8, {20.0f, 60.0f, 100.0f});
+    const std::string output = utf8PathString(getTestDir() / "georef_quac_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("quac_correction");
+    params["input"] = input;
+    params["output"] = output;
+    params["dark_percentile"] = 1.0;
+    params["bright_percentile"] = 99.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "quac_correction");
+    EXPECT_EQ(result.metadata.at("band_count"), "3");
+
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    EXPECT_EQ(ds->GetRasterCount(), 3);
+    EXPECT_NEAR(readRasterPixel(output, 1, 2, 2), 0.0f, 1e-6f);
+    EXPECT_NEAR(readRasterPixel(output, 2, 2, 2), 0.0f, 1e-6f);
+    EXPECT_NEAR(readRasterPixel(output, 3, 2, 2), 0.0f, 1e-6f);
 }
 
 TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {

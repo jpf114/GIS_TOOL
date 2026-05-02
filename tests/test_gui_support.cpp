@@ -293,6 +293,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_georef_c_correction.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "georef", "quac_correction"),
+        "D:/data/image_georef_quac_correction.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
@@ -885,6 +889,26 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefCValues) {
     issue = gis::gui::validateActionSpecificParams("georef", "c_correction", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "sun_zenith_deg");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefQuacValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["dark_percentile"] = 100.0;
+
+    auto issue = gis::gui::validateActionSpecificParams("georef", "quac_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "dark_percentile");
+
+    params["dark_percentile"] = 10.0;
+    params["bright_percentile"] = 10.0;
+    issue = gis::gui::validateActionSpecificParams("georef", "quac_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "bright_percentile");
+
+    params["bright_percentile"] = 101.0;
+    issue = gis::gui::validateActionSpecificParams("georef", "quac_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "bright_percentile");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsEvenKernelSizeForProcessingFilter) {
