@@ -298,6 +298,36 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_spindex_ndmi_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/spindex_ndmi/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/spindex_ndmi/gui_spindex_ndmi.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_spindex_ndmi_regression.cmake
+    )
+
+    add_test(
+        NAME gui_spindex_evi2_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/spindex_evi2/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/spindex_evi2/gui_spindex_evi2.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_spindex_evi2_regression.cmake
+    )
+
+    add_test(
+        NAME gui_spindex_bsi_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/spindex_bsi/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/spindex_bsi/gui_spindex_bsi.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_spindex_bsi_regression.cmake
+    )
+
+    add_test(
         NAME gui_spindex_custom_index_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>

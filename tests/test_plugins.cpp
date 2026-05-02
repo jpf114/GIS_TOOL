@@ -1616,9 +1616,11 @@ TEST_F(PluginTest, SpindexOtherIndicesExecution) {
 
     const std::vector<CaseSpec> cases = {
         {"gndvi", "e2e_spindex_gndvi_output.tif", {{"green_band", 2}, {"nir_band", 4}}, 50.0f / 90.0f},
+        {"ndmi", "e2e_spindex_ndmi_output.tif", {{"nir_band", 4}, {"swir1_band", 5}}, -20.0f / 160.0f},
         {"ndwi", "e2e_spindex_ndwi_output.tif", {{"green_band", 2}, {"nir_band", 4}}, -50.0f / 90.0f},
         {"mndwi", "e2e_spindex_mndwi_output.tif", {{"green_band", 2}, {"swir1_band", 5}}, -70.0f / 110.0f},
         {"ndbi", "e2e_spindex_ndbi_output.tif", {{"swir1_band", 5}, {"nir_band", 4}}, 20.0f / 160.0f},
+        {"bsi", "e2e_spindex_bsi_output.tif", {{"blue_band", 1}, {"red_band", 3}, {"nir_band", 4}, {"swir1_band", 5}}, 40.0f / 200.0f},
         {"arvi", "e2e_spindex_arvi_output.tif", {{"blue_band", 1}, {"red_band", 3}, {"nir_band", 4}}, 20.0f / 120.0f},
         {"nbr", "e2e_spindex_nbr_output.tif", {{"nir_band", 4}, {"swir2_band", 6}}, -40.0f / 180.0f},
         {"awei", "e2e_spindex_awei_output.tif", {{"green_band", 2}, {"nir_band", 4}, {"swir1_band", 5}, {"swir2_band", 6}}, -600.0f},
@@ -1626,6 +1628,8 @@ TEST_F(PluginTest, SpindexOtherIndicesExecution) {
         {"bi", "e2e_spindex_bi_output.tif", {{"red_band", 3}, {"nir_band", 4}}, 1.0f / 5785.6136f},
         {"savi", "e2e_spindex_savi_output.tif", {{"red_band", 3}, {"nir_band", 4}, {"l_value", 0.5}}, 60.0f / 100.5f},
         {"evi", "e2e_spindex_evi_output.tif", {{"blue_band", 1}, {"red_band", 3}, {"nir_band", 4}, {"g_value", 2.5}, {"c1", 6.0}, {"c2", 7.5}, {"l_value", 1.0}}, 100.0f / 176.0f},
+        {"osavi", "e2e_spindex_osavi_output.tif", {{"red_band", 3}, {"nir_band", 4}}, 46.4f / 100.16f},
+        {"evi2", "e2e_spindex_evi2_output.tif", {{"red_band", 3}, {"nir_band", 4}}, 100.0f / 143.0f},
     };
 
     for (const auto& testCase : cases) {
@@ -1714,6 +1718,30 @@ TEST_F(PluginTest, SpindexCustomIndexPresetExecution) {
     EXPECT_EQ(result.metadata.at("preset"), "ndvi_alias");
     EXPECT_EQ(result.metadata.at("expression"), "(NIR-RED)/(NIR+RED)");
     EXPECT_NEAR(readRasterPixel(output, 5, 5), 40.0f / 100.0f, 1e-4f);
+}
+
+TEST_F(PluginTest, SpindexCustomIndexNewPresetExecution) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createMultiBandConstantRaster(
+        "e2e_spindex_custom_index_new_preset_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f, 90.0f});
+    const std::string output = utf8PathString(getTestDir() / "e2e_spindex_custom_index_new_preset_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("custom_index");
+    params["input"] = input;
+    params["output"] = output;
+    params["preset"] = std::string("ndmi_alias");
+    params["nir_band"] = 4;
+    params["swir1_band"] = 5;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("preset"), "ndmi_alias");
+    EXPECT_EQ(result.metadata.at("expression"), "(NIR-SWIR1)/(NIR+SWIR1)");
+    EXPECT_NEAR(readRasterPixel(output, 5, 5), -20.0f / 160.0f, 1e-4f);
 }
 
 TEST_F(PluginTest, ProjectionInfoExecution) {

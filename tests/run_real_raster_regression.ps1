@@ -229,6 +229,24 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Size:   24 x 24 x 1 bands" -Message "spindex_ndvi raster size mismatch"
             Assert-TextContains -Text $info -Expected "Mean:   0.75" -Message "spindex_ndvi mean mismatch"
         }
+        "spindex_ndmi" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "ndmi_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Mean:   -0.125" -Message "spindex_ndmi mean mismatch"
+        }
+        "spindex_bsi" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "bsi_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Mean:   0" -Message "spindex_bsi mean mismatch"
+        }
+        "spindex_evi2" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "evi2_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Mean:   1.57895" -Message "spindex_evi2 mean mismatch"
+        }
         "raster_inspect_histogram" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "histogram_output.json")
             Assert-Condition -Condition ($payload.total -gt 0) -Message "histogram total should be greater than zero"
@@ -398,6 +416,16 @@ $cases += New-Case -Name "spindex_evi" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "evi_output.tif")
 )
 
+$cases += New-Case -Name "spindex_evi2" -CaseArgs @(
+    "spindex", "evi2",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "evi2_output.tif")),
+    "--red_band=1",
+    "--nir_band=4"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "evi2_output.tif")
+)
+
 $cases += New-Case -Name "spindex_savi" -CaseArgs @(
     "spindex", "savi",
     ("--input=" + $data.NdviInput),
@@ -416,6 +444,16 @@ $cases += New-Case -Name "spindex_gndvi" -CaseArgs @(
     "--nir_band=4"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "gndvi_output.tif")
+)
+
+$cases += New-Case -Name "spindex_ndmi" -CaseArgs @(
+    "spindex", "ndmi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "ndmi_output.tif")),
+    "--nir_band=4",
+    "--swir1_band=5"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "ndmi_output.tif")
 )
 
 $cases += New-Case -Name "spindex_ndwi" -CaseArgs @(
@@ -446,6 +484,18 @@ $cases += New-Case -Name "spindex_ndbi" -CaseArgs @(
     "--nir_band=2"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "ndbi_output.tif")
+)
+
+$cases += New-Case -Name "spindex_bsi" -CaseArgs @(
+    "spindex", "bsi",
+    ("--input=" + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "bsi_output.tif")),
+    "--blue_band=3",
+    "--red_band=1",
+    "--nir_band=4",
+    "--swir1_band=5"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "bsi_output.tif")
 )
 
 $cases += New-Case -Name "spindex_arvi" -CaseArgs @(

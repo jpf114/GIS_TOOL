@@ -171,7 +171,7 @@ cmake --build build/release --config Release --target real_raster_regression_ful
 - `matching` Release 追加：`ecc_register / stitch`
 - `processing`：`pansharpen`
 - `classification`：`feature_stats`，以及 `full` 模式下的 `feature_stats_csv`
-- `spindex`：`ndvi / evi / savi / gndvi / ndwi / mndwi / ndbi / arvi / nbr / awei / ui / bi / custom_index`
+- `spindex`：`ndvi / ndmi / evi / evi2 / savi / osavi / gndvi / ndwi / mndwi / ndbi / bsi / arvi / nbr / awei / ui / bi / custom_index`
 - `terrain`：当前已实现动作的真实数据回归链路
 
 当前 `real_raster_regression` 中这 3 类重点模块的专项验收范围为：
@@ -186,7 +186,7 @@ cmake --build build/release --config Release --target real_raster_regression_ful
   - 当前已额外校验输出为 `30 x 30 x 3`，并校验三波段统计值
 - `spindex`
   - 当前固定验证 `ndvi / evi / savi / gndvi / ndwi / mndwi / ndbi / arvi / nbr / awei / ui / bi / custom_index`
-  - `custom_index` 当前使用 `preset=ndvi_alias` 作为稳定验收入口
+  - `custom_index` 当前使用 `preset=ndvi_alias / ndmi_alias` 作为稳定验收入口
   - 当前已额外校验 `ndvi` 输出尺寸与均值
 - `terrain`
   - 当前已额外校验 `slope / profile_extract / viewshed_multi` 的关键结构或统计结果

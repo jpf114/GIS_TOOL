@@ -115,10 +115,11 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
     }
 
     if (pluginName == "spindex") {
-        if (action == "ndvi" || action == "evi" || action == "savi" ||
+        if (action == "ndvi" || action == "ndmi" || action == "evi" ||
+            action == "evi2" || action == "savi" || action == "osavi" ||
             action == "gndvi" || action == "ndwi" || action == "mndwi" ||
-            action == "ndbi" || action == "arvi" || action == "nbr" ||
-            action == "awei" || action == "ui" || action == "bi" ||
+            action == "ndbi" || action == "bsi" || action == "arvi" ||
+            action == "nbr" || action == "awei" || action == "ui" || action == "bi" ||
             action == "custom_index") return ".tif";
         return inputExt;
     }

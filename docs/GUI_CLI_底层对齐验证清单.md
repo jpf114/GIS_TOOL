@@ -122,11 +122,11 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 补充说明：
 
-- `spindex` 当前除 `ndvi / ndwi / custom_index` 的 GUI 证据外，还已纳入真实数据专项的 `ndvi / evi / savi / gndvi / ndwi / mndwi / ndbi / arvi / nbr / awei / ui / bi / custom_index`
+- `spindex` 当前已有 `ndvi / ndwi / ndmi / evi2 / bsi / custom_index` 的 GUI 证据，并已纳入真实数据专项的 `ndvi / ndmi / evi / evi2 / savi / gndvi / ndwi / mndwi / ndbi / bsi / arvi / nbr / awei / ui / bi / custom_index`
 - `classification.feature_stats` 当前真实数据专项中，`quick` 已覆盖 `json / vector_output / raster_output`，`full` 追加 `csv`
 - `processing.pansharpen` 当前真实数据专项固定验证 `pan_method=simple_mean`
 - `real_raster_regression` 当前也已补充关键结果断言，而不只是检查输出文件存在：
-  - `spindex.ndvi` 校验输出尺寸与均值
+  - `spindex.ndvi / ndmi / bsi / evi2` 校验关键输出统计
   - `classification.feature_stats` 校验 `actual_srs` 与 `__summary__` 汇总记录
   - `processing.pansharpen` 校验输出为 `30 x 30 x 3`，并校验三波段统计值
   - `terrain.profile_extract / terrain.slope / terrain.viewshed_multi` 校验关键结构或统计结果
