@@ -870,6 +870,33 @@ TEST_F(PluginTest, ProcessingGlcmTextureExecution) {
     EXPECT_GT(maxValue, 0.0);
 }
 
+TEST_F(PluginTest, ProcessingMeanShiftSegmentExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::string input = createPatternRaster("e2e_mean_shift_input.tif");
+    std::string output = (getTestDir() / "e2e_mean_shift_output.tif").string();
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("mean_shift_segment");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["spatial_radius"] = 8.0;
+    params["color_radius"] = 16.0;
+    params["pyramid_level"] = 1;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Mean Shift failed: " << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "mean_shift_segment");
+    cv::Mat shifted = gis::core::readBandAsMat(output, 1);
+    double minValue = 0.0;
+    double maxValue = 0.0;
+    cv::minMaxLoc(shifted, &minValue, &maxValue);
+    EXPECT_GT(maxValue - minValue, 0.0);
+}
+
 TEST_F(PluginTest, ProcessingConnectedComponentsExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

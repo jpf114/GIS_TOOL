@@ -253,6 +253,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_processing_glcm_texture.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "processing", "mean_shift_segment"),
+        "D:/data/image_processing_mean_shift_segment.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
@@ -756,6 +760,27 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidProcessingGlcmVal
     issue = gis::gui::validateActionSpecificParams("processing", "glcm_texture", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "glcm_levels");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidProcessingMeanShiftValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["spatial_radius"] = 0.0;
+
+    auto issue = gis::gui::validateActionSpecificParams("processing", "mean_shift_segment", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "spatial_radius");
+
+    params.erase("spatial_radius");
+    params["color_radius"] = 0.0;
+    issue = gis::gui::validateActionSpecificParams("processing", "mean_shift_segment", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "color_radius");
+
+    params.erase("color_radius");
+    params["pyramid_level"] = -1;
+    issue = gis::gui::validateActionSpecificParams("processing", "mean_shift_segment", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "pyramid_level");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {

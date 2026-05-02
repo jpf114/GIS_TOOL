@@ -20,7 +20,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "skeleton", "gabor_filter", "glcm_texture", "connected_components", "kmeans"}
+            {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "skeleton", "gabor_filter", "glcm_texture", "mean_shift_segment", "connected_components", "kmeans"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -87,6 +87,18 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
         gis::framework::ParamSpec{
             "glcm_levels", "灰度级数", "GLCM量化灰度级数",
             gis::framework::ParamType::Int, false, int{8}
+        },
+        gis::framework::ParamSpec{
+            "spatial_radius", "空间半径", "Mean Shift空间窗口半径",
+            gis::framework::ParamType::Double, false, double{10.0}
+        },
+        gis::framework::ParamSpec{
+            "color_radius", "颜色半径", "Mean Shift颜色窗口半径",
+            gis::framework::ParamType::Double, false, double{20.0}
+        },
+        gis::framework::ParamSpec{
+            "pyramid_level", "金字塔层数", "Mean Shift金字塔层数",
+            gis::framework::ParamType::Int, false, int{1}
         },
         gis::framework::ParamSpec{
             "enhance_type", "增强类型", "增强算法",
@@ -216,6 +228,7 @@ gis::framework::Result ProcessingPlugin::execute(
     if (action == "skeleton")        return doSkeleton(params, progress);
     if (action == "gabor_filter")    return doGaborFilter(params, progress);
     if (action == "glcm_texture")    return doGlcmTexture(params, progress);
+    if (action == "mean_shift_segment") return doMeanShiftSegment(params, progress);
     if (action == "connected_components") return doConnectedComponents(params, progress);
     if (action == "kmeans")          return doKMeans(params, progress);
 
@@ -1121,6 +1134,48 @@ gis::framework::Result ProcessingPlugin::doGlcmTexture(
     execResult.metadata["metric"] = metric;
     execResult.metadata["kernel_size"] = std::to_string(kernelSize);
     execResult.metadata["levels"] = std::to_string(levels);
+    return execResult;
+}
+
+gis::framework::Result ProcessingPlugin::doMeanShiftSegment(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+    double spatialRadius = gis::framework::getParam<double>(params, "spatial_radius", 10.0);
+    double colorRadius = gis::framework::getParam<double>(params, "color_radius", 20.0);
+    int pyramidLevel = gis::framework::getParam<int>(params, "pyramid_level", 1);
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (spatialRadius <= 0.0) return gis::framework::Result::fail("spatial_radius must be positive");
+    if (colorRadius <= 0.0) return gis::framework::Result::fail("color_radius must be positive");
+    if (pyramidLevel < 0) return gis::framework::Result::fail("pyramid_level must be >= 0");
+
+    progress.onProgress(0.1);
+    cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.onProgress(0.3);
+
+    cv::Mat gray = gis::core::toUint8(mat);
+    cv::Mat color;
+    cv::cvtColor(gray, color, cv::COLOR_GRAY2BGR);
+
+    cv::Mat shifted;
+    cv::pyrMeanShiftFiltering(color, shifted, spatialRadius, colorRadius, pyramidLevel);
+
+    cv::Mat shiftedGray;
+    cv::cvtColor(shifted, shiftedGray, cv::COLOR_BGR2GRAY);
+    cv::Mat result;
+    shiftedGray.convertTo(result, CV_32F, 1.0 / 255.0);
+
+    progress.onProgress(0.75);
+    auto execResult = writeMatOutput(result, input, output, band, progress);
+    execResult.metadata["action"] = "mean_shift_segment";
+    execResult.metadata["spatial_radius"] = std::to_string(spatialRadius);
+    execResult.metadata["color_radius"] = std::to_string(colorRadius);
+    execResult.metadata["pyramid_level"] = std::to_string(pyramidLevel);
     return execResult;
 }
 

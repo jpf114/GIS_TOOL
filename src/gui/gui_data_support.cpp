@@ -1329,6 +1329,20 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
                 return ActionValidationIssue{"glcm_levels", "参数“灰度级数”必须大于等于 2"};
             }
         }
+        if (actionKey == "mean_shift_segment") {
+            if (const auto spatialRadius = doubleParamValue(params, "spatial_radius");
+                spatialRadius.has_value() && *spatialRadius <= 0.0) {
+                return ActionValidationIssue{"spatial_radius", "参数“空间半径”必须大于 0"};
+            }
+            if (const auto colorRadius = doubleParamValue(params, "color_radius");
+                colorRadius.has_value() && *colorRadius <= 0.0) {
+                return ActionValidationIssue{"color_radius", "参数“颜色半径”必须大于 0"};
+            }
+            if (const auto pyramidLevel = intParamValue(params, "pyramid_level");
+                pyramidLevel.has_value() && *pyramidLevel < 0) {
+                return ActionValidationIssue{"pyramid_level", "参数“金字塔层数”必须大于等于 0"};
+            }
+        }
     }
 
     return std::nullopt;
@@ -1444,6 +1458,10 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 adjustedSpec.minValue = 0.000001;
             } else if (spec.key == "glcm_levels") {
                 adjustedSpec.minValue = 2;
+            } else if (spec.key == "spatial_radius" || spec.key == "color_radius") {
+                adjustedSpec.minValue = 0.000001;
+            } else if (spec.key == "pyramid_level") {
+                adjustedSpec.minValue = 0;
             }
         }
         if (pluginName == "projection" && action == "transform" && spec.key == "src_srs") {
