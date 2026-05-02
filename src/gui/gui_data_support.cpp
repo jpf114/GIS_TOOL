@@ -624,6 +624,14 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
         return config;
     }
 
+    if (pluginName == "georef" && (paramKey == "slope_raster" || paramKey == "aspect_raster")) {
+        config.placeholder = paramKey == "slope_raster"
+            ? "请选择坡度栅格，像元值单位应为度"
+            : "请选择坡向栅格，像元值单位应为度";
+        config.openFilter = filterForRasterInputs();
+        return config;
+    }
+
     if (pluginName == "classification" && paramKey == "rasters") {
         config.placeholder = "请输入多个分类栅格路径，使用英文逗号分隔，例如 a.tif,b.tif";
         config.openFilter = filterForRasterInputs();
@@ -1285,6 +1293,25 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
+    if (pluginName == "georef" && actionKey == "cosine_correction") {
+        const auto band = intParamValue(params, "band");
+        const auto sunZenith = doubleParamValue(params, "sun_zenith_deg");
+        const auto sunAzimuth = doubleParamValue(params, "sun_azimuth_deg");
+        const std::string outputPath = stringParam("output");
+        if (band.has_value() && *band <= 0) {
+            return ActionValidationIssue{"band", "参数“波段序号”必须大于 0"};
+        }
+        if (sunZenith.has_value() && (*sunZenith < 0.0 || *sunZenith >= 90.0)) {
+            return ActionValidationIssue{"sun_zenith_deg", "参数“太阳天顶角”应落在 [0, 90) 范围内"};
+        }
+        if (sunAzimuth.has_value() && (*sunAzimuth < 0.0 || *sunAzimuth > 360.0)) {
+            return ActionValidationIssue{"sun_azimuth_deg", "参数“太阳方位角”应落在 [0, 360] 范围内"};
+        }
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
+            return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
+        }
+    }
+
     if (pluginName == "vector" && actionKey == "adjacency") {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
@@ -1584,6 +1611,12 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
         }
         if (pluginName == "georef" && spec.key == "band") {
             adjustedSpec.minValue = 1;
+        } else if (pluginName == "georef" && spec.key == "sun_zenith_deg") {
+            adjustedSpec.minValue = 0.0;
+            adjustedSpec.maxValue = 89.999999;
+        } else if (pluginName == "georef" && spec.key == "sun_azimuth_deg") {
+            adjustedSpec.minValue = 0.0;
+            adjustedSpec.maxValue = 360.0;
         }
         if (pluginName == "projection" && action == "transform" && spec.key == "src_srs") {
             adjustedSpec.defaultValue = std::string("EPSG:4326");

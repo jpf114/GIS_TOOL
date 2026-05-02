@@ -281,6 +281,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_georef_gcp_register.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "georef", "cosine_correction"),
+        "D:/data/image_georef_cosine_correction.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
@@ -796,6 +800,33 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefGcpRegister
     params["gcp_file"] = std::string("D:/data/points.csv");
     params["output"] = std::string("D:/data/result.json");
     issue = gis::gui::validateActionSpecificParams("georef", "gcp_register", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "output");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefCosineValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["band"] = 0;
+
+    auto issue = gis::gui::validateActionSpecificParams("georef", "cosine_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "band");
+
+    params["band"] = 1;
+    params["sun_zenith_deg"] = 95.0;
+    issue = gis::gui::validateActionSpecificParams("georef", "cosine_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "sun_zenith_deg");
+
+    params["sun_zenith_deg"] = 30.0;
+    params["sun_azimuth_deg"] = 400.0;
+    issue = gis::gui::validateActionSpecificParams("georef", "cosine_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "sun_azimuth_deg");
+
+    params["sun_azimuth_deg"] = 180.0;
+    params["output"] = std::string("D:/data/result.json");
+    issue = gis::gui::validateActionSpecificParams("georef", "cosine_correction", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "output");
 }

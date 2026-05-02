@@ -31,6 +31,10 @@ private:
     gis::framework::Result doGcpRegister(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
+
+    gis::framework::Result doCosineCorrection(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
 };
 
 } // namespace gis::plugins
