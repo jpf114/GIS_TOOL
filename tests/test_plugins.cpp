@@ -799,6 +799,25 @@ TEST_F(PluginTest, ProcessingEnhanceExecution) {
     EXPECT_TRUE(fs::exists(output));
 }
 
+TEST_F(PluginTest, ProcessingSkeletonExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::string input = createPatternRaster("e2e_skeleton_input.tif");
+    std::string output = (getTestDir() / "e2e_skeleton_output.tif").string();
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("skeleton");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Skeleton failed: " << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_GT(readRasterPixel(output, 48, 48), 0.0f);
+}
+
 TEST_F(PluginTest, ProcessingContourExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

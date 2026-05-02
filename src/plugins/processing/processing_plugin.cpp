@@ -20,7 +20,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "kmeans"}
+            {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "skeleton", "kmeans"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -187,6 +187,7 @@ gis::framework::Result ProcessingPlugin::execute(
     if (action == "pansharpen")      return doPansharpen(params, progress);
     if (action == "hough")           return doHough(params, progress);
     if (action == "watershed")       return doWatershed(params, progress);
+    if (action == "skeleton")        return doSkeleton(params, progress);
     if (action == "kmeans")          return doKMeans(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
@@ -918,6 +919,51 @@ gis::framework::Result ProcessingPlugin::doWatershed(
 
     auto result = writeMatOutput(resultImg, input, output, band, progress);
     result.metadata["segment_count"] = std::to_string(segmentCount);
+    return result;
+}
+
+gis::framework::Result ProcessingPlugin::doSkeleton(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.onProgress(0.1);
+    cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.onProgress(0.3);
+
+    cv::Mat binary = gis::core::toUint8(mat);
+    cv::threshold(binary, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+
+    cv::Mat skeleton = cv::Mat::zeros(binary.size(), CV_8U);
+    cv::Mat work = binary.clone();
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(3, 3));
+    cv::Mat eroded;
+    cv::Mat opened;
+    cv::Mat temp;
+
+    while (true) {
+        cv::erode(work, eroded, kernel);
+        cv::dilate(eroded, opened, kernel);
+        cv::subtract(work, opened, temp);
+        cv::bitwise_or(skeleton, temp, skeleton);
+        eroded.copyTo(work);
+        if (cv::countNonZero(work) == 0) {
+            break;
+        }
+    }
+
+    progress.onProgress(0.7);
+
+    cv::Mat outFloat;
+    skeleton.convertTo(outFloat, CV_32F);
+    auto result = writeMatOutput(outFloat, input, output, band, progress);
+    result.metadata["action"] = "skeleton";
     return result;
 }
 

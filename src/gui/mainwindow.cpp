@@ -77,6 +77,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("pansharpen"), QStringLiteral("\345\205\250\350\211\262\351\224\220\345\214\226")},
         {QStringLiteral("hough"), QStringLiteral("\351\234\215\345\244\253\345\217\230\346\215\242")},
         {QStringLiteral("watershed"), QStringLiteral("\345\210\206\346\260\264\345\262\255")},
+        {QStringLiteral("skeleton"), QStringLiteral("\351\252\250\346\236\266\346\217\220\345\217\226")},
         {QStringLiteral("kmeans"), QStringLiteral("K-Means")},
         {QStringLiteral("overviews"), QStringLiteral("\351\207\221\345\255\227\345\241\224")},
         {QStringLiteral("nodata"), QStringLiteral("NoData \350\256\276\347\275\256")},
@@ -714,6 +715,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"pansharpen", {QStringLiteral("全色锐化"), QStringLiteral("将多光谱影像与全色影像进行融合。"), {"input", "output", "pan_file", "pan_method"}, {"input", "output", "pan_file"}}},
             {"hough", {QStringLiteral("霍夫变换"), QStringLiteral("检测直线或圆形结构。"), {"input", "output", "band", "hough_type", "hough_threshold", "min_line_length", "max_line_gap", "min_radius", "max_radius", "circle_param2"}, {"input", "output"}}},
             {"watershed", {QStringLiteral("分水岭分割"), QStringLiteral("执行分水岭分割，可选外部标记输入。"), {"input", "output", "band", "marker_input"}, {"input", "output"}}},
+            {"skeleton", {QStringLiteral("骨架提取"), QStringLiteral("对二值目标执行形态学骨架提取。"), {"input", "output", "band"}, {"input", "output"}}},
             {"kmeans", {QStringLiteral("K-Means 分割"), QStringLiteral("按聚类数对影像全部波段执行 K-Means 分割。"), {"input", "output", "k", "max_iter", "epsilon_kmeans"}, {"input", "output"}}},
         }},
         {"raster_math", {
