@@ -589,6 +589,22 @@ TEST_F(PluginTest, FeatureStatsPluginParams) {
     EXPECT_TRUE(hasRasterOutput);
 }
 
+TEST_F(PluginTest, ClassificationSupervisedParamsDoNotRequireFeatureStatsInputs) {
+    auto* p = mgr_.find("classification");
+    ASSERT_NE(p, nullptr);
+
+    const auto specs = p->paramSpecs();
+    const std::map<std::string, gis::framework::ParamValue> params = {
+        {"action", std::string("svm_classify")},
+        {"input", std::string("dummy_input.tif")},
+        {"training_csv", std::string("dummy_samples.csv")},
+        {"output", std::string("dummy_output.tif")},
+        {"bands", std::string("1,2")}
+    };
+
+    EXPECT_TRUE(gis::framework::validateParams(specs, params).empty());
+}
+
 TEST_F(PluginTest, ProcessingPluginParams) {
     auto* p = mgr_.find("processing");
     if (p) {

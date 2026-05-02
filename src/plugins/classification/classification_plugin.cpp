@@ -1245,7 +1245,7 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
         },
         gis::framework::ParamSpec{
             "vector", "输入面矢量", "参与统计的面矢量文件路径",
-            gis::framework::ParamType::FilePath, true, std::string{}
+            gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
             "feature_id_field", "要素 ID 字段", "可选，要素唯一标识字段名",
@@ -1257,11 +1257,11 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
         },
         gis::framework::ParamSpec{
             "class_map", "分类映射", "分类值到分类名称的 JSON 映射文件路径",
-            gis::framework::ParamType::FilePath, true, std::string{}
+            gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
             "rasters", "分类栅格列表", "多个分类栅格路径，使用逗号分隔，顺序即优先级",
-            gis::framework::ParamType::String, true, std::string{}
+            gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
             "bands", "波段列表", "与 rasters 对应的波段列表，逗号分隔，默认全部为 1",
@@ -1277,7 +1277,7 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
         },
         gis::framework::ParamSpec{
             "output", "统计输出", "输出统计结果路径，当前只支持 .json 或 .csv",
-            gis::framework::ParamType::FilePath, true, std::string{}
+            gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
             "vector_output", "分类面输出", "可选，输出分类面结果，当前仅支持 .gpkg",

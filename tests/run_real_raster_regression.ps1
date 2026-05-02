@@ -350,6 +350,33 @@ function Validate-CaseOutputs {
             Assert-Condition -Condition ($rows[0].PSObject.Properties.Name -contains "feature_id") -Message "classification_feature_stats_csv missing feature_id column"
             Assert-Condition -Condition ($rows[0].PSObject.Properties.Name -contains "pixel_count") -Message "classification_feature_stats_csv missing pixel_count column"
         }
+        "classification_svm_classify" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "classification_svm_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   24 x 12 x 1 bands" -Message "classification_svm_classify raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "classification_svm_classify raster type mismatch"
+            Assert-TextContains -Text $info -Expected "Min:    1" -Message "classification_svm_classify min mismatch"
+            Assert-TextContains -Text $info -Expected "Max:    2" -Message "classification_svm_classify max mismatch"
+        }
+        "classification_random_forest_classify" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "classification_rf_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   24 x 12 x 1 bands" -Message "classification_random_forest_classify raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "classification_random_forest_classify raster type mismatch"
+            Assert-TextContains -Text $info -Expected "Min:    1" -Message "classification_random_forest_classify min mismatch"
+            Assert-TextContains -Text $info -Expected "Max:    2" -Message "classification_random_forest_classify max mismatch"
+        }
+        "classification_max_likelihood_classify" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "classification_ml_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   24 x 12 x 1 bands" -Message "classification_max_likelihood_classify raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "classification_max_likelihood_classify raster type mismatch"
+            Assert-TextContains -Text $info -Expected "Min:    1" -Message "classification_max_likelihood_classify min mismatch"
+            Assert-TextContains -Text $info -Expected "Max:    2" -Message "classification_max_likelihood_classify max mismatch"
+        }
     }
 }
 
@@ -386,6 +413,8 @@ function Ensure-RasterRegressionData {
     $analysisRaster = Join-Path $generatedRoot "analysis_input.tif"
     $processingBinaryRaster = Join-Path $generatedRoot "processing_binary_input.tif"
     $terrainRaster = Join-Path $generatedRoot "terrain_input.tif"
+    $supervisedClassificationRaster = Join-Path $generatedRoot "classification_supervised_input.tif"
+    $supervisedClassificationCsv = Join-Path $generatedRoot "classification_supervised_samples.csv"
 
     if (-not (Test-Path $ndviInput)) {
         Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("ndvi-raster", $ndviInput)
@@ -420,6 +449,14 @@ function Ensure-RasterRegressionData {
         Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("terrain-raster", $terrainRaster)
     }
 
+    if ((-not (Test-Path $supervisedClassificationRaster)) -or (-not (Test-Path $supervisedClassificationCsv))) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @(
+            "classification-supervised-inputs",
+            $supervisedClassificationRaster,
+            $supervisedClassificationCsv
+        )
+    }
+
     return [pscustomobject]@{
         NdviInput = $ndviInput
         PansharpenMs = $panMs
@@ -430,6 +467,8 @@ function Ensure-RasterRegressionData {
         AnalysisRaster = $analysisRaster
         ProcessingBinaryRaster = $processingBinaryRaster
         TerrainRaster = $terrainRaster
+        SupervisedClassificationRaster = $supervisedClassificationRaster
+        SupervisedClassificationCsv = $supervisedClassificationCsv
     }
 }
 
@@ -973,6 +1012,36 @@ if ($Mode -eq "full") {
         (Join-Path $ResolvedOutputRoot "feature_stats_output.csv")
     )
 }
+
+$cases += New-Case -Name "classification_svm_classify" -CaseArgs @(
+    "classification", "svm_classify",
+    ("--input=" + $data.SupervisedClassificationRaster),
+    ("--training_csv=" + $data.SupervisedClassificationCsv),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "classification_svm_output.tif")),
+    "--bands=1,2"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "classification_svm_output.tif")
+)
+
+$cases += New-Case -Name "classification_random_forest_classify" -CaseArgs @(
+    "classification", "random_forest_classify",
+    ("--input=" + $data.SupervisedClassificationRaster),
+    ("--training_csv=" + $data.SupervisedClassificationCsv),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "classification_rf_output.tif")),
+    "--bands=1,2"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "classification_rf_output.tif")
+)
+
+$cases += New-Case -Name "classification_max_likelihood_classify" -CaseArgs @(
+    "classification", "max_likelihood_classify",
+    ("--input=" + $data.SupervisedClassificationRaster),
+    ("--training_csv=" + $data.SupervisedClassificationCsv),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "classification_ml_output.tif")),
+    "--bands=1,2"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "classification_ml_output.tif")
+)
 
 $results = @()
 foreach ($case in $cases) {
