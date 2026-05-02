@@ -10,7 +10,7 @@ public:
     std::string displayName() const override { return "矢量数据处理"; }
     std::string version() const override { return "1.1.0"; }
     std::string description() const override {
-        return "矢量读取、查询、过滤、空间分析、矢栅互转、并集、差集、融合与简化。";
+        return "矢量读取、查询、过滤、空间分析、拓扑检查、几何派生、矢栅互转与格式转换。";
     }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;

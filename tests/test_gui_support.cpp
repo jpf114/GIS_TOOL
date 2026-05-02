@@ -1003,6 +1003,40 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidProcessingMeanShi
     EXPECT_EQ(issue->key, "pyramid_level");
 }
 
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidRasterManageCogOutputExtension) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["output"] = std::string("D:/data/output.png");
+
+    const auto issue = gis::gui::validateActionSpecificParams("raster_manage", "cog", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "output");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidVectorSimplifyTolerance) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["tolerance"] = 0.0;
+
+    const auto issue = gis::gui::validateActionSpecificParams("vector", "simplify", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "tolerance");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidVectorSliverRemoveValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["output"] = std::string("D:/data/output.csv");
+
+    auto issue = gis::gui::validateActionSpecificParams("vector", "sliver_remove", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "output");
+
+    params["output"] = std::string("D:/data/output.gpkg");
+    params["min_area"] = 0.0;
+
+    issue = gis::gui::validateActionSpecificParams("vector", "sliver_remove", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "min_area");
+}
+
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {
     std::map<std::string, gis::framework::ParamValue> params;
     params["band"] = 0;

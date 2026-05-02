@@ -26,6 +26,10 @@ std::vector<gis::framework::ParamSpec> RasterManagePlugin::paramSpecs() const {
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
+            "output", "输出文件", "COG 生成结果路径",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
             "band", "波段序号", "波段序号，填写 0 表示全部波段，从 1 开始表示单波段",
             gis::framework::ParamType::Int, false, int{1}
         },

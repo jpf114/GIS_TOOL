@@ -33,7 +33,7 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 
 结果：
 
-- `309/309` 通过
+- `337/337` 通过
 
 这组结果覆盖：
 
@@ -50,9 +50,9 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 
 - GUI support 测试通过
 - GUI offscreen 回归通过
-- GUI 当前自动化覆盖总量为 `144` 项
-  - `58` 项 `GuiSupportTest`
-  - `86` 项 `gui_` 离屏回归
+- GUI 当前自动化覆盖总量为 `172` 项
+  - `61` 项 `GuiSupportTest`
+  - `111` 项 `gui_` 离屏回归
 
 ### 3.3 CLI 插件加载验证
 
@@ -91,8 +91,8 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 | 层级 | 当前状态 | 主要证据 | 说明 |
 | --- | --- | --- | --- |
-| 底层 `core` | 通过 | `ctest 309/309` | GDAL/OpenCV/PROJ 包装、运行时环境、基础能力可用 |
-| 底层 `framework` | 通过 | `ctest 309/309` | 参数类型、校验、插件管理器、CLI 参数解析链路通过 |
+| 底层 `core` | 通过 | `ctest 337/337` | GDAL/OpenCV/PROJ 包装、运行时环境、基础能力可用 |
+| 底层 `framework` | 通过 | `ctest 337/337` | 参数类型、校验、插件管理器、CLI 参数解析链路通过 |
 | 插件层 `plugins/*` | 通过 | 插件测试 + GUI/CLI 回归 | 主执行链已验证 |
 | `CLI` 入口 | 通过 | `gis-cli --list` + 全量测试 + real vector regression | 可加载插件并执行主要动作 |
 | `GUI` 入口 | 通过 | `GuiSupportTest` + `gui_` offscreen 回归 | 参数 UI 支撑与自动执行链路可用 |
@@ -104,12 +104,12 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 | 模块 | 动作 | 底层/插件测试 | CLI 证据 | GUI 证据 | 结论 |
 | --- | --- | --- | --- | --- | --- |
-| `vector` | `info` `filter` `buffer` `clip` `rasterize` `polygonize` `convert` `union` `difference` `dissolve` | 有 | 有 | 有 | 主链路已对齐 |
+| `vector` | `info` `filter` `buffer` `clip` `rasterize` `polygonize` `convert` `union` `difference` `dissolve` `simplify` `repair` `geom_metrics` `nearest` `adjacency` `overlap_check` `topology_check` `convex_hull` `centroid` `envelope` `boundary` `multipart_check` `singlepart` `vertices_extract` `endpoints_extract` `midpoints_extract` `interior_point` `duplicate_point_check` `hole_check` `dangling_endpoint_check` `sliver_remove` | 有 | 有 | 有 | 主链路已对齐 |
 | `projection` | `reproject` `info` `transform` `assign_srs` | 有 | 有 | 有 | 主链路已对齐 |
 | `spindex` | `ndvi` `ndwi` `custom_index` | 有 | 有 | 有 | 主链路已对齐 |
-| `raster_manage / raster_inspect / raster_render / raster_math` | `info` `histogram` `colormap` `nodata` `overviews` `band_math` | 有 | 有 | 有 | GUI 已统一归并到“栅格工具”主项 |
+| `raster_manage / raster_inspect / raster_render / raster_math` | `info` `histogram` `colormap` `histogram_match` `nodata` `overviews` `band_math` `cog` | 有 | 有 | 有 | GUI 已统一归并到“栅格工具”主项 |
 | `classification` | `feature_stats` `svm_classify` `random_forest_classify` `max_likelihood_classify` | 有 | 有 | 有 | 主链路已对齐 |
-| `processing` | `threshold` `filter` `enhance` `stats` `edge` `contour` `template_match` `pansharpen` `hough` `watershed` `kmeans` | 有 | 有 | 有 | 主链路已对齐 |
+| `processing` | `threshold` `filter` `enhance` `stats` `edge` `contour` `template_match` `pansharpen` `hough` `watershed` `kmeans` `gabor_filter` `glcm_texture` `mean_shift_segment` `skeleton` `connected_components` | 有 | 有 | 有 | 主链路已对齐 |
 | `matching` | `detect` `corner` `match` `change` `register` | 有 | 有 | 有 | 主链路已对齐 |
 | `cutting` | `clip` `mosaic` `split` `merge_bands` | 有 | 有 | 有 | 主链路已对齐 |
 | `georef` | `dos_correction` `radiometric_calibration` `gcp_register` `cosine_correction` `minnaert_correction` `c_correction` `quac_correction` `rpc_orthorectify` | 有 | 有 | 有 | 主链路已对齐 |
@@ -123,7 +123,7 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 ## 6. GUI 当前回归覆盖说明
 
-GUI 当前已覆盖的离屏回归共 `86` 项，包含：
+GUI 当前已覆盖的离屏回归共 `111` 项，包含：
 
 - `vector`
   - `info`
@@ -136,6 +136,27 @@ GUI 当前已覆盖的离屏回归共 `86` 项，包含：
   - `union`
   - `difference`
   - `dissolve`
+  - `simplify`
+  - `repair`
+  - `geom_metrics`
+  - `nearest`
+  - `adjacency`
+  - `overlap_check`
+  - `topology_check`
+  - `convex_hull`
+  - `centroid`
+  - `envelope`
+  - `boundary`
+  - `multipart_check`
+  - `singlepart`
+  - `vertices_extract`
+  - `endpoints_extract`
+  - `midpoints_extract`
+  - `interior_point`
+  - `duplicate_point_check`
+  - `hole_check`
+  - `dangling_endpoint_check`
+  - `sliver_remove`
 - `projection`
   - `reproject`
   - `info`
@@ -148,10 +169,12 @@ GUI 当前已覆盖的离屏回归共 `86` 项，包含：
 - `栅格工具`
   - `histogram`
   - `colormap`
+  - `histogram_match`
   - `nodata`
   - `overviews`
   - `info`
   - `band_math`
+  - `cog`
 - `classification`
   - `feature_stats`
   - `svm_classify`
@@ -164,12 +187,16 @@ GUI 当前已覆盖的离屏回归共 `86` 项，包含：
   - `stats`
   - `edge`
   - `contour`
-  - `band_math`
   - `template_match`
   - `pansharpen`
   - `hough`
   - `watershed`
   - `kmeans`
+  - `gabor_filter`
+  - `glcm_texture`
+  - `mean_shift_segment`
+  - `skeleton`
+  - `connected_components`
 - `matching`
   - `detect`
   - `corner`
@@ -183,6 +210,15 @@ GUI 当前已覆盖的离屏回归共 `86` 项，包含：
   - `mosaic`
   - `split`
   - `merge_bands`
+- `georef`
+  - `dos_correction`
+  - `radiometric_calibration`
+  - `gcp_register`
+  - `cosine_correction`
+  - `minnaert_correction`
+  - `c_correction`
+  - `quac_correction`
+  - `rpc_orthorectify`
 - `terrain`
   - `slope`
   - `aspect`
@@ -200,6 +236,14 @@ GUI 当前已覆盖的离屏回归共 `86` 项，包含：
   - `viewshed_multi`
   - `cut_fill`
   - `reservoir_volume`
+
+另外，`111` 项离屏回归总数中还包含以下非“成功动作输出”场景：
+
+- `gui_smoke_startup`
+- `gui_invalid_param_fast_fail_offscreen`
+- `gui_vector_buffer_geographic_failure_offscreen`
+- `gui_matching_ecc_register_debug_failure_offscreen`
+- `gui_matching_stitch_debug_failure_offscreen`
 
 ## 7. 已知边界与注意事项
 

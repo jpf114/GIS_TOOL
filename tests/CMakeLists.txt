@@ -683,6 +683,119 @@ if(TARGET gis-gui)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_mean_shift_regression.cmake
     )
 
+    foreach(processing_action IN ITEMS skeleton connected_components)
+        add_test(
+            NAME gui_processing_${processing_action}_offscreen
+            COMMAND ${CMAKE_COMMAND}
+                -DGUI_PATH=$<TARGET_FILE:gis-gui>
+                -DACTION=${processing_action}
+                -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_${processing_action}/output.tif
+                -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_${processing_action}/gui_processing_${processing_action}.png
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_binary_regression.cmake
+        )
+    endforeach()
+
+    add_test(
+        NAME gui_raster_tools_cog_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_tools_cog/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_tools_cog/gui_raster_tools_cog.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_tools_cog_regression.cmake
+    )
+
+    add_test(
+        NAME gui_raster_tools_histogram_match_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_tools_histogram_match/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_tools_histogram_match/gui_raster_tools_histogram_match.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_tools_histogram_match_regression.cmake
+    )
+
+    set(GUI_VECTOR_ADVANCED_GPKG_SPECS
+        "gui_vector_simplify_offscreen|simplify|projected_touching_polygons|vector_simplify|output.gpkg|tolerance=5"
+        "gui_vector_repair_offscreen|repair|projected_invalid_polygon|vector_repair|output.gpkg|"
+        "gui_vector_geom_metrics_offscreen|geom_metrics|projected_touching_polygons|vector_geom_metrics|output.gpkg|"
+        "gui_vector_nearest_offscreen|nearest|projected_nearest_source_points|vector_nearest|output.gpkg|nearest_field=name|projected_nearest_target_points"
+        "gui_vector_convex_hull_offscreen|convex_hull|projected_touching_polygons|vector_convex_hull|output.gpkg|"
+        "gui_vector_centroid_offscreen|centroid|projected_touching_polygons|vector_centroid|output.gpkg|"
+        "gui_vector_envelope_offscreen|envelope|projected_touching_polygons|vector_envelope|output.gpkg|"
+        "gui_vector_boundary_offscreen|boundary|projected_touching_polygons|vector_boundary|output.gpkg|"
+        "gui_vector_singlepart_offscreen|singlepart|projected_multipart_polygons|vector_singlepart|output.gpkg|"
+        "gui_vector_vertices_extract_offscreen|vertices_extract|projected_touching_polygons|vector_vertices_extract|output.gpkg|"
+        "gui_vector_endpoints_extract_offscreen|endpoints_extract|projected_lines|vector_endpoints_extract|output.gpkg|"
+        "gui_vector_midpoints_extract_offscreen|midpoints_extract|projected_lines|vector_midpoints_extract|output.gpkg|"
+        "gui_vector_interior_point_offscreen|interior_point|projected_touching_polygons|vector_interior_point|output.gpkg|"
+        "gui_vector_sliver_remove_offscreen|sliver_remove|projected_overlapping_polygons|vector_sliver_remove|output.gpkg|min_area=100"
+    )
+
+    foreach(spec IN LISTS GUI_VECTOR_ADVANCED_GPKG_SPECS)
+        string(REPLACE "|" ";" fields "${spec}")
+        list(GET fields 0 test_name)
+        list(GET fields 1 action_name)
+        list(GET fields 2 dataset_name)
+        list(GET fields 3 output_dir_name)
+        list(GET fields 4 output_file_name)
+        list(GET fields 5 extra_params)
+        set(target_dataset_name "")
+        list(LENGTH fields field_count)
+        if(field_count GREATER 6)
+            list(GET fields 6 target_dataset_name)
+        endif()
+
+        set(test_command
+            ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DACTION=${action_name}
+            -DDATASET=${dataset_name}
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/${output_dir_name}/${output_file_name}
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/${output_dir_name}/${test_name}.png
+        )
+        if(NOT extra_params STREQUAL "")
+            list(APPEND test_command -DEXTRA_PARAMS=${extra_params})
+        endif()
+        if(NOT target_dataset_name STREQUAL "")
+            list(APPEND test_command -DTARGET_DATASET=${target_dataset_name})
+        endif()
+        list(APPEND test_command -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_advanced_regression.cmake)
+        add_test(NAME ${test_name} COMMAND ${test_command})
+    endforeach()
+
+    set(GUI_VECTOR_ADVANCED_CSV_SPECS
+        "gui_vector_adjacency_offscreen|adjacency|projected_touching_polygons|vector_adjacency|output.csv|"
+        "gui_vector_overlap_check_offscreen|overlap_check|projected_overlapping_polygons|vector_overlap_check|output.csv|"
+        "gui_vector_topology_check_offscreen|topology_check|projected_invalid_polygon|vector_topology_check|output.csv|"
+        "gui_vector_multipart_check_offscreen|multipart_check|projected_multipart_polygons|vector_multipart_check|output.csv|"
+        "gui_vector_duplicate_point_check_offscreen|duplicate_point_check|projected_points_duplicate|vector_duplicate_point_check|output.csv|"
+        "gui_vector_hole_check_offscreen|hole_check|projected_hole_polygon|vector_hole_check|output.csv|"
+        "gui_vector_dangling_endpoint_check_offscreen|dangling_endpoint_check|projected_lines|vector_dangling_endpoint_check|output.csv|"
+    )
+
+    foreach(spec IN LISTS GUI_VECTOR_ADVANCED_CSV_SPECS)
+        string(REPLACE "|" ";" fields "${spec}")
+        list(GET fields 0 test_name)
+        list(GET fields 1 action_name)
+        list(GET fields 2 dataset_name)
+        list(GET fields 3 output_dir_name)
+        list(GET fields 4 output_file_name)
+        list(GET fields 5 extra_params)
+
+        set(test_command
+            ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DACTION=${action_name}
+            -DDATASET=${dataset_name}
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/${output_dir_name}/${output_file_name}
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/${output_dir_name}/${test_name}.png
+        )
+        if(NOT extra_params STREQUAL "")
+            list(APPEND test_command -DEXTRA_PARAMS=${extra_params})
+        endif()
+        list(APPEND test_command -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_advanced_regression.cmake)
+        add_test(NAME ${test_name} COMMAND ${test_command})
+    endforeach()
+
     add_test(
         NAME gui_georef_dos_offscreen
         COMMAND ${CMAKE_COMMAND}

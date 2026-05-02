@@ -392,3 +392,225 @@ function(gis_gui_generate_feature_bmp image_path width height)
             "stderr:\n${ps_stderr}")
     endif()
 endfunction()
+
+function(gis_gui_write_geojson_dataset output_path dataset_kind)
+    get_filename_component(output_dir "${output_path}" DIRECTORY)
+    file(MAKE_DIRECTORY "${output_dir}")
+
+    if(dataset_kind STREQUAL "projected_touching_polygons")
+        set(content [=[
+{
+  "type": "FeatureCollection",
+  "name": "projected_touching_polygons",
+  "crs": { "type": "name", "properties": { "name": "EPSG:3857" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "id": 1, "name": "poly_a" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0,0],[100,0],[100,100],[0,100],[0,0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "id": 2, "name": "poly_b" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[100,0],[200,0],[200,100],[100,100],[100,0]]]
+      }
+    }
+  ]
+}
+]=])
+    elseif(dataset_kind STREQUAL "projected_overlapping_polygons")
+        set(content [=[
+{
+  "type": "FeatureCollection",
+  "name": "projected_overlapping_polygons",
+  "crs": { "type": "name", "properties": { "name": "EPSG:3857" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "id": 1, "name": "poly_a" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0,0],[120,0],[120,120],[0,120],[0,0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "id": 2, "name": "poly_b" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[80,40],[200,40],[200,160],[80,160],[80,40]]]
+      }
+    }
+  ]
+}
+]=])
+    elseif(dataset_kind STREQUAL "projected_invalid_polygon")
+        set(content [=[
+{
+  "type": "FeatureCollection",
+  "name": "projected_invalid_polygon",
+  "crs": { "type": "name", "properties": { "name": "EPSG:3857" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "id": 1, "name": "bowtie" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0,0],[120,120],[120,0],[0,120],[0,0]]]
+      }
+    }
+  ]
+}
+]=])
+    elseif(dataset_kind STREQUAL "projected_hole_polygon")
+        set(content [=[
+{
+  "type": "FeatureCollection",
+  "name": "projected_hole_polygon",
+  "crs": { "type": "name", "properties": { "name": "EPSG:3857" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "id": 1, "name": "with_hole" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[0,0],[200,0],[200,200],[0,200],[0,0]],
+          [[60,60],[140,60],[140,140],[60,140],[60,60]]
+        ]
+      }
+    }
+  ]
+}
+]=])
+    elseif(dataset_kind STREQUAL "projected_multipart_polygons")
+        set(content [=[
+{
+  "type": "FeatureCollection",
+  "name": "projected_multipart_polygons",
+  "crs": { "type": "name", "properties": { "name": "EPSG:3857" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "id": 1, "name": "multi_a" },
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [[[0,0],[60,0],[60,60],[0,60],[0,0]]],
+          [[[100,0],[160,0],[160,60],[100,60],[100,0]]]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "id": 2, "name": "poly_b" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0,100],[80,100],[80,180],[0,180],[0,100]]]
+      }
+    }
+  ]
+}
+]=])
+    elseif(dataset_kind STREQUAL "projected_lines")
+        set(content [=[
+{
+  "type": "FeatureCollection",
+  "name": "projected_lines",
+  "crs": { "type": "name", "properties": { "name": "EPSG:3857" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "id": 1, "name": "line_a" },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[0,0],[100,50],[200,50]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "id": 2, "name": "line_b" },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[40,120],[160,120],[220,180]]
+      }
+    }
+  ]
+}
+]=])
+    elseif(dataset_kind STREQUAL "projected_points_duplicate")
+        set(content [=[
+{
+  "type": "FeatureCollection",
+  "name": "projected_points_duplicate",
+  "crs": { "type": "name", "properties": { "name": "EPSG:3857" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "id": 1, "name": "p1" },
+      "geometry": { "type": "Point", "coordinates": [10, 10] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "id": 2, "name": "p2" },
+      "geometry": { "type": "Point", "coordinates": [10, 10] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "id": 3, "name": "p3" },
+      "geometry": { "type": "Point", "coordinates": [50, 20] }
+    }
+  ]
+}
+]=])
+    elseif(dataset_kind STREQUAL "projected_nearest_source_points")
+        set(content [=[
+{
+  "type": "FeatureCollection",
+  "name": "projected_nearest_source_points",
+  "crs": { "type": "name", "properties": { "name": "EPSG:3857" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "id": 1, "name": "src_a" },
+      "geometry": { "type": "Point", "coordinates": [20, 20] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "id": 2, "name": "src_b" },
+      "geometry": { "type": "Point", "coordinates": [180, 180] }
+    }
+  ]
+}
+]=])
+    elseif(dataset_kind STREQUAL "projected_nearest_target_points")
+        set(content [=[
+{
+  "type": "FeatureCollection",
+  "name": "projected_nearest_target_points",
+  "crs": { "type": "name", "properties": { "name": "EPSG:3857" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "id": 101, "name": "target_a" },
+      "geometry": { "type": "Point", "coordinates": [40, 40] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "id": 102, "name": "target_b" },
+      "geometry": { "type": "Point", "coordinates": [210, 200] }
+    }
+  ]
+}
+]=])
+    else()
+        message(FATAL_ERROR "Unsupported GeoJSON dataset kind: ${dataset_kind}")
+    endif()
+
+    file(WRITE "${output_path}" "${content}")
+endfunction()

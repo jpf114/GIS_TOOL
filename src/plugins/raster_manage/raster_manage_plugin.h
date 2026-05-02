@@ -8,7 +8,7 @@ public:
     std::string name() const override { return "raster_manage"; }
     std::string displayName() const override { return "栅格维护"; }
     std::string version() const override { return "1.0.0"; }
-    std::string description() const override { return "金字塔构建与 NoData 维护"; }
+    std::string description() const override { return "金字塔构建、NoData 维护与 COG 生成"; }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
 
