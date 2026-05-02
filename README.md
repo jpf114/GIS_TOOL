@@ -9,9 +9,10 @@
   - `build/debug`
   - `build/release`
 - 默认安装与交付：`Release`
-- 依赖统一使用全局 `vcpkg`，当前项目约定路径为 `D:\Develop\vcpkg`
+- 依赖统一复用全局 `vcpkg`
+  - 当前项目约定路径：`D:\Develop\vcpkg`
 
-## 当前主功能
+## 主功能
 
 - 投影转换
 - 影像裁切与镶嵌
@@ -24,7 +25,7 @@
 - 栅格工具
 - 矢量数据处理
 
-当前底层插件与主功能映射：
+## 插件与主功能映射
 
 - `projection` -> 投影转换
 - `cutting` -> 影像裁切与镶嵌
@@ -37,91 +38,94 @@
 - `raster_manage / raster_inspect / raster_render / raster_math` -> 栅格工具
 - `vector` -> 矢量数据处理
 
-GUI 当前已完成的主功能归并：
+## GUI 主功能归并
 
-- 左侧导航已将 `raster_manage / raster_inspect / raster_render / raster_math` 合并为单一“栅格工具”主项
-- 子功能点击时会自动切回对应真实插件，底层参数与执行链路保持不变
-- `classification` 主项统一使用“分类统计”，监督分类动作继续作为其子功能
+- GUI 左侧导航已将 `raster_manage / raster_inspect / raster_render / raster_math` 合并为单一“栅格工具”主项
+- `classification` 主项统一使用“分类统计”，监督分类动作为其子功能
+- GUI 与 CLI 最终都落到同一套插件执行链
 
-## 本轮新增并已接入的功能
+## 当前已补齐的重点能力
 
 ### processing
 
-- `gabor_filter` Gabor 滤波
-- `glcm_texture` GLCM 纹理
-- `mean_shift_segment` Mean Shift 分割
-- `skeleton` 骨架提取
-- `connected_components` 连通组件
+- `gabor_filter`
+- `glcm_texture`
+- `mean_shift_segment`
+- `skeleton`
+- `connected_components`
+- `pansharpen`
 
 ### classification
 
-- `svm_classify` SVM 分类
-- `random_forest_classify` 随机森林分类
-- `max_likelihood_classify` 最大似然分类
+- `feature_stats`
+- `svm_classify`
+- `random_forest_classify`
+- `max_likelihood_classify`
 
 ### georef
 
-- `dos_correction` DOS 大气校正
-- `radiometric_calibration` 辐射定标
-- `gcp_register` 控制点配准
-- `cosine_correction` 余弦校正
-- `minnaert_correction` Minnaert 校正
-- `c_correction` C 校正
-- `quac_correction` QUAC 大气校正
-- `rpc_orthorectify` RPC 正射校正
+- `dos_correction`
+- `radiometric_calibration`
+- `gcp_register`
+- `cosine_correction`
+- `minnaert_correction`
+- `c_correction`
+- `quac_correction`
+- `rpc_orthorectify`
 
-### raster_tools
+### projection
 
-- `band_math` 波段运算
-- `cog` COG 生成
-- `histogram_match` 直方图匹配
+- `info`
+- `transform`
+- `assign_srs`
+- `reproject`
+
+### cutting
+
+- `clip`
+- `mosaic`
+- `split`
+- `merge_bands`
 
 ### vector
 
-- `intersect` 交集
-- `simplify` 简化
-- `repair` 修复
-- `geom_metrics` 几何属性
-- `nearest` 最近邻
-- `spatial_join` 空间连接
-- `adjacency` 邻接关系
-- `overlap_check` 重叠检查
-- `topology_check` 拓扑检查
-- `convex_hull` 凸包
-- `centroid` 质心
-- `envelope` 外包矩形
-- `boundary` 边界提取
-- `multipart_check` 多部件检查
-- `singlepart` 转单部件
-- `vertices_extract` 顶点提取
-- `endpoints_extract` 端点提取
-- `midpoints_extract` 中点提取
-- `interior_point` 内部点
-- `duplicate_point_check` 重复点检查
-- `hole_check` 孔洞检查
-- `dangling_endpoint_check` 悬挂端点检查
-- `sliver_remove` 碎片面消除
+- `intersect`
+- `simplify`
+- `repair`
+- `geom_metrics`
+- `nearest`
+- `spatial_join`
+- `adjacency`
+- `overlap_check`
+- `topology_check`
+- `convex_hull`
+- `centroid`
+- `envelope`
+- `boundary`
+- `multipart_check`
+- `singlepart`
+- `vertices_extract`
+- `endpoints_extract`
+- `midpoints_extract`
+- `interior_point`
+- `duplicate_point_check`
+- `hole_check`
+- `dangling_endpoint_check`
+- `sliver_remove`
 
 ## 完整性说明
 
-以上新增功能都按当前项目既有模式补齐到以下层级：
+以上重点能力当前都已经按既有项目标准补到以下层级：
 
-- 底层算法实现
-- 插件参数定义
+- 底层算法 / 插件实现
 - CLI 调用链路
-- GUI 动作接入
-- GUI 参数面板说明
-- GUI 建议输出路径
+- GUI 接入
 - GUI 参数校验
 - 插件测试
-- GUI 支撑测试
-- GUI 离屏回归测试
-- 算法说明文档
-
-说明：
-
-- CLI 使用统一插件驱动入口，不为每个算法单独维护一套命令程序
-- 自动化测试以合成数据和离屏 GUI 回归为主，适合当前阶段持续迭代验证
+- GUI support 测试
+- GUI 离屏回归
+- 真实数据专项回归
+- Release 安装与启动验证
 
 ## 构建
 
@@ -147,59 +151,83 @@ cmake --install build/release --config Release
 - 默认安装使用 `build/release`
 - 发布前至少执行一次 `Debug 全量测试 + Release 编译安装`
 
-### 真实数据专项回归
+## 真实数据专项回归
 
-`Debug`：
+### Debug
 
 ```powershell
 cmake --build build/debug --config Debug --target real_matching_regression
 cmake --build build/debug --config Debug --target real_matching_regression_full
 cmake --build build/debug --config Debug --target real_raster_regression
 cmake --build build/debug --config Debug --target real_raster_regression_full
+cmake --build build/debug --config Debug --target real_vector_regression
+cmake --build build/debug --config Debug --target real_vector_regression_full
 ```
 
-`Release`：
+### Release
 
 ```powershell
 cmake --build build/release --config Release --target real_matching_regression
 cmake --build build/release --config Release --target real_matching_regression_full
 cmake --build build/release --config Release --target real_raster_regression
 cmake --build build/release --config Release --target real_raster_regression_full
+cmake --build build/release --config Release --target real_vector_regression
+cmake --build build/release --config Release --target real_vector_regression_full
 ```
 
 当前已经确认通过的专项包括：
 
-- `matching`：`detect / corner / match / register / change`
-- `matching` Release 追加：`ecc_register / stitch`
-- `processing`：`pansharpen / gabor_filter / glcm_texture / mean_shift_segment`
-- `classification`：`feature_stats`，以及 `full` 模式下的 `feature_stats_csv`
-- `spindex`：`ndvi / ndmi / evi / evi2 / savi / osavi / gndvi / ndwi / mndwi / ndbi / bsi / arvi / nbr / awei / ui / bi / custom_index`
-- `terrain`：当前已实现动作的真实数据回归链路
+- `matching`
+  - `detect / corner / match / register / change`
+  - Release 追加：`ecc_register / stitch`
+- `projection`
+  - `info / transform / assign_srs / reproject`
+- `cutting`
+  - `clip / mosaic / split / merge_bands`
+- `processing`
+  - `pansharpen / gabor_filter / glcm_texture / mean_shift_segment / skeleton / connected_components`
+- `classification`
+  - `feature_stats / svm_classify / random_forest_classify / max_likelihood_classify`
+  - `full` 追加：`feature_stats_csv`
+- `georef`
+  - `dos_correction / radiometric_calibration / gcp_register / cosine_correction / minnaert_correction / c_correction / quac_correction / rpc_orthorectify`
+- `spindex`
+  - `ndvi / ndmi / evi / evi2 / savi / osavi / gndvi / ndwi / mndwi / ndbi / bsi / arvi / nbr / awei / ui / bi / custom_index`
+- `terrain`
+  - 当前已实现动作的真实数据回归链路
+- `vector`
+  - 当前主链动作的真实数据回归链路
 
-当前 `real_raster_regression` 中这 3 类重点模块的专项验收范围为：
+当前 `real_raster_regression` 的重点验收口径为：
 
 - `classification.feature_stats`
   - `quick`：验证 `json / vector_output / raster_output`
-  - `full`：在 `quick` 基础上追加 `csv` 输出
-  - 当前已额外校验 `actual_srs` 与 `__summary__` 汇总记录
+  - `full`：追加 `csv`
+  - 额外校验 `actual_srs` 与 `__summary__`
+- `classification.svm_classify / random_forest_classify / max_likelihood_classify`
+  - 验证输出尺寸 `24 x 12 x 1`
+  - 验证输出类型 `Float32`
+  - 验证类别范围 `1~2`
+- `projection.info / transform / assign_srs / reproject`
+  - 验证尺寸、EPSG 编码、坐标转换结果与重投影输出
+- `cutting.clip / mosaic / split / merge_bands`
+  - 验证输出尺寸、瓦片数量、波段数量与关键统计值
 - `processing.pansharpen`
-  - 当前固定验证 `pan_method=simple_mean`
-  - 输入由真实样例或辅助程序生成的多光谱 / 全色配对数据提供
+  - 固定验证 `pan_method=simple_mean`
 - `processing.gabor_filter / glcm_texture / mean_shift_segment`
-  - 已纳入 Debug / Release `real_raster_regression quick`
-  - 当前固定验证输出尺寸 `32 x 32 x 1` 与输出类型 `Float32`
+  - 验证输出尺寸 `32 x 32 x 1`
+  - 验证输出类型 `Float32`
 - `processing.skeleton / connected_components`
-  - 已纳入 Debug / Release `real_raster_regression quick`
-  - 当前固定验证输出尺寸 `64 x 64 x 1`
-  - `skeleton` 校验输出类型 `Float32` 与最大值 `255`
-  - `connected_components` 校验输出类型 `Float32` 与最大标签值 `4`
-  - 当前已额外校验输出为 `30 x 30 x 3`，并校验三波段统计值
+  - 验证输出尺寸 `64 x 64 x 1`
+  - `skeleton` 校验最大值 `255`
+  - `connected_components` 校验最大标签值 `4`
+- `georef`
+  - 8 个动作固定校验输出尺寸、输出类型、CRS 或关键统计值
 - `spindex`
-  - 当前固定验证 `ndvi / evi / savi / gndvi / ndwi / mndwi / ndbi / arvi / nbr / awei / ui / bi / custom_index`
-  - `custom_index` 当前使用 `preset=ndvi_alias / ndmi_alias` 作为稳定验收入口
-  - 当前已额外校验 `ndvi` 输出尺寸与均值
+  - 固定验证主流指数输出
+  - `custom_index` 使用 `preset=ndvi_alias / ndmi_alias` 作为稳定验收入口
 - `terrain`
-  - 当前已额外校验 `slope / profile_extract / viewshed_multi` 的关键结构或统计结果
+  - 当前已额外校验 `slope / profile_extract / viewshed_multi` 等关键结果
 
 ## 使用
 
@@ -221,12 +249,15 @@ cmake --build build/release --config Release --target real_raster_regression_ful
 .\install\bin\gis-gui.exe
 ```
 
-## 算法文档
+## 文档
 
-算法说明总览见 [docs/算法说明/总览.md](/D:/Develop/GIS/GIS_TOOL/docs/算法说明/总览.md)。
+- 算法总览：[docs/算法说明/总览.md](/D:/Develop/GIS/GIS_TOOL/docs/算法说明/总览.md)
+- 对齐验证清单：[docs/GUI_CLI_底层对齐验证清单.md](/D:/Develop/GIS/GIS_TOOL/docs/GUI_CLI_底层对齐验证清单.md)
+- 后续工作计划：[docs/后续工作计划.md](/D:/Develop/GIS/GIS_TOOL/docs/后续工作计划.md)
 
 ## 说明
 
 - 文档统一使用中文
 - 提交信息统一使用中文
-- 当前项目优先保持简单、可维护、可持续扩展
+- 当前阶段优先保证简单、可维护、可回归
+- `pointcloud` 当前不计入已完成主模块，相关依赖条件尚未满足
