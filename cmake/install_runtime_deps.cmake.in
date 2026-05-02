@@ -27,46 +27,79 @@ file(REMOVE
     "${CMAKE_INSTALL_PREFIX}/plugins/plugin_utility.dll"
 )
 
-file(GET_RUNTIME_DEPENDENCIES
-    EXECUTABLES ${_gis_runtime_executables}
-    LIBRARIES ${_gis_runtime_libraries}
-    RESOLVED_DEPENDENCIES_VAR _gis_resolved_deps
-    UNRESOLVED_DEPENDENCIES_VAR _gis_unresolved_deps
-    DIRECTORIES
-        "@GIS_VCPKG_RELEASE_BIN_DIR@"
-        "@GIS_VCPKG_DEBUG_BIN_DIR@"
-    PRE_EXCLUDE_REGEXES
-        "api-ms-"
-        "ext-ms-"
-        "[Hh][Vv][Ss][Ii][Ff]ile[Tt]rust\\.dll"
-    POST_EXCLUDE_REGEXES
-        ".*/install/bin/.*"
-        ".*/[Ww]indows/.*"
-        ".*/[Ss]ystem32/.*"
-)
+set(_gis_can_scan_runtime_deps TRUE)
 
-if(_gis_unresolved_deps)
-    list(JOIN _gis_unresolved_deps "\n  " _gis_unresolved_text)
-    message(FATAL_ERROR "Unresolved runtime dependencies:\n  ${_gis_unresolved_text}")
+if(WIN32)
+    find_program(_gis_dumpbin_command dumpbin)
+    find_program(_gis_llvm_objdump_command llvm-objdump)
+    find_program(_gis_objdump_command objdump)
+
+    if(_gis_dumpbin_command)
+        set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL dumpbin)
+        set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${_gis_dumpbin_command}")
+    elseif(_gis_llvm_objdump_command)
+        set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL objdump)
+        set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${_gis_llvm_objdump_command}")
+    elseif(_gis_objdump_command)
+        set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL objdump)
+        set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${_gis_objdump_command}")
+    else()
+        set(_gis_can_scan_runtime_deps FALSE)
+        message(WARNING "No dumpbin/objdump tool found, fallback to copying vcpkg runtime DLLs directly.")
+    endif()
 endif()
 
-set(_gis_filtered_resolved_deps)
-foreach(_gis_dep IN LISTS _gis_resolved_deps)
-    get_filename_component(_gis_dep_dir "${_gis_dep}" DIRECTORY)
-    file(TO_CMAKE_PATH "${_gis_dep_dir}" _gis_dep_dir_norm)
-    file(TO_CMAKE_PATH "${_gis_install_bin_dir}" _gis_install_bin_dir_norm)
-    if(_gis_dep_dir_norm STREQUAL _gis_install_bin_dir_norm)
-        continue()
-    endif()
-    list(APPEND _gis_filtered_resolved_deps "${_gis_dep}")
-endforeach()
-
-list(REMOVE_DUPLICATES _gis_filtered_resolved_deps)
-
-foreach(_gis_dep IN LISTS _gis_filtered_resolved_deps)
-    file(INSTALL
-        DESTINATION "${_gis_install_bin_dir}"
-        TYPE SHARED_LIBRARY
-        FILES "${_gis_dep}"
+if(_gis_can_scan_runtime_deps)
+    file(GET_RUNTIME_DEPENDENCIES
+        EXECUTABLES ${_gis_runtime_executables}
+        LIBRARIES ${_gis_runtime_libraries}
+        RESOLVED_DEPENDENCIES_VAR _gis_resolved_deps
+        UNRESOLVED_DEPENDENCIES_VAR _gis_unresolved_deps
+        DIRECTORIES
+            "@GIS_VCPKG_RELEASE_BIN_DIR@"
+            "@GIS_VCPKG_DEBUG_BIN_DIR@"
+        PRE_EXCLUDE_REGEXES
+            "api-ms-"
+            "ext-ms-"
+            "[Hh][Vv][Ss][Ii][Ff]ile[Tt]rust\\.dll"
+        POST_EXCLUDE_REGEXES
+            ".*/install/bin/.*"
+            ".*/[Ww]indows/.*"
+            ".*/[Ss]ystem32/.*"
     )
-endforeach()
+
+    if(_gis_unresolved_deps)
+        list(JOIN _gis_unresolved_deps "\n  " _gis_unresolved_text)
+        message(FATAL_ERROR "Unresolved runtime dependencies:\n  ${_gis_unresolved_text}")
+    endif()
+
+    set(_gis_filtered_resolved_deps)
+    foreach(_gis_dep IN LISTS _gis_resolved_deps)
+        get_filename_component(_gis_dep_dir "${_gis_dep}" DIRECTORY)
+        file(TO_CMAKE_PATH "${_gis_dep_dir}" _gis_dep_dir_norm)
+        file(TO_CMAKE_PATH "${_gis_install_bin_dir}" _gis_install_bin_dir_norm)
+        if(_gis_dep_dir_norm STREQUAL _gis_install_bin_dir_norm)
+            continue()
+        endif()
+        list(APPEND _gis_filtered_resolved_deps "${_gis_dep}")
+    endforeach()
+
+    list(REMOVE_DUPLICATES _gis_filtered_resolved_deps)
+
+    foreach(_gis_dep IN LISTS _gis_filtered_resolved_deps)
+        file(INSTALL
+            DESTINATION "${_gis_install_bin_dir}"
+            TYPE SHARED_LIBRARY
+            FILES "${_gis_dep}"
+        )
+    endforeach()
+else()
+    file(GLOB _gis_vcpkg_runtime_dlls "@GIS_VCPKG_RELEASE_BIN_DIR@/*.dll")
+    foreach(_gis_dep IN LISTS _gis_vcpkg_runtime_dlls)
+        file(INSTALL
+            DESTINATION "${_gis_install_bin_dir}"
+            TYPE SHARED_LIBRARY
+            FILES "${_gis_dep}"
+        )
+    endforeach()
+endif()
