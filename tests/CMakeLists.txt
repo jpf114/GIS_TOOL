@@ -323,6 +323,14 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_raster_tools_overviews_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_tools_overviews/gui_raster_tools_overviews.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_tools_overviews_regression.cmake
+    )
+
+    add_test(
         NAME gui_raster_inspect_info_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
@@ -610,6 +618,15 @@ if(TARGET gis-gui)
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_math_band_math/output.tif
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_math_band_math/gui_raster_math_band_math.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_math_band_math_regression.cmake
+    )
+
+    add_test(
+        NAME gui_raster_tools_band_math_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_tools_band_math/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/raster_tools_band_math/gui_raster_tools_band_math.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_raster_tools_band_math_regression.cmake
     )
 
     add_test(
