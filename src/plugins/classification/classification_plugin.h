@@ -10,7 +10,7 @@ public:
     std::string displayName() const override { return "分类统计"; }
     std::string version() const override { return "0.1.0"; }
     std::string description() const override {
-        return "提供地物分类统计与监督分类能力，当前支持分类统计、SVM、随机森林和最大似然分类。";
+        return "提供分类统计与监督分类能力，当前支持地物分类统计、SVM、随机森林和最大似然分类。";
     }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
