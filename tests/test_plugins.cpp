@@ -843,6 +843,33 @@ TEST_F(PluginTest, ProcessingGaborFilterExecution) {
     EXPECT_GT(readRasterPixel(output, 26, 26), 0.0f);
 }
 
+TEST_F(PluginTest, ProcessingGlcmTextureExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::string input = createPatternRaster("e2e_glcm_texture_input.tif");
+    std::string output = (getTestDir() / "e2e_glcm_texture_output.tif").string();
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("glcm_texture");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["kernel_size"] = 5;
+    params["glcm_metric"] = std::string("contrast");
+    params["glcm_levels"] = 8;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "GLCM texture failed: " << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "glcm_texture");
+    cv::Mat texture = gis::core::readBandAsMat(output, 1);
+    double minValue = 0.0;
+    double maxValue = 0.0;
+    cv::minMaxLoc(texture, &minValue, &maxValue);
+    EXPECT_GT(maxValue, 0.0);
+}
+
 TEST_F(PluginTest, ProcessingConnectedComponentsExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

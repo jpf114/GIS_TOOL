@@ -20,7 +20,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "skeleton", "gabor_filter", "connected_components", "kmeans"}
+            {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "skeleton", "gabor_filter", "glcm_texture", "connected_components", "kmeans"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -77,6 +77,16 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
         gis::framework::ParamSpec{
             "gabor_psi", "相位偏移", "Gabor滤波核的相位偏移",
             gis::framework::ParamType::Double, false, double{0.0}
+        },
+        gis::framework::ParamSpec{
+            "glcm_metric", "纹理指标", "GLCM输出的纹理指标类型",
+            gis::framework::ParamType::Enum, false, std::string{"contrast"},
+            int{0}, int{0},
+            {"contrast", "homogeneity", "energy", "entropy"}
+        },
+        gis::framework::ParamSpec{
+            "glcm_levels", "灰度级数", "GLCM量化灰度级数",
+            gis::framework::ParamType::Int, false, int{8}
         },
         gis::framework::ParamSpec{
             "enhance_type", "增强类型", "增强算法",
@@ -205,6 +215,7 @@ gis::framework::Result ProcessingPlugin::execute(
     if (action == "watershed")       return doWatershed(params, progress);
     if (action == "skeleton")        return doSkeleton(params, progress);
     if (action == "gabor_filter")    return doGaborFilter(params, progress);
+    if (action == "glcm_texture")    return doGlcmTexture(params, progress);
     if (action == "connected_components") return doConnectedComponents(params, progress);
     if (action == "kmeans")          return doKMeans(params, progress);
 
@@ -1029,6 +1040,87 @@ gis::framework::Result ProcessingPlugin::doGaborFilter(
     execResult.metadata["theta"] = std::to_string(theta);
     execResult.metadata["lambda"] = std::to_string(lambda);
     execResult.metadata["gamma"] = std::to_string(gamma);
+    return execResult;
+}
+
+gis::framework::Result ProcessingPlugin::doGlcmTexture(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+    int kernelSize = gis::framework::getParam<int>(params, "kernel_size", 5);
+    std::string metric = gis::framework::getParam<std::string>(params, "glcm_metric", "contrast");
+    int levels = gis::framework::getParam<int>(params, "glcm_levels", 8);
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (kernelSize < 3) return gis::framework::Result::fail("kernel_size must be >= 3");
+    if ((kernelSize % 2) == 0) return gis::framework::Result::fail("kernel_size must be odd");
+    if (levels < 2) return gis::framework::Result::fail("glcm_levels must be >= 2");
+
+    progress.onProgress(0.1);
+    cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.onProgress(0.25);
+
+    cv::Mat gray = gis::core::toUint8(mat);
+    const int rows = gray.rows;
+    const int cols = gray.cols;
+    const int radius = kernelSize / 2;
+    const int pairCount = kernelSize * std::max(0, kernelSize - 1);
+    if (pairCount <= 0) {
+        return gis::framework::Result::fail("invalid kernel_size");
+    }
+
+    cv::Mat result(rows, cols, CV_32F, cv::Scalar(0));
+    const double scale = static_cast<double>(levels) / 256.0;
+
+    for (int y = radius; y < rows - radius; ++y) {
+        for (int x = radius; x < cols - radius; ++x) {
+            std::vector<double> glcm(static_cast<size_t>(levels * levels), 0.0);
+            for (int wy = y - radius; wy <= y + radius; ++wy) {
+                for (int wx = x - radius; wx < x + radius; ++wx) {
+                    int left = std::min(levels - 1, static_cast<int>(gray.at<unsigned char>(wy, wx) * scale));
+                    int right = std::min(levels - 1, static_cast<int>(gray.at<unsigned char>(wy, wx + 1) * scale));
+                    glcm[static_cast<size_t>(left * levels + right)] += 1.0;
+                }
+            }
+
+            double value = 0.0;
+            for (int i = 0; i < levels; ++i) {
+                for (int j = 0; j < levels; ++j) {
+                    const double p = glcm[static_cast<size_t>(i * levels + j)] / static_cast<double>(pairCount);
+                    if (p <= 0.0) {
+                        continue;
+                    }
+                    if (metric == "contrast") {
+                        const double diff = static_cast<double>(i - j);
+                        value += diff * diff * p;
+                    } else if (metric == "homogeneity") {
+                        value += p / (1.0 + std::abs(i - j));
+                    } else if (metric == "energy") {
+                        value += p * p;
+                    } else if (metric == "entropy") {
+                        value -= p * std::log(p);
+                    } else {
+                        return gis::framework::Result::fail("Unknown glcm metric: " + metric);
+                    }
+                }
+            }
+            result.at<float>(y, x) = static_cast<float>(value);
+        }
+    }
+
+    progress.onProgress(0.75);
+    cv::Mat normalized;
+    cv::normalize(result, normalized, 0.0, 1.0, cv::NORM_MINMAX, CV_32F);
+
+    auto execResult = writeMatOutput(normalized, input, output, band, progress);
+    execResult.metadata["action"] = "glcm_texture";
+    execResult.metadata["metric"] = metric;
+    execResult.metadata["kernel_size"] = std::to_string(kernelSize);
+    execResult.metadata["levels"] = std::to_string(levels);
     return execResult;
 }
 

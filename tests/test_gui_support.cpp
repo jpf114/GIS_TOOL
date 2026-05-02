@@ -249,6 +249,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_processing_gabor_filter.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "processing", "glcm_texture"),
+        "D:/data/image_processing_glcm_texture.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
@@ -737,6 +741,21 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidProcessingGaborVa
     issue = gis::gui::validateActionSpecificParams("processing", "gabor_filter", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "gabor_gamma");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidProcessingGlcmValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["kernel_size"] = 4;
+
+    auto issue = gis::gui::validateActionSpecificParams("processing", "glcm_texture", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "kernel_size");
+
+    params["kernel_size"] = 5;
+    params["glcm_levels"] = 1;
+    issue = gis::gui::validateActionSpecificParams("processing", "glcm_texture", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "glcm_levels");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {

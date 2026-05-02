@@ -1314,6 +1314,21 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
                 return ActionValidationIssue{"gabor_gamma", "参数“纵横比”必须大于 0"};
             }
         }
+        if (actionKey == "glcm_texture") {
+            const auto kernelSize = intParamValue(params, "kernel_size");
+            if (kernelSize.has_value()) {
+                if (*kernelSize < 3) {
+                    return ActionValidationIssue{"kernel_size", "参数“窗口大小”必须大于等于 3"};
+                }
+                if ((*kernelSize % 2) == 0) {
+                    return ActionValidationIssue{"kernel_size", "参数“窗口大小”建议填写奇数，例如 3、5、7"};
+                }
+            }
+            const auto levels = intParamValue(params, "glcm_levels");
+            if (levels.has_value() && *levels < 2) {
+                return ActionValidationIssue{"glcm_levels", "参数“灰度级数”必须大于等于 2"};
+            }
+        }
     }
 
     return std::nullopt;
@@ -1427,6 +1442,8 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 adjustedSpec.minValue = 3;
             } else if (spec.key == "sigma" || spec.key == "gabor_lambda" || spec.key == "gabor_gamma") {
                 adjustedSpec.minValue = 0.000001;
+            } else if (spec.key == "glcm_levels") {
+                adjustedSpec.minValue = 2;
             }
         }
         if (pluginName == "projection" && action == "transform" && spec.key == "src_srs") {
