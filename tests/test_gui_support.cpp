@@ -269,6 +269,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_processing_mean_shift_segment.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "georef", "dos_correction"),
+        "D:/data/image_georef_dos_correction.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
@@ -741,6 +745,21 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidClassificationSvm
     issue = gis::gui::validateActionSpecificParams("classification", "svm_classify", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "bands");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefDosValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["band"] = 0;
+
+    auto issue = gis::gui::validateActionSpecificParams("georef", "dos_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "band");
+
+    params["band"] = 1;
+    params["output"] = std::string("D:/data/result.json");
+    issue = gis::gui::validateActionSpecificParams("georef", "dos_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "output");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsEvenKernelSizeForProcessingFilter) {

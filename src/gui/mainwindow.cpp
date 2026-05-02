@@ -89,6 +89,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("histogram"), QStringLiteral("\347\233\264\346\226\271\345\233\276")},
         {QStringLiteral("colormap"), QStringLiteral("\344\274\252\345\275\251\350\211\262")},
         {QStringLiteral("histogram_match"), QStringLiteral("\347\233\264\346\226\271\345\233\276\345\214\271\351\205\215")},
+        {QStringLiteral("dos_correction"), QStringLiteral("DOS \346\240\241\346\255\243")},
         {QStringLiteral("slope"), QStringLiteral("\345\235\241\345\272\246")},
         {QStringLiteral("aspect"), QStringLiteral("\345\235\241\345\220\221")},
         {QStringLiteral("hillshade"), QStringLiteral("\345\261\261\344\275\223\351\230\264\345\275\261")},
@@ -563,6 +564,7 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"nodata_value", {QStringLiteral("NoData 值"), QStringLiteral("要写入的 NoData 数值。")}},
         {"bins", {QStringLiteral("分箱数"), QStringLiteral("直方图的分箱数量。")}},
         {"cmap", {QStringLiteral("颜色映射"), QStringLiteral("伪彩色映射方案。")}},
+        {"dark_object_value", {QStringLiteral("暗像元值"), QStringLiteral("DOS 校正使用的暗像元值，小于 0 表示自动估计。")}},
         {"red_band", {QStringLiteral("红光波段"), QStringLiteral("计算 NDVI 的红光波段序号。")}},
         {"nir_band", {QStringLiteral("近红外波段"), QStringLiteral("计算 NDVI 的近红外波段序号。")}},
         {"blue_band", {QStringLiteral("蓝光波段"), QStringLiteral("计算 EVI 使用的蓝光波段序号。")}},
@@ -710,6 +712,11 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"label_column", {QStringLiteral("标签列"), QStringLiteral("训练样本 CSV 中的类别标签列名，默认 label。")}},
             }},
         }},
+        {"georef", {
+            {"dos_correction", {
+                {"dark_object_value", {QStringLiteral("暗像元值"), QStringLiteral("小于 0 时自动使用当前波段最小值作为暗像元值。")}},
+            }},
+        }},
         {"vector", {
             {"convert", {
                 {"output", {QStringLiteral("输出文件"), QStringLiteral("输出路径应与输出格式一致，例如 .geojson、.gpkg、.shp。")}},
@@ -783,6 +790,9 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
             {"nodata", {QStringLiteral("NoData 设置"), QStringLiteral("为单波段或全部波段写入 NoData 值。"), {"input", "band", "nodata_value"}, {"input"}}},
             {"cog", {QStringLiteral("COG 生成"), QStringLiteral("将输入栅格转换为 Cloud Optimized GeoTIFF。"), {"input", "output"}, {"input", "output"}}},
+        }},
+        {"georef", {
+            {"dos_correction", {QStringLiteral("DOS 大气校正"), QStringLiteral("对单波段栅格执行简化暗像元大气校正。"), {"input", "output", "band", "dark_object_value"}, {"input", "output"}}},
         }},
         {"terrain", {
             {"slope", {QStringLiteral("坡度"), QStringLiteral("根据 DEM 计算坡度栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
@@ -1236,7 +1246,7 @@ void MainWindow::loadPlugins() {
     }
 
     static const std::vector<std::string> preferredOrder = {
-        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "raster_manage", "raster_render", "terrain", "classification", "vector"
+        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "raster_manage", "raster_render", "georef", "terrain", "classification", "vector"
     };
 
     std::vector<gis::framework::IGisPlugin*> plugins = pluginManager_.plugins();

@@ -63,6 +63,7 @@ add_dependencies(gis_tests
     plugin_raster_inspect
     plugin_raster_manage
     plugin_raster_render
+    plugin_georef
     plugin_terrain
     plugin_classification
     plugin_spindex

@@ -94,6 +94,10 @@ QIcon makeSidebarIcon(const std::string& kind, const QColor& bg, const QColor& f
         painter.drawLine(QPointF(5, 12.8), QPointF(5, 9.4));
         painter.drawLine(QPointF(9, 12.8), QPointF(9, 6.6));
         painter.drawLine(QPointF(13, 12.8), QPointF(13, 4.4));
+    } else if (kind == "georef") {
+        painter.drawEllipse(QRectF(4.2, 4.2, 9.6, 9.6));
+        painter.drawLine(QPointF(6.0, 10.5), QPointF(12.0, 6.5));
+        painter.drawLine(QPointF(6.0, 12.0), QPointF(12.0, 8.0));
     } else if (kind == "spindex") {
         painter.drawEllipse(QRectF(4.4, 3.4, 7.2, 10.2));
         painter.drawLine(QPointF(8.0, 4.8), QPointF(8.0, 12.0));
