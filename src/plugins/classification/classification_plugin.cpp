@@ -1236,7 +1236,7 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
         gis::framework::ParamSpec{
             "action", "子功能", "分类相关功能",
             gis::framework::ParamType::Enum, true, std::string{},
-            int{0}, int{0}, {"feature_stats", "svm_classify"}
+            int{0}, int{0}, {"feature_stats", "svm_classify", "random_forest_classify"}
         },
         gis::framework::ParamSpec{
             "input", "输入栅格", "待分类的多波段栅格文件路径",
@@ -1307,6 +1307,9 @@ gis::framework::Result ClassificationPlugin::execute(
         }
         if (action == "svm_classify") {
             return doSvmClassify(params, progress);
+        }
+        if (action == "random_forest_classify") {
+            return doRandomForestClassify(params, progress);
         }
         return gis::framework::Result::fail("Unknown action: " + action);
     } catch (const std::exception& ex) {
@@ -1615,6 +1618,147 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
 
     auto execResult = gis::framework::Result::ok("SVM 分类完成", task.outputPath);
     execResult.metadata["action"] = "svm_classify";
+    execResult.metadata["input"] = task.inputPath;
+    execResult.metadata["training_csv"] = task.trainingCsvPath;
+    execResult.metadata["band_count"] = std::to_string(task.bands.size());
+    execResult.metadata["sample_count"] = std::to_string(rows.size());
+    execResult.metadata["class_count"] = std::to_string(classValues.size());
+    return execResult;
+}
+
+gis::framework::Result ClassificationPlugin::doRandomForestClassify(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    SvmTask task;
+    task.inputPath = gis::framework::getParam<std::string>(params, "input", "");
+    task.trainingCsvPath = gis::framework::getParam<std::string>(params, "training_csv", "");
+    task.labelColumn = gis::framework::getParam<std::string>(params, "label_column", "label");
+    task.outputPath = gis::framework::getParam<std::string>(params, "output", "");
+
+    if (task.inputPath.empty()) {
+        return gis::framework::Result::fail("input is required");
+    }
+    if (task.trainingCsvPath.empty()) {
+        return gis::framework::Result::fail("training_csv is required");
+    }
+    if (task.outputPath.empty()) {
+        return gis::framework::Result::fail("output is required");
+    }
+
+    std::string bandError;
+    if (!parseIntList(gis::framework::getParam<std::string>(params, "bands", ""), task.bands, bandError)) {
+        return gis::framework::Result::fail(bandError);
+    }
+
+    progress.onMessage("正在读取训练样本...");
+    progress.onProgress(0.1);
+
+    std::vector<std::string> headers;
+    std::vector<std::vector<std::string>> rows;
+    std::string csvError;
+    if (!parseCsvHeaderAndRows(task.trainingCsvPath, headers, rows, csvError)) {
+        return gis::framework::Result::fail(csvError);
+    }
+
+    int labelIndex = -1;
+    for (std::size_t i = 0; i < headers.size(); ++i) {
+        if (headers[i] == task.labelColumn) {
+            labelIndex = static_cast<int>(i);
+            break;
+        }
+    }
+    if (labelIndex < 0) {
+        return gis::framework::Result::fail("训练样本 CSV 缺少标签列: " + task.labelColumn);
+    }
+
+    std::vector<int> featureIndices;
+    for (std::size_t i = 0; i < headers.size(); ++i) {
+        if (static_cast<int>(i) != labelIndex) {
+            featureIndices.push_back(static_cast<int>(i));
+        }
+    }
+    if (featureIndices.empty()) {
+        return gis::framework::Result::fail("训练样本 CSV 缺少特征列");
+    }
+
+    auto ds = gis::core::openRaster(task.inputPath, true);
+    if (!ds) {
+        return gis::framework::Result::fail("无法打开输入栅格: " + task.inputPath);
+    }
+
+    if (task.bands.empty()) {
+        for (int bandIndex = 1; bandIndex <= ds->GetRasterCount(); ++bandIndex) {
+            task.bands.push_back(bandIndex);
+        }
+    }
+    if (featureIndices.size() != task.bands.size()) {
+        return gis::framework::Result::fail("训练样本特征列数量必须与 bands 数量一致");
+    }
+
+    cv::Mat trainingSamples(static_cast<int>(rows.size()), static_cast<int>(featureIndices.size()), CV_32F);
+    cv::Mat trainingLabels(static_cast<int>(rows.size()), 1, CV_32S);
+    std::set<int> classValues;
+    for (int rowIndex = 0; rowIndex < static_cast<int>(rows.size()); ++rowIndex) {
+        try {
+            trainingLabels.at<int>(rowIndex, 0) = std::stoi(rows[rowIndex][labelIndex]);
+            classValues.insert(trainingLabels.at<int>(rowIndex, 0));
+            for (int featureIndex = 0; featureIndex < static_cast<int>(featureIndices.size()); ++featureIndex) {
+                trainingSamples.at<float>(rowIndex, featureIndex) =
+                    std::stof(rows[rowIndex][featureIndices[featureIndex]]);
+            }
+        } catch (...) {
+            return gis::framework::Result::fail("训练样本 CSV 存在无法解析的数字");
+        }
+    }
+
+    progress.onMessage("正在训练随机森林分类器...");
+    progress.onProgress(0.3);
+
+    auto forest = cv::ml::RTrees::create();
+    forest->setMaxDepth(10);
+    forest->setMinSampleCount(2);
+    forest->setRegressionAccuracy(0.0f);
+    forest->setUseSurrogates(false);
+    forest->setMaxCategories(std::max(2, static_cast<int>(classValues.size())));
+    forest->setTermCriteria(cv::TermCriteria(cv::TermCriteria::MAX_ITER, 100, 0));
+    if (!forest->train(trainingSamples, cv::ml::ROW_SAMPLE, trainingLabels)) {
+        return gis::framework::Result::fail("随机森林训练失败");
+    }
+
+    progress.onMessage("正在读取待分类波段...");
+    progress.onProgress(0.45);
+
+    std::vector<cv::Mat> bandMats;
+    bandMats.reserve(task.bands.size());
+    for (int bandIndex : task.bands) {
+        if (bandIndex <= 0 || bandIndex > ds->GetRasterCount()) {
+            return gis::framework::Result::fail("bands 中存在无效波段号");
+        }
+        bandMats.push_back(gis::core::gdalBandToMat(ds.get(), bandIndex));
+    }
+
+    const int width = ds->GetRasterXSize();
+    const int height = ds->GetRasterYSize();
+    cv::Mat result(height, width, CV_32F);
+    cv::Mat sample(1, static_cast<int>(task.bands.size()), CV_32F);
+
+    progress.onMessage("正在执行栅格分类...");
+    progress.onProgress(0.7);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            for (int bandOffset = 0; bandOffset < static_cast<int>(bandMats.size()); ++bandOffset) {
+                sample.at<float>(0, bandOffset) = bandMats[bandOffset].at<float>(y, x);
+            }
+            result.at<float>(y, x) = forest->predict(sample);
+        }
+    }
+
+    progress.onMessage("正在写出分类结果...");
+    gis::core::matToGdalTiff(result, ds.get(), task.outputPath, task.bands.front());
+    progress.onProgress(1.0);
+
+    auto execResult = gis::framework::Result::ok("随机森林分类完成", task.outputPath);
+    execResult.metadata["action"] = "random_forest_classify";
     execResult.metadata["input"] = task.inputPath;
     execResult.metadata["training_csv"] = task.trainingCsvPath;
     execResult.metadata["band_count"] = std::to_string(task.bands.size());

@@ -241,6 +241,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/scene_classification_svm_classify.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/scene.tif", "classification", "random_forest_classify"),
+        "D:/data/scene_classification_random_forest_classify.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/image.tif", "processing", "skeleton"),
         "D:/data/image_processing_skeleton.tif");
     EXPECT_EQ(

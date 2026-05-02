@@ -106,6 +106,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("cut_fill"), QStringLiteral("\345\241\253\346\214\226\346\226\271")},
         {QStringLiteral("reservoir_volume"), QStringLiteral("\345\272\223\345\256\271\350\256\241\347\256\227")},
         {QStringLiteral("svm_classify"), QStringLiteral("SVM \345\210\206\347\261\273")},
+        {QStringLiteral("random_forest_classify"), QStringLiteral("\351\232\217\346\234\272\346\243\256\346\236\227\345\210\206\347\261\273")},
         {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
         {QStringLiteral("evi"), QStringLiteral("EVI")},
         {QStringLiteral("savi"), QStringLiteral("SAVI")},
@@ -697,6 +698,11 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"bands", {QStringLiteral("波段列表"), QStringLiteral("与训练样本特征列一一对应，例如 1,2。留空则默认使用全部波段。")}},
                 {"label_column", {QStringLiteral("标签列"), QStringLiteral("训练样本 CSV 中的类别标签列名，默认 label。")}},
             }},
+            {"random_forest_classify", {
+                {"training_csv", {QStringLiteral("训练样本 CSV"), QStringLiteral("CSV 表头需包含标签列和特征列，例如 label,b1,b2。")}},
+                {"bands", {QStringLiteral("波段列表"), QStringLiteral("与训练样本特征列一一对应，例如 1,2。留空则默认使用全部波段。")}},
+                {"label_column", {QStringLiteral("标签列"), QStringLiteral("训练样本 CSV 中的类别标签列名，默认 label。")}},
+            }},
         }},
         {"vector", {
             {"convert", {
@@ -793,6 +799,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
             {"svm_classify", {QStringLiteral("SVM 分类"), QStringLiteral("使用训练样本 CSV 对多波段栅格执行监督分类。"), {"input", "output", "training_csv", "label_column", "bands"}, {"input", "output", "training_csv"}}},
+            {"random_forest_classify", {QStringLiteral("随机森林分类"), QStringLiteral("使用训练样本 CSV 对多波段栅格执行随机森林监督分类。"), {"input", "output", "training_csv", "label_column", "bands"}, {"input", "output", "training_csv"}}},
         }},
         {"spindex", {
             {"ndvi", {QStringLiteral("NDVI"), QStringLiteral("根据红光与近红外波段计算 NDVI。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},
