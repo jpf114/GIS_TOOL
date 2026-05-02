@@ -582,6 +582,324 @@ int makeTerrainRaster(const std::string& outputPath) {
     return 0;
 }
 
+int makeSupervisedClassificationInputs(const std::string& rasterPath, const std::string& csvPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(rasterPath);
+    ensureParentDir(csvPath);
+
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(rasterPath.c_str(), 24, 12, 2, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create supervised classification raster: " << rasterPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.001, 0.0,
+        40.0, 0.0, -0.001
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<float> band1(24 * 12, 0.0f);
+    std::vector<float> band2(24 * 12, 0.0f);
+    for (int y = 0; y < 12; ++y) {
+        for (int x = 0; x < 24; ++x) {
+            const bool leftClass = x < 12;
+            band1[y * 24 + x] = leftClass ? 10.0f : 200.0f;
+            band2[y * 24 + x] = leftClass ? 20.0f : 180.0f;
+        }
+    }
+
+    GDALRasterBand* rasterBand1 = ds->GetRasterBand(1);
+    GDALRasterBand* rasterBand2 = ds->GetRasterBand(2);
+    if (!rasterBand1 || !rasterBand2) {
+        GDALClose(ds);
+        std::cerr << "Failed to get supervised classification raster bands\n";
+        return 1;
+    }
+
+    if (rasterBand1->RasterIO(
+            GF_Write, 0, 0, 24, 12,
+            band1.data(), 24, 12, GDT_Float32,
+            0, 0, nullptr) != CE_None ||
+        rasterBand2->RasterIO(
+            GF_Write, 0, 0, 24, 12,
+            band2.data(), 24, 12, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write supervised classification raster bands\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+
+    std::ofstream ofs(csvPath, std::ios::binary);
+    if (!ofs) {
+        std::cerr << "Failed to create supervised classification CSV: " << csvPath << "\n";
+        return 1;
+    }
+    ofs << "label,b1,b2\n";
+    ofs << "1,10,20\n";
+    ofs << "1,12,18\n";
+    ofs << "2,200,180\n";
+    ofs << "2,195,185\n";
+    return 0;
+}
+
+int makeGeorefGcpInputs(const std::string& rasterPath, const std::string& csvPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(rasterPath);
+    ensureParentDir(csvPath);
+
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(rasterPath.c_str(), 10, 6, 1, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create GCP raster: " << rasterPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        120.0, 1.0, 0.0,
+        30.0, 0.0, -1.0
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<float> data(10 * 6, 7.0f);
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band) {
+        GDALClose(ds);
+        std::cerr << "Failed to get GCP raster band\n";
+        return 1;
+    }
+    if (band->RasterIO(
+            GF_Write, 0, 0, 10, 6,
+            data.data(), 10, 6, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write GCP raster band\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+
+    std::ofstream ofs(csvPath, std::ios::binary);
+    if (!ofs) {
+        std::cerr << "Failed to create GCP CSV: " << csvPath << "\n";
+        return 1;
+    }
+    ofs << "pixel_x,pixel_y,map_x,map_y\n";
+    ofs << "0,0,120,30\n";
+    ofs << "9,0,129,30\n";
+    ofs << "0,5,120,25\n";
+    ofs << "9,5,129,25\n";
+    return 0;
+}
+
+int makeGeorefRadiometricInputs(const std::string& rasterPath, const std::string& metadataPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(rasterPath);
+    ensureParentDir(metadataPath);
+
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(rasterPath.c_str(), 16, 16, 1, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create radiometric raster: " << rasterPath << "\n";
+        return 1;
+    }
+
+    std::vector<float> data(16 * 16, 0.0f);
+    for (int i = 0; i < 16 * 16; ++i) {
+        data[static_cast<size_t>(i)] = static_cast<float>(i % 256);
+    }
+
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band) {
+        GDALClose(ds);
+        std::cerr << "Failed to get radiometric raster band\n";
+        return 1;
+    }
+    if (band->RasterIO(
+            GF_Write, 0, 0, 16, 16,
+            data.data(), 16, 16, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write radiometric raster band\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+
+    std::ofstream ofs(metadataPath, std::ios::binary);
+    if (!ofs) {
+        std::cerr << "Failed to create radiometric metadata file: " << metadataPath << "\n";
+        return 1;
+    }
+    ofs << "RADIANCE_MULT_BAND_1 = 3.0\n";
+    ofs << "RADIANCE_ADD_BAND_1 = 2.0\n";
+    return 0;
+}
+
+int makeGeorefTopographicInputs(const std::string& inputPath,
+                                const std::string& slopePath,
+                                const std::string& aspectPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(inputPath);
+    ensureParentDir(slopePath);
+    ensureParentDir(aspectPath);
+
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    auto writeConstantRaster = [&](const std::string& path, float value) -> bool {
+        GDALDataset* ds = driver->Create(path.c_str(), 10, 6, 1, GDT_Float32, nullptr);
+        if (!ds) {
+            return false;
+        }
+        std::vector<float> data(10 * 6, value);
+        GDALRasterBand* band = ds->GetRasterBand(1);
+        const bool ok = band && band->RasterIO(
+            GF_Write, 0, 0, 10, 6,
+            data.data(), 10, 6, GDT_Float32,
+            0, 0, nullptr) == CE_None;
+        GDALClose(ds);
+        return ok;
+    };
+
+    if (!writeConstantRaster(inputPath, 10.0f) ||
+        !writeConstantRaster(slopePath, 60.0f) ||
+        !writeConstantRaster(aspectPath, 90.0f)) {
+        std::cerr << "Failed to create topographic correction rasters\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int makeGeorefQuacInput(const std::string& rasterPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(rasterPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(rasterPath.c_str(), 8, 8, 3, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create QUAC raster: " << rasterPath << "\n";
+        return 1;
+    }
+
+    const std::vector<float> values = {20.0f, 60.0f, 100.0f};
+    for (int i = 0; i < 3; ++i) {
+        std::vector<float> bandData(8 * 8, values[static_cast<size_t>(i)]);
+        GDALRasterBand* band = ds->GetRasterBand(i + 1);
+        if (!band || band->RasterIO(
+                GF_Write, 0, 0, 8, 8,
+                bandData.data(), 8, 8, GDT_Float32,
+                0, 0, nullptr) != CE_None) {
+            GDALClose(ds);
+            std::cerr << "Failed to write QUAC raster band\n";
+            return 1;
+        }
+    }
+
+    GDALClose(ds);
+    return 0;
+}
+
+int makeGeorefRpcInput(const std::string& rasterPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(rasterPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(rasterPath.c_str(), 10, 6, 1, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create RPC raster: " << rasterPath << "\n";
+        return 1;
+    }
+
+    std::vector<float> data(10 * 6, 9.0f);
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band || band->RasterIO(
+            GF_Write, 0, 0, 10, 6,
+            data.data(), 10, 6, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write RPC raster band\n";
+        return 1;
+    }
+
+    const bool ok =
+        ds->SetMetadataItem("ERR_BIAS", "0", "RPC") == CE_None &&
+        ds->SetMetadataItem("ERR_RAND", "0", "RPC") == CE_None &&
+        ds->SetMetadataItem("LINE_OFF", "2.5", "RPC") == CE_None &&
+        ds->SetMetadataItem("SAMP_OFF", "4.5", "RPC") == CE_None &&
+        ds->SetMetadataItem("LAT_OFF", "29.9975", "RPC") == CE_None &&
+        ds->SetMetadataItem("LONG_OFF", "120.0045", "RPC") == CE_None &&
+        ds->SetMetadataItem("HEIGHT_OFF", "0", "RPC") == CE_None &&
+        ds->SetMetadataItem("LINE_SCALE", "2.5", "RPC") == CE_None &&
+        ds->SetMetadataItem("SAMP_SCALE", "4.5", "RPC") == CE_None &&
+        ds->SetMetadataItem("LAT_SCALE", "0.0025", "RPC") == CE_None &&
+        ds->SetMetadataItem("LONG_SCALE", "0.0045", "RPC") == CE_None &&
+        ds->SetMetadataItem("HEIGHT_SCALE", "1", "RPC") == CE_None &&
+        ds->SetMetadataItem(
+            "LINE_NUM_COEFF",
+            "0 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", "RPC") == CE_None &&
+        ds->SetMetadataItem(
+            "LINE_DEN_COEFF",
+            "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", "RPC") == CE_None &&
+        ds->SetMetadataItem(
+            "SAMP_NUM_COEFF",
+            "0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", "RPC") == CE_None &&
+        ds->SetMetadataItem(
+            "SAMP_DEN_COEFF",
+            "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", "RPC") == CE_None;
+
+    GDALClose(ds);
+
+    if (!ok) {
+        std::cerr << "Failed to write RPC metadata\n";
+        return 1;
+    }
+
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -630,6 +948,40 @@ int main(int argc, char* argv[]) {
     }
     if (command == "terrain-raster") {
         return makeTerrainRaster(argv[2]);
+    }
+    if (command == "classification-supervised-inputs") {
+        if (argc < 4) {
+            std::cerr << "Usage: gui_test_data_helper classification-supervised-inputs <raster_output> <csv_output>\n";
+            return 1;
+        }
+        return makeSupervisedClassificationInputs(argv[2], argv[3]);
+    }
+    if (command == "georef-gcp-inputs") {
+        if (argc < 4) {
+            std::cerr << "Usage: gui_test_data_helper georef-gcp-inputs <raster_output> <csv_output>\n";
+            return 1;
+        }
+        return makeGeorefGcpInputs(argv[2], argv[3]);
+    }
+    if (command == "georef-radiometric-inputs") {
+        if (argc < 4) {
+            std::cerr << "Usage: gui_test_data_helper georef-radiometric-inputs <raster_output> <metadata_output>\n";
+            return 1;
+        }
+        return makeGeorefRadiometricInputs(argv[2], argv[3]);
+    }
+    if (command == "georef-topographic-inputs") {
+        if (argc < 5) {
+            std::cerr << "Usage: gui_test_data_helper georef-topographic-inputs <input_output> <slope_output> <aspect_output>\n";
+            return 1;
+        }
+        return makeGeorefTopographicInputs(argv[2], argv[3], argv[4]);
+    }
+    if (command == "georef-quac-input") {
+        return makeGeorefQuacInput(argv[2]);
+    }
+    if (command == "georef-rpc-input") {
+        return makeGeorefRpcInput(argv[2]);
     }
 
     std::cerr << "Unknown command: " << command << "\n";

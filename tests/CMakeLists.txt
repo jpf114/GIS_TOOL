@@ -350,6 +350,39 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_classification_svm_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DACTION=svm_classify
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/classification_svm/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/classification_svm/gui_classification_svm.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_classification_supervised_regression.cmake
+    )
+
+    add_test(
+        NAME gui_classification_random_forest_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DACTION=random_forest_classify
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/classification_random_forest/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/classification_random_forest/gui_classification_random_forest.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_classification_supervised_regression.cmake
+    )
+
+    add_test(
+        NAME gui_classification_max_likelihood_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DACTION=max_likelihood_classify
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/classification_max_likelihood/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/classification_max_likelihood/gui_classification_max_likelihood.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_classification_supervised_regression.cmake
+    )
+
+    add_test(
         NAME gui_processing_threshold_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
@@ -454,6 +487,115 @@ if(TARGET gis-gui)
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_kmeans/output.tif
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_kmeans/gui_processing_kmeans.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_kmeans_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_gabor_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_gabor/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_gabor/gui_processing_gabor.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_gabor_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_glcm_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_glcm/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_glcm/gui_processing_glcm.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_glcm_regression.cmake
+    )
+
+    add_test(
+        NAME gui_processing_mean_shift_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_mean_shift/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/processing_mean_shift/gui_processing_mean_shift.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_processing_mean_shift_regression.cmake
+    )
+
+    add_test(
+        NAME gui_georef_dos_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_dos/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_dos/gui_georef_dos.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_georef_dos_regression.cmake
+    )
+
+    add_test(
+        NAME gui_georef_radiometric_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_radiometric/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_radiometric/gui_georef_radiometric.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_georef_radiometric_regression.cmake
+    )
+
+    add_test(
+        NAME gui_georef_gcp_register_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_gcp_register/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_gcp_register/gui_georef_gcp_register.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_georef_gcp_register_regression.cmake
+    )
+
+    add_test(
+        NAME gui_georef_cosine_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DACTION=cosine_correction
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_cosine/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_cosine/gui_georef_cosine.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_georef_topographic_regression.cmake
+    )
+
+    add_test(
+        NAME gui_georef_minnaert_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DACTION=minnaert_correction
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_minnaert/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_minnaert/gui_georef_minnaert.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_georef_topographic_regression.cmake
+    )
+
+    add_test(
+        NAME gui_georef_c_correction_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DACTION=c_correction
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_c_correction/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_c_correction/gui_georef_c_correction.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_georef_topographic_regression.cmake
+    )
+
+    add_test(
+        NAME gui_georef_quac_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_quac/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_quac/gui_georef_quac.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_georef_quac_regression.cmake
+    )
+
+    add_test(
+        NAME gui_georef_rpc_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_rpc/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/georef_rpc/gui_georef_rpc.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_georef_rpc_regression.cmake
     )
 
     add_test(

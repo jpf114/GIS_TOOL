@@ -1,150 +1,128 @@
 # GIS Tool
 
-基于 `C++17 + GDAL + OpenCV + PROJ + Qt` 的插件式 GIS 工具集，提供命令行和桌面图形界面两种入口。
+基于 `C++17 + GDAL + OpenCV + PROJ + Qt` 的插件式 GIS 工具集，提供 CLI 和 GUI 两种入口。
 
-## 当前版本
+## 当前状态
 
-当前稳定版本：`v0.1.3`
+- 当前版本：`v0.1.3`
+- 标准构建目录：
+  - `build/debug`
+  - `build/release`
+- 默认安装与交付：`Release`
+- 依赖统一使用全局 `vcpkg`，当前项目约定路径为 `D:\Develop\vcpkg`
 
-## 当前验证状态
+## 当前主功能
 
-以下结论已在本仓库当前代码上重新验证：
+- `projection` 投影转换
+- `cutting` 影像裁切与镶嵌
+- `matching` 特征匹配与配准
+- `processing` 影像处理与分析
+- `classification` 分类统计与监督分类
+- `georef` 几何校正与辐射处理
+- `terrain` 地形分析
+- `spindex` 光谱指数
+- `raster_manage` 栅格管理
+- `raster_inspect` 栅格检查
+- `raster_render` 栅格渲染
+- `raster_math` 栅格计算
+- `vector` 矢量数据处理
 
-- `Visual Studio 2022 + C++17 + 全局 vcpkg` 可稳定配置与编译
-- `GIS_BUILD_GUI=OFF/ON` 两种模式均可构建
-- 标准构建目录为 `build/debug` 与 `build/release`，标准安装目录为 `install`
-- `ctest --test-dir build/debug -C Debug --output-on-failure` 为 `201/201` 通过
-- `gis-cli.exe --list` 可正常列出全部主插件
-- `gis-gui.exe -platform offscreen --self-test` 可正常启动并退出
-- GUI 已验证较完整的离屏自动执行链路，覆盖 `vector / projection / utility / classification / processing / matching / cutting` 主功能动作
-- 矢量回归 `quick / full` 可运行；存在本地 `data/vector` 时优先使用本地数据，否则自动生成可复现样例数据
-- Windows 下 `gis-cli.exe` 已验证可直接处理中文路径输入
-- `vector filter` 已用真实 GeoJSON 数据验证中文属性条件可正常过滤
-- 当前收口状态与边界说明见 [GUI_CLI_底层对齐验证清单](D:\Code\MyProject\GIS_TOOL\docs\GUI_CLI_底层对齐验证清单.md)
+## 本轮新增并已接入的功能
 
-需要特别说明：
+### processing
 
-- 当前自动化测试覆盖已经较完整，但其中一部分仍属于合成数据测试
-- 项目已经具备真实场景使用能力，但还不能等同于“所有模块都经过完整生产数据验证”
-- GUI 已具备参数配置、执行和结果反馈能力，但当前自动化验证重点仍是主执行链路，不是完整交互回归
+- `gabor_filter` Gabor 滤波
+- `glcm_texture` GLCM 纹理
+- `mean_shift_segment` Mean Shift 分割
 
-## 项目状态
+### classification
 
-- `core / framework / plugins / cli / gui / tests` 主链路可稳定使用
-- GUI 已接入主要功能模块，参数界面与插件参数定义基本匹配
-- 当前版本适合作为持续迭代的可用基线
+- `svm_classify` SVM 分类
+- `random_forest_classify` 随机森林分类
+- `max_likelihood_classify` 最大似然分类
 
-## 项目结构
+### georef
 
-- `src/core`
-  - GDAL / OpenCV 基础封装、运行时环境初始化、通用类型
-- `src/framework`
-  - 插件接口、参数描述、插件管理器、执行结果模型
-- `src/plugins`
-  - 投影、裁切、匹配、处理、分类、工具、矢量等插件
-- `src/cli`
-  - 命令行入口
-- `src/gui`
-  - Qt Widgets 图形界面入口
-- `tests`
-  - 核心能力、框架能力、插件能力、GUI 支撑能力测试
+- `dos_correction` DOS 大气校正
+- `radiometric_calibration` 辐射定标
+- `gcp_register` 控制点配准
+- `cosine_correction` 余弦校正
+- `minnaert_correction` Minnaert 校正
+- `c_correction` C 校正
+- `quac_correction` QUAC 大气校正
+- `rpc_orthorectify` RPC 正射校正
 
-## 已实现插件
+## 完整性说明
 
-- `projection`
-  - 重投影、坐标系信息查看、坐标转换、赋予坐标系
-- `cutting`
-  - 裁切、镶嵌、分块、波段合并
-- `matching`
-  - 特征检测、特征匹配、影像配准、变化检测、角点检测
-- `processing`
-  - 阈值分割、滤波、增强、波段运算、统计、边缘检测、轮廓提取、模板匹配、全色锐化、霍夫变换、分水岭、K-Means
-- `classification`
-  - 地物分类统计
-- `utility`
-  - 金字塔、NoData、直方图、信息查看、伪彩色、NDVI
-- `vector`
-  - 信息查看、过滤、缓冲、裁切、栅格化、面矢量化、格式转换、并集、差集、融合
+以上新增功能都按当前项目既有模式补齐到以下层级：
 
-## 环境要求
+- 底层算法实现
+- 插件参数定义
+- CLI 调用链路
+- GUI 动作接入
+- GUI 参数面板说明
+- GUI 建议输出路径
+- GUI 参数校验
+- 插件测试
+- GUI 支撑测试
+- GUI 离屏回归测试
+- 算法说明文档
 
-推荐环境：
+说明：
 
-- Windows
-- Visual Studio 2022
-- C++17
-- 全局 `vcpkg`
-- `VCPKG_ROOT/installed/x64-windows`
-
-推荐已安装依赖：
-
-- `gdal`
-- `opencv4`
-- `proj`
-- `gtest`
-- `qtbase`
+- CLI 使用统一插件驱动入口，不为每个算法单独维护一套命令程序
+- 自动化测试以合成数据和离屏 GUI 回归为主，适合当前阶段持续迭代验证
 
 ## 构建
 
-仅构建 CLI 与测试：
-
-```powershell
-cmake -S . -B build/debug -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=OFF -DGIS_BUILD_TESTS=ON
-cmake --build build/debug --config Debug
-ctest --test-dir build/debug -C Debug --output-on-failure
-```
-
-构建 GUI、CLI 与测试：
+### Debug
 
 ```powershell
 cmake -S . -B build/debug -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
 cmake --build build/debug --config Debug
 ctest --test-dir build/debug -C Debug --output-on-failure
+```
+
+### Release
+
+```powershell
 cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
 cmake --build build/release --config Release
 cmake --install build/release --config Release
 ```
 
-建议：
+约定：
 
-- 使用 `build/debug` 作为标准 Debug 构建与验证目录
-- 使用 `build/release` 作为标准 Release 构建与安装目录
-- 使用 `install` 作为标准安装目录
-- 建议开发验证使用 `Debug`
-- 默认安装与交付使用 `Release`
-- 发布前至少完整执行一次 `Debug build + Debug test + Release install`
+- 日常开发验证使用 `build/debug`
+- 默认安装使用 `build/release`
+- 发布前至少执行一次 `Debug 全量测试 + Release 编译安装`
 
 ## 使用
 
-列出插件：
+### 列出插件
 
 ```powershell
 .\install\bin\gis-cli.exe --list
 ```
 
-运行插件：
+### 运行算法
 
 ```powershell
 .\install\bin\gis-cli.exe <plugin> <action> --input <path> --output <path>
 ```
 
-启动 GUI：
+### 启动 GUI
 
 ```powershell
 .\install\bin\gis-gui.exe
 ```
 
-GUI 当前适合：
+## 算法文档
 
-- 选择插件与功能
-- 自动生成参数面板
-- 执行算法并查看进度与结果摘要
-
-## 许可证
-
-本项目采用 `MIT License`，详见 [LICENSE](/D:/Code/MyProject/GIS_TOOL/LICENSE)。
+算法说明总览见 [docs/算法说明/总览.md](/D:/Develop/GIS/GIS_TOOL/docs/算法说明/总览.md)。
 
 ## 说明
 
 - 文档统一使用中文
 - 提交信息统一使用中文
+- 当前项目优先保持简单、可维护、可持续扩展
