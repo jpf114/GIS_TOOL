@@ -20,7 +20,11 @@ set(_gis_runtime_libraries
     "${_gis_install_plugin_dir}/plugin_processing.dll"
     "${_gis_install_plugin_dir}/plugin_classification.dll"
     "${_gis_install_plugin_dir}/plugin_vector.dll"
+)
+
+file(REMOVE
     "${_gis_install_plugin_dir}/plugin_utility.dll"
+    "${CMAKE_INSTALL_PREFIX}/plugins/plugin_utility.dll"
 )
 
 file(GET_RUNTIME_DEPENDENCIES

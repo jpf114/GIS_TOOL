@@ -109,6 +109,8 @@ add_custom_target(copy_runtime_dlls ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/plugins
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/share/proj
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/share/gdal
+    COMMAND ${CMAKE_COMMAND} -E rm -f
+        ${CMAKE_BINARY_DIR}/plugins/plugin_utility.dll
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${GIS_VCPKG_RUNTIME_BIN_DIR}
         ${CMAKE_BINARY_DIR}/plugins
@@ -130,6 +132,19 @@ install(DIRECTORY
     "${GIS_VCPKG_GDAL_DATA_DIR}/"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/gdal"
 )
+
+install(CODE [[
+    file(REMOVE
+        "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/plugins/plugin_utility.dll"
+        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_utility.dll"
+        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_inspect.dll"
+        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_inspect.lib"
+        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_manage.dll"
+        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_manage.lib"
+        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_render.dll"
+        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_render.lib"
+    )
+]])
 
 if(GIS_BUILD_GUI)
     find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
