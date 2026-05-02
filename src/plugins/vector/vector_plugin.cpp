@@ -140,7 +140,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract", "midpoints_extract", "interior_point", "duplicate_point_check"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract", "midpoints_extract", "interior_point", "duplicate_point_check", "hole_check"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -245,6 +245,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "midpoints_extract") return doMidpointsExtract(params, progress);
     if (action == "interior_point") return doInteriorPoint(params, progress);
     if (action == "duplicate_point_check") return doDuplicatePointCheck(params, progress);
+    if (action == "hole_check") return doHoleCheck(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -298,6 +299,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_interior_point.inc"
 
 #include "vector_plugin_duplicate_point_check.inc"
+
+#include "vector_plugin_hole_check.inc"
 
 } // namespace gis::plugins
 

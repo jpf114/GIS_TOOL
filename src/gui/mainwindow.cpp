@@ -135,6 +135,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("midpoints_extract"), QStringLiteral("中点提取")},
         {QStringLiteral("interior_point"), QStringLiteral("内部点")},
         {QStringLiteral("duplicate_point_check"), QStringLiteral("重复点检查")},
+        {QStringLiteral("hole_check"), QStringLiteral("孔洞检查")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -790,6 +791,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"midpoints_extract", {QStringLiteral("中点提取"), QStringLiteral("提取线要素几何中点为点图层，并附带来源要素。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"interior_point", {QStringLiteral("内部点"), QStringLiteral("提取面要素内部点为点图层，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"duplicate_point_check", {QStringLiteral("重复点检查"), QStringLiteral("检查坐标完全重复的点要素并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
+            {"hole_check", {QStringLiteral("孔洞检查"), QStringLiteral("检查面要素内环孔洞并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
         }},
     };
     return kConfigs;
