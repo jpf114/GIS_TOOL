@@ -188,6 +188,11 @@ cmake --build build/release --config Release --target real_raster_regression_ful
 - `processing.gabor_filter / glcm_texture / mean_shift_segment`
   - 已纳入 Debug / Release `real_raster_regression quick`
   - 当前固定验证输出尺寸 `32 x 32 x 1` 与输出类型 `Float32`
+- `processing.skeleton / connected_components`
+  - 已纳入 Debug / Release `real_raster_regression quick`
+  - 当前固定验证输出尺寸 `64 x 64 x 1`
+  - `skeleton` 校验输出类型 `Float32` 与最大值 `255`
+  - `connected_components` 校验输出类型 `Float32` 与最大标签值 `4`
   - 当前已额外校验输出为 `30 x 30 x 3`，并校验三波段统计值
 - `spindex`
   - 当前固定验证 `ndvi / evi / savi / gndvi / ndwi / mndwi / ndbi / arvi / nbr / awei / ui / bi / custom_index`

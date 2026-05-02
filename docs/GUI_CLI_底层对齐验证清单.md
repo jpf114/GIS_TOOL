@@ -126,11 +126,13 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 - `classification.feature_stats` 当前真实数据专项中，`quick` 已覆盖 `json / vector_output / raster_output`，`full` 追加 `csv`
 - `processing.pansharpen` 当前真实数据专项固定验证 `pan_method=simple_mean`
 - `processing.gabor_filter / glcm_texture / mean_shift_segment` 已纳入真实数据专项 quick 回归
+- `processing.skeleton / connected_components` 已纳入真实数据专项 quick 回归
 - `real_raster_regression` 当前也已补充关键结果断言，而不只是检查输出文件存在：
   - `spindex.ndvi / ndmi / bsi / evi2` 校验关键输出统计
   - `classification.feature_stats` 校验 `actual_srs` 与 `__summary__` 汇总记录
   - `processing.pansharpen` 校验输出为 `30 x 30 x 3`，并校验三波段统计值
   - `processing.gabor_filter / glcm_texture / mean_shift_segment` 校验输出尺寸为 `32 x 32 x 1`，输出类型为 `Float32`
+  - `processing.skeleton / connected_components` 校验输出尺寸为 `64 x 64 x 1`；其中 `skeleton` 校验最大值 `255`，`connected_components` 校验最大标签值 `4`
   - `terrain.profile_extract / terrain.slope / terrain.viewshed_multi / terrain.profile_curvature / terrain.plan_curvature / terrain.tri` 校验关键结构或统计结果
 
 ## 6. GUI 当前回归覆盖说明

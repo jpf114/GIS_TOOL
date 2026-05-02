@@ -135,10 +135,12 @@ function Invoke-Case {
     }
 
     $watch.Stop()
+    $combinedOutput = ($stdout + [Environment]::NewLine + $stderr).Trim()
     return [pscustomobject]@{
         Name = $Case.Name
         ExitCode = $code
         Seconds = [Math]::Round($watch.Elapsed.TotalSeconds, 2)
+        Output = $combinedOutput
     }
 }
 
@@ -319,6 +321,22 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Size:   32 x 32 x 1 bands" -Message "processing_mean_shift_segment raster size mismatch"
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_mean_shift_segment raster type mismatch"
         }
+        "processing_skeleton" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "skeleton_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   64 x 64 x 1 bands" -Message "processing_skeleton raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_skeleton raster type mismatch"
+            Assert-TextContains -Text $info -Expected "Max:    255" -Message "processing_skeleton max mismatch"
+        }
+        "processing_connected_components" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "connected_components_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   64 x 64 x 1 bands" -Message "processing_connected_components raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_connected_components raster type mismatch"
+            Assert-TextContains -Text $info -Expected "Max:    4" -Message "processing_connected_components component count mismatch"
+        }
         "classification_feature_stats" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "feature_stats_output.json")
             Assert-Condition -Condition ($payload.meta.actual_srs -eq "EPSG:3857") -Message "classification_feature_stats actual_srs mismatch"
@@ -366,9 +384,12 @@ function Ensure-RasterRegressionData {
     $classMap = Join-Path $rasterDataRoot "classification_class_map.json"
     $classRaster = Join-Path $rasterDataRoot "classification_raster.tif"
     $analysisRaster = Join-Path $generatedRoot "analysis_input.tif"
+    $processingBinaryRaster = Join-Path $generatedRoot "processing_binary_input.tif"
     $terrainRaster = Join-Path $generatedRoot "terrain_input.tif"
 
-    Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("ndvi-raster", $ndviInput)
+    if (-not (Test-Path $ndviInput)) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("ndvi-raster", $ndviInput)
+    }
 
     if ((-not (Test-Path $panMs)) -or (-not (Test-Path $panPan))) {
         $panMs = Join-Path $generatedRoot "pansharpen_ms.tif"
@@ -391,6 +412,10 @@ function Ensure-RasterRegressionData {
         Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("analysis-raster", $analysisRaster)
     }
 
+    if (-not (Test-Path $processingBinaryRaster)) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("processing-binary-raster", $processingBinaryRaster)
+    }
+
     if (-not (Test-Path $terrainRaster)) {
         Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("terrain-raster", $terrainRaster)
     }
@@ -403,6 +428,7 @@ function Ensure-RasterRegressionData {
         ClassificationClassMap = $classMap
         ClassificationRaster = $classRaster
         AnalysisRaster = $analysisRaster
+        ProcessingBinaryRaster = $processingBinaryRaster
         TerrainRaster = $terrainRaster
     }
 }
@@ -893,6 +919,24 @@ $cases += New-Case -Name "processing_mean_shift_segment" -CaseArgs @(
     "--pyramid_level=1"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "mean_shift_segment_output.tif")
+)
+
+$cases += New-Case -Name "processing_skeleton" -CaseArgs @(
+    "processing", "skeleton",
+    ("--input=" + $data.ProcessingBinaryRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "skeleton_output.tif")),
+    "--band=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "skeleton_output.tif")
+)
+
+$cases += New-Case -Name "processing_connected_components" -CaseArgs @(
+    "processing", "connected_components",
+    ("--input=" + $data.ProcessingBinaryRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "connected_components_output.tif")),
+    "--band=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "connected_components_output.tif")
 )
 
 $featureStatsOutput = Join-Path $ResolvedOutputRoot "feature_stats_output.json"

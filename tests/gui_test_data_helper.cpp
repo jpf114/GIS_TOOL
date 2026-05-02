@@ -532,6 +532,66 @@ int makeAnalysisRaster(const std::string& outputPath) {
     return 0;
 }
 
+int makeProcessingBinaryRaster(const std::string& outputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(outputPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    GDALDataset* ds = driver->Create(outputPath.c_str(), 64, 64, 1, GDT_Byte, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create processing binary raster: " << outputPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.0005, 0.0,
+        40.0, 0.0, -0.0005
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<unsigned char> data(64 * 64, 0);
+    auto fillRect = [&](int minX, int minY, int maxX, int maxY, unsigned char value) {
+        for (int y = minY; y <= maxY; ++y) {
+            for (int x = minX; x <= maxX; ++x) {
+                data[static_cast<size_t>(y * 64 + x)] = value;
+            }
+        }
+    };
+
+    fillRect(6, 6, 20, 20, 255);
+    fillRect(28, 8, 44, 18, 255);
+    fillRect(10, 34, 18, 54, 255);
+    fillRect(34, 34, 54, 54, 255);
+    for (int i = 0; i < 14; ++i) {
+        data[static_cast<size_t>((24 + i) * 64 + (48 + i / 2))] = 255;
+    }
+
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band) {
+        GDALClose(ds);
+        std::cerr << "Failed to get processing binary raster band\n";
+        return 1;
+    }
+    band->SetNoDataValue(0);
+    if (band->RasterIO(
+            GF_Write, 0, 0, 64, 64,
+            data.data(), 64, 64, GDT_Byte,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write processing binary raster\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+    return 0;
+}
+
 int makeTerrainRaster(const std::string& outputPath) {
     gis::core::initRuntimeEnvironment();
     GDALAllRegister();
@@ -1039,6 +1099,9 @@ int main(int argc, char* argv[]) {
     }
     if (command == "analysis-raster") {
         return makeAnalysisRaster(argv[2]);
+    }
+    if (command == "processing-binary-raster") {
+        return makeProcessingBinaryRaster(argv[2]);
     }
     if (command == "terrain-raster") {
         return makeTerrainRaster(argv[2]);
