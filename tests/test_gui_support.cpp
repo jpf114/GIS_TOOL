@@ -297,6 +297,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_georef_quac_correction.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "georef", "rpc_orthorectify"),
+        "D:/data/image_georef_rpc_orthorectify.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
@@ -915,6 +919,15 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefQuacValues)
     issue = gis::gui::validateActionSpecificParams("georef", "quac_correction", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "bright_percentile");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefRpcValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["output"] = std::string("D:/data/result.json");
+
+    auto issue = gis::gui::validateActionSpecificParams("georef", "rpc_orthorectify", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "output");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsEvenKernelSizeForProcessingFilter) {

@@ -36,8 +36,8 @@
 
 当前实现状态：
 
-- 已完成：控制点配准、DOS 大气校正、QUAC 大气校正、辐射定标（支持元数据文件自动读取 gain/offset）、余弦校正、Minnaert 校正、C 校正
-- 待完成：RPC 正射校正
+- 已完成：RPC 正射校正、控制点配准、DOS 大气校正、QUAC 大气校正、辐射定标（支持元数据文件自动读取 gain/offset）、余弦校正、Minnaert 校正、C 校正
+- 待完成：无
 
 **依赖**：GDAL（RPC 支持）、PROJ（坐标转换）、现有 feature matching 能力。
 

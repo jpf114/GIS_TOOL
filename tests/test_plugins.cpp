@@ -210,6 +210,45 @@ static std::string createRadiometricMetadataFile(const std::string& name) {
     return path;
 }
 
+static std::string createRpcTestRaster(const std::string& name) {
+    const int w = 10;
+    const int h = 6;
+    const std::string path = utf8PathString(getTestDir() / name);
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+
+    std::vector<float> data(w * h, 9.0f);
+    auto* band = ds->GetRasterBand(1);
+    EXPECT_NE(band, nullptr);
+    EXPECT_EQ(band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0), CE_None);
+    band->FlushCache();
+
+    EXPECT_EQ(ds->SetMetadataItem("ERR_BIAS", "0", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("ERR_RAND", "0", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("LINE_OFF", "2.5", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("SAMP_OFF", "4.5", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("LAT_OFF", "29.9975", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("LONG_OFF", "120.0045", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("HEIGHT_OFF", "0", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("LINE_SCALE", "2.5", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("SAMP_SCALE", "4.5", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("LAT_SCALE", "0.0025", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("LONG_SCALE", "0.0045", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem("HEIGHT_SCALE", "1", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem(
+        "LINE_NUM_COEFF",
+        "0 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem(
+        "LINE_DEN_COEFF",
+        "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem(
+        "SAMP_NUM_COEFF",
+        "0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", "RPC"), CE_None);
+    EXPECT_EQ(ds->SetMetadataItem(
+        "SAMP_DEN_COEFF",
+        "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", "RPC"), CE_None);
+    return path;
+}
+
 static std::string createTerrainRaster(const std::string& name, int w = 48, int h = 48) {
     std::string path = (getTestDir() / name).string();
     auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
@@ -910,6 +949,39 @@ TEST_F(PluginTest, GeorefQuacCorrectionExecution) {
     EXPECT_NEAR(readRasterPixel(output, 1, 2, 2), 0.0f, 1e-6f);
     EXPECT_NEAR(readRasterPixel(output, 2, 2, 2), 0.0f, 1e-6f);
     EXPECT_NEAR(readRasterPixel(output, 3, 2, 2), 0.0f, 1e-6f);
+}
+
+TEST_F(PluginTest, GeorefRpcOrthorectifyExecution) {
+    auto* p = mgr_.find("georef");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createRpcTestRaster("georef_rpc_input.tif");
+    const std::string output = utf8PathString(getTestDir() / "georef_rpc_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("rpc_orthorectify");
+    params["input"] = input;
+    params["output"] = output;
+    params["dst_srs"] = std::string("EPSG:4326");
+    params["rpc_height"] = 0.0;
+    params["resample"] = std::string("nearest");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "rpc_orthorectify");
+
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    OGRSpatialReference srs;
+    ASSERT_EQ(srs.SetFromUserInput(ds->GetProjectionRef()), OGRERR_NONE);
+    const char* authName = srs.GetAuthorityName(nullptr);
+    const char* authCode = srs.GetAuthorityCode(nullptr);
+    ASSERT_NE(authName, nullptr);
+    ASSERT_NE(authCode, nullptr);
+    EXPECT_STREQ(authName, "EPSG");
+    EXPECT_STREQ(authCode, "4326");
+    EXPECT_NEAR(readRasterPixel(output, 1, 1), 9.0f, 1e-4f);
 }
 
 TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {

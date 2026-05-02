@@ -276,7 +276,8 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0}, {
                 "dos_correction", "radiometric_calibration", "gcp_register",
-                "cosine_correction", "minnaert_correction", "c_correction", "quac_correction"
+                "cosine_correction", "minnaert_correction", "c_correction",
+                "quac_correction", "rpc_orthorectify"
             }
         },
         gis::framework::ParamSpec{
@@ -352,6 +353,14 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
             "bright_percentile", "亮像元百分位", "简化 QUAC 使用的亮像元百分位",
             gis::framework::ParamType::Double, false, double{99.0}
         },
+        gis::framework::ParamSpec{
+            "dem_file", "DEM 文件", "RPC 正射校正使用的可选 DEM 文件",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "rpc_height", "固定高程", "不使用 DEM 时的固定高程值",
+            gis::framework::ParamType::Double, false, double{0.0}
+        },
     };
 }
 
@@ -379,6 +388,9 @@ gis::framework::Result GeorefPlugin::execute(
     }
     if (action == "quac_correction") {
         return doQuacCorrection(params, progress);
+    }
+    if (action == "rpc_orthorectify") {
+        return doRpcOrthorectify(params, progress);
     }
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -880,6 +892,85 @@ gis::framework::Result GeorefPlugin::doQuacCorrection(
     result.metadata["band_count"] = std::to_string(bandCount);
     result.metadata["dark_percentile"] = std::to_string(darkPercentile);
     result.metadata["bright_percentile"] = std::to_string(brightPercentile);
+    return result;
+}
+
+gis::framework::Result GeorefPlugin::doRpcOrthorectify(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    const std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    const std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    const std::string dstSrs = gis::framework::getParam<std::string>(params, "dst_srs", "EPSG:4326");
+    const std::string demFile = gis::framework::getParam<std::string>(params, "dem_file", "");
+    const std::string resample = gis::framework::getParam<std::string>(params, "resample", "nearest");
+    const double rpcHeight = gis::framework::getParam<double>(params, "rpc_height", 0.0);
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (dstSrs.empty()) return gis::framework::Result::fail("dst_srs is required");
+
+    auto srcDs = gis::core::openRaster(input, true);
+    if (!srcDs) {
+        return gis::framework::Result::fail("Cannot open input raster: " + input);
+    }
+
+    char** rpcMetadata = srcDs->GetMetadata("RPC");
+    if (!rpcMetadata || CSLCount(rpcMetadata) == 0) {
+        return gis::framework::Result::fail("Input raster does not contain RPC metadata");
+    }
+
+    progress.onMessage("Running RPC orthorectification");
+    progress.onProgress(0.2);
+
+    std::vector<std::string> argStorage = {
+        "-rpc",
+        "-t_srs", dstSrs,
+        "-r", resample
+    };
+
+    if (!demFile.empty()) {
+        argStorage.push_back("-to");
+        argStorage.push_back("RPC_DEM=" + demFile);
+    } else {
+        argStorage.push_back("-to");
+        argStorage.push_back("RPC_HEIGHT=" + std::to_string(rpcHeight));
+    }
+
+    std::vector<const char*> warpArgs;
+    for (auto& arg : argStorage) {
+        warpArgs.push_back(arg.c_str());
+    }
+    warpArgs.push_back(nullptr);
+
+    GDALWarpAppOptions* warpOpts = GDALWarpAppOptionsNew(const_cast<char**>(warpArgs.data()), nullptr);
+    if (!warpOpts) {
+        return gis::framework::Result::fail("Failed to create warp options: " + std::string(CPLGetLastErrorMsg()));
+    }
+
+    GDALDatasetH srcHandle = static_cast<GDALDatasetH>(srcDs.get());
+    int errCode = 0;
+    GDALDatasetH dstHandle = GDALWarp(output.c_str(), nullptr, 1, &srcHandle, warpOpts, &errCode);
+    GDALWarpAppOptionsFree(warpOpts);
+
+    if (!dstHandle || errCode) {
+        if (dstHandle) {
+            GDALClose(dstHandle);
+        }
+        return gis::framework::Result::fail("RPC orthorectification failed: " + std::string(CPLGetLastErrorMsg()));
+    }
+
+    GDALClose(dstHandle);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("RPC orthorectification completed", output);
+    result.metadata["action"] = "rpc_orthorectify";
+    result.metadata["dst_srs"] = dstSrs;
+    result.metadata["resample"] = resample;
+    if (!demFile.empty()) {
+        result.metadata["dem_file"] = demFile;
+    } else {
+        result.metadata["rpc_height"] = std::to_string(rpcHeight);
+    }
     return result;
 }
 

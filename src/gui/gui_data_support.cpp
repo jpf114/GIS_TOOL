@@ -630,6 +630,12 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
         return config;
     }
 
+    if (pluginName == "georef" && paramKey == "dem_file") {
+        config.placeholder = "请选择 DEM 栅格文件";
+        config.openFilter = filterForRasterInputs();
+        return config;
+    }
+
     if (pluginName == "georef" && (paramKey == "slope_raster" || paramKey == "aspect_raster")) {
         config.placeholder = paramKey == "slope_raster"
             ? "请选择坡度栅格，像元值单位应为度"
@@ -1382,6 +1388,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
             *darkPercentile >= *brightPercentile) {
             return ActionValidationIssue{"bright_percentile", "参数“亮像元百分位”必须大于“暗像元百分位”"};
         }
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
+            return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
+        }
+    }
+
+    if (pluginName == "georef" && actionKey == "rpc_orthorectify") {
+        const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
             return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
         }
