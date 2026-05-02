@@ -37,6 +37,19 @@
 
 namespace {
 
+constexpr const char* kRasterToolsGroupName = "raster_tools";
+
+bool isRasterToolsMember(const std::string& pluginName) {
+    return pluginName == "raster_math"
+        || pluginName == "raster_inspect"
+        || pluginName == "raster_manage"
+        || pluginName == "raster_render";
+}
+
+std::string displayGroupForPlugin(const std::string& pluginName) {
+    return isRasterToolsMember(pluginName) ? std::string{kRasterToolsGroupName} : pluginName;
+}
+
 struct ActionUiConfig {
     QString displayName;
     QString description;
@@ -258,6 +271,10 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.drawRect(QRectF(10, 10, 18, 18));
         painter.drawLine(QPointF(13, 19), QPointF(25, 19));
         painter.drawLine(QPointF(19, 13), QPointF(19, 25));
+    } else if (text == QStringLiteral("raster_tools")) {
+        drawGrid();
+        painter.drawLine(QPointF(14, 26), QPointF(14, 20));
+        painter.drawLine(QPointF(24, 26), QPointF(24, 12));
     } else if (text == QStringLiteral("terrain")) {
         painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(16, 17) << QPointF(22, 20) << QPointF(28, 11));
     } else if (text == QStringLiteral("cutting") || text == QStringLiteral("clip")) {
@@ -965,6 +982,62 @@ QString actionDisplayName(const std::string& pluginName, const QString& actionKe
     return genericActionDisplayName(actionKey);
 }
 
+std::vector<NavPanel::SubFunctionItem> collectSubFunctionItems(
+    gis::framework::PluginManager& pluginManager,
+    const std::string& selectionKey) {
+    std::vector<NavPanel::SubFunctionItem> items;
+    auto appendPluginActions = [&](const std::string& pluginName) {
+        auto* plugin = pluginManager.find(pluginName);
+        if (!plugin) {
+            return;
+        }
+        for (const auto& spec : plugin->paramSpecs()) {
+            if (spec.key != "action") {
+                continue;
+            }
+            for (const auto& action : spec.enumValues) {
+                items.push_back({
+                    pluginName,
+                    action,
+                    actionDisplayName(pluginName, QString::fromStdString(action)).toUtf8().toStdString()
+                });
+            }
+            break;
+        }
+    };
+
+    if (selectionKey == kRasterToolsGroupName) {
+        appendPluginActions("raster_manage");
+        appendPluginActions("raster_inspect");
+        appendPluginActions("raster_render");
+        appendPluginActions("raster_math");
+        return items;
+    }
+
+    appendPluginActions(selectionKey);
+    return items;
+}
+
+std::string resolveGroupedActionPlugin(
+    gis::framework::PluginManager& pluginManager,
+    const std::string& selectionKey,
+    const std::string& actionKey) {
+    for (const auto& item : collectSubFunctionItems(pluginManager, selectionKey)) {
+        if (item.actionKey == actionKey) {
+            return item.pluginName;
+        }
+    }
+    return {};
+}
+
+int displayPluginCount(const std::vector<gis::framework::IGisPlugin*>& plugins) {
+    std::set<std::string> groups;
+    for (const auto* plugin : plugins) {
+        groups.insert(displayGroupForPlugin(plugin->name()));
+    }
+    return static_cast<int>(groups.size());
+}
+
 const std::map<std::string, std::map<std::string, std::set<std::string>>>& actionVisibilityMapStorage() {
     static const std::map<std::string, std::map<std::string, std::set<std::string>>> kMap = [] {
         std::map<std::string, std::map<std::string, std::set<std::string>>> result;
@@ -1101,10 +1174,17 @@ void MainWindow::selectPluginByName(const std::string& pluginName) {
 }
 
 void MainWindow::selectActionByKey(const std::string& actionKey) {
-    if (navPanel_) {
-        navPanel_->setCurrentSubFunctionSelection(actionKey);
+    std::string pluginName = currentPlugin_ ? currentPlugin_->name() : std::string{};
+    if (pluginName.empty() && !currentDisplayGroupKey_.empty()) {
+        pluginName = resolveGroupedActionPlugin(pluginManager_, currentDisplayGroupKey_, actionKey);
     }
-    onSubFunctionSelected(actionKey);
+    if (pluginName.empty()) {
+        return;
+    }
+    if (navPanel_) {
+        navPanel_->setCurrentSubFunctionSelection(pluginName, actionKey);
+    }
+    onSubFunctionSelected(pluginName, actionKey);
 }
 
 const std::map<std::string, std::map<std::string, std::set<std::string>>>& MainWindow::actionParamVisibilityMap() {
@@ -1314,10 +1394,15 @@ void MainWindow::loadPlugins() {
     }
 
     static const std::vector<std::string> preferredOrder = {
-        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "raster_manage", "raster_render", "georef", "terrain", "classification", "vector"
+        "projection", "cutting", "matching", "processing", "raster_math", "raster_inspect", "raster_manage", "raster_render", "georef", "terrain", "classification", "vector", "spindex"
     };
 
     std::vector<gis::framework::IGisPlugin*> plugins = pluginManager_.plugins();
+    plugins.erase(
+        std::remove_if(plugins.begin(), plugins.end(), [&](auto* plugin) {
+            return std::find(preferredOrder.begin(), preferredOrder.end(), plugin->name()) == preferredOrder.end();
+        }),
+        plugins.end());
     std::sort(plugins.begin(), plugins.end(), [&](auto* lhs, auto* rhs) {
         const auto leftIt = std::find(preferredOrder.begin(), preferredOrder.end(), lhs->name());
         const auto rightIt = std::find(preferredOrder.begin(), preferredOrder.end(), rhs->name());
@@ -1338,7 +1423,7 @@ void MainWindow::loadPlugins() {
     }
 
     if (statusPluginCountLabel_) {
-        statusPluginCountLabel_->setText(QStringLiteral("已加载主功能：%1").arg(plugins.size()));
+        statusPluginCountLabel_->setText(QStringLiteral("已加载主功能：%1").arg(displayPluginCount(plugins)));
     }
     if (statusSubFunctionCountLabel_) {
         statusSubFunctionCountLabel_->setText(QStringLiteral("已加载子功能：0"));
@@ -1419,8 +1504,9 @@ QString MainWindow::lastExecutionRawMessage() const {
 
 void MainWindow::onPluginSelected(const std::string& pluginName) {
     resetDerivedParamTracking();
+    currentDisplayGroupKey_ = pluginName;
     currentPlugin_ = pluginManager_.find(pluginName);
-    if (!currentPlugin_) {
+    if (!currentPlugin_ && pluginName != kRasterToolsGroupName) {
         paramWidget_->clear();
         currentActionKey_.clear();
         functionTitleLabel_->setText(QStringLiteral("请选择功能"));
@@ -1442,43 +1528,43 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
         return;
     }
 
-    functionTitleLabel_->setText(QString::fromUtf8(currentPlugin_->displayName()));
-    functionDescLabel_->setText(QString::fromUtf8(currentPlugin_->description()));
+    const bool isRasterToolsGroup = pluginName == kRasterToolsGroupName;
+    const QString groupName = isRasterToolsGroup
+        ? QStringLiteral("栅格工具")
+        : QString::fromUtf8(currentPlugin_->displayName());
+
+    functionTitleLabel_->setText(groupName);
+    functionDescLabel_->setText(isRasterToolsGroup
+        ? QStringLiteral("集中提供栅格管理、检查、渲染与波段运算相关子功能。")
+        : QString::fromUtf8(currentPlugin_->description()));
     if (functionIconLabel_) {
-        functionIconLabel_->setPixmap(badgeIconPixmap(QString::fromStdString(currentPlugin_->name()), QColor("#EAF3FF"), QColor("#2F7CF6")));
+        functionIconLabel_->setPixmap(badgeIconPixmap(
+            isRasterToolsGroup ? QStringLiteral("raster_tools") : QString::fromStdString(currentPlugin_->name()),
+            QColor("#EAF3FF"),
+            QColor("#2F7CF6")));
     }
     if (functionMetaLabel_) {
         functionMetaLabel_->setText(
             QStringLiteral("当前主功能：%1  |  子功能数：载入中")
-                .arg(QString::fromUtf8(currentPlugin_->displayName())));
+                .arg(groupName));
     }
     if (statusAlgorithmLabel_) {
         statusAlgorithmLabel_->setText(
-            QStringLiteral("当前算法：%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
+            QStringLiteral("当前算法：%1").arg(groupName));
     }
 
-    std::vector<std::string> actions;
-    std::vector<std::string> displayNames;
-    for (const auto& spec : currentPlugin_->paramSpecs()) {
-        if (spec.key != "action") continue;
-        for (const auto& action : spec.enumValues) {
-            actions.push_back(action);
-            displayNames.push_back(
-                actionDisplayName(currentPlugin_->name(), QString::fromStdString(action)).toUtf8().toStdString());
-        }
-        break;
-    }
-    navPanel_->setSubFunctions(actions, displayNames);
-    navPanel_->setCurrentPluginSelection(currentPlugin_->name());
+    const auto items = collectSubFunctionItems(pluginManager_, pluginName);
+    navPanel_->setSubFunctions(items);
+    navPanel_->setCurrentPluginSelection(pluginName);
     if (statusSubFunctionCountLabel_) {
         statusSubFunctionCountLabel_->setText(
-            QStringLiteral("已加载子功能：%1").arg(static_cast<int>(actions.size())));
+            QStringLiteral("已加载子功能：%1").arg(static_cast<int>(items.size())));
     }
     if (functionMetaLabel_) {
         functionMetaLabel_->setText(
             QStringLiteral("当前主功能：%1  |  子功能数：%2")
-                .arg(QString::fromUtf8(currentPlugin_->displayName()))
-                .arg(static_cast<int>(actions.size())));
+                .arg(groupName)
+                .arg(static_cast<int>(items.size())));
     }
 
     currentActionKey_.clear();
@@ -1488,10 +1574,12 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
         resultSummaryLabel_->setText(QStringLiteral("请选择该主功能下的子功能，然后补全参数。"));
     }
     refreshExecuteButtonState();
-    statusBar()->showMessage(QStringLiteral("当前主功能：%1").arg(QString::fromUtf8(currentPlugin_->displayName())));
+    statusBar()->showMessage(QStringLiteral("当前主功能：%1").arg(groupName));
 }
 
-void MainWindow::onSubFunctionSelected(const std::string& actionKey) {
+void MainWindow::onSubFunctionSelected(const std::string& pluginName,
+                                       const std::string& actionKey) {
+    currentPlugin_ = pluginManager_.find(pluginName);
     if (!currentPlugin_) {
         paramWidget_->clear();
         refreshExecuteButtonState();
@@ -1499,8 +1587,10 @@ void MainWindow::onSubFunctionSelected(const std::string& actionKey) {
     }
 
     resetDerivedParamTracking();
+    currentDisplayGroupKey_ = displayGroupForPlugin(pluginName);
     currentActionKey_ = QString::fromStdString(actionKey);
-    navPanel_->setCurrentSubFunctionSelection(actionKey);
+    navPanel_->setCurrentPluginSelection(pluginName);
+    navPanel_->setCurrentSubFunctionSelection(pluginName, actionKey);
     if (functionIconLabel_) {
         functionIconLabel_->setPixmap(badgeIconPixmap(actionIconText(currentActionKey_), QColor("#EAF3FF"), QColor("#2F7CF6")));
     }
@@ -1512,9 +1602,12 @@ void MainWindow::onSubFunctionSelected(const std::string& actionKey) {
     functionDescLabel_->setText(desc.isEmpty()
         ? QString::fromUtf8(currentPlugin_->description()) : desc);
     if (functionMetaLabel_) {
+        const QString groupName = currentDisplayGroupKey_ == kRasterToolsGroupName
+            ? QStringLiteral("栅格工具")
+            : QString::fromUtf8(currentPlugin_->displayName());
         functionMetaLabel_->setText(
             QStringLiteral("当前主功能：%1  |  当前子功能：%2")
-                .arg(QString::fromUtf8(currentPlugin_->displayName()))
+                .arg(groupName)
                 .arg(displayName));
     }
 

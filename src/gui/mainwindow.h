@@ -36,7 +36,8 @@ signals:
 
 private slots:
     void onPluginSelected(const std::string& pluginName);
-    void onSubFunctionSelected(const std::string& actionKey);
+    void onSubFunctionSelected(const std::string& pluginName,
+                               const std::string& actionKey);
     void onExecute();
     void onParamValuesChanged();
 
@@ -78,6 +79,7 @@ private:
 
     gis::framework::PluginManager pluginManager_;
     gis::framework::IGisPlugin* currentPlugin_ = nullptr;
+    std::string currentDisplayGroupKey_;
     QString currentActionKey_;
     bool isSyncingParams_ = false;
     std::string lastAutoOutputPath_;

@@ -14,6 +14,15 @@
 
 namespace {
 
+constexpr const char* kRasterToolsGroupName = "raster_tools";
+
+bool isRasterToolsMember(const std::string& pluginName) {
+    return pluginName == "raster_math"
+        || pluginName == "raster_inspect"
+        || pluginName == "raster_manage"
+        || pluginName == "raster_render";
+}
+
 QString collapsedPluginText(const std::string& pluginName, const QString& displayName) {
     Q_UNUSED(pluginName);
     return QStringLiteral("%1   >").arg(displayName);
@@ -94,6 +103,12 @@ QIcon makeSidebarIcon(const std::string& kind, const QColor& bg, const QColor& f
         painter.drawLine(QPointF(5, 12.8), QPointF(5, 9.4));
         painter.drawLine(QPointF(9, 12.8), QPointF(9, 6.6));
         painter.drawLine(QPointF(13, 12.8), QPointF(13, 4.4));
+    } else if (kind == "raster_tools") {
+        painter.drawRect(QRectF(3.8, 3.8, 10.4, 10.4));
+        painter.drawLine(QPointF(9.0, 3.8), QPointF(9.0, 14.2));
+        painter.drawLine(QPointF(3.8, 9.0), QPointF(14.2, 9.0));
+        painter.drawLine(QPointF(5.0, 12.8), QPointF(5.0, 9.6));
+        painter.drawLine(QPointF(13.0, 12.8), QPointF(13.0, 5.0));
     } else if (kind == "georef") {
         painter.drawEllipse(QRectF(4.2, 4.2, 9.6, 9.6));
         painter.drawLine(QPointF(6.0, 10.5), QPointF(12.0, 6.5));
@@ -480,28 +495,52 @@ void NavPanel::setPlugins(const std::vector<gis::framework::IGisPlugin*>& plugin
     pluginSubContainerMap_.clear();
     pluginSubLayoutMap_.clear();
     pluginDisplayNameMap_.clear();
+    pluginGroupKeyMap_.clear();
+    groupMembersMap_.clear();
     pluginButtonMap_.clear();
     subFunctionButtonMap_.clear();
     subFunctionDisplayNameMap_.clear();
     currentPluginButton_ = nullptr;
     currentSubFunctionButton_ = nullptr;
 
+    bool rasterToolsCreated = false;
     for (auto* plugin : plugins) {
+        const std::string pluginName = plugin->name();
+        if (isRasterToolsMember(pluginName)) {
+            pluginGroupKeyMap_[pluginName] = kRasterToolsGroupName;
+            groupMembersMap_[kRasterToolsGroupName].push_back(pluginName);
+            if (rasterToolsCreated) {
+                continue;
+            }
+            rasterToolsCreated = true;
+        } else {
+            pluginGroupKeyMap_[pluginName] = pluginName;
+            groupMembersMap_[pluginName].push_back(pluginName);
+        }
+
+        const std::string displayGroupName = isRasterToolsMember(pluginName)
+            ? std::string{kRasterToolsGroupName}
+            : pluginName;
+        const QString displayName = isRasterToolsMember(pluginName)
+            ? QStringLiteral("栅格工具")
+            : QString::fromUtf8(plugin->displayName());
+        const std::string iconKind = isRasterToolsMember(pluginName)
+            ? std::string{kRasterToolsGroupName}
+            : pluginName;
+
         auto* groupWidget = new QWidget;
         groupWidget->setStyleSheet(QStringLiteral("background: transparent;"));
         auto* groupLayout = new QVBoxLayout(groupWidget);
         groupLayout->setContentsMargins(0, 0, 0, 0);
         groupLayout->setSpacing(2);
 
-        const QString displayName = QString::fromUtf8(plugin->displayName());
-
         auto* btn = new QPushButton;
         btn->setObjectName(QStringLiteral("navItem"));
         btn->setCheckable(true);
-        btn->setText(collapsedPluginText(plugin->name(), displayName));
-        btn->setIcon(makeSidebarIcon(plugin->name(), QColor("#2F7CF6"), QColor("#FFFFFF")));
+        btn->setText(collapsedPluginText(displayGroupName, displayName));
+        btn->setIcon(makeSidebarIcon(iconKind, QColor("#2F7CF6"), QColor("#FFFFFF")));
         btn->setIconSize(QSize(18, 18));
-        connect(btn, &QPushButton::clicked, this, [this, name = plugin->name()]() {
+        connect(btn, &QPushButton::clicked, this, [this, name = displayGroupName]() {
             onPluginButtonClicked(name);
         });
         groupLayout->addWidget(btn);
@@ -516,11 +555,11 @@ void NavPanel::setPlugins(const std::vector<gis::framework::IGisPlugin*>& plugin
         groupLayout->addWidget(subContainer);
 
         pluginLayout_->addWidget(groupWidget);
-        pluginGroupMap_[plugin->name()] = groupWidget;
-        pluginSubContainerMap_[plugin->name()] = subContainer;
-        pluginSubLayoutMap_[plugin->name()] = subLayout;
-        pluginDisplayNameMap_[plugin->name()] = displayName;
-        pluginButtonMap_[btn] = plugin->name();
+        pluginGroupMap_[displayGroupName] = groupWidget;
+        pluginSubContainerMap_[displayGroupName] = subContainer;
+        pluginSubLayoutMap_[displayGroupName] = subLayout;
+        pluginDisplayNameMap_[displayGroupName] = displayName;
+        pluginButtonMap_[btn] = displayGroupName;
     }
 }
 
@@ -537,8 +576,7 @@ void NavPanel::clearSubFunctions() {
     currentSubFunctionButton_ = nullptr;
 }
 
-void NavPanel::setSubFunctions(const std::vector<std::string>& actions,
-                               const std::vector<std::string>& displayNames) {
+void NavPanel::setSubFunctions(const std::vector<SubFunctionItem>& items) {
     if (!currentPluginButton_) {
         clearSubFunctions();
         return;
@@ -559,29 +597,31 @@ void NavPanel::setSubFunctions(const std::vector<std::string>& actions,
 
     clearSubFunctions();
 
-    for (size_t i = 0; i < actions.size(); ++i) {
-        const QString displayText = QString::fromUtf8(i < displayNames.size() ? displayNames[i] : actions[i]);
+    for (const auto& item : items) {
+        const QString displayText = QString::fromUtf8(
+            item.displayName.empty() ? item.actionKey : item.displayName);
 
         auto* btn = new QPushButton;
         btn->setObjectName(QStringLiteral("subNavItem"));
         btn->setCheckable(true);
         btn->setText(subFunctionText(displayText, false));
-        btn->setIcon(makeSubFunctionIcon(actions[i], false));
+        btn->setIcon(makeSubFunctionIcon(item.actionKey, false));
         btn->setIconSize(QSize(16, 16));
 
-        connect(btn, &QPushButton::clicked, this, [this, action = actions[i]]() {
-            onSubFunctionButtonClicked(action);
+        connect(btn, &QPushButton::clicked, this, [this, item]() {
+            onSubFunctionButtonClicked(item.pluginName, item.actionKey);
         });
 
         subLayoutIt->second->addWidget(btn);
-        subFunctionButtonMap_[btn] = actions[i];
+        subFunctionButtonMap_[btn] = item;
         subFunctionDisplayNameMap_[btn] = displayText;
     }
 
-    subContainerIt->second->setVisible(!actions.empty());
+    subContainerIt->second->setVisible(!items.empty());
 }
 
 void NavPanel::setCurrentPluginSelection(const std::string& pluginName) {
+    const std::string displayGroupName = displayGroupForPlugin(pluginName);
     if (pluginName.empty()) {
         for (auto& entry : pluginButtonMap_) {
             entry.first->setChecked(false);
@@ -597,7 +637,7 @@ void NavPanel::setCurrentPluginSelection(const std::string& pluginName) {
     }
 
     for (auto& entry : pluginButtonMap_) {
-        const bool active = entry.second == pluginName;
+        const bool active = entry.second == displayGroupName;
         entry.first->setChecked(active);
         const QString displayName = pluginDisplayNameMap_[entry.second];
         entry.first->setText(active
@@ -619,24 +659,26 @@ void NavPanel::setCurrentPluginSelection(const std::string& pluginName) {
     }
 }
 
-void NavPanel::setCurrentSubFunctionSelection(const std::string& actionKey) {
+void NavPanel::setCurrentSubFunctionSelection(const std::string& pluginName,
+                                              const std::string& actionKey) {
     if (actionKey.empty()) {
         for (auto& entry : subFunctionButtonMap_) {
             entry.first->setChecked(false);
             const QString displayName = subFunctionDisplayNameMap_[entry.first];
             entry.first->setText(subFunctionText(displayName, false));
-            entry.first->setIcon(makeSubFunctionIcon(entry.second, false));
+            entry.first->setIcon(makeSubFunctionIcon(entry.second.actionKey, false));
         }
         currentSubFunctionButton_ = nullptr;
         return;
     }
 
     for (auto& entry : subFunctionButtonMap_) {
-        const bool active = entry.second == actionKey;
+        const bool pluginMatched = pluginName.empty() || entry.second.pluginName == pluginName;
+        const bool active = pluginMatched && entry.second.actionKey == actionKey;
         entry.first->setChecked(active);
         const QString displayName = subFunctionDisplayNameMap_[entry.first];
         entry.first->setText(subFunctionText(displayName, active));
-        entry.first->setIcon(makeSubFunctionIcon(entry.second, active));
+        entry.first->setIcon(makeSubFunctionIcon(entry.second.actionKey, active));
         if (active) {
             currentSubFunctionButton_ = entry.first;
         }
@@ -655,7 +697,7 @@ void NavPanel::onPluginButtonClicked(const std::string& pluginName) {
             clickedIt->second == pluginName &&
             !clickedButton->isChecked()) {
             setCurrentPluginSelection(std::string{});
-            setCurrentSubFunctionSelection(std::string{});
+            setCurrentSubFunctionSelection(std::string{}, std::string{});
             emit pluginSelected(std::string{});
             return;
         }
@@ -665,7 +707,23 @@ void NavPanel::onPluginButtonClicked(const std::string& pluginName) {
     emit pluginSelected(pluginName);
 }
 
-void NavPanel::onSubFunctionButtonClicked(const std::string& actionKey) {
-    setCurrentSubFunctionSelection(actionKey);
-    emit subFunctionSelected(actionKey);
+void NavPanel::onSubFunctionButtonClicked(const std::string& pluginName,
+                                          const std::string& actionKey) {
+    setCurrentPluginSelection(pluginName);
+    setCurrentSubFunctionSelection(pluginName, actionKey);
+    emit subFunctionSelected(pluginName, actionKey);
+}
+
+std::string NavPanel::displayGroupForPlugin(const std::string& pluginName) const {
+    if (pluginName.empty()) {
+        return {};
+    }
+    if (pluginGroupMap_.find(pluginName) != pluginGroupMap_.end()) {
+        return pluginName;
+    }
+    const auto it = pluginGroupKeyMap_.find(pluginName);
+    if (it != pluginGroupKeyMap_.end()) {
+        return it->second;
+    }
+    return pluginName;
 }

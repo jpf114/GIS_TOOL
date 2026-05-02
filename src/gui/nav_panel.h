@@ -17,23 +17,31 @@ class IGisPlugin;
 class NavPanel : public QWidget {
     Q_OBJECT
 public:
+    struct SubFunctionItem {
+        std::string pluginName;
+        std::string actionKey;
+        std::string displayName;
+    };
+
     explicit NavPanel(QWidget* parent = nullptr);
 
     void setPlugins(const std::vector<gis::framework::IGisPlugin*>& plugins);
     void clearSubFunctions();
-    void setSubFunctions(const std::vector<std::string>& actions,
-                         const std::vector<std::string>& displayNames);
+    void setSubFunctions(const std::vector<SubFunctionItem>& items);
     void setCurrentPluginSelection(const std::string& pluginName);
-    void setCurrentSubFunctionSelection(const std::string& actionKey);
+    void setCurrentSubFunctionSelection(const std::string& pluginName,
+                                        const std::string& actionKey);
 
 signals:
     void pluginSelected(const std::string& pluginName);
-    void subFunctionSelected(const std::string& actionKey);
+    void subFunctionSelected(const std::string& pluginName, const std::string& actionKey);
 
 private:
     void setupUi();
     void onPluginButtonClicked(const std::string& pluginName);
-    void onSubFunctionButtonClicked(const std::string& actionKey);
+    void onSubFunctionButtonClicked(const std::string& pluginName,
+                                    const std::string& actionKey);
+    std::string displayGroupForPlugin(const std::string& pluginName) const;
 
     QFrame* sidebarFrame_ = nullptr;
     QLabel* titleLabel_ = nullptr;
@@ -46,8 +54,10 @@ private:
     std::map<std::string, QWidget*> pluginSubContainerMap_;
     std::map<std::string, QVBoxLayout*> pluginSubLayoutMap_;
     std::map<std::string, QString> pluginDisplayNameMap_;
+    std::map<std::string, std::string> pluginGroupKeyMap_;
+    std::map<std::string, std::vector<std::string>> groupMembersMap_;
     std::map<QPushButton*, std::string> pluginButtonMap_;
-    std::map<QPushButton*, std::string> subFunctionButtonMap_;
+    std::map<QPushButton*, SubFunctionItem> subFunctionButtonMap_;
     std::map<QPushButton*, QString> subFunctionDisplayNameMap_;
     QPushButton* currentPluginButton_ = nullptr;
     QPushButton* currentSubFunctionButton_ = nullptr;
