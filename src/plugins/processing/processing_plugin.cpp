@@ -20,7 +20,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "skeleton", "connected_components", "kmeans"}
+            {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "skeleton", "gabor_filter", "connected_components", "kmeans"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -61,6 +61,22 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
         gis::framework::ParamSpec{
             "sigma", "sigma值", "高斯滤波sigma参数",
             gis::framework::ParamType::Double, false, double{1.5}
+        },
+        gis::framework::ParamSpec{
+            "gabor_theta", "方向角", "Gabor滤波核的方向角（弧度）",
+            gis::framework::ParamType::Double, false, double{0.0}
+        },
+        gis::framework::ParamSpec{
+            "gabor_lambda", "波长", "Gabor滤波核的波长",
+            gis::framework::ParamType::Double, false, double{8.0}
+        },
+        gis::framework::ParamSpec{
+            "gabor_gamma", "纵横比", "Gabor滤波核的纵横比",
+            gis::framework::ParamType::Double, false, double{0.5}
+        },
+        gis::framework::ParamSpec{
+            "gabor_psi", "相位偏移", "Gabor滤波核的相位偏移",
+            gis::framework::ParamType::Double, false, double{0.0}
         },
         gis::framework::ParamSpec{
             "enhance_type", "增强类型", "增强算法",
@@ -188,6 +204,7 @@ gis::framework::Result ProcessingPlugin::execute(
     if (action == "hough")           return doHough(params, progress);
     if (action == "watershed")       return doWatershed(params, progress);
     if (action == "skeleton")        return doSkeleton(params, progress);
+    if (action == "gabor_filter")    return doGaborFilter(params, progress);
     if (action == "connected_components") return doConnectedComponents(params, progress);
     if (action == "kmeans")          return doKMeans(params, progress);
 
@@ -966,6 +983,53 @@ gis::framework::Result ProcessingPlugin::doSkeleton(
     auto result = writeMatOutput(outFloat, input, output, band, progress);
     result.metadata["action"] = "skeleton";
     return result;
+}
+
+gis::framework::Result ProcessingPlugin::doGaborFilter(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input  = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    int band = gis::framework::getParam<int>(params, "band", 1);
+    int kernelSize = gis::framework::getParam<int>(params, "kernel_size", 9);
+    double sigma = gis::framework::getParam<double>(params, "sigma", 2.0);
+    double theta = gis::framework::getParam<double>(params, "gabor_theta", 0.0);
+    double lambda = gis::framework::getParam<double>(params, "gabor_lambda", 8.0);
+    double gamma = gis::framework::getParam<double>(params, "gabor_gamma", 0.5);
+    double psi = gis::framework::getParam<double>(params, "gabor_psi", 0.0);
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (kernelSize < 3) return gis::framework::Result::fail("kernel_size must be >= 3");
+    if ((kernelSize % 2) == 0) return gis::framework::Result::fail("kernel_size must be odd");
+    if (sigma <= 0.0) return gis::framework::Result::fail("sigma must be positive");
+    if (lambda <= 0.0) return gis::framework::Result::fail("gabor_lambda must be positive");
+    if (gamma <= 0.0) return gis::framework::Result::fail("gabor_gamma must be positive");
+
+    progress.onProgress(0.1);
+    cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.onProgress(0.3);
+
+    cv::Mat source;
+    mat.convertTo(source, CV_32F);
+
+    cv::Mat kernel = cv::getGaborKernel(
+        cv::Size(kernelSize, kernelSize), sigma, theta, lambda, gamma, psi, CV_32F);
+    cv::Mat response;
+    cv::filter2D(source, response, CV_32F, kernel);
+    cv::Mat result;
+    cv::normalize(response, result, 0.0, 1.0, cv::NORM_MINMAX, CV_32F);
+
+    progress.onProgress(0.7);
+    auto execResult = writeMatOutput(result, input, output, band, progress);
+    execResult.metadata["action"] = "gabor_filter";
+    execResult.metadata["kernel_size"] = std::to_string(kernelSize);
+    execResult.metadata["sigma"] = std::to_string(sigma);
+    execResult.metadata["theta"] = std::to_string(theta);
+    execResult.metadata["lambda"] = std::to_string(lambda);
+    execResult.metadata["gamma"] = std::to_string(gamma);
+    return execResult;
 }
 
 gis::framework::Result ProcessingPlugin::doConnectedComponents(

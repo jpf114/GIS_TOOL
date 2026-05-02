@@ -1291,6 +1291,29 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
                 return ActionValidationIssue{"k", "参数“聚类数”必须大于 0"};
             }
         }
+        if (actionKey == "gabor_filter") {
+            const auto kernelSize = intParamValue(params, "kernel_size");
+            if (kernelSize.has_value()) {
+                if (*kernelSize < 3) {
+                    return ActionValidationIssue{"kernel_size", "参数“核大小”必须大于等于 3"};
+                }
+                if ((*kernelSize % 2) == 0) {
+                    return ActionValidationIssue{"kernel_size", "参数“核大小”建议填写奇数，例如 3、5、7"};
+                }
+            }
+            if (const auto sigma = doubleParamValue(params, "sigma");
+                sigma.has_value() && *sigma <= 0.0) {
+                return ActionValidationIssue{"sigma", "参数“Sigma”必须大于 0"};
+            }
+            if (const auto lambda = doubleParamValue(params, "gabor_lambda");
+                lambda.has_value() && *lambda <= 0.0) {
+                return ActionValidationIssue{"gabor_lambda", "参数“波长”必须大于 0"};
+            }
+            if (const auto gamma = doubleParamValue(params, "gabor_gamma");
+                gamma.has_value() && *gamma <= 0.0) {
+                return ActionValidationIssue{"gabor_gamma", "参数“纵横比”必须大于 0"};
+            }
+        }
     }
 
     return std::nullopt;
@@ -1402,6 +1425,8 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 adjustedSpec.minValue = 0.0;
             } else if (spec.key == "kernel_size") {
                 adjustedSpec.minValue = 3;
+            } else if (spec.key == "sigma" || spec.key == "gabor_lambda" || spec.key == "gabor_gamma") {
+                adjustedSpec.minValue = 0.000001;
             }
         }
         if (pluginName == "projection" && action == "transform" && spec.key == "src_srs") {

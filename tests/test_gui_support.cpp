@@ -245,6 +245,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_processing_connected_components.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "processing", "gabor_filter"),
+        "D:/data/image_processing_gabor_filter.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
@@ -706,6 +710,33 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsEvenKernelSizeForProcess
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "kernel_size");
     EXPECT_EQ(issue->message, "参数“核大小”建议填写奇数，例如 3、5、7");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidProcessingGaborValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["kernel_size"] = 4;
+
+    auto issue = gis::gui::validateActionSpecificParams("processing", "gabor_filter", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "kernel_size");
+
+    params["kernel_size"] = 5;
+    params["sigma"] = 0.0;
+    issue = gis::gui::validateActionSpecificParams("processing", "gabor_filter", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "sigma");
+
+    params.erase("sigma");
+    params["gabor_lambda"] = 0.0;
+    issue = gis::gui::validateActionSpecificParams("processing", "gabor_filter", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "gabor_lambda");
+
+    params.erase("gabor_lambda");
+    params["gabor_gamma"] = 0.0;
+    issue = gis::gui::validateActionSpecificParams("processing", "gabor_filter", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "gabor_gamma");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {
