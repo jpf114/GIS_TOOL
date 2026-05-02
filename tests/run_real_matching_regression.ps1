@@ -170,6 +170,56 @@ function Save-RegressionResults {
     $Results | Select-Object Name,ExitCode,Seconds | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
 }
 
+function Assert-Condition {
+    param(
+        [bool]$Condition,
+        [string]$Message
+    )
+
+    if (-not $Condition) {
+        throw $Message
+    }
+}
+
+function Read-JsonPayload {
+    param([string]$Path)
+
+    $raw = Get-Content $Path -Raw
+    $jsonStart = $raw.IndexOf("{")
+    Assert-Condition -Condition ($jsonStart -ge 0) -Message ("JSON payload missing: " + $Path)
+    return ($raw.Substring($jsonStart) | ConvertFrom-Json)
+}
+
+function Validate-CaseOutputs {
+    param(
+        [pscustomobject]$Case,
+        [string]$ResolvedOutputRoot
+    )
+
+    switch ($Case.Name) {
+        "matching_detect" {
+            $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "detect_output.json")
+            Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_detect count should be greater than zero"
+            Assert-Condition -Condition ($payload.keypoints.Count -eq $payload.count) -Message "matching_detect keypoint count mismatch"
+        }
+        "matching_corner" {
+            $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "corner_output.json")
+            Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_corner count should be greater than zero"
+            Assert-Condition -Condition ($payload.keypoints.Count -eq $payload.count) -Message "matching_corner keypoint count mismatch"
+        }
+        "matching_match" {
+            $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "match_output.json")
+            Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_match count should be greater than zero"
+            Assert-Condition -Condition ($payload.matches.Count -eq $payload.count) -Message "matching_match match count mismatch"
+        }
+        "matching_detect_sift" {
+            $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "detect_sift_output.json")
+            Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_detect_sift count should be greater than zero"
+            Assert-Condition -Condition ($payload.keypoints.Count -eq $payload.count) -Message "matching_detect_sift keypoint count mismatch"
+        }
+    }
+}
+
 function Test-DebugCliBuild {
     param([string]$ResolvedCliPath)
 
@@ -341,6 +391,7 @@ if ($Mode -eq "full") {
 $results = @()
 foreach ($case in $cases) {
     $results += Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
+    Validate-CaseOutputs -Case $case -ResolvedOutputRoot $ResolvedOutputRoot
 }
 
 Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results

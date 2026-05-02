@@ -163,6 +163,59 @@ function Save-RegressionResults {
     $Results | Select-Object Name,ExitCode,Seconds | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
 }
 
+function Assert-Condition {
+    param(
+        [bool]$Condition,
+        [string]$Message
+    )
+
+    if (-not $Condition) {
+        throw $Message
+    }
+}
+
+function Read-JsonPayload {
+    param([string]$Path)
+
+    $raw = Get-Content $Path -Raw
+    $jsonStart = $raw.IndexOf("{")
+    Assert-Condition -Condition ($jsonStart -ge 0) -Message ("JSON payload missing: " + $Path)
+    return ($raw.Substring($jsonStart) | ConvertFrom-Json)
+}
+
+function Validate-CaseOutputs {
+    param(
+        [pscustomobject]$Case,
+        [string]$ResolvedOutputRoot
+    )
+
+    switch ($Case.Name) {
+        "raster_inspect_histogram" {
+            $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "histogram_output.json")
+            Assert-Condition -Condition ($payload.total -gt 0) -Message "histogram total should be greater than zero"
+            Assert-Condition -Condition ($payload.histogram.Count -eq 16) -Message "histogram bin count should equal 16"
+        }
+        "terrain_profile_extract" {
+            $rows = Import-Csv (Join-Path $ResolvedOutputRoot "terrain_profile_output.csv")
+            Assert-Condition -Condition ($rows.Count -ge 10) -Message "terrain_profile_extract should output at least 10 rows"
+            Assert-Condition -Condition ([double]$rows[0].distance -eq 0.0) -Message "terrain_profile_extract first distance should be zero"
+        }
+        "classification_feature_stats" {
+            $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "feature_stats_output.json")
+            Assert-Condition -Condition ($payload.meta.actual_srs -eq "EPSG:3857") -Message "classification_feature_stats actual_srs mismatch"
+            Assert-Condition -Condition ($payload.records.Count -ge 2) -Message "classification_feature_stats should output at least two records"
+            $summary = @($payload.records | Where-Object { $_.feature_id -eq "__summary__" })
+            Assert-Condition -Condition ($summary.Count -eq 1) -Message "classification_feature_stats summary record missing"
+        }
+        "classification_feature_stats_csv" {
+            $rows = Import-Csv (Join-Path $ResolvedOutputRoot "feature_stats_output.csv")
+            Assert-Condition -Condition ($rows.Count -ge 2) -Message "classification_feature_stats_csv should output at least two rows"
+            Assert-Condition -Condition ($rows[0].PSObject.Properties.Name -contains "feature_id") -Message "classification_feature_stats_csv missing feature_id column"
+            Assert-Condition -Condition ($rows[0].PSObject.Properties.Name -contains "pixel_count") -Message "classification_feature_stats_csv missing pixel_count column"
+        }
+    }
+}
+
 function Invoke-Helper {
     param(
         [string]$ResolvedHelperPath,
@@ -661,6 +714,7 @@ if ($Mode -eq "full") {
 $results = @()
 foreach ($case in $cases) {
     $results += Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
+    Validate-CaseOutputs -Case $case -ResolvedOutputRoot $ResolvedOutputRoot
 }
 
 Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results
