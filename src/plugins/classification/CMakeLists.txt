@@ -10,6 +10,8 @@ target_link_libraries(plugin_classification PRIVATE
     gis_core
     gis_framework
     GDAL::GDAL
+    opencv_core
+    opencv_ml
 )
 
 set_target_properties(plugin_classification PROPERTIES

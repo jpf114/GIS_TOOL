@@ -237,6 +237,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/scene_classification_feature_stats.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/scene.tif", "classification", "svm_classify"),
+        "D:/data/scene_classification_svm_classify.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/image.tif", "processing", "skeleton"),
         "D:/data/image_processing_skeleton.tif");
     EXPECT_EQ(
@@ -708,6 +712,27 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsMismatchedFeatureStatsBa
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "bands");
     EXPECT_EQ(issue->message, "参数“波段列表”数量必须与“分类栅格列表”一致");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidClassificationSvmValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["training_csv"] = std::string("D:/data/samples.json");
+
+    auto issue = gis::gui::validateActionSpecificParams("classification", "svm_classify", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "training_csv");
+
+    params["training_csv"] = std::string("D:/data/samples.csv");
+    params["output"] = std::string("D:/data/result.json");
+    issue = gis::gui::validateActionSpecificParams("classification", "svm_classify", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "output");
+
+    params["output"] = std::string("D:/data/result.tif");
+    params["bands"] = std::string("1,0,3");
+    issue = gis::gui::validateActionSpecificParams("classification", "svm_classify", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "bands");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsEvenKernelSizeForProcessingFilter) {

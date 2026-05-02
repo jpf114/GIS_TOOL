@@ -105,6 +105,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("viewshed_multi"), QStringLiteral("\345\244\232\347\202\271\350\247\206\345\237\237")},
         {QStringLiteral("cut_fill"), QStringLiteral("\345\241\253\346\214\226\346\226\271")},
         {QStringLiteral("reservoir_volume"), QStringLiteral("\345\272\223\345\256\271\350\256\241\347\256\227")},
+        {QStringLiteral("svm_classify"), QStringLiteral("SVM \345\210\206\347\261\273")},
         {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
         {QStringLiteral("evi"), QStringLiteral("EVI")},
         {QStringLiteral("savi"), QStringLiteral("SAVI")},
@@ -573,6 +574,8 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"vector", {QStringLiteral("输入面矢量"), QStringLiteral("参与统计的面矢量文件路径。")}},
         {"feature_id_field", {QStringLiteral("要素 ID 字段"), QStringLiteral("可选，用于标识每个面要素的唯一字段名。")}},
         {"feature_name_field", {QStringLiteral("要素名称字段"), QStringLiteral("可选，用于读取面要素名称的字段名。")}},
+        {"training_csv", {QStringLiteral("训练样本 CSV"), QStringLiteral("监督分类训练样本文件，默认使用 label 列和其余特征列。")}},
+        {"label_column", {QStringLiteral("标签列"), QStringLiteral("训练样本 CSV 中保存类别标签的列名。")}},
         {"class_map", {QStringLiteral("分类映射"), QStringLiteral("分类值到分类名称的 JSON 映射文件，例如 {\"1\":\"耕地\",\"2\":\"林地\"}。")}},
         {"rasters", {QStringLiteral("分类栅格列表"), QStringLiteral("多个分类栅格路径，使用英文逗号分隔，例如 a.tif,b.tif。")}},
         {"nodatas", {QStringLiteral("NoData 列表"), QStringLiteral("与分类栅格一一对应的 NoData 列表，使用英文逗号分隔，例如 0,0,255。")}},
@@ -689,6 +692,11 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"bands", {QStringLiteral("波段列表"), QStringLiteral("与分类栅格一一对应，使用英文逗号分隔，默认全部为 1。")}},
                 {"nodatas", {QStringLiteral("NoData 列表"), QStringLiteral("与分类栅格一一对应，使用英文逗号分隔，默认全部为 0。")}},
             }},
+            {"svm_classify", {
+                {"training_csv", {QStringLiteral("训练样本 CSV"), QStringLiteral("CSV 表头需包含标签列和特征列，例如 label,b1,b2。")}},
+                {"bands", {QStringLiteral("波段列表"), QStringLiteral("与训练样本特征列一一对应，例如 1,2。留空则默认使用全部波段。")}},
+                {"label_column", {QStringLiteral("标签列"), QStringLiteral("训练样本 CSV 中的类别标签列名，默认 label。")}},
+            }},
         }},
         {"vector", {
             {"convert", {
@@ -784,6 +792,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         }},
         {"classification", {
             {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
+            {"svm_classify", {QStringLiteral("SVM 分类"), QStringLiteral("使用训练样本 CSV 对多波段栅格执行监督分类。"), {"input", "output", "training_csv", "label_column", "bands"}, {"input", "output", "training_csv"}}},
         }},
         {"spindex", {
             {"ndvi", {QStringLiteral("NDVI"), QStringLiteral("根据红光与近红外波段计算 NDVI。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},

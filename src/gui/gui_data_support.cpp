@@ -72,6 +72,7 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
                                    const std::string& paramKey,
                                    const std::string& inputExt) {
     if (pluginName == "classification") {
+        if (action == "svm_classify" && paramKey == "output") return ".tif";
         if (paramKey == "output") return ".json";
         if (paramKey == "vector_output") return ".gpkg";
         if (paramKey == "raster_output") return ".tif";
@@ -284,6 +285,27 @@ std::vector<std::string> splitCommaList(const std::string& rawText) {
         }
     }
     return items;
+}
+
+bool parseIntegerList(const std::string& rawText,
+                      std::vector<int>& values,
+                      std::string& error) {
+    values.clear();
+    for (const auto& item : splitCommaList(rawText)) {
+        try {
+            std::size_t parsed = 0;
+            const int value = std::stoi(item, &parsed);
+            if (parsed != item.size()) {
+                error = "invalid integer";
+                return false;
+            }
+            values.push_back(value);
+        } catch (...) {
+            error = "invalid integer";
+            return false;
+        }
+    }
+    return true;
 }
 
 bool endsWithOneOf(const std::string& path, const std::vector<std::string>& suffixes) {
@@ -585,6 +607,12 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
         return config;
     }
 
+    if (pluginName == "classification" && paramKey == "training_csv") {
+        config.placeholder = "请选择训练样本 CSV，例如 samples.csv";
+        config.openFilter = "CSV 文件 (*.csv);;所有文件 (*)";
+        return config;
+    }
+
     if (pluginName == "classification" && paramKey == "rasters") {
         config.placeholder = "请输入多个分类栅格路径，使用英文逗号分隔，例如 a.tif,b.tif";
         config.openFilter = filterForRasterInputs();
@@ -621,7 +649,10 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
     if (config.isOutput) {
         config.suggestedSuffix = defaultSuffixForOutput(pluginName, action, paramKey, ".tif");
 
-        if (pluginName == "classification" && paramKey == "output") {
+        if (pluginName == "classification" && action == "svm_classify" && paramKey == "output") {
+            config.placeholder = "请选择分类输出栅格，建议使用 .tif";
+            config.saveFilter = filterForRasterOutputs();
+        } else if (pluginName == "classification" && paramKey == "output") {
             config.placeholder = "请选择统计输出文件，支持 .json 或 .csv，默认建议 .json";
             config.saveFilter = "JSON 文件 (*.json);;CSV 文件 (*.csv);;所有文件 (*)";
         } else if (pluginName == "classification" && paramKey == "vector_output") {
@@ -708,6 +739,12 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
     if (pluginName == "classification") {
         if (spec.key == "rasters") {
             return "请输入多个分类栅格路径，英文逗号分隔，例如 D:/a.tif,D:/b.tif";
+        }
+        if (action == "svm_classify" && spec.key == "bands") {
+            return "输入波段列表，英文逗号分隔，例如 1,2,3";
+        }
+        if (spec.key == "label_column") {
+            return "训练样本 CSV 中的标签列名，例如 label";
         }
         if (spec.key == "bands") {
             return "与分类栅格一一对应，英文逗号分隔，例如 1,1,1";
@@ -1164,6 +1201,30 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp", ".kml"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg、.shp 或 .kml"};
+        }
+    }
+
+    if (pluginName == "classification" && actionKey == "svm_classify") {
+        const std::string trainingCsv = stringParam("training_csv");
+        const std::string outputPath = stringParam("output");
+        const std::string bandsText = stringParam("bands");
+        if (!trainingCsv.empty() && !endsWithOneOf(trainingCsv, {".csv"})) {
+            return ActionValidationIssue{"training_csv", "参数“训练样本 CSV”应选择 .csv 文件"};
+        }
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
+            return ActionValidationIssue{"output", "参数“输出文件”应使用 .tif 或 .tiff"};
+        }
+        if (!bandsText.empty()) {
+            std::string error;
+            std::vector<int> bands;
+            if (!parseIntegerList(bandsText, bands, error)) {
+                return ActionValidationIssue{"bands", "参数“波段列表”应使用英文逗号分隔的整数，例如 1,2,3"};
+            }
+            for (int band : bands) {
+                if (band <= 0) {
+                    return ActionValidationIssue{"bands", "参数“波段列表”中的波段号必须大于 0"};
+                }
+            }
         }
     }
 

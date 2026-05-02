@@ -1,12 +1,15 @@
 ﻿#include "classification_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
+#include <gis/core/opencv_wrapper.h>
 
 #include <cpl_conv.h>
 #include <gdal_alg.h>
 #include <gdal_priv.h>
 #include <gdalwarper.h>
 #include <ogrsf_frmts.h>
+#include <opencv2/core.hpp>
+#include <opencv2/ml.hpp>
 
 #include <algorithm>
 #include <array>
@@ -16,6 +19,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <set>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -55,6 +59,14 @@ struct FeatureStatsTask {
     std::string outputFormat;
     std::string vectorOutputPath;
     std::string rasterOutputPath;
+};
+
+struct SvmTask {
+    std::string inputPath;
+    std::vector<int> bands;
+    std::string trainingCsvPath;
+    std::string labelColumn = "label";
+    std::string outputPath;
 };
 
 struct RasterSpatialRefInfo {
@@ -219,6 +231,52 @@ bool parseDoubleList(const std::string& text, std::vector<double>& values, std::
             return false;
         }
     }
+    return true;
+}
+
+bool parseCsvHeaderAndRows(
+    const std::string& path,
+    std::vector<std::string>& headers,
+    std::vector<std::vector<std::string>>& rows,
+    std::string& error) {
+    headers.clear();
+    rows.clear();
+
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs) {
+        error = "无法打开训练样本 CSV: " + path;
+        return false;
+    }
+
+    std::string line;
+    if (!std::getline(ifs, line)) {
+        error = "训练样本 CSV 为空: " + path;
+        return false;
+    }
+
+    headers = splitCsv(line);
+    if (headers.empty()) {
+        error = "训练样本 CSV 表头为空: " + path;
+        return false;
+    }
+
+    while (std::getline(ifs, line)) {
+        auto cols = splitCsv(line);
+        if (cols.empty()) {
+            continue;
+        }
+        if (cols.size() != headers.size()) {
+            error = "训练样本 CSV 存在列数不一致的记录";
+            return false;
+        }
+        rows.push_back(std::move(cols));
+    }
+
+    if (rows.empty()) {
+        error = "训练样本 CSV 没有样本记录: " + path;
+        return false;
+    }
+
     return true;
 }
 
@@ -1176,9 +1234,13 @@ gis::framework::Result buildTaskFromParams(
 std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "当前固定为 feature_stats",
+            "action", "子功能", "分类相关功能",
             gis::framework::ParamType::Enum, true, std::string{},
-            int{0}, int{0}, {"feature_stats"}
+            int{0}, int{0}, {"feature_stats", "svm_classify"}
+        },
+        gis::framework::ParamSpec{
+            "input", "输入栅格", "待分类的多波段栅格文件路径",
+            gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
             "vector", "输入面矢量", "参与统计的面矢量文件路径",
@@ -1224,6 +1286,14 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
             "raster_output", "分类栅格输出", "可选，输出分类栅格结果，当前仅支持 .tif 或 .tiff",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
+        gis::framework::ParamSpec{
+            "training_csv", "训练样本 CSV", "监督分类训练样本 CSV，默认使用 label 列和其余特征列",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "label_column", "标签列", "训练样本 CSV 中的类别标签列名，默认 label",
+            gis::framework::ParamType::String, false, std::string{"label"}
+        },
     };
 }
 
@@ -1234,6 +1304,9 @@ gis::framework::Result ClassificationPlugin::execute(
         const std::string action = gis::framework::getParam<std::string>(params, "action", "");
         if (action == "feature_stats") {
             return doFeatureStats(params, progress);
+        }
+        if (action == "svm_classify") {
+            return doSvmClassify(params, progress);
         }
         return gis::framework::Result::fail("Unknown action: " + action);
     } catch (const std::exception& ex) {
@@ -1400,6 +1473,154 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
     result.metadata["vector_output"] = task.vectorOutputPath;
     result.metadata["raster_output"] = task.rasterOutputPath;
     return result;
+}
+
+gis::framework::Result ClassificationPlugin::doSvmClassify(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    SvmTask task;
+    task.inputPath = gis::framework::getParam<std::string>(params, "input", "");
+    task.trainingCsvPath = gis::framework::getParam<std::string>(params, "training_csv", "");
+    task.labelColumn = gis::framework::getParam<std::string>(params, "label_column", "label");
+    task.outputPath = gis::framework::getParam<std::string>(params, "output", "");
+
+    if (task.inputPath.empty()) {
+        return gis::framework::Result::fail("input is required");
+    }
+    if (task.trainingCsvPath.empty()) {
+        return gis::framework::Result::fail("training_csv is required");
+    }
+    if (task.outputPath.empty()) {
+        return gis::framework::Result::fail("output is required");
+    }
+
+    std::string bandError;
+    if (!parseIntList(gis::framework::getParam<std::string>(params, "bands", ""), task.bands, bandError)) {
+        return gis::framework::Result::fail(bandError);
+    }
+
+    progress.onMessage("正在读取训练样本...");
+    progress.onProgress(0.1);
+
+    std::vector<std::string> headers;
+    std::vector<std::vector<std::string>> rows;
+    std::string csvError;
+    if (!parseCsvHeaderAndRows(task.trainingCsvPath, headers, rows, csvError)) {
+        return gis::framework::Result::fail(csvError);
+    }
+
+    int labelIndex = -1;
+    for (std::size_t i = 0; i < headers.size(); ++i) {
+        if (headers[i] == task.labelColumn) {
+            labelIndex = static_cast<int>(i);
+            break;
+        }
+    }
+    if (labelIndex < 0) {
+        return gis::framework::Result::fail("训练样本 CSV 缺少标签列: " + task.labelColumn);
+    }
+
+    std::vector<int> featureIndices;
+    for (std::size_t i = 0; i < headers.size(); ++i) {
+        if (static_cast<int>(i) != labelIndex) {
+            featureIndices.push_back(static_cast<int>(i));
+        }
+    }
+    if (featureIndices.empty()) {
+        return gis::framework::Result::fail("训练样本 CSV 缺少特征列");
+    }
+
+    auto ds = gis::core::openRaster(task.inputPath, true);
+    if (!ds) {
+        return gis::framework::Result::fail("无法打开输入栅格: " + task.inputPath);
+    }
+
+    if (task.bands.empty()) {
+        for (int bandIndex = 1; bandIndex <= ds->GetRasterCount(); ++bandIndex) {
+            task.bands.push_back(bandIndex);
+        }
+    }
+    if (featureIndices.size() != task.bands.size()) {
+        return gis::framework::Result::fail("训练样本特征列数量必须与 bands 数量一致");
+    }
+
+    cv::Mat trainingSamples(static_cast<int>(rows.size()), static_cast<int>(featureIndices.size()), CV_32F);
+    cv::Mat trainingLabels(static_cast<int>(rows.size()), 1, CV_32S);
+    std::set<int> classValues;
+    for (int rowIndex = 0; rowIndex < static_cast<int>(rows.size()); ++rowIndex) {
+        try {
+            trainingLabels.at<int>(rowIndex, 0) = std::stoi(rows[rowIndex][labelIndex]);
+            classValues.insert(trainingLabels.at<int>(rowIndex, 0));
+            for (int featureIndex = 0; featureIndex < static_cast<int>(featureIndices.size()); ++featureIndex) {
+                trainingSamples.at<float>(rowIndex, featureIndex) =
+                    std::stof(rows[rowIndex][featureIndices[featureIndex]]);
+            }
+        } catch (...) {
+            return gis::framework::Result::fail("训练样本 CSV 存在无法解析的数字");
+        }
+    }
+
+    progress.onMessage("正在训练 SVM 分类器...");
+    progress.onProgress(0.3);
+
+    auto svm = cv::ml::SVM::create();
+    svm->setType(cv::ml::SVM::C_SVC);
+    svm->setKernel(cv::ml::SVM::RBF);
+    svm->setGamma(0.5);
+    svm->setC(2.0);
+    svm->setTermCriteria(cv::TermCriteria(cv::TermCriteria::MAX_ITER, 1000, 1e-6));
+    if (!svm->train(trainingSamples, cv::ml::ROW_SAMPLE, trainingLabels)) {
+        return gis::framework::Result::fail("SVM 训练失败");
+    }
+
+    progress.onMessage("正在读取待分类波段...");
+    progress.onProgress(0.45);
+
+    std::vector<cv::Mat> bandMats;
+    bandMats.reserve(task.bands.size());
+    for (int bandIndex : task.bands) {
+        if (bandIndex <= 0 || bandIndex > ds->GetRasterCount()) {
+            return gis::framework::Result::fail("bands 中存在无效波段号");
+        }
+        bandMats.push_back(gis::core::gdalBandToMat(ds.get(), bandIndex));
+    }
+
+    const int width = ds->GetRasterXSize();
+    const int height = ds->GetRasterYSize();
+    cv::Mat predictSamples(width * height, static_cast<int>(task.bands.size()), CV_32F);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const int sampleIndex = y * width + x;
+            for (int bandOffset = 0; bandOffset < static_cast<int>(bandMats.size()); ++bandOffset) {
+                predictSamples.at<float>(sampleIndex, bandOffset) = bandMats[bandOffset].at<float>(y, x);
+            }
+        }
+    }
+
+    progress.onMessage("正在执行栅格分类...");
+    progress.onProgress(0.7);
+
+    cv::Mat responses;
+    svm->predict(predictSamples, responses);
+    cv::Mat result(height, width, CV_32F);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            result.at<float>(y, x) = responses.at<float>(y * width + x, 0);
+        }
+    }
+
+    progress.onMessage("正在写出分类结果...");
+    gis::core::matToGdalTiff(result, ds.get(), task.outputPath, task.bands.front());
+    progress.onProgress(1.0);
+
+    auto execResult = gis::framework::Result::ok("SVM 分类完成", task.outputPath);
+    execResult.metadata["action"] = "svm_classify";
+    execResult.metadata["input"] = task.inputPath;
+    execResult.metadata["training_csv"] = task.trainingCsvPath;
+    execResult.metadata["band_count"] = std::to_string(task.bands.size());
+    execResult.metadata["sample_count"] = std::to_string(rows.size());
+    execResult.metadata["class_count"] = std::to_string(classValues.size());
+    return execResult;
 }
 
 } // namespace gis::plugins

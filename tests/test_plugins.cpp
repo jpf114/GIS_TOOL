@@ -157,6 +157,40 @@ static std::string createMultiBandConstantRaster(const std::string& name,
     return path;
 }
 
+static std::string createTwoClassTrainingRaster(const std::string& name, int w = 24, int h = 12) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 2, GDT_Float32);
+    double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+    ds->SetGeoTransform(adfGT);
+
+    std::vector<float> band1(w * h, 0.0f);
+    std::vector<float> band2(w * h, 0.0f);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const bool leftClass = x < (w / 2);
+            band1[y * w + x] = leftClass ? 10.0f : 200.0f;
+            band2[y * w + x] = leftClass ? 20.0f : 180.0f;
+        }
+    }
+
+    ds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, w, h, band1.data(), w, h, GDT_Float32, 0, 0);
+    ds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, w, h, band2.data(), w, h, GDT_Float32, 0, 0);
+    ds->GetRasterBand(1)->FlushCache();
+    ds->GetRasterBand(2)->FlushCache();
+    return path;
+}
+
+static std::string createSvmTrainingCsv(const std::string& name) {
+    const std::string path = utf8PathString(getTestDir() / name);
+    std::ofstream ofs(path, std::ios::binary);
+    ofs << "label,b1,b2\n";
+    ofs << "1,10,20\n";
+    ofs << "1,12,18\n";
+    ofs << "2,200,180\n";
+    ofs << "2,195,185\n";
+    return path;
+}
+
 static std::string createTerrainRaster(const std::string& name, int w = 48, int h = 48) {
     std::string path = (getTestDir() / name).string();
     auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
@@ -554,6 +588,31 @@ TEST_F(PluginTest, FeatureStatsRunRejectsGeographicInputsWithoutTargetEpsg) {
     const auto result = p->execute(params, progress_);
     EXPECT_FALSE(result.success);
     EXPECT_NE(result.message.find("必须显式提供 target_epsg"), std::string::npos);
+}
+
+TEST_F(PluginTest, ClassificationSvmExecution) {
+    auto* p = mgr_.find("classification");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTwoClassTrainingRaster("classification_svm_input.tif");
+    const std::string trainingCsv = createSvmTrainingCsv("classification_svm_samples.csv");
+    const std::string output = utf8PathString(getTestDir() / "classification_svm_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("svm_classify");
+    params["input"] = input;
+    params["training_csv"] = trainingCsv;
+    params["output"] = output;
+    params["bands"] = std::string("1,2");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "svm_classify");
+    EXPECT_EQ(result.metadata.at("sample_count"), "4");
+    EXPECT_EQ(result.metadata.at("class_count"), "2");
+    EXPECT_NEAR(readRasterPixel(output, 2, 2), 1.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 20, 2), 2.0f, 1e-4f);
 }
 
 TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {
