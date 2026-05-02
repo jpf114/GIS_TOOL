@@ -183,7 +183,7 @@ std::vector<gis::framework::ParamSpec> ProjectionPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
-            gis::framework::ParamType::FilePath, true, std::string{}
+            gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
             "output", "输出文件", "输出影像文件路径",

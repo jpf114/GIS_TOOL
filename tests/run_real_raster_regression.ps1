@@ -291,6 +291,73 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Min:    0" -Message "terrain_viewshed_multi min mismatch"
             Assert-TextContains -Text $info -Expected "Max:    255" -Message "terrain_viewshed_multi max mismatch"
         }
+        "projection_info" {
+            $text = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "projection", "info", ("--input=" + $data.ClassificationRaster)
+            )
+            Assert-TextContains -Text $text -Expected "Size: 6 x 6 x 1 bands" -Message "projection_info size mismatch"
+            Assert-TextContains -Text $text -Expected "Authority: EPSG:3857" -Message "projection_info authority mismatch"
+        }
+        "projection_transform" {
+            $text = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "projection", "transform",
+                "--src_srs=EPSG:4326",
+                "--dst_srs=EPSG:3857",
+                "--x=116",
+                "--y=40"
+            )
+            Assert-TextContains -Text $text -Expected "(116, 40) ->" -Message "projection_transform output format mismatch"
+            Assert-TextContains -Text $text -Expected "12913060.93" -Message "projection_transform dst_x mismatch"
+            Assert-TextContains -Text $text -Expected "4865942.28" -Message "projection_transform dst_y mismatch"
+        }
+        "projection_assign_srs" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "projection_assign_input.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   24 x 24 x 6 bands" -Message "projection_assign_srs raster size mismatch"
+            Assert-TextContains -Text $info -Expected "CRS:    EPSG:4326" -Message "projection_assign_srs crs mismatch"
+        }
+        "projection_reproject" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "projection_reproject_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   7 x 5 x 1 bands" -Message "projection_reproject raster size mismatch"
+            Assert-TextContains -Text $info -Expected "CRS:    EPSG:4326" -Message "projection_reproject crs mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   1" -Message "projection_reproject mean mismatch"
+        }
+        "cutting_clip" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "cutting_clip_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   2 x 2 x 1 bands" -Message "cutting_clip raster size mismatch"
+            Assert-TextContains -Text $info -Expected "CRS:    EPSG:3857" -Message "cutting_clip crs mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   1" -Message "cutting_clip mean mismatch"
+        }
+        "cutting_mosaic" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "cutting_mosaic_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   6 x 6 x 1 bands" -Message "cutting_mosaic raster size mismatch"
+            Assert-TextContains -Text $info -Expected "CRS:    EPSG:3857" -Message "cutting_mosaic crs mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   1" -Message "cutting_mosaic mean mismatch"
+        }
+        "cutting_split" {
+            $tilesDir = Join-Path $ResolvedOutputRoot "cutting_split_tiles"
+            $tiles = @(Get-ChildItem $tilesDir -Filter *.tif -ErrorAction Stop)
+            Assert-Condition -Condition ($tiles.Count -eq 4) -Message "cutting_split tile count mismatch"
+            $firstTile = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $tiles[0].FullName)
+            )
+            Assert-TextContains -Text $firstTile -Expected "Size:   4 x 4 x 1 bands" -Message "cutting_split first tile size mismatch"
+        }
+        "cutting_merge_bands" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "cutting_merge_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   24 x 24 x 12 bands" -Message "cutting_merge_bands raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Band 12:" -Message "cutting_merge_bands band count mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   110" -Message "cutting_merge_bands final band mean mismatch"
+        }
         "processing_pansharpen" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "pansharpen_output.tif"))
@@ -1034,6 +1101,74 @@ $cases += New-Case -Name "terrain_reservoir_volume" -CaseArgs @(
     "--water_level=60.0"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "terrain_reservoir_output.tif")
+)
+
+$cases += New-Case -Name "projection_info" -CaseArgs @(
+    "projection", "info",
+    ("--input=" + $data.ClassificationRaster)
+) -ExpectedOutputs @()
+
+$projectionAssignInput = Join-Path $ResolvedOutputRoot "projection_assign_input.tif"
+Copy-Item $data.NdviInput $projectionAssignInput -Force
+$cases += New-Case -Name "projection_assign_srs" -CaseArgs @(
+    "projection", "assign_srs",
+    ("--input=" + $projectionAssignInput),
+    "--srs=EPSG:4326"
+) -ExpectedOutputs @(
+    $projectionAssignInput
+)
+
+$cases += New-Case -Name "projection_transform" -CaseArgs @(
+    "projection", "transform",
+    "--src_srs=EPSG:4326",
+    "--dst_srs=EPSG:3857",
+    "--x=116",
+    "--y=40"
+) -ExpectedOutputs @()
+
+$cases += New-Case -Name "projection_reproject" -CaseArgs @(
+    "projection", "reproject",
+    ("--input=" + $data.ClassificationRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "projection_reproject_output.tif")),
+    "--dst_srs=EPSG:4326",
+    "--resample=nearest"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "projection_reproject_output.tif")
+)
+
+$cases += New-Case -Name "cutting_clip" -CaseArgs @(
+    "cutting", "clip",
+    ("--input=" + $data.ClassificationRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "cutting_clip_output.tif")),
+    "--extent=12935050,4852100,12935150,4852200"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "cutting_clip_output.tif")
+)
+
+$cases += New-Case -Name "cutting_mosaic" -CaseArgs @(
+    "cutting", "mosaic",
+    ("--input=" + $data.ClassificationRaster + "," + $data.ClassificationRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "cutting_mosaic_output.tif"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "cutting_mosaic_output.tif")
+)
+
+$cases += New-Case -Name "cutting_split" -CaseArgs @(
+    "cutting", "split",
+    ("--input=" + $data.ClassificationRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "cutting_split_tiles")),
+    "--tile_size=4",
+    "--overlap=0"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "cutting_split_tiles")
+)
+
+$cases += New-Case -Name "cutting_merge_bands" -CaseArgs @(
+    "cutting", "merge_bands",
+    ("--input=" + $data.NdviInput + "," + $data.NdviInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "cutting_merge_output.tif"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "cutting_merge_output.tif")
 )
 
 $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(

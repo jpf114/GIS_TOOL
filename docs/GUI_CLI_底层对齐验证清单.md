@@ -125,6 +125,8 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 - `spindex` 当前已有 `ndvi / ndwi / ndmi / evi2 / bsi / custom_index` 的 GUI 证据，并已纳入真实数据专项的 `ndvi / ndmi / evi / evi2 / savi / gndvi / ndwi / mndwi / ndbi / bsi / arvi / nbr / awei / ui / bi / custom_index`
 - `classification.feature_stats` 当前真实数据专项中，`quick` 已覆盖 `json / vector_output / raster_output`，`full` 追加 `csv`
 - `classification.svm_classify / random_forest_classify / max_likelihood_classify` 已纳入真实数据专项 quick 回归
+- `projection.info / transform / assign_srs / reproject` 已纳入真实数据专项 quick 回归
+- `cutting.clip / mosaic / split / merge_bands` 已纳入真实数据专项 quick 回归
 - `processing.pansharpen` 当前真实数据专项固定验证 `pan_method=simple_mean`
 - `processing.gabor_filter / glcm_texture / mean_shift_segment` 已纳入真实数据专项 quick 回归
 - `processing.skeleton / connected_components` 已纳入真实数据专项 quick 回归
@@ -133,6 +135,8 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
   - `spindex.ndvi / ndmi / bsi / evi2` 校验关键输出统计
   - `classification.feature_stats` 校验 `actual_srs` 与 `__summary__` 汇总记录
   - `classification.svm_classify / random_forest_classify / max_likelihood_classify` 校验输出尺寸 `24 x 12 x 1`、输出类型 `Float32`、类别范围 `1~2`
+  - `projection.info / transform / assign_srs / reproject` 校验尺寸、EPSG 编码、转换结果与重投影输出
+  - `cutting.clip / mosaic / split / merge_bands` 校验输出尺寸、瓦片数量、波段数量与关键统计值
   - `processing.pansharpen` 校验输出为 `30 x 30 x 3`，并校验三波段统计值
   - `processing.gabor_filter / glcm_texture / mean_shift_segment` 校验输出尺寸为 `32 x 32 x 1`，输出类型为 `Float32`
   - `processing.skeleton / connected_components` 校验输出尺寸为 `64 x 64 x 1`；其中 `skeleton` 校验最大值 `255`，`connected_components` 校验最大标签值 `4`

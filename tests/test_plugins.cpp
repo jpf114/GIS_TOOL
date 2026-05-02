@@ -1807,6 +1807,22 @@ TEST_F(PluginTest, ProjectionTransformExecution) {
     EXPECT_GT(std::abs(std::stod(result.metadata.at("dst_y"))), 1000.0);
 }
 
+TEST_F(PluginTest, ProjectionTransformParamsDoNotRequireInput) {
+    auto* p = mgr_.find("projection");
+    ASSERT_NE(p, nullptr);
+
+    const auto specs = p->paramSpecs();
+    const std::map<std::string, gis::framework::ParamValue> params = {
+        {"action", std::string("transform")},
+        {"src_srs", std::string("EPSG:4326")},
+        {"dst_srs", std::string("EPSG:3857")},
+        {"x", 116.0},
+        {"y", 40.0}
+    };
+
+    EXPECT_TRUE(gis::framework::validateParams(specs, params).empty());
+}
+
 TEST_F(PluginTest, ProjectionAssignSrsExecution) {
     auto* p = mgr_.find("projection");
     ASSERT_NE(p, nullptr);
