@@ -95,6 +95,10 @@ private:
     gis::framework::Result doCentroid(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
+
+    gis::framework::Result doEnvelope(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
 };
 
 } // namespace gis::plugins
