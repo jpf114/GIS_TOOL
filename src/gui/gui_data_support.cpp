@@ -657,7 +657,8 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
     }
 
     if (paramKey == "vector" || paramKey.find("vector") != std::string::npos ||
-        paramKey == "cutline" || paramKey == "clip_vector" || paramKey == "overlay_vector") {
+        paramKey == "cutline" || paramKey == "clip_vector" || paramKey == "overlay_vector" ||
+        paramKey == "nearest_vector") {
         config.placeholder = "请选择矢量文件，例如 .gpkg、.shp、.geojson";
         config.openFilter = filterForVectorInputs();
         return config;
@@ -1142,7 +1143,8 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
 
     if (pluginName == "vector" &&
         (actionKey == "filter" || actionKey == "buffer" || actionKey == "clip" ||
-         actionKey == "simplify" || actionKey == "repair" || actionKey == "geom_metrics")) {
+         actionKey == "simplify" || actionKey == "repair" || actionKey == "geom_metrics" ||
+         actionKey == "nearest")) {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp", ".kml"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg、.shp 或 .kml"};

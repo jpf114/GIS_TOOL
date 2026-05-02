@@ -120,6 +120,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("simplify"), QStringLiteral("简化")},
         {QStringLiteral("repair"), QStringLiteral("修复")},
         {QStringLiteral("geom_metrics"), QStringLiteral("几何属性")},
+        {QStringLiteral("nearest"), QStringLiteral("最近邻")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -472,6 +473,8 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"band", {QStringLiteral("波段号"), QStringLiteral("要处理的波段序号，从 1 开始。")}},
         {"format", {QStringLiteral("输出格式"), QStringLiteral("输出数据格式。")}},
         {"overlay_vector", {QStringLiteral("叠加矢量"), QStringLiteral("用于并集或差集分析的第二个矢量文件。")}},
+        {"nearest_vector", {QStringLiteral("目标图层"), QStringLiteral("最近邻分析使用的目标矢量文件。")}},
+        {"nearest_field", {QStringLiteral("目标字段"), QStringLiteral("可选，将最近邻要素的该字段值写入结果。")}},
         {"dissolve_field", {QStringLiteral("融合字段"), QStringLiteral("按该字段值对相邻要素进行融合。")}},
         {"tolerance", {QStringLiteral("简化容差"), QStringLiteral("Douglas-Peucker 简化容差，单位与图层坐标单位一致。")}},
         {"method", {QStringLiteral("方法"), QStringLiteral("当前算法使用的主要处理方法。")}},
@@ -758,6 +761,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"simplify", {QStringLiteral("简化"), QStringLiteral("按 Douglas-Peucker 算法简化线或面要素。"), {"input", "output", "layer", "tolerance"}, {"input", "output", "tolerance"}}},
             {"repair", {QStringLiteral("修复"), QStringLiteral("尝试修复无效几何并输出新的矢量数据。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"geom_metrics", {QStringLiteral("几何属性"), QStringLiteral("为要素计算面积、长度、紧凑度、圆形度和走向等几何属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
+            {"nearest", {QStringLiteral("最近邻"), QStringLiteral("为每个输入要素寻找目标图层中的最近邻要素，并写入距离与标识。"), {"input", "output", "layer", "nearest_vector", "nearest_field"}, {"input", "output", "nearest_vector"}}},
         }},
     };
     return kConfigs;

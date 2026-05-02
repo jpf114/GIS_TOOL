@@ -2774,6 +2774,83 @@ TEST_F(PluginTest, VectorGeomMetricsExecution) {
     GDALClose(outDs);
 }
 
+TEST_F(PluginTest, VectorNearestExecution) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_nearest_input.gpkg");
+    const std::string target = utf8PathString(getTestDir() / "e2e_nearest_target.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_nearest_output.gpkg");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+
+        auto* inputDs = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(inputDs, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* inputLayer = inputDs->CreateLayer("input", srs.get(), wkbPoint, nullptr);
+        ASSERT_NE(inputLayer, nullptr);
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(inputLayer->CreateField(&nameField), OGRERR_NONE);
+        auto* inputFeat = OGRFeature::CreateFeature(inputLayer->GetLayerDefn());
+        OGRPoint inputPoint(0, 0);
+        inputFeat->SetGeometry(&inputPoint);
+        inputFeat->SetField("name", "src");
+        ASSERT_EQ(inputLayer->CreateFeature(inputFeat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(inputFeat);
+        GDALClose(inputDs);
+
+        auto* targetDs = driver->Create(target.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(targetDs, nullptr);
+        auto* targetLayer = targetDs->CreateLayer("target", srs.get(), wkbPoint, nullptr);
+        ASSERT_NE(targetLayer, nullptr);
+        OGRFieldDefn targetNameField("label", OFTString);
+        ASSERT_EQ(targetLayer->CreateField(&targetNameField), OGRERR_NONE);
+
+        auto* nearFeat = OGRFeature::CreateFeature(targetLayer->GetLayerDefn());
+        OGRPoint nearPoint(3, 4);
+        nearFeat->SetGeometry(&nearPoint);
+        nearFeat->SetField("label", "A");
+        ASSERT_EQ(targetLayer->CreateFeature(nearFeat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(nearFeat);
+
+        auto* farFeat = OGRFeature::CreateFeature(targetLayer->GetLayerDefn());
+        OGRPoint farPoint(20, 20);
+        farFeat->SetGeometry(&farPoint);
+        farFeat->SetField("label", "B");
+        ASSERT_EQ(targetLayer->CreateFeature(farFeat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(farFeat);
+        GDALClose(targetDs);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("nearest");
+    params["input"] = input;
+    params["output"] = output;
+    params["nearest_vector"] = target;
+    params["nearest_field"] = std::string("label");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("feature_count"), "1");
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    EXPECT_NEAR(outFeat->GetFieldAsDouble("nearest_dist"), 5.0, 1e-6);
+    EXPECT_GE(outFeat->GetFieldAsInteger64("nearest_fid"), 1);
+    EXPECT_STREQ(outFeat->GetFieldAsString("nearest_val"), "A");
+    OGRFeature::DestroyFeature(outFeat);
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);

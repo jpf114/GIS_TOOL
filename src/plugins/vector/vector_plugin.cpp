@@ -139,7 +139,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -192,6 +192,14 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
+            "nearest_vector", "目标图层", "最近邻分析使用的目标矢量文件路径",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "nearest_field", "目标字段", "可选，将最近邻要素的该字段值写入结果",
+            gis::framework::ParamType::String, false, std::string{}
+        },
+        gis::framework::ParamSpec{
             "dissolve_field", "融合字段", "融合操作按该字段值合并相邻多边形(不指定则全部合并)",
             gis::framework::ParamType::String, false, std::string{}
         },
@@ -221,6 +229,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "simplify")   return doSimplify(params, progress);
     if (action == "repair")     return doRepair(params, progress);
     if (action == "geom_metrics") return doGeomMetrics(params, progress);
+    if (action == "nearest")    return doNearest(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -244,6 +253,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_repair.inc"
 
 #include "vector_plugin_geom_metrics.inc"
+
+#include "vector_plugin_nearest.inc"
 
 } // namespace gis::plugins
 
