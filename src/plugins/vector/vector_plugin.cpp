@@ -16,6 +16,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #ifdef _WIN32
@@ -140,7 +141,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "intersect", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract", "midpoints_extract", "interior_point", "duplicate_point_check", "hole_check", "dangling_endpoint_check", "sliver_remove"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "intersect", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "spatial_join", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract", "midpoints_extract", "interior_point", "duplicate_point_check", "hole_check", "dangling_endpoint_check", "sliver_remove"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -201,6 +202,14 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
+            "join_vector", "连接图层", "空间连接使用的目标矢量文件路径",
+            gis::framework::ParamType::FilePath, false, std::string{}
+        },
+        gis::framework::ParamSpec{
+            "join_field", "连接字段", "可选，将匹配要素的该字段值汇总写入结果",
+            gis::framework::ParamType::String, false, std::string{}
+        },
+        gis::framework::ParamSpec{
             "dissolve_field", "融合字段", "融合操作按该字段值合并相邻多边形(不指定则全部合并)",
             gis::framework::ParamType::String, false, std::string{}
         },
@@ -236,6 +245,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "repair")     return doRepair(params, progress);
     if (action == "geom_metrics") return doGeomMetrics(params, progress);
     if (action == "nearest")    return doNearest(params, progress);
+    if (action == "spatial_join") return doSpatialJoin(params, progress);
     if (action == "adjacency")  return doAdjacency(params, progress);
     if (action == "overlap_check") return doOverlapCheck(params, progress);
     if (action == "topology_check") return doTopologyCheck(params, progress);
@@ -278,6 +288,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_geom_metrics.inc"
 
 #include "vector_plugin_nearest.inc"
+
+#include "vector_plugin_spatial_join.inc"
 
 #include "vector_plugin_adjacency.inc"
 

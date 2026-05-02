@@ -790,6 +790,7 @@ if(TARGET gis-gui)
         "gui_vector_repair_offscreen|repair|projected_invalid_polygon|vector_repair|output.gpkg|"
         "gui_vector_geom_metrics_offscreen|geom_metrics|projected_touching_polygons|vector_geom_metrics|output.gpkg|"
         "gui_vector_nearest_offscreen|nearest|projected_nearest_source_points|vector_nearest|output.gpkg|nearest_field=name|projected_nearest_target_points"
+        "gui_vector_spatial_join_offscreen|spatial_join|projected_touching_polygons|vector_spatial_join|output.gpkg|join_field=name|projected_overlapping_polygons"
         "gui_vector_convex_hull_offscreen|convex_hull|projected_touching_polygons|vector_convex_hull|output.gpkg|"
         "gui_vector_centroid_offscreen|centroid|projected_touching_polygons|vector_centroid|output.gpkg|"
         "gui_vector_envelope_offscreen|envelope|projected_touching_polygons|vector_envelope|output.gpkg|"

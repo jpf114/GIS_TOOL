@@ -1037,6 +1037,15 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidVectorSliverRemov
     EXPECT_EQ(issue->key, "min_area");
 }
 
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidVectorSpatialJoinOutputExtension) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["output"] = std::string("D:/data/output.csv");
+
+    const auto issue = gis::gui::validateActionSpecificParams("vector", "spatial_join", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "output");
+}
+
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidTerrainValues) {
     std::map<std::string, gis::framework::ParamValue> params;
     params["band"] = 0;

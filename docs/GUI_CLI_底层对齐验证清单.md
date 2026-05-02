@@ -109,7 +109,7 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 | 模块 | 动作 | 底层/插件测试 | CLI 证据 | GUI 证据 | 结论 |
 | --- | --- | --- | --- | --- | --- |
-| `vector` | `info` `filter` `buffer` `clip` `rasterize` `polygonize` `convert` `union` `difference` `intersect` `dissolve` `simplify` `repair` `geom_metrics` `nearest` `adjacency` `overlap_check` `topology_check` `convex_hull` `centroid` `envelope` `boundary` `multipart_check` `singlepart` `vertices_extract` `endpoints_extract` `midpoints_extract` `interior_point` `duplicate_point_check` `hole_check` `dangling_endpoint_check` `sliver_remove` | 有 | 有 | 有 | 主链路已对齐 |
+| `vector` | `info` `filter` `buffer` `clip` `rasterize` `polygonize` `convert` `union` `difference` `intersect` `dissolve` `simplify` `repair` `geom_metrics` `nearest` `spatial_join` `adjacency` `overlap_check` `topology_check` `convex_hull` `centroid` `envelope` `boundary` `multipart_check` `singlepart` `vertices_extract` `endpoints_extract` `midpoints_extract` `interior_point` `duplicate_point_check` `hole_check` `dangling_endpoint_check` `sliver_remove` | 有 | 有 | 有 | 主链路已对齐 |
 | `projection` | `reproject` `info` `transform` `assign_srs` | 有 | 有 | 有 | 主链路已对齐 |
 | `spindex` | `ndvi` `ndwi` `custom_index` | 有 | 有 | 有 | 主链路已对齐 |
 | `raster_manage / raster_inspect / raster_render / raster_math` | `info` `histogram` `colormap` `histogram_match` `nodata` `overviews` `band_math` `cog` | 有 | 有 | 有 | GUI 已统一归并到“栅格工具”主项 |
@@ -151,6 +151,7 @@ GUI 当前已覆盖的离屏回归共 `112` 项，包含：
   - `repair`
   - `geom_metrics`
   - `nearest`
+  - `spatial_join`
   - `adjacency`
   - `overlap_check`
   - `topology_check`

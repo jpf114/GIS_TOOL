@@ -2784,6 +2784,172 @@ TEST_F(PluginTest, VectorIntersectOutputsOverlappedPolygon) {
     GDALClose(outDs);
 }
 
+TEST_F(PluginTest, VectorSpatialJoinRejectsMismatchedSrs) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_spatial_join_input.shp").string();
+    std::string join = (getTestDir() / "e2e_spatial_join_join.shp").string();
+    std::string output = (getTestDir() / "e2e_spatial_join_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs1 = std::make_unique<OGRSpatialReference>();
+        srs1->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs1.get(), wkbPolygon);
+        ASSERT_NE(layer1, nullptr);
+        auto* feat1 = OGRFeature::CreateFeature(layer1->GetLayerDefn());
+        OGRPolygon poly1;
+        OGRLinearRing ring1;
+        ring1.addPoint(0, 0);
+        ring1.addPoint(100, 0);
+        ring1.addPoint(100, 100);
+        ring1.addPoint(0, 100);
+        ring1.addPoint(0, 0);
+        poly1.addRing(&ring1);
+        feat1->SetGeometry(&poly1);
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(join.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto srs2 = std::make_unique<OGRSpatialReference>();
+        srs2->importFromEPSG(4326);
+        auto* layer2 = ds2->CreateLayer("join", srs2.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* feat2 = OGRFeature::CreateFeature(layer2->GetLayerDefn());
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(0, 0);
+        ring2.addPoint(1, 0);
+        ring2.addPoint(1, 1);
+        ring2.addPoint(0, 1);
+        ring2.addPoint(0, 0);
+        poly2.addRing(&ring2);
+        feat2->SetGeometry(&poly2);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("spatial_join");
+    params["input"] = input;
+    params["join_vector"] = join;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("CRS"), std::string::npos);
+}
+
+TEST_F(PluginTest, VectorSpatialJoinWritesJoinCountAndValue) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_spatial_join_input.gpkg");
+    const std::string join = utf8PathString(getTestDir() / "e2e_spatial_join_join.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_spatial_join_output.gpkg");
+
+    auto makeRect = [](double minX, double minY, double maxX, double maxY) {
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(minX, minY);
+        ring.addPoint(maxX, minY);
+        ring.addPoint(maxX, maxY);
+        ring.addPoint(minX, maxY);
+        ring.addPoint(minX, minY);
+        poly.addRing(&ring);
+        return poly;
+    };
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+
+        auto* inputDs = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(inputDs, nullptr);
+        OGRSpatialReference srs;
+        ASSERT_EQ(srs.importFromEPSG(3857), OGRERR_NONE);
+        auto* inputLayer = inputDs->CreateLayer("source", &srs, wkbPolygon, nullptr);
+        ASSERT_NE(inputLayer, nullptr);
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(inputLayer->CreateField(&nameField), OGRERR_NONE);
+
+        auto* srcA = OGRFeature::CreateFeature(inputLayer->GetLayerDefn());
+        srcA->SetField("name", "src_a");
+        OGRPolygon srcAPoly = makeRect(0, 0, 100, 100);
+        srcA->SetGeometry(&srcAPoly);
+        ASSERT_EQ(inputLayer->CreateFeature(srcA), OGRERR_NONE);
+        OGRFeature::DestroyFeature(srcA);
+
+        auto* srcB = OGRFeature::CreateFeature(inputLayer->GetLayerDefn());
+        srcB->SetField("name", "src_b");
+        OGRPolygon srcBPoly = makeRect(150, 0, 250, 100);
+        srcB->SetGeometry(&srcBPoly);
+        ASSERT_EQ(inputLayer->CreateFeature(srcB), OGRERR_NONE);
+        OGRFeature::DestroyFeature(srcB);
+        GDALClose(inputDs);
+
+        auto* joinDs = driver->Create(join.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(joinDs, nullptr);
+        auto* joinLayer = joinDs->CreateLayer("join", &srs, wkbPolygon, nullptr);
+        ASSERT_NE(joinLayer, nullptr);
+        OGRFieldDefn labelField("label", OFTString);
+        ASSERT_EQ(joinLayer->CreateField(&labelField), OGRERR_NONE);
+
+        auto* joinFeat = OGRFeature::CreateFeature(joinLayer->GetLayerDefn());
+        joinFeat->SetField("label", "join_a");
+        OGRPolygon joinPoly = makeRect(50, 50, 120, 120);
+        joinFeat->SetGeometry(&joinPoly);
+        ASSERT_EQ(joinLayer->CreateFeature(joinFeat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(joinFeat);
+        GDALClose(joinDs);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("spatial_join");
+    params["input"] = input;
+    params["join_vector"] = join;
+    params["join_field"] = std::string("label");
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("feature_count"), "2");
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(outLayer->GetFeatureCount(FALSE), 2);
+
+    std::map<std::string, std::pair<int, std::string>> actual;
+    outLayer->ResetReading();
+    OGRFeature* outFeat = nullptr;
+    while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
+        actual[outFeat->GetFieldAsString("name")] = {
+            outFeat->GetFieldAsInteger("join_count"),
+            outFeat->GetFieldAsString("join_value")
+        };
+        OGRFeature::DestroyFeature(outFeat);
+    }
+
+    ASSERT_EQ(actual.size(), 2u);
+    EXPECT_EQ(actual["src_a"].first, 1);
+    EXPECT_EQ(actual["src_a"].second, "join_a");
+    EXPECT_EQ(actual["src_b"].first, 0);
+    EXPECT_TRUE(actual["src_b"].second.empty());
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";

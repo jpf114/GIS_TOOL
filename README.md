@@ -83,6 +83,7 @@ GUI 当前已完成的主功能归并：
 - `repair` 修复
 - `geom_metrics` 几何属性
 - `nearest` 最近邻
+- `spatial_join` 空间连接
 - `adjacency` 邻接关系
 - `overlap_check` 重叠检查
 - `topology_check` 拓扑检查

@@ -25,7 +25,11 @@ set(command_args
 )
 
 if(DEFINED TARGET_DATASET)
-    list(APPEND command_args --set-param "nearest_vector=${TARGET_PATH}")
+    if(ACTION STREQUAL "nearest")
+        list(APPEND command_args --set-param "nearest_vector=${TARGET_PATH}")
+    elseif(ACTION STREQUAL "spatial_join")
+        list(APPEND command_args --set-param "join_vector=${TARGET_PATH}")
+    endif()
 endif()
 
 if(DEFINED EXTRA_PARAMS AND NOT EXTRA_PARAMS STREQUAL "")

@@ -708,7 +708,9 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
             if (pluginName == "vector" && action == "convert") {
                 config.saveFilter = filterForVectorOutputs();
             } else if (pluginName == "vector" &&
-                       (action == "union" || action == "difference" || action == "dissolve")) {
+                       (action == "union" || action == "difference" ||
+                        action == "intersect" || action == "dissolve" ||
+                        action == "spatial_join")) {
                 config.saveFilter = filterForVectorOutputsWithoutCsvOrKml();
             } else if (pluginName == "vector" && action == "polygonize") {
                 config.saveFilter = filterForPolygonizeOutputs();
@@ -1462,7 +1464,9 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "vector" &&
-        (actionKey == "union" || actionKey == "difference" || actionKey == "dissolve")) {
+        (actionKey == "union" || actionKey == "difference" ||
+         actionKey == "intersect" || actionKey == "dissolve" ||
+         actionKey == "spatial_join")) {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg 或 .shp"};
