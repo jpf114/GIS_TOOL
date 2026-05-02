@@ -255,6 +255,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         gis::gui::buildSuggestedOutputPath(
             "D:/data/parcels.gpkg", "vector", "topology_check"),
         "D:/data/parcels_vector_topology_check.csv");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/parcels.gpkg", "vector", "multipart_check"),
+        "D:/data/parcels_vector_multipart_check.csv");
 }
 
 TEST(GuiSupportTest, ComputeDerivedOutputUpdateAppliesSuggestedValueForEmptyOutput) {

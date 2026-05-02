@@ -3334,6 +3334,92 @@ TEST_F(PluginTest, VectorBoundaryExecution) {
     GDALClose(outDs);
 }
 
+TEST_F(PluginTest, VectorMultipartCheckExecution) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_multipart_check_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_multipart_check_output.csv");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("shapes", srs.get(), wkbMultiPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        OGRMultiPolygon multiPoly;
+        OGRPolygon poly1;
+        OGRLinearRing ring1;
+        ring1.addPoint(0, 0);
+        ring1.addPoint(5, 0);
+        ring1.addPoint(5, 5);
+        ring1.addPoint(0, 5);
+        ring1.addPoint(0, 0);
+        poly1.addRing(&ring1);
+        multiPoly.addGeometry(&poly1);
+
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(10, 0);
+        ring2.addPoint(15, 0);
+        ring2.addPoint(15, 5);
+        ring2.addPoint(10, 5);
+        ring2.addPoint(10, 0);
+        poly2.addRing(&ring2);
+        multiPoly.addGeometry(&poly2);
+
+        auto* feat1 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat1->SetGeometry(&multiPoly);
+        ASSERT_EQ(layer->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+
+        OGRMultiPolygon singleAsMulti;
+        OGRPolygon poly3;
+        OGRLinearRing ring3;
+        ring3.addPoint(20, 0);
+        ring3.addPoint(25, 0);
+        ring3.addPoint(25, 5);
+        ring3.addPoint(20, 5);
+        ring3.addPoint(20, 0);
+        poly3.addRing(&ring3);
+        singleAsMulti.addGeometry(&poly3);
+
+        auto* feat2 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat2->SetGeometry(&singleAsMulti);
+        ASSERT_EQ(layer->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("multipart_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("issue_count"), "2");
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(ifs, line)) {
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 3u);
+    EXPECT_EQ(lines[0], "source_fid,geom_type,part_count");
+    EXPECT_NE(lines[1].find("MultiPolygon"), std::string::npos);
+    EXPECT_NE(lines[1].find(",2"), std::string::npos);
+    EXPECT_NE(lines[2].find("MultiPolygon"), std::string::npos);
+    EXPECT_NE(lines[2].find(",1"), std::string::npos);
+}
+
 TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);

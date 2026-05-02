@@ -128,6 +128,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("centroid"), QStringLiteral("质心")},
         {QStringLiteral("envelope"), QStringLiteral("外包矩形")},
         {QStringLiteral("boundary"), QStringLiteral("边界提取")},
+        {QStringLiteral("multipart_check"), QStringLiteral("多部件检查")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -776,6 +777,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"centroid", {QStringLiteral("质心"), QStringLiteral("按要素生成质心点，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"envelope", {QStringLiteral("外包矩形"), QStringLiteral("按要素生成外包矩形面，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"boundary", {QStringLiteral("边界提取"), QStringLiteral("按要素提取面边界线，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
+            {"multipart_check", {QStringLiteral("多部件检查"), QStringLiteral("检查多部件要素并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
         }},
     };
     return kConfigs;
