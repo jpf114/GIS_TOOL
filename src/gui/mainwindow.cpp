@@ -1281,7 +1281,7 @@ void MainWindow::setupUi() {
     functionTitleLabel_->setObjectName(QStringLiteral("heroTitle"));
     heroTextLayout->addWidget(functionTitleLabel_);
 
-    functionDescLabel_ = new QLabel(QStringLiteral("从左侧选择插件和子功能后，这里会显示功能说明和参数配置。"));
+    functionDescLabel_ = new QLabel(QStringLiteral("从左侧选择主功能和子功能后，这里会显示功能说明和参数配置。"));
     functionDescLabel_->setObjectName(QStringLiteral("heroDesc"));
     functionDescLabel_->setWordWrap(true);
     heroTextLayout->addWidget(functionDescLabel_);
@@ -1510,7 +1510,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
         paramWidget_->clear();
         currentActionKey_.clear();
         functionTitleLabel_->setText(QStringLiteral("请选择功能"));
-        functionDescLabel_->setText(QStringLiteral("从左侧选择插件和子功能后，这里会显示功能说明和参数配置。"));
+        functionDescLabel_->setText(QStringLiteral("从左侧选择主功能和子功能后，这里会显示功能说明和参数配置。"));
         if (functionIconLabel_) {
             functionIconLabel_->setPixmap(badgeIconPixmap(QStringLiteral("default"), QColor("#EAF3FF"), QColor("#2F7CF6")));
         }
