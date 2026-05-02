@@ -74,6 +74,7 @@ GUI 当前已完成的主功能归并：
 
 - `band_math` 波段运算
 - `cog` COG 生成
+- `histogram_match` 直方图匹配
 
 ### vector
 

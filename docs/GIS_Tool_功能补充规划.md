@@ -18,7 +18,7 @@
 | classification | 地物分类统计、SVM、随机森林、最大似然分类 |
 | georef | DOS、辐射定标、控制点配准、余弦校正、Minnaert、C 校正、QUAC、RPC 正射校正 |
 | terrain | 坡度、坡向、山体阴影、TPI、曲率、粗糙度、填洼、流向、汇流累积、河网提取、流域划分、剖面提取、视域、多点视域、填挖方、库容计算 |
-| raster_manage / raster_inspect / raster_render / raster_math | 金字塔、NoData、直方图、信息查看、伪彩色、波段运算、COG 生成 |
+| raster_manage / raster_inspect / raster_render / raster_math | 金字塔、NoData、直方图、信息查看、伪彩色、直方图匹配、波段运算、COG 生成 |
 | spindex | NDVI、NDWI、自定义指数及其他已扩展光谱指数 |
 | vector | 信息查看、过滤、缓冲、裁切、栅格化、面矢量化、格式转换、并集、差集、融合、简化、修复、几何属性、最近邻，以及一批拓扑检查与空间分析能力 |
 
@@ -130,7 +130,7 @@
 
 - **NDVI → 光谱指数迁移**：将 NDVI 功能升级为通用光谱指数计算器，纳入 `spindex` 插件。
 - **影像统计增强**：支持按矢量区域分区统计（Zonal Statistics）。
-- **直方图匹配**：一景影像匹配到另一景的色调分布。
+- **直方图匹配**：一景影像匹配到另一景的色调分布，当前已接入 `raster_render.histogram_match`。
 - **COG 输出**：生成 Cloud Optimized GeoTIFF，便于云端发布。
 
 当前实现状态补充：
