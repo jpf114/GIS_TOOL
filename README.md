@@ -37,6 +37,11 @@
 - `raster_manage / raster_inspect / raster_render / raster_math` -> 栅格工具
 - `vector` -> 矢量数据处理
 
+GUI 当前已完成的主功能归并：
+
+- 左侧导航已将 `raster_manage / raster_inspect / raster_render / raster_math` 合并为单一“栅格工具”主项
+- 子功能点击时会自动切回对应真实插件，底层参数与执行链路保持不变
+
 ## 本轮新增并已接入的功能
 
 ### processing
