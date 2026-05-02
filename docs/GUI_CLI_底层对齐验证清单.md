@@ -4,7 +4,7 @@
 
 本文用于收口当前项目在 `GUI / CLI / 底层算法插件` 三层上的对齐状态，给出已经完成的验证证据、当前可确认结论、已知边界，以及后续是否还存在必须继续补测的硬缺口。
 
-结论以 `2026-04-30` 当天在当前工作区重新执行得到的结果为准。
+结论以 `2026-05-02` 当天在当前工作区重新执行得到的结果为准。
 
 ## 2. 当前结论
 
@@ -33,7 +33,7 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 
 结果：
 
-- `201/201` 通过
+- `308/308` 通过
 
 这组结果覆盖：
 
@@ -50,9 +50,9 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 
 - GUI support 测试通过
 - GUI offscreen 回归通过
-- GUI 当前自动化覆盖总量为 `92` 项
-  - `41` 项 `GuiSupportTest`
-  - `51` 项 `gui_` 离屏回归
+- GUI 当前自动化覆盖总量为 `144` 项
+  - `58` 项 `GuiSupportTest`
+  - `86` 项 `gui_` 离屏回归
 
 ### 3.3 CLI 插件加载验证
 
@@ -91,8 +91,8 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 | 层级 | 当前状态 | 主要证据 | 说明 |
 | --- | --- | --- | --- |
-| 底层 `core` | 通过 | `ctest 201/201` | GDAL/OpenCV/PROJ 包装、运行时环境、基础能力可用 |
-| 底层 `framework` | 通过 | `ctest 201/201` | 参数类型、校验、插件管理器、CLI 参数解析链路通过 |
+| 底层 `core` | 通过 | `ctest 308/308` | GDAL/OpenCV/PROJ 包装、运行时环境、基础能力可用 |
+| 底层 `framework` | 通过 | `ctest 308/308` | 参数类型、校验、插件管理器、CLI 参数解析链路通过 |
 | 插件层 `plugins/*` | 通过 | 插件测试 + GUI/CLI 回归 | 主插件执行链已验证 |
 | `CLI` 入口 | 通过 | `gis-cli --list` + 全量测试 + real vector regression | 可加载插件并执行主要动作 |
 | `GUI` 入口 | 通过 | `GuiSupportTest` + `gui_` offscreen 回归 | 参数 UI 支撑与自动执行链路可用 |
@@ -106,15 +106,18 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 | --- | --- | --- | --- | --- | --- |
 | `vector` | `info` `filter` `buffer` `clip` `rasterize` `polygonize` `convert` `union` `difference` `dissolve` | 有 | 有 | 有 | 主链路已对齐 |
 | `projection` | `reproject` `info` `transform` `assign_srs` | 有 | 有 | 有 | 主链路已对齐 |
-| `utility` | `histogram` `colormap` `ndvi` `nodata` `overviews` `info` | 有 | 有 | 有 | 主链路已对齐 |
-| `classification` | `feature_stats` | 有 | 有 | 有 | 主链路已对齐 |
-| `processing` | `threshold` `filter` `enhance` `stats` `edge` `contour` `band_math` `template_match` `pansharpen` `hough` `watershed` `kmeans` | 有 | 有 | 有 | 主链路已对齐 |
+| `spindex` | `ndvi` `ndwi` `custom_index` | 有 | 有 | 有 | 主链路已对齐 |
+| `raster_manage / raster_inspect / raster_render / raster_math` | `info` `histogram` `colormap` `nodata` `overviews` `band_math` | 有 | 有 | 有 | GUI 已统一归并到“栅格工具”主项 |
+| `classification` | `feature_stats` `svm_classify` `random_forest_classify` `max_likelihood_classify` | 有 | 有 | 有 | 主链路已对齐 |
+| `processing` | `threshold` `filter` `enhance` `stats` `edge` `contour` `template_match` `pansharpen` `hough` `watershed` `kmeans` | 有 | 有 | 有 | 主链路已对齐 |
 | `matching` | `detect` `corner` `match` `change` `register` | 有 | 有 | 有 | 主链路已对齐 |
 | `cutting` | `clip` `mosaic` `split` `merge_bands` | 有 | 有 | 有 | 主链路已对齐 |
+| `georef` | `dos_correction` `radiometric_calibration` `gcp_register` `cosine_correction` `minnaert_correction` `c_correction` `quac_correction` `rpc_orthorectify` | 有 | 有 | 有 | 主链路已对齐 |
+| `terrain` | `slope` `aspect` `hillshade` `tpi` `curvature` `roughness` `fill_sinks` `flow_direction` `flow_accumulation` `stream_extract` `watershed` `profile_extract` `viewshed` `viewshed_multi` `cut_fill` `reservoir_volume` | 有 | 有 | 有 | 主链路已对齐 |
 
 ## 6. GUI 当前回归覆盖说明
 
-GUI 当前已覆盖的离屏回归共 `51` 项，包含：
+GUI 当前已覆盖的离屏回归共 `86` 项，包含：
 
 - `vector`
   - `info`
@@ -132,15 +135,22 @@ GUI 当前已覆盖的离屏回归共 `51` 项，包含：
   - `info`
   - `transform`
   - `assign_srs`
-- `utility`
+- `spindex`
+  - `ndvi`
+  - `ndwi`
+  - `custom_index`
+- `栅格工具`
   - `histogram`
   - `colormap`
-  - `ndvi`
   - `nodata`
   - `overviews`
   - `info`
+  - `band_math`
 - `classification`
   - `feature_stats`
+  - `svm_classify`
+  - `random_forest_classify`
+  - `max_likelihood_classify`
 - `processing`
   - `threshold`
   - `filter`
@@ -160,11 +170,30 @@ GUI 当前已覆盖的离屏回归共 `51` 项，包含：
   - `match`
   - `change`
   - `register`
+  - `ecc_register_debug_failure`
+  - `stitch_debug_failure`
 - `cutting`
   - `clip`
   - `mosaic`
   - `split`
   - `merge_bands`
+- `terrain`
+  - `slope`
+  - `aspect`
+  - `hillshade`
+  - `tpi`
+  - `curvature`
+  - `roughness`
+  - `fill_sinks`
+  - `flow_direction`
+  - `flow_accumulation`
+  - `watershed`
+  - `stream_extract`
+  - `profile_extract`
+  - `viewshed`
+  - `viewshed_multi`
+  - `cut_fill`
+  - `reservoir_volume`
 
 ## 7. 已知边界与注意事项
 

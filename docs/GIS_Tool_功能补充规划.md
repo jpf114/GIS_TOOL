@@ -7,7 +7,7 @@
 
 ## 一、当前算法现状
 
-本项目已实现六大插件组，均为传统图像处理与 GIS 算子：
+本项目当前已形成多主功能插件体系，均为传统图像处理与 GIS 算子：
 
 | 插件组 | 已实现功能 |
 |--------|------------|
@@ -15,7 +15,7 @@
 | cutting | 裁切、镶嵌、分块、波段合并 |
 | matching | 特征检测、特征匹配、影像配准、变化检测、ECC 配准、角点检测、拼接 |
 | processing | 阈值分割、滤波、增强、波段运算、统计、边缘检测、轮廓提取、模板匹配、全色锐化、霍夫、分水岭、K-Means |
-| utility | 金字塔、NoData、直方图、信息查看、伪彩色、NDVI |
+| raster_manage / raster_inspect / raster_render / raster_math / spindex | 金字塔、NoData、直方图、信息查看、伪彩色、波段运算、NDVI 及其他光谱指数 |
 | vector | 信息查看、过滤、缓冲、裁切、栅格化、面矢量化、格式转换、并集、差集、融合 |
 
 现有功能已覆盖基础处理链，但在**遥感几何校正、地形分析、光谱指数、点云处理、矢量空间分析**等方面存在空白。
@@ -71,7 +71,7 @@
 
 ---
 
-### 2.4 新增插件：spindex（光谱指数与植被分析）
+### 2.4 新增插件：spindex（光谱指数）
 
 **目标**：在现有 NDVI 基础上，扩充常用遥感光谱指数库。
 
@@ -111,12 +111,18 @@
 
 ---
 
-### 2.7 现有 `utility` 插件增强
+### 2.7 现有栅格工具体系增强
 
 - **NDVI → 光谱指数迁移**：将 NDVI 功能升级为通用光谱指数计算器，纳入 `spindex` 插件。
 - **影像统计增强**：支持按矢量区域分区统计（Zonal Statistics）。
 - **直方图匹配**：一景影像匹配到另一景的色调分布。
 - **COG 输出**：生成 Cloud Optimized GeoTIFF，便于云端发布。
+
+当前实现状态补充：
+
+- `utility` 已不再作为当前主插件存在
+- 其中能力已拆分并归并到 `raster_manage / raster_inspect / raster_render / raster_math / spindex`
+- GUI 当前进一步把 `raster_manage / raster_inspect / raster_render / raster_math` 合并展示为“栅格工具”主项
 
 ---
 

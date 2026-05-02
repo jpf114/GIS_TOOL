@@ -17,7 +17,7 @@
 - 影像裁切与镶嵌
 - 特征匹配与配准
 - 影像处理与分析
-- 分类统计与监督分类
+- 分类统计
 - 几何校正与辐射处理
 - 地形分析
 - 光谱指数
@@ -30,7 +30,7 @@
 - `cutting` -> 影像裁切与镶嵌
 - `matching` -> 特征匹配与配准
 - `processing` -> 影像处理与分析
-- `classification` -> 分类统计与监督分类
+- `classification` -> 分类统计
 - `georef` -> 几何校正与辐射处理
 - `terrain` -> 地形分析
 - `spindex` -> 光谱指数
@@ -41,6 +41,7 @@ GUI 当前已完成的主功能归并：
 
 - 左侧导航已将 `raster_manage / raster_inspect / raster_render / raster_math` 合并为单一“栅格工具”主项
 - 子功能点击时会自动切回对应真实插件，底层参数与执行链路保持不变
+- `classification` 主项统一使用“分类统计”，监督分类动作继续作为其子功能
 
 ## 本轮新增并已接入的功能
 
