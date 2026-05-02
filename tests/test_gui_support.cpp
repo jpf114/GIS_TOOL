@@ -271,6 +271,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         gis::gui::buildSuggestedOutputPath(
             "D:/data/roads.gpkg", "vector", "dangling_endpoint_check"),
         "D:/data/roads_vector_dangling_endpoint_check.csv");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/parcels.gpkg", "vector", "sliver_remove"),
+        "D:/data/parcels_vector_sliver_remove.gpkg");
 }
 
 TEST(GuiSupportTest, ComputeDerivedOutputUpdateAppliesSuggestedValueForEmptyOutput) {

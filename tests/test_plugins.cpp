@@ -3930,6 +3930,99 @@ TEST_F(PluginTest, VectorDanglingEndpointCheckExecution) {
     EXPECT_NE(lines[4].find(",1,11,0"), std::string::npos);
 }
 
+TEST_F(PluginTest, VectorSliverRemoveExecution) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_sliver_remove_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_sliver_remove_output.gpkg");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("polygons", srs.get(), wkbMultiPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        OGRMultiPolygon mixed;
+
+        OGRPolygon largePolygon;
+        OGRLinearRing largeRing;
+        largeRing.addPoint(0, 0);
+        largeRing.addPoint(10, 0);
+        largeRing.addPoint(10, 10);
+        largeRing.addPoint(0, 10);
+        largeRing.addPoint(0, 0);
+        largePolygon.addRing(&largeRing);
+        mixed.addGeometry(&largePolygon);
+
+        OGRPolygon smallPolygon;
+        OGRLinearRing smallRing;
+        smallRing.addPoint(20, 0);
+        smallRing.addPoint(21, 0);
+        smallRing.addPoint(21, 1);
+        smallRing.addPoint(20, 1);
+        smallRing.addPoint(20, 0);
+        smallPolygon.addRing(&smallRing);
+        mixed.addGeometry(&smallPolygon);
+
+        auto* feat1 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat1->SetGeometry(&mixed);
+        ASSERT_EQ(layer->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+
+        OGRMultiPolygon onlySmall;
+        OGRPolygon smallOnlyPolygon;
+        OGRLinearRing smallOnlyRing;
+        smallOnlyRing.addPoint(30, 0);
+        smallOnlyRing.addPoint(31, 0);
+        smallOnlyRing.addPoint(31, 1);
+        smallOnlyRing.addPoint(30, 1);
+        smallOnlyRing.addPoint(30, 0);
+        smallOnlyPolygon.addRing(&smallOnlyRing);
+        onlySmall.addGeometry(&smallOnlyPolygon);
+
+        auto* feat2 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat2->SetGeometry(&onlySmall);
+        ASSERT_EQ(layer->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("sliver_remove");
+    params["input"] = input;
+    params["output"] = output;
+    params["min_area"] = 10.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("feature_count"), "1");
+    EXPECT_EQ(result.metadata.at("removed_part_count"), "2");
+    EXPECT_EQ(result.metadata.at("removed_feature_count"), "1");
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(outLayer->GetFeatureCount(), 1);
+
+    outLayer->ResetReading();
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    OGRGeometry* outGeom = outFeat->GetGeometryRef();
+    ASSERT_NE(outGeom, nullptr);
+    ASSERT_EQ(wkbFlatten(outGeom->getGeometryType()), wkbMultiPolygon);
+    EXPECT_NEAR(outGeom->toMultiPolygon()->get_Area(), 100.0, 1e-6);
+    OGRFeature::DestroyFeature(outFeat);
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);

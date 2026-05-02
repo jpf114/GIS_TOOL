@@ -140,7 +140,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract", "midpoints_extract", "interior_point", "duplicate_point_check", "hole_check", "dangling_endpoint_check"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract", "midpoints_extract", "interior_point", "duplicate_point_check", "hole_check", "dangling_endpoint_check", "sliver_remove"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -208,6 +208,10 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "tolerance", "简化容差", "Douglas-Peucker 简化容差，单位与图层坐标单位一致",
             gis::framework::ParamType::Double, false, double{10.0}
         },
+        gis::framework::ParamSpec{
+            "min_area", "最小面积", "小于该面积阈值的面碎片将被移除",
+            gis::framework::ParamType::Double, false, double{10.0}
+        },
     };
 }
 
@@ -247,6 +251,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "duplicate_point_check") return doDuplicatePointCheck(params, progress);
     if (action == "hole_check") return doHoleCheck(params, progress);
     if (action == "dangling_endpoint_check") return doDanglingEndpointCheck(params, progress);
+    if (action == "sliver_remove") return doSliverRemove(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -304,6 +309,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_hole_check.inc"
 
 #include "vector_plugin_dangling_endpoint_check.inc"
+
+#include "vector_plugin_sliver_remove.inc"
 
 } // namespace gis::plugins
 

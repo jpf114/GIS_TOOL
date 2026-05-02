@@ -137,6 +137,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("duplicate_point_check"), QStringLiteral("重复点检查")},
         {QStringLiteral("hole_check"), QStringLiteral("孔洞检查")},
         {QStringLiteral("dangling_endpoint_check"), QStringLiteral("悬挂端点检查")},
+        {QStringLiteral("sliver_remove"), QStringLiteral("碎片面消除")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -794,6 +795,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"duplicate_point_check", {QStringLiteral("重复点检查"), QStringLiteral("检查坐标完全重复的点要素并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"hole_check", {QStringLiteral("孔洞检查"), QStringLiteral("检查面要素内环孔洞并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"dangling_endpoint_check", {QStringLiteral("悬挂端点检查"), QStringLiteral("检查线要素未连接的端点并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
+            {"sliver_remove", {QStringLiteral("碎片面消除"), QStringLiteral("按最小面积阈值移除碎片多边形，输出清理后的面图层。"), {"input", "output", "layer", "min_area"}, {"input", "output", "min_area"}}},
         }},
     };
     return kConfigs;

@@ -1206,6 +1206,17 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
+    if (pluginName == "vector" && actionKey == "sliver_remove") {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".gpkg", ".geojson", ".json", ".shp", ".kml"})) {
+            return ActionValidationIssue{"output", "参数“输出文件”应使用 .gpkg/.geojson/.json/.shp/.kml"};
+        }
+        const auto minArea = doubleParamValue(params, "min_area");
+        if (minArea.has_value() && *minArea <= 0.0) {
+            return ActionValidationIssue{"min_area", "参数“最小面积”必须大于 0"};
+        }
+    }
+
     if (pluginName == "vector" &&
         (actionKey == "union" || actionKey == "difference" || actionKey == "dissolve")) {
         const std::string outputPath = stringParam("output");
