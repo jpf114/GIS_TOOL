@@ -430,6 +430,26 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_terrain_stream_extract_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_stream_extract/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_stream_extract/gui_terrain_stream_extract.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_stream_extract_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_profile_extract_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_profile_extract/output.csv
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_profile_extract/gui_terrain_profile_extract.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_profile_extract_regression.cmake
+    )
+
+    add_test(
         NAME gui_terrain_viewshed_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
@@ -437,6 +457,26 @@ if(TARGET gis-gui)
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_viewshed/output.tif
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_viewshed/gui_terrain_viewshed.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_viewshed_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_cut_fill_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_cut_fill/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_cut_fill/gui_terrain_cut_fill.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_cut_fill_regression.cmake
+    )
+
+    add_test(
+        NAME gui_terrain_reservoir_volume_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_reservoir_volume/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_reservoir_volume/gui_terrain_reservoir_volume.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_reservoir_volume_regression.cmake
     )
 
     add_test(
