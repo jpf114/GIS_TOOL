@@ -1145,7 +1145,8 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     if (pluginName == "vector" &&
         (actionKey == "filter" || actionKey == "buffer" || actionKey == "clip" ||
          actionKey == "simplify" || actionKey == "repair" || actionKey == "geom_metrics" ||
-         actionKey == "nearest")) {
+         actionKey == "nearest" || actionKey == "convex_hull" || actionKey == "centroid" ||
+         actionKey == "envelope" || actionKey == "boundary")) {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp", ".kml"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg、.shp 或 .kml"};

@@ -140,7 +140,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -237,6 +237,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "convex_hull") return doConvexHull(params, progress);
     if (action == "centroid")   return doCentroid(params, progress);
     if (action == "envelope")   return doEnvelope(params, progress);
+    if (action == "boundary")   return doBoundary(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -274,6 +275,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_centroid.inc"
 
 #include "vector_plugin_envelope.inc"
+
+#include "vector_plugin_boundary.inc"
 
 } // namespace gis::plugins
 
