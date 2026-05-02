@@ -78,6 +78,7 @@ GUI 当前已完成的主功能归并：
 
 ### vector
 
+- `intersect` 交集
 - `simplify` 简化
 - `repair` 修复
 - `geom_metrics` 几何属性

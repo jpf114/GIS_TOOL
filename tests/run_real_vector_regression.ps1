@@ -224,6 +224,9 @@ function Validate-CaseOutputs {
         "difference_focus" {
             Assert-TextContains -Text $Case.Output -Expected "Difference completed: 0 features" -Message "difference_focus feature count mismatch"
         }
+        "intersect_focus" {
+            Assert-TextContains -Text $Case.Output -Expected "Intersect completed: 2 features" -Message "intersect_focus feature count mismatch"
+        }
         "union_focus" {
             Assert-TextContains -Text $Case.Output -Expected "Union completed: 2 features" -Message "union_focus feature count mismatch"
         }
@@ -541,6 +544,14 @@ $cases += New-Case -Name "union_focus" -CaseArgs @(
     ("--output=" + (Join-Path $ResolvedOutputRoot "union_focus.gpkg"))
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "union_focus.gpkg")
+)
+$cases += New-Case -Name "intersect_focus" -CaseArgs @(
+    "vector", "intersect",
+    ("--input=" + $roadsCore),
+    ("--overlay_vector=" + $chinaBbox),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "intersect_focus.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "intersect_focus.gpkg")
 )
 $cases += New-Case -Name "dissolve_bbox" -CaseArgs @(
     "vector", "dissolve",

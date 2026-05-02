@@ -140,7 +140,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract", "midpoints_extract", "interior_point", "duplicate_point_check", "hole_check", "dangling_endpoint_check", "sliver_remove"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "intersect", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract", "midpoints_extract", "interior_point", "duplicate_point_check", "hole_check", "dangling_endpoint_check", "sliver_remove"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -189,7 +189,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             {"GeoJSON", "ESRI Shapefile", "GPKG", "KML", "CSV"}
         },
         gis::framework::ParamSpec{
-            "overlay_vector", "叠加矢量", "并集/差集操作的第二个矢量文件路径",
+            "overlay_vector", "叠加矢量", "并集/差集/交集操作的第二个矢量文件路径",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
@@ -230,6 +230,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "convert")    return doConvert(params, progress);
     if (action == "union")      return doUnion(params, progress);
     if (action == "difference") return doDifference(params, progress);
+    if (action == "intersect")  return doIntersect(params, progress);
     if (action == "dissolve")   return doDissolve(params, progress);
     if (action == "simplify")   return doSimplify(params, progress);
     if (action == "repair")     return doRepair(params, progress);

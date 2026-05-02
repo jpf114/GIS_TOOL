@@ -52,7 +52,7 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 - GUI offscreen 回归通过
 - GUI 当前自动化覆盖总量为 `172` 项
   - `61` 项 `GuiSupportTest`
-  - `111` 项 `gui_` 离屏回归
+  - `112` 项 `gui_` 离屏回归
 
 ### 3.3 CLI 插件加载验证
 
@@ -88,7 +88,7 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 - 这些文件属于验证产物，可按上面的命令随时重新生成，不必纳入仓库跟踪
 - 当前 `real_vector_regression` 已不只验证“命令成功 + 文件存在”，还补充了代表性结果断言：
   - `buffer` 校验 `feature_count` 与 `srs_type`
-  - `clip / difference / union / dissolve / polygonize` 校验 CLI 输出中的结果数量
+  - `clip / difference / union / intersect / dissolve / polygonize` 校验 CLI 输出中的结果数量
   - `convert` 校验 `GeoJSON FeatureCollection` 结构与要素数
   - `rasterize` 追加校验输出栅格尺寸、坐标系与统计值
 
@@ -109,7 +109,7 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 | 模块 | 动作 | 底层/插件测试 | CLI 证据 | GUI 证据 | 结论 |
 | --- | --- | --- | --- | --- | --- |
-| `vector` | `info` `filter` `buffer` `clip` `rasterize` `polygonize` `convert` `union` `difference` `dissolve` `simplify` `repair` `geom_metrics` `nearest` `adjacency` `overlap_check` `topology_check` `convex_hull` `centroid` `envelope` `boundary` `multipart_check` `singlepart` `vertices_extract` `endpoints_extract` `midpoints_extract` `interior_point` `duplicate_point_check` `hole_check` `dangling_endpoint_check` `sliver_remove` | 有 | 有 | 有 | 主链路已对齐 |
+| `vector` | `info` `filter` `buffer` `clip` `rasterize` `polygonize` `convert` `union` `difference` `intersect` `dissolve` `simplify` `repair` `geom_metrics` `nearest` `adjacency` `overlap_check` `topology_check` `convex_hull` `centroid` `envelope` `boundary` `multipart_check` `singlepart` `vertices_extract` `endpoints_extract` `midpoints_extract` `interior_point` `duplicate_point_check` `hole_check` `dangling_endpoint_check` `sliver_remove` | 有 | 有 | 有 | 主链路已对齐 |
 | `projection` | `reproject` `info` `transform` `assign_srs` | 有 | 有 | 有 | 主链路已对齐 |
 | `spindex` | `ndvi` `ndwi` `custom_index` | 有 | 有 | 有 | 主链路已对齐 |
 | `raster_manage / raster_inspect / raster_render / raster_math` | `info` `histogram` `colormap` `histogram_match` `nodata` `overviews` `band_math` `cog` | 有 | 有 | 有 | GUI 已统一归并到“栅格工具”主项 |
@@ -133,7 +133,7 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 ## 6. GUI 当前回归覆盖说明
 
-GUI 当前已覆盖的离屏回归共 `111` 项，包含：
+GUI 当前已覆盖的离屏回归共 `112` 项，包含：
 
 - `vector`
   - `info`
@@ -145,6 +145,7 @@ GUI 当前已覆盖的离屏回归共 `111` 项，包含：
   - `convert`
   - `union`
   - `difference`
+  - `intersect`
   - `dissolve`
   - `simplify`
   - `repair`
@@ -247,7 +248,7 @@ GUI 当前已覆盖的离屏回归共 `111` 项，包含：
   - `cut_fill`
   - `reservoir_volume`
 
-另外，`111` 项离屏回归总数中还包含以下非“成功动作输出”场景：
+另外，`112` 项离屏回归总数中还包含以下非“成功动作输出”场景：
 
 - `gui_smoke_startup`
 - `gui_invalid_param_fast_fail_offscreen`

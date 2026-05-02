@@ -2646,6 +2646,144 @@ TEST_F(PluginTest, VectorDifferenceWithoutOverlapAvoidsMultiGeometryWarning) {
     EXPECT_FALSE(hasGeometryTypeWarning);
 }
 
+TEST_F(PluginTest, VectorIntersectRejectsMismatchedSrs) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_intersect_input.shp").string();
+    std::string overlay = (getTestDir() / "e2e_intersect_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_intersect_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs1 = std::make_unique<OGRSpatialReference>();
+        srs1->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs1.get(), wkbPolygon);
+        ASSERT_NE(layer1, nullptr);
+        auto* feat1 = OGRFeature::CreateFeature(layer1->GetLayerDefn());
+        OGRPolygon poly1;
+        OGRLinearRing ring1;
+        ring1.addPoint(0, 0); ring1.addPoint(100, 0); ring1.addPoint(100, 100); ring1.addPoint(0, 100); ring1.addPoint(0, 0);
+        poly1.addRing(&ring1);
+        feat1->SetGeometry(&poly1);
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(overlay.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto srs2 = std::make_unique<OGRSpatialReference>();
+        srs2->importFromEPSG(4326);
+        auto* layer2 = ds2->CreateLayer("overlay", srs2.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* feat2 = OGRFeature::CreateFeature(layer2->GetLayerDefn());
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(116, 39); ring2.addPoint(117, 39); ring2.addPoint(117, 40); ring2.addPoint(116, 40); ring2.addPoint(116, 39);
+        poly2.addRing(&ring2);
+        feat2->SetGeometry(&poly2);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("intersect");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("CRS"), std::string::npos);
+}
+
+TEST_F(PluginTest, VectorIntersectOutputsOverlappedPolygon) {
+    auto* p = mgr_.find("vector");
+    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+
+    std::string input = (getTestDir() / "e2e_intersect_polygon_input.shp").string();
+    std::string overlay = (getTestDir() / "e2e_intersect_polygon_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_intersect_polygon_output.gpkg").string();
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer1 = ds1->CreateLayer("input", srs.get(), wkbPolygon);
+        ASSERT_NE(layer1, nullptr);
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer1->CreateField(&nameField), OGRERR_NONE);
+        auto* feat1 = OGRFeature::CreateFeature(layer1->GetLayerDefn());
+        OGRPolygon poly1;
+        OGRLinearRing ring1;
+        ring1.addPoint(0, 0); ring1.addPoint(100, 0); ring1.addPoint(100, 100); ring1.addPoint(0, 100); ring1.addPoint(0, 0);
+        poly1.addRing(&ring1);
+        feat1->SetGeometry(&poly1);
+        feat1->SetField("name", "zone_a");
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+
+        auto* ds2 = driver->Create(overlay.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto* layer2 = ds2->CreateLayer("overlay", srs.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* feat2 = OGRFeature::CreateFeature(layer2->GetLayerDefn());
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(50, 50); ring2.addPoint(150, 50); ring2.addPoint(150, 150); ring2.addPoint(50, 150); ring2.addPoint(50, 50);
+        poly2.addRing(&ring2);
+        feat2->SetGeometry(&poly2);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("intersect");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Intersect failed: " << result.message;
+    EXPECT_NE(result.message.find("1 features"), std::string::npos);
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(outLayer->GetFeatureCount(), 1);
+    EXPECT_EQ(wkbFlatten(outLayer->GetGeomType()), wkbMultiPolygon);
+
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "zone_a");
+    OGRGeometry* outGeom = outFeat->GetGeometryRef();
+    ASSERT_NE(outGeom, nullptr);
+    EXPECT_EQ(wkbFlatten(outGeom->getGeometryType()), wkbMultiPolygon);
+    EXPECT_NEAR(outGeom->toMultiPolygon()->get_Area(), 2500.0, 1e-6);
+    OGREnvelope envelope;
+    outGeom->getEnvelope(&envelope);
+    EXPECT_NEAR(envelope.MinX, 50.0, 1e-6);
+    EXPECT_NEAR(envelope.MinY, 50.0, 1e-6);
+    EXPECT_NEAR(envelope.MaxX, 100.0, 1e-6);
+    EXPECT_NEAR(envelope.MaxY, 100.0, 1e-6);
+    OGRFeature::DestroyFeature(outFeat);
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
     auto* p = mgr_.find("vector");
     if (!p) GTEST_SKIP() << "vector plugin not loaded";

@@ -170,6 +170,18 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_vector_intersect_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DACTION=intersect
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_overlay_input.geojson
+            -DOVERLAY_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_overlay_mask.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/intersect/output.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/intersect/gui_intersect.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_overlay_regression.cmake
+    )
+
+    add_test(
         NAME gui_vector_filter_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>

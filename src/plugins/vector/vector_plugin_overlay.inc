@@ -353,3 +353,165 @@ gis::framework::Result VectorPlugin::doDifference(
     return gis::framework::Result::ok(
         "Difference completed: " + std::to_string(count) + " features", output);
 }
+
+gis::framework::Result VectorPlugin::doIntersect(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    std::string layerName = gis::framework::getParam<std::string>(params, "layer", "");
+    std::string overlayVector = gis::framework::getParam<std::string>(params, "overlay_vector", "");
+
+    if (input.empty())  return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (overlayVector.empty()) return gis::framework::Result::fail("overlay_vector is required for intersect");
+
+    progress.onProgress(0.1);
+
+    GDALDataset* srcDS = openVector(input, true);
+    if (!srcDS) return gis::framework::Result::fail("Cannot open input: " + input);
+
+    GDALDataset* overlayDS = openVector(overlayVector, true);
+    if (!overlayDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot open overlay: " + overlayVector); }
+
+    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* overlayLayer = overlayDS->GetLayer(0);
+    if (!srcLayer || !overlayLayer) {
+        GDALClose(overlayDS); GDALClose(srcDS);
+        return gis::framework::Result::fail("Cannot find required layers");
+    }
+
+    if (!areSameCrs(srcLayer->GetSpatialRef(), overlayLayer->GetSpatialRef())) {
+        GDALClose(overlayDS); GDALClose(srcDS);
+        return failCrsMismatch("Intersect");
+    }
+
+    const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
+    auto overlayEntries = collectNormalizedGeometries(overlayLayer);
+    const bool useLinearPolygonSegmentation =
+        isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
+    GDALClose(overlayDS);
+
+    if (overlayEntries.empty()) {
+        GDALClose(srcDS);
+        return failInvalidGeometry("Intersect");
+    }
+
+    std::unique_ptr<OGRGeometry> mergedOverlayGeometry;
+    if (overlayEntries.size() <= 128) {
+        mergedOverlayGeometry.reset(buildMergedOverlayGeometry(overlayEntries));
+    }
+
+    progress.onProgress(0.3);
+
+    namespace fs = std::filesystem;
+    std::string outFormat = "GeoJSON";
+    std::string ext = fs::path(output).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext == ".shp") outFormat = "ESRI Shapefile";
+    else if (ext == ".gpkg") outFormat = "GPKG";
+
+    GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
+    if (!drv) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+
+    if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
+        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
+            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
+        }
+    }
+
+    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+
+    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    const bool useTransactions = outFormat == "GPKG";
+    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
+    OGRLayer* dstLayer = dstDS->CreateLayer(
+        "intersect",
+        srcSRS,
+        resultLayerGeometryType(srcEffectiveType),
+        layerOptions.empty() ? nullptr : layerOptions.data());
+    if (!dstLayer) {
+        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+        return gis::framework::Result::fail("Cannot create output layer");
+    }
+
+    auto* srcLayerDefn = srcLayer->GetLayerDefn();
+    for (int i = 0; i < srcLayerDefn->GetFieldCount(); ++i) {
+        OGRFieldDefn fieldDefn(srcLayerDefn->GetFieldDefn(i));
+        dstLayer->CreateField(&fieldDefn);
+    }
+
+    progress.onProgress(0.4);
+
+    srcLayer->ResetReading();
+    const std::vector<int> fieldMap = dstLayer->GetLayerDefn()->ComputeMapForSetFrom(srcLayerDefn, true);
+    OGRFeature* feat = nullptr;
+    int count = 0;
+    const int transactionBatchSize = useTransactions ? 20000 : 1000;
+    if (useTransactions) {
+        dstLayer->StartTransaction();
+    }
+    while ((feat = srcLayer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (geom) {
+            if (useLinearPolygonSegmentation) {
+                const auto candidates = collectCandidateOverlayEntries(overlayEntries, geom);
+                if (candidates.empty()) {
+                    OGRFeature::DestroyFeature(feat);
+                    continue;
+                }
+
+                auto segments = splitLineByOverlayEntries(geom, candidates);
+                std::unique_ptr<OGRGeometry> intersectGeom(buildMergedSegmentGeometry(segments, true));
+                for (auto& segment : segments) {
+                    delete segment.geometry;
+                }
+
+                if (intersectGeom && !intersectGeom->IsEmpty()) {
+                    if (writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(intersectGeom), &fieldMap)) {
+                        count++;
+                        if (useTransactions && count % transactionBatchSize == 0) {
+                            dstLayer->CommitTransaction();
+                            dstLayer->StartTransaction();
+                        }
+                    }
+                }
+                OGRFeature::DestroyFeature(feat);
+                continue;
+            }
+
+            OGRGeometry* overlayGeometry = mergedOverlayGeometry.get();
+            std::unique_ptr<OGRGeometry> candidateOverlay;
+            if (!overlayGeometry) {
+                candidateOverlay.reset(buildCandidateOverlayGeometry(overlayEntries, geom));
+                overlayGeometry = candidateOverlay.get();
+            }
+            if (overlayGeometry && geom->Intersects(overlayGeometry)) {
+                std::unique_ptr<OGRGeometry> intersectGeom(geom->Intersection(overlayGeometry));
+                if (intersectGeom && !intersectGeom->IsEmpty()) {
+                    if (writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(intersectGeom), &fieldMap)) {
+                        count++;
+                        if (useTransactions && count % transactionBatchSize == 0) {
+                            dstLayer->CommitTransaction();
+                            dstLayer->StartTransaction();
+                        }
+                    }
+                }
+            }
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    if (useTransactions) {
+        dstLayer->CommitTransaction();
+        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "intersect");
+    }
+    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.onProgress(1.0);
+
+    return gis::framework::Result::ok(
+        "Intersect completed: " + std::to_string(count) + " features", output);
+}
