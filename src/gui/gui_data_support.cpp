@@ -72,7 +72,8 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
                                    const std::string& paramKey,
                                    const std::string& inputExt) {
     if (pluginName == "classification") {
-        if ((action == "svm_classify" || action == "random_forest_classify") && paramKey == "output") return ".tif";
+        if ((action == "svm_classify" || action == "random_forest_classify" ||
+             action == "max_likelihood_classify") && paramKey == "output") return ".tif";
         if (paramKey == "output") return ".json";
         if (paramKey == "vector_output") return ".gpkg";
         if (paramKey == "raster_output") return ".tif";
@@ -650,7 +651,8 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
         config.suggestedSuffix = defaultSuffixForOutput(pluginName, action, paramKey, ".tif");
 
         if (pluginName == "classification" &&
-            (action == "svm_classify" || action == "random_forest_classify") &&
+            (action == "svm_classify" || action == "random_forest_classify" ||
+             action == "max_likelihood_classify") &&
             paramKey == "output") {
             config.placeholder = "请选择分类输出栅格，建议使用 .tif";
             config.saveFilter = filterForRasterOutputs();
@@ -742,7 +744,8 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
         if (spec.key == "rasters") {
             return "请输入多个分类栅格路径，英文逗号分隔，例如 D:/a.tif,D:/b.tif";
         }
-        if ((action == "svm_classify" || action == "random_forest_classify") && spec.key == "bands") {
+        if ((action == "svm_classify" || action == "random_forest_classify" ||
+             action == "max_likelihood_classify") && spec.key == "bands") {
             return "输入波段列表，英文逗号分隔，例如 1,2,3";
         }
         if (spec.key == "label_column") {
@@ -1207,7 +1210,8 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "classification" &&
-        (actionKey == "svm_classify" || actionKey == "random_forest_classify")) {
+        (actionKey == "svm_classify" || actionKey == "random_forest_classify" ||
+         actionKey == "max_likelihood_classify")) {
         const std::string trainingCsv = stringParam("training_csv");
         const std::string outputPath = stringParam("output");
         const std::string bandsText = stringParam("bands");

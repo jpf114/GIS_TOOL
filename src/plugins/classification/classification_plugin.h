@@ -29,6 +29,10 @@ private:
     gis::framework::Result doRandomForestClassify(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
+
+    gis::framework::Result doMaxLikelihoodClassify(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
 };
 
 } // namespace gis::plugins

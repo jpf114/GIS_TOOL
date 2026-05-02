@@ -640,6 +640,31 @@ TEST_F(PluginTest, ClassificationRandomForestExecution) {
     EXPECT_NEAR(readRasterPixel(output, 20, 2), 2.0f, 1e-4f);
 }
 
+TEST_F(PluginTest, ClassificationMaxLikelihoodExecution) {
+    auto* p = mgr_.find("classification");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTwoClassTrainingRaster("classification_ml_input.tif");
+    const std::string trainingCsv = createSvmTrainingCsv("classification_ml_samples.csv");
+    const std::string output = utf8PathString(getTestDir() / "classification_ml_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("max_likelihood_classify");
+    params["input"] = input;
+    params["training_csv"] = trainingCsv;
+    params["output"] = output;
+    params["bands"] = std::string("1,2");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "max_likelihood_classify");
+    EXPECT_EQ(result.metadata.at("sample_count"), "4");
+    EXPECT_EQ(result.metadata.at("class_count"), "2");
+    EXPECT_NEAR(readRasterPixel(output, 2, 2), 1.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 20, 2), 2.0f, 1e-4f);
+}
+
 TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {
     auto* p = mgr_.find("classification");
     ASSERT_NE(p, nullptr);
