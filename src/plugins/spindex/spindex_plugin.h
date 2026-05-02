@@ -10,7 +10,7 @@ public:
     std::string displayName() const override { return "光谱指数"; }
     std::string version() const override { return "1.2.0"; }
     std::string description() const override {
-        return "遥感光谱指数计算与专题分析，当前支持 NDVI、EVI、SAVI、ARVI、GNDVI、NDWI、MNDWI、NDBI、NBR、AWEI、UI、BI 以及自定义指数表达式。";
+        return "提供遥感光谱指数计算能力，当前支持 NDVI、EVI、SAVI、ARVI、GNDVI、NDWI、MNDWI、NDBI、NBR、AWEI、UI、BI 以及自定义指数表达式。";
     }
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
