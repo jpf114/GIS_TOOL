@@ -83,9 +83,20 @@ TEST_F(CoreTest, GdalDriverCatalogProbe) {
 
 TEST_F(CoreTest, SpindexPresetCatalogIsStable) {
     const auto values = gis::core::spindexCustomIndexPresetValues();
-    ASSERT_EQ(values.size(), 8u);
-    EXPECT_EQ(values.front(), "none");
-    EXPECT_EQ(values.back(), "evi_alias");
+    const std::vector<std::string> expected = {
+        "none",
+        "ndvi_alias",
+        "ndmi_alias",
+        "ndwi_alias",
+        "mndwi_alias",
+        "ndbi_alias",
+        "bsi_alias",
+        "gndvi_alias",
+        "savi_alias",
+        "evi_alias",
+        "evi2_alias"
+    };
+    EXPECT_EQ(values, expected);
     EXPECT_EQ(
         gis::core::spindexCustomIndexPresetExpression("ndvi_alias"),
         "(NIR-RED)/(NIR+RED)");
