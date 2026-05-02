@@ -191,6 +191,8 @@ gis::framework::Result runLocalTerrainProcess(
             true,
             cv::BORDER_REPLICATE);
         result = elevation - ((neighborhoodMean * 9.0f - elevation) / 8.0f);
+    } else if (action == "curvature") {
+        cv::Laplacian(elevation, result, CV_32F, 3, 1.0, 0.0, cv::BORDER_REPLICATE);
     } else if (action == "roughness") {
         cv::Mat neighborhoodMax;
         cv::Mat neighborhoodMin;
@@ -1009,7 +1011,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
             "action", "???", "?????????????",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"slope", "aspect", "hillshade", "tpi", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "viewshed_multi", "cut_fill", "reservoir_volume"}
+            {"slope", "aspect", "hillshade", "tpi", "curvature", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "viewshed_multi", "cut_fill", "reservoir_volume"}
         },
         gis::framework::ParamSpec{
             "input", "????", "?? DEM ????",
@@ -1086,6 +1088,7 @@ gis::framework::Result TerrainPlugin::execute(
     if (action == "aspect") return doAspect(params, progress);
     if (action == "hillshade") return doHillshade(params, progress);
     if (action == "tpi") return doTpi(params, progress);
+    if (action == "curvature") return doCurvature(params, progress);
     if (action == "roughness") return doRoughness(params, progress);
     if (action == "fill_sinks") return doFillSinks(params, progress);
     if (action == "flow_direction") return doFlowDirection(params, progress);
@@ -1151,6 +1154,19 @@ gis::framework::Result TerrainPlugin::doTpi(
     return runLocalTerrainProcess(
         "tpi",
         "TPI",
+        gis::framework::getParam<std::string>(params, "input", ""),
+        gis::framework::getParam<std::string>(params, "output", ""),
+        gis::framework::getParam<int>(params, "band", 1),
+        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        progress);
+}
+
+gis::framework::Result TerrainPlugin::doCurvature(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    return runLocalTerrainProcess(
+        "curvature",
+        "Curvature",
         gis::framework::getParam<std::string>(params, "input", ""),
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),

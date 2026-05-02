@@ -30,6 +30,9 @@ private:
     gis::framework::Result doTpi(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
+    gis::framework::Result doCurvature(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
     gis::framework::Result doRoughness(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
