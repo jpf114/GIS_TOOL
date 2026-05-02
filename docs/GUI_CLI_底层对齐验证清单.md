@@ -33,7 +33,7 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 
 结果：
 
-- `308/308` 通过
+- `309/309` 通过
 
 这组结果覆盖：
 
@@ -91,8 +91,8 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 | 层级 | 当前状态 | 主要证据 | 说明 |
 | --- | --- | --- | --- |
-| 底层 `core` | 通过 | `ctest 308/308` | GDAL/OpenCV/PROJ 包装、运行时环境、基础能力可用 |
-| 底层 `framework` | 通过 | `ctest 308/308` | 参数类型、校验、插件管理器、CLI 参数解析链路通过 |
+| 底层 `core` | 通过 | `ctest 309/309` | GDAL/OpenCV/PROJ 包装、运行时环境、基础能力可用 |
+| 底层 `framework` | 通过 | `ctest 309/309` | 参数类型、校验、插件管理器、CLI 参数解析链路通过 |
 | 插件层 `plugins/*` | 通过 | 插件测试 + GUI/CLI 回归 | 主执行链已验证 |
 | `CLI` 入口 | 通过 | `gis-cli --list` + 全量测试 + real vector regression | 可加载插件并执行主要动作 |
 | `GUI` 入口 | 通过 | `GuiSupportTest` + `gui_` offscreen 回归 | 参数 UI 支撑与自动执行链路可用 |
