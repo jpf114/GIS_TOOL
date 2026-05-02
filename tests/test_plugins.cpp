@@ -814,6 +814,33 @@ TEST_F(PluginTest, GeorefMinnaertCorrectionExecution) {
     EXPECT_NEAR(readRasterPixel(output, 3, 3), 10.0f * std::sqrt(2.0f), 1e-3f);
 }
 
+TEST_F(PluginTest, GeorefCCorrectionExecution) {
+    auto* p = mgr_.find("georef");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createConstantRaster("georef_c_input.tif", 10, 6, 10.0f);
+    const std::string slope = createConstantRaster("georef_c_slope.tif", 10, 6, 60.0f);
+    const std::string aspect = createConstantRaster("georef_c_aspect.tif", 10, 6, 90.0f);
+    const std::string output = utf8PathString(getTestDir() / "georef_c_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("c_correction");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["slope_raster"] = slope;
+    params["aspect_raster"] = aspect;
+    params["sun_zenith_deg"] = 30.0;
+    params["sun_azimuth_deg"] = 180.0;
+    params["c_value"] = 0.1;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "c_correction");
+    EXPECT_NEAR(readRasterPixel(output, 3, 3), 10.0f * (0.8660254f + 0.1f) / (0.4330127f + 0.1f), 1e-3f);
+}
+
 TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {
     auto* p = mgr_.find("classification");
     ASSERT_NE(p, nullptr);

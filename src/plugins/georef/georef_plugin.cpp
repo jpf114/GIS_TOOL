@@ -175,7 +175,7 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
         gis::framework::ParamSpec{
             "action", "子功能", "几何校正与辐射处理功能",
             gis::framework::ParamType::Enum, true, std::string{},
-            int{0}, int{0}, {"dos_correction", "radiometric_calibration", "gcp_register", "cosine_correction", "minnaert_correction"}
+            int{0}, int{0}, {"dos_correction", "radiometric_calibration", "gcp_register", "cosine_correction", "minnaert_correction", "c_correction"}
         },
         gis::framework::ParamSpec{
             "input", "输入栅格", "待处理栅格影像路径",
@@ -234,6 +234,10 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
             "minnaert_k", "Minnaert 系数", "Minnaert 地形校正系数",
             gis::framework::ParamType::Double, false, double{0.5}
         },
+        gis::framework::ParamSpec{
+            "c_value", "C 系数", "C 地形校正系数",
+            gis::framework::ParamType::Double, false, double{0.1}
+        },
     };
 }
 
@@ -255,6 +259,9 @@ gis::framework::Result GeorefPlugin::execute(
     }
     if (action == "minnaert_correction") {
         return doMinnaertCorrection(params, progress);
+    }
+    if (action == "c_correction") {
+        return doCCorrection(params, progress);
     }
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -594,6 +601,84 @@ gis::framework::Result GeorefPlugin::doMinnaertCorrection(
     result.metadata["sun_zenith_deg"] = std::to_string(sunZenithDeg);
     result.metadata["sun_azimuth_deg"] = std::to_string(sunAzimuthDeg);
     result.metadata["minnaert_k"] = std::to_string(minnaertK);
+    return result;
+}
+
+gis::framework::Result GeorefPlugin::doCCorrection(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    const std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    const std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    const std::string slopeRaster = gis::framework::getParam<std::string>(params, "slope_raster", "");
+    const std::string aspectRaster = gis::framework::getParam<std::string>(params, "aspect_raster", "");
+    const int band = gis::framework::getParam<int>(params, "band", 1);
+    const double sunZenithDeg = gis::framework::getParam<double>(params, "sun_zenith_deg", 30.0);
+    const double sunAzimuthDeg = gis::framework::getParam<double>(params, "sun_azimuth_deg", 180.0);
+    const double cValue = gis::framework::getParam<double>(params, "c_value", 0.1);
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (slopeRaster.empty()) return gis::framework::Result::fail("slope_raster is required");
+    if (aspectRaster.empty()) return gis::framework::Result::fail("aspect_raster is required");
+    if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+
+    progress.onMessage("Reading raster, slope and aspect for C correction");
+    progress.onProgress(0.2);
+
+    cv::Mat inputMat = gis::core::readBandAsMat(input, band);
+    cv::Mat slopeMat = gis::core::readBandAsMat(slopeRaster, 1);
+    cv::Mat aspectMat = gis::core::readBandAsMat(aspectRaster, 1);
+
+    if (inputMat.size() != slopeMat.size() || inputMat.size() != aspectMat.size()) {
+        return gis::framework::Result::fail("input, slope_raster and aspect_raster must have the same size");
+    }
+
+    cv::Mat input32f;
+    cv::Mat slope32f;
+    cv::Mat aspect32f;
+    inputMat.convertTo(input32f, CV_32F);
+    slopeMat.convertTo(slope32f, CV_32F);
+    aspectMat.convertTo(aspect32f, CV_32F);
+
+    const float degToRad = static_cast<float>(CV_PI / 180.0);
+    const float sunZenithRad = static_cast<float>(sunZenithDeg) * degToRad;
+    const float sunAzimuthRad = static_cast<float>(sunAzimuthDeg) * degToRad;
+    const float cosSunZenith = std::cos(sunZenithRad);
+
+    cv::Mat corrected = cv::Mat::zeros(input32f.size(), CV_32F);
+    for (int row = 0; row < input32f.rows; ++row) {
+        const float* inputPtr = input32f.ptr<float>(row);
+        const float* slopePtr = slope32f.ptr<float>(row);
+        const float* aspectPtr = aspect32f.ptr<float>(row);
+        float* outputPtr = corrected.ptr<float>(row);
+        for (int col = 0; col < input32f.cols; ++col) {
+            const float slopeRad = slopePtr[col] * degToRad;
+            const float aspectRad = aspectPtr[col] * degToRad;
+            const float cosIncidence =
+                std::cos(slopeRad) * cosSunZenith +
+                std::sin(slopeRad) * std::sin(sunZenithRad) * std::cos(sunAzimuthRad - aspectRad);
+
+            if (cosIncidence + static_cast<float>(cValue) > 1e-6f) {
+                outputPtr[col] = inputPtr[col] *
+                    ((cosSunZenith + static_cast<float>(cValue)) /
+                     (cosIncidence + static_cast<float>(cValue)));
+            } else {
+                outputPtr[col] = 0.0f;
+            }
+        }
+    }
+
+    progress.onMessage("Writing C correction result");
+    progress.onProgress(0.8);
+    gis::core::matToGdalTiff(corrected, input, output, band);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("C correction completed", output);
+    result.metadata["action"] = "c_correction";
+    result.metadata["band"] = std::to_string(band);
+    result.metadata["sun_zenith_deg"] = std::to_string(sunZenithDeg);
+    result.metadata["sun_azimuth_deg"] = std::to_string(sunAzimuthDeg);
+    result.metadata["c_value"] = std::to_string(cValue);
     return result;
 }
 

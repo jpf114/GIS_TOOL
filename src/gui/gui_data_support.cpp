@@ -1335,6 +1335,29 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
+    if (pluginName == "georef" && actionKey == "c_correction") {
+        const auto band = intParamValue(params, "band");
+        const auto sunZenith = doubleParamValue(params, "sun_zenith_deg");
+        const auto sunAzimuth = doubleParamValue(params, "sun_azimuth_deg");
+        const auto cValue = doubleParamValue(params, "c_value");
+        const std::string outputPath = stringParam("output");
+        if (band.has_value() && *band <= 0) {
+            return ActionValidationIssue{"band", "参数“波段序号”必须大于 0"};
+        }
+        if (sunZenith.has_value() && (*sunZenith < 0.0 || *sunZenith >= 90.0)) {
+            return ActionValidationIssue{"sun_zenith_deg", "参数“太阳天顶角”应落在 [0, 90) 范围内"};
+        }
+        if (sunAzimuth.has_value() && (*sunAzimuth < 0.0 || *sunAzimuth > 360.0)) {
+            return ActionValidationIssue{"sun_azimuth_deg", "参数“太阳方位角”应落在 [0, 360] 范围内"};
+        }
+        if (cValue.has_value() && *cValue < 0.0) {
+            return ActionValidationIssue{"c_value", "参数“C 系数”不能小于 0"};
+        }
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
+            return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
+        }
+    }
+
     if (pluginName == "vector" && actionKey == "adjacency") {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
@@ -1642,6 +1665,8 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
             adjustedSpec.maxValue = 360.0;
         } else if (pluginName == "georef" && spec.key == "minnaert_k") {
             adjustedSpec.minValue = 0.000001;
+        } else if (pluginName == "georef" && spec.key == "c_value") {
+            adjustedSpec.minValue = 0.0;
         }
         if (pluginName == "projection" && action == "transform" && spec.key == "src_srs") {
             adjustedSpec.defaultValue = std::string("EPSG:4326");

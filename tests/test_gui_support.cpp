@@ -289,6 +289,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_georef_minnaert_correction.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "georef", "c_correction"),
+        "D:/data/image_georef_c_correction.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(
@@ -860,6 +864,27 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefMinnaertVal
     issue = gis::gui::validateActionSpecificParams("georef", "minnaert_correction", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "sun_azimuth_deg");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefCValues) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["band"] = 0;
+
+    auto issue = gis::gui::validateActionSpecificParams("georef", "c_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "band");
+
+    params["band"] = 1;
+    params["c_value"] = -0.1;
+    issue = gis::gui::validateActionSpecificParams("georef", "c_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "c_value");
+
+    params["c_value"] = 0.1;
+    params["sun_zenith_deg"] = 95.0;
+    issue = gis::gui::validateActionSpecificParams("georef", "c_correction", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "sun_zenith_deg");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsEvenKernelSizeForProcessingFilter) {
