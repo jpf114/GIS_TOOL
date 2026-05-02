@@ -93,6 +93,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("radiometric_calibration"), QStringLiteral("\350\276\220\345\260\204\345\256\232\346\240\207")},
         {QStringLiteral("gcp_register"), QStringLiteral("\346\216\247\345\210\266\347\202\271\351\205\215\345\207\206")},
         {QStringLiteral("cosine_correction"), QStringLiteral("\344\275\231\345\274\246\346\240\241\346\255\243")},
+        {QStringLiteral("minnaert_correction"), QStringLiteral("Minnaert \346\240\241\346\255\243")},
         {QStringLiteral("slope"), QStringLiteral("\345\235\241\345\272\246")},
         {QStringLiteral("aspect"), QStringLiteral("\345\235\241\345\220\221")},
         {QStringLiteral("hillshade"), QStringLiteral("\345\261\261\344\275\223\351\230\264\345\275\261")},
@@ -494,6 +495,7 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"aspect_raster", {QStringLiteral("坡向栅格"), QStringLiteral("坡向栅格文件，像元值单位应为度。")}},
         {"sun_zenith_deg", {QStringLiteral("太阳天顶角"), QStringLiteral("太阳天顶角，单位为度。")}},
         {"sun_azimuth_deg", {QStringLiteral("太阳方位角"), QStringLiteral("太阳方位角，单位为度。")}},
+        {"minnaert_k", {QStringLiteral("Minnaert 系数"), QStringLiteral("Minnaert 地形校正系数，通常取正数。")}},
         {"x", {QStringLiteral("X 坐标"), QStringLiteral("待转换点的 X 坐标。")}},
         {"y", {QStringLiteral("Y 坐标"), QStringLiteral("待转换点的 Y 坐标。")}},
         {"extent", {QStringLiteral("空间范围"), QStringLiteral("矩形范围 xmin, ymin, xmax, ymax。")}},
@@ -741,6 +743,13 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"sun_zenith_deg", {QStringLiteral("太阳天顶角"), QStringLiteral("太阳天顶角，单位为度。")}},
                 {"sun_azimuth_deg", {QStringLiteral("太阳方位角"), QStringLiteral("太阳方位角，单位为度。")}},
             }},
+            {"minnaert_correction", {
+                {"slope_raster", {QStringLiteral("坡度栅格"), QStringLiteral("坡度栅格文件，像元值单位应为度。")}},
+                {"aspect_raster", {QStringLiteral("坡向栅格"), QStringLiteral("坡向栅格文件，像元值单位应为度。")}},
+                {"sun_zenith_deg", {QStringLiteral("太阳天顶角"), QStringLiteral("太阳天顶角，单位为度。")}},
+                {"sun_azimuth_deg", {QStringLiteral("太阳方位角"), QStringLiteral("太阳方位角，单位为度。")}},
+                {"minnaert_k", {QStringLiteral("Minnaert 系数"), QStringLiteral("Minnaert 地形校正系数，通常取正数。")}},
+            }},
         }},
         {"vector", {
             {"convert", {
@@ -821,6 +830,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"radiometric_calibration", {QStringLiteral("辐射定标"), QStringLiteral("按给定 gain/offset 对单波段栅格执行辐射定标。"), {"input", "output", "band", "gain", "offset"}, {"input", "output"}}},
             {"gcp_register", {QStringLiteral("控制点配准"), QStringLiteral("根据控制点 CSV 对输入影像执行轻量几何配准。"), {"input", "output", "gcp_file", "dst_srs", "resample"}, {"input", "output", "gcp_file", "dst_srs"}}},
             {"cosine_correction", {QStringLiteral("余弦校正"), QStringLiteral("根据坡度、坡向和太阳角度对单波段栅格执行余弦地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg"}, {"input", "output", "slope_raster", "aspect_raster"}}},
+            {"minnaert_correction", {QStringLiteral("Minnaert 校正"), QStringLiteral("根据坡度、坡向、太阳角度和 Minnaert 系数执行单波段地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg", "minnaert_k"}, {"input", "output", "slope_raster", "aspect_raster"}}},
         }},
         {"terrain", {
             {"slope", {QStringLiteral("坡度"), QStringLiteral("根据 DEM 计算坡度栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
