@@ -88,7 +88,7 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 - 这些文件属于验证产物，可按上面的命令随时重新生成，不必纳入仓库跟踪
 - 当前 `real_vector_regression` 已不只验证“命令成功 + 文件存在”，还补充了代表性结果断言：
   - `buffer` 校验 `feature_count` 与 `srs_type`
-  - `clip / difference / union / intersect / dissolve / polygonize` 校验 CLI 输出中的结果数量
+  - `clip / difference / union / intersect / spatial_join / dissolve / polygonize` 校验 CLI 输出中的结果数量
   - `convert` 校验 `GeoJSON FeatureCollection` 结构与要素数
   - `rasterize` 追加校验输出栅格尺寸、坐标系与统计值
 

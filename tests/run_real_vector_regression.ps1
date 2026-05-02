@@ -227,6 +227,10 @@ function Validate-CaseOutputs {
         "intersect_focus" {
             Assert-TextContains -Text $Case.Output -Expected "Intersect completed: 2 features" -Message "intersect_focus feature count mismatch"
         }
+        "spatial_join_focus" {
+            Assert-TextContains -Text $Case.Output -Expected "Spatial join completed: 2 features" -Message "spatial_join_focus feature count mismatch"
+            Assert-Condition -Condition (Test-Path (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")) -Message "spatial_join_focus output missing"
+        }
         "union_focus" {
             Assert-TextContains -Text $Case.Output -Expected "Union completed: 2 features" -Message "union_focus feature count mismatch"
         }
@@ -552,6 +556,14 @@ $cases += New-Case -Name "intersect_focus" -CaseArgs @(
     ("--output=" + (Join-Path $ResolvedOutputRoot "intersect_focus.gpkg"))
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "intersect_focus.gpkg")
+)
+$cases += New-Case -Name "spatial_join_focus" -CaseArgs @(
+    "vector", "spatial_join",
+    ("--input=" + $roadsCore),
+    ("--join_vector=" + $chinaBbox),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")
 )
 $cases += New-Case -Name "dissolve_bbox" -CaseArgs @(
     "vector", "dissolve",
