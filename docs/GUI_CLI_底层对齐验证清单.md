@@ -86,6 +86,11 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 - 回归脚本会在 `tmp/vector_regression` 或 `tmp/vector_regression_full` 下生成摘要文件
 - 这些文件属于验证产物，可按上面的命令随时重新生成，不必纳入仓库跟踪
+- 当前 `real_vector_regression` 已不只验证“命令成功 + 文件存在”，还补充了代表性结果断言：
+  - `buffer` 校验 `feature_count` 与 `srs_type`
+  - `clip / difference / union / dissolve / polygonize` 校验 CLI 输出中的结果数量
+  - `convert` 校验 `GeoJSON FeatureCollection` 结构与要素数
+  - `rasterize` 追加校验输出栅格尺寸、坐标系与统计值
 
 ## 4. 三层对齐状态
 
@@ -120,6 +125,11 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 - `spindex` 当前除 `ndvi / ndwi / custom_index` 的 GUI 证据外，还已纳入真实数据专项的 `ndvi / evi / savi / gndvi / ndwi / mndwi / ndbi / arvi / nbr / awei / ui / bi / custom_index`
 - `classification.feature_stats` 当前真实数据专项中，`quick` 已覆盖 `json / vector_output / raster_output`，`full` 追加 `csv`
 - `processing.pansharpen` 当前真实数据专项固定验证 `pan_method=simple_mean`
+- `real_raster_regression` 当前也已补充关键结果断言，而不只是检查输出文件存在：
+  - `spindex.ndvi` 校验输出尺寸与均值
+  - `classification.feature_stats` 校验 `actual_srs` 与 `__summary__` 汇总记录
+  - `processing.pansharpen` 校验输出为 `30 x 30 x 3`，并校验三波段统计值
+  - `terrain.profile_extract / terrain.slope / terrain.viewshed_multi` 校验关键结构或统计结果
 
 ## 6. GUI 当前回归覆盖说明
 
@@ -286,7 +296,8 @@ GUI 当前已覆盖的离屏回归共 `111` 项，包含：
 
 本轮最后修正了：
 
-- [tests/run_real_vector_regression.ps1](D:\Code\MyProject\GIS_TOOL\tests\run_real_vector_regression.ps1)
+- [tests/run_real_vector_regression.ps1](/D:/Develop/GIS/GIS_TOOL/tests/run_real_vector_regression.ps1)
+- [tests/run_real_raster_regression.ps1](/D:/Develop/GIS/GIS_TOOL/tests/run_real_raster_regression.ps1)
 
 修正内容：
 
