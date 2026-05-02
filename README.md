@@ -97,6 +97,35 @@ cmake --install build/release --config Release
 - 默认安装使用 `build/release`
 - 发布前至少执行一次 `Debug 全量测试 + Release 编译安装`
 
+### 真实数据专项回归
+
+`Debug`：
+
+```powershell
+cmake --build build/debug --config Debug --target real_matching_regression
+cmake --build build/debug --config Debug --target real_matching_regression_full
+cmake --build build/debug --config Debug --target real_raster_regression
+cmake --build build/debug --config Debug --target real_raster_regression_full
+```
+
+`Release`：
+
+```powershell
+cmake --build build/release --config Release --target real_matching_regression
+cmake --build build/release --config Release --target real_matching_regression_full
+cmake --build build/release --config Release --target real_raster_regression
+cmake --build build/release --config Release --target real_raster_regression_full
+```
+
+当前已经确认通过的专项包括：
+
+- `matching`：`detect / corner / match / register / change`
+- `matching` Release 追加：`ecc_register / stitch`
+- `processing`：`pansharpen`
+- `classification`：`feature_stats / feature_stats_csv`
+- `spindex`：常用指数与自定义指数
+- `terrain`：当前已实现动作的真实数据回归链路
+
 ## 使用
 
 ### 列出插件
