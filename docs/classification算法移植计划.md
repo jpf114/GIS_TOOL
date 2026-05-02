@@ -4,7 +4,7 @@
 
 把 `D:\Code\MyProject\FeatureStatistics` 的核心分类统计算法移植到 `GIS_TOOL`，并整理成更符合当前产品结构的插件形态：
 
-- 主功能插件：`classification`
+- 主功能实现：`classification`
 - 当前子功能：`feature_stats`
 - GUI 展示：
   - 主功能：`分类统计`
@@ -78,7 +78,7 @@
 
 已完成：
 
-- 新增主功能 `分类统计`
+- 新增主功能入口 `分类统计`
 - 子功能显示为 `地物分类统计`
 - 增加该主功能的侧边栏图标
 - 增加 `feature_stats` 子功能文案配置
