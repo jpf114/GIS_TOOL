@@ -134,6 +134,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("endpoints_extract"), QStringLiteral("端点提取")},
         {QStringLiteral("midpoints_extract"), QStringLiteral("中点提取")},
         {QStringLiteral("interior_point"), QStringLiteral("内部点")},
+        {QStringLiteral("duplicate_point_check"), QStringLiteral("重复点检查")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -788,6 +789,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"endpoints_extract", {QStringLiteral("端点提取"), QStringLiteral("提取线要素起点和终点为点图层，并附带来源要素与端点类型。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"midpoints_extract", {QStringLiteral("中点提取"), QStringLiteral("提取线要素几何中点为点图层，并附带来源要素。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"interior_point", {QStringLiteral("内部点"), QStringLiteral("提取面要素内部点为点图层，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
+            {"duplicate_point_check", {QStringLiteral("重复点检查"), QStringLiteral("检查坐标完全重复的点要素并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
         }},
     };
     return kConfigs;

@@ -3733,6 +3733,66 @@ TEST_F(PluginTest, VectorInteriorPointExecution) {
     GDALClose(outDs);
 }
 
+TEST_F(PluginTest, VectorDuplicatePointCheckExecution) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_duplicate_point_check_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_duplicate_point_check_output.csv");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("points", srs.get(), wkbPoint, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        auto addPoint = [&](double x, double y) {
+            OGRPoint point(x, y);
+            auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            feat->SetGeometry(&point);
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        };
+
+        addPoint(0, 0);
+        addPoint(1, 1);
+        addPoint(0, 0);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("duplicate_point_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("issue_count"), "1");
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(ifs, line)) {
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 2u);
+    EXPECT_EQ(lines[0], "source_fid,duplicate_fid,x,y");
+    std::stringstream ss(lines[1]);
+    std::vector<std::string> fields;
+    while (std::getline(ss, line, ',')) {
+        fields.push_back(line);
+    }
+    ASSERT_EQ(fields.size(), 4u);
+    EXPECT_EQ(fields[2], "0");
+    EXPECT_EQ(fields[3], "0");
+}
+
 TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);

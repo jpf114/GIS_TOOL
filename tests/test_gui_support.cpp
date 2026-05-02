@@ -259,6 +259,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         gis::gui::buildSuggestedOutputPath(
             "D:/data/parcels.gpkg", "vector", "multipart_check"),
         "D:/data/parcels_vector_multipart_check.csv");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/points.gpkg", "vector", "duplicate_point_check"),
+        "D:/data/points_vector_duplicate_point_check.csv");
 }
 
 TEST(GuiSupportTest, ComputeDerivedOutputUpdateAppliesSuggestedValueForEmptyOutput) {

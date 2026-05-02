@@ -119,7 +119,7 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
         if (action == "polygonize") return ".gpkg";
         if (action == "convert") return ".geojson";
         if (action == "adjacency" || action == "overlap_check" || action == "topology_check" ||
-            action == "multipart_check") return ".csv";
+            action == "multipart_check" || action == "duplicate_point_check") return ".csv";
         return ".gpkg";
     }
 
@@ -1178,6 +1178,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "vector" && actionKey == "multipart_check") {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
+            return ActionValidationIssue{"output", "参数“输出文件”应使用 .csv"};
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "duplicate_point_check") {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .csv"};
