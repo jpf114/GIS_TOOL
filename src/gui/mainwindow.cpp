@@ -125,6 +125,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("overlap_check"), QStringLiteral("重叠检查")},
         {QStringLiteral("topology_check"), QStringLiteral("拓扑检查")},
         {QStringLiteral("convex_hull"), QStringLiteral("凸包")},
+        {QStringLiteral("centroid"), QStringLiteral("质心")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -770,6 +771,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"overlap_check", {QStringLiteral("重叠检查"), QStringLiteral("分析同一面图层中存在面积重叠的要素对，并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"topology_check", {QStringLiteral("拓扑检查"), QStringLiteral("检查空几何、无效几何、重复面和重叠面，并导出 CSV 问题清单。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"convex_hull", {QStringLiteral("凸包"), QStringLiteral("按要素生成最小凸包面，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
+            {"centroid", {QStringLiteral("质心"), QStringLiteral("按要素生成质心点，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
         }},
     };
     return kConfigs;
