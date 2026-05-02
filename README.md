@@ -50,6 +50,8 @@ GUI 当前已完成的主功能归并：
 - `gabor_filter` Gabor 滤波
 - `glcm_texture` GLCM 纹理
 - `mean_shift_segment` Mean Shift 分割
+- `skeleton` 骨架提取
+- `connected_components` 连通组件
 
 ### classification
 
@@ -67,6 +69,35 @@ GUI 当前已完成的主功能归并：
 - `c_correction` C 校正
 - `quac_correction` QUAC 大气校正
 - `rpc_orthorectify` RPC 正射校正
+
+### raster_tools
+
+- `band_math` 波段运算
+- `cog` COG 生成
+
+### vector
+
+- `simplify` 简化
+- `repair` 修复
+- `geom_metrics` 几何属性
+- `nearest` 最近邻
+- `adjacency` 邻接关系
+- `overlap_check` 重叠检查
+- `topology_check` 拓扑检查
+- `convex_hull` 凸包
+- `centroid` 质心
+- `envelope` 外包矩形
+- `boundary` 边界提取
+- `multipart_check` 多部件检查
+- `singlepart` 转单部件
+- `vertices_extract` 顶点提取
+- `endpoints_extract` 端点提取
+- `midpoints_extract` 中点提取
+- `interior_point` 内部点
+- `duplicate_point_check` 重复点检查
+- `hole_check` 孔洞检查
+- `dangling_endpoint_check` 悬挂端点检查
+- `sliver_remove` 碎片面消除
 
 ## 完整性说明
 

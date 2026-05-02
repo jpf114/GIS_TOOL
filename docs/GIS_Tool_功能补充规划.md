@@ -14,13 +14,13 @@
 | projection | 重投影、坐标系信息查看、坐标转换、赋予坐标系 |
 | cutting | 裁切、镶嵌、分块、波段合并 |
 | matching | 特征检测、特征匹配、影像配准、变化检测、ECC 配准、角点检测、拼接 |
-| processing | 阈值分割、滤波、增强、波段运算、统计、边缘检测、轮廓提取、模板匹配、全色锐化、霍夫、分水岭、K-Means、Gabor、GLCM、Mean Shift |
+| processing | 阈值分割、滤波、增强、波段运算、统计、边缘检测、轮廓提取、模板匹配、全色锐化、霍夫、分水岭、骨架提取、连通组件、K-Means、Gabor、GLCM、Mean Shift |
 | classification | 地物分类统计、SVM、随机森林、最大似然分类 |
 | georef | DOS、辐射定标、控制点配准、余弦校正、Minnaert、C 校正、QUAC、RPC 正射校正 |
 | terrain | 坡度、坡向、山体阴影、TPI、曲率、粗糙度、填洼、流向、汇流累积、河网提取、流域划分、剖面提取、视域、多点视域、填挖方、库容计算 |
-| raster_manage / raster_inspect / raster_render / raster_math | 金字塔、NoData、直方图、信息查看、伪彩色、波段运算 |
+| raster_manage / raster_inspect / raster_render / raster_math | 金字塔、NoData、直方图、信息查看、伪彩色、波段运算、COG 生成 |
 | spindex | NDVI、NDWI、自定义指数及其他已扩展光谱指数 |
-| vector | 信息查看、过滤、缓冲、裁切、栅格化、面矢量化、格式转换、并集、差集、融合，以及一批拓扑检查与空间分析能力 |
+| vector | 信息查看、过滤、缓冲、裁切、栅格化、面矢量化、格式转换、并集、差集、融合、简化、修复、几何属性、最近邻，以及一批拓扑检查与空间分析能力 |
 
 现有功能已覆盖较完整的基础处理链，目前真正仍未落地的明显新增方向主要集中在**点云处理**；其余模块的重点已经从“有没有”转向“是否继续做实、做齐、做稳”。
 
