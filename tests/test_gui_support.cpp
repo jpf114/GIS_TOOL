@@ -1331,7 +1331,7 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
     const auto invalid = gis::gui::buildExecuteButtonState(true, "参数“输入文件”不能为空");
     EXPECT_FALSE(invalid.enabled);
     EXPECT_EQ(invalid.tooltip, "参数“输入文件”不能为空");
-    EXPECT_EQ(invalid.statusText, "待补充");
+    EXPECT_EQ(invalid.statusText, "待修正");
     EXPECT_EQ(invalid.statusObjectName, "statusBadgeWarning");
 
     const auto ready = gis::gui::buildExecuteButtonState(true, "");

@@ -1740,7 +1740,7 @@ ExecuteButtonState buildExecuteButtonState(bool hasSelection,
         return ExecuteButtonState{
             false,
             validationMessage,
-            "待补充",
+            "待修正",
             "statusBadgeWarning"
         };
     }
