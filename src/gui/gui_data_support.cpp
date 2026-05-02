@@ -118,6 +118,7 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
         if (action == "rasterize") return ".tif";
         if (action == "polygonize") return ".gpkg";
         if (action == "convert") return ".geojson";
+        if (action == "adjacency") return ".csv";
         return ".gpkg";
     }
 
@@ -1148,6 +1149,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".geojson", ".json", ".gpkg", ".shp", ".kml"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .geojson、.json、.gpkg、.shp 或 .kml"};
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "adjacency") {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
+            return ActionValidationIssue{"output", "参数“输出文件”应使用 .csv"};
         }
     }
 

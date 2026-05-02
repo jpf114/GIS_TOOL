@@ -243,6 +243,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         gis::gui::buildSuggestedOutputPath(
             "D:/data/roads.shp", "vector", "convert"),
         "D:/data/roads_vector_convert.geojson");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/parcels.gpkg", "vector", "adjacency"),
+        "D:/data/parcels_vector_adjacency.csv");
 }
 
 TEST(GuiSupportTest, ComputeDerivedOutputUpdateAppliesSuggestedValueForEmptyOutput) {

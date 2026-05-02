@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <chrono>
 #include <cmath>
@@ -139,7 +140,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -230,6 +231,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "repair")     return doRepair(params, progress);
     if (action == "geom_metrics") return doGeomMetrics(params, progress);
     if (action == "nearest")    return doNearest(params, progress);
+    if (action == "adjacency")  return doAdjacency(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -255,6 +257,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_geom_metrics.inc"
 
 #include "vector_plugin_nearest.inc"
+
+#include "vector_plugin_adjacency.inc"
 
 } // namespace gis::plugins
 

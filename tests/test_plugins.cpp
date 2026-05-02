@@ -2851,6 +2851,77 @@ TEST_F(PluginTest, VectorNearestExecution) {
     GDALClose(outDs);
 }
 
+TEST_F(PluginTest, VectorAdjacencyExecution) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_adjacency_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_adjacency_output.csv");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("parcels", srs.get(), wkbPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        auto makeRect = [&](double minX, double minY, double maxX, double maxY) {
+            OGRPolygon poly;
+            OGRLinearRing ring;
+            ring.addPoint(minX, minY);
+            ring.addPoint(maxX, minY);
+            ring.addPoint(maxX, maxY);
+            ring.addPoint(minX, maxY);
+            ring.addPoint(minX, minY);
+            poly.addRing(&ring);
+            return poly;
+        };
+
+        auto* feat1 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly1 = makeRect(0, 0, 10, 10);
+        feat1->SetGeometry(&poly1);
+        ASSERT_EQ(layer->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+
+        auto* feat2 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly2 = makeRect(10, 0, 20, 10);
+        feat2->SetGeometry(&poly2);
+        ASSERT_EQ(layer->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+
+        auto* feat3 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly3 = makeRect(30, 0, 40, 10);
+        feat3->SetGeometry(&poly3);
+        ASSERT_EQ(layer->CreateFeature(feat3), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat3);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("adjacency");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("relation_count"), "1");
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(ifs, line)) {
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 2u);
+    EXPECT_EQ(lines[0], "source_fid,target_fid,shared_length");
+    EXPECT_NE(lines[1].find(",10"), std::string::npos);
+}
+
 TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);

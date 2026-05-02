@@ -121,6 +121,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("repair"), QStringLiteral("修复")},
         {QStringLiteral("geom_metrics"), QStringLiteral("几何属性")},
         {QStringLiteral("nearest"), QStringLiteral("最近邻")},
+        {QStringLiteral("adjacency"), QStringLiteral("邻接关系")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -762,6 +763,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"repair", {QStringLiteral("修复"), QStringLiteral("尝试修复无效几何并输出新的矢量数据。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"geom_metrics", {QStringLiteral("几何属性"), QStringLiteral("为要素计算面积、长度、紧凑度、圆形度和走向等几何属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"nearest", {QStringLiteral("最近邻"), QStringLiteral("为每个输入要素寻找目标图层中的最近邻要素，并写入距离与标识。"), {"input", "output", "layer", "nearest_vector", "nearest_field"}, {"input", "output", "nearest_vector"}}},
+            {"adjacency", {QStringLiteral("邻接关系"), QStringLiteral("分析同一面图层中要素之间的邻接关系，并导出 CSV 邻接表。"), {"input", "output", "layer"}, {"input", "output"}}},
         }},
     };
     return kConfigs;
