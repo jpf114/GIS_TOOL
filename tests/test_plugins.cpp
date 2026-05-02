@@ -202,6 +202,14 @@ static std::string createGcpCsv(const std::string& name) {
     return path;
 }
 
+static std::string createRadiometricMetadataFile(const std::string& name) {
+    const std::string path = utf8PathString(getTestDir() / name);
+    std::ofstream ofs(path, std::ios::binary);
+    ofs << "RADIANCE_MULT_BAND_1 = 3.0\n";
+    ofs << "RADIANCE_ADD_BAND_1 = 2.0\n";
+    return path;
+}
+
 static std::string createTerrainRaster(const std::string& name, int w = 48, int h = 48) {
     std::string path = (getTestDir() / name).string();
     auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
@@ -727,6 +735,29 @@ TEST_F(PluginTest, GeorefRadiometricCalibrationExecution) {
     EXPECT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("action"), "radiometric_calibration");
     EXPECT_NEAR(readRasterPixel(output, 5, 0), 15.0f, 1e-4f);
+}
+
+TEST_F(PluginTest, GeorefRadiometricCalibrationExecutionWithMetadataFile) {
+    auto* p = mgr_.find("georef");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("georef_radiometric_metadata_input.tif", 16, 16);
+    const std::string metadataFile = createRadiometricMetadataFile("georef_radiometric_metadata.txt");
+    const std::string output = utf8PathString(getTestDir() / "georef_radiometric_metadata_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("radiometric_calibration");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["metadata_file"] = metadataFile;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "radiometric_calibration");
+    EXPECT_EQ(result.metadata.at("metadata_file"), metadataFile);
+    EXPECT_NEAR(readRasterPixel(output, 5, 0), 17.0f, 1e-4f);
 }
 
 TEST_F(PluginTest, GeorefGcpRegisterExecution) {

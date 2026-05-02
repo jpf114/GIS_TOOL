@@ -13,6 +13,8 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -40,6 +42,14 @@ std::string lowerString(const std::string& value) {
     return lowered;
 }
 
+std::string upperString(const std::string& value) {
+    std::string uppered = value;
+    std::transform(uppered.begin(), uppered.end(), uppered.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+    return uppered;
+}
+
 std::vector<std::string> splitCsvLine(const std::string& line) {
     std::vector<std::string> columns;
     std::stringstream ss(line);
@@ -62,6 +72,11 @@ bool tryParseDouble(const std::string& text, double& value) {
 
 struct ParsedGcps {
     std::vector<GDAL_GCP> gcps;
+};
+
+struct RadiometricCoefficients {
+    double gain = 1.0;
+    double offset = 0.0;
 };
 
 bool loadGcpsFromCsv(const std::string& csvPath,
@@ -176,6 +191,82 @@ float percentileValue(std::vector<float>& values, double percentile) {
     return values[index];
 }
 
+std::optional<double> lookupMetadataValue(
+    const std::map<std::string, std::string>& metadata,
+    const std::vector<std::string>& keys) {
+    for (const auto& key : keys) {
+        const auto it = metadata.find(key);
+        if (it == metadata.end()) {
+            continue;
+        }
+        double value = 0.0;
+        if (tryParseDouble(it->second, value)) {
+            return value;
+        }
+    }
+    return std::nullopt;
+}
+
+bool loadRadiometricCoefficients(const std::string& metadataFile,
+                                 int band,
+                                 RadiometricCoefficients& coefficients,
+                                 std::string& error) {
+    std::ifstream ifs(metadataFile, std::ios::binary);
+    if (!ifs.is_open()) {
+        error = "Cannot open metadata_file: " + metadataFile;
+        return false;
+    }
+
+    std::map<std::string, std::string> metadata;
+    std::string line;
+    while (std::getline(ifs, line)) {
+        line = trim(line);
+        if (line.empty()) {
+            continue;
+        }
+        const auto eqPos = line.find('=');
+        const auto colonPos = line.find(':');
+        std::size_t sepPos = std::string::npos;
+        if (eqPos != std::string::npos) {
+            sepPos = eqPos;
+        } else if (colonPos != std::string::npos) {
+            sepPos = colonPos;
+        }
+        if (sepPos == std::string::npos) {
+            continue;
+        }
+
+        std::string key = upperString(trim(line.substr(0, sepPos)));
+        std::string value = trim(line.substr(sepPos + 1));
+        if (!key.empty() && !value.empty()) {
+            metadata[key] = value;
+        }
+    }
+
+    const std::string bandSuffix = std::to_string(band);
+    const auto gain = lookupMetadataValue(metadata, {
+        "GAIN",
+        "RADIANCE_MULT_BAND_" + bandSuffix,
+        "REFLECTANCE_MULT_BAND_" + bandSuffix,
+        "BAND_" + bandSuffix + "_GAIN"
+    });
+    const auto offset = lookupMetadataValue(metadata, {
+        "OFFSET",
+        "RADIANCE_ADD_BAND_" + bandSuffix,
+        "REFLECTANCE_ADD_BAND_" + bandSuffix,
+        "BAND_" + bandSuffix + "_OFFSET"
+    });
+
+    if (!gain.has_value() || !offset.has_value()) {
+        error = "metadata_file does not contain gain/offset for requested band";
+        return false;
+    }
+
+    coefficients.gain = *gain;
+    coefficients.offset = *offset;
+    return true;
+}
+
 } // namespace
 
 std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
@@ -211,6 +302,10 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
         gis::framework::ParamSpec{
             "offset", "偏移", "辐射定标偏移量",
             gis::framework::ParamType::Double, false, double{0.0}
+        },
+        gis::framework::ParamSpec{
+            "metadata_file", "元数据文件", "可选，自动读取辐射定标系数的元数据文件",
+            gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
             "gcp_file", "控制点文件", "CSV 控制点文件，表头应包含 pixel_x,pixel_y,map_x,map_y",
@@ -338,13 +433,24 @@ gis::framework::Result GeorefPlugin::doRadiometricCalibration(
     gis::core::ProgressReporter& progress) {
     const std::string input = gis::framework::getParam<std::string>(params, "input", "");
     const std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    const std::string metadataFile = gis::framework::getParam<std::string>(params, "metadata_file", "");
     const int band = gis::framework::getParam<int>(params, "band", 1);
-    const double gain = gis::framework::getParam<double>(params, "gain", 1.0);
-    const double offset = gis::framework::getParam<double>(params, "offset", 0.0);
+    double gain = gis::framework::getParam<double>(params, "gain", 1.0);
+    double offset = gis::framework::getParam<double>(params, "offset", 0.0);
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+
+    if (!metadataFile.empty()) {
+        RadiometricCoefficients coefficients;
+        std::string error;
+        if (!loadRadiometricCoefficients(metadataFile, band, coefficients, error)) {
+            return gis::framework::Result::fail(error);
+        }
+        gain = coefficients.gain;
+        offset = coefficients.offset;
+    }
 
     progress.onMessage("Reading raster band for radiometric calibration");
     progress.onProgress(0.2);
@@ -363,6 +469,9 @@ gis::framework::Result GeorefPlugin::doRadiometricCalibration(
     result.metadata["band"] = std::to_string(band);
     result.metadata["gain"] = std::to_string(gain);
     result.metadata["offset"] = std::to_string(offset);
+    if (!metadataFile.empty()) {
+        result.metadata["metadata_file"] = metadataFile;
+    }
     return result;
 }
 

@@ -799,6 +799,12 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefRadiometric
     issue = gis::gui::validateActionSpecificParams("georef", "radiometric_calibration", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "output");
+
+    params["output"] = std::string("D:/data/result.tif");
+    params["metadata_file"] = std::string("D:/data/meta.csv");
+    issue = gis::gui::validateActionSpecificParams("georef", "radiometric_calibration", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "metadata_file");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefGcpRegisterValues) {

@@ -493,6 +493,7 @@ const std::map<std::string, ParamText>& commonParamTextStorage() {
         {"srs", {QStringLiteral("坐标系"), QStringLiteral("要写入数据的坐标参考系。")}},
         {"resample", {QStringLiteral("重采样方式"), QStringLiteral("输出计算或重投影时采用的重采样算法。")}},
         {"gcp_file", {QStringLiteral("控制点文件"), QStringLiteral("CSV 表头应包含 pixel_x,pixel_y,map_x,map_y，可选 map_z。")}},
+        {"metadata_file", {QStringLiteral("元数据文件"), QStringLiteral("可选，用于自动读取辐射定标增益和偏移量。")}},
         {"slope_raster", {QStringLiteral("坡度栅格"), QStringLiteral("坡度栅格文件，像元值单位应为度。")}},
         {"aspect_raster", {QStringLiteral("坡向栅格"), QStringLiteral("坡向栅格文件，像元值单位应为度。")}},
         {"sun_zenith_deg", {QStringLiteral("太阳天顶角"), QStringLiteral("太阳天顶角，单位为度。")}},
@@ -736,6 +737,7 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
             {"radiometric_calibration", {
                 {"gain", {QStringLiteral("增益"), QStringLiteral("按 output = input * gain + offset 执行辐射定标。")}},
                 {"offset", {QStringLiteral("偏移"), QStringLiteral("辐射定标偏移量，可为负值。")}},
+                {"metadata_file", {QStringLiteral("元数据文件"), QStringLiteral("可选，自动读取辐射定标系数；填写后将优先使用文件中的系数。")}},
             }},
             {"gcp_register", {
                 {"gcp_file", {QStringLiteral("控制点文件"), QStringLiteral("CSV 表头应包含 pixel_x,pixel_y,map_x,map_y，可选 map_z。")}},
@@ -843,7 +845,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         }},
         {"georef", {
             {"dos_correction", {QStringLiteral("DOS 大气校正"), QStringLiteral("对单波段栅格执行简化暗像元大气校正。"), {"input", "output", "band", "dark_object_value"}, {"input", "output"}}},
-            {"radiometric_calibration", {QStringLiteral("辐射定标"), QStringLiteral("按给定 gain/offset 对单波段栅格执行辐射定标。"), {"input", "output", "band", "gain", "offset"}, {"input", "output"}}},
+            {"radiometric_calibration", {QStringLiteral("辐射定标"), QStringLiteral("按给定 gain/offset 或元数据文件中的系数对单波段栅格执行辐射定标。"), {"input", "output", "band", "gain", "offset", "metadata_file"}, {"input", "output"}}},
             {"gcp_register", {QStringLiteral("控制点配准"), QStringLiteral("根据控制点 CSV 对输入影像执行轻量几何配准。"), {"input", "output", "gcp_file", "dst_srs", "resample"}, {"input", "output", "gcp_file", "dst_srs"}}},
             {"cosine_correction", {QStringLiteral("余弦校正"), QStringLiteral("根据坡度、坡向和太阳角度对单波段栅格执行余弦地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg"}, {"input", "output", "slope_raster", "aspect_raster"}}},
             {"minnaert_correction", {QStringLiteral("Minnaert 校正"), QStringLiteral("根据坡度、坡向、太阳角度和 Minnaert 系数执行单波段地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg", "minnaert_k"}, {"input", "output", "slope_raster", "aspect_raster"}}},

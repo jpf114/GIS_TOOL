@@ -624,6 +624,12 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
         return config;
     }
 
+    if (pluginName == "georef" && paramKey == "metadata_file") {
+        config.placeholder = "请选择辐射定标元数据文件，例如 .txt、.mtl";
+        config.openFilter = "文本文件 (*.txt *.mtl *.xml *.json);;所有文件 (*)";
+        return config;
+    }
+
     if (pluginName == "georef" && (paramKey == "slope_raster" || paramKey == "aspect_raster")) {
         config.placeholder = paramKey == "slope_raster"
             ? "请选择坡度栅格，像元值单位应为度"
@@ -1279,6 +1285,10 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
             return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
+        }
+        const std::string metadataFile = stringParam("metadata_file");
+        if (!metadataFile.empty() && !endsWithOneOf(metadataFile, {".txt", ".mtl", ".xml", ".json"})) {
+            return ActionValidationIssue{"metadata_file", "参数“元数据文件”建议选择 .txt/.mtl/.xml/.json"};
         }
     }
 
