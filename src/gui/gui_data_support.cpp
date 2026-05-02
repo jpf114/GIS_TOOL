@@ -766,6 +766,9 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
     if (pluginName == "georef" && spec.key == "dark_object_value") {
         return "填写暗像元值；小于 0 时自动使用当前波段最小值";
     }
+    if (pluginName == "georef" && spec.key == "gain") {
+        return "填写增益系数，例如 0.01 或 1.2";
+    }
 
     if (pluginName == "cutting" && action == "merge_bands") {
         if (spec.key == "input") {
@@ -1244,6 +1247,17 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "georef" && actionKey == "dos_correction") {
+        const auto band = intParamValue(params, "band");
+        if (band.has_value() && *band <= 0) {
+            return ActionValidationIssue{"band", "参数“波段序号”必须大于 0"};
+        }
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
+            return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
+        }
+    }
+
+    if (pluginName == "georef" && actionKey == "radiometric_calibration") {
         const auto band = intParamValue(params, "band");
         if (band.has_value() && *band <= 0) {
             return ActionValidationIssue{"band", "参数“波段序号”必须大于 0"};

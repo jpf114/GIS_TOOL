@@ -13,7 +13,7 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
         gis::framework::ParamSpec{
             "action", "子功能", "几何校正与辐射处理功能",
             gis::framework::ParamType::Enum, true, std::string{},
-            int{0}, int{0}, {"dos_correction"}
+            int{0}, int{0}, {"dos_correction", "radiometric_calibration"}
         },
         gis::framework::ParamSpec{
             "input", "输入栅格", "待处理栅格影像路径",
@@ -31,6 +31,14 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
             "dark_object_value", "暗像元值", "小于 0 时自动使用当前波段最小值",
             gis::framework::ParamType::Double, false, double{-1.0}
         },
+        gis::framework::ParamSpec{
+            "gain", "增益", "辐射定标增益系数",
+            gis::framework::ParamType::Double, false, double{1.0}
+        },
+        gis::framework::ParamSpec{
+            "offset", "偏移", "辐射定标偏移量",
+            gis::framework::ParamType::Double, false, double{0.0}
+        },
     };
 }
 
@@ -40,6 +48,9 @@ gis::framework::Result GeorefPlugin::execute(
     const std::string action = gis::framework::getParam<std::string>(params, "action", "");
     if (action == "dos_correction") {
         return doDosCorrection(params, progress);
+    }
+    if (action == "radiometric_calibration") {
+        return doRadiometricCalibration(params, progress);
     }
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -86,6 +97,39 @@ gis::framework::Result GeorefPlugin::doDosCorrection(
     result.metadata["action"] = "dos_correction";
     result.metadata["band"] = std::to_string(band);
     result.metadata["dark_object_value"] = std::to_string(darkObject);
+    return result;
+}
+
+gis::framework::Result GeorefPlugin::doRadiometricCalibration(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+    const std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    const std::string output = gis::framework::getParam<std::string>(params, "output", "");
+    const int band = gis::framework::getParam<int>(params, "band", 1);
+    const double gain = gis::framework::getParam<double>(params, "gain", 1.0);
+    const double offset = gis::framework::getParam<double>(params, "offset", 0.0);
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+    if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+
+    progress.onMessage("Reading raster band for radiometric calibration");
+    progress.onProgress(0.2);
+    cv::Mat bandMat = gis::core::readBandAsMat(input, band);
+
+    cv::Mat calibrated = bandMat * gain + offset;
+    calibrated.convertTo(calibrated, CV_32F);
+
+    progress.onMessage("Writing radiometric calibration result");
+    progress.onProgress(0.75);
+    gis::core::matToGdalTiff(calibrated, input, output, band);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("Radiometric calibration completed", output);
+    result.metadata["action"] = "radiometric_calibration";
+    result.metadata["band"] = std::to_string(band);
+    result.metadata["gain"] = std::to_string(gain);
+    result.metadata["offset"] = std::to_string(offset);
     return result;
 }
 

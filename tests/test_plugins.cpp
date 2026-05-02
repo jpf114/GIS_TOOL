@@ -685,6 +685,28 @@ TEST_F(PluginTest, GeorefDosCorrectionExecution) {
     EXPECT_NEAR(readRasterPixel(output, 5, 0), 5.0f / 255.0f, 1e-4f);
 }
 
+TEST_F(PluginTest, GeorefRadiometricCalibrationExecution) {
+    auto* p = mgr_.find("georef");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("georef_radiometric_input.tif", 16, 16);
+    const std::string output = utf8PathString(getTestDir() / "georef_radiometric_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("radiometric_calibration");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["gain"] = 2.0;
+    params["offset"] = 5.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "radiometric_calibration");
+    EXPECT_NEAR(readRasterPixel(output, 5, 0), 15.0f, 1e-4f);
+}
+
 TEST_F(PluginTest, FeatureStatsRunWritesPriorityStatisticsJson) {
     auto* p = mgr_.find("classification");
     ASSERT_NE(p, nullptr);
