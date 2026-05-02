@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <functional>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -138,7 +139,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -219,6 +220,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "dissolve")   return doDissolve(params, progress);
     if (action == "simplify")   return doSimplify(params, progress);
     if (action == "repair")     return doRepair(params, progress);
+    if (action == "geom_metrics") return doGeomMetrics(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -240,6 +242,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_simplify.inc"
 
 #include "vector_plugin_repair.inc"
+
+#include "vector_plugin_geom_metrics.inc"
 
 } // namespace gis::plugins
 
