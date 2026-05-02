@@ -140,7 +140,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -234,6 +234,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "adjacency")  return doAdjacency(params, progress);
     if (action == "overlap_check") return doOverlapCheck(params, progress);
     if (action == "topology_check") return doTopologyCheck(params, progress);
+    if (action == "convex_hull") return doConvexHull(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -265,6 +266,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_overlap_check.inc"
 
 #include "vector_plugin_topology_check.inc"
+
+#include "vector_plugin_convex_hull.inc"
 
 } // namespace gis::plugins
 

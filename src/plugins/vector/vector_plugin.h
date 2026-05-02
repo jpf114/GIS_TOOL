@@ -87,6 +87,10 @@ private:
     gis::framework::Result doTopologyCheck(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
+
+    gis::framework::Result doConvexHull(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
 };
 
 } // namespace gis::plugins
