@@ -2993,6 +2993,88 @@ TEST_F(PluginTest, VectorOverlapCheckExecution) {
     EXPECT_NE(lines[1].find(",50"), std::string::npos);
 }
 
+TEST_F(PluginTest, VectorTopologyCheckExecution) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_topology_check_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_topology_check_output.csv");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("parcels", srs.get(), wkbPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        auto makeRect = [&](double minX, double minY, double maxX, double maxY) {
+            OGRPolygon poly;
+            OGRLinearRing ring;
+            ring.addPoint(minX, minY);
+            ring.addPoint(maxX, minY);
+            ring.addPoint(maxX, maxY);
+            ring.addPoint(minX, maxY);
+            ring.addPoint(minX, minY);
+            poly.addRing(&ring);
+            return poly;
+        };
+
+        auto* feat1 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly1 = makeRect(0, 0, 10, 10);
+        feat1->SetGeometry(&poly1);
+        ASSERT_EQ(layer->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+
+        auto* feat2 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly2 = makeRect(0, 0, 10, 10);
+        feat2->SetGeometry(&poly2);
+        ASSERT_EQ(layer->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+
+        auto* feat3 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly3 = makeRect(5, 0, 15, 10);
+        feat3->SetGeometry(&poly3);
+        ASSERT_EQ(layer->CreateFeature(feat3), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat3);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("topology_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("issue_count"), "3");
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(ifs, line)) {
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 4u);
+    EXPECT_EQ(lines[0], "source_fid,target_fid,issue_type,issue_value");
+    int duplicateCount = 0;
+    int overlapCount = 0;
+    for (size_t i = 1; i < lines.size(); ++i) {
+        if (lines[i].find("duplicate_geometry") != std::string::npos) {
+            ++duplicateCount;
+        }
+        if (lines[i].find("overlap,50") != std::string::npos) {
+            ++overlapCount;
+        }
+    }
+    EXPECT_EQ(duplicateCount, 1);
+    EXPECT_EQ(overlapCount, 2);
+}
+
 TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);

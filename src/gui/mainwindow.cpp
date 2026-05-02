@@ -123,6 +123,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("nearest"), QStringLiteral("最近邻")},
         {QStringLiteral("adjacency"), QStringLiteral("邻接关系")},
         {QStringLiteral("overlap_check"), QStringLiteral("重叠检查")},
+        {QStringLiteral("topology_check"), QStringLiteral("拓扑检查")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -766,6 +767,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"nearest", {QStringLiteral("最近邻"), QStringLiteral("为每个输入要素寻找目标图层中的最近邻要素，并写入距离与标识。"), {"input", "output", "layer", "nearest_vector", "nearest_field"}, {"input", "output", "nearest_vector"}}},
             {"adjacency", {QStringLiteral("邻接关系"), QStringLiteral("分析同一面图层中要素之间的邻接关系，并导出 CSV 邻接表。"), {"input", "output", "layer"}, {"input", "output"}}},
             {"overlap_check", {QStringLiteral("重叠检查"), QStringLiteral("分析同一面图层中存在面积重叠的要素对，并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
+            {"topology_check", {QStringLiteral("拓扑检查"), QStringLiteral("检查空几何、无效几何、重复面和重叠面，并导出 CSV 问题清单。"), {"input", "output", "layer"}, {"input", "output"}}},
         }},
     };
     return kConfigs;
