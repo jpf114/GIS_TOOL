@@ -138,9 +138,21 @@ cmake --build build/release --config Release --target real_raster_regression_ful
 - `matching`：`detect / corner / match / register / change`
 - `matching` Release 追加：`ecc_register / stitch`
 - `processing`：`pansharpen`
-- `classification`：`feature_stats / feature_stats_csv`
-- `spindex`：常用指数与自定义指数
+- `classification`：`feature_stats`，以及 `full` 模式下的 `feature_stats_csv`
+- `spindex`：`ndvi / evi / savi / gndvi / ndwi / mndwi / ndbi / arvi / nbr / awei / ui / bi / custom_index`
 - `terrain`：当前已实现动作的真实数据回归链路
+
+当前 `real_raster_regression` 中这 3 类重点模块的专项验收范围为：
+
+- `classification.feature_stats`
+  - `quick`：验证 `json / vector_output / raster_output`
+  - `full`：在 `quick` 基础上追加 `csv` 输出
+- `processing.pansharpen`
+  - 当前固定验证 `pan_method=simple_mean`
+  - 输入由真实样例或辅助程序生成的多光谱 / 全色配对数据提供
+- `spindex`
+  - 当前固定验证 `ndvi / evi / savi / gndvi / ndwi / mndwi / ndbi / arvi / nbr / awei / ui / bi / custom_index`
+  - `custom_index` 当前使用 `preset=ndvi_alias` 作为稳定验收入口
 
 ## 使用
 
