@@ -460,6 +460,16 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_terrain_viewshed_multi_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_viewshed_multi/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/terrain_viewshed_multi/gui_terrain_viewshed_multi.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_terrain_viewshed_multi_regression.cmake
+    )
+
+    add_test(
         NAME gui_terrain_cut_fill_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
