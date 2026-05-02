@@ -85,6 +85,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("cog"), QStringLiteral("COG \347\224\237\346\210\220")},
         {QStringLiteral("histogram"), QStringLiteral("\347\233\264\346\226\271\345\233\276")},
         {QStringLiteral("colormap"), QStringLiteral("\344\274\252\345\275\251\350\211\262")},
+        {QStringLiteral("histogram_match"), QStringLiteral("\347\233\264\346\226\271\345\233\276\345\214\271\351\205\215")},
         {QStringLiteral("slope"), QStringLiteral("\345\235\241\345\272\246")},
         {QStringLiteral("aspect"), QStringLiteral("\345\235\241\345\220\221")},
         {QStringLiteral("hillshade"), QStringLiteral("\345\261\261\344\275\223\351\230\264\345\275\261")},
@@ -771,6 +772,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         }},
         {"raster_render", {
             {"colormap", {QStringLiteral("伪彩色"), QStringLiteral("对单波段影像应用伪彩色映射。"), {"input", "output", "band", "cmap"}, {"input", "output"}}},
+            {"histogram_match", {QStringLiteral("直方图匹配"), QStringLiteral("将输入影像的灰度分布匹配到参考影像。"), {"input", "reference", "output", "band"}, {"input", "reference", "output"}}},
         }},
         {"vector", {
             {"info", {QStringLiteral("矢量信息"), QStringLiteral("查看矢量图层、字段和空间参考信息。"), {"input", "layer"}, {"input"}}},

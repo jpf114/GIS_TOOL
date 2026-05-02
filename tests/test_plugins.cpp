@@ -1049,6 +1049,28 @@ TEST_F(PluginTest, RasterRenderColormapExecution) {
     EXPECT_EQ(ds->GetRasterCount(), 3);
 }
 
+TEST_F(PluginTest, RasterRenderHistogramMatchExecution) {
+    auto* p = mgr_.find("raster_render");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("e2e_util_hist_match_input.tif", 40, 40);
+    const std::string reference = createTerrainRaster("e2e_util_hist_match_reference.tif", 40, 40);
+    const std::string output = utf8PathString(getTestDir() / "e2e_util_hist_match_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("histogram_match");
+    params["input"] = input;
+    params["reference"] = reference;
+    params["output"] = output;
+    params["band"] = 1;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("action"), "histogram_match");
+    EXPECT_NE(readRasterPixel(output, 10, 10), readRasterPixel(input, 10, 10));
+}
+
 TEST_F(PluginTest, SpindexNdviExecution) {
     auto* p = mgr_.find("spindex");
     ASSERT_NE(p, nullptr);

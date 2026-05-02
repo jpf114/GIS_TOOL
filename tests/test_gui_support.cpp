@@ -209,6 +209,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_raster_render_colormap.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "raster_render", "histogram_match"),
+        "D:/data/image_raster_render_histogram_match.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/image.tif", "raster_manage", "cog"),
         "D:/data/image_raster_manage_cog.tif");
     EXPECT_EQ(

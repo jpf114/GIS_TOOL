@@ -85,7 +85,7 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
     }
 
     if (pluginName == "raster_render") {
-        if (action == "colormap") return ".tif";
+        if (action == "colormap" || action == "histogram_match") return ".tif";
         return inputExt;
     }
 
