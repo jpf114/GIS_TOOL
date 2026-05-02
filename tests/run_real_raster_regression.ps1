@@ -337,6 +337,73 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_connected_components raster type mismatch"
             Assert-TextContains -Text $info -Expected "Max:    4" -Message "processing_connected_components component count mismatch"
         }
+        "georef_dos_correction" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_dos_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   16 x 16 x 1 bands" -Message "georef_dos_correction raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "georef_dos_correction raster type mismatch"
+            Assert-TextContains -Text $info -Expected "Min:    0" -Message "georef_dos_correction min mismatch"
+            Assert-TextContains -Text $info -Expected "Max:    1" -Message "georef_dos_correction max mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   0.5" -Message "georef_dos_correction mean mismatch"
+        }
+        "georef_radiometric_calibration" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_radiometric_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   16 x 16 x 1 bands" -Message "georef_radiometric_calibration raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "georef_radiometric_calibration raster type mismatch"
+            Assert-TextContains -Text $info -Expected "Min:    2" -Message "georef_radiometric_calibration min mismatch"
+            Assert-TextContains -Text $info -Expected "Max:    767" -Message "georef_radiometric_calibration max mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   384.5" -Message "georef_radiometric_calibration mean mismatch"
+        }
+        "georef_gcp_register" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_gcp_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   10 x 6 x 1 bands" -Message "georef_gcp_register raster size mismatch"
+            Assert-TextContains -Text $info -Expected "CRS:    EPSG:4326" -Message "georef_gcp_register crs mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   7" -Message "georef_gcp_register mean mismatch"
+        }
+        "georef_cosine_correction" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_cosine_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   10 x 6 x 1 bands" -Message "georef_cosine_correction raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   20" -Message "georef_cosine_correction mean mismatch"
+        }
+        "georef_minnaert_correction" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_minnaert_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   10 x 6 x 1 bands" -Message "georef_minnaert_correction raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   14.1421" -Message "georef_minnaert_correction mean mismatch"
+        }
+        "georef_c_correction" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_c_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   10 x 6 x 1 bands" -Message "georef_c_correction raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   18.1239" -Message "georef_c_correction mean mismatch"
+        }
+        "georef_quac_correction" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_quac_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   8 x 8 x 3 bands" -Message "georef_quac_correction raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Band 1:" -Message "georef_quac_correction band 1 missing"
+            Assert-TextContains -Text $info -Expected "Band 2:" -Message "georef_quac_correction band 2 missing"
+            Assert-TextContains -Text $info -Expected "Band 3:" -Message "georef_quac_correction band 3 missing"
+            Assert-TextContains -Text $info -Expected "Mean:   0" -Message "georef_quac_correction mean mismatch"
+        }
+        "georef_rpc_orthorectify" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_rpc_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   10 x 6 x 1 bands" -Message "georef_rpc_orthorectify raster size mismatch"
+            Assert-TextContains -Text $info -Expected "CRS:    EPSG:4326" -Message "georef_rpc_orthorectify crs mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   9" -Message "georef_rpc_orthorectify mean mismatch"
+        }
         "classification_feature_stats" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "feature_stats_output.json")
             Assert-Condition -Condition ($payload.meta.actual_srs -eq "EPSG:3857") -Message "classification_feature_stats actual_srs mismatch"
@@ -415,6 +482,15 @@ function Ensure-RasterRegressionData {
     $terrainRaster = Join-Path $generatedRoot "terrain_input.tif"
     $supervisedClassificationRaster = Join-Path $generatedRoot "classification_supervised_input.tif"
     $supervisedClassificationCsv = Join-Path $generatedRoot "classification_supervised_samples.csv"
+    $georefRadiometricRaster = Join-Path $generatedRoot "georef_radiometric_input.tif"
+    $georefRadiometricMetadata = Join-Path $generatedRoot "georef_radiometric_metadata.txt"
+    $georefGcpRaster = Join-Path $generatedRoot "georef_gcp_input.tif"
+    $georefGcpCsv = Join-Path $generatedRoot "georef_gcps.csv"
+    $georefTopoInput = Join-Path $generatedRoot "georef_topo_input.tif"
+    $georefTopoSlope = Join-Path $generatedRoot "georef_topo_slope.tif"
+    $georefTopoAspect = Join-Path $generatedRoot "georef_topo_aspect.tif"
+    $georefQuacRaster = Join-Path $generatedRoot "georef_quac_input.tif"
+    $georefRpcRaster = Join-Path $generatedRoot "georef_rpc_input.tif"
 
     if (-not (Test-Path $ndviInput)) {
         Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("ndvi-raster", $ndviInput)
@@ -457,6 +533,45 @@ function Ensure-RasterRegressionData {
         )
     }
 
+    if ((-not (Test-Path $georefRadiometricRaster)) -or (-not (Test-Path $georefRadiometricMetadata))) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @(
+            "georef-radiometric-inputs",
+            $georefRadiometricRaster,
+            $georefRadiometricMetadata
+        )
+    }
+
+    if ((-not (Test-Path $georefGcpRaster)) -or (-not (Test-Path $georefGcpCsv))) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @(
+            "georef-gcp-inputs",
+            $georefGcpRaster,
+            $georefGcpCsv
+        )
+    }
+
+    if ((-not (Test-Path $georefTopoInput)) -or (-not (Test-Path $georefTopoSlope)) -or (-not (Test-Path $georefTopoAspect))) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @(
+            "georef-topographic-inputs",
+            $georefTopoInput,
+            $georefTopoSlope,
+            $georefTopoAspect
+        )
+    }
+
+    if (-not (Test-Path $georefQuacRaster)) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @(
+            "georef-quac-input",
+            $georefQuacRaster
+        )
+    }
+
+    if (-not (Test-Path $georefRpcRaster)) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @(
+            "georef-rpc-input",
+            $georefRpcRaster
+        )
+    }
+
     return [pscustomobject]@{
         NdviInput = $ndviInput
         PansharpenMs = $panMs
@@ -469,6 +584,15 @@ function Ensure-RasterRegressionData {
         TerrainRaster = $terrainRaster
         SupervisedClassificationRaster = $supervisedClassificationRaster
         SupervisedClassificationCsv = $supervisedClassificationCsv
+        GeorefRadiometricRaster = $georefRadiometricRaster
+        GeorefRadiometricMetadata = $georefRadiometricMetadata
+        GeorefGcpRaster = $georefGcpRaster
+        GeorefGcpCsv = $georefGcpCsv
+        GeorefTopoInput = $georefTopoInput
+        GeorefTopoSlope = $georefTopoSlope
+        GeorefTopoAspect = $georefTopoAspect
+        GeorefQuacRaster = $georefQuacRaster
+        GeorefRpcRaster = $georefRpcRaster
     }
 }
 
@@ -976,6 +1100,98 @@ $cases += New-Case -Name "processing_connected_components" -CaseArgs @(
     "--band=1"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "connected_components_output.tif")
+)
+
+$cases += New-Case -Name "georef_dos_correction" -CaseArgs @(
+    "georef", "dos_correction",
+    ("--input=" + $data.GeorefRadiometricRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_dos_output.tif")),
+    "--band=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "georef_dos_output.tif")
+)
+
+$cases += New-Case -Name "georef_radiometric_calibration" -CaseArgs @(
+    "georef", "radiometric_calibration",
+    ("--input=" + $data.GeorefRadiometricRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_radiometric_output.tif")),
+    ("--metadata_file=" + $data.GeorefRadiometricMetadata),
+    "--band=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "georef_radiometric_output.tif")
+)
+
+$cases += New-Case -Name "georef_gcp_register" -CaseArgs @(
+    "georef", "gcp_register",
+    ("--input=" + $data.GeorefGcpRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_gcp_output.tif")),
+    ("--gcp_file=" + $data.GeorefGcpCsv),
+    "--dst_srs=EPSG:4326",
+    "--resample=nearest"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "georef_gcp_output.tif")
+)
+
+$cases += New-Case -Name "georef_cosine_correction" -CaseArgs @(
+    "georef", "cosine_correction",
+    ("--input=" + $data.GeorefTopoInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_cosine_output.tif")),
+    "--band=1",
+    ("--slope_raster=" + $data.GeorefTopoSlope),
+    ("--aspect_raster=" + $data.GeorefTopoAspect),
+    "--sun_zenith_deg=30",
+    "--sun_azimuth_deg=180"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "georef_cosine_output.tif")
+)
+
+$cases += New-Case -Name "georef_minnaert_correction" -CaseArgs @(
+    "georef", "minnaert_correction",
+    ("--input=" + $data.GeorefTopoInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_minnaert_output.tif")),
+    "--band=1",
+    ("--slope_raster=" + $data.GeorefTopoSlope),
+    ("--aspect_raster=" + $data.GeorefTopoAspect),
+    "--sun_zenith_deg=30",
+    "--sun_azimuth_deg=180",
+    "--minnaert_k=0.5"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "georef_minnaert_output.tif")
+)
+
+$cases += New-Case -Name "georef_c_correction" -CaseArgs @(
+    "georef", "c_correction",
+    ("--input=" + $data.GeorefTopoInput),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_c_output.tif")),
+    "--band=1",
+    ("--slope_raster=" + $data.GeorefTopoSlope),
+    ("--aspect_raster=" + $data.GeorefTopoAspect),
+    "--sun_zenith_deg=30",
+    "--sun_azimuth_deg=180",
+    "--c_value=0.1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "georef_c_output.tif")
+)
+
+$cases += New-Case -Name "georef_quac_correction" -CaseArgs @(
+    "georef", "quac_correction",
+    ("--input=" + $data.GeorefQuacRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_quac_output.tif")),
+    "--dark_percentile=1",
+    "--bright_percentile=99"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "georef_quac_output.tif")
+)
+
+$cases += New-Case -Name "georef_rpc_orthorectify" -CaseArgs @(
+    "georef", "rpc_orthorectify",
+    ("--input=" + $data.GeorefRpcRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_rpc_output.tif")),
+    "--dst_srs=EPSG:4326",
+    "--rpc_height=0",
+    "--resample=nearest"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "georef_rpc_output.tif")
 )
 
 $featureStatsOutput = Join-Path $ResolvedOutputRoot "feature_stats_output.json"
