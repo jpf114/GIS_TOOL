@@ -247,6 +247,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         gis::gui::buildSuggestedOutputPath(
             "D:/data/parcels.gpkg", "vector", "adjacency"),
         "D:/data/parcels_vector_adjacency.csv");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
+            "D:/data/parcels.gpkg", "vector", "overlap_check"),
+        "D:/data/parcels_vector_overlap_check.csv");
 }
 
 TEST(GuiSupportTest, ComputeDerivedOutputUpdateAppliesSuggestedValueForEmptyOutput) {

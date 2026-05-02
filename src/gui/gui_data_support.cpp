@@ -118,7 +118,7 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
         if (action == "rasterize") return ".tif";
         if (action == "polygonize") return ".gpkg";
         if (action == "convert") return ".geojson";
-        if (action == "adjacency") return ".csv";
+        if (action == "adjacency" || action == "overlap_check") return ".csv";
         return ".gpkg";
     }
 
@@ -1153,6 +1153,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "vector" && actionKey == "adjacency") {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
+            return ActionValidationIssue{"output", "参数“输出文件”应使用 .csv"};
+        }
+    }
+
+    if (pluginName == "vector" && actionKey == "overlap_check") {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .csv"};
