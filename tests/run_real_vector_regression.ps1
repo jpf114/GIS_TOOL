@@ -158,6 +158,103 @@ function Save-RegressionResults {
     $Results | Select-Object Name,ExitCode,Seconds | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
 }
 
+function Assert-Condition {
+    param(
+        [bool]$Condition,
+        [string]$Message
+    )
+
+    if (-not $Condition) {
+        throw $Message
+    }
+}
+
+function Read-JsonPayload {
+    param([string]$Path)
+
+    return (Get-Content $Path -Raw | ConvertFrom-Json)
+}
+
+function Invoke-CliAndCaptureText {
+    param(
+        [string]$ResolvedCliPath,
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString() + "_gis_stdout.txt")
+    $stderrPath = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString() + "_gis_stderr.txt")
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $ResolvedCliPath @Arguments 1> $stdoutPath 2> $stderrPath
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorAction
+    $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { "" }
+    $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
+    Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    Assert-Condition -Condition ($code -eq 0) -Message ("CLI validation command failed: " + ($Arguments -join " "))
+    return (($stdout + [Environment]::NewLine + $stderr).Trim())
+}
+
+function Assert-TextContains {
+    param(
+        [string]$Text,
+        [string]$Expected,
+        [string]$Message
+    )
+
+    Assert-Condition -Condition ($Text.Contains($Expected)) -Message $Message
+}
+
+function Validate-CaseOutputs {
+    param(
+        [pscustomobject]$Case,
+        [string]$ResolvedCliPath,
+        [string]$ResolvedOutputRoot
+    )
+
+    switch ($Case.Name) {
+        "buffer_quick" {
+            Assert-TextContains -Text $Case.Output -Expected "feature_count: 2" -Message "buffer_quick feature_count mismatch"
+            Assert-TextContains -Text $Case.Output -Expected "srs_type: projected" -Message "buffer_quick srs_type mismatch"
+        }
+        "clip_focus" {
+            Assert-TextContains -Text $Case.Output -Expected "Clip completed: 2 features clipped" -Message "clip_focus feature count mismatch"
+        }
+        "difference_focus" {
+            Assert-TextContains -Text $Case.Output -Expected "Difference completed: 0 features" -Message "difference_focus feature count mismatch"
+        }
+        "union_focus" {
+            Assert-TextContains -Text $Case.Output -Expected "Union completed: 2 features" -Message "union_focus feature count mismatch"
+        }
+        "dissolve_bbox" {
+            Assert-TextContains -Text $Case.Output -Expected "Dissolve completed: 1 features" -Message "dissolve_bbox feature count mismatch"
+        }
+        "convert_roads_geojson" {
+            $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "roads_core.geojson")
+            Assert-Condition -Condition ($payload.type -eq "FeatureCollection") -Message "convert_roads_geojson type mismatch"
+            Assert-Condition -Condition ($payload.features.Count -eq 2) -Message "convert_roads_geojson feature count mismatch"
+        }
+        "rasterize_bbox" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "bbox_rasterized.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   46 x 35 x 1 bands" -Message "rasterize_bbox raster size mismatch"
+            Assert-TextContains -Text $info -Expected "CRS:    EPSG:4326" -Message "rasterize_bbox CRS mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   1" -Message "rasterize_bbox mean mismatch"
+        }
+        "polygonize_bbox_raster" {
+            Assert-TextContains -Text $Case.Output -Expected "Polygonize completed: 1 polygons" -Message "polygonize_bbox_raster polygon count mismatch"
+        }
+        "clip_stress" {
+            Assert-TextContains -Text $Case.Output -Expected "Clip completed: 2 features clipped" -Message "clip_stress feature count mismatch"
+        }
+        "difference_stress" {
+            Assert-TextContains -Text $Case.Output -Expected "Difference completed: 0 features" -Message "difference_stress feature count mismatch"
+        }
+    }
+}
+
 function Invoke-SetupCommand {
     param(
         [string]$ResolvedCliPath,
@@ -498,7 +595,9 @@ if ($Mode -eq "full") {
 
 $results = @()
 foreach ($case in $cases) {
-    $results += Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
+    $result = Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
+    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot
+    $results += $result
 }
 
 Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results

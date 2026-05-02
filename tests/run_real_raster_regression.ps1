@@ -183,22 +183,84 @@ function Read-JsonPayload {
     return ($raw.Substring($jsonStart) | ConvertFrom-Json)
 }
 
+function Invoke-CliAndCaptureText {
+    param(
+        [string]$ResolvedCliPath,
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString() + "_gis_stdout.txt")
+    $stderrPath = Join-Path $env:TEMP ([System.Guid]::NewGuid().ToString() + "_gis_stderr.txt")
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $ResolvedCliPath @Arguments 1> $stdoutPath 2> $stderrPath
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorAction
+    $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { "" }
+    $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
+    Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    Assert-Condition -Condition ($code -eq 0) -Message ("CLI validation command failed: " + ($Arguments -join " "))
+    return (($stdout + [Environment]::NewLine + $stderr).Trim())
+}
+
+function Assert-TextContains {
+    param(
+        [string]$Text,
+        [string]$Expected,
+        [string]$Message
+    )
+
+    Assert-Condition -Condition ($Text.Contains($Expected)) -Message $Message
+}
+
 function Validate-CaseOutputs {
     param(
         [pscustomobject]$Case,
-        [string]$ResolvedOutputRoot
+        [string]$ResolvedOutputRoot,
+        [string]$ResolvedCliPath
     )
 
     switch ($Case.Name) {
+        "spindex_ndvi" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "ndvi_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   24 x 24 x 1 bands" -Message "spindex_ndvi raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   0.75" -Message "spindex_ndvi mean mismatch"
+        }
         "raster_inspect_histogram" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "histogram_output.json")
             Assert-Condition -Condition ($payload.total -gt 0) -Message "histogram total should be greater than zero"
             Assert-Condition -Condition ($payload.histogram.Count -eq 16) -Message "histogram bin count should equal 16"
         }
+        "terrain_slope" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_slope_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   48 x 48 x 1 bands" -Message "terrain_slope raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_slope raster type mismatch"
+        }
         "terrain_profile_extract" {
             $rows = Import-Csv (Join-Path $ResolvedOutputRoot "terrain_profile_output.csv")
             Assert-Condition -Condition ($rows.Count -ge 10) -Message "terrain_profile_extract should output at least 10 rows"
             Assert-Condition -Condition ([double]$rows[0].distance -eq 0.0) -Message "terrain_profile_extract first distance should be zero"
+        }
+        "terrain_viewshed_multi" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_viewshed_multi_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Min:    0" -Message "terrain_viewshed_multi min mismatch"
+            Assert-TextContains -Text $info -Expected "Max:    255" -Message "terrain_viewshed_multi max mismatch"
+        }
+        "processing_pansharpen" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "pansharpen_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   30 x 30 x 3 bands" -Message "processing_pansharpen raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   75" -Message "processing_pansharpen band1 mean mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   85" -Message "processing_pansharpen band2 mean mismatch"
+            Assert-TextContains -Text $info -Expected "Mean:   95" -Message "processing_pansharpen band3 mean mismatch"
         }
         "classification_feature_stats" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "feature_stats_output.json")
@@ -714,7 +776,7 @@ if ($Mode -eq "full") {
 $results = @()
 foreach ($case in $cases) {
     $results += Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
-    Validate-CaseOutputs -Case $case -ResolvedOutputRoot $ResolvedOutputRoot
+    Validate-CaseOutputs -Case $case -ResolvedOutputRoot $ResolvedOutputRoot -ResolvedCliPath $ResolvedCliPath
 }
 
 Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results
