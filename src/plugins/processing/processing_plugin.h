@@ -61,6 +61,10 @@ private:
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
 
+    gis::framework::Result doConnectedComponents(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
+
     gis::framework::Result doKMeans(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);

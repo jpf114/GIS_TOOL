@@ -233,6 +233,10 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_processing_skeleton.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
+            "D:/data/image.tif", "processing", "connected_components"),
+        "D:/data/image_processing_connected_components.tif");
+    EXPECT_EQ(
+        gis::gui::buildSuggestedOutputPath(
             "D:/data/dem.tif", "terrain", "slope"),
         "D:/data/dem_terrain_slope.tif");
     EXPECT_EQ(

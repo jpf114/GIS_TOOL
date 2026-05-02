@@ -818,6 +818,26 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
     EXPECT_GT(readRasterPixel(output, 48, 48), 0.0f);
 }
 
+TEST_F(PluginTest, ProcessingConnectedComponentsExecution) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::string input = createPatternRaster("e2e_connected_components_input.tif");
+    std::string output = (getTestDir() / "e2e_connected_components_output.tif").string();
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("connected_components");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Connected components failed: " << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_GT(std::stoi(result.metadata.at("component_count")), 1);
+    EXPECT_GT(readRasterPixel(output, 26, 26), 0.0f);
+}
+
 TEST_F(PluginTest, ProcessingContourExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
