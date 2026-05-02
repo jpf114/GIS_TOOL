@@ -140,7 +140,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract"}
+            {"info", "filter", "buffer", "clip", "rasterize", "polygonize", "convert", "union", "difference", "dissolve", "simplify", "repair", "geom_metrics", "nearest", "adjacency", "overlap_check", "topology_check", "convex_hull", "centroid", "envelope", "boundary", "multipart_check", "singlepart", "vertices_extract", "endpoints_extract", "midpoints_extract"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入矢量/栅格文件路径",
@@ -242,6 +242,7 @@ gis::framework::Result VectorPlugin::execute(
     if (action == "singlepart") return doSinglepart(params, progress);
     if (action == "vertices_extract") return doVerticesExtract(params, progress);
     if (action == "endpoints_extract") return doEndpointsExtract(params, progress);
+    if (action == "midpoints_extract") return doMidpointsExtract(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
@@ -289,6 +290,8 @@ gis::framework::Result VectorPlugin::execute(
 #include "vector_plugin_vertices_extract.inc"
 
 #include "vector_plugin_endpoints_extract.inc"
+
+#include "vector_plugin_midpoints_extract.inc"
 
 } // namespace gis::plugins
 
