@@ -22,6 +22,15 @@
 | 重采样方式 | 枚举 | 否 | `bilinear` | `nearest` `bilinear` `cubic`。 |
 | 波段号 | 整数 | 否 | `1` | 从 1 开始。 |
 
+## 输出说明
+
+- 输出结果为栅格文件。
+- 建议优先使用 `.tif` 保存，便于后续在 CLI、GUI 或 GIS 软件中继续处理。
+
+## 推荐输出文件名
+
+- `ECC_配准_result.tif`
+
 ## 注意事项
 
 - Debug lightweight 模式下该功能会被禁用。
