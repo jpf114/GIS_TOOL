@@ -135,6 +135,10 @@ private:
     gis::framework::Result doHoleCheck(
         const std::map<std::string, gis::framework::ParamValue>& params,
         gis::core::ProgressReporter& progress);
+
+    gis::framework::Result doDanglingEndpointCheck(
+        const std::map<std::string, gis::framework::ParamValue>& params,
+        gis::core::ProgressReporter& progress);
 };
 
 } // namespace gis::plugins

@@ -3871,6 +3871,65 @@ TEST_F(PluginTest, VectorHoleCheckExecution) {
     EXPECT_NE(lines[1].find(",1"), std::string::npos);
 }
 
+TEST_F(PluginTest, VectorDanglingEndpointCheckExecution) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_dangling_endpoint_check_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_dangling_endpoint_check_output.csv");
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("lines", srs.get(), wkbLineString, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        auto addLine = [&](std::initializer_list<std::pair<double, double>> points) {
+            OGRLineString line;
+            for (const auto& [x, y] : points) {
+                line.addPoint(x, y);
+            }
+            auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            feat->SetGeometry(&line);
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        };
+
+        addLine({{0, 0}, {1, 0}});
+        addLine({{1, 0}, {2, 0}});
+        addLine({{10, 0}, {11, 0}});
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("dangling_endpoint_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("issue_count"), "4");
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(ifs, line)) {
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 5u);
+    EXPECT_EQ(lines[0], "source_fid,endpoint_type,x,y");
+    EXPECT_NE(lines[1].find(",0,0,0"), std::string::npos);
+    EXPECT_NE(lines[2].find(",1,2,0"), std::string::npos);
+    EXPECT_NE(lines[3].find(",0,10,0"), std::string::npos);
+    EXPECT_NE(lines[4].find(",1,11,0"), std::string::npos);
+}
+
 TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);
