@@ -135,7 +135,10 @@ install(DIRECTORY
 
 install(CODE [[
     file(REMOVE
-        "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/plugins/plugin_utility.dll"
+        "${CMAKE_INSTALL_PREFIX}/bin/plugins/plugin_utility.dll"
+        "${CMAKE_INSTALL_PREFIX}/bin/plugins/plugin_raster_inspect.lib"
+        "${CMAKE_INSTALL_PREFIX}/bin/plugins/plugin_raster_manage.lib"
+        "${CMAKE_INSTALL_PREFIX}/bin/plugins/plugin_raster_render.lib"
         "${CMAKE_INSTALL_PREFIX}/plugins/plugin_utility.dll"
         "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_inspect.dll"
         "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_inspect.lib"
