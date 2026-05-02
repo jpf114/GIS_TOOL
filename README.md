@@ -13,19 +13,29 @@
 
 ## 当前主功能
 
-- `projection` 投影转换
-- `cutting` 影像裁切与镶嵌
-- `matching` 特征匹配与配准
-- `processing` 影像处理与分析
-- `classification` 分类统计与监督分类
-- `georef` 几何校正与辐射处理
-- `terrain` 地形分析
-- `spindex` 光谱指数
-- `raster_manage` 栅格管理
-- `raster_inspect` 栅格检查
-- `raster_render` 栅格渲染
-- `raster_math` 栅格计算
-- `vector` 矢量数据处理
+- 投影转换
+- 影像裁切与镶嵌
+- 特征匹配与配准
+- 影像处理与分析
+- 分类统计与监督分类
+- 几何校正与辐射处理
+- 地形分析
+- 光谱指数
+- 栅格工具
+- 矢量数据处理
+
+当前底层插件与主功能映射：
+
+- `projection` -> 投影转换
+- `cutting` -> 影像裁切与镶嵌
+- `matching` -> 特征匹配与配准
+- `processing` -> 影像处理与分析
+- `classification` -> 分类统计与监督分类
+- `georef` -> 几何校正与辐射处理
+- `terrain` -> 地形分析
+- `spindex` -> 光谱指数
+- `raster_manage / raster_inspect / raster_render / raster_math` -> 栅格工具
+- `vector` -> 矢量数据处理
 
 ## 本轮新增并已接入的功能
 
