@@ -50,7 +50,7 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 
 - GUI support 测试通过
 - GUI offscreen 回归通过
-- GUI 当前自动化覆盖总量为 `172` 项
+- GUI 当前自动化覆盖总量为 `173` 项
   - `61` 项 `GuiSupportTest`
   - `112` 项 `gui_` 离屏回归
 
