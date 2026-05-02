@@ -90,6 +90,9 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
     }
 
     if (pluginName == "raster_manage") {
+        if (action == "cog") {
+            return ".tif";
+        }
         return inputExt;
     }
 
@@ -992,6 +995,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
         if (!hasValidLevel) {
             return ActionValidationIssue{"levels", "参数“金字塔层级”至少应包含一个大于 1 的整数，例如 2 4 8 16"};
+        }
+    }
+
+    if (pluginName == "raster_manage" && actionKey == "cog") {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
+            return ActionValidationIssue{"output", "参数“输出文件”应使用 .tif 或 .tiff"};
         }
     }
 

@@ -82,6 +82,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("kmeans"), QStringLiteral("K-Means")},
         {QStringLiteral("overviews"), QStringLiteral("\351\207\221\345\255\227\345\241\224")},
         {QStringLiteral("nodata"), QStringLiteral("NoData \350\256\276\347\275\256")},
+        {QStringLiteral("cog"), QStringLiteral("COG \347\224\237\346\210\220")},
         {QStringLiteral("histogram"), QStringLiteral("\347\233\264\346\226\271\345\233\276")},
         {QStringLiteral("colormap"), QStringLiteral("\344\274\252\345\275\251\350\211\262")},
         {QStringLiteral("slope"), QStringLiteral("\345\235\241\345\272\246")},
@@ -730,6 +731,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
         {"raster_manage", {
             {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
             {"nodata", {QStringLiteral("NoData 设置"), QStringLiteral("为单波段或全部波段写入 NoData 值。"), {"input", "band", "nodata_value"}, {"input"}}},
+            {"cog", {QStringLiteral("COG 生成"), QStringLiteral("将输入栅格转换为 Cloud Optimized GeoTIFF。"), {"input", "output"}, {"input", "output"}}},
         }},
         {"terrain", {
             {"slope", {QStringLiteral("坡度"), QStringLiteral("根据 DEM 计算坡度栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},

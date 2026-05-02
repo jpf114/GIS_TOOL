@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cpl_conv.h>
 #include <gdal_priv.h>
+#include <gdal_utils.h>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -18,7 +19,7 @@ std::vector<gis::framework::ParamSpec> RasterManagePlugin::paramSpecs() const {
             "action", "子功能", "选择要执行的子功能",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
-            {"overviews", "nodata"}
+            {"overviews", "nodata", "cog"}
         },
         gis::framework::ParamSpec{
             "input", "输入文件", "输入影像文件路径",
@@ -52,6 +53,7 @@ gis::framework::Result RasterManagePlugin::execute(
     const std::string action = gis::framework::getParam<std::string>(params, "action", "");
 
     if (action == "overviews") return doBuildOverviews(params, progress);
+    if (action == "cog")       return doBuildCog(params, progress);
     if (action == "nodata")    return doSetNoData(params, progress);
 
     return gis::framework::Result::fail("Unknown action: " + action);
@@ -100,6 +102,64 @@ gis::framework::Result RasterManagePlugin::doBuildOverviews(
 
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Overviews built successfully: " + levelsStr, input);
+}
+
+gis::framework::Result RasterManagePlugin::doBuildCog(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    const std::string input = gis::framework::getParam<std::string>(params, "input", "");
+    const std::string output = gis::framework::getParam<std::string>(params, "output", "");
+
+    if (input.empty()) return gis::framework::Result::fail("input is required");
+    if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.onProgress(0.1);
+    auto ds = gis::core::openRaster(input, true);
+
+    std::vector<std::string> argStorage = {
+        "-of", "COG",
+        "-co", "COMPRESS=LZW",
+        "-co", "BIGTIFF=IF_SAFER"
+    };
+    std::vector<char*> argv;
+    argv.reserve(argStorage.size() + 1);
+    for (auto& item : argStorage) {
+        argv.push_back(item.data());
+    }
+    argv.push_back(nullptr);
+
+    GDALTranslateOptions* translateOpts = GDALTranslateOptionsNew(argv.data(), nullptr);
+    if (!translateOpts) {
+        return gis::framework::Result::fail("Failed to create COG translate options");
+    }
+
+    progress.onMessage("Building Cloud Optimized GeoTIFF: " + output);
+    progress.onProgress(0.4);
+
+    int usageError = FALSE;
+    GDALDatasetH dstHandle = GDALTranslate(
+        output.c_str(),
+        GDALDataset::ToHandle(ds.get()),
+        translateOpts,
+        &usageError);
+    GDALTranslateOptionsFree(translateOpts);
+
+    if (!dstHandle || usageError) {
+        if (dstHandle) {
+            GDALClose(dstHandle);
+        }
+        return gis::framework::Result::fail(
+            "Failed to build COG: " + std::string(CPLGetLastErrorMsg()));
+    }
+
+    GDALClose(dstHandle);
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok("COG built successfully", output);
+    result.metadata["format"] = "COG";
+    result.metadata["compression"] = "LZW";
+    return result;
 }
 
 gis::framework::Result RasterManagePlugin::doSetNoData(

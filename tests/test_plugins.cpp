@@ -986,6 +986,30 @@ TEST_F(PluginTest, RasterManageNoDataExecution) {
     EXPECT_DOUBLE_EQ(noDataValue, -99.0);
 }
 
+TEST_F(PluginTest, RasterManageCogExecution) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("e2e_util_cog_input.tif", 64, 64);
+    const std::string output = utf8PathString(getTestDir() / "e2e_util_cog_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("cog");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("format"), "COG");
+
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    EXPECT_EQ(ds->GetRasterXSize(), 64);
+    EXPECT_EQ(ds->GetRasterYSize(), 64);
+    EXPECT_EQ(ds->GetRasterCount(), 1);
+}
+
 TEST_F(PluginTest, RasterInspectHistogramExecution) {
     auto* p = mgr_.find("raster_inspect");
     ASSERT_NE(p, nullptr);
