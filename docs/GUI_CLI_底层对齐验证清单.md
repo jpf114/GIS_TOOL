@@ -115,6 +115,12 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 | `georef` | `dos_correction` `radiometric_calibration` `gcp_register` `cosine_correction` `minnaert_correction` `c_correction` `quac_correction` `rpc_orthorectify` | 有 | 有 | 有 | 主链路已对齐 |
 | `terrain` | `slope` `aspect` `hillshade` `tpi` `curvature` `roughness` `fill_sinks` `flow_direction` `flow_accumulation` `stream_extract` `watershed` `profile_extract` `viewshed` `viewshed_multi` `cut_fill` `reservoir_volume` | 有 | 有 | 有 | 主链路已对齐 |
 
+补充说明：
+
+- `spindex` 当前除 `ndvi / ndwi / custom_index` 的 GUI 证据外，还已纳入真实数据专项的 `ndvi / evi / savi / gndvi / ndwi / mndwi / ndbi / arvi / nbr / awei / ui / bi / custom_index`
+- `classification.feature_stats` 当前真实数据专项中，`quick` 已覆盖 `json / vector_output / raster_output`，`full` 追加 `csv`
+- `processing.pansharpen` 当前真实数据专项固定验证 `pan_method=simple_mean`
+
 ## 6. GUI 当前回归覆盖说明
 
 GUI 当前已覆盖的离屏回归共 `86` 项，包含：
