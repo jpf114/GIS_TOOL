@@ -133,6 +133,11 @@ install(DIRECTORY
     DESTINATION "${CMAKE_INSTALL_DATADIR}/gdal"
 )
 
+install(DIRECTORY
+    "${CMAKE_SOURCE_DIR}/resources/icons/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons"
+)
+
 install(CODE [[
     file(REMOVE
         "${CMAKE_INSTALL_PREFIX}/bin/plugins/plugin_utility.dll"
@@ -150,7 +155,7 @@ install(CODE [[
 ]])
 
 if(GIS_BUILD_GUI)
-    find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
+    find_package(Qt6 COMPONENTS Core Gui Widgets Svg REQUIRED)
     add_subdirectory(src/gui)
 endif()
 

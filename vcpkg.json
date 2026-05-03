@@ -16,7 +16,7 @@
     {
       "name": "qtbase",
       "default-features": false,
-      "features": ["widgets"]
+      "features": ["widgets", "svg"]
     }
   ],
   "overrides": []

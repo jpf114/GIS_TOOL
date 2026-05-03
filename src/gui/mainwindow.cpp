@@ -7,6 +7,7 @@
 #include "qt_progress_reporter.h"
 #include "style_constants.h"
 #include "gui_data_support.h"
+#include "icon_manager.h"
 
 #include <gis/core/runtime_env.h>
 
@@ -189,305 +190,46 @@ QString actionIconText(const QString& actionKey) {
 }
 
 QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg, int size = 38) {
+    auto& mgr = gis::gui::IconManager::instance();
+    std::string key = text.toStdString();
+    QPixmap iconPixmap;
+    bool hasSvg = false;
+
+    if (mgr.hasPluginIcon(key)) {
+        iconPixmap = mgr.pixmapForPlugin(key, static_cast<int>(size * 0.55), fg);
+        hasSvg = true;
+    } else if (mgr.hasActionIcon(key)) {
+        iconPixmap = mgr.pixmapForAction(key, static_cast<int>(size * 0.55), fg);
+        hasSvg = true;
+    }
+
+    if (hasSvg) {
+        QPixmap result(size, size);
+        result.fill(Qt::transparent);
+        QPainter painter(&result);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(bg);
+        painter.drawRoundedRect(QRectF(0.5, 0.5, size - 1.0, size - 1.0), 8, 8);
+        int iconSize = static_cast<int>(size * 0.55);
+        int offset = (size - iconSize) / 2;
+        painter.drawPixmap(offset, offset, iconPixmap);
+        return result;
+    }
+
     QPixmap pixmap(size, size);
     pixmap.fill(Qt::transparent);
-
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(Qt::NoPen);
     painter.setBrush(bg);
     painter.drawRoundedRect(QRectF(0.5, 0.5, size - 1.0, size - 1.0), 8, 8);
-
     QPen pen(fg);
     pen.setWidthF(1.8);
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
     painter.setPen(pen);
-
-    auto drawGrid = [&]() {
-        painter.drawRect(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(19, 10), QPointF(19, 28));
-        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
-    };
-    auto drawBars = [&]() {
-        painter.drawLine(QPointF(14, 26), QPointF(14, 18));
-        painter.drawLine(QPointF(19, 26), QPointF(19, 14));
-        painter.drawLine(QPointF(24, 26), QPointF(24, 10));
-    };
-    auto drawScissors = [&]() {
-        painter.drawLine(QPointF(12, 12), QPointF(26, 26));
-        painter.drawLine(QPointF(26, 12), QPointF(12, 26));
-        painter.drawEllipse(QRectF(10.4, 10.4, 4.2, 4.2));
-        painter.drawEllipse(QRectF(23.4, 10.4, 4.2, 4.2));
-    };
-    auto drawNodes = [&]() {
-        painter.drawEllipse(QRectF(11.2, 11.2, 4.2, 4.2));
-        painter.drawEllipse(QRectF(22.2, 12.2, 4.2, 4.2));
-        painter.drawEllipse(QRectF(17.2, 22.0, 4.2, 4.2));
-        painter.drawLine(QPointF(15.0, 14.0), QPointF(22.0, 14.6));
-        painter.drawLine(QPointF(23.0, 16.0), QPointF(20.0, 22.2));
-        painter.drawLine(QPointF(17.9, 22.0), QPointF(14.1, 15.8));
-    };
-
-    if (text == QStringLiteral("threshold")) {
-        painter.drawLine(QPointF(10, 26), QPointF(15, 21));
-        painter.drawLine(QPointF(15, 21), QPointF(19, 24));
-        painter.drawLine(QPointF(19, 24), QPointF(28, 13));
-        painter.drawRect(QRectF(9.5, 9.5, 18, 18));
-    } else if (text == QStringLiteral("filter")) {
-        painter.drawEllipse(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
-    } else if (text == QStringLiteral("reproject")) {
-        painter.drawEllipse(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(19, 10), QPointF(19, 28));
-        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
-        painter.drawLine(QPointF(13, 13), QPointF(25, 25));
-    } else if (text == QStringLiteral("transform")) {
-        painter.drawEllipse(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(19, 10), QPointF(19, 28));
-        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
-        painter.drawEllipse(QRectF(16, 16, 6, 6));
-    } else if (text == QStringLiteral("assign_srs")) {
-        painter.drawRoundedRect(QRectF(10, 12, 18, 14), 3, 3);
-        painter.drawLine(QPointF(14, 16), QPointF(24, 16));
-        painter.drawLine(QPointF(14, 20), QPointF(22, 20));
-        painter.drawLine(QPointF(19, 9), QPointF(19, 12));
-    } else if (text == QStringLiteral("projection")) {
-        painter.drawEllipse(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(19, 10), QPointF(19, 28));
-        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
-    } else if (text == QStringLiteral("processing") || text == QStringLiteral("default")) {
-        painter.drawRect(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(12, 24), QPointF(17, 18));
-        painter.drawLine(QPointF(17, 18), QPointF(21, 21));
-        painter.drawLine(QPointF(21, 21), QPointF(26, 14));
-    } else if (text == QStringLiteral("raster_math")) {
-        painter.drawRect(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(19, 10), QPointF(19, 28));
-        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
-        painter.drawLine(QPointF(12, 12), QPointF(15, 15));
-        painter.drawLine(QPointF(15, 12), QPointF(12, 15));
-    } else if (text == QStringLiteral("raster_inspect")) {
-        drawBars();
-        painter.drawEllipse(QRectF(12.4, 8.5, 3.2, 3.2));
-        painter.drawEllipse(QRectF(17.4, 12.5, 3.2, 3.2));
-        painter.drawEllipse(QRectF(22.4, 6.5, 3.2, 3.2));
-    } else if (text == QStringLiteral("raster_manage")) {
-        painter.drawRect(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(13, 19), QPointF(25, 19));
-        painter.drawLine(QPointF(19, 13), QPointF(19, 25));
-    } else if (text == QStringLiteral("raster_tools")) {
-        drawGrid();
-        painter.drawLine(QPointF(14, 26), QPointF(14, 20));
-        painter.drawLine(QPointF(24, 26), QPointF(24, 12));
-    } else if (text == QStringLiteral("terrain")) {
-        painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(16, 17) << QPointF(22, 20) << QPointF(28, 11));
-    } else if (text == QStringLiteral("cutting") || text == QStringLiteral("clip")) {
-        drawScissors();
-    } else if (text == QStringLiteral("mosaic")) {
-        drawGrid();
-        painter.drawLine(QPointF(10, 10), QPointF(28, 28));
-    } else if (text == QStringLiteral("split")) {
-        drawGrid();
-        painter.drawLine(QPointF(19, 10), QPointF(19, 28));
-        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
-    } else if (text == QStringLiteral("merge_bands")) {
-        painter.drawRect(QRectF(11, 12, 14, 12));
-        painter.drawRect(QRectF(14, 9, 14, 12));
-        painter.drawRect(QRectF(17, 6, 10, 10));
-    } else if (text == QStringLiteral("matching")) {
-        painter.drawEllipse(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(19, 11.5), QPointF(19, 26.5));
-        painter.drawLine(QPointF(11.5, 19), QPointF(26.5, 19));
-        painter.drawEllipse(QRectF(16.2, 16.2, 5.6, 5.6));
-    } else if (text == QStringLiteral("classification")) {
-        drawGrid();
-        painter.drawPoint(QPointF(14.0, 14.0));
-        painter.drawPoint(QPointF(24.0, 14.0));
-        painter.drawPoint(QPointF(14.0, 24.0));
-    } else if (text == QStringLiteral("spindex")) {
-        painter.drawEllipse(QRectF(12, 10, 12, 18));
-        painter.drawLine(QPointF(18, 12), QPointF(18, 26));
-        painter.drawLine(QPointF(18, 18), QPointF(24, 12));
-    } else if (text == QStringLiteral("detect")) {
-        painter.drawEllipse(QRectF(11, 11, 16, 16));
-        painter.drawLine(QPointF(19, 8.5), QPointF(19, 13));
-        painter.drawLine(QPointF(19, 25), QPointF(19, 29.5));
-        painter.drawLine(QPointF(8.5, 19), QPointF(13, 19));
-        painter.drawLine(QPointF(25, 19), QPointF(29.5, 19));
-    } else if (text == QStringLiteral("match")) {
-        painter.drawEllipse(QRectF(10, 10, 10, 10));
-        painter.drawEllipse(QRectF(18, 18, 10, 10));
-        painter.drawLine(QPointF(18, 18), QPointF(20, 20));
-    } else if (text == QStringLiteral("register") || text == QStringLiteral("ecc_register")) {
-        painter.drawRect(QRectF(10, 12, 10, 10));
-        painter.drawRect(QRectF(18, 16, 10, 10));
-        painter.drawLine(QPointF(16, 8), QPointF(22, 8));
-        painter.drawLine(QPointF(22, 8), QPointF(20, 6));
-        painter.drawLine(QPointF(22, 8), QPointF(20, 10));
-    } else if (text == QStringLiteral("change")) {
-        painter.drawRect(QRectF(10, 12, 8, 8));
-        painter.drawRect(QRectF(20, 18, 8, 8));
-        painter.drawLine(QPointF(16, 16), QPointF(22, 22));
-    } else if (text == QStringLiteral("corner")) {
-        painter.drawLine(QPointF(11, 11), QPointF(11, 27));
-        painter.drawLine(QPointF(11, 27), QPointF(27, 27));
-        painter.drawEllipse(QRectF(17, 17, 4, 4));
-    } else if (text == QStringLiteral("stitch")) {
-        painter.drawRoundedRect(QRectF(10, 13, 9, 11), 2, 2);
-        painter.drawRoundedRect(QRectF(19, 13, 9, 11), 2, 2);
-        painter.drawLine(QPointF(19, 18.5), QPointF(19, 18.5));
-    } else if (text == QStringLiteral("feature_stats")) {
-        drawGrid();
-        painter.drawPoint(QPointF(14.0, 14.0));
-        painter.drawPoint(QPointF(24.0, 14.0));
-        painter.drawPoint(QPointF(14.0, 24.0));
-    } else if (text == QStringLiteral("info") || text == QStringLiteral("stats")) {
-        drawBars();
-        painter.drawEllipse(QRectF(12.4, 8.5, 3.2, 3.2));
-        painter.drawEllipse(QRectF(17.4, 12.5, 3.2, 3.2));
-        painter.drawEllipse(QRectF(22.4, 6.5, 3.2, 3.2));
-    } else if (text == QStringLiteral("enhance")) {
-        painter.drawLine(QPointF(19, 10), QPointF(19, 28));
-        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
-        painter.drawLine(QPointF(12.5, 12.5), QPointF(25.5, 25.5));
-    } else if (text == QStringLiteral("band_math")) {
-        painter.drawLine(QPointF(19, 10), QPointF(19, 28));
-        painter.drawLine(QPointF(10, 19), QPointF(28, 19));
-        painter.drawLine(QPointF(12, 12), QPointF(15, 15));
-        painter.drawLine(QPointF(15, 12), QPointF(12, 15));
-    } else if (text == QStringLiteral("edge")) {
-        painter.drawPolyline(QPolygonF() << QPointF(11, 24) << QPointF(16, 14) << QPointF(20, 22) << QPointF(27, 11));
-    } else if (text == QStringLiteral("contour")) {
-        painter.drawEllipse(QRectF(10, 10, 18, 18));
-        painter.drawEllipse(QRectF(14, 14, 10, 10));
-    } else if (text == QStringLiteral("template_match")) {
-        painter.drawRect(QRectF(10, 10, 18, 18));
-        painter.drawRect(QRectF(15, 15, 8, 8));
-    } else if (text == QStringLiteral("pansharpen")) {
-        painter.drawEllipse(QRectF(11, 11, 8, 8));
-        painter.drawLine(QPointF(23, 12), QPointF(23, 27));
-        painter.drawLine(QPointF(20, 19.5), QPointF(27, 19.5));
-    } else if (text == QStringLiteral("hough")) {
-        painter.drawLine(QPointF(11, 26), QPointF(27, 10));
-        painter.drawEllipse(QRectF(18, 14, 8, 8));
-    } else if (text == QStringLiteral("watershed")) {
-        painter.drawEllipse(QRectF(14, 11, 10, 14));
-        painter.drawLine(QPointF(19, 25), QPointF(19, 28));
-    } else if (text == QStringLiteral("kmeans")) {
-        drawNodes();
-    } else if (text == QStringLiteral("raster_render")) {
-        drawBars();
-    } else if (text == QStringLiteral("vector")) {
-        drawNodes();
-    } else if (text == QStringLiteral("overviews")) {
-        painter.drawRect(QRectF(10, 10, 18, 18));
-        painter.drawRect(QRectF(13, 13, 12, 12));
-        painter.drawRect(QRectF(16, 16, 6, 6));
-    } else if (text == QStringLiteral("nodata")) {
-        painter.drawEllipse(QRectF(11, 11, 16, 16));
-        painter.drawLine(QPointF(12, 26), QPointF(26, 12));
-    } else if (text == QStringLiteral("histogram")) {
-        drawBars();
-    } else if (text == QStringLiteral("colormap")) {
-        painter.drawRoundedRect(QRectF(10, 12, 18, 14), 4, 4);
-        painter.drawLine(QPointF(15, 16), QPointF(15, 22));
-        painter.drawLine(QPointF(19, 14), QPointF(19, 24));
-        painter.drawLine(QPointF(23, 16), QPointF(23, 22));
-    } else if (text == QStringLiteral("slope")) {
-        painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(16, 17) << QPointF(22, 19) << QPointF(28, 11));
-    } else if (text == QStringLiteral("aspect")) {
-        painter.drawEllipse(QRectF(10, 10, 18, 18));
-        painter.drawLine(QPointF(19, 19), QPointF(25, 13));
-        painter.drawLine(QPointF(25, 13), QPointF(22, 13));
-        painter.drawLine(QPointF(25, 13), QPointF(25, 16));
-    } else if (text == QStringLiteral("hillshade")) {
-        painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(16, 17) << QPointF(22, 19) << QPointF(28, 11));
-        painter.drawEllipse(QRectF(10, 8, 5, 5));
-    } else if (text == QStringLiteral("tpi")) {
-        painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(15, 18) << QPointF(19, 21) << QPointF(24, 14) << QPointF(28, 18));
-    } else if (text == QStringLiteral("roughness")) {
-        painter.drawPolyline(QPolygonF() << QPointF(10, 24) << QPointF(14, 14) << QPointF(18, 22) << QPointF(22, 12) << QPointF(28, 20));
-    } else if (text == QStringLiteral("fill_sinks")) {
-        painter.drawPolyline(QPolygonF() << QPointF(10, 16) << QPointF(15, 22) << QPointF(20, 24) << QPointF(24, 18) << QPointF(28, 12));
-    } else if (text == QStringLiteral("flow_direction")) {
-        painter.drawLine(QPointF(11, 26), QPointF(27, 12));
-        painter.drawLine(QPointF(27, 12), QPointF(22, 12));
-        painter.drawLine(QPointF(27, 12), QPointF(27, 17));
-    } else if (text == QStringLiteral("flow_accumulation")) {
-        painter.drawLine(QPointF(11, 13), QPointF(19, 21));
-        painter.drawLine(QPointF(27, 13), QPointF(19, 21));
-        painter.drawLine(QPointF(19, 21), QPointF(19, 27));
-    } else if (text == QStringLiteral("stream_extract")) {
-        painter.drawLine(QPointF(11, 13), QPointF(19, 21));
-        painter.drawLine(QPointF(27, 13), QPointF(19, 21));
-        painter.drawLine(QPointF(19, 21), QPointF(19, 27));
-        painter.drawEllipse(QRectF(17, 24, 4, 4));
-    } else if (text == QStringLiteral("watershed")) {
-        painter.drawLine(QPointF(11, 13), QPointF(19, 21));
-        painter.drawLine(QPointF(27, 13), QPointF(19, 21));
-        painter.drawLine(QPointF(19, 21), QPointF(19, 27));
-        painter.drawRect(QRectF(15, 23, 8, 6));
-    } else if (text == QStringLiteral("profile_extract")) {
-        painter.drawLine(QPointF(10, 25), QPointF(15, 17));
-        painter.drawLine(QPointF(15, 17), QPointF(20, 21));
-        painter.drawLine(QPointF(20, 21), QPointF(28, 11));
-        painter.drawLine(QPointF(12, 10), QPointF(26, 10));
-    } else if (text == QStringLiteral("viewshed")) {
-        painter.drawEllipse(QRectF(10, 10, 6, 6));
-        painter.drawArc(QRectF(8, 8, 12, 12), 30 * 16, 120 * 16);
-        painter.drawArc(QRectF(5, 5, 18, 18), 25 * 16, 130 * 16);
-        painter.drawArc(QRectF(2, 2, 24, 24), 20 * 16, 140 * 16);
-    } else if (text == QStringLiteral("viewshed_multi")) {
-        painter.drawEllipse(QRectF(8, 10, 5, 5));
-        painter.drawEllipse(QRectF(18, 18, 5, 5));
-        painter.drawArc(QRectF(5, 7, 12, 12), 30 * 16, 120 * 16);
-        painter.drawArc(QRectF(15, 15, 12, 12), 30 * 16, 120 * 16);
-        painter.drawLine(QPointF(13, 14), QPointF(18, 18));
-    } else if (text == QStringLiteral("cut_fill")) {
-        painter.drawLine(QPointF(10, 24), QPointF(18, 14));
-        painter.drawLine(QPointF(18, 14), QPointF(28, 24));
-        painter.drawLine(QPointF(18, 10), QPointF(18, 28));
-        painter.drawLine(QPointF(14, 14), QPointF(18, 10));
-        painter.drawLine(QPointF(22, 14), QPointF(18, 10));
-    } else if (text == QStringLiteral("reservoir_volume")) {
-        painter.drawLine(QPointF(9, 24), QPointF(27, 24));
-        painter.drawArc(QRectF(9, 18, 6, 6), 180 * 16, 180 * 16);
-        painter.drawArc(QRectF(15, 18, 6, 6), 180 * 16, 180 * 16);
-        painter.drawArc(QRectF(21, 18, 6, 6), 180 * 16, 180 * 16);
-        painter.drawLine(QPointF(18, 10), QPointF(18, 18));
-    } else if (text == QStringLiteral("ndvi")) {
-        painter.drawEllipse(QRectF(12, 10, 12, 18));
-        painter.drawLine(QPointF(18, 12), QPointF(18, 26));
-        painter.drawLine(QPointF(18, 18), QPointF(24, 12));
-    } else if (text == QStringLiteral("buffer")) {
-        painter.drawEllipse(QRectF(14, 14, 10, 10));
-        painter.drawEllipse(QRectF(10, 10, 18, 18));
-    } else if (text == QStringLiteral("rasterize")) {
-        drawGrid();
-    } else if (text == QStringLiteral("polygonize")) {
-        painter.drawPolygon(QPolygonF() << QPointF(12, 14) << QPointF(18, 10) << QPointF(26, 15) << QPointF(23, 24) << QPointF(14, 26));
-    } else if (text == QStringLiteral("convert")) {
-        painter.drawLine(QPointF(11, 14), QPointF(26, 14));
-        painter.drawLine(QPointF(21, 10), QPointF(26, 14));
-        painter.drawLine(QPointF(21, 18), QPointF(26, 14));
-        painter.drawLine(QPointF(27, 24), QPointF(12, 24));
-        painter.drawLine(QPointF(17, 20), QPointF(12, 24));
-        painter.drawLine(QPointF(17, 28), QPointF(12, 24));
-    } else if (text == QStringLiteral("union")) {
-        painter.drawEllipse(QRectF(10, 12, 10, 10));
-        painter.drawEllipse(QRectF(18, 12, 10, 10));
-    } else if (text == QStringLiteral("difference")) {
-        painter.drawEllipse(QRectF(10, 12, 12, 12));
-        painter.drawLine(QPointF(24, 18), QPointF(28, 18));
-    } else if (text == QStringLiteral("dissolve")) {
-        painter.drawEllipse(QRectF(10, 12, 8, 8));
-        painter.drawEllipse(QRectF(18, 12, 8, 8));
-        painter.drawEllipse(QRectF(14, 18, 8, 8));
-    } else {
-        painter.drawEllipse(QRectF(11, 11, 16, 16));
-        painter.drawPoint(QPointF(19, 19));
-    }
+    painter.drawEllipse(QRectF(11, 11, 16, 16));
     return pixmap;
 }
 
@@ -1155,8 +897,23 @@ std::optional<gis::gui::ActionValidationIssue> actionSpecificValidationIssue(
 
 }
 
+namespace {
+
+void initIconManager() {
+    namespace fs = std::filesystem;
+    auto exeDir = fs::canonical(fs::path(QApplication::applicationFilePath().toStdWString()).parent_path());
+    auto iconsDir = gis::core::findRuntimePathFrom(exeDir, "share/icons");
+    if (iconsDir.empty()) {
+        iconsDir = exeDir / ".." / ".." / "resources" / "icons";
+    }
+    gis::gui::IconManager::instance().setIconsBasePath(iconsDir.string());
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
+    initIconManager();
     reporter_ = new QtProgressReporter(this);
     setupUi();
     connect(reporter_, &QtProgressReporter::progressChanged, this, [this](double percent) {

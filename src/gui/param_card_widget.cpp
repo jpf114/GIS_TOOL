@@ -1,7 +1,8 @@
-﻿#include "param_card_widget.h"
+#include "param_card_widget.h"
 #include "custom_index_preset_store.h"
 #include "style_constants.h"
 #include "gui_data_support.h"
+#include "icon_manager.h"
 
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
@@ -219,34 +220,13 @@ QString cardIconText(ParamCardWidget::CardType type) {
 }
 
 QPixmap cardIconPixmap(const QString& text) {
-    QPixmap pixmap(16, 16);
-    pixmap.fill(Qt::transparent);
-
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    QPen pen(QColor("#2F7CF6"));
-    pen.setWidthF(1.5);
-    pen.setCapStyle(Qt::RoundCap);
-    pen.setJoinStyle(Qt::RoundJoin);
-    painter.setPen(pen);
-    if (text == QStringLiteral("I")) {
-        painter.drawRect(QRectF(3.5, 3.5, 9, 9));
-        painter.drawLine(QPointF(5, 10.5), QPointF(7.5, 8));
-        painter.drawLine(QPointF(7.5, 8), QPointF(9.2, 9.5));
-        painter.drawLine(QPointF(9.2, 9.5), QPointF(11.2, 6.5));
-    } else if (text == QStringLiteral("O")) {
-        painter.drawLine(QPointF(4, 8), QPointF(12, 8));
-        painter.drawLine(QPointF(9, 5), QPointF(12, 8));
-        painter.drawLine(QPointF(9, 11), QPointF(12, 8));
-    } else if (text == QStringLiteral("A")) {
-        painter.drawLine(QPointF(4, 5), QPointF(12, 5));
-        painter.drawLine(QPointF(4, 8), QPointF(12, 8));
-        painter.drawLine(QPointF(4, 11), QPointF(12, 11));
-        painter.drawEllipse(QRectF(6.5, 4, 3, 3));
-        painter.drawEllipse(QRectF(9, 7, 3, 3));
-        painter.drawEllipse(QRectF(5, 10, 3, 3));
-    }
-    return pixmap;
+    auto& mgr = gis::gui::IconManager::instance();
+    std::string cardType;
+    if (text == QStringLiteral("I")) cardType = "input";
+    else if (text == QStringLiteral("O")) cardType = "output";
+    else if (text == QStringLiteral("A")) cardType = "advanced";
+    else cardType = "input";
+    return mgr.pixmapForCard(cardType, 16, QColor("#2F7CF6"));
 }
 
 QIcon browseIcon() {

@@ -13,6 +13,7 @@ add_executable(gis-gui
     crs_dialog.cpp
     execute_worker.cpp
     qt_progress_reporter.cpp
+    icon_manager.cpp
 )
 
 set(GIS_PLUGIN_TARGETS
@@ -40,6 +41,7 @@ target_link_libraries(gis-gui PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    Qt6::Svg
     PROJ::proj
 )
 
@@ -131,3 +133,10 @@ if(GIS_COPY_QT_PLATFORM_DLL)
         DESTINATION ${GIS_INSTALL_PLATFORM_DIR}
     )
 endif()
+
+add_custom_command(TARGET gis-gui POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/resources/icons"
+        "$<TARGET_FILE_DIR:gis-gui>/icons"
+    COMMENT "Copying icon resources"
+)
