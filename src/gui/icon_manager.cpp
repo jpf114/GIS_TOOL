@@ -74,7 +74,7 @@ void IconManager::loadMapping() {
     actionMap_["kmeans"]              = {"circles-three-plus", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["gabor_filter"]        = {"waves", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["glcm_texture"]        = {"checkerboard", IconWeight::Regular, QColor("#9AA8B8")};
-    actionMap_["mean_shift_segment"]  = {"circles-four", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["mean_shift_filter"]   = {"circles-four", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["connected_components"] = {"circles-three", IconWeight::Regular, QColor("#9AA8B8")};
 
     actionMap_["band_math"]   = {"math-operations", IconWeight::Regular, QColor("#9AA8B8")};
@@ -94,7 +94,7 @@ void IconManager::loadMapping() {
     actionMap_["cosine_correction"]       = {"sun-dim", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["minnaert_correction"]     = {"sun-horizon", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["c_correction"]            = {"sun", IconWeight::Regular, QColor("#9AA8B8")};
-    actionMap_["quac_correction"]         = {"cloud-fog", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["percentile_stretch"]       = {"cloud-fog", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["rpc_orthorectify"]        = {"airplane-tilt", IconWeight::Regular, QColor("#9AA8B8")};
 
     actionMap_["slope"]            = {"trend-up", IconWeight::Regular, QColor("#9AA8B8")};
@@ -136,9 +136,19 @@ void IconManager::loadMapping() {
     actionMap_["arvi"]         = {"leaf", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["nbr"]          = {"fire", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["awei"]         = {"drop-half-bottom", IconWeight::Regular, QColor("#9AA8B8")};
-    actionMap_["ui"]           = {"buildings", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["ui"]           = {"city", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["bi"]           = {"fire", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["custom_index"] = {"function", IconWeight::Regular, QColor("#9AA8B8")};
+
+    actionMap_["projection:info"]       = {"info", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["raster_inspect:info"]   = {"info", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["vector:info"]           = {"info", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["vector:filter"]         = {"funnel", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["vector:clip"]           = {"scissors", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["terrain:watershed"]     = {"tree-structure", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["processing:watershed"]  = {"drop", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["processing:filter"]     = {"funnel", IconWeight::Regular, QColor("#9AA8B8")};
+    actionMap_["processing:contour"]    = {"circle", IconWeight::Regular, QColor("#9AA8B8")};
 
     actionMap_["buffer"]                  = {"circle", IconWeight::Regular, QColor("#9AA8B8")};
     actionMap_["rasterize"]               = {"grid-four", IconWeight::Regular, QColor("#9AA8B8")};
@@ -236,6 +246,35 @@ QPixmap IconManager::pixmapForAction(const std::string& actionKey, int size, con
     return rendered;
 }
 
+QPixmap IconManager::pixmapForAction(const std::string& pluginName, const std::string& actionKey,
+                                     int size, const QColor& color) {
+    const std::string compositeKey = pluginName + ":" + actionKey;
+    auto it = actionMap_.find(compositeKey);
+    if (it == actionMap_.end()) {
+        it = actionMap_.find(actionKey);
+    }
+    if (it == actionMap_.end()) {
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(color, 1.2));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(QRectF(3, 3, size - 6, size - 6));
+        return pixmap;
+    }
+    const auto& spec = it->second;
+    const std::string key = cacheKey(spec.svgName, spec.weight, size, color);
+    auto cacheIt = cache_.find(key);
+    if (cacheIt != cache_.end()) {
+        return cacheIt->second;
+    }
+    const std::string path = svgPathFor(spec.svgName, spec.weight);
+    QPixmap rendered = renderSvg(path, size, color);
+    cache_[key] = rendered;
+    return rendered;
+}
+
 QPixmap IconManager::pixmapForCard(const std::string& cardType, int size, const QColor& color) {
     auto it = cardMap_.find(cardType);
     if (it == cardMap_.end()) {
@@ -259,6 +298,12 @@ bool IconManager::hasPluginIcon(const std::string& pluginName) const {
 
 bool IconManager::hasActionIcon(const std::string& actionKey) const {
     return actionMap_.find(actionKey) != actionMap_.end();
+}
+
+bool IconManager::hasActionIcon(const std::string& pluginName, const std::string& actionKey) const {
+    const std::string compositeKey = pluginName + ":" + actionKey;
+    return actionMap_.find(compositeKey) != actionMap_.end()
+        || actionMap_.find(actionKey) != actionMap_.end();
 }
 
 std::string IconManager::svgPathFor(const std::string& svgName, IconWeight weight) const {

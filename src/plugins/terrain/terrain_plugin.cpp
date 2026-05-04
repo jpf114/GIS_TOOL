@@ -1078,74 +1078,85 @@ gis::framework::Result runReservoirVolumeProcess(
 std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "???", "?????????????",
+            "action", "操作", "地形分析操作类型",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"slope", "aspect", "hillshade", "tpi", "curvature", "profile_curvature", "plan_curvature", "tri", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "viewshed_multi", "cut_fill", "reservoir_volume"}
         },
         gis::framework::ParamSpec{
-            "input", "????", "?? DEM ????",
+            "input", "输入文件", "输入 DEM 文件路径",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "reference", "????", "?? DEM ????",
+            "reference", "参考文件", "参考 DEM 文件路径",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "????", "??????",
+            "output", "输出文件", "输出结果文件路径",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "band", "????", "????????????? 1 ??",
-            gis::framework::ParamType::Int, false, int{1}
+            "band", "波段", "输入影像的波段号，默认为 1 波段",
+            gis::framework::ParamType::Int, false, int{1},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "z_factor", "????", "???????????",
-            gis::framework::ParamType::Double, false, double{1.0}
+            "z_factor", "高程缩放", "高程值缩放因子",
+            gis::framework::ParamType::Double, false, double{1.0},
+            double{0.001}, double{10000.0}
         },
         gis::framework::ParamSpec{
-            "azimuth", "???", "??????????????",
-            gis::framework::ParamType::Double, false, double{315.0}
+            "azimuth", "方位角", "光源方位角（度）",
+            gis::framework::ParamType::Double, false, double{315.0},
+            double{0.0}, double{360.0}
         },
         gis::framework::ParamSpec{
-            "altitude", "???", "??????????????",
-            gis::framework::ParamType::Double, false, double{45.0}
+            "altitude", "高度角", "光源高度角（度）",
+            gis::framework::ParamType::Double, false, double{45.0},
+            double{0.0}, double{90.0}
         },
         gis::framework::ParamSpec{
-            "accum_threshold", "????", "???????????????",
-            gis::framework::ParamType::Double, false, double{10.0}
+            "accum_threshold", "累积阈值", "水流累积提取阈值",
+            gis::framework::ParamType::Double, false, double{10.0},
+            double{0.0}, double{1e9}
         },
         gis::framework::ParamSpec{
-            "profile_path", "????", "????????? x1,y1;x2,y2;...",
+            "profile_path", "剖面路径", "剖面线坐标串 x1,y1;x2,y2;...",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "observer_x", "??? X", "??????? X",
-            gis::framework::ParamType::Double, false, double{0.0}
+            "observer_x", "观测点 X", "观测点坐标 X",
+            gis::framework::ParamType::Double, false, double{0.0},
+            double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "observer_y", "??? Y", "??????? Y",
-            gis::framework::ParamType::Double, false, double{0.0}
+            "observer_y", "观测点 Y", "观测点坐标 Y",
+            gis::framework::ParamType::Double, false, double{0.0},
+            double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "observer_points", "?????", "??????????? x1,y1;x2,y2;...",
+            "observer_points", "观测点列表", "多个观测点坐标 x1,y1;x2,y2;...",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "observer_height", "?????", "??????????",
-            gis::framework::ParamType::Double, false, double{2.0}
+            "observer_height", "观测高度", "观测者离地高度",
+            gis::framework::ParamType::Double, false, double{2.0},
+            double{0.0}, double{10000.0}
         },
         gis::framework::ParamSpec{
-            "target_height", "????", "?????????",
-            gis::framework::ParamType::Double, false, double{0.0}
+            "target_height", "目标高度", "目标物离地高度",
+            gis::framework::ParamType::Double, false, double{0.0},
+            double{0.0}, double{10000.0}
         },
         gis::framework::ParamSpec{
-            "max_distance", "????", "?????????0 ?????",
-            gis::framework::ParamType::Double, false, double{0.0}
+            "max_distance", "最大距离", "最大可视距离，0 表示不限",
+            gis::framework::ParamType::Double, false, double{0.0},
+            double{0.0}, double{1e9}
         },
         gis::framework::ParamSpec{
-            "water_level", "????", "?????????????",
-            gis::framework::ParamType::Double, false, double{0.0}
+            "water_level", "水位", "水库水位高程值",
+            gis::framework::ParamType::Double, false, double{0.0},
+            double{-10000.0}, double{10000.0}
         },
     };
 }

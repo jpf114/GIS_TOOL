@@ -24,7 +24,7 @@ execute_process(
     COMMAND "${GUI_PATH}"
         -platform offscreen
         --select-plugin georef
-        --select-action quac_correction
+        --select-action percentile_stretch
         --set-param "input=${INPUT_PATH}"
         --set-param "output=${OUTPUT_PATH}"
         --set-param "dark_percentile=1"
@@ -39,7 +39,7 @@ execute_process(
 )
 
 gis_gui_assert_regression_result(
-    "GUI georef QUAC regression"
+    "GUI georef percentile_stretch regression"
     "${GUI_EXIT_CODE}"
     "${GUI_STDOUT}"
     "${GUI_STDERR}"

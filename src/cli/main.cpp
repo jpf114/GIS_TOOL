@@ -137,7 +137,11 @@ int main(int argc, char* argv[]) {
     }
 
     namespace fs = std::filesystem;
-    auto exePath = fs::canonical(fs::path(programName).parent_path());
+    std::error_code ec;
+    auto exePath = fs::canonical(fs::path(programName).parent_path(), ec);
+    if (ec) {
+        exePath = fs::current_path(ec);
+    }
     const auto pluginsDir = gis::core::findPluginDirectoryFrom(exePath);
 
     gis::framework::PluginManager mgr;

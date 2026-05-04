@@ -1,4 +1,4 @@
-﻿#include <gtest/gtest.h>
+#include <gtest/gtest.h>
 
 #include <gdal_priv.h>
 #include <ogr_spatialref.h>
@@ -265,8 +265,8 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_processing_glcm_texture.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
-            "D:/data/image.tif", "processing", "mean_shift_segment"),
-        "D:/data/image_processing_mean_shift_segment.tif");
+            "D:/data/image.tif", "processing", "mean_shift_filter"),
+        "D:/data/image_processing_mean_shift_filter.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
             "D:/data/image.tif", "georef", "dos_correction"),
@@ -293,8 +293,8 @@ TEST(GuiSupportTest, BuildSuggestedOutputPathUsesActionSpecificSuffixes) {
         "D:/data/image_georef_c_correction.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
-            "D:/data/image.tif", "georef", "quac_correction"),
-        "D:/data/image_georef_quac_correction.tif");
+            "D:/data/image.tif", "georef", "percentile_stretch"),
+        "D:/data/image_georef_percentile_stretch.tif");
     EXPECT_EQ(
         gis::gui::buildSuggestedOutputPath(
             "D:/data/image.tif", "georef", "rpc_orthorectify"),
@@ -905,18 +905,18 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefQuacValues)
     std::map<std::string, gis::framework::ParamValue> params;
     params["dark_percentile"] = 100.0;
 
-    auto issue = gis::gui::validateActionSpecificParams("georef", "quac_correction", params);
+    auto issue = gis::gui::validateActionSpecificParams("georef", "percentile_stretch", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "dark_percentile");
 
     params["dark_percentile"] = 10.0;
     params["bright_percentile"] = 10.0;
-    issue = gis::gui::validateActionSpecificParams("georef", "quac_correction", params);
+    issue = gis::gui::validateActionSpecificParams("georef", "percentile_stretch", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "bright_percentile");
 
     params["bright_percentile"] = 101.0;
-    issue = gis::gui::validateActionSpecificParams("georef", "quac_correction", params);
+    issue = gis::gui::validateActionSpecificParams("georef", "percentile_stretch", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "bright_percentile");
 }
@@ -986,19 +986,19 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidProcessingMeanShi
     std::map<std::string, gis::framework::ParamValue> params;
     params["spatial_radius"] = 0.0;
 
-    auto issue = gis::gui::validateActionSpecificParams("processing", "mean_shift_segment", params);
+    auto issue = gis::gui::validateActionSpecificParams("processing", "mean_shift_filter", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "spatial_radius");
 
     params.erase("spatial_radius");
     params["color_radius"] = 0.0;
-    issue = gis::gui::validateActionSpecificParams("processing", "mean_shift_segment", params);
+    issue = gis::gui::validateActionSpecificParams("processing", "mean_shift_filter", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "color_radius");
 
     params.erase("color_radius");
     params["pyramid_level"] = -1;
-    issue = gis::gui::validateActionSpecificParams("processing", "mean_shift_segment", params);
+    issue = gis::gui::validateActionSpecificParams("processing", "mean_shift_filter", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "pyramid_level");
 }

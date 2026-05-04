@@ -45,11 +45,13 @@ std::vector<gis::framework::ParamSpec> RasterInspectPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "band", "波段序号", "要统计的波段序号，从 1 开始",
-            gis::framework::ParamType::Int, false, int{1}
+            gis::framework::ParamType::Int, false, int{1},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "bins", "分箱数", "直方图分箱数量",
-            gis::framework::ParamType::Int, false, int{256}
+            gis::framework::ParamType::Int, false, int{256},
+            int{1}, int{65536}
         },
     };
 }

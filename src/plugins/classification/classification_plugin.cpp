@@ -1,4 +1,4 @@
-﻿#include "classification_plugin.h"
+#include "classification_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
@@ -1241,7 +1241,7 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
         },
         gis::framework::ParamSpec{
             "input", "输入栅格", "待分类的多波段栅格文件路径",
-            gis::framework::ParamType::FilePath, false, std::string{}
+            gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
             "vector", "输入面矢量", "参与统计的面矢量文件路径",
@@ -1273,11 +1273,12 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
         },
         gis::framework::ParamSpec{
             "target_epsg", "目标 EPSG", "可选，显式指定目标投影坐标系",
-            gis::framework::ParamType::Int, false, int{0}
+            gis::framework::ParamType::Int, false, int{0},
+            int{0}, int{99999}
         },
         gis::framework::ParamSpec{
-            "output", "统计输出", "输出统计结果路径，当前只支持 .json 或 .csv",
-            gis::framework::ParamType::FilePath, false, std::string{}
+            "output", "统计输出", "输出统计结果路径(feature_stats 时 .json/.csv，分类时为分类栅格输出)",
+            gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
             "vector_output", "分类面输出", "可选，输出分类面结果，当前仅支持 .gpkg",
@@ -1294,6 +1295,31 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
         gis::framework::ParamSpec{
             "label_column", "标签列", "训练样本 CSV 中的类别标签列名，默认 label",
             gis::framework::ParamType::String, false, std::string{"label"}
+        },
+        gis::framework::ParamSpec{
+            "svm_c", "SVM 惩罚系数 C", "SVM C_SVC 惩罚系数，默认 2.0",
+            gis::framework::ParamType::Double, false, double{2.0},
+            double{0.001}, double{1e6}
+        },
+        gis::framework::ParamSpec{
+            "svm_gamma", "SVM Gamma", "SVM RBF 核 gamma 参数，默认 0.5",
+            gis::framework::ParamType::Double, false, double{0.5},
+            double{0.0}, double{1e6}
+        },
+        gis::framework::ParamSpec{
+            "rf_max_depth", "RF 最大深度", "随机森林最大树深度，默认 10",
+            gis::framework::ParamType::Int, false, int{10},
+            int{1}, int{100}
+        },
+        gis::framework::ParamSpec{
+            "rf_tree_count", "RF 树数量", "随机森林树数量，默认 100",
+            gis::framework::ParamType::Int, false, int{100},
+            int{1}, int{10000}
+        },
+        gis::framework::ParamSpec{
+            "rf_min_sample_count", "RF 最小样本数", "随机森林叶节点最小样本数，默认 2",
+            gis::framework::ParamType::Int, false, int{2},
+            int{1}, int{1000}
         },
     };
 }
@@ -1573,8 +1599,10 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     auto svm = cv::ml::SVM::create();
     svm->setType(cv::ml::SVM::C_SVC);
     svm->setKernel(cv::ml::SVM::RBF);
-    svm->setGamma(0.5);
-    svm->setC(2.0);
+    double svmC = gis::framework::getParam<double>(params, "svm_c", 2.0);
+    double svmGamma = gis::framework::getParam<double>(params, "svm_gamma", 0.5);
+    svm->setC(svmC);
+    svm->setGamma(svmGamma);
     svm->setTermCriteria(cv::TermCriteria(cv::TermCriteria::MAX_ITER, 1000, 1e-6));
     if (!svm->train(trainingSamples, cv::ml::ROW_SAMPLE, trainingLabels)) {
         return gis::framework::Result::fail("SVM 训练失败");
@@ -1718,13 +1746,17 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
     progress.onMessage("正在训练随机森林分类器...");
     progress.onProgress(0.3);
 
+    int rfMaxDepth = gis::framework::getParam<int>(params, "rf_max_depth", 10);
+    int rfTreeCount = gis::framework::getParam<int>(params, "rf_tree_count", 100);
+    int rfMinSampleCount = gis::framework::getParam<int>(params, "rf_min_sample_count", 2);
+
     auto forest = cv::ml::RTrees::create();
-    forest->setMaxDepth(10);
-    forest->setMinSampleCount(2);
+    forest->setMaxDepth(rfMaxDepth);
+    forest->setMinSampleCount(rfMinSampleCount);
     forest->setRegressionAccuracy(0.0f);
     forest->setUseSurrogates(false);
     forest->setMaxCategories(std::max(2, static_cast<int>(classValues.size())));
-    forest->setTermCriteria(cv::TermCriteria(cv::TermCriteria::MAX_ITER, 100, 0));
+    forest->setTermCriteria(cv::TermCriteria(cv::TermCriteria::MAX_ITER, rfTreeCount, 0));
     if (!forest->train(trainingSamples, cv::ml::ROW_SAMPLE, trainingLabels)) {
         return gis::framework::Result::fail("随机森林训练失败");
     }
@@ -1743,17 +1775,25 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
 
     const int width = ds->GetRasterXSize();
     const int height = ds->GetRasterYSize();
-    cv::Mat result(height, width, CV_32F);
-    cv::Mat sample(1, static_cast<int>(task.bands.size()), CV_32F);
+    cv::Mat predictSamples(width * height, static_cast<int>(task.bands.size()), CV_32F);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const int sampleIndex = y * width + x;
+            for (int bandOffset = 0; bandOffset < static_cast<int>(bandMats.size()); ++bandOffset) {
+                predictSamples.at<float>(sampleIndex, bandOffset) = bandMats[bandOffset].at<float>(y, x);
+            }
+        }
+    }
 
     progress.onMessage("正在执行栅格分类...");
     progress.onProgress(0.7);
+
+    cv::Mat responses;
+    forest->predict(predictSamples, responses);
+    cv::Mat result(height, width, CV_32F);
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            for (int bandOffset = 0; bandOffset < static_cast<int>(bandMats.size()); ++bandOffset) {
-                sample.at<float>(0, bandOffset) = bandMats[bandOffset].at<float>(y, x);
-            }
-            result.at<float>(y, x) = forest->predict(sample);
+            result.at<float>(y, x) = responses.at<float>(y * width + x);
         }
     }
 

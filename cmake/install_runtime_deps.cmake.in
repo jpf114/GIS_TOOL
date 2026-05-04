@@ -1,6 +1,9 @@
 if(POLICY CMP0207)
     cmake_policy(SET CMP0207 NEW)
 endif()
+if(POLICY CMP0057)
+    cmake_policy(SET CMP0057 NEW)
+endif()
 
 set(_gis_install_bin_dir "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@")
 set(_gis_install_plugin_dir "${CMAKE_INSTALL_PREFIX}/@GIS_INSTALL_PLUGIN_DIR@")
@@ -20,6 +23,13 @@ set(_gis_runtime_libraries
     "${_gis_install_plugin_dir}/plugin_processing.dll"
     "${_gis_install_plugin_dir}/plugin_classification.dll"
     "${_gis_install_plugin_dir}/plugin_vector.dll"
+    "${_gis_install_plugin_dir}/plugin_terrain.dll"
+    "${_gis_install_plugin_dir}/plugin_spindex.dll"
+    "${_gis_install_plugin_dir}/plugin_georef.dll"
+    "${_gis_install_plugin_dir}/plugin_raster_math.dll"
+    "${_gis_install_plugin_dir}/plugin_raster_inspect.dll"
+    "${_gis_install_plugin_dir}/plugin_raster_manage.dll"
+    "${_gis_install_plugin_dir}/plugin_raster_render.dll"
 )
 
 file(REMOVE
@@ -57,6 +67,31 @@ file(REMOVE
     "${_gis_install_bin_dir}/version.dll"
     "${_gis_install_bin_dir}/winmm.dll"
     "${_gis_install_bin_dir}/ws2_32.dll"
+    "${_gis_install_bin_dir}/onnxruntime.dll"
+    "${_gis_install_bin_dir}/onnxruntime_providers_shared.dll"
+    "${_gis_install_bin_dir}/libprotobuf-lite.dll"
+    "${_gis_install_bin_dir}/libprotoc.dll"
+    "${_gis_install_bin_dir}/re2.dll"
+    "${_gis_install_bin_dir}/date-tz.dll"
+    "${_gis_install_bin_dir}/dbus-1-3.dll"
+    "${_gis_install_bin_dir}/Qt6DBus.dll"
+    "${_gis_install_bin_dir}/libecpg.dll"
+    "${_gis_install_bin_dir}/libecpg_compat.dll"
+    "${_gis_install_bin_dir}/libpgtypes.dll"
+    "${_gis_install_bin_dir}/charset-1.dll"
+    "${_gis_install_bin_dir}/hdf5_cpp.dll"
+    "${_gis_install_bin_dir}/hdf5_hl_cpp.dll"
+    "${_gis_install_bin_dir}/pkgconf-7.dll"
+    "${_gis_install_bin_dir}/Qt6PrintSupport.dll"
+    "${_gis_install_bin_dir}/Qt6Sql.dll"
+    "${_gis_install_bin_dir}/Qt6Xml.dll"
+    "${_gis_install_bin_dir}/Qt6Concurrent.dll"
+    "${_gis_install_bin_dir}/Qt6Network.dll"
+    "${_gis_install_bin_dir}/Qt6OpenGL.dll"
+    "${_gis_install_bin_dir}/Qt6OpenGLWidgets.dll"
+    "${_gis_install_bin_dir}/opencv_objdetect4.dll"
+    "${_gis_install_bin_dir}/opencv_highgui4.dll"
+    "${_gis_install_bin_dir}/opencv_videoio4.dll"
 )
 
 set(_gis_can_scan_runtime_deps TRUE)
@@ -126,13 +161,25 @@ if(_gis_can_scan_runtime_deps)
         )
     endforeach()
 else()
+    set(_gis_exclude_dll_names
+        gmock.dll gmock_main.dll gtest.dll gtest_main.dll Qt6Test.dll
+        onnxruntime.dll onnxruntime_providers_shared.dll
+        libprotobuf-lite.dll libprotoc.dll
+        re2.dll date-tz.dll
+        dbus-1-3.dll Qt6DBus.dll
+        libecpg.dll libecpg_compat.dll libpgtypes.dll charset-1.dll
+        hdf5_cpp.dll hdf5_hl_cpp.dll
+        pkgconf-7.dll
+        Qt6PrintSupport.dll Qt6Sql.dll Qt6Xml.dll
+        Qt6Concurrent.dll Qt6Network.dll
+        Qt6OpenGL.dll Qt6OpenGLWidgets.dll
+        opencv_objdetect4.dll
+        opencv_highgui4.dll opencv_videoio4.dll
+    )
     file(GLOB _gis_vcpkg_runtime_dlls "@GIS_VCPKG_RELEASE_BIN_DIR@/*.dll")
     foreach(_gis_dep IN LISTS _gis_vcpkg_runtime_dlls)
         get_filename_component(_gis_dep_name "${_gis_dep}" NAME)
-        if(_gis_dep_name MATCHES "^(gmock|gmock_main|gtest|gtest_main)\\.dll$")
-            continue()
-        endif()
-        if(_gis_dep_name STREQUAL "Qt6Test.dll")
+        if(_gis_dep_name IN_LIST _gis_exclude_dll_names)
             continue()
         endif()
         file(INSTALL

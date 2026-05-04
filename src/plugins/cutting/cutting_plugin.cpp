@@ -20,8 +20,8 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
             {"clip", "mosaic", "split", "merge_bands"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入影像文件路径(多文件用逗号分隔)",
-            gis::framework::ParamType::FilePath, true, std::string{}
+            "input", "输入文件", "输入影像文件路径(多文件用逗号分隔，merge_bands 时可不填)",
+            gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
             "output", "输出文件", "输出影像文件路径",
@@ -37,11 +37,13 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "tile_size", "分块大小", "分块切割时每块的像素大小",
-            gis::framework::ParamType::Int, false, int{1024}
+            gis::framework::ParamType::Int, false, int{1024},
+            int{1}, int{65536}
         },
         gis::framework::ParamSpec{
             "overlap", "重叠像素数", "分块切割时块间的重叠像素数",
-            gis::framework::ParamType::Int, false, int{0}
+            gis::framework::ParamType::Int, false, int{0},
+            int{0}, int{65536}
         },
         gis::framework::ParamSpec{
             "bands", "波段列表", "合并波段时各波段对应的文件路径(逗号分隔)",

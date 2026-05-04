@@ -115,7 +115,8 @@ std::vector<gis::framework::ParamSpec> RasterRenderPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "band", "波段序号", "处理的波段序号，从 1 开始",
-            gis::framework::ParamType::Int, false, int{1}
+            gis::framework::ParamType::Int, false, int{1},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "cmap", "颜色映射", "伪彩色映射方案",
@@ -183,11 +184,12 @@ gis::framework::Result RasterRenderPlugin::doColormap(
 
     std::vector<cv::Mat> bgrChannels;
     cv::split(colored, bgrChannels);
+    std::vector<cv::Mat> rgbChannels = {bgrChannels[2], bgrChannels[1], bgrChannels[0]};
     for (int i = 0; i < 3; ++i) {
         GDALRasterBand* outBand = dstDS->GetRasterBand(i + 1);
         outBand->RasterIO(
             GF_Write, 0, 0, colored.cols, colored.rows,
-            bgrChannels[static_cast<size_t>(i)].data, colored.cols, colored.rows, GDT_Byte, 0, 0);
+            rgbChannels[static_cast<size_t>(i)].data, colored.cols, colored.rows, GDT_Byte, 0, 0);
         outBand->SetColorInterpretation(static_cast<GDALColorInterp>(GCI_RedBand + i));
     }
 

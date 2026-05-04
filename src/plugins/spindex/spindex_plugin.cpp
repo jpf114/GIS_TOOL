@@ -290,47 +290,57 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "output", "输出栅格", "指数计算结果输出路径",
-            gis::framework::ParamType::FilePath, false, std::string{}
+            gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
             "red_band", "红光波段", "红光波段序号",
-            gis::framework::ParamType::Int, false, int{3}
+            gis::framework::ParamType::Int, false, int{3},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "nir_band", "近红外波段", "近红外波段序号",
-            gis::framework::ParamType::Int, false, int{4}
+            gis::framework::ParamType::Int, false, int{4},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "blue_band", "蓝光波段", "蓝光波段序号",
-            gis::framework::ParamType::Int, false, int{1}
+            gis::framework::ParamType::Int, false, int{1},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "green_band", "绿光波段", "绿光波段序号",
-            gis::framework::ParamType::Int, false, int{2}
+            gis::framework::ParamType::Int, false, int{2},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "swir1_band", "短波红外1波段", "短波红外1波段序号",
-            gis::framework::ParamType::Int, false, int{5}
+            gis::framework::ParamType::Int, false, int{5},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "swir2_band", "短波红外2波段", "短波红外2波段序号",
-            gis::framework::ParamType::Int, false, int{6}
+            gis::framework::ParamType::Int, false, int{6},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "l_value", "L 参数", "SAVI 与 EVI 使用的 L 参数",
-            gis::framework::ParamType::Double, false, double{0.5}
+            gis::framework::ParamType::Double, false, double{0.5},
+            double{0.0}, double{1.0}
         },
         gis::framework::ParamSpec{
             "g_value", "G 参数", "EVI 使用的增益参数 G",
-            gis::framework::ParamType::Double, false, double{2.5}
+            gis::framework::ParamType::Double, false, double{2.5},
+            double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
             "c1", "C1 参数", "EVI 使用的 C1 参数",
-            gis::framework::ParamType::Double, false, double{6.0}
+            gis::framework::ParamType::Double, false, double{6.0},
+            double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
             "c2", "C2 参数", "EVI 使用的 C2 参数",
-            gis::framework::ParamType::Double, false, double{7.5}
+            gis::framework::ParamType::Double, false, double{7.5},
+            double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
             "expression", "表达式", "自定义指数表达式，例如 (B4-B1)/(B4+B1)",

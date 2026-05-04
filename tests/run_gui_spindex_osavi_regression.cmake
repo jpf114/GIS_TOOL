@@ -1,25 +1,29 @@
-if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
-    message(FATAL_ERROR "Missing required GUI processing mean shift regression arguments.")
+if(NOT DEFINED GUI_PATH OR NOT DEFINED GUI_TEST_DATA_HELPER_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
+    message(FATAL_ERROR "Missing required GUI spindex OSAVI regression arguments.")
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
 get_filename_component(OUTPUT_DIR "${OUTPUT_PATH}" DIRECTORY)
 set(STATUS_PATH "${OUTPUT_DIR}/status.json")
 gis_gui_prepare_artifact_paths("${OUTPUT_PATH}" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
-set(INPUT_PATH "${OUTPUT_DIR}/mean_shift_input.tif")
-gis_gui_generate_test_tiff("${INPUT_PATH}")
+set(INPUT_PATH "${OUTPUT_DIR}/osavi_input.tif")
+execute_process(
+    COMMAND "${GUI_TEST_DATA_HELPER_PATH}" ndvi-raster "${INPUT_PATH}"
+    RESULT_VARIABLE HELPER_EXIT_CODE
+)
+if(NOT "${HELPER_EXIT_CODE}" STREQUAL "0")
+    message(FATAL_ERROR "Failed to generate OSAVI GUI test raster.")
+endif()
 
 execute_process(
     COMMAND "${GUI_PATH}"
         -platform offscreen
-        --select-plugin processing
-        --select-action mean_shift_filter
+        --select-plugin spindex
+        --select-action osavi
         --set-param "input=${INPUT_PATH}"
         --set-param "output=${OUTPUT_PATH}"
-        --set-param "band=1"
-        --set-param "spatial_radius=8"
-        --set-param "color_radius=16"
-        --set-param "pyramid_level=1"
+        --set-param "red_band=3"
+        --set-param "nir_band=4"
         --auto-execute
         --quit-on-finish
         --screenshot "${SCREENSHOT_PATH}"
@@ -30,7 +34,7 @@ execute_process(
 )
 
 gis_gui_assert_regression_result(
-    "GUI processing mean shift regression"
+    "GUI spindex OSAVI regression"
     "${GUI_EXIT_CODE}"
     "${GUI_STDOUT}"
     "${GUI_STDERR}"

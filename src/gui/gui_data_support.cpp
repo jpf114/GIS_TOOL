@@ -1,4 +1,4 @@
-﻿#include "gui_data_support.h"
+#include "gui_data_support.h"
 
 #include "custom_index_preset_store.h"
 
@@ -1377,7 +1377,7 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
-    if (pluginName == "georef" && actionKey == "quac_correction") {
+    if (pluginName == "georef" && actionKey == "percentile_stretch") {
         const auto darkPercentile = doubleParamValue(params, "dark_percentile");
         const auto brightPercentile = doubleParamValue(params, "bright_percentile");
         const std::string outputPath = stringParam("output");
@@ -1567,7 +1567,7 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
                 return ActionValidationIssue{"glcm_levels", "参数“灰度级数”必须大于等于 2"};
             }
         }
-        if (actionKey == "mean_shift_segment") {
+        if (actionKey == "mean_shift_filter") {
             if (const auto spatialRadius = doubleParamValue(params, "spatial_radius");
                 spatialRadius.has_value() && *spatialRadius <= 0.0) {
                 return ActionValidationIssue{"spatial_radius", "参数“空间半径”必须大于 0"};

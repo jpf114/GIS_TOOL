@@ -96,29 +96,25 @@ gis::framework::Result VectorPlugin::doBuffer(
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
         if (geom) {
-            OGRGeometry* bufferGeom = geom->Buffer(distance);
+            std::unique_ptr<OGRGeometry> bufferGeom(geom->Buffer(distance));
             if (bufferGeom) {
                 OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayerDefn);
                 copyFeatureFieldsOnly(dstFeat, feat, fieldMap);
-                std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, bufferGeom);
+                std::unique_ptr<OGRGeometry> promoted = promoteGeometryToLayerType(dstLayer, bufferGeom.get());
                 if (promoted) {
-                    delete bufferGeom;
-                    bufferGeom = nullptr;
                     dstFeat->SetGeometryDirectly(promoted.release());
                 } else {
-                    dstFeat->SetGeometryDirectly(bufferGeom);
-                    bufferGeom = nullptr;
+                    dstFeat->SetGeometryDirectly(bufferGeom.release());
                 }
                 if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
                     OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete bufferGeom; GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
                     return gis::framework::Result::fail("Failed to write buffer feature");
                 }
                 OGRFeature::DestroyFeature(dstFeat);
-                delete bufferGeom;
             }
         }
         OGRFeature::DestroyFeature(feat);

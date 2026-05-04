@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-- 当前版本：`v0.1.3`
+- 当前版本：`v0.5.0`
 - 标准构建目录：
   - `build/debug`
   - `build/release`
@@ -50,7 +50,7 @@
 
 - `gabor_filter`
 - `glcm_texture`
-- `mean_shift_segment`
+- `mean_shift_filter`
 - `skeleton`
 - `connected_components`
 - `pansharpen`
@@ -70,7 +70,7 @@
 - `cosine_correction`
 - `minnaert_correction`
 - `c_correction`
-- `quac_correction`
+- `percentile_stretch`
 - `rpc_orthorectify`
 
 ### projection
@@ -185,12 +185,12 @@ cmake --build build/release --config Release --target real_vector_regression_ful
 - `cutting`
   - `clip / mosaic / split / merge_bands`
 - `processing`
-  - `pansharpen / gabor_filter / glcm_texture / mean_shift_segment / skeleton / connected_components`
+  - `pansharpen / gabor_filter / glcm_texture / mean_shift_filter / skeleton / connected_components`
 - `classification`
   - `feature_stats / svm_classify / random_forest_classify / max_likelihood_classify`
   - `full` 追加：`feature_stats_csv`
 - `georef`
-  - `dos_correction / radiometric_calibration / gcp_register / cosine_correction / minnaert_correction / c_correction / quac_correction / rpc_orthorectify`
+  - `dos_correction / radiometric_calibration / gcp_register / cosine_correction / minnaert_correction / c_correction / percentile_stretch / rpc_orthorectify`
 - `spindex`
   - `ndvi / ndmi / evi / evi2 / savi / osavi / gndvi / ndwi / mndwi / ndbi / bsi / arvi / nbr / awei / ui / bi / custom_index`
 - `terrain`
@@ -214,12 +214,12 @@ cmake --build build/release --config Release --target real_vector_regression_ful
   - 验证输出尺寸、瓦片数量、波段数量与关键统计值
 - `processing.pansharpen`
   - 固定验证 `pan_method=simple_mean`
-- `processing.gabor_filter / glcm_texture / mean_shift_segment`
+- `processing.gabor_filter / glcm_texture / mean_shift_filter`
   - 验证输出尺寸 `32 x 32 x 1`
   - 验证输出类型 `Float32`
 - `processing.skeleton / connected_components`
   - 验证输出尺寸 `64 x 64 x 1`
-  - `skeleton` 校验最大值 `255`
+  - `skeleton` 校验最大值 `1.0`
   - `connected_components` 校验最大标签值 `4`
 - `georef`
   - 8 个动作固定校验输出尺寸、输出类型、CRS 或关键统计值

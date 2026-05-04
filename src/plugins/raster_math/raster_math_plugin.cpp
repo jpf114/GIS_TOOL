@@ -7,6 +7,7 @@
 #include <gdal_priv.h>
 #include <opencv2/opencv.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <map>
@@ -21,8 +22,15 @@ namespace {
 static double evalExpression(const std::string& expr,
                              const std::map<std::string, double>& bandValues) {
     std::string e = expr;
+    std::vector<std::string> keys;
+    keys.reserve(bandValues.size());
     for (const auto& [key, val] : bandValues) {
-        const std::string replacement = std::to_string(val);
+        keys.push_back(key);
+    }
+    std::sort(keys.begin(), keys.end(),
+              [](const std::string& a, const std::string& b) { return a.size() > b.size(); });
+    for (const auto& key : keys) {
+        const std::string replacement = std::to_string(bandValues.at(key));
         size_t pos = 0;
         while ((pos = e.find(key, pos)) != std::string::npos) {
             e.replace(pos, key.length(), replacement);

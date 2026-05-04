@@ -947,7 +947,7 @@ TEST_F(PluginTest, GeorefQuacCorrectionExecution) {
     const std::string output = utf8PathString(getTestDir() / "georef_quac_output.tif");
 
     std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("quac_correction");
+    params["action"] = std::string("percentile_stretch");
     params["input"] = input;
     params["output"] = output;
     params["dark_percentile"] = 1.0;
@@ -956,7 +956,7 @@ TEST_F(PluginTest, GeorefQuacCorrectionExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     EXPECT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("action"), "quac_correction");
+    EXPECT_EQ(result.metadata.at("action"), "percentile_stretch");
     EXPECT_EQ(result.metadata.at("band_count"), "3");
 
     auto ds = gis::core::openRaster(output, true);
@@ -1322,7 +1322,7 @@ TEST_F(PluginTest, ProcessingMeanShiftSegmentExecution) {
     std::string output = (getTestDir() / "e2e_mean_shift_output.tif").string();
 
     std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("mean_shift_segment");
+    params["action"] = std::string("mean_shift_filter");
     params["input"] = input;
     params["output"] = output;
     params["band"] = 1;
@@ -1333,7 +1333,7 @@ TEST_F(PluginTest, ProcessingMeanShiftSegmentExecution) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Mean Shift failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("action"), "mean_shift_segment");
+    EXPECT_EQ(result.metadata.at("action"), "mean_shift_filter");
     cv::Mat shifted = gis::core::readBandAsMat(output, 1);
     double minValue = 0.0;
     double maxValue = 0.0;

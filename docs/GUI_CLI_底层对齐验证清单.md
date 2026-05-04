@@ -114,10 +114,10 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 | `spindex` | `ndvi` `ndwi` `custom_index` | 有 | 有 | 有 | 主链路已对齐 |
 | `raster_manage / raster_inspect / raster_render / raster_math` | `info` `histogram` `colormap` `histogram_match` `nodata` `overviews` `band_math` `cog` | 有 | 有 | 有 | GUI 已统一归并到“栅格工具”主项 |
 | `classification` | `feature_stats` `svm_classify` `random_forest_classify` `max_likelihood_classify` | 有 | 有 | 有 | 主链路已对齐 |
-| `processing` | `threshold` `filter` `enhance` `stats` `edge` `contour` `template_match` `pansharpen` `hough` `watershed` `kmeans` `gabor_filter` `glcm_texture` `mean_shift_segment` `skeleton` `connected_components` | 有 | 有 | 有 | 主链路已对齐 |
+| `processing` | `threshold` `filter` `enhance` `stats` `edge` `contour` `template_match` `pansharpen` `hough` `watershed` `kmeans` `gabor_filter` `glcm_texture` `mean_shift_filter` `skeleton` `connected_components` | 有 | 有 | 有 | 主链路已对齐 |
 | `matching` | `detect` `corner` `match` `change` `register` | 有 | 有 | 有 | 主链路已对齐 |
 | `cutting` | `clip` `mosaic` `split` `merge_bands` | 有 | 有 | 有 | 主链路已对齐 |
-| `georef` | `dos_correction` `radiometric_calibration` `gcp_register` `cosine_correction` `minnaert_correction` `c_correction` `quac_correction` `rpc_orthorectify` | 有 | 有 | 有 | 主链路已对齐 |
+| `georef` | `dos_correction` `radiometric_calibration` `gcp_register` `cosine_correction` `minnaert_correction` `c_correction` `percentile_stretch` `rpc_orthorectify` | 有 | 有 | 有 | 主链路已对齐 |
 | `terrain` | `slope` `aspect` `hillshade` `tpi` `curvature` `profile_curvature` `plan_curvature` `tri` `roughness` `fill_sinks` `flow_direction` `flow_accumulation` `stream_extract` `watershed` `profile_extract` `viewshed` `viewshed_multi` `cut_fill` `reservoir_volume` | 有 | 有 | 有 | 主链路已对齐 |
 
 补充说明：
@@ -128,9 +128,9 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 - `projection.info / transform / assign_srs / reproject` 已纳入真实数据专项 quick 回归
 - `cutting.clip / mosaic / split / merge_bands` 已纳入真实数据专项 quick 回归
 - `processing.pansharpen` 当前真实数据专项固定验证 `pan_method=simple_mean`
-- `processing.gabor_filter / glcm_texture / mean_shift_segment` 已纳入真实数据专项 quick 回归
+- `processing.gabor_filter / glcm_texture / mean_shift_filter` 已纳入真实数据专项 quick 回归
 - `processing.skeleton / connected_components` 已纳入真实数据专项 quick 回归
-- `georef.dos_correction / radiometric_calibration / gcp_register / cosine_correction / minnaert_correction / c_correction / quac_correction / rpc_orthorectify` 已纳入真实数据专项 quick 回归
+- `georef.dos_correction / radiometric_calibration / gcp_register / cosine_correction / minnaert_correction / c_correction / percentile_stretch / rpc_orthorectify` 已纳入真实数据专项 quick 回归
 - `real_raster_regression` 当前也已补充关键结果断言，而不只是检查输出文件存在：
   - `spindex.ndvi / ndmi / bsi / evi2` 校验关键输出统计
   - `classification.feature_stats` 校验 `actual_srs` 与 `__summary__` 汇总记录
@@ -138,8 +138,8 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
   - `projection.info / transform / assign_srs / reproject` 校验尺寸、EPSG 编码、转换结果与重投影输出
   - `cutting.clip / mosaic / split / merge_bands` 校验输出尺寸、瓦片数量、波段数量与关键统计值
   - `processing.pansharpen` 校验输出为 `30 x 30 x 3`，并校验三波段统计值
-  - `processing.gabor_filter / glcm_texture / mean_shift_segment` 校验输出尺寸为 `32 x 32 x 1`，输出类型为 `Float32`
-  - `processing.skeleton / connected_components` 校验输出尺寸为 `64 x 64 x 1`；其中 `skeleton` 校验最大值 `255`，`connected_components` 校验最大标签值 `4`
+  - `processing.gabor_filter / glcm_texture / mean_shift_filter` 校验输出尺寸为 `32 x 32 x 1`，输出类型为 `Float32`
+  - `processing.skeleton / connected_components` 校验输出尺寸为 `64 x 64 x 1`；其中 `skeleton` 校验最大值 `1.0`，`connected_components` 校验最大标签值 `4`
   - `georef` 8 个动作校验输出尺寸、类型、CRS 或关键统计值
   - `terrain.profile_extract / terrain.slope / terrain.viewshed_multi / terrain.profile_curvature / terrain.plan_curvature / terrain.tri` 校验关键结构或统计结果
 
@@ -218,7 +218,7 @@ GUI 当前已覆盖的离屏回归共 `112` 项，包含：
   - `kmeans`
   - `gabor_filter`
   - `glcm_texture`
-  - `mean_shift_segment`
+  - `mean_shift_filter`
   - `skeleton`
   - `connected_components`
 - `matching`
@@ -241,7 +241,7 @@ GUI 当前已覆盖的离屏回归共 `112` 项，包含：
   - `cosine_correction`
   - `minnaert_correction`
   - `c_correction`
-  - `quac_correction`
+  - `percentile_stretch`
   - `rpc_orthorectify`
 - `terrain`
   - `slope`

@@ -73,11 +73,13 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "max_points", "最大特征点数", "检测的最大特征点数量",
-            gis::framework::ParamType::Int, false, int{5000}
+            gis::framework::ParamType::Int, false, int{5000},
+            int{1}, int{100000}
         },
         gis::framework::ParamSpec{
             "ratio_test", "Lowe比率阈值", "Lowe比率测试阈值(0-1)",
-            gis::framework::ParamType::Double, false, double{0.75}
+            gis::framework::ParamType::Double, false, double{0.75},
+            double{0.0}, double{1.0}
         },
         gis::framework::ParamSpec{
             "transform", "变换模型", "配准变换模型",
@@ -99,11 +101,13 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "threshold", "变化阈值", "变化检测阈值(0=自动)",
-            gis::framework::ParamType::Double, false, double{0.0}
+            gis::framework::ParamType::Double, false, double{0.0},
+            double{0.0}, double{1e6}
         },
         gis::framework::ParamSpec{
             "band", "波段序号", "处理的波段序号(从1开始)",
-            gis::framework::ParamType::Int, false, int{1}
+            gis::framework::ParamType::Int, false, int{1},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "ecc_motion", "ECC运动模型", "ECC配准的运动模型",
@@ -113,11 +117,13 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "ecc_iterations", "ECC迭代次数", "ECC配准最大迭代次数",
-            gis::framework::ParamType::Int, false, int{200}
+            gis::framework::ParamType::Int, false, int{200},
+            int{1}, int{10000}
         },
         gis::framework::ParamSpec{
             "ecc_epsilon", "ECC收敛阈值", "ECC配准收敛阈值",
-            gis::framework::ParamType::Double, false, double{1e-6}
+            gis::framework::ParamType::Double, false, double{1e-6},
+            double{1e-10}, double{1.0}
         },
         gis::framework::ParamSpec{
             "corner_method", "角点方法", "角点检测方法",
@@ -127,19 +133,23 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "max_corners", "最大角点数", "检测的最大角点数量",
-            gis::framework::ParamType::Int, false, int{5000}
+            gis::framework::ParamType::Int, false, int{5000},
+            int{1}, int{100000}
         },
         gis::framework::ParamSpec{
             "quality_level", "质量水平", "角点检测质量水平(0-1)",
-            gis::framework::ParamType::Double, false, double{0.01}
+            gis::framework::ParamType::Double, false, double{0.01},
+            double{0.0}, double{1.0}
         },
         gis::framework::ParamSpec{
             "min_distance", "最小间距", "角点之间的最小欧氏距离",
-            gis::framework::ParamType::Double, false, double{10.0}
+            gis::framework::ParamType::Double, false, double{10.0},
+            double{0.0}, double{10000.0}
         },
         gis::framework::ParamSpec{
             "stitch_confidence", "拼接置信度", "图像拼接的置信度阈值",
-            gis::framework::ParamType::Double, false, double{0.5}
+            gis::framework::ParamType::Double, false, double{0.5},
+            double{0.0}, double{1.0}
         },
     };
 }
@@ -423,11 +433,19 @@ gis::framework::Result MatchingPlugin::doRegister(
     cv::Mat H;
     if (transformType == "projective") {
         H = cv::findHomography(pts2, pts1, cv::RANSAC);
+    } else if (transformType == "similarity") {
+        H = cv::estimateAffinePartial2D(pts2, pts1, cv::noArray(), cv::RANSAC);
+    } else if (transformType == "translation") {
+        cv::Mat aff = cv::estimateAffinePartial2D(pts2, pts1, cv::noArray(), cv::RANSAC);
+        if (!aff.empty()) {
+            aff.at<double>(0, 0) = 1.0;
+            aff.at<double>(0, 1) = 0.0;
+            aff.at<double>(1, 0) = 0.0;
+            aff.at<double>(1, 1) = 1.0;
+            H = aff;
+        }
     } else {
         H = cv::estimateAffine2D(pts2, pts1, cv::noArray(), cv::RANSAC);
-        if (H.empty()) {
-            H = cv::estimateAffinePartial2D(pts2, pts1, cv::noArray(), cv::RANSAC);
-        }
     }
 
     if (H.empty()) {
@@ -500,16 +518,11 @@ gis::framework::Result MatchingPlugin::doChange(
         cv::log(ratio, logRatio);
         changeMap = cv::abs(logRatio);
     } else if (changeMethod == "pcd") {
-        std::vector<cv::Mat> channels = {before, after};
-        cv::Mat stacked;
-        cv::merge(channels, stacked);
-        cv::Mat mean;
-        cv::reduce(stacked.reshape(1, stacked.rows * stacked.cols), mean, 1, cv::REDUCE_AVG);
-        mean = mean.reshape(stacked.channels(), stacked.rows);
-        cv::Mat diff1, diff2;
-        cv::subtract(before, mean, diff1);
-        cv::subtract(after, mean, diff2);
-        cv::magnitude(diff1, diff2, changeMap);
+        cv::Mat diff;
+        cv::subtract(before, after, diff);
+        cv::Mat diffSq;
+        cv::multiply(diff, diff, diffSq);
+        cv::sqrt(diffSq, changeMap);
     } else {
         return gis::framework::Result::fail("Unknown change method: " + changeMethod);
     }

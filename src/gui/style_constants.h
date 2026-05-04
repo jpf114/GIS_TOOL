@@ -19,8 +19,8 @@ constexpr const char* kSidebarIndicator  = "#2E7EC9";
 constexpr const char* kSidebarText       = "#BCC4CF";
 constexpr const char* kSidebarMuted      = "#8B9099";
 constexpr const char* kPrimary           = "#2E7EC9";
-constexpr const char* kPrimaryHover      = "#1F6AB5";
-constexpr const char* kPrimaryPressed    = "#1A5B98";
+constexpr const char* kPrimaryHover      = "#3590DA";
+constexpr const char* kPrimaryPressed    = "#2575C0";
 constexpr const char* kPrimaryLight      = "#E8F2FB";
 constexpr const char* kPrimaryDeep       = "#1F6AB5";
 constexpr const char* kSuccess           = "#1F9D68";
@@ -65,6 +65,7 @@ constexpr int kButtonMinWidth       = 118;
 constexpr int kProgressHeight       = 8;
 constexpr int kProgressRadius       = 4;
 constexpr int kLabelInputRatio      = 2;
+constexpr double kBadgeIconRatio     = 0.55;
 
 }
 
@@ -137,27 +138,27 @@ inline QString globalStyleSheet() {
         "  color: white; border: none; border-radius: %23px;"
         "  min-height: %24px; min-width: %25px; font-weight: 700; padding: 0 18px;"
         "}"
-        "QPushButton#primaryButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3590DA, stop:1 #2575C0); }"
-        "QPushButton#primaryButton:pressed { background: %27; }"
-        "QPushButton#primaryButton:disabled { background: %28; color: %29; }"
+        "QPushButton#primaryButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 %26, stop:1 %27); }"
+        "QPushButton#primaryButton:pressed { background: %28; }"
+        "QPushButton#primaryButton:disabled { background: %29; color: %30; }"
         "QPushButton#secondaryButton {"
         "  background: %8; color: %7; border: 1px solid #D0E0FA; border-radius: %23px;"
         "  min-height: %24px; font-weight: 600; padding: 0 16px;"
         "}"
         "QPushButton#secondaryButton:hover { background: #DDEBFF; }"
-        "QPushButton#secondaryButton:disabled { background: %28; color: %29; border-color: %28; }"
+        "QPushButton#secondaryButton:disabled { background: %29; color: %30; border-color: %29; }"
         "QPushButton#browseButton {"
         "  min-width: 72px; max-width: 88px; min-height: %17px;"
         "  border: 1px solid %18; border-radius: %19px;"
-        "  background: white; color: %9; font-weight: 600; padding: 0 12px;"
+        "  background: %31; color: %9; font-weight: 600; padding: 0 12px;"
         "}"
-        "QPushButton#browseButton:hover { background: #F3F5F7; border-color: #C8CDD4; color: %2; }"
+        "QPushButton#browseButton:hover { background: %32; border-color: #C8CDD4; color: %2; }"
         "QPushButton#navItem::menu-indicator, QPushButton#subNavItem::menu-indicator { image: none; width: 0; }"
         "QCheckBox { color: %2; spacing: 8px; }"
         "QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px; border: 1px solid %18; background: white; }"
         "QCheckBox::indicator:checked { background: %7; border-color: %7; }"
         "QProgressBar {"
-          "  border: none; border-radius: %32px; background: #E5E9EE; height: %34px; text-align: center;"
+          "  border: none; border-radius: %32px; background: %33; height: %34px; text-align: center;"
         "  color: %9; font-weight: 600; font-size: 11px;"
         "}"
         "QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #5CB8FF, stop:1 #2E7EC9); border-radius: %32px; }"
@@ -205,8 +206,7 @@ inline QString globalStyleSheet() {
         .arg(Color::kBrowseBtnHover)
         .arg(Size::kProgressRadius)
         .arg(Color::kProgressTrack)
-        .arg(Size::kProgressHeight)
-        .arg(Color::kProgressFill);
+        .arg(Size::kProgressHeight);
 }
 
 inline QString sidebarStyleSheet() {
@@ -215,18 +215,18 @@ inline QString sidebarStyleSheet() {
         "QFrame#sidebarTopCard, QFrame#sidebarFooterCard {"
         "  background: transparent; border: none; border-radius: 0px;"
         "}"
-        "QLabel#sidebarEyebrow { font-size: 11px; font-weight: 700; color: %3; letter-spacing: 1px; }"
+        "QLabel#sidebarEyebrow { font-size: 11px; font-weight: 700; color: %2; letter-spacing: 1px; }"
         "QLabel#sidebarTitle { font-size: 18px; font-weight: 700; color: white; }"
-        "QLabel#sidebarDesc { font-size: 12px; color: %4; line-height: 1.5; }"
+        "QLabel#sidebarDesc { font-size: 12px; color: %3; line-height: 1.5; }"
         "QLabel#sidebarSection { font-size: 10.5px; font-weight: 700; color: #5C6E80; padding: 12px 4px 8px 4px; letter-spacing: 1.8px; }"
         "QFrame#sidebarDivider { background: rgba(255, 255, 255, 0.06); min-height: 1px; max-height: 1px; }"
         "QPushButton#navItem {"
         "  text-align: left; padding: 9px 14px; border: none; border-left: 3px solid transparent;"
-        "  border-radius: 0px; background: transparent; color: %5; font-size: 13px; font-weight: 500;"
+        "  border-radius: 0px; background: transparent; color: %4; font-size: 13px; font-weight: 500;"
         "}"
-        "QPushButton#navItem:hover { background: %6; color: #DDE3EA; }"
+        "QPushButton#navItem:hover { background: %5; color: #DDE3EA; }"
         "QPushButton#navItem:checked {"
-        "  background: #1A3A52; color: white; border-left-color: %3; font-weight: 600;"
+        "  background: %6; color: white; border-left-color: %2; font-weight: 600;"
         "}"
         "QPushButton#subNavItem {"
           "  text-align: left; padding: 7px 14px 7px 12px; border: 1px solid transparent; border-radius: 4px;"
@@ -237,14 +237,13 @@ inline QString sidebarStyleSheet() {
         "  background: rgba(46, 126, 201, 0.25); color: white; border-color: rgba(46, 126, 201, 0.20);"
         "}"
         "QLabel#sidebarFooterTitle { font-size: 12px; font-weight: 700; color: white; }"
-        "QLabel#sidebarFooterDesc { font-size: 11px; color: %4; line-height: 1.5; }"
+        "QLabel#sidebarFooterDesc { font-size: 11px; color: %3; line-height: 1.5; }"
         "QScrollArea { background: transparent; border: none; }"
         "QScrollBar:vertical { background: transparent; width: 8px; }"
         "QScrollBar::handle:vertical { background: #2D476A; border-radius: 4px; min-height: 30px; }"
         "QScrollBar::handle:vertical:hover { background: #3A5D8B; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }")
         .arg(Color::kSidebarBg)
-        .arg(Color::kSidebarPanel)
         .arg(Color::kSidebarIndicator)
         .arg(Color::kSidebarMuted)
         .arg(Color::kSidebarText)

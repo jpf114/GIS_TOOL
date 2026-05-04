@@ -1,4 +1,4 @@
-﻿#include "mainwindow.h"
+#include "mainwindow.h"
 
 #include "execute_worker.h"
 #include "nav_panel.h"
@@ -94,7 +94,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("skeleton"), QStringLiteral("\351\252\250\346\236\266\346\217\220\345\217\226")},
         {QStringLiteral("gabor_filter"), QStringLiteral("Gabor \346\273\244\346\263\242")},
         {QStringLiteral("glcm_texture"), QStringLiteral("GLCM \347\272\271\347\220\206")},
-        {QStringLiteral("mean_shift_segment"), QStringLiteral("Mean Shift \345\210\206\345\211\262")},
+        {QStringLiteral("mean_shift_filter"), QStringLiteral("Mean Shift \346\273\242\346\263\242")},
         {QStringLiteral("connected_components"), QStringLiteral("\350\277\236\351\200\232\347\273\204\344\273\266")},
         {QStringLiteral("kmeans"), QStringLiteral("K-Means")},
         {QStringLiteral("overviews"), QStringLiteral("\351\207\221\345\255\227\345\241\224")},
@@ -109,7 +109,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("cosine_correction"), QStringLiteral("\344\275\231\345\274\246\346\240\241\346\255\243")},
         {QStringLiteral("minnaert_correction"), QStringLiteral("Minnaert \346\240\241\346\255\243")},
         {QStringLiteral("c_correction"), QStringLiteral("C \346\240\241\346\255\243")},
-        {QStringLiteral("quac_correction"), QStringLiteral("QUAC \346\240\241\346\255\243")},
+        {QStringLiteral("percentile_stretch"), QStringLiteral("百分位拉伸")},
         {QStringLiteral("rpc_orthorectify"), QStringLiteral("RPC \346\255\243\345\260\204\346\240\241\346\255\243")},
         {QStringLiteral("slope"), QStringLiteral("\345\235\241\345\272\246")},
         {QStringLiteral("aspect"), QStringLiteral("\345\235\241\345\220\221")},
@@ -196,10 +196,10 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
     bool hasSvg = false;
 
     if (mgr.hasPluginIcon(key)) {
-        iconPixmap = mgr.pixmapForPlugin(key, static_cast<int>(size * 0.55), fg);
+        iconPixmap = mgr.pixmapForPlugin(key, static_cast<int>(size * gis::style::Size::kBadgeIconRatio), fg);
         hasSvg = true;
     } else if (mgr.hasActionIcon(key)) {
-        iconPixmap = mgr.pixmapForAction(key, static_cast<int>(size * 0.55), fg);
+        iconPixmap = mgr.pixmapForAction(key, static_cast<int>(size * gis::style::Size::kBadgeIconRatio), fg);
         hasSvg = true;
     }
 
@@ -211,7 +211,7 @@ QPixmap badgeIconPixmap(const QString& text, const QColor& bg, const QColor& fg,
         painter.setPen(Qt::NoPen);
         painter.setBrush(bg);
         painter.drawRoundedRect(QRectF(0.5, 0.5, size - 1.0, size - 1.0), 8, 8);
-        int iconSize = static_cast<int>(size * 0.55);
+        int iconSize = static_cast<int>(size * gis::style::Size::kBadgeIconRatio);
         int offset = (size - iconSize) / 2;
         painter.drawPixmap(offset, offset, iconPixmap);
         return result;
@@ -418,7 +418,7 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"kernel_size", {QStringLiteral("窗口大小"), QStringLiteral("局部纹理窗口大小，建议填写大于等于 3 的奇数。")}},
                 {"glcm_levels", {QStringLiteral("灰度级数"), QStringLiteral("量化灰度级数，常用 8 或 16。")}},
             }},
-            {"mean_shift_segment", {
+            {"mean_shift_filter", {
                 {"spatial_radius", {QStringLiteral("空间半径"), QStringLiteral("值越大，空间上合并得越平滑。")}},
                 {"color_radius", {QStringLiteral("颜色半径"), QStringLiteral("值越大，灰度相近区域越容易被合并。")}},
                 {"pyramid_level", {QStringLiteral("金字塔层数"), QStringLiteral("通常填写 0 或 1，值越大速度越快但更粗。")}},
@@ -533,9 +533,9 @@ const ParamText* findActionSpecificParamText(const std::string& pluginName,
                 {"sun_azimuth_deg", {QStringLiteral("太阳方位角"), QStringLiteral("太阳方位角，单位为度。")}},
                 {"c_value", {QStringLiteral("C 系数"), QStringLiteral("C 地形校正系数，通常不小于 0。")}},
             }},
-            {"quac_correction", {
-                {"dark_percentile", {QStringLiteral("暗像元百分位"), QStringLiteral("简化 QUAC 使用的暗像元百分位。")}},
-                {"bright_percentile", {QStringLiteral("亮像元百分位"), QStringLiteral("简化 QUAC 使用的亮像元百分位。")}},
+            {"percentile_stretch", {
+                {"dark_percentile", {QStringLiteral("暗像元百分位"), QStringLiteral("百分位拉伸使用的暗端百分位。")}},
+                {"bright_percentile", {QStringLiteral("亮像元百分位"), QStringLiteral("百分位拉伸使用的亮端百分位。")}},
             }},
             {"rpc_orthorectify", {
                 {"dst_srs", {QStringLiteral("目标坐标系"), QStringLiteral("RPC 正射校正输出坐标系，例如 EPSG:4326。")}},
@@ -602,7 +602,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"skeleton", {QStringLiteral("骨架提取"), QStringLiteral("对二值目标执行形态学骨架提取。"), {"input", "output", "band"}, {"input", "output"}}},
             {"gabor_filter", {QStringLiteral("Gabor 滤波"), QStringLiteral("按给定方向和尺度提取纹理响应。"), {"input", "output", "band", "kernel_size", "sigma", "gabor_theta", "gabor_lambda", "gabor_gamma", "gabor_psi"}, {"input", "output"}}},
             {"glcm_texture", {QStringLiteral("GLCM 纹理"), QStringLiteral("按局部窗口计算灰度共生矩阵纹理特征。"), {"input", "output", "band", "kernel_size", "glcm_metric", "glcm_levels"}, {"input", "output"}}},
-            {"mean_shift_segment", {QStringLiteral("Mean Shift 分割"), QStringLiteral("按空间和灰度邻域执行 Mean Shift 平滑分割。"), {"input", "output", "band", "spatial_radius", "color_radius", "pyramid_level"}, {"input", "output"}}},
+            {"mean_shift_filter", {QStringLiteral("Mean Shift 滤波"), QStringLiteral("按空间和灰度邻域执行 Mean Shift 平滑滤波。"), {"input", "output", "band", "spatial_radius", "color_radius", "pyramid_level"}, {"input", "output"}}},
             {"connected_components", {QStringLiteral("连通组件"), QStringLiteral("对二值目标执行连通组件标记并输出标签栅格。"), {"input", "output", "band"}, {"input", "output"}}},
             {"kmeans", {QStringLiteral("K-Means 分割"), QStringLiteral("按聚类数对影像全部波段执行 K-Means 分割。"), {"input", "output", "k", "max_iter", "epsilon_kmeans"}, {"input", "output"}}},
         }},
@@ -625,7 +625,7 @@ const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConf
             {"cosine_correction", {QStringLiteral("余弦校正"), QStringLiteral("根据坡度、坡向和太阳角度对单波段栅格执行余弦地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg"}, {"input", "output", "slope_raster", "aspect_raster"}}},
             {"minnaert_correction", {QStringLiteral("Minnaert 校正"), QStringLiteral("根据坡度、坡向、太阳角度和 Minnaert 系数执行单波段地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg", "minnaert_k"}, {"input", "output", "slope_raster", "aspect_raster"}}},
             {"c_correction", {QStringLiteral("C 校正"), QStringLiteral("根据坡度、坡向、太阳角度和 C 系数执行单波段地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg", "c_value"}, {"input", "output", "slope_raster", "aspect_raster"}}},
-            {"quac_correction", {QStringLiteral("QUAC 校正"), QStringLiteral("按多波段亮暗百分位对输入影像执行简化快速大气校正。"), {"input", "output", "dark_percentile", "bright_percentile"}, {"input", "output"}}},
+            {"percentile_stretch", {QStringLiteral("百分位拉伸"), QStringLiteral("按多波段亮暗百分位对输入影像执行线性拉伸归一化。"), {"input", "output", "dark_percentile", "bright_percentile"}, {"input", "output"}}},
             {"rpc_orthorectify", {QStringLiteral("RPC 正射校正"), QStringLiteral("基于影像 RPC 元数据执行轻量正射校正，可选 DEM 参与。"), {"input", "output", "dst_srs", "dem_file", "rpc_height", "resample"}, {"input", "output", "dst_srs"}}},
         }},
         {"terrain", {

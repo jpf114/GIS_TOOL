@@ -277,7 +277,7 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
             int{0}, int{0}, {
                 "dos_correction", "radiometric_calibration", "gcp_register",
                 "cosine_correction", "minnaert_correction", "c_correction",
-                "quac_correction", "rpc_orthorectify"
+                "percentile_stretch", "rpc_orthorectify"
             }
         },
         gis::framework::ParamSpec{
@@ -290,19 +290,23 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "band", "波段序号", "待处理波段序号，从 1 开始",
-            gis::framework::ParamType::Int, false, int{1}
+            gis::framework::ParamType::Int, false, int{1},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "dark_object_value", "暗像元值", "小于 0 时自动使用当前波段最小值",
-            gis::framework::ParamType::Double, false, double{-1.0}
+            gis::framework::ParamType::Double, false, double{-1.0},
+            double{-1e6}, double{1e6}
         },
         gis::framework::ParamSpec{
             "gain", "增益", "辐射定标增益系数",
-            gis::framework::ParamType::Double, false, double{1.0}
+            gis::framework::ParamType::Double, false, double{1.0},
+            double{-1e6}, double{1e6}
         },
         gis::framework::ParamSpec{
             "offset", "偏移", "辐射定标偏移量",
-            gis::framework::ParamType::Double, false, double{0.0}
+            gis::framework::ParamType::Double, false, double{0.0},
+            double{-1e6}, double{1e6}
         },
         gis::framework::ParamSpec{
             "metadata_file", "元数据文件", "可选，自动读取辐射定标系数的元数据文件",
@@ -313,8 +317,8 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "dst_srs", "目标坐标系", "控制点坐标对应的目标坐标系，例如 EPSG:4326",
-            gis::framework::ParamType::CRS, false, std::string{}
+            "dst_srs", "目标坐标系", "目标坐标系，例如 EPSG:4326（RPC正射校正默认 EPSG:4326）",
+            gis::framework::ParamType::CRS, false, std::string{"EPSG:4326"}
         },
         gis::framework::ParamSpec{
             "resample", "重采样方法", "控制点配准后的重采样算法",
@@ -331,27 +335,33 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "sun_zenith_deg", "太阳天顶角", "太阳天顶角，单位为度",
-            gis::framework::ParamType::Double, false, double{30.0}
+            gis::framework::ParamType::Double, false, double{30.0},
+            double{0.0}, double{90.0}
         },
         gis::framework::ParamSpec{
             "sun_azimuth_deg", "太阳方位角", "太阳方位角，单位为度",
-            gis::framework::ParamType::Double, false, double{180.0}
+            gis::framework::ParamType::Double, false, double{180.0},
+            double{0.0}, double{360.0}
         },
         gis::framework::ParamSpec{
             "minnaert_k", "Minnaert 系数", "Minnaert 地形校正系数",
-            gis::framework::ParamType::Double, false, double{0.5}
+            gis::framework::ParamType::Double, false, double{0.5},
+            double{0.0}, double{1.0}
         },
         gis::framework::ParamSpec{
             "c_value", "C 系数", "C 地形校正系数",
-            gis::framework::ParamType::Double, false, double{0.1}
+            gis::framework::ParamType::Double, false, double{0.1},
+            double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
             "dark_percentile", "暗像元百分位", "简化 QUAC 使用的暗像元百分位",
-            gis::framework::ParamType::Double, false, double{1.0}
+            gis::framework::ParamType::Double, false, double{1.0},
+            double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
             "bright_percentile", "亮像元百分位", "简化 QUAC 使用的亮像元百分位",
-            gis::framework::ParamType::Double, false, double{99.0}
+            gis::framework::ParamType::Double, false, double{99.0},
+            double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
             "dem_file", "DEM 文件", "RPC 正射校正使用的可选 DEM 文件",
@@ -359,7 +369,8 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "rpc_height", "固定高程", "不使用 DEM 时的固定高程值",
-            gis::framework::ParamType::Double, false, double{0.0}
+            gis::framework::ParamType::Double, false, double{0.0},
+            double{-10000.0}, double{10000.0}
         },
     };
 }
@@ -386,7 +397,7 @@ gis::framework::Result GeorefPlugin::execute(
     if (action == "c_correction") {
         return doCCorrection(params, progress);
     }
-    if (action == "quac_correction") {
+    if (action == "percentile_stretch") {
         return doQuacCorrection(params, progress);
     }
     if (action == "rpc_orthorectify") {
@@ -530,7 +541,7 @@ gis::framework::Result GeorefPlugin::doGcpRegister(
     }
     gis::core::GdalDatasetPtr vrtDs(vrtRaw);
 
-    std::unique_ptr<OGRSpatialReference> dstSrsRef(gis::core::parseSRS(dstSrs));
+    auto dstSrsRef = gis::core::parseSRS(dstSrs);
     if (!dstSrsRef) {
         freeParsedGcps(parsedGcps);
         return gis::framework::Result::fail("Invalid dst_srs: " + dstSrs);
@@ -887,8 +898,8 @@ gis::framework::Result GeorefPlugin::doQuacCorrection(
     gis::core::matsToGdalTiff(correctedBands, srcDs.get(), output);
     progress.onProgress(1.0);
 
-    auto result = gis::framework::Result::ok("QUAC correction completed", output);
-    result.metadata["action"] = "quac_correction";
+    auto result = gis::framework::Result::ok("Percentile stretch completed", output);
+    result.metadata["action"] = "percentile_stretch";
     result.metadata["band_count"] = std::to_string(bandCount);
     result.metadata["dark_percentile"] = std::to_string(darkPercentile);
     result.metadata["bright_percentile"] = std::to_string(brightPercentile);

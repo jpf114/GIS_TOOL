@@ -1,4 +1,4 @@
-﻿#include "vector_plugin.h"
+#include "vector_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
 #include <gdal_priv.h>
@@ -149,7 +149,7 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "output", "输出文件", "输出文件路径",
-            gis::framework::ParamType::FilePath, false, std::string{}
+            gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
             "layer", "图层名", "操作的图层名(默认第一个图层)",
@@ -165,7 +165,8 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "distance", "缓冲距离", "缓冲区分析的距离(地图单位)",
-            gis::framework::ParamType::Double, false, double{100.0}
+            gis::framework::ParamType::Double, false, double{100.0},
+            double{0.0}, double{1e9}
         },
         gis::framework::ParamSpec{
             "clip_vector", "裁切矢量", "用于裁切的矢量文件路径",
@@ -173,7 +174,8 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "resolution", "栅格分辨率", "矢量转栅格时的像元大小",
-            gis::framework::ParamType::Double, false, double{1.0}
+            gis::framework::ParamType::Double, false, double{1.0},
+            double{0.001}, double{1e9}
         },
         gis::framework::ParamSpec{
             "attribute", "属性字段", "栅格化时写入的属性字段名(不指定则写入 1)",
@@ -181,7 +183,8 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "band", "波段序号", "栅格转矢量时使用的波段序号(从 1 开始)",
-            gis::framework::ParamType::Int, false, int{1}
+            gis::framework::ParamType::Int, false, int{1},
+            int{1}, int{999}
         },
         gis::framework::ParamSpec{
             "format", "输出格式", "格式转换的目标格式(GeoJSON/ESRI Shapefile/GPKG/KML/CSV)",
@@ -215,11 +218,13 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "tolerance", "简化容差", "Douglas-Peucker 简化容差，单位与图层坐标单位一致",
-            gis::framework::ParamType::Double, false, double{10.0}
+            gis::framework::ParamType::Double, false, double{10.0},
+            double{0.0}, double{1e9}
         },
         gis::framework::ParamSpec{
             "min_area", "最小面积", "小于该面积阈值的面碎片将被移除",
-            gis::framework::ParamType::Double, false, double{10.0}
+            gis::framework::ParamType::Double, false, double{10.0},
+            double{0.0}, double{1e9}
         },
     };
 }

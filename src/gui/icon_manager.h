@@ -39,6 +39,10 @@ public:
 
     bool hasPluginIcon(const std::string& pluginName) const;
     bool hasActionIcon(const std::string& actionKey) const;
+    bool hasActionIcon(const std::string& pluginName, const std::string& actionKey) const;
+
+    QPixmap pixmapForAction(const std::string& pluginName, const std::string& actionKey,
+                           int size, const QColor& color = QColor("#FFFFFF"));
 
 private:
     IconManager();

@@ -205,11 +205,13 @@ std::vector<gis::framework::ParamSpec> ProjectionPlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "x", "X坐标", "待转换的X坐标(经度)",
-            gis::framework::ParamType::Double, false, double{0}
+            gis::framework::ParamType::Double, false, double{0},
+            double{-1e9}, double{1e9}
         },
         gis::framework::ParamSpec{
             "y", "Y坐标", "待转换的Y坐标(纬度)",
-            gis::framework::ParamType::Double, false, double{0}
+            gis::framework::ParamType::Double, false, double{0},
+            double{-1e9}, double{1e9}
         },
         gis::framework::ParamSpec{
             "srs", "坐标系", "指定坐标系(EPSG代号或WKT字符串)，用于assign_srs",
@@ -430,13 +432,11 @@ gis::framework::Result ProjectionPlugin::doTransform(
 
     progress.onProgress(0.2);
 
-    auto* srcSRS = gis::core::parseSRS(srcSrs);
-    auto* dstSRS = gis::core::parseSRS(dstSrs);
+    auto srcSRS = gis::core::parseSRS(srcSrs);
+    auto dstSRS = gis::core::parseSRS(dstSrs);
 
     auto ct = std::unique_ptr<OGRCoordinateTransformation>(
-        OGRCreateCoordinateTransformation(srcSRS, dstSRS));
-    delete srcSRS;
-    delete dstSRS;
+        OGRCreateCoordinateTransformation(srcSRS.get(), dstSRS.get()));
 
     if (!ct) {
         return gis::framework::Result::fail("Failed to create coordinate transformation");
@@ -472,10 +472,9 @@ gis::framework::Result ProjectionPlugin::doAssignSRS(
 
     progress.onProgress(0.2);
 
-    auto* srsObj = gis::core::parseSRS(srs);
+    auto srsObj = gis::core::parseSRS(srs);
     char* wktOut = nullptr;
     srsObj->exportToWkt(&wktOut);
-    delete srsObj;
 
     if (!wktOut) {
         return gis::framework::Result::fail("Failed to export SRS to WKT");

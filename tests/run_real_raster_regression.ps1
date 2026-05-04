@@ -381,12 +381,12 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Size:   32 x 32 x 1 bands" -Message "processing_glcm_texture raster size mismatch"
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_glcm_texture raster type mismatch"
         }
-        "processing_mean_shift_segment" {
+        "processing_mean_shift_filter" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
-                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "mean_shift_segment_output.tif"))
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "mean_shift_filter_output.tif"))
             )
-            Assert-TextContains -Text $info -Expected "Size:   32 x 32 x 1 bands" -Message "processing_mean_shift_segment raster size mismatch"
-            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_mean_shift_segment raster type mismatch"
+            Assert-TextContains -Text $info -Expected "Size:   32 x 32 x 1 bands" -Message "processing_mean_shift_filter raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_mean_shift_filter raster type mismatch"
         }
         "processing_skeleton" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -453,15 +453,15 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Size:   10 x 6 x 1 bands" -Message "georef_c_correction raster size mismatch"
             Assert-TextContains -Text $info -Expected "Mean:   18.1239" -Message "georef_c_correction mean mismatch"
         }
-        "georef_quac_correction" {
+        "georef_percentile_stretch" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
-                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_quac_output.tif"))
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_percentile_stretch_output.tif"))
             )
-            Assert-TextContains -Text $info -Expected "Size:   8 x 8 x 3 bands" -Message "georef_quac_correction raster size mismatch"
-            Assert-TextContains -Text $info -Expected "Band 1:" -Message "georef_quac_correction band 1 missing"
-            Assert-TextContains -Text $info -Expected "Band 2:" -Message "georef_quac_correction band 2 missing"
-            Assert-TextContains -Text $info -Expected "Band 3:" -Message "georef_quac_correction band 3 missing"
-            Assert-TextContains -Text $info -Expected "Mean:   0" -Message "georef_quac_correction mean mismatch"
+            Assert-TextContains -Text $info -Expected "Size:   8 x 8 x 3 bands" -Message "georef_percentile_stretch raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Band 1:" -Message "georef_percentile_stretch band 1 missing"
+            Assert-TextContains -Text $info -Expected "Band 2:" -Message "georef_percentile_stretch band 2 missing"
+            Assert-TextContains -Text $info -Expected "Band 3:" -Message "georef_percentile_stretch band 3 missing"
+            Assert-TextContains -Text $info -Expected "Mean:   0" -Message "georef_percentile_stretch mean mismatch"
         }
         "georef_rpc_orthorectify" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -1207,16 +1207,16 @@ $cases += New-Case -Name "processing_glcm_texture" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "glcm_texture_output.tif")
 )
 
-$cases += New-Case -Name "processing_mean_shift_segment" -CaseArgs @(
-    "processing", "mean_shift_segment",
+$cases += New-Case -Name "processing_mean_shift_filter" -CaseArgs @(
+    "processing", "mean_shift_filter",
     ("--input=" + $data.AnalysisRaster),
-    ("--output=" + (Join-Path $ResolvedOutputRoot "mean_shift_segment_output.tif")),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "mean_shift_filter_output.tif")),
     "--band=1",
     "--spatial_radius=8",
     "--color_radius=16",
     "--pyramid_level=1"
 ) -ExpectedOutputs @(
-    (Join-Path $ResolvedOutputRoot "mean_shift_segment_output.tif")
+    (Join-Path $ResolvedOutputRoot "mean_shift_filter_output.tif")
 )
 
 $cases += New-Case -Name "processing_skeleton" -CaseArgs @(
@@ -1308,10 +1308,10 @@ $cases += New-Case -Name "georef_c_correction" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "georef_c_output.tif")
 )
 
-$cases += New-Case -Name "georef_quac_correction" -CaseArgs @(
-    "georef", "quac_correction",
+$cases += New-Case -Name "georef_percentile_stretch" -CaseArgs @(
+    "georef", "percentile_stretch",
     ("--input=" + $data.GeorefQuacRaster),
-    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_quac_output.tif")),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "georef_percentile_stretch_output.tif")),
     "--dark_percentile=1",
     "--bright_percentile=99"
 ) -ExpectedOutputs @(

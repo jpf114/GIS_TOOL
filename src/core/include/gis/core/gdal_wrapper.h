@@ -23,7 +23,7 @@ GdalDatasetPtr createRaster(const std::string& path, int width, int height,
 
 void copySpatialRef(GDALDataset* src, GDALDataset* dst);
 
-OGRSpatialReference* parseSRS(const std::string& srs);
+std::unique_ptr<OGRSpatialReference> parseSRS(const std::string& srs);
 
 std::string getSRSWKT(GDALDataset* ds);
 void initGDAL();

@@ -69,18 +69,15 @@ void copySpatialRef(GDALDataset* src, GDALDataset* dst) {
     }
 }
 
-OGRSpatialReference* parseSRS(const std::string& srs) {
-    auto* srsObj = new OGRSpatialReference();
+std::unique_ptr<OGRSpatialReference> parseSRS(const std::string& srs) {
+    auto srsObj = std::make_unique<OGRSpatialReference>();
     if (isEpsgCode(srs)) {
         int epsg = parseEpsgCode(srs);
         if (srsObj->importFromEPSG(epsg) != OGRERR_NONE) {
-            delete srsObj;
             throw GisError("Invalid EPSG code: " + srs);
         }
     } else {
-        // Treat as WKT
         if (srsObj->importFromWkt(srs.c_str()) != OGRERR_NONE) {
-            delete srsObj;
             throw GisError("Invalid WKT or EPSG code: " + srs);
         }
     }

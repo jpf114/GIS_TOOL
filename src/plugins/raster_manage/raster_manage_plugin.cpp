@@ -31,7 +31,8 @@ std::vector<gis::framework::ParamSpec> RasterManagePlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "band", "波段序号", "波段序号，填写 0 表示全部波段，从 1 开始表示单波段",
-            gis::framework::ParamType::Int, false, int{1}
+            gis::framework::ParamType::Int, false, int{1},
+            int{0}, int{999}
         },
         gis::framework::ParamSpec{
             "levels", "金字塔层级", "金字塔缩放层级，例如 2 4 8 16",
@@ -45,7 +46,8 @@ std::vector<gis::framework::ParamSpec> RasterManagePlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{
             "nodata_value", "NoData 值", "要写入的 NoData 数值",
-            gis::framework::ParamType::Double, false, double{0.0}
+            gis::framework::ParamType::Double, false, double{0.0},
+            double{-1e15}, double{1e15}
         },
     };
 }

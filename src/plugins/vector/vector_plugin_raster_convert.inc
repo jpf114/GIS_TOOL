@@ -35,6 +35,14 @@ gis::framework::Result VectorPlugin::doRasterize(
         GDALClose(srcDS);
         return gis::framework::Result::fail("Invalid raster dimensions");
     }
+    const long long maxPixels = 500000000LL;
+    if (static_cast<long long>(xSize) * static_cast<long long>(ySize) > maxPixels) {
+        GDALClose(srcDS);
+        return gis::framework::Result::fail(
+            "Output raster too large (" + std::to_string(xSize) + "x" + std::to_string(ySize) +
+            " = " + std::to_string(static_cast<long long>(xSize) * ySize) +
+            " pixels). Please increase resolution or reduce extent.");
+    }
 
     progress.onProgress(0.2);
 
