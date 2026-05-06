@@ -252,9 +252,12 @@ gis::framework::Result MatchingPlugin::doDetect(
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
     cv::Mat gray = gis::core::toUint8(mat);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     auto detector = createDetector(method, maxPoints);
@@ -263,6 +266,7 @@ gis::framework::Result MatchingPlugin::doDetect(
 
     progress.onMessage("Detecting " + method + " features...");
     detector->detectAndCompute(gray, cv::noArray(), keypoints, descriptors);
+    progress.throwIfCancelled();
     progress.onProgress(0.8);
 
     progress.onMessage("Detected " + std::to_string(keypoints.size()) + " keypoints");
@@ -271,6 +275,7 @@ gis::framework::Result MatchingPlugin::doDetect(
         if (!writeKeyPointsJSON(output, keypoints)) {
             return gis::framework::Result::fail("Failed to write output: " + output);
         }
+        progress.throwIfCancelled();
         progress.onProgress(1.0);
         auto result = gis::framework::Result::ok(
             "Detected " + std::to_string(keypoints.size()) + " keypoints", output);
@@ -278,6 +283,8 @@ gis::framework::Result MatchingPlugin::doDetect(
         result.metadata["method"] = method;
         return result;
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(1.0);
     auto result = gis::framework::Result::ok(
@@ -303,12 +310,15 @@ gis::framework::Result MatchingPlugin::doMatch(
     if (reference.empty()) return gis::framework::Result::fail("reference is required");
     if (input.empty())     return gis::framework::Result::fail("input is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.05);
     cv::Mat refMat = readBandAsMat(reference, band, progress);
     cv::Mat srcMat = readBandAsMat(input, band, progress);
 
     cv::Mat refGray = gis::core::toUint8(refMat);
     cv::Mat srcGray = gis::core::toUint8(srcMat);
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
 
     auto detector = createDetector(method, maxPoints);
@@ -318,10 +328,12 @@ gis::framework::Result MatchingPlugin::doMatch(
 
     progress.onMessage("Detecting features in reference...");
     detector->detectAndCompute(refGray, cv::noArray(), kp1, desc1);
+    progress.throwIfCancelled();
     progress.onProgress(0.4);
 
     progress.onMessage("Detecting features in search image...");
     detector->detectAndCompute(srcGray, cv::noArray(), kp2, desc2);
+    progress.throwIfCancelled();
     progress.onProgress(0.6);
 
     if (kp1.empty() || kp2.empty()) {
@@ -340,6 +352,7 @@ gis::framework::Result MatchingPlugin::doMatch(
             goodMatches.push_back(m[0]);
         }
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.85);
 
     progress.onMessage("Found " + std::to_string(goodMatches.size()) + " good matches (from " +
@@ -350,6 +363,8 @@ gis::framework::Result MatchingPlugin::doMatch(
             return gis::framework::Result::fail("Failed to write output: " + output);
         }
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(1.0);
     auto result = gis::framework::Result::ok(
@@ -381,12 +396,15 @@ gis::framework::Result MatchingPlugin::doRegister(
     if (input.empty())     return gis::framework::Result::fail("input is required");
     if (output.empty())    return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.05);
 
     cv::Mat refMat = readBandAsMat(reference, band, progress);
     cv::Mat srcMat = readBandAsMat(input, band, progress);
     cv::Mat refGray = gis::core::toUint8(refMat);
     cv::Mat srcGray = gis::core::toUint8(srcMat);
+    progress.throwIfCancelled();
     progress.onProgress(0.15);
 
     auto detector = createDetector(method, maxPoints);
@@ -397,6 +415,7 @@ gis::framework::Result MatchingPlugin::doRegister(
     detector->detectAndCompute(refGray, cv::noArray(), kp1, desc1);
     progress.onMessage("Detecting features in input...");
     detector->detectAndCompute(srcGray, cv::noArray(), kp2, desc2);
+    progress.throwIfCancelled();
     progress.onProgress(0.35);
 
     if (kp1.empty() || kp2.empty()) {
@@ -414,6 +433,7 @@ gis::framework::Result MatchingPlugin::doRegister(
             goodMatches.push_back(m[0]);
         }
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.5);
 
     if (goodMatches.size() < 4) {
@@ -451,6 +471,7 @@ gis::framework::Result MatchingPlugin::doRegister(
     if (H.empty()) {
         return gis::framework::Result::fail("Failed to compute transformation matrix");
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.65);
 
     progress.onMessage("Warping image...");
@@ -464,10 +485,12 @@ gis::framework::Result MatchingPlugin::doRegister(
     } else {
         cv::warpAffine(srcMat, warped, H, refMat.size(), interpFlag);
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.85);
 
     progress.onMessage("Writing output: " + output);
     gis::core::matToGdalTiff(warped, reference, output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(
@@ -493,10 +516,13 @@ gis::framework::Result MatchingPlugin::doChange(
     if (input.empty())     return gis::framework::Result::fail("input is required (after image)");
     if (output.empty())    return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.05);
 
     cv::Mat before = readBandAsMat(reference, band, progress);
     cv::Mat after  = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     if (before.size() != after.size()) {
@@ -526,6 +552,7 @@ gis::framework::Result MatchingPlugin::doChange(
     } else {
         return gis::framework::Result::fail("Unknown change method: " + changeMethod);
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.7);
 
     if (threshVal <= 0) {
@@ -539,6 +566,7 @@ gis::framework::Result MatchingPlugin::doChange(
     cv::Mat changeMask;
     cv::threshold(changeMap, changeMask, threshVal, 255, cv::THRESH_BINARY);
     changeMask.convertTo(changeMask, CV_8U);
+    progress.throwIfCancelled();
     progress.onProgress(0.85);
 
     int changedPixels = cv::countNonZero(changeMask);
@@ -549,6 +577,7 @@ gis::framework::Result MatchingPlugin::doChange(
     cv::Mat outFloat;
     changeMap.convertTo(outFloat, CV_32F);
     gis::core::matToGdalTiff(outFloat, reference, output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     progress.onMessage("Changed pixels: " + std::to_string(changedPixels) + "/" +
@@ -591,12 +620,15 @@ gis::framework::Result MatchingPlugin::doEccRegister(
     if (input.empty())     return gis::framework::Result::fail("input is required");
     if (output.empty())    return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.05);
 
     cv::Mat refMat = readBandAsMat(reference, band, progress);
     cv::Mat srcMat = readBandAsMat(input, band, progress);
     cv::Mat refGray = gis::core::toUint8(refMat);
     cv::Mat srcGray = gis::core::toUint8(srcMat);
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
 
     if (refGray.size() != srcGray.size()) {
@@ -634,6 +666,8 @@ gis::framework::Result MatchingPlugin::doEccRegister(
             "ECC registration failed: " + std::string(e.what()));
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.7);
 
     progress.onMessage("Warping image...");
@@ -647,10 +681,12 @@ gis::framework::Result MatchingPlugin::doEccRegister(
     } else {
         cv::warpAffine(srcMat, warped, warpMat, refMat.size(), interpFlag);
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.85);
 
     progress.onMessage("Writing output: " + output);
     gis::core::matToGdalTiff(warped, reference, output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(
@@ -678,9 +714,12 @@ gis::framework::Result MatchingPlugin::doCornerDetect(
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
     cv::Mat gray = gis::core::toUint8(mat);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     std::vector<cv::Point2f> corners;
@@ -741,6 +780,8 @@ gis::framework::Result MatchingPlugin::doCornerDetect(
         }
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.8);
 
     progress.onMessage("Detected " + std::to_string(corners.size()) + " " + cornerMethod + " corners");
@@ -757,6 +798,8 @@ gis::framework::Result MatchingPlugin::doCornerDetect(
             return gis::framework::Result::fail("Failed to write output: " + output);
         }
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(1.0);
     auto result = gis::framework::Result::ok(
@@ -788,6 +831,8 @@ gis::framework::Result MatchingPlugin::doStitch(
         return gis::framework::Result::fail("At least 2 input images required for stitching (comma-separated)");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     progress.onMessage("Loading " + std::to_string(inputFiles.size()) + " images...");
 
@@ -799,6 +844,7 @@ gis::framework::Result MatchingPlugin::doStitch(
         cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
         images.push_back(bgr);
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     progress.onMessage("Running image stitching...");
@@ -807,6 +853,7 @@ gis::framework::Result MatchingPlugin::doStitch(
 
     cv::Mat pano;
     cv::Stitcher::Status status = stitcher->stitch(images, pano);
+    progress.throwIfCancelled();
     progress.onProgress(0.8);
 
     if (status != cv::Stitcher::OK) {
@@ -827,6 +874,7 @@ gis::framework::Result MatchingPlugin::doStitch(
 
     progress.onMessage("Writing output: " + output);
     gis::core::matToGdalTiff(outFloat, inputFiles[0], output, 1);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

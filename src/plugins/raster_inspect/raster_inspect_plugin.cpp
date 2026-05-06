@@ -82,6 +82,8 @@ gis::framework::Result RasterInspectPlugin::doHistogram(
         return gis::framework::Result::fail("bins must be > 0");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     auto ds = gis::core::openRaster(input, true);
@@ -98,6 +100,8 @@ gis::framework::Result RasterInspectPlugin::doHistogram(
         return gis::framework::Result::fail("Band has no value range (min >= max)");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.4);
 
     GUIntBig* histogram = new GUIntBig[bins]();
@@ -109,6 +113,8 @@ gis::framework::Result RasterInspectPlugin::doHistogram(
         delete[] histogram;
         return gis::framework::Result::fail("Failed to compute histogram");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.8);
 
@@ -144,6 +150,8 @@ gis::framework::Result RasterInspectPlugin::doHistogram(
         }
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(oss.str(), output);
@@ -160,6 +168,8 @@ gis::framework::Result RasterInspectPlugin::doRasterInfo(
 
     const std::string input = gis::framework::getParam<std::string>(params, "input", "");
     if (input.empty()) return gis::framework::Result::fail("input is required");
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.1);
 
@@ -260,6 +270,8 @@ gis::framework::Result RasterInspectPlugin::doRasterInfo(
         const char* colorInterp = GDALGetColorInterpretationName(rasterBand->GetColorInterpretation());
         oss << "  Color:  " << colorInterp << "\n";
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(1.0);
     return gis::framework::Result::ok(oss.str());

@@ -8,6 +8,7 @@
 #include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QApplication>
 
 ProgressDialog::ProgressDialog(QtProgressReporter* reporter, QWidget* parent)
     : QDialog(parent), reporter_(reporter) {
@@ -32,16 +33,21 @@ ProgressDialog::ProgressDialog(QtProgressReporter* reporter, QWidget* parent)
 
     auto* btnBox = new QDialogButtonBox;
     cancelButton_ = new QPushButton(QStringLiteral("取消"));
+    forceQuitButton_ = new QPushButton(QStringLiteral("强制终止"));
+    forceQuitButton_->setVisible(false);
     btnBox->addButton(cancelButton_, QDialogButtonBox::ActionRole);
+    btnBox->addButton(forceQuitButton_, QDialogButtonBox::DestructiveRole);
     layout->addWidget(btnBox);
 
     connect(cancelButton_, &QPushButton::clicked, this, &ProgressDialog::onCancel);
+    connect(forceQuitButton_, &QPushButton::clicked, this, &ProgressDialog::onForceQuit);
     connect(reporter_, &QtProgressReporter::progressChanged, this, &ProgressDialog::onProgressChanged);
     connect(reporter_, &QtProgressReporter::messageLogged, this, &ProgressDialog::onMessageLogged);
 }
 
 void ProgressDialog::setFinished(const QString& message, bool success, bool cancelled) {
     cancelButton_->setEnabled(false);
+    forceQuitButton_->setVisible(false);
 
     if (success) {
         progressBar_->setValue(100);
@@ -68,7 +74,7 @@ void ProgressDialog::setFinished(const QString& message, bool success, bool canc
     }
 
     if (success) {
-        QTimer::singleShot(700, this, &QDialog::accept);
+        QTimer::singleShot(2500, this, &QDialog::accept);
     }
 }
 
@@ -77,9 +83,14 @@ void ProgressDialog::onCancel() {
         reporter_->cancel();
     }
     cancelButton_->setEnabled(false);
-    cancelButton_->setText(QStringLiteral("等待当前步骤结束"));
+    cancelButton_->setText(QStringLiteral("已请求取消"));
+    forceQuitButton_->setVisible(true);
     statusLabel_->setText(QStringLiteral("已请求取消，正在等待当前步骤结束..."));
-    logEdit_->append(QStringLiteral("<i>已请求取消，需等待当前步骤结束</i>"));
+    logEdit_->append(QStringLiteral("<i>") + tr("已请求取消，需等待当前步骤结束。可点击[强制终止]立即关闭。") + QStringLiteral("</i>"));
+}
+
+void ProgressDialog::onForceQuit() {
+    reject();
 }
 
 void ProgressDialog::onProgressChanged(double percent) {

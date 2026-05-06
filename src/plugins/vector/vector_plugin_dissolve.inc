@@ -10,6 +10,8 @@
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -23,6 +25,8 @@
         GDALClose(srcDS);
         return failProjectedRequired("Dissolve");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.2);
 
@@ -48,6 +52,8 @@
         }
         OGRFeature::DestroyFeature(feat);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.4);
 
@@ -88,6 +94,8 @@
         OGRFieldDefn fieldDefn(dissolveField.c_str(), OFTString);
         dstLayer->CreateField(&fieldDefn);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.5);
 
@@ -145,6 +153,7 @@
         addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "dissolved");
     }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(

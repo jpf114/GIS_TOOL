@@ -9,6 +9,8 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -25,6 +27,8 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
         GDALClose(srcDS);
         return gis::framework::Result::fail("Interior point currently only supports polygon layers");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.2);
 
@@ -73,6 +77,8 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
         dstLayer->CreateField(&fieldDefn);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.35);
 
     srcLayer->ResetReading();
@@ -85,6 +91,7 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
         if (!normalized || normalized->IsEmpty()) {
             ++skippedCount;
             OGRFeature::DestroyFeature(feat);
+            progress.throwIfCancelled();
             progress.onProgress(0.35 + 0.55 * static_cast<double>(count + skippedCount) /
                 static_cast<double>(totalCount));
             continue;
@@ -94,6 +101,7 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
         if (normalized->Centroid(&point) != OGRERR_NONE || point.IsEmpty()) {
             ++skippedCount;
             OGRFeature::DestroyFeature(feat);
+            progress.throwIfCancelled();
             progress.onProgress(0.35 + 0.55 * static_cast<double>(count + skippedCount) /
                 static_cast<double>(totalCount));
             continue;
@@ -109,6 +117,7 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
 
         OGRFeature::DestroyFeature(feat);
         ++count;
+        progress.throwIfCancelled();
         progress.onProgress(0.35 + 0.55 * static_cast<double>(count + skippedCount) /
             static_cast<double>(totalCount));
     }
@@ -116,6 +125,7 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
     GDALClose(dstDS);
     GDALClose(srcDS);
     delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

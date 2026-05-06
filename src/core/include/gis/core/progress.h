@@ -1,7 +1,14 @@
-﻿#pragma once
+#pragma once
 #include <string>
+#include <stdexcept>
 
 namespace gis::core {
+
+class CancelledException : public std::runtime_error {
+public:
+    explicit CancelledException(const std::string& msg = "操作已取消")
+        : std::runtime_error(msg) {}
+};
 
 class ProgressReporter {
 public:
@@ -9,6 +16,12 @@ public:
     virtual void onProgress(double percent) = 0;
     virtual void onMessage(const std::string& msg) = 0;
     virtual bool isCancelled() const = 0;
+
+    void throwIfCancelled() const {
+        if (isCancelled()) {
+            throw CancelledException();
+        }
+    }
 };
 
 class CliProgress : public ProgressReporter {

@@ -24,15 +24,7 @@
 
 ParamWidget::ParamWidget(QWidget* parent)
     : QWidget(parent) {
-    auto* scrollArea = new QScrollArea;
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
-    scrollArea->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; }"));
-
-    auto* container = new QWidget;
-    container->setStyleSheet(QStringLiteral("background: transparent;"));
-
-    mainLayout_ = new QVBoxLayout(container);
+    mainLayout_ = new QVBoxLayout(this);
     mainLayout_->setContentsMargins(
         gis::style::Size::kCardPadding,
         gis::style::Size::kCardPadding,
@@ -40,12 +32,6 @@ ParamWidget::ParamWidget(QWidget* parent)
         gis::style::Size::kCardPadding);
     mainLayout_->setSpacing(gis::style::Size::kCardSpacing);
     mainLayout_->addStretch();
-
-    scrollArea->setWidget(container);
-
-    auto* outerLayout = new QVBoxLayout(this);
-    outerLayout->setContentsMargins(0, 0, 0, 0);
-    outerLayout->addWidget(scrollArea);
 }
 
 void ParamWidget::setUiContext(const std::string& pluginName, const std::string& actionKey) {

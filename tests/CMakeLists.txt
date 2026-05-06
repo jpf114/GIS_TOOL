@@ -53,6 +53,7 @@ if(MSVC)
 endif()
 
 add_dependencies(gis_tests
+    copy_runtime_dlls
     gui_test_data_helper
     plugin_test_lifecycle
     plugin_projection

@@ -7,6 +7,8 @@ gis::framework::Result VectorPlugin::doInfo(
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* ds = openVector(input, true);
@@ -73,6 +75,7 @@ gis::framework::Result VectorPlugin::doInfo(
     }
 
     GDALClose(ds);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(oss.str());
@@ -95,6 +98,8 @@ gis::framework::Result VectorPlugin::doFilter(
         return gis::framework::Result::fail("At least one of --where or --extent must be specified");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -113,6 +118,8 @@ gis::framework::Result VectorPlugin::doFilter(
     if (hasExtent) {
         srcLayer->SetSpatialFilterRect(extentArr[0], extentArr[1], extentArr[2], extentArr[3]);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.3);
 
@@ -159,6 +166,8 @@ gis::framework::Result VectorPlugin::doFilter(
         dstLayer->CreateField(&fieldDefn);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.4);
 
     srcLayer->ResetReading();
@@ -177,6 +186,7 @@ gis::framework::Result VectorPlugin::doFilter(
     }
 
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(

@@ -1,5 +1,6 @@
 #include "execute_worker.h"
 #include "qt_progress_reporter.h"
+#include <gis/core/progress.h>
 #include <QThread>
 #include <exception>
 
@@ -19,12 +20,14 @@ void ExecuteWorker::run() {
     try {
         if (plugin_ && reporter_) {
             result = plugin_->execute(params_, *reporter_);
-            if (reporter_->isCancelled()) {
-                result = gis::framework::Result::fail("已取消执行");
+            if (reporter_->isCancelled() && !result.isCancelled) {
+                result = gis::framework::Result::cancelled();
             }
         } else {
             result = gis::framework::Result::fail("No plugin or reporter configured");
         }
+    } catch (const gis::core::CancelledException&) {
+        result = gis::framework::Result::cancelled();
     } catch (const std::exception& e) {
         result = gis::framework::Result::fail(std::string("Exception: ") + e.what());
     } catch (...) {

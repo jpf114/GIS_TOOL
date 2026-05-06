@@ -75,6 +75,8 @@ gis::framework::Result RasterManagePlugin::doBuildOverviews(
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     auto ds = gis::core::openRaster(input, false);
 
@@ -106,6 +108,8 @@ gis::framework::Result RasterManagePlugin::doBuildOverviews(
             "Failed to build overviews: " + std::string(CPLGetLastErrorMsg()));
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Overviews built successfully: " + levelsStr, input);
 }
@@ -119,6 +123,8 @@ gis::framework::Result RasterManagePlugin::doBuildCog(
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.1);
     auto ds = gis::core::openRaster(input, true);
@@ -141,6 +147,7 @@ gis::framework::Result RasterManagePlugin::doBuildCog(
     }
 
     progress.onMessage("Building Cloud Optimized GeoTIFF: " + output);
+    progress.throwIfCancelled();
     progress.onProgress(0.4);
 
     int usageError = FALSE;
@@ -160,6 +167,7 @@ gis::framework::Result RasterManagePlugin::doBuildCog(
     }
 
     GDALClose(dstHandle);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("COG built successfully", output);
@@ -178,6 +186,8 @@ gis::framework::Result RasterManagePlugin::doSetNoData(
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     auto ds = gis::core::openRaster(input, false);
 
@@ -186,6 +196,7 @@ gis::framework::Result RasterManagePlugin::doSetNoData(
         for (int b = 1; b <= bandCount; ++b) {
             ds->GetRasterBand(b)->SetNoDataValue(nodataVal);
         }
+        progress.throwIfCancelled();
         progress.onProgress(1.0);
         return gis::framework::Result::ok(
             "NoData set to " + std::to_string(nodataVal) + " for all " +
@@ -198,6 +209,7 @@ gis::framework::Result RasterManagePlugin::doSetNoData(
     }
 
     rasterBand->SetNoDataValue(nodataVal);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
     return gis::framework::Result::ok(
         "NoData set to " + std::to_string(nodataVal) + " for band " + std::to_string(band), input);

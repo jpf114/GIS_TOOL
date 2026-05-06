@@ -11,6 +11,8 @@ gis::framework::Result VectorPlugin::doBuffer(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -77,6 +79,8 @@ gis::framework::Result VectorPlugin::doBuffer(
         dstLayer->CreateField(&fieldDefn);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.3);
 
     srcLayer->ResetReading();
@@ -124,6 +128,7 @@ gis::framework::Result VectorPlugin::doBuffer(
             dstLayer->StartTransaction();
         }
         if (count % progressUpdateInterval == 0) {
+            progress.throwIfCancelled();
             progress.onProgress(0.3 + 0.6 * static_cast<double>(count) / total);
         }
     }
@@ -134,6 +139,7 @@ gis::framework::Result VectorPlugin::doBuffer(
     }
     dstLayer->SyncToDisk();
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(
@@ -164,6 +170,8 @@ gis::framework::Result VectorPlugin::doClip(
     if (input.empty())       return gis::framework::Result::fail("input is required");
     if (output.empty())      return gis::framework::Result::fail("output is required");
     if (clipVector.empty())  return gis::framework::Result::fail("clip_vector is required for clip operation");
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.1);
 
@@ -203,6 +211,8 @@ gis::framework::Result VectorPlugin::doClip(
     if (clipEntries.size() <= 128) {
         mergedClipGeometry.reset(buildMergedOverlayGeometry(clipEntries));
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.3);
 
@@ -248,6 +258,8 @@ gis::framework::Result VectorPlugin::doClip(
         OGRFieldDefn fieldDefn(srcLayerDefn->GetFieldDefn(i));
         dstLayer->CreateField(&fieldDefn);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.4);
 
@@ -313,6 +325,7 @@ gis::framework::Result VectorPlugin::doClip(
         addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, srcLayer->GetName());
     }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(

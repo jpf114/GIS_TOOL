@@ -1,5 +1,6 @@
 #include "param_card_widget.h"
 #include "custom_index_preset_store.h"
+#include "crs_dialog.h"
 #include "style_constants.h"
 #include "gui_data_support.h"
 #include "icon_manager.h"
@@ -494,6 +495,21 @@ QWidget* ParamCardWidget::createFileWidget(const gis::framework::ParamSpec& spec
             }
         });
         layout->addWidget(browseBtn);
+    } else {
+        auto* crsBtn = new QPushButton(QStringLiteral("选择"));
+        crsBtn->setObjectName(QStringLiteral("browseButton"));
+        crsBtn->setIcon(browseIcon());
+        crsBtn->setIconSize(QSize(14, 14));
+        connect(crsBtn, &QPushButton::clicked, this, [lineEdit]() {
+            CrsDialog dlg;
+            if (dlg.exec() == QDialog::Accepted) {
+                const QString crs = dlg.selectedCrs();
+                if (!crs.isEmpty()) {
+                    lineEdit->setText(crs);
+                }
+            }
+        });
+        layout->addWidget(crsBtn);
     }
 
     return container;
@@ -878,6 +894,11 @@ void ParamCardWidget::markFieldError(const std::string& key, bool error) const {
         entry.spinBox->setStyleSheet(error ? errorStyle : normalStyle);
     } else if (entry.intSpinBox) {
         entry.intSpinBox->setStyleSheet(error ? errorStyle : normalStyle);
+    } else if (entry.widget) {
+        auto spinBoxes = entry.widget->findChildren<QDoubleSpinBox*>();
+        for (auto* spin : spinBoxes) {
+            spin->setStyleSheet(error ? errorStyle : normalStyle);
+        }
     }
 }
 

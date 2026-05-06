@@ -280,6 +280,7 @@ static gis::framework::Result writeMatOutput(
 
     progress.onMessage("Writing output: " + outputPath);
     gis::core::matToGdalTiff(mat, inputPath, outputPath, bandIndex);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Processing completed successfully", outputPath);
 }
@@ -298,11 +299,15 @@ gis::framework::Result ProcessingPlugin::doThreshold(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat gray = gis::core::toUint8(mat);
+    progress.throwIfCancelled();
     progress.onProgress(0.4);
 
     cv::Mat result;
@@ -325,6 +330,8 @@ gis::framework::Result ProcessingPlugin::doThreshold(
     } else {
         return gis::framework::Result::fail("Unknown threshold method: " + method);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.7);
 
@@ -350,8 +357,11 @@ gis::framework::Result ProcessingPlugin::doFilter(
     if (kernelSize % 2 == 0) kernelSize++;
     if (kernelSize < 3) kernelSize = 3;
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat result;
@@ -385,6 +395,8 @@ gis::framework::Result ProcessingPlugin::doFilter(
         return gis::framework::Result::fail("Unknown filter type: " + filterType);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.7);
     return writeMatOutput(result, input, output, band, progress);
 }
@@ -403,8 +415,11 @@ gis::framework::Result ProcessingPlugin::doEnhance(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat result;
@@ -449,6 +464,8 @@ gis::framework::Result ProcessingPlugin::doEnhance(
         return gis::framework::Result::fail("Unknown enhance type: " + enhanceType);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.7);
     return writeMatOutput(result, input, output, band, progress);
 }
@@ -462,6 +479,8 @@ gis::framework::Result ProcessingPlugin::doStats(
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     auto ds = gis::core::openRaster(input, true);
     auto* rasterBand = ds->GetRasterBand(band);
@@ -469,10 +488,14 @@ gis::framework::Result ProcessingPlugin::doStats(
         return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.3);
 
     double minVal = 0, maxVal = 0, meanVal = 0, stdDev = 0;
     rasterBand->ComputeStatistics(false, &minVal, &maxVal, &meanVal, &stdDev, nullptr, nullptr);
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.6);
 
@@ -506,6 +529,8 @@ gis::framework::Result ProcessingPlugin::doStats(
         oss << "  NoData: " << noDataVal << "\n";
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(oss.str());
@@ -538,11 +563,15 @@ gis::framework::Result ProcessingPlugin::doEdge(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat gray = gis::core::toUint8(mat);
+    progress.throwIfCancelled();
     progress.onProgress(0.4);
 
     cv::Mat result;
@@ -565,6 +594,8 @@ gis::framework::Result ProcessingPlugin::doEdge(
         return gis::framework::Result::fail("Unknown edge method: " + edgeMethod);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.7);
 
     cv::Mat outFloat;
@@ -584,19 +615,24 @@ gis::framework::Result ProcessingPlugin::doContour(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat gray = gis::core::toUint8(mat);
 
     cv::Mat binary;
     cv::threshold(gray, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+    progress.throwIfCancelled();
     progress.onProgress(0.4);
 
     std::vector<std::vector<cv::Point>> contours;
     std::vector<cv::Vec4i> hierarchy;
     cv::findContours(binary, contours, hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    progress.throwIfCancelled();
     progress.onProgress(0.6);
 
     cv::Mat resultImg = cv::Mat::zeros(mat.size(), CV_8U);
@@ -608,6 +644,8 @@ gis::framework::Result ProcessingPlugin::doContour(
             keptCount++;
         }
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.8);
 
@@ -639,10 +677,14 @@ gis::framework::Result ProcessingPlugin::doTemplateMatch(
     if (output.empty())        return gis::framework::Result::fail("output is required");
     if (templateFile.empty())  return gis::framework::Result::fail("template_file is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat srcMat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
     cv::Mat tplMat = readBandAsMat(templateFile, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat srcGray = gis::core::toUint8(srcMat);
@@ -663,6 +705,7 @@ gis::framework::Result ProcessingPlugin::doTemplateMatch(
     progress.onMessage("Running template matching...");
     cv::Mat matchResult;
     cv::matchTemplate(srcGray, tplGray, matchResult, method);
+    progress.throwIfCancelled();
     progress.onProgress(0.7);
 
     double minVal, maxVal;
@@ -709,6 +752,8 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
     if (output.empty())  return gis::framework::Result::fail("output is required");
     if (panFile.empty()) return gis::framework::Result::fail("pan_file is required (panchromatic image)");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.05);
 
     auto msDS = gis::core::openRaster(input, true);
@@ -727,10 +772,13 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
     progress.onMessage("MS: " + std::to_string(msWidth) + "x" + std::to_string(msHeight) +
                        " PAN: " + std::to_string(panWidth) + "x" + std::to_string(panHeight));
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     cv::Mat panMat = gis::core::gdalBandToMat(panDS.get(), 1);
     if (panMat.type() != CV_32F) panMat.convertTo(panMat, CV_32F);
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
 
     std::vector<cv::Mat> msBandsMat;
@@ -739,6 +787,7 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
         if (band.type() != CV_32F) band.convertTo(band, CV_32F);
         msBandsMat.push_back(band);
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.35);
 
     if (panWidth != msWidth || panHeight != msHeight) {
@@ -747,6 +796,7 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
             cv::resize(band, band, cv::Size(panWidth, panHeight), 0, 0, cv::INTER_CUBIC);
         }
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.5);
 
     std::vector<cv::Mat> sharpenedBands;
@@ -804,9 +854,12 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
         return gis::framework::Result::fail("Unknown pansharpen method: " + panMethod);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.8);
 
     gis::core::matsToGdalTiff(sharpenedBands, msDS.get(), output);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(
@@ -839,14 +892,18 @@ gis::framework::Result ProcessingPlugin::doHough(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat gray = gis::core::toUint8(mat);
 
     cv::Mat edges;
     cv::Canny(gray, edges, 50, 150);
+    progress.throwIfCancelled();
     progress.onProgress(0.5);
 
     cv::Mat resultImg = cv::Mat::zeros(gray.size(), CV_8U);
@@ -877,6 +934,8 @@ gis::framework::Result ProcessingPlugin::doHough(
         return gis::framework::Result::fail("Unknown hough type: " + houghType);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.8);
 
     std::ostringstream oss;
@@ -904,8 +963,11 @@ gis::framework::Result ProcessingPlugin::doWatershed(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat gray = gis::core::toUint8(mat);
@@ -943,6 +1005,7 @@ gis::framework::Result ProcessingPlugin::doWatershed(
             }
         }
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.5);
 
     cv::Mat bgr;
@@ -953,6 +1016,7 @@ gis::framework::Result ProcessingPlugin::doWatershed(
     }
 
     cv::watershed(bgr, markers);
+    progress.throwIfCancelled();
     progress.onProgress(0.8);
 
     cv::Mat resultImg = cv::Mat::zeros(markers.size(), CV_32F);
@@ -990,8 +1054,11 @@ gis::framework::Result ProcessingPlugin::doSkeleton(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat binary = gis::core::toUint8(mat);
@@ -1014,6 +1081,8 @@ gis::framework::Result ProcessingPlugin::doSkeleton(
             break;
         }
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.7);
 
@@ -1046,8 +1115,11 @@ gis::framework::Result ProcessingPlugin::doGaborFilter(
     if (lambda <= 0.0) return gis::framework::Result::fail("gabor_lambda must be positive");
     if (gamma <= 0.0) return gis::framework::Result::fail("gabor_gamma must be positive");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat source;
@@ -1059,6 +1131,8 @@ gis::framework::Result ProcessingPlugin::doGaborFilter(
     cv::filter2D(source, response, CV_32F, kernel);
     cv::Mat result;
     cv::normalize(response, result, 0.0, 1.0, cv::NORM_MINMAX, CV_32F);
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.7);
     auto execResult = writeMatOutput(result, input, output, band, progress);
@@ -1088,8 +1162,11 @@ gis::framework::Result ProcessingPlugin::doGlcmTexture(
     if ((kernelSize % 2) == 0) return gis::framework::Result::fail("kernel_size must be odd");
     if (levels < 2) return gis::framework::Result::fail("glcm_levels must be >= 2");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.25);
 
     cv::Mat gray = gis::core::toUint8(mat);
@@ -1150,6 +1227,8 @@ gis::framework::Result ProcessingPlugin::doGlcmTexture(
         }
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.75);
     cv::Mat normalized;
     cv::normalize(result, normalized, 0.0, 1.0, cv::NORM_MINMAX, CV_32F);
@@ -1179,8 +1258,11 @@ gis::framework::Result ProcessingPlugin::doMeanShiftSegment(
     if (colorRadius <= 0.0) return gis::framework::Result::fail("color_radius must be positive");
     if (pyramidLevel < 0) return gis::framework::Result::fail("pyramid_level must be >= 0");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat gray = gis::core::toUint8(mat);
@@ -1194,6 +1276,8 @@ gis::framework::Result ProcessingPlugin::doMeanShiftSegment(
     cv::cvtColor(shifted, shiftedGray, cv::COLOR_BGR2GRAY);
     cv::Mat result;
     shiftedGray.convertTo(result, CV_32F, 1.0 / 255.0);
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.75);
     auto execResult = writeMatOutput(result, input, output, band, progress);
@@ -1215,8 +1299,11 @@ gis::framework::Result ProcessingPlugin::doConnectedComponents(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat binary = gis::core::toUint8(mat);
@@ -1224,6 +1311,7 @@ gis::framework::Result ProcessingPlugin::doConnectedComponents(
 
     cv::Mat labels;
     const int componentCount = cv::connectedComponents(binary, labels, 8, CV_32S);
+    progress.throwIfCancelled();
     progress.onProgress(0.7);
 
     cv::Mat outFloat;
@@ -1249,6 +1337,8 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (k <= 0) return gis::framework::Result::fail("k must be positive");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     auto ds = gis::core::openRaster(input, true);
@@ -1264,6 +1354,7 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     for (int b = 1; b <= bands; ++b) {
         bandMats.push_back(gis::core::gdalBandToMat(ds.get(), b));
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat samples(width * height, bands, CV_32F);
@@ -1282,6 +1373,8 @@ gis::framework::Result ProcessingPlugin::doKMeans(
                                maxIter, epsilon);
     double compactness = cv::kmeans(samples, k, labels, criteria,
                                      3, cv::KMEANS_PP_CENTERS, centers);
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.8);
 

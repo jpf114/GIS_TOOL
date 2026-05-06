@@ -12,6 +12,8 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (joinVector.empty()) return gis::framework::Result::fail("join_vector is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -46,6 +48,8 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
             return gis::framework::Result::fail("join_field not found: " + joinField);
         }
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.2);
 
@@ -102,6 +106,8 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
         joinValueField.SetWidth(254);
         dstLayer->CreateField(&joinValueField);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.35);
 
@@ -177,6 +183,7 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
         OGRFeature::DestroyFeature(dstFeat);
         OGRFeature::DestroyFeature(srcFeat);
         ++count;
+        progress.throwIfCancelled();
         progress.onProgress(0.35 + 0.55 * static_cast<double>(count) / static_cast<double>(totalCount));
     }
 
@@ -184,6 +191,7 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
     GDALClose(joinDS);
     GDALClose(srcDS);
     delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

@@ -59,6 +59,8 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -75,6 +77,8 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
         GDALClose(srcDS);
         return gis::framework::Result::fail("Endpoints extract currently only supports line layers");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.2);
 
@@ -127,6 +131,8 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
     OGRFieldDefn endpointField("endpoint_type", OFTInteger);
     dstLayer->CreateField(&endpointField);
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.35);
 
     srcLayer->ResetReading();
@@ -141,6 +147,7 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
             ++skippedCount;
             OGRFeature::DestroyFeature(feat);
             ++sourceCount;
+            progress.throwIfCancelled();
             progress.onProgress(0.35 + 0.55 * static_cast<double>(sourceCount) /
                 static_cast<double>(totalCount));
             continue;
@@ -166,6 +173,7 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
 
         OGRFeature::DestroyFeature(feat);
         ++sourceCount;
+        progress.throwIfCancelled();
         progress.onProgress(0.35 + 0.55 * static_cast<double>(sourceCount) /
             static_cast<double>(totalCount));
     }
@@ -173,6 +181,7 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
     GDALClose(dstDS);
     GDALClose(srcDS);
     delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

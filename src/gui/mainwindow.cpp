@@ -90,7 +90,6 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("template_match"), QStringLiteral("\346\250\241\346\235\277\345\214\271\351\205\215")},
         {QStringLiteral("pansharpen"), QStringLiteral("\345\205\250\350\211\262\351\224\220\345\214\226")},
         {QStringLiteral("hough"), QStringLiteral("\351\234\215\345\244\253\345\217\230\346\215\242")},
-        {QStringLiteral("watershed"), QStringLiteral("\345\210\206\346\260\264\345\262\255")},
         {QStringLiteral("skeleton"), QStringLiteral("\351\252\250\346\236\266\346\217\220\345\217\226")},
         {QStringLiteral("gabor_filter"), QStringLiteral("Gabor \346\273\244\346\263\242")},
         {QStringLiteral("glcm_texture"), QStringLiteral("GLCM \347\272\271\347\220\206")},
@@ -121,7 +120,6 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("flow_direction"), QStringLiteral("\346\265\201\345\220\221")},
         {QStringLiteral("flow_accumulation"), QStringLiteral("\346\261\207\346\265\201\347\264\257\347\247\257")},
         {QStringLiteral("stream_extract"), QStringLiteral("\346\262\263\347\275\221\346\217\220\345\217\226")},
-        {QStringLiteral("watershed"), QStringLiteral("\346\265\201\345\237\237\345\210\222\345\210\206")},
         {QStringLiteral("profile_extract"), QStringLiteral("\345\211\226\351\235\242\346\217\220\345\217\226")},
         {QStringLiteral("viewshed"), QStringLiteral("\350\247\206\345\237\237\345\210\206\346\236\220")},
         {QStringLiteral("viewshed_multi"), QStringLiteral("\345\244\232\347\202\271\350\247\206\345\237\237")},
@@ -917,7 +915,7 @@ MainWindow::MainWindow(QWidget* parent)
     reporter_ = new QtProgressReporter(this);
     setupUi();
     connect(reporter_, &QtProgressReporter::progressChanged, this, [this](double percent) {
-        const int value = std::clamp(static_cast<int>(percent), 0, 100);
+        const int value = std::clamp(static_cast<int>(percent * 100.0), 0, 100);
         if (progressBar_) {
             progressBar_->setRange(0, 100);
             progressBar_->setValue(value);
@@ -1615,7 +1613,7 @@ void MainWindow::runPluginWithParams(
                 const QString localizedMessage =
                     QString::fromUtf8(gis::gui::localizeResultMessage(result.message));
                 QString message = localizedMessage;
-                const bool cancelled = result.message == "\345\267\262\345\217\226\346\266\210\346\211\247\350\241\214";
+                const bool cancelled = result.isCancelled;
                 lastExecutionSuccess_ = result.success;
                 lastExecutionCancelled_ = cancelled;
                 lastExecutionMessage_ = localizedMessage;
@@ -1685,6 +1683,7 @@ void MainWindow::runPluginWithParams(
     connect(progressDialog, &QDialog::finished, progressDialog, &QObject::deleteLater);
 
     thread->start();
-    progressDialog->exec();
+    progressDialog->setWindowFlags(progressDialog->windowFlags() & ~Qt::WindowModal);
+    progressDialog->show();
 }
 

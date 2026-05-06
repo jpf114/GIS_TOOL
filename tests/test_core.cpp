@@ -271,6 +271,41 @@ TEST_F(CoreTest, ProgressReporter) {
     EXPECT_FALSE(progress.isCancelled());
 }
 
+TEST_F(CoreTest, CancelledExceptionThrowIfCancelled) {
+    gis::core::CliProgress progress;
+    EXPECT_NO_THROW(progress.throwIfCancelled());
+}
+
+TEST_F(CoreTest, CancelledExceptionType) {
+    gis::core::CancelledException ex("custom message");
+    EXPECT_STREQ(ex.what(), "custom message");
+    EXPECT_NO_THROW((void)gis::core::CancelledException());
+    try {
+        throw gis::core::CancelledException();
+    } catch (const std::runtime_error& e) {
+        EXPECT_STREQ(e.what(), "操作已取消");
+    } catch (...) {
+        FAIL() << "CancelledException should be catchable as std::runtime_error";
+    }
+}
+
+class CancellableProgress : public gis::core::ProgressReporter {
+public:
+    void onProgress(double) override {}
+    void onMessage(const std::string&) override {}
+    bool isCancelled() const override { return cancelled_; }
+    void setCancelled(bool v) { cancelled_ = v; }
+private:
+    bool cancelled_ = false;
+};
+
+TEST_F(CoreTest, ThrowIfCancelledThrowsWhenCancelled) {
+    CancellableProgress progress;
+    EXPECT_NO_THROW(progress.throwIfCancelled());
+    progress.setCancelled(true);
+    EXPECT_THROW(progress.throwIfCancelled(), gis::core::CancelledException);
+}
+
 TEST_F(CoreTest, MatsToGdalTiff) {
     std::string srcPath = (getTestDir() / "multi_src.tif").string();
     std::string dstPath = (getTestDir() / "multi_dst.tif").string();

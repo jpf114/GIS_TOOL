@@ -476,6 +476,9 @@ TEST_F(PluginTest, ProjectionVectorReprojectExecution) {
     const std::string input = utf8PathString(getTestDir() / "projection_vector_input.geojson");
     const std::string output = utf8PathString(getTestDir() / "projection_vector_output.gpkg");
 
+    std::filesystem::remove(std::filesystem::path(input));
+    std::filesystem::remove(std::filesystem::path(output));
+
     {
         auto* driver = GetGDALDriverManager()->GetDriverByName("GeoJSON");
         ASSERT_NE(driver, nullptr);

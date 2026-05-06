@@ -419,6 +419,7 @@ gis::framework::Result GeorefPlugin::doDosCorrection(
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
 
     progress.onMessage("Reading raster band for DOS correction");
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
     cv::Mat bandMat = gis::core::readBandAsMat(input, band);
 
@@ -440,8 +441,10 @@ gis::framework::Result GeorefPlugin::doDosCorrection(
     }
 
     progress.onMessage("Writing DOS correction result");
+    progress.throwIfCancelled();
     progress.onProgress(0.75);
     gis::core::matToGdalTiff(corrected, input, output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("DOS correction completed", output);
@@ -476,6 +479,7 @@ gis::framework::Result GeorefPlugin::doRadiometricCalibration(
     }
 
     progress.onMessage("Reading raster band for radiometric calibration");
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
     cv::Mat bandMat = gis::core::readBandAsMat(input, band);
 
@@ -483,8 +487,10 @@ gis::framework::Result GeorefPlugin::doRadiometricCalibration(
     calibrated.convertTo(calibrated, CV_32F);
 
     progress.onMessage("Writing radiometric calibration result");
+    progress.throwIfCancelled();
     progress.onProgress(0.75);
     gis::core::matToGdalTiff(calibrated, input, output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("Radiometric calibration completed", output);
@@ -532,6 +538,7 @@ gis::framework::Result GeorefPlugin::doGcpRegister(
     }
 
     progress.onMessage("Preparing temporary dataset with control points");
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
 
     GDALDataset* vrtRaw = vrtDriver->CreateCopy(tempVrtPath.c_str(), srcDs.get(), FALSE, nullptr, nullptr, nullptr);
@@ -561,6 +568,7 @@ gis::framework::Result GeorefPlugin::doGcpRegister(
     CPLFree(dstSrsWkt);
 
     progress.onMessage("Warping raster with GCP transform");
+    progress.throwIfCancelled();
     progress.onProgress(0.55);
 
     std::vector<std::string> argStorage = {
@@ -596,6 +604,7 @@ gis::framework::Result GeorefPlugin::doGcpRegister(
     }
 
     GDALClose(dstHandle);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("GCP registration completed", output);
@@ -625,6 +634,7 @@ gis::framework::Result GeorefPlugin::doCosineCorrection(
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
 
     progress.onMessage("Reading raster, slope and aspect for cosine correction");
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
 
     cv::Mat inputMat = gis::core::readBandAsMat(input, band);
@@ -669,8 +679,10 @@ gis::framework::Result GeorefPlugin::doCosineCorrection(
     }
 
     progress.onMessage("Writing cosine correction result");
+    progress.throwIfCancelled();
     progress.onProgress(0.8);
     gis::core::matToGdalTiff(corrected, input, output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("Cosine correction completed", output);
@@ -700,6 +712,7 @@ gis::framework::Result GeorefPlugin::doMinnaertCorrection(
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
 
     progress.onMessage("Reading raster, slope and aspect for Minnaert correction");
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
 
     cv::Mat inputMat = gis::core::readBandAsMat(input, band);
@@ -745,8 +758,10 @@ gis::framework::Result GeorefPlugin::doMinnaertCorrection(
     }
 
     progress.onMessage("Writing Minnaert correction result");
+    progress.throwIfCancelled();
     progress.onProgress(0.8);
     gis::core::matToGdalTiff(corrected, input, output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("Minnaert correction completed", output);
@@ -777,6 +792,7 @@ gis::framework::Result GeorefPlugin::doCCorrection(
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
 
     progress.onMessage("Reading raster, slope and aspect for C correction");
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
 
     cv::Mat inputMat = gis::core::readBandAsMat(input, band);
@@ -823,8 +839,10 @@ gis::framework::Result GeorefPlugin::doCCorrection(
     }
 
     progress.onMessage("Writing C correction result");
+    progress.throwIfCancelled();
     progress.onProgress(0.8);
     gis::core::matToGdalTiff(corrected, input, output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("C correction completed", output);
@@ -866,6 +884,7 @@ gis::framework::Result GeorefPlugin::doQuacCorrection(
     correctedBands.reserve(bandCount);
 
     progress.onMessage("Reading raster bands for QUAC correction");
+    progress.throwIfCancelled();
     progress.onProgress(0.15);
 
     for (int bandIndex = 1; bandIndex <= bandCount; ++bandIndex) {
@@ -894,8 +913,10 @@ gis::framework::Result GeorefPlugin::doQuacCorrection(
     }
 
     progress.onMessage("Writing QUAC correction result");
+    progress.throwIfCancelled();
     progress.onProgress(0.8);
     gis::core::matsToGdalTiff(correctedBands, srcDs.get(), output);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("Percentile stretch completed", output);
@@ -931,6 +952,7 @@ gis::framework::Result GeorefPlugin::doRpcOrthorectify(
     }
 
     progress.onMessage("Running RPC orthorectification");
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
 
     std::vector<std::string> argStorage = {
@@ -971,6 +993,7 @@ gis::framework::Result GeorefPlugin::doRpcOrthorectify(
     }
 
     GDALClose(dstHandle);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("RPC orthorectification completed", output);

@@ -97,6 +97,8 @@ gis::framework::Result runDemProcess(
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
     if (zFactor <= 0.0) return gis::framework::Result::fail("z_factor must be greater than 0");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     auto srcDs = gis::core::openRaster(input, true);
     if (!srcDs) {
@@ -132,6 +134,7 @@ gis::framework::Result runDemProcess(
     }
 
     progress.onMessage("Running terrain action: " + successLabel);
+    progress.throwIfCancelled();
     progress.onProgress(0.4);
 
     int usageError = FALSE;
@@ -152,6 +155,7 @@ gis::framework::Result runDemProcess(
     }
 
     GDALClose(outHandle);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(successLabel + " completed", output);
@@ -179,6 +183,8 @@ gis::framework::Result runLocalTerrainProcess(
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
     if (zFactor <= 0.0) return gis::framework::Result::fail("z_factor must be greater than 0");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     auto srcDs = gis::core::openRaster(input, true);
     if (!srcDs) {
@@ -195,6 +201,7 @@ gis::framework::Result runLocalTerrainProcess(
     if (zFactor != 1.0) {
         elevation *= static_cast<float>(zFactor);
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.35);
 
     cv::Mat result;
@@ -272,6 +279,7 @@ gis::framework::Result runLocalTerrainProcess(
     } else {
         return gis::framework::Result::fail("Unknown local terrain action: " + action);
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.7);
 
     int hasNoData = 0;
@@ -284,6 +292,7 @@ gis::framework::Result runLocalTerrainProcess(
 
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(result, srcDs.get(), output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto terrainResult = gis::framework::Result::ok(successLabel + " completed", output);
@@ -312,6 +321,8 @@ gis::framework::Result runHydrologyTerrainProcess(
         return gis::framework::Result::fail("accum_threshold must be greater than 0");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     auto srcDs = gis::core::openRaster(input, true);
     if (!srcDs) {
@@ -327,6 +338,7 @@ gis::framework::Result runHydrologyTerrainProcess(
     if (zFactor != 1.0) {
         elevation *= static_cast<float>(zFactor);
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     int hasNoData = 0;
@@ -393,6 +405,7 @@ gis::framework::Result runHydrologyTerrainProcess(
             }
 
             result = updated;
+            progress.throwIfCancelled();
             progress.onProgress(0.3 + 0.4 * static_cast<double>(iteration + 1) / 256.0);
         }
     } else if (action == "flow_direction") {
@@ -455,6 +468,7 @@ gis::framework::Result runHydrologyTerrainProcess(
 
             ++processed;
             if ((processed % 256) == 0) {
+                progress.throwIfCancelled();
                 progress.onProgress(0.3 + 0.4 * static_cast<double>(processed) /
                     std::max(1, (direction.rows - 2) * (direction.cols - 2)));
             }
@@ -589,9 +603,12 @@ gis::framework::Result runHydrologyTerrainProcess(
         return gis::framework::Result::fail("Unknown hydrology terrain action: " + action);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.8);
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(result, srcDs.get(), output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto terrainResult = gis::framework::Result::ok(successLabel + " completed", output);
@@ -667,6 +684,8 @@ gis::framework::Result runProfileExtractProcess(
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
     if (profilePath.empty()) return gis::framework::Result::fail("profile_path is required");
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.1);
     auto srcDs = gis::core::openRaster(input, true);
@@ -746,6 +765,7 @@ gis::framework::Result runProfileExtractProcess(
         }
 
         cumulativeDistance += length;
+        progress.throwIfCancelled();
         progress.onProgress(0.2 + 0.7 * static_cast<double>(segmentIndex + 1) / (profilePoints.size() - 1));
     }
 
@@ -774,6 +794,8 @@ gis::framework::Result runViewshedProcess(
     if (targetHeight < 0.0) return gis::framework::Result::fail("target_height must be greater than or equal to 0");
     if (maxDistance < 0.0) return gis::framework::Result::fail("max_distance must be greater than or equal to 0");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     auto srcDs = gis::core::openRaster(input, true);
     if (!srcDs) {
@@ -791,6 +813,7 @@ gis::framework::Result runViewshedProcess(
     }
 
     progress.onMessage("Running terrain action: Viewshed");
+    progress.throwIfCancelled();
     progress.onProgress(0.45);
 
     int usageError = FALSE;
@@ -824,6 +847,7 @@ gis::framework::Result runViewshedProcess(
     }
 
     GDALClose(outHandle);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("Viewshed completed", output);
@@ -861,6 +885,8 @@ gis::framework::Result runViewshedMultiProcess(
     } catch (const std::exception& ex) {
         return gis::framework::Result::fail(ex.what());
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.1);
     auto srcDs = gis::core::openRaster(input, true);
@@ -910,6 +936,7 @@ gis::framework::Result runViewshedMultiProcess(
         gis::core::GdalDatasetPtr viewshedDs(reinterpret_cast<GDALDataset*>(outHandle));
         cv::Mat viewshedMat = gis::core::gdalBandToMat(viewshedDs.get(), 1);
         cv::max(merged, viewshedMat, merged);
+        progress.throwIfCancelled();
         progress.onProgress(0.2 + 0.7 * static_cast<double>(index + 1) / observerPoints.size());
     }
 
@@ -919,6 +946,7 @@ gis::framework::Result runViewshedMultiProcess(
     }
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(merged, srcDs.get(), output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("MultiViewshed completed", output);
@@ -942,6 +970,8 @@ gis::framework::Result runCutFillProcess(
     if (reference.empty()) return gis::framework::Result::fail("reference is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.1);
     auto inputDs = gis::core::openRaster(input, true);
@@ -977,6 +1007,7 @@ gis::framework::Result runCutFillProcess(
     progress.onMessage("Reading terrain raster bands");
     cv::Mat inputMat = gis::core::gdalBandToMat(inputDs.get(), band);
     cv::Mat referenceMat = gis::core::gdalBandToMat(referenceDs.get(), band);
+    progress.throwIfCancelled();
     progress.onProgress(0.45);
 
     cv::Mat diff = inputMat - referenceMat;
@@ -1002,6 +1033,7 @@ gis::framework::Result runCutFillProcess(
     }
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(diff, inputDs.get(), output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("CutFill completed", output);
@@ -1024,6 +1056,8 @@ gis::framework::Result runReservoirVolumeProcess(
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     auto srcDs = gis::core::openRaster(input, true);
     if (!srcDs) {
@@ -1035,6 +1069,7 @@ gis::framework::Result runReservoirVolumeProcess(
 
     progress.onMessage("Reading terrain raster band");
     cv::Mat elevation = gis::core::gdalBandToMat(srcDs.get(), band);
+    progress.throwIfCancelled();
     progress.onProgress(0.45);
 
     cv::Mat depth = waterLevel - elevation;
@@ -1062,6 +1097,7 @@ gis::framework::Result runReservoirVolumeProcess(
     }
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(depth, srcDs.get(), output, band);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("ReservoirVolume completed", output);

@@ -40,6 +40,8 @@ gis::framework::Result VectorPlugin::doTopologyCheck(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -61,6 +63,8 @@ gis::framework::Result VectorPlugin::doTopologyCheck(
         GDALClose(srcDS);
         return failProjectedRequired("Topology check");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.2);
 
@@ -84,6 +88,8 @@ gis::framework::Result VectorPlugin::doTopologyCheck(
         features.push_back(std::move(cached));
         OGRFeature::DestroyFeature(feat);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.35);
 
@@ -115,6 +121,7 @@ gis::framework::Result VectorPlugin::doTopologyCheck(
             const auto& rhs = features[j];
             if (!lhs.geometry || !rhs.geometry || lhs.geometry->IsEmpty() || rhs.geometry->IsEmpty()) {
                 ++processedPairs;
+                progress.throwIfCancelled();
                 progress.onProgress(0.35 + 0.55 * static_cast<double>(processedPairs) / static_cast<double>(totalPairs));
                 continue;
             }
@@ -131,12 +138,14 @@ gis::framework::Result VectorPlugin::doTopologyCheck(
             }
 
             ++processedPairs;
+            progress.throwIfCancelled();
             progress.onProgress(0.35 + 0.55 * static_cast<double>(processedPairs) / static_cast<double>(totalPairs));
         }
     }
 
     ofs.close();
     GDALClose(srcDS);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

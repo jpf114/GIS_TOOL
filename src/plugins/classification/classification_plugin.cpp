@@ -1351,6 +1351,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
     progress.onMessage("正在准备地物分类统计任务...");
+    progress.throwIfCancelled();
     progress.onProgress(0.05);
 
     FeatureStatsTask task;
@@ -1365,6 +1366,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
     if (vectorData.epsg == 0) {
         throw std::runtime_error("矢量缺少有效 EPSG，当前版本暂不支持");
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.2);
 
     progress.onMessage("正在检查栅格输入...");
@@ -1373,6 +1375,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
     for (const auto& raster : task.rasters) {
         rasterInfos.push_back(inspectRaster(raster));
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.35);
 
     progress.onMessage("正在决策目标坐标系与目标网格...");
@@ -1385,6 +1388,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
     const auto targetGrid = buildTargetGrid(grids);
     const std::string targetProjectionWkt = buildTargetProjectionWkt(targetSrs.epsg);
     const double pixelArea = std::abs(targetGrid.pixelWidth * targetGrid.pixelHeight);
+    progress.throwIfCancelled();
     progress.onProgress(0.5);
 
     FeatureWindow globalWindow;
@@ -1438,6 +1442,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
         if (window.width <= 0 || window.height <= 0) {
             resultData.records.push_back(buildEmptyRecord(feature, targetSrs.epsgText));
             ++processed;
+            progress.throwIfCancelled();
             progress.onProgress(0.5 + 0.35 * static_cast<double>(processed) / static_cast<double>(vectorData.features.size()));
             continue;
         }
@@ -1482,6 +1487,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
 
         resultData.records.insert(resultData.records.end(), records.begin(), records.end());
         ++processed;
+        progress.throwIfCancelled();
         progress.onProgress(0.5 + 0.35 * static_cast<double>(processed) / static_cast<double>(vectorData.features.size()));
     }
 
@@ -1489,6 +1495,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
 
     progress.onMessage("正在写出统计结果...");
     writeResult(task, resultData);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("地物分类统计完成", task.outputPath);
@@ -1533,6 +1540,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     }
 
     progress.onMessage("正在读取训练样本...");
+    progress.throwIfCancelled();
     progress.onProgress(0.1);
 
     std::vector<std::string> headers;
@@ -1594,6 +1602,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     }
 
     progress.onMessage("正在训练 SVM 分类器...");
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     auto svm = cv::ml::SVM::create();
@@ -1609,6 +1618,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     }
 
     progress.onMessage("正在读取待分类波段...");
+    progress.throwIfCancelled();
     progress.onProgress(0.45);
 
     std::vector<cv::Mat> bandMats;
@@ -1633,6 +1643,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     }
 
     progress.onMessage("正在执行栅格分类...");
+    progress.throwIfCancelled();
     progress.onProgress(0.7);
 
     cv::Mat responses;
@@ -1646,6 +1657,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
 
     progress.onMessage("正在写出分类结果...");
     gis::core::matToGdalTiff(result, ds.get(), task.outputPath, task.bands.front());
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto execResult = gis::framework::Result::ok("SVM 分类完成", task.outputPath);
@@ -1683,6 +1695,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
     }
 
     progress.onMessage("正在读取训练样本...");
+    progress.throwIfCancelled();
     progress.onProgress(0.1);
 
     std::vector<std::string> headers;
@@ -1744,6 +1757,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
     }
 
     progress.onMessage("正在训练随机森林分类器...");
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     int rfMaxDepth = gis::framework::getParam<int>(params, "rf_max_depth", 10);
@@ -1762,6 +1776,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
     }
 
     progress.onMessage("正在读取待分类波段...");
+    progress.throwIfCancelled();
     progress.onProgress(0.45);
 
     std::vector<cv::Mat> bandMats;
@@ -1786,6 +1801,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
     }
 
     progress.onMessage("正在执行栅格分类...");
+    progress.throwIfCancelled();
     progress.onProgress(0.7);
 
     cv::Mat responses;
@@ -1799,6 +1815,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
 
     progress.onMessage("正在写出分类结果...");
     gis::core::matToGdalTiff(result, ds.get(), task.outputPath, task.bands.front());
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto execResult = gis::framework::Result::ok("随机森林分类完成", task.outputPath);
@@ -1836,6 +1853,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     }
 
     progress.onMessage("正在读取训练样本...");
+    progress.throwIfCancelled();
     progress.onProgress(0.1);
 
     std::vector<std::string> headers;
@@ -1908,6 +1926,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     stats.reserve(classSamples.size());
 
     progress.onMessage("正在估计类别统计参数...");
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
     for (const auto& [label, samples] : classSamples) {
         cv::Mat sampleMat(static_cast<int>(samples.size()), static_cast<int>(featureIndices.size()), CV_32F);
@@ -1935,6 +1954,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     }
 
     progress.onMessage("正在读取待分类波段...");
+    progress.throwIfCancelled();
     progress.onProgress(0.45);
 
     std::vector<cv::Mat> bandMats;
@@ -1952,6 +1972,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     cv::Mat sample(1, static_cast<int>(task.bands.size()), CV_32F);
 
     progress.onMessage("正在执行最大似然分类...");
+    progress.throwIfCancelled();
     progress.onProgress(0.7);
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
@@ -1976,6 +1997,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
 
     progress.onMessage("正在写出分类结果...");
     gis::core::matToGdalTiff(result, ds.get(), task.outputPath, task.bands.front());
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto execResult = gis::framework::Result::ok("最大似然分类完成", task.outputPath);

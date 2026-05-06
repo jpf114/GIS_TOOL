@@ -9,6 +9,8 @@ gis::framework::Result VectorPlugin::doRepair(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -19,6 +21,8 @@ gis::framework::Result VectorPlugin::doRepair(
         GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.2);
 
@@ -63,6 +67,8 @@ gis::framework::Result VectorPlugin::doRepair(
         dstLayer->CreateField(&fieldDefn);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.35);
 
     srcLayer->ResetReading();
@@ -79,6 +85,7 @@ gis::framework::Result VectorPlugin::doRepair(
             ++skippedCount;
             OGRFeature::DestroyFeature(dstFeat);
             OGRFeature::DestroyFeature(feat);
+            progress.throwIfCancelled();
             progress.onProgress(0.35 + 0.55 * static_cast<double>(repairedCount + skippedCount) /
                 static_cast<double>(totalCount));
             continue;
@@ -99,6 +106,7 @@ gis::framework::Result VectorPlugin::doRepair(
         OGRFeature::DestroyFeature(dstFeat);
         OGRFeature::DestroyFeature(feat);
         ++repairedCount;
+        progress.throwIfCancelled();
         progress.onProgress(0.35 + 0.55 * static_cast<double>(repairedCount + skippedCount) /
             static_cast<double>(totalCount));
     }
@@ -106,6 +114,7 @@ gis::framework::Result VectorPlugin::doRepair(
     GDALClose(dstDS);
     GDALClose(srcDS);
     delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

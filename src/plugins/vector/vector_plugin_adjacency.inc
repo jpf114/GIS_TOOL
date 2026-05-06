@@ -44,6 +44,8 @@ gis::framework::Result VectorPlugin::doAdjacency(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -66,6 +68,8 @@ gis::framework::Result VectorPlugin::doAdjacency(
         return failProjectedRequired("Adjacency");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.2);
 
     std::vector<CachedPolygonFeature> features;
@@ -81,6 +85,8 @@ gis::framework::Result VectorPlugin::doAdjacency(
         }
         OGRFeature::DestroyFeature(feat);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.35);
 
@@ -101,6 +107,7 @@ gis::framework::Result VectorPlugin::doAdjacency(
             const auto& rhs = features[j];
             if (!lhs.geometry->Touches(rhs.geometry.get())) {
                 ++processedPairs;
+                progress.throwIfCancelled();
                 progress.onProgress(0.35 + 0.55 * static_cast<double>(processedPairs) / static_cast<double>(totalPairs));
                 continue;
             }
@@ -109,12 +116,14 @@ gis::framework::Result VectorPlugin::doAdjacency(
             ofs << lhs.fid << "," << rhs.fid << "," << length << "\n";
             ++relationCount;
             ++processedPairs;
+            progress.throwIfCancelled();
             progress.onProgress(0.35 + 0.55 * static_cast<double>(processedPairs) / static_cast<double>(totalPairs));
         }
     }
 
     ofs.close();
     GDALClose(srcDS);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

@@ -110,6 +110,7 @@ gis::framework::Result CuttingPlugin::doClip(
     }
 
     progress.onMessage("Clipping: " + input);
+    progress.throwIfCancelled();
     progress.onProgress(0.1);
 
     if (!cutline.empty()) {
@@ -169,6 +170,8 @@ gis::framework::Result CuttingPlugin::doClip(
         GDALClose(dstHandle);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(1.0);
     progress.onMessage("Clip completed.");
     return gis::framework::Result::ok("Clip completed successfully", output);
@@ -192,6 +195,7 @@ gis::framework::Result CuttingPlugin::doMosaic(
     }
 
     progress.onMessage("Mosaicing " + std::to_string(inputFiles.size()) + " files...");
+    progress.throwIfCancelled();
     progress.onProgress(0.1);
 
     std::vector<GDALDatasetH> srcHandles;
@@ -231,6 +235,7 @@ gis::framework::Result CuttingPlugin::doMosaic(
     }
 
     GDALClose(dstHandle);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
     progress.onMessage("Mosaic completed.");
     return gis::framework::Result::ok("Mosaic completed successfully", output);
@@ -255,6 +260,7 @@ gis::framework::Result CuttingPlugin::doSplit(
 
     progress.onMessage("Splitting " + std::to_string(width) + "x" + std::to_string(height) +
                        " into " + std::to_string(tileSize) + "px tiles...");
+    progress.throwIfCancelled();
     progress.onProgress(0.1);
 
     std::string outDir = output;
@@ -302,9 +308,12 @@ gis::framework::Result CuttingPlugin::doSplit(
 
             tileIdx++;
             double pct = 0.1 + 0.9 * static_cast<double>(tileIdx) / totalTiles;
+            progress.throwIfCancelled();
             progress.onProgress(pct);
         }
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(1.0);
     progress.onMessage("Split completed: " + std::to_string(tileIdx) + " tiles created.");
@@ -337,6 +346,7 @@ gis::framework::Result CuttingPlugin::doMergeBands(
     }
 
     progress.onMessage("Building VRT from " + std::to_string(bandFiles.size()) + " files...");
+    progress.throwIfCancelled();
     progress.onProgress(0.1);
 
     std::vector<GDALDatasetH> srcDSVec;
@@ -376,6 +386,8 @@ gis::framework::Result CuttingPlugin::doMergeBands(
         return gis::framework::Result::fail("Failed to build VRT: " + std::string(CPLGetLastErrorMsg()));
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.4);
     progress.onMessage("Converting VRT to GeoTIFF...");
 
@@ -395,6 +407,7 @@ gis::framework::Result CuttingPlugin::doMergeBands(
     }
 
     GDALClose(dstHandle);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
     progress.onMessage("Band merge completed.");
     return gis::framework::Result::ok("Band merge completed successfully", output);

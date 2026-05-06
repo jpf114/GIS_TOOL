@@ -91,13 +91,6 @@ QIcon makeSubFunctionIcon(const std::string& pluginName, const std::string& acti
 
 NavPanel::NavPanel(QWidget* parent)
     : QWidget(parent) {
-    namespace fs = std::filesystem;
-    auto exeDir = fs::canonical(fs::path(QApplication::applicationFilePath().toStdWString()).parent_path());
-    auto iconsDir = gis::core::findRuntimePathFrom(exeDir, "share/icons");
-    if (iconsDir.empty()) {
-        iconsDir = exeDir / ".." / ".." / "resources" / "icons";
-    }
-    gis::gui::IconManager::instance().setIconsBasePath(iconsDir.string());
     setupUi();
 }
 

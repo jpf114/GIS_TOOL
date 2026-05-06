@@ -11,6 +11,8 @@
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (overlayVector.empty()) return gis::framework::Result::fail("overlay_vector is required for union");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -48,6 +50,8 @@
             "Union detected heavily overlapped polygon overlays for mixed-dimension input. "
             "Please dissolve or simplify the overlay polygons first, or use clip/difference instead.");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.3);
 
@@ -89,6 +93,8 @@
 
     OGRFieldDefn fieldDefn("source", OFTString);
     dstLayer->CreateField(&fieldDefn);
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.4);
 
@@ -173,6 +179,7 @@
         addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "union");
     }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -191,6 +198,8 @@ gis::framework::Result VectorPlugin::doDifference(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (overlayVector.empty()) return gis::framework::Result::fail("overlay_vector is required for difference");
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.1);
 
@@ -227,6 +236,8 @@ gis::framework::Result VectorPlugin::doDifference(
     if (overlayEntries.size() <= 128) {
         mergedOverlayGeometry.reset(buildMergedOverlayGeometry(overlayEntries));
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.3);
 
@@ -268,6 +279,8 @@ gis::framework::Result VectorPlugin::doDifference(
         OGRFieldDefn fieldDefn(srcLayerDefn->GetFieldDefn(i));
         dstLayer->CreateField(&fieldDefn);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.4);
 
@@ -348,6 +361,7 @@ gis::framework::Result VectorPlugin::doDifference(
         addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "difference");
     }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -366,6 +380,8 @@ gis::framework::Result VectorPlugin::doIntersect(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (overlayVector.empty()) return gis::framework::Result::fail("overlay_vector is required for intersect");
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.1);
 
@@ -402,6 +418,8 @@ gis::framework::Result VectorPlugin::doIntersect(
     if (overlayEntries.size() <= 128) {
         mergedOverlayGeometry.reset(buildMergedOverlayGeometry(overlayEntries));
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.3);
 
@@ -443,6 +461,8 @@ gis::framework::Result VectorPlugin::doIntersect(
         OGRFieldDefn fieldDefn(srcLayerDefn->GetFieldDefn(i));
         dstLayer->CreateField(&fieldDefn);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.4);
 
@@ -510,6 +530,7 @@ gis::framework::Result VectorPlugin::doIntersect(
         addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "intersect");
     }
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(

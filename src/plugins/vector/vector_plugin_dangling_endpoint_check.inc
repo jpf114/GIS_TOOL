@@ -73,6 +73,8 @@ gis::framework::Result VectorPlugin::doDanglingEndpointCheck(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -90,6 +92,8 @@ gis::framework::Result VectorPlugin::doDanglingEndpointCheck(
         return gis::framework::Result::fail("Dangling endpoint check currently only supports line layers");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.2);
 
     std::vector<DanglingEndpointRecord> endpoints;
@@ -102,6 +106,7 @@ gis::framework::Result VectorPlugin::doDanglingEndpointCheck(
         appendDanglingEndpoints(normalized.get(), endpoints, feat->GetFID());
         OGRFeature::DestroyFeature(feat);
         ++scannedCount;
+        progress.throwIfCancelled();
         progress.onProgress(0.2 + 0.35 * static_cast<double>(scannedCount) /
             static_cast<double>(totalCount));
     }
@@ -130,12 +135,14 @@ gis::framework::Result VectorPlugin::doDanglingEndpointCheck(
                 << "," << endpoint.point.getY() << "\n";
             ++issueCount;
         }
+        progress.throwIfCancelled();
         progress.onProgress(0.55 + 0.4 * static_cast<double>(i + 1) /
             static_cast<double>(totalEndpoints));
     }
 
     ofs.close();
     GDALClose(srcDS);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

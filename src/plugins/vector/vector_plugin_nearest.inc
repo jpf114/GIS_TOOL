@@ -12,6 +12,8 @@ gis::framework::Result VectorPlugin::doNearest(
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (nearestVector.empty()) return gis::framework::Result::fail("nearest_vector is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -52,6 +54,8 @@ gis::framework::Result VectorPlugin::doNearest(
             return gis::framework::Result::fail("nearest_field not found: " + nearestField);
         }
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.2);
 
@@ -113,6 +117,8 @@ gis::framework::Result VectorPlugin::doNearest(
         nearestValueField.SetWidth(254);
         dstLayer->CreateField(&nearestValueField);
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.35);
 
@@ -181,6 +187,7 @@ gis::framework::Result VectorPlugin::doNearest(
         OGRFeature::DestroyFeature(dstFeat);
         OGRFeature::DestroyFeature(srcFeat);
         ++count;
+        progress.throwIfCancelled();
         progress.onProgress(0.35 + 0.55 * static_cast<double>(count) / static_cast<double>(totalCount));
     }
 
@@ -188,6 +195,7 @@ gis::framework::Result VectorPlugin::doNearest(
     GDALClose(targetDS);
     GDALClose(srcDS);
     delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

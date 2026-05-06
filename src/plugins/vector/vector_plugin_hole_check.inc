@@ -43,6 +43,8 @@ gis::framework::Result VectorPlugin::doHoleCheck(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -59,6 +61,8 @@ gis::framework::Result VectorPlugin::doHoleCheck(
         GDALClose(srcDS);
         return gis::framework::Result::fail("Hole check currently only supports polygon layers");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.25);
 
@@ -88,12 +92,14 @@ gis::framework::Result VectorPlugin::doHoleCheck(
 
         OGRFeature::DestroyFeature(feat);
         ++scannedCount;
+        progress.throwIfCancelled();
         progress.onProgress(0.25 + 0.7 * static_cast<double>(scannedCount) /
             static_cast<double>(totalCount));
     }
 
     ofs.close();
     GDALClose(srcDS);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

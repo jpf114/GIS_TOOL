@@ -65,6 +65,8 @@ gis::framework::Result VectorPlugin::doSliverRemove(
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (minArea <= 0.0) return gis::framework::Result::fail("min_area must be greater than 0");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -81,6 +83,8 @@ gis::framework::Result VectorPlugin::doSliverRemove(
         GDALClose(srcDS);
         return gis::framework::Result::fail("Sliver remove currently only supports polygon layers");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.2);
 
@@ -129,6 +133,8 @@ gis::framework::Result VectorPlugin::doSliverRemove(
         dstLayer->CreateField(&fieldDefn);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.35);
 
     srcLayer->ResetReading();
@@ -145,6 +151,7 @@ gis::framework::Result VectorPlugin::doSliverRemove(
             ++skippedCount;
             OGRFeature::DestroyFeature(feat);
             ++sourceCount;
+            progress.throwIfCancelled();
             progress.onProgress(0.35 + 0.55 * static_cast<double>(sourceCount) /
                 static_cast<double>(totalCount));
             continue;
@@ -158,6 +165,7 @@ gis::framework::Result VectorPlugin::doSliverRemove(
             ++removedFeatureCount;
             OGRFeature::DestroyFeature(feat);
             ++sourceCount;
+            progress.throwIfCancelled();
             progress.onProgress(0.35 + 0.55 * static_cast<double>(sourceCount) /
                 static_cast<double>(totalCount));
             continue;
@@ -174,6 +182,7 @@ gis::framework::Result VectorPlugin::doSliverRemove(
         OGRFeature::DestroyFeature(feat);
         ++featureCount;
         ++sourceCount;
+        progress.throwIfCancelled();
         progress.onProgress(0.35 + 0.55 * static_cast<double>(sourceCount) /
             static_cast<double>(totalCount));
     }
@@ -181,6 +190,7 @@ gis::framework::Result VectorPlugin::doSliverRemove(
     GDALClose(dstDS);
     GDALClose(srcDS);
     delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

@@ -249,6 +249,7 @@ gis::framework::Result ProjectionPlugin::doReproject(
     if (dstSrs.empty()) return gis::framework::Result::fail("dst_srs is required");
 
     progress.onMessage("Opening source dataset: " + input);
+    progress.throwIfCancelled();
     progress.onProgress(0.0);
 
     const std::string resolvedVectorInput = resolveVectorInputPath(input);
@@ -288,6 +289,8 @@ gis::framework::Result ProjectionPlugin::doReproject(
                 "Failed to create vector translate options: " + std::string(CPLGetLastErrorMsg()));
         }
 
+        progress.throwIfCancelled();
+
         progress.onProgress(0.2);
         progress.onMessage("Reprojecting vector dataset...");
 
@@ -307,6 +310,7 @@ gis::framework::Result ProjectionPlugin::doReproject(
         }
 
         GDALClose(dstHandle);
+        progress.throwIfCancelled();
         progress.onProgress(1.0);
         progress.onMessage("Vector reprojection completed.");
         return gis::framework::Result::ok("Vector reprojection completed successfully", output);
@@ -341,6 +345,8 @@ gis::framework::Result ProjectionPlugin::doReproject(
         return gis::framework::Result::fail("Failed to create warp options: " + std::string(CPLGetLastErrorMsg()));
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.2);
     progress.onMessage("Reprojecting...");
 
@@ -357,6 +363,7 @@ gis::framework::Result ProjectionPlugin::doReproject(
     }
 
     GDALClose(dstHandle);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
     progress.onMessage("Reprojection completed.");
 
@@ -371,6 +378,7 @@ gis::framework::Result ProjectionPlugin::doInfo(
     if (input.empty()) return gis::framework::Result::fail("input is required");
 
     auto ds = gis::core::openRaster(input, true);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     std::ostringstream oss;
@@ -409,6 +417,8 @@ gis::framework::Result ProjectionPlugin::doInfo(
         oss << "CRS: (none)\n";
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(oss.str());
@@ -430,6 +440,8 @@ gis::framework::Result ProjectionPlugin::doTransform(
 
     if (dstSrs.empty()) return gis::framework::Result::fail("dst_srs is required for transform");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.2);
 
     auto srcSRS = gis::core::parseSRS(srcSrs);
@@ -446,6 +458,8 @@ gis::framework::Result ProjectionPlugin::doTransform(
     if (!ct->Transform(1, &tx, &ty)) {
         return gis::framework::Result::fail("Coordinate transformation failed");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(1.0);
 
@@ -470,6 +484,8 @@ gis::framework::Result ProjectionPlugin::doAssignSRS(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (srs.empty())   return gis::framework::Result::fail("srs is required for assign_srs");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.2);
 
     auto srsObj = gis::core::parseSRS(srs);
@@ -479,6 +495,8 @@ gis::framework::Result ProjectionPlugin::doAssignSRS(
     if (!wktOut) {
         return gis::framework::Result::fail("Failed to export SRS to WKT");
     }
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.4);
 
@@ -490,6 +508,8 @@ gis::framework::Result ProjectionPlugin::doAssignSRS(
 
     ds.reset();
     CPLFree(wktOut);
+
+    progress.throwIfCancelled();
 
     progress.onProgress(1.0);
     return gis::framework::Result::ok("SRS assigned successfully", input);

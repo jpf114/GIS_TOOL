@@ -25,6 +25,26 @@ TEST(FrameworkTest, ResultFail) {
     EXPECT_TRUE(r.outputPath.empty());
 }
 
+TEST(FrameworkTest, ResultCancelled) {
+    auto r = gis::framework::Result::cancelled();
+    EXPECT_FALSE(r.success);
+    EXPECT_TRUE(r.isCancelled);
+    EXPECT_EQ(r.message, "操作已取消");
+    EXPECT_TRUE(r.outputPath.empty());
+
+    auto r2 = gis::framework::Result::cancelled("custom cancel");
+    EXPECT_FALSE(r2.success);
+    EXPECT_TRUE(r2.isCancelled);
+    EXPECT_EQ(r2.message, "custom cancel");
+}
+
+TEST(FrameworkTest, ResultCancelledFieldDistinctFromFail) {
+    auto fail = gis::framework::Result::fail("error");
+    auto cancelled = gis::framework::Result::cancelled("error");
+    EXPECT_FALSE(fail.isCancelled);
+    EXPECT_TRUE(cancelled.isCancelled);
+}
+
 TEST(FrameworkTest, ParamSpecDefaults) {
     gis::framework::ParamSpec spec;
     spec.key = "test_key";

@@ -17,6 +17,7 @@ public:
 
 private slots:
     void onCancel();
+    void onForceQuit();
     void onProgressChanged(double percent);
     void onMessageLogged(const QString& msg);
 
@@ -25,5 +26,6 @@ private:
     QProgressBar* progressBar_ = nullptr;
     QTextEdit* logEdit_ = nullptr;
     QPushButton* cancelButton_ = nullptr;
+    QPushButton* forceQuitButton_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;
 };

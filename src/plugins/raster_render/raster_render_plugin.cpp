@@ -153,10 +153,13 @@ gis::framework::Result RasterRenderPlugin::doColormap(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     auto srcDS = gis::core::openRaster(input, true);
     cv::Mat mat = gis::core::gdalBandToMat(srcDS.get(), band);
+    progress.throwIfCancelled();
     progress.onProgress(0.3);
 
     cv::Mat u8;
@@ -167,10 +170,12 @@ gis::framework::Result RasterRenderPlugin::doColormap(
         return gis::framework::Result::fail("Band has no value range for color mapping");
     }
     cv::normalize(mat, u8, 0, 255, cv::NORM_MINMAX, CV_8U);
+    progress.throwIfCancelled();
     progress.onProgress(0.5);
 
     cv::Mat colored;
     cv::applyColorMap(u8, colored, mapColormapName(cmap));
+    progress.throwIfCancelled();
     progress.onProgress(0.7);
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
@@ -194,6 +199,7 @@ gis::framework::Result RasterRenderPlugin::doColormap(
     }
 
     GDALClose(dstDS);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Colormap applied: " + cmap, output);
 }
@@ -211,12 +217,15 @@ gis::framework::Result RasterRenderPlugin::doHistogramMatch(
     if (reference.empty()) return gis::framework::Result::fail("reference is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     auto srcDS = gis::core::openRaster(input, true);
     auto refDS = gis::core::openRaster(reference, true);
     cv::Mat sourceMat = gis::core::gdalBandToMat(srcDS.get(), band);
     cv::Mat referenceMat = gis::core::gdalBandToMat(refDS.get(), band);
+    progress.throwIfCancelled();
     progress.onProgress(0.35);
 
     cv::Mat sourceU8;
@@ -230,6 +239,7 @@ gis::framework::Result RasterRenderPlugin::doHistogramMatch(
     cv::Mat referenceU8;
     cv::normalize(sourceMat, sourceU8, 0, 255, cv::NORM_MINMAX, CV_8U);
     cv::normalize(referenceResized, referenceU8, 0, 255, cv::NORM_MINMAX, CV_8U);
+    progress.throwIfCancelled();
     progress.onProgress(0.55);
 
     const auto lutValues = buildHistogramMatchLut(sourceU8, referenceU8);
@@ -242,6 +252,7 @@ gis::framework::Result RasterRenderPlugin::doHistogramMatch(
     cv::LUT(sourceU8, lut, matchedU8);
     cv::Mat matchedFloat;
     matchedU8.convertTo(matchedFloat, CV_32F);
+    progress.throwIfCancelled();
     progress.onProgress(0.75);
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
@@ -259,6 +270,7 @@ gis::framework::Result RasterRenderPlugin::doHistogramMatch(
         matchedFloat.data, matchedFloat.cols, matchedFloat.rows, GDT_Float32, 0, 0);
 
     GDALClose(dstDS);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok("Histogram match completed", output);

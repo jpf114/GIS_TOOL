@@ -12,6 +12,8 @@ gis::framework::Result VectorPlugin::doRasterize(
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (resolution <= 0) return gis::framework::Result::fail("resolution must be positive");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     GDALDataset* srcDS = openVector(input, true);
@@ -44,6 +46,8 @@ gis::framework::Result VectorPlugin::doRasterize(
             " pixels). Please increase resolution or reduce extent.");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.2);
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
@@ -69,6 +73,8 @@ gis::framework::Result VectorPlugin::doRasterize(
     GDALRasterBand* band = dstDS->GetRasterBand(1);
     band->Fill(0);
     band->SetNoDataValue(0);
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.3);
 
@@ -105,6 +111,7 @@ gis::framework::Result VectorPlugin::doRasterize(
     }
 
     GDALClose(dstHandle); GDALClose(srcDS);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -122,6 +129,8 @@ gis::framework::Result VectorPlugin::doPolygonize(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
 
     auto srcDS = gis::core::openRaster(input, true);
@@ -129,6 +138,8 @@ gis::framework::Result VectorPlugin::doPolygonize(
 
     GDALRasterBand* rasterBand = srcDS->GetRasterBand(band);
     if (!rasterBand) return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.2);
 
@@ -168,6 +179,8 @@ gis::framework::Result VectorPlugin::doPolygonize(
     OGRFieldDefn fieldDefn("DN", OFTInteger);
     dstLayer->CreateField(&fieldDefn);
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.3);
 
     const CPLErr polygonizeErr = GDALPolygonize(
@@ -195,6 +208,7 @@ gis::framework::Result VectorPlugin::doPolygonize(
 
     if (srs) delete srs;
     GDALClose(dstDS);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -212,6 +226,8 @@ gis::framework::Result VectorPlugin::doConvert(
 
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.throwIfCancelled();
 
     progress.onProgress(0.1);
 
@@ -257,6 +273,8 @@ gis::framework::Result VectorPlugin::doConvert(
         dstLayer->CreateField(&fieldDefn);
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.3);
 
     srcLayer->ResetReading();
@@ -275,6 +293,7 @@ gis::framework::Result VectorPlugin::doConvert(
     }
 
     GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(

@@ -146,6 +146,8 @@ gis::framework::Result RasterMathPlugin::execute(
         return gis::framework::Result::fail("expression is required (e.g., B1+B2, B1*0.5+B2*0.5)");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.1);
     auto ds = gis::core::openRaster(input, true);
     const int width = ds->GetRasterXSize();
@@ -158,6 +160,7 @@ gis::framework::Result RasterMathPlugin::execute(
     for (int b = 1; b <= bands; ++b) {
         bandMats.push_back(gis::core::gdalBandToMat(ds.get(), b));
     }
+    progress.throwIfCancelled();
     progress.onProgress(0.4);
 
     progress.onMessage("Evaluating expression: " + expression);
@@ -171,6 +174,7 @@ gis::framework::Result RasterMathPlugin::execute(
             result.at<float>(y, x) = static_cast<float>(evalExpression(expression, bandValues));
         }
         if ((y % 100) == 0) {
+            progress.throwIfCancelled();
             progress.onProgress(0.4 + 0.5 * static_cast<double>(y) / height);
         }
     }
@@ -179,9 +183,12 @@ gis::framework::Result RasterMathPlugin::execute(
         return gis::framework::Result::fail("output is required");
     }
 
+    progress.throwIfCancelled();
+
     progress.onProgress(0.9);
     progress.onMessage("Writing output: " + output);
     gis::core::matToGdalTiff(result, input, output, 1);
+    progress.throwIfCancelled();
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Processing completed successfully", output);
 }
