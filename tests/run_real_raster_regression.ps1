@@ -394,7 +394,7 @@ function Validate-CaseOutputs {
             )
             Assert-TextContains -Text $info -Expected "Size:   64 x 64 x 1 bands" -Message "processing_skeleton raster size mismatch"
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_skeleton raster type mismatch"
-            Assert-TextContains -Text $info -Expected "Max:    255" -Message "processing_skeleton max mismatch"
+            Assert-TextContains -Text $info -Expected "Max:    1" -Message "processing_skeleton max mismatch"
         }
         "processing_connected_components" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -1315,7 +1315,7 @@ $cases += New-Case -Name "georef_percentile_stretch" -CaseArgs @(
     "--dark_percentile=1",
     "--bright_percentile=99"
 ) -ExpectedOutputs @(
-    (Join-Path $ResolvedOutputRoot "georef_quac_output.tif")
+    (Join-Path $ResolvedOutputRoot "georef_percentile_stretch_output.tif")
 )
 
 $cases += New-Case -Name "georef_rpc_orthorectify" -CaseArgs @(

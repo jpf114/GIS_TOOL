@@ -20,6 +20,12 @@
 - `cmake --install build/release --config Release` 通过
 - `install/bin/gis-cli.exe --list` 正常，可列出 13 个插件
 - `install/bin/gis-gui.exe -platform offscreen --self-test` 正常
+- `cmake --build build/release --config Release --target real_matching_regression` 通过
+- `cmake --build build/release --config Release --target real_matching_regression_full` 通过
+- `cmake --build build/release --config Release --target real_raster_regression` 通过
+- `cmake --build build/release --config Release --target real_raster_regression_full` 通过
+- `cmake --build build/release --config Release --target real_vector_regression` 通过
+- `cmake --build build/release --config Release --target real_vector_regression_full` 通过
 - `tmp/` 当前为空
 
 ## 主功能

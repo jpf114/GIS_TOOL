@@ -63,7 +63,19 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 - `cmake --install build/release --config Release` 通过
 - `install/bin/gis-cli.exe --list` 可正常列出 13 个插件
 - `install/bin/gis-gui.exe -platform offscreen --self-test` 正常启动并退出
+- `cmake --build build/release --config Release --target real_matching_regression` 通过
+- `cmake --build build/release --config Release --target real_matching_regression_full` 通过
+- `cmake --build build/release --config Release --target real_raster_regression` 通过
+- `cmake --build build/release --config Release --target real_raster_regression_full` 通过
+- `cmake --build build/release --config Release --target real_vector_regression` 通过
+- `cmake --build build/release --config Release --target real_vector_regression_full` 通过
 - `tmp/` 当前为空，未残留本轮临时产物
+
+本轮同时修正了 3 处会影响 Release 栅格专项回归的收口问题：
+
+- [tests/run_real_raster_regression.ps1](/D:/Develop/GIS/GIS_TOOL/tests/run_real_raster_regression.ps1) 中 `processing_skeleton` 的最大值断言与实际 `Float32` 归一化输出不一致，已改为校验 `1`
+- [tests/run_real_raster_regression.ps1](/D:/Develop/GIS/GIS_TOOL/tests/run_real_raster_regression.ps1) 中 `georef_percentile_stretch` 的期望输出文件名误写为 `georef_quac_output.tif`，已改为实际输出名
+- [src/plugins/classification/classification_plugin.cpp](/D:/Develop/GIS/GIS_TOOL/src/plugins/classification/classification_plugin.cpp:1243) 中 `feature_stats` 复用了 `classification` 的全局 `input` 必填约束，导致 CLI 先于动作执行被拦截，现已改为按动作分别校验
 
 ### 3.4 CLI 插件加载验证
 

@@ -1241,7 +1241,7 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
         },
         gis::framework::ParamSpec{
             "input", "输入栅格", "待分类的多波段栅格文件路径",
-            gis::framework::ParamType::FilePath, true, std::string{}
+            gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
             "vector", "输入面矢量", "参与统计的面矢量文件路径",
