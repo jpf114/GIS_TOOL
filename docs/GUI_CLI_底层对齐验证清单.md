@@ -4,7 +4,7 @@
 
 本文用于收口当前项目在 `GUI / CLI / 底层算法插件` 三层上的对齐状态，给出已经完成的验证证据、当前可确认结论、已知边界，以及后续是否还存在必须继续补测的硬缺口。
 
-结论以 `2026-05-02` 当天在当前工作区重新执行得到的结果为准。
+结论以 `2026-05-02` 首轮收口结果为基础，并已在 `2026-05-06` 按当前工作区补充重新核对本轮构建、安装、启动与全量测试结果。
 
 ## 2. 当前结论
 
@@ -33,7 +33,7 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 
 结果：
 
-- `337/337` 通过
+- `364/364` 通过
 
 这组结果覆盖：
 
@@ -54,7 +54,18 @@ ctest --test-dir build/debug -C Debug --output-on-failure
   - `61` 项 `GuiSupportTest`
   - `112` 项 `gui_` 离屏回归
 
-### 3.3 CLI 插件加载验证
+### 3.3 2026-05-06 补充验收
+
+本轮额外重新执行并确认：
+
+- `cmake --build build/debug --config Debug` 通过
+- `cmake --build build/release --config Release` 通过
+- `cmake --install build/release --config Release` 通过
+- `install/bin/gis-cli.exe --list` 可正常列出 13 个插件
+- `install/bin/gis-gui.exe -platform offscreen --self-test` 正常启动并退出
+- `tmp/` 当前为空，未残留本轮临时产物
+
+### 3.4 CLI 插件加载验证
 
 已重新验证：
 
@@ -67,7 +78,7 @@ build\debug\src\cli\Debug\gis-cli.exe --list
 - 可正常列出全部主插件
 - 说明 `CLI -> 插件发现 -> 插件加载` 链路当前可用
 
-### 3.4 真实矢量回归脚本
+### 3.5 真实矢量回归脚本
 
 已重新执行：
 
@@ -96,8 +107,8 @@ powershell.exe -ExecutionPolicy Bypass -File tests/run_real_vector_regression.ps
 
 | 层级 | 当前状态 | 主要证据 | 说明 |
 | --- | --- | --- | --- |
-| 底层 `core` | 通过 | `ctest 337/337` | GDAL/OpenCV/PROJ 包装、运行时环境、基础能力可用 |
-| 底层 `framework` | 通过 | `ctest 337/337` | 参数类型、校验、插件管理器、CLI 参数解析链路通过 |
+| 底层 `core` | 通过 | `ctest 364/364` | GDAL/OpenCV/PROJ 包装、运行时环境、基础能力可用 |
+| 底层 `framework` | 通过 | `ctest 364/364` | 参数类型、校验、插件管理器、CLI 参数解析链路通过 |
 | 插件层 `plugins/*` | 通过 | 插件测试 + GUI/CLI 回归 | 主执行链已验证 |
 | `CLI` 入口 | 通过 | `gis-cli --list` + 全量测试 + real vector regression | 可加载插件并执行主要动作 |
 | `GUI` 入口 | 通过 | `GuiSupportTest` + `gui_` offscreen 回归 | 参数 UI 支撑与自动执行链路可用 |

@@ -12,6 +12,16 @@
 - 依赖统一复用全局 `vcpkg`
   - 当前项目约定路径：`D:\Develop\vcpkg`
 
+### 最新验收状态（2026-05-06）
+
+- `cmake --build build/debug --config Debug` 通过
+- `cmake --build build/release --config Release` 通过
+- `ctest --test-dir build/debug -C Debug --output-on-failure`：`364/364` 通过
+- `cmake --install build/release --config Release` 通过
+- `install/bin/gis-cli.exe --list` 正常，可列出 13 个插件
+- `install/bin/gis-gui.exe -platform offscreen --self-test` 正常
+- `tmp/` 当前为空
+
 ## 主功能
 
 - 投影转换
