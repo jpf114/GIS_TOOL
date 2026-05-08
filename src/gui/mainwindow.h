@@ -79,12 +79,10 @@ private:
     QLabel* functionMetaLabel_ = nullptr;
     ParamWidget* paramWidget_ = nullptr;
     QPushButton* executeButton_ = nullptr;
-    QProgressBar* progressBar_ = nullptr;
     QLabel* resultSummaryLabel_ = nullptr;
     QLabel* statusAlgorithmLabel_ = nullptr;
     QLabel* statusPluginCountLabel_ = nullptr;
     QLabel* statusSubFunctionCountLabel_ = nullptr;
-    QLabel* statusExecutionLabel_ = nullptr;
     QProgressBar* statusProgressBar_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;
 

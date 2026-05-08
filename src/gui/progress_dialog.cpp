@@ -1,5 +1,6 @@
 #include "progress_dialog.h"
 #include "qt_progress_reporter.h"
+#include "style_constants.h"
 
 #include <QDialogButtonBox>
 #include <QLabel>
@@ -15,10 +16,14 @@ ProgressDialog::ProgressDialog(QtProgressReporter* reporter, QWidget* parent)
     setWindowTitle(QStringLiteral("执行中..."));
     setMinimumWidth(450);
     setWindowFlags(windowFlags() & ~Qt::WindowCloseButtonHint);
+    setStyleSheet(gis::style::globalStyleSheet());
 
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(20, 20, 20, 20);
+    layout->setSpacing(12);
 
     statusLabel_ = new QLabel(QStringLiteral("正在执行，请稍候..."));
+    statusLabel_->setObjectName(QStringLiteral("heroMeta"));
     layout->addWidget(statusLabel_);
 
     progressBar_ = new QProgressBar;
@@ -29,11 +34,14 @@ ProgressDialog::ProgressDialog(QtProgressReporter* reporter, QWidget* parent)
     logEdit_ = new QTextEdit;
     logEdit_->setReadOnly(true);
     logEdit_->setMaximumHeight(150);
+    logEdit_->setObjectName(QStringLiteral("logTerminal"));
     layout->addWidget(logEdit_);
 
     auto* btnBox = new QDialogButtonBox;
     cancelButton_ = new QPushButton(QStringLiteral("取消"));
+    cancelButton_->setObjectName(QStringLiteral("secondaryButton"));
     forceQuitButton_ = new QPushButton(QStringLiteral("强制终止"));
+    forceQuitButton_->setObjectName(QStringLiteral("secondaryButton"));
     forceQuitButton_->setVisible(false);
     btnBox->addButton(cancelButton_, QDialogButtonBox::ActionRole);
     btnBox->addButton(forceQuitButton_, QDialogButtonBox::DestructiveRole);
@@ -65,6 +73,7 @@ void ProgressDialog::setFinished(const QString& message, bool success, bool canc
     }
 
     auto* closeBtn = new QPushButton(QStringLiteral("关闭"));
+    closeBtn->setObjectName(QStringLiteral("primaryButton"));
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
 
     auto* btnBox = findChild<QDialogButtonBox*>();

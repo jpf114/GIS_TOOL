@@ -21,11 +21,15 @@ TaskManager::TaskManager(QObject* parent)
 QString TaskManager::submitTask(
     const QString& pluginName,
     const QString& actionKey,
-    const std::map<std::string, gis::framework::ParamValue>& params) {
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const QString& pluginDisplayName,
+    const QString& actionDisplayName) {
 
     TaskRecord rec;
     rec.pluginName = pluginName;
     rec.actionKey = actionKey;
+    rec.pluginDisplayName = pluginDisplayName.isEmpty() ? pluginName : pluginDisplayName;
+    rec.actionDisplayName = actionDisplayName.isEmpty() ? actionKey : actionDisplayName;
     rec.params = params;
     rec.startTime = QDateTime::currentDateTime();
     rec.status = TaskRecord::Pending;

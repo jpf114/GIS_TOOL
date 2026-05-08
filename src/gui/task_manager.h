@@ -20,6 +20,8 @@ struct TaskRecord {
     QString id;
     QString pluginName;
     QString actionKey;
+    QString pluginDisplayName;
+    QString actionDisplayName;
     std::map<std::string, gis::framework::ParamValue> params;
     gis::framework::Result result;
     QDateTime startTime;
@@ -34,7 +36,9 @@ public:
 
     QString submitTask(const QString& pluginName,
                        const QString& actionKey,
-                       const std::map<std::string, gis::framework::ParamValue>& params);
+                       const std::map<std::string, gis::framework::ParamValue>& params,
+                       const QString& pluginDisplayName = {},
+                       const QString& actionDisplayName = {});
     void updateAndRerunTask(const QString& id,
                             const std::map<std::string, gis::framework::ParamValue>& newParams);
     void updateTaskStatus(const QString& id, TaskRecord::Status status);

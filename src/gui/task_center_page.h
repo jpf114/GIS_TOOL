@@ -13,9 +13,10 @@ class TaskCenterPage : public QWidget {
 public:
     explicit TaskCenterPage(QWidget* parent = nullptr);
 
-    void addTaskRow(const QString& taskId, const QString& pluginName,
-                    const QString& actionKey, int status, const QString& startTime);
+    void addTaskRow(const QString& taskId, const QString& pluginDisplayName,
+                    const QString& actionDisplayName, int status, const QString& startTime);
     void updateTaskRow(const QString& taskId, int status, const QString& endTime);
+    void updateTaskProgress(const QString& taskId, double percent);
     void removeTaskRows(const QStringList& taskIds);
     void refreshAll();
     void appendLog(const QString& taskId, const QString& message);

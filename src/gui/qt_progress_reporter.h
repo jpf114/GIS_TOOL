@@ -16,6 +16,7 @@ public:
     void cancel();
     void reset();
     void setCurrentTaskId(const QString& taskId);
+    QString currentTaskId() const { return m_currentTaskId; }
 
 signals:
     void progressChanged(double percent);

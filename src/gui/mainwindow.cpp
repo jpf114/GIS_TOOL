@@ -926,11 +926,6 @@ MainWindow::MainWindow(QWidget* parent)
     setupUi();
     connect(reporter_, &QtProgressReporter::progressChanged, this, [this](double percent) {
         const int value = std::clamp(static_cast<int>(percent * 100.0), 0, 100);
-        if (progressBar_) {
-            progressBar_->setRange(0, 100);
-            progressBar_->setValue(value);
-            progressBar_->setFormat(QStringLiteral("完成 %1%").arg(value));
-        }
         if (statusProgressBar_) {
             statusProgressBar_->setRange(0, 100);
             statusProgressBar_->setValue(value);
@@ -1094,10 +1089,6 @@ void MainWindow::setupUi() {
     execHeaderLayout->addWidget(execTitleLabel);
     execHeaderLayout->addStretch();
 
-    statusExecutionLabel_ = new QLabel(QStringLiteral("就绪"));
-    statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeReady"));
-    execHeaderLayout->addWidget(statusExecutionLabel_);
-
     executeButton_ = new QPushButton(QStringLiteral("执行处理"));
     executeButton_->setObjectName(QStringLiteral("primaryButton"));
     executeButton_->setIcon(executeIcon());
@@ -1107,13 +1098,6 @@ void MainWindow::setupUi() {
     execHeaderLayout->addWidget(executeButton_);
 
     executionLayout->addLayout(execHeaderLayout);
-
-    progressBar_ = new QProgressBar;
-    progressBar_->setRange(0, 100);
-    progressBar_->setValue(0);
-    progressBar_->setTextVisible(true);
-    progressBar_->setFormat(QStringLiteral("等待执行"));
-    executionLayout->addWidget(progressBar_);
 
     resultSummaryLabel_ = new QLabel;
     resultSummaryLabel_->setWordWrap(true);
@@ -1149,31 +1133,34 @@ void MainWindow::setupUi() {
             this, [this](const QString& id) {
         auto rec = TaskManager::instance().findTask(id);
         if (rec.id.isEmpty()) return;
-        taskCenterPage_->addTaskRow(rec.id, rec.pluginName, rec.actionKey,
+        taskCenterPage_->addTaskRow(rec.id,
+            rec.pluginDisplayName.isEmpty() ? rec.pluginName : rec.pluginDisplayName,
+            rec.actionDisplayName.isEmpty() ? rec.actionKey : rec.actionDisplayName,
             static_cast<int>(rec.status),
-            rec.startTime.toString(QStringLiteral("HH:mm:ss")));
+            rec.startTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
     });
     connect(&TaskManager::instance(), &TaskManager::taskFinished,
             this, [this](const QString& id) {
         auto rec = TaskManager::instance().findTask(id);
         if (rec.id.isEmpty()) return;
         taskCenterPage_->updateTaskRow(id, static_cast<int>(rec.status),
-            rec.endTime.toString(QStringLiteral("HH:mm:ss")));
+            rec.endTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
     });
     connect(&TaskManager::instance(), &TaskManager::logAppended,
             taskCenterPage_, &TaskCenterPage::appendLog);
 
-    auto* splitter = new QSplitter(Qt::Horizontal);
-    splitter->setChildrenCollapsible(false);
-    splitter->setHandleWidth(1);
+    connect(reporter_, &QtProgressReporter::progressChanged,
+            this, [this](double percent) {
+        QString taskId = reporter_->currentTaskId();
+        if (!taskId.isEmpty()) {
+            taskCenterPage_->updateTaskProgress(taskId, percent);
+        }
+    });
 
-    splitter->addWidget(navPanel_);
-    splitter->addWidget(tabWidget_);
-    splitter->setStretchFactor(0, 0);
-    splitter->setStretchFactor(1, 1);
-    splitter->setSizes({gis::style::Size::kSidebarWidth, 800});
+    navPanel_->setFixedWidth(gis::style::Size::kSidebarWidth);
 
-    mainLayout->addWidget(splitter);
+    mainLayout->addWidget(navPanel_);
+    mainLayout->addWidget(tabWidget_, 1);
 
     statusPluginCountLabel_ = new QLabel(QStringLiteral("已加载主功能：0"));
     statusAlgorithmLabel_ = new QLabel(QStringLiteral("当前算法：未选择"));
@@ -1431,12 +1418,6 @@ void MainWindow::onSubFunctionSelected(const std::string& pluginName,
     refreshExecuteButtonState();
     refreshParamValidationState();
 
-    if (statusExecutionLabel_) {
-        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeReady"));
-        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
-        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
-        statusExecutionLabel_->setText(QStringLiteral("待执行"));
-    }
     statusBar()->showMessage(QStringLiteral("当前子功能：%1").arg(displayName));
 }
 
@@ -1505,12 +1486,6 @@ void MainWindow::refreshExecuteButtonState() {
     const auto state = gis::gui::buildExecuteButtonState(hasSelection, validationMessage);
     executeButton_->setEnabled(state.enabled);
     executeButton_->setToolTip(QString::fromUtf8(state.tooltip));
-    if (statusExecutionLabel_) {
-        statusExecutionLabel_->setObjectName(QString::fromUtf8(state.statusObjectName));
-        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
-        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
-        statusExecutionLabel_->setText(QString::fromUtf8(state.statusText));
-    }
 }
 
 void MainWindow::refreshParamValidationState() {
@@ -1625,26 +1600,23 @@ void MainWindow::runPluginWithParams(
     lastExecutionCancelled_ = false;
     lastExecutionMessage_.clear();
 
+    const QString pluginDisplayName = currentDisplayGroupKey_ == kRasterToolsGroupName
+        ? QStringLiteral("栅格工具")
+        : QString::fromUtf8(currentPlugin_->displayName());
+    const QString actionDisplayName = ::actionDisplayName(currentPlugin_->name(), currentActionKey_);
+
     auto taskId = TaskManager::instance().submitTask(
         QString::fromStdString(currentPlugin_->name()),
         currentActionKey_,
-        params);
+        params,
+        pluginDisplayName,
+        actionDisplayName);
 
     reporter_->setCurrentTaskId(taskId);
     lastExecutionRawMessage_.clear();
     if (resultSummaryLabel_) {
         resultSummaryLabel_->setStyleSheet(QString());
         resultSummaryLabel_->setText(QStringLiteral("正在执行，请稍候..."));
-    }
-    if (statusExecutionLabel_) {
-        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeRunning"));
-        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
-        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
-        statusExecutionLabel_->setText(QStringLiteral("运行中"));
-    }
-    if (progressBar_) {
-        progressBar_->setRange(0, 0);
-        progressBar_->setFormat(QStringLiteral("处理中"));
     }
     if (statusProgressBar_) {
         statusProgressBar_->setRange(0, 0);
@@ -1696,48 +1668,15 @@ void MainWindow::runPluginWithParams(
                     resultSummaryLabel_->setText(
                         QStringLiteral("✓ 执行成功\n%1").arg(summary));
                     resultSummaryLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
-                    if (progressBar_) {
-                        progressBar_->setRange(0, 100);
-                        progressBar_->setValue(100);
-                        progressBar_->setFormat(QStringLiteral("完成 100%"));
-                    }
-                    if (statusExecutionLabel_) {
-                        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeSuccess"));
-                        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
-                        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
-                        statusExecutionLabel_->setText(QStringLiteral("成功"));
-                    }
                     statusBar()->showMessage(QStringLiteral("执行成功"));
                 } else if (cancelled) {
                     resultSummaryLabel_->setText(QStringLiteral("✖ 已取消"));
                     resultSummaryLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
-                    if (progressBar_) {
-                        progressBar_->setRange(0, 100);
-                        progressBar_->setValue(0);
-                        progressBar_->setFormat(QStringLiteral("已取消"));
-                    }
-                    if (statusExecutionLabel_) {
-                        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeWarning"));
-                        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
-                        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
-                        statusExecutionLabel_->setText(QStringLiteral("已取消"));
-                    }
                     statusBar()->showMessage(QStringLiteral("执行已取消"));
                 } else {
                     resultSummaryLabel_->setText(
                         QStringLiteral("✖ 执行失败\n%1").arg(message));
                     resultSummaryLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(gis::style::Color::kError));
-                    if (progressBar_) {
-                        progressBar_->setRange(0, 100);
-                        progressBar_->setValue(0);
-                        progressBar_->setFormat(QStringLiteral("失败"));
-                    }
-                    if (statusExecutionLabel_) {
-                        statusExecutionLabel_->setObjectName(QStringLiteral("statusBadgeError"));
-                        statusExecutionLabel_->style()->unpolish(statusExecutionLabel_);
-                        statusExecutionLabel_->style()->polish(statusExecutionLabel_);
-                        statusExecutionLabel_->setText(QStringLiteral("失败"));
-                    }
                     statusBar()->showMessage(QStringLiteral("执行失败：") + message);
                 }
 
@@ -1799,7 +1738,9 @@ void MainWindow::onRerunTask(const QString& taskId) {
     currentEditingTaskId_.clear();
     resetDerivedParamTracking();
 
-    auto newId = TaskManager::instance().submitTask(rec.pluginName, rec.actionKey, rec.params);
+    auto newId = TaskManager::instance().submitTask(
+        rec.pluginName, rec.actionKey, rec.params,
+        rec.pluginDisplayName, rec.actionDisplayName);
     runPluginWithParams(rec.params);
 }
 

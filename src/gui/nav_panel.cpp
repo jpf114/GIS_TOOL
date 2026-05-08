@@ -408,7 +408,14 @@ void NavPanel::onPluginButtonClicked(const std::string& pluginName) {
 
 void NavPanel::onSubFunctionButtonClicked(const std::string& pluginName,
                                           const std::string& actionKey) {
-    setCurrentPluginSelection(pluginName);
+    const std::string currentGroup = displayGroupForPlugin(pluginName);
+    const bool pluginAlreadySelected = currentPluginButton_ &&
+        pluginButtonMap_.count(currentPluginButton_) &&
+        pluginButtonMap_[currentPluginButton_] == currentGroup;
+
+    if (!pluginAlreadySelected) {
+        setCurrentPluginSelection(pluginName);
+    }
     setCurrentSubFunctionSelection(pluginName, actionKey);
     emit subFunctionSelected(pluginName, actionKey);
 }

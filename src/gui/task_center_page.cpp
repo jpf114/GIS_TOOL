@@ -13,6 +13,7 @@
 #include <QTime>
 #include <QDateTime>
 #include <QHeaderView>
+#include <algorithm>
 
 TaskCenterPage::TaskCenterPage(QWidget* parent)
     : QWidget(parent) {
@@ -68,16 +69,19 @@ void TaskCenterPage::setupUi() {
         << QStringLiteral("插件")
         << QStringLiteral("子功能")
         << QStringLiteral("开始时间")
+        << QStringLiteral("进度")
         << QStringLiteral("耗时"));
     taskTree_->header()->setStretchLastSection(true);
     taskTree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     taskTree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     taskTree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     taskTree_->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    taskTree_->header()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     taskTree_->setColumnWidth(0, 80);
-    taskTree_->setColumnWidth(1, 100);
-    taskTree_->setColumnWidth(2, 120);
-    taskTree_->setColumnWidth(3, 80);
+    taskTree_->setColumnWidth(1, 120);
+    taskTree_->setColumnWidth(2, 140);
+    taskTree_->setColumnWidth(3, 150);
+    taskTree_->setColumnWidth(4, 80);
 
     connect(taskTree_, &QTreeWidget::currentItemChanged,
             this, &TaskCenterPage::onCurrentItemChanged);
@@ -149,16 +153,17 @@ void TaskCenterPage::setupUi() {
     mainLayout->addWidget(splitter_);
 }
 
-void TaskCenterPage::addTaskRow(const QString& taskId, const QString& pluginName,
-                                 const QString& actionKey, int status,
+void TaskCenterPage::addTaskRow(const QString& taskId, const QString& pluginDisplayName,
+                                 const QString& actionDisplayName, int status,
                                  const QString& startTime) {
     auto* item = new QTreeWidgetItem;
     item->setData(0, Qt::UserRole, taskId);
     item->setText(0, statusText(status));
-    item->setText(1, pluginName);
-    item->setText(2, actionKey);
+    item->setText(1, pluginDisplayName);
+    item->setText(2, actionDisplayName);
     item->setText(3, startTime);
     item->setText(4, QStringLiteral("-"));
+    item->setText(5, QStringLiteral("-"));
 
     QFont f = item->font(0);
     f.setBold(true);
@@ -180,24 +185,43 @@ void TaskCenterPage::updateTaskRow(const QString& taskId, int status,
     item->setText(0, statusText(status));
     item->setForeground(0, QColor(statusColor(status)));
 
+    if (status == TaskRecord::Running) {
+        item->setText(4, QStringLiteral("运行中"));
+    }
+
     if (status == TaskRecord::Completed || status == TaskRecord::Failed || status == TaskRecord::Cancelled) {
         QString startStr = item->text(3);
-        QDateTime startDt = QDateTime::fromString(startStr, QStringLiteral("HH:mm:ss"));
+        QDateTime startDt = QDateTime::fromString(startStr, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        if (!startDt.isValid()) {
+            startDt = QDateTime::fromString(startStr, QStringLiteral("HH:mm:ss"));
+        }
         if (!startDt.isValid()) {
             startDt = QDateTime::currentDateTime();
         }
-        QDateTime endDt = QDateTime::fromString(endTime, QStringLiteral("HH:mm:ss"));
+        QDateTime endDt = QDateTime::fromString(endTime, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        if (!endDt.isValid()) {
+            endDt = QDateTime::fromString(endTime, QStringLiteral("HH:mm:ss"));
+        }
         if (!endDt.isValid()) {
             endDt = QDateTime::currentDateTime();
         }
         qint64 secs = startDt.secsTo(endDt);
         if (secs < 0) secs = 0;
         if (secs < 60) {
-            item->setText(4, QStringLiteral("%1秒").arg(secs));
+            item->setText(5, QStringLiteral("%1秒").arg(secs));
         } else {
-            item->setText(4, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
+            item->setText(5, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
         }
+        item->setText(4, status == TaskRecord::Completed ? QStringLiteral("100%") : QStringLiteral("-"));
     }
+}
+
+void TaskCenterPage::updateTaskProgress(const QString& taskId, double percent) {
+    auto* item = findItemByTaskId(taskId);
+    if (!item) return;
+
+    int value = std::clamp(static_cast<int>(percent * 100.0), 0, 100);
+    item->setText(4, QStringLiteral("%1%").arg(value));
 }
 
 void TaskCenterPage::removeTaskRows(const QStringList& taskIds) {
@@ -221,20 +245,28 @@ void TaskCenterPage::refreshAll() {
         auto* item = new QTreeWidgetItem;
         item->setData(0, Qt::UserRole, rec.id);
         item->setText(0, statusText(static_cast<int>(rec.status)));
-        item->setText(1, rec.pluginName);
-        item->setText(2, rec.actionKey);
-        item->setText(3, rec.startTime.toString(QStringLiteral("HH:mm:ss")));
+        item->setText(1, rec.pluginDisplayName.isEmpty() ? rec.pluginName : rec.pluginDisplayName);
+        item->setText(2, rec.actionDisplayName.isEmpty() ? rec.actionKey : rec.actionDisplayName);
+        item->setText(3, rec.startTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+
+        if (rec.status == TaskRecord::Running) {
+            item->setText(4, QStringLiteral("运行中"));
+        } else if (rec.status == TaskRecord::Completed) {
+            item->setText(4, QStringLiteral("100%"));
+        } else {
+            item->setText(4, QStringLiteral("-"));
+        }
 
         if (rec.endTime.isValid() && rec.startTime.isValid()) {
             qint64 secs = rec.startTime.secsTo(rec.endTime);
             if (secs < 0) secs = 0;
             if (secs < 60) {
-                item->setText(4, QStringLiteral("%1秒").arg(secs));
+                item->setText(5, QStringLiteral("%1秒").arg(secs));
             } else {
-                item->setText(4, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
+                item->setText(5, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
             }
         } else {
-            item->setText(4, QStringLiteral("-"));
+            item->setText(5, QStringLiteral("-"));
         }
 
         QFont f = item->font(0);
@@ -338,6 +370,18 @@ void TaskCenterPage::onCustomContextMenu(const QPoint& pos) {
                      status == TaskRecord::Cancelled);
 
     QMenu menu;
+    menu.setStyleSheet(
+        QStringLiteral(
+            "QMenu { background: white; border: 1px solid %1; border-radius: 6px; padding: 4px 0; }"
+            "QMenu::item { padding: 8px 28px; color: %2; font-size: 13px; }"
+            "QMenu::item:selected { background: %3; color: %4; }"
+            "QMenu::item:disabled { color: %5; }"
+            "QMenu::separator { height: 1px; background: %1; margin: 4px 8px; }")
+        .arg(gis::style::Color::kCardBorder)
+        .arg(gis::style::Color::kTextPrimary)
+        .arg(gis::style::Color::kPrimaryLight)
+        .arg(gis::style::Color::kPrimary)
+        .arg(gis::style::Color::kDisabledText));
     auto* rerunAction = menu.addAction(QStringLiteral("重新执行"));
     rerunAction->setEnabled(canRerun);
     auto* editAction = menu.addAction(QStringLiteral("编辑参数"));
