@@ -13,8 +13,11 @@ class TaskCenterPage : public QWidget {
 public:
     explicit TaskCenterPage(QWidget* parent = nullptr);
 
-    void addTaskRow(const QString& taskId, const QString& pluginDisplayName,
-                    const QString& actionDisplayName, int status, const QString& startTime);
+    void setCurrentGroup(const QString& displayGroup);
+    QString currentGroup() const { return currentGroup_; }
+
+    void addTaskRow(const QString& taskId, const QString& actionDisplayName,
+                    int status, const QString& startTime);
     void updateTaskRow(const QString& taskId, int status, const QString& endTime);
     void updateTaskProgress(const QString& taskId, double percent);
     void removeTaskRows(const QStringList& taskIds);
@@ -52,4 +55,5 @@ private:
     QLabel* logTaskLabel_ = nullptr;
     QSplitter* splitter_ = nullptr;
     QString currentLogTaskId_;
+    QString currentGroup_;
 };

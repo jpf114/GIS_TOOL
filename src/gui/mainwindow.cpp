@@ -1,16 +1,16 @@
 #include "mainwindow.h"
 #include "execute_worker.h"
+#include "gdal_config.h"
 #include "nav_panel.h"
 #include "param_widget.h"
-#include "progress_dialog.h"
-#include "qt_progress_reporter.h"
 #include "style_constants.h"
 #include "gui_data_support.h"
 #include "icon_manager.h"
 #include "settings_manager.h"
 #include "task_manager.h"
-#include "task_center_page.h"
+#include "task_runner.h"
 #include "task_database.h"
+#include "task_center_page.h"
 
 #include <gis/core/runtime_env.h>
 
@@ -920,23 +920,20 @@ void initIconManager() {
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
+    gis::gui::configureGdalRuntime();
     setAcceptDrops(true);
     initIconManager();
-    reporter_ = new QtProgressReporter(this);
     setupUi();
-    connect(reporter_, &QtProgressReporter::progressChanged, this, [this](double percent) {
+
+    connect(&TaskRunner::instance(), &TaskRunner::taskProgressChanged,
+            this, [this](const QString& /*taskId*/, double percent) {
         const int value = std::clamp(static_cast<int>(percent * 100.0), 0, 100);
         if (statusProgressBar_) {
             statusProgressBar_->setRange(0, 100);
             statusProgressBar_->setValue(value);
         }
     });
-    connect(reporter_, &QtProgressReporter::messageLogged, this, [this](const QString& message) {
-        if (!message.isEmpty() && resultSummaryLabel_) {
-            resultSummaryLabel_->setStyleSheet(QString());
-            resultSummaryLabel_->setText(message);
-        }
-    });
+
     loadPlugins();
 }
 
@@ -1129,32 +1126,30 @@ void MainWindow::setupUi() {
     connect(taskCenterPage_, &TaskCenterPage::clearAllLogsRequested,
             this, &MainWindow::onClearAllLogs);
 
-    connect(&TaskManager::instance(), &TaskManager::taskSubmitted,
-            this, [this](const QString& id) {
-        auto rec = TaskManager::instance().findTask(id);
+    connect(&TaskRunner::instance(), &TaskRunner::taskStarted,
+            this, [this](const QString& displayGroup, const QString& id) {
+        if (displayGroup != taskCenterPage_->currentGroup()) return;
+        auto rec = TaskManager::instance().findTask(displayGroup, id);
         if (rec.id.isEmpty()) return;
         taskCenterPage_->addTaskRow(rec.id,
-            rec.pluginDisplayName.isEmpty() ? rec.pluginName : rec.pluginDisplayName,
             rec.actionDisplayName.isEmpty() ? rec.actionKey : rec.actionDisplayName,
             static_cast<int>(rec.status),
             rec.startTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
     });
-    connect(&TaskManager::instance(), &TaskManager::taskFinished,
-            this, [this](const QString& id) {
-        auto rec = TaskManager::instance().findTask(id);
+    connect(&TaskRunner::instance(), &TaskRunner::taskFinished,
+            this, [this](const QString& displayGroup, const QString& id,
+                         bool /*success*/, bool /*cancelled*/) {
+        if (displayGroup != taskCenterPage_->currentGroup()) return;
+        auto rec = TaskManager::instance().findTask(displayGroup, id);
         if (rec.id.isEmpty()) return;
         taskCenterPage_->updateTaskRow(id, static_cast<int>(rec.status),
             rec.endTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
     });
-    connect(&TaskManager::instance(), &TaskManager::logAppended,
+    connect(&TaskRunner::instance(), &TaskRunner::taskLogMessage,
             taskCenterPage_, &TaskCenterPage::appendLog);
-
-    connect(reporter_, &QtProgressReporter::progressChanged,
-            this, [this](double percent) {
-        QString taskId = reporter_->currentTaskId();
-        if (!taskId.isEmpty()) {
-            taskCenterPage_->updateTaskProgress(taskId, percent);
-        }
+    connect(&TaskRunner::instance(), &TaskRunner::taskProgressChanged,
+            this, [this](const QString& taskId, double percent) {
+        taskCenterPage_->updateTaskProgress(taskId, percent);
     });
 
     navPanel_->setFixedWidth(gis::style::Size::kSidebarWidth);
@@ -1371,6 +1366,11 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     }
     refreshExecuteButtonState();
     statusBar()->showMessage(QStringLiteral("当前主功能：%1").arg(groupName));
+
+    if (taskCenterPage_) {
+        taskCenterPage_->setCurrentGroup(
+            QString::fromStdString(displayGroupForPlugin(pluginName)));
+    }
 }
 
 void MainWindow::onSubFunctionSelected(const std::string& pluginName,
@@ -1419,6 +1419,11 @@ void MainWindow::onSubFunctionSelected(const std::string& pluginName,
     refreshParamValidationState();
 
     statusBar()->showMessage(QStringLiteral("当前子功能：%1").arg(displayName));
+
+    if (taskCenterPage_) {
+        taskCenterPage_->setCurrentGroup(
+            QString::fromStdString(displayGroupForPlugin(pluginName)));
+    }
 }
 
 void MainWindow::onExecute() {
@@ -1450,7 +1455,8 @@ void MainWindow::onExecute() {
     }
 
     if (!currentEditingTaskId_.isEmpty()) {
-        TaskManager::instance().updateAndRerunTask(currentEditingTaskId_, params);
+        TaskManager::instance().updateAndRerunTask(
+            taskCenterPage_->currentGroup(), currentEditingTaskId_, params);
         currentEditingTaskId_.clear();
         runPluginWithParams(params);
     } else {
@@ -1595,25 +1601,26 @@ void MainWindow::resetDerivedParamTracking() {
 
 void MainWindow::runPluginWithParams(
     const std::map<std::string, gis::framework::ParamValue>& params) {
-    reporter_->reset();
     lastExecutionSuccess_ = false;
     lastExecutionCancelled_ = false;
     lastExecutionMessage_.clear();
+    lastExecutionRawMessage_.clear();
 
+    const QString displayGroup = QString::fromStdString(
+        displayGroupForPlugin(currentPlugin_->name()));
     const QString pluginDisplayName = currentDisplayGroupKey_ == kRasterToolsGroupName
         ? QStringLiteral("栅格工具")
         : QString::fromUtf8(currentPlugin_->displayName());
     const QString actionDisplayName = ::actionDisplayName(currentPlugin_->name(), currentActionKey_);
 
-    auto taskId = TaskManager::instance().submitTask(
+    auto taskId = TaskRunner::instance().run(
+        currentPlugin_, displayGroup,
         QString::fromStdString(currentPlugin_->name()),
-        currentActionKey_,
-        params,
-        pluginDisplayName,
-        actionDisplayName);
+        currentActionKey_, params,
+        pluginDisplayName, actionDisplayName);
 
-    reporter_->setCurrentTaskId(taskId);
-    lastExecutionRawMessage_.clear();
+    if (taskId.isEmpty()) return;
+
     if (resultSummaryLabel_) {
         resultSummaryLabel_->setStyleSheet(QString());
         resultSummaryLabel_->setText(QStringLiteral("正在执行，请稍候..."));
@@ -1627,74 +1634,52 @@ void MainWindow::runPluginWithParams(
         tabWidget_->setCurrentIndex(1);
     }
 
-    auto* worker = new ExecuteWorker;
-    worker->setup(currentPlugin_, params, reporter_);
+    connect(&TaskRunner::instance(), &TaskRunner::taskFinished,
+            this,
+            [this, taskId, displayGroup](
+                const QString& dg, const QString& tid,
+                bool success, bool cancelled) {
+        if (tid != taskId) return;
 
-    auto* thread = new QThread;
-    worker->moveToThread(thread);
+        auto result = TaskManager::instance().findTask(dg, tid);
+        const QString localizedMessage =
+            QString::fromUtf8(gis::gui::localizeResultMessage(result.result.message));
+        lastExecutionSuccess_ = success;
+        lastExecutionCancelled_ = cancelled;
+        lastExecutionMessage_ = localizedMessage;
+        lastExecutionRawMessage_ = QString::fromUtf8(result.result.message);
 
-    auto* progressDialog = new ProgressDialog(reporter_);
-
-    connect(reporter_, &QtProgressReporter::messageLogged,
-            this, [this](const QString& taskId, const QString& msg) {
-        if (!taskId.isEmpty()) {
-            TaskManager::instance().appendLog(taskId, msg);
+        if (success) {
+            if (!result.result.outputPath.empty()) {
+                SettingsManager::instance().addRecentFile(
+                    QString::fromUtf8(result.result.outputPath));
+            }
+            QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result.result));
+            resultSummaryLabel_->setText(
+                QStringLiteral("✓ 执行成功\n%1").arg(summary));
+            resultSummaryLabel_->setStyleSheet(
+                QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
+            statusBar()->showMessage(QStringLiteral("执行成功"));
+        } else if (cancelled) {
+            resultSummaryLabel_->setText(QStringLiteral("✖ 已取消"));
+            resultSummaryLabel_->setStyleSheet(
+                QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
+            statusBar()->showMessage(QStringLiteral("执行已取消"));
+        } else {
+            resultSummaryLabel_->setText(
+                QStringLiteral("✖ 执行失败\n%1").arg(localizedMessage));
+            resultSummaryLabel_->setStyleSheet(
+                QStringLiteral("color: %1;").arg(gis::style::Color::kError));
+            statusBar()->showMessage(QStringLiteral("执行失败：") + localizedMessage);
         }
+
+        if (statusProgressBar_) {
+            statusProgressBar_->setRange(0, 100);
+            statusProgressBar_->setValue(success ? 100 : 0);
+        }
+        refreshExecuteButtonState();
+        emit executionFinished(success);
     });
-
-    connect(thread, &QThread::started, this, [taskId]() {
-        TaskManager::instance().updateTaskStatus(taskId, TaskRecord::Running);
-    });
-    connect(thread, &QThread::started, worker, &ExecuteWorker::run);
-    connect(worker, &ExecuteWorker::finished, this,
-            [this, progressDialog, taskId](const gis::framework::Result& result) {
-                TaskManager::instance().finishTask(taskId, result);
-                const QString localizedMessage =
-                    QString::fromUtf8(gis::gui::localizeResultMessage(result.message));
-                QString message = localizedMessage;
-                const bool cancelled = result.isCancelled;
-                lastExecutionSuccess_ = result.success;
-                lastExecutionCancelled_ = cancelled;
-                lastExecutionMessage_ = localizedMessage;
-                lastExecutionRawMessage_ = QString::fromUtf8(result.message);
-                progressDialog->setFinished(message, result.success, cancelled);
-
-                if (result.success) {
-                    if (!result.outputPath.empty()) {
-                        SettingsManager::instance().addRecentFile(
-                            QString::fromUtf8(result.outputPath));
-                    }
-                    QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result));
-                    resultSummaryLabel_->setText(
-                        QStringLiteral("✓ 执行成功\n%1").arg(summary));
-                    resultSummaryLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
-                    statusBar()->showMessage(QStringLiteral("执行成功"));
-                } else if (cancelled) {
-                    resultSummaryLabel_->setText(QStringLiteral("✖ 已取消"));
-                    resultSummaryLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
-                    statusBar()->showMessage(QStringLiteral("执行已取消"));
-                } else {
-                    resultSummaryLabel_->setText(
-                        QStringLiteral("✖ 执行失败\n%1").arg(message));
-                    resultSummaryLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(gis::style::Color::kError));
-                    statusBar()->showMessage(QStringLiteral("执行失败：") + message);
-                }
-
-                if (statusProgressBar_) {
-                    statusProgressBar_->setRange(0, 100);
-                    statusProgressBar_->setValue(result.success ? 100 : 0);
-                }
-                refreshExecuteButtonState();
-                emit executionFinished(result.success);
-            });
-    connect(worker, &ExecuteWorker::finished, thread, &QThread::quit);
-    connect(worker, &ExecuteWorker::finished, worker, &QObject::deleteLater);
-    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-    connect(progressDialog, &QDialog::finished, progressDialog, &QObject::deleteLater);
-
-    thread->start();
-    progressDialog->setWindowFlags(progressDialog->windowFlags() & ~Qt::WindowModal);
-    progressDialog->show();
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
@@ -1723,7 +1708,7 @@ void MainWindow::dropEvent(QDropEvent* event) {
 }
 
 void MainWindow::onRerunTask(const QString& taskId) {
-    auto rec = TaskManager::instance().findTask(taskId);
+    auto rec = TaskManager::instance().findTask(taskCenterPage_->currentGroup(), taskId);
     if (rec.id.isEmpty()) return;
     currentPlugin_ = nullptr;
     for (auto* plugin : pluginManager_.plugins()) {
@@ -1738,14 +1723,11 @@ void MainWindow::onRerunTask(const QString& taskId) {
     currentEditingTaskId_.clear();
     resetDerivedParamTracking();
 
-    auto newId = TaskManager::instance().submitTask(
-        rec.pluginName, rec.actionKey, rec.params,
-        rec.pluginDisplayName, rec.actionDisplayName);
     runPluginWithParams(rec.params);
 }
 
 void MainWindow::onEditTask(const QString& taskId) {
-    auto rec = TaskManager::instance().findTask(taskId);
+    auto rec = TaskManager::instance().findTask(taskCenterPage_->currentGroup(), taskId);
     if (rec.id.isEmpty()) return;
 
     selectPluginByName(rec.pluginName.toStdString());
@@ -1773,22 +1755,22 @@ void MainWindow::onEditTask(const QString& taskId) {
 }
 
 void MainWindow::onDeleteTasks(const QStringList& taskIds) {
-    TaskManager::instance().deleteTasks(taskIds);
+    TaskManager::instance().deleteTasks(taskCenterPage_->currentGroup(), taskIds);
     taskCenterPage_->removeTaskRows(taskIds);
 }
 
 void MainWindow::onClearHistory() {
-    TaskManager::instance().clearHistory();
+    TaskManager::instance().clearHistory(taskCenterPage_->currentGroup());
     taskCenterPage_->refreshAll();
 }
 
 void MainWindow::onClearLogsForTask(const QString& taskId) {
-    TaskDatabase::instance().clearLogsForTask(taskId);
+    TaskDatabase::instance().clearLogsForTask(taskCenterPage_->currentGroup(), taskId);
     taskCenterPage_->clearLogDisplay();
 }
 
 void MainWindow::onClearAllLogs() {
-    TaskDatabase::instance().clearAllLogs();
+    TaskDatabase::instance().clearAllLogs(taskCenterPage_->currentGroup());
     taskCenterPage_->clearLogDisplay();
 }
 

@@ -1,7 +1,7 @@
 #include "qt_progress_reporter.h"
 
-QtProgressReporter::QtProgressReporter(QObject* parent)
-    : QObject(parent) {}
+QtProgressReporter::QtProgressReporter(const QString& taskId, QObject* parent)
+    : QObject(parent), taskId_(taskId) {}
 
 bool QtProgressReporter::shouldEmitProgress(double percent) const {
     if (m_firstProgress) return true;
@@ -25,11 +25,11 @@ void QtProgressReporter::onProgress(double percent) {
     m_lastProgressTime = std::chrono::steady_clock::now();
     m_firstProgress = false;
 
-    emit progressChanged(percent);
+    emit progressChanged(taskId_, percent);
 }
 
 void QtProgressReporter::onMessage(const std::string& msg) {
-    emit messageLogged(m_currentTaskId, QString::fromUtf8(msg.c_str()));
+    emit messageLogged(taskId_, QString::fromUtf8(msg.c_str()));
 }
 
 bool QtProgressReporter::isCancelled() const {
@@ -45,8 +45,4 @@ void QtProgressReporter::reset() {
     m_lastProgressValue = -1.0;
     m_firstProgress = true;
     m_lastProgressTime = std::chrono::steady_clock::now();
-}
-
-void QtProgressReporter::setCurrentTaskId(const QString& taskId) {
-    m_currentTaskId = taskId;
 }

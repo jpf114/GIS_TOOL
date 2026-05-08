@@ -19,45 +19,80 @@ TaskDatabase& TaskDatabase::instance() {
 TaskDatabase::TaskDatabase(QObject* parent)
     : QObject(parent) {}
 
-bool TaskDatabase::initialize(const QString& dbPath) {
-    dbPath_ = dbPath;
-    db_ = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"));
-    db_.setDatabaseName(dbPath);
+QSqlDatabase TaskDatabase::databaseForGroup(const QString& displayGroup) const {
+    QString connName = groupConnectionNames_.value(displayGroup);
+    if (connName.isEmpty()) {
+        return QSqlDatabase();
+    }
+    return QSqlDatabase::database(connName);
+}
 
-    if (!db_.open()) {
+QString TaskDatabase::dbPathForGroup(const QString& displayGroup) const {
+    return baseDbPath_ + QStringLiteral("/gis_tasks_%1.db").arg(displayGroup);
+}
+
+bool TaskDatabase::initializeGroup(const QString& displayGroup) {
+    if (groupConnectionNames_.contains(displayGroup)) {
+        return true;
+    }
+
+    if (baseDbPath_.isEmpty()) {
+        baseDbPath_ = QCoreApplication::applicationDirPath();
+    }
+
+    QString connName = QStringLiteral("tasks_%1").arg(displayGroup);
+    QString dbPath = dbPathForGroup(displayGroup);
+
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
+    db.setDatabaseName(dbPath);
+
+    if (!db.open()) {
         qWarning() << "Failed to open database:" << dbPath;
         return false;
     }
 
-    db_.exec(QStringLiteral("PRAGMA journal_mode=WAL"));
-    db_.exec(QStringLiteral("PRAGMA foreign_keys=ON"));
+    db.exec(QStringLiteral("PRAGMA journal_mode=WAL"));
+    db.exec(QStringLiteral("PRAGMA foreign_keys=ON"));
 
-    if (!createTables()) {
+    groupConnectionNames_[displayGroup] = connName;
+    groupNextIds_[displayGroup] = 1;
+
+    if (!createTables(displayGroup)) {
         return false;
     }
 
-    QSqlQuery query(db_);
+    QSqlQuery query(db);
     query.exec(QStringLiteral("SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) FROM tasks"));
     if (query.next()) {
         bool ok = false;
         int maxId = query.value(0).toInt(&ok);
         if (ok && maxId > 0) {
-            nextId_ = maxId + 1;
+            groupNextIds_[displayGroup] = maxId + 1;
         }
     }
 
-    checkDatabaseSize();
+    checkDatabaseSize(displayGroup);
     return true;
 }
 
-void TaskDatabase::close() {
-    if (db_.isOpen()) {
-        db_.close();
+void TaskDatabase::closeAll() {
+    for (auto it = groupConnectionNames_.constBegin();
+         it != groupConnectionNames_.constEnd(); ++it) {
+        QSqlDatabase db = QSqlDatabase::database(it.value());
+        if (db.isOpen()) {
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(it.value());
     }
+    groupConnectionNames_.clear();
+    groupNextIds_.clear();
 }
 
-bool TaskDatabase::createTables() {
-    QSqlQuery query(db_);
+bool TaskDatabase::createTables(const QString& displayGroup) {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return false;
+
+    QSqlQuery query(db);
 
     bool ok = query.exec(
         QStringLiteral("CREATE TABLE IF NOT EXISTS tasks ("
@@ -96,12 +131,11 @@ bool TaskDatabase::createTables() {
     query.exec(QStringLiteral("CREATE INDEX IF NOT EXISTS idx_tasks_start_time ON tasks(start_time)"));
 
     QStringList existingColumns;
-    QSqlQuery colQuery(db_);
+    QSqlQuery colQuery(db);
     colQuery.exec(QStringLiteral("PRAGMA table_info(tasks)"));
     while (colQuery.next()) {
         existingColumns << colQuery.value(1).toString();
     }
-
     if (!existingColumns.contains(QStringLiteral("plugin_display_name"))) {
         query.exec(QStringLiteral("ALTER TABLE tasks ADD COLUMN plugin_display_name TEXT"));
     }
@@ -112,10 +146,11 @@ bool TaskDatabase::createTables() {
     return true;
 }
 
-void TaskDatabase::checkDatabaseSize() {
+void TaskDatabase::checkDatabaseSize(const QString& displayGroup) {
     qint64 maxSize = 50 * 1024 * 1024;
-    if (databaseFileSize() > maxSize) {
-        QSqlQuery query(db_);
+    if (databaseFileSize(displayGroup) > maxSize) {
+        QSqlDatabase db = databaseForGroup(displayGroup);
+        QSqlQuery query(db);
         query.exec(QStringLiteral(
             "DELETE FROM tasks WHERE status IN (2, 3, 4) "
             "ORDER BY start_time ASC"));
@@ -123,8 +158,11 @@ void TaskDatabase::checkDatabaseSize() {
     }
 }
 
-QString TaskDatabase::insertTask(const TaskRecord& rec) {
-    QString id = QStringLiteral("T%1").arg(nextId_++, 4, 10, QLatin1Char('0'));
+QString TaskDatabase::insertTask(const QString& displayGroup, const TaskRecord& rec) {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return {};
+
+    QString id = QStringLiteral("T%1").arg(groupNextIds_[displayGroup]++, 4, 10, QLatin1Char('0'));
 
     QJsonObject paramsObj;
     for (const auto& [key, value] : rec.params) {
@@ -152,7 +190,7 @@ QString TaskDatabase::insertTask(const TaskRecord& rec) {
 
     QString paramsJson = QJsonDocument(paramsObj).toJson(QJsonDocument::Compact);
 
-    QSqlQuery query(db_);
+    QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "INSERT INTO tasks (id, plugin_name, action_key, plugin_display_name, action_display_name, params, status, start_time) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"));
@@ -173,18 +211,24 @@ QString TaskDatabase::insertTask(const TaskRecord& rec) {
     return id;
 }
 
-bool TaskDatabase::updateTaskStatus(const QString& id, int status) {
-    QSqlQuery query(db_);
+bool TaskDatabase::updateTaskStatus(const QString& displayGroup, const QString& id, int status) {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return false;
+
+    QSqlQuery query(db);
     query.prepare(QStringLiteral("UPDATE tasks SET status=? WHERE id=?"));
     query.addBindValue(status);
     query.addBindValue(id);
     return query.exec();
 }
 
-bool TaskDatabase::updateTaskResult(const QString& id, int status, const QString& resultMsg,
-                                     const QString& resultRaw, const QString& outputPath,
-                                     const QString& endTime) {
-    QSqlQuery query(db_);
+bool TaskDatabase::updateTaskResult(const QString& displayGroup, const QString& id, int status,
+                                     const QString& resultMsg, const QString& resultRaw,
+                                     const QString& outputPath, const QString& endTime) {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return false;
+
+    QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "UPDATE tasks SET status=?, result_msg=?, result_raw=?, output_path=?, end_time=? WHERE id=?"));
     query.addBindValue(status);
@@ -196,9 +240,12 @@ bool TaskDatabase::updateTaskResult(const QString& id, int status, const QString
     return query.exec();
 }
 
-bool TaskDatabase::updateTaskParams(const QString& id, const QString& paramsJson,
-                                     int status, const QString& startTime) {
-    QSqlQuery query(db_);
+bool TaskDatabase::updateTaskParams(const QString& displayGroup, const QString& id,
+                                     const QString& paramsJson, int status, const QString& startTime) {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return false;
+
+    QSqlQuery query(db);
     query.prepare(QStringLiteral("DELETE FROM task_logs WHERE task_id=?"));
     query.addBindValue(id);
     query.exec();
@@ -213,15 +260,18 @@ bool TaskDatabase::updateTaskParams(const QString& id, const QString& paramsJson
     return query.exec();
 }
 
-bool TaskDatabase::deleteTasks(const QStringList& ids) {
+bool TaskDatabase::deleteTasks(const QString& displayGroup, const QStringList& ids) {
     if (ids.isEmpty()) return true;
+
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return false;
 
     QStringList placeholders;
     for (int i = 0; i < ids.size(); ++i) {
         placeholders << QStringLiteral("?");
     }
 
-    QSqlQuery query(db_);
+    QSqlQuery query(db);
     query.prepare(QStringLiteral("DELETE FROM tasks WHERE id IN (%1)")
         .arg(placeholders.join(QStringLiteral(", "))));
     for (const auto& id : ids) {
@@ -230,15 +280,22 @@ bool TaskDatabase::deleteTasks(const QStringList& ids) {
     return query.exec();
 }
 
-bool TaskDatabase::clearHistory() {
-    QSqlQuery query(db_);
+bool TaskDatabase::clearHistory(const QString& displayGroup) {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return false;
+
+    QSqlQuery query(db);
     query.exec(QStringLiteral("DELETE FROM task_logs WHERE task_id IN "
         "(SELECT id FROM tasks WHERE status NOT IN (0, 1))"));
     return query.exec(QStringLiteral("DELETE FROM tasks WHERE status NOT IN (0, 1)"));
 }
 
-int TaskDatabase::appendLog(const QString& taskId, const QString& message, int level) {
-    QSqlQuery query(db_);
+int TaskDatabase::appendLog(const QString& displayGroup, const QString& taskId,
+                             const QString& message, int level) {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return -1;
+
+    QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "INSERT INTO task_logs (task_id, timestamp, level, message) VALUES (?, ?, ?, ?)"));
     query.addBindValue(taskId);
@@ -252,21 +309,31 @@ int TaskDatabase::appendLog(const QString& taskId, const QString& message, int l
     return -1;
 }
 
-bool TaskDatabase::clearLogsForTask(const QString& taskId) {
-    QSqlQuery query(db_);
+bool TaskDatabase::clearLogsForTask(const QString& displayGroup, const QString& taskId) {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return false;
+
+    QSqlQuery query(db);
     query.prepare(QStringLiteral("DELETE FROM task_logs WHERE task_id=?"));
     query.addBindValue(taskId);
     return query.exec();
 }
 
-bool TaskDatabase::clearAllLogs() {
-    QSqlQuery query(db_);
+bool TaskDatabase::clearAllLogs(const QString& displayGroup) {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return false;
+
+    QSqlQuery query(db);
     return query.exec(QStringLiteral("DELETE FROM task_logs"));
 }
 
-QList<TaskLogEntry> TaskDatabase::logsForTask(const QString& taskId) const {
+QList<TaskLogEntry> TaskDatabase::logsForTask(const QString& displayGroup,
+                                               const QString& taskId) const {
     QList<TaskLogEntry> result;
-    QSqlQuery query(db_);
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return result;
+
+    QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "SELECT id, task_id, timestamp, level, message FROM task_logs "
         "WHERE task_id=? ORDER BY id ASC"));
@@ -348,9 +415,12 @@ static TaskRecord recordFromQuery(const QSqlQuery& query) {
     return rec;
 }
 
-QList<TaskRecord> TaskDatabase::recentTasks(int limit) const {
+QList<TaskRecord> TaskDatabase::recentTasks(const QString& displayGroup, int limit) const {
     QList<TaskRecord> result;
-    QSqlQuery query(db_);
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return result;
+
+    QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "SELECT id, plugin_name, action_key, plugin_display_name, action_display_name, "
         "params, status, result_msg, result_raw, output_path, start_time, end_time "
@@ -365,8 +435,11 @@ QList<TaskRecord> TaskDatabase::recentTasks(int limit) const {
     return result;
 }
 
-TaskRecord TaskDatabase::findTask(const QString& id) const {
-    QSqlQuery query(db_);
+TaskRecord TaskDatabase::findTask(const QString& displayGroup, const QString& id) const {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return TaskRecord{};
+
+    QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "SELECT id, plugin_name, action_key, plugin_display_name, action_display_name, "
         "params, status, result_msg, result_raw, output_path, start_time, end_time "
@@ -379,8 +452,11 @@ TaskRecord TaskDatabase::findTask(const QString& id) const {
     return TaskRecord{};
 }
 
-int TaskDatabase::taskCount() const {
-    QSqlQuery query(db_);
+int TaskDatabase::taskCount(const QString& displayGroup) const {
+    QSqlDatabase db = databaseForGroup(displayGroup);
+    if (!db.isOpen()) return 0;
+
+    QSqlQuery query(db);
     query.exec(QStringLiteral("SELECT COUNT(*) FROM tasks"));
     if (query.next()) {
         return query.value(0).toInt();
@@ -388,6 +464,6 @@ int TaskDatabase::taskCount() const {
     return 0;
 }
 
-qint64 TaskDatabase::databaseFileSize() const {
-    return QFileInfo(dbPath_).size();
+qint64 TaskDatabase::databaseFileSize(const QString& displayGroup) const {
+    return QFileInfo(dbPathForGroup(displayGroup)).size();
 }

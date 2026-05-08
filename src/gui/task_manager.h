@@ -18,6 +18,7 @@ struct TaskLogEntry {
 
 struct TaskRecord {
     QString id;
+    QString displayGroup;
     QString pluginName;
     QString actionKey;
     QString pluginDisplayName;
@@ -34,30 +35,38 @@ class TaskManager : public QObject {
 public:
     static TaskManager& instance();
 
-    QString submitTask(const QString& pluginName,
+    void initializeGroup(const QString& displayGroup);
+
+    QString submitTask(const QString& displayGroup,
+                       const QString& pluginName,
                        const QString& actionKey,
                        const std::map<std::string, gis::framework::ParamValue>& params,
                        const QString& pluginDisplayName = {},
                        const QString& actionDisplayName = {});
-    void updateAndRerunTask(const QString& id,
+    void updateAndRerunTask(const QString& displayGroup, const QString& id,
                             const std::map<std::string, gis::framework::ParamValue>& newParams);
-    void updateTaskStatus(const QString& id, TaskRecord::Status status);
-    void finishTask(const QString& id, const gis::framework::Result& result);
-    void deleteTasks(const QStringList& ids);
-    void clearHistory();
+    void updateTaskStatus(const QString& displayGroup, const QString& id,
+                          TaskRecord::Status status);
+    void finishTask(const QString& displayGroup, const QString& id,
+                    const gis::framework::Result& result);
+    void deleteTasks(const QString& displayGroup, const QStringList& ids);
+    void clearHistory(const QString& displayGroup);
 
-    void appendLog(const QString& taskId, const QString& message, int level = 0);
-    QList<TaskLogEntry> logsForTask(const QString& taskId) const;
+    void appendLog(const QString& displayGroup, const QString& taskId,
+                   const QString& message, int level = 0);
+    QList<TaskLogEntry> logsForTask(const QString& displayGroup,
+                                     const QString& taskId) const;
 
-    const TaskRecord findTask(const QString& id) const;
-    QList<TaskRecord> recentTasks(int limit = 200) const;
-    int taskCount() const;
+    const TaskRecord findTask(const QString& displayGroup, const QString& id) const;
+    QList<TaskRecord> recentTasks(const QString& displayGroup, int limit = 200) const;
+    int taskCount(const QString& displayGroup) const;
 
 signals:
-    void taskSubmitted(const QString& id);
-    void taskStarted(const QString& id);
-    void taskFinished(const QString& id);
-    void logAppended(const QString& taskId, const QString& message);
+    void taskSubmitted(const QString& displayGroup, const QString& id);
+    void taskStarted(const QString& displayGroup, const QString& id);
+    void taskFinished(const QString& displayGroup, const QString& id);
+    void logAppended(const QString& displayGroup, const QString& taskId,
+                     const QString& message);
 
 private:
     TaskManager(QObject* parent = nullptr);

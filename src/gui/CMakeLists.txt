@@ -5,6 +5,7 @@ add_executable(gis-gui
     main.cpp
     custom_index_preset_store.cpp
     gui_data_support.cpp
+    gdal_config.cpp
     mainwindow.cpp
     nav_panel.cpp
     param_card_widget.cpp
@@ -18,6 +19,7 @@ add_executable(gis-gui
     task_manager.cpp
     task_database.cpp
     task_center_page.cpp
+    task_runner.cpp
 )
 
 set(GIS_PLUGIN_TARGETS

@@ -18,7 +18,6 @@
 TaskCenterPage::TaskCenterPage(QWidget* parent)
     : QWidget(parent) {
     setupUi();
-    refreshAll();
 }
 
 void TaskCenterPage::setupUi() {
@@ -66,7 +65,6 @@ void TaskCenterPage::setupUi() {
     taskTree_->setContextMenuPolicy(Qt::CustomContextMenu);
     taskTree_->setHeaderLabels(QStringList()
         << QStringLiteral("状态")
-        << QStringLiteral("插件")
         << QStringLiteral("子功能")
         << QStringLiteral("开始时间")
         << QStringLiteral("进度")
@@ -76,12 +74,10 @@ void TaskCenterPage::setupUi() {
     taskTree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     taskTree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     taskTree_->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    taskTree_->header()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     taskTree_->setColumnWidth(0, 80);
-    taskTree_->setColumnWidth(1, 120);
-    taskTree_->setColumnWidth(2, 140);
-    taskTree_->setColumnWidth(3, 150);
-    taskTree_->setColumnWidth(4, 80);
+    taskTree_->setColumnWidth(1, 160);
+    taskTree_->setColumnWidth(2, 150);
+    taskTree_->setColumnWidth(3, 80);
 
     connect(taskTree_, &QTreeWidget::currentItemChanged,
             this, &TaskCenterPage::onCurrentItemChanged);
@@ -153,17 +149,21 @@ void TaskCenterPage::setupUi() {
     mainLayout->addWidget(splitter_);
 }
 
-void TaskCenterPage::addTaskRow(const QString& taskId, const QString& pluginDisplayName,
-                                 const QString& actionDisplayName, int status,
-                                 const QString& startTime) {
+void TaskCenterPage::setCurrentGroup(const QString& displayGroup) {
+    if (currentGroup_ == displayGroup) return;
+    currentGroup_ = displayGroup;
+    refreshAll();
+}
+
+void TaskCenterPage::addTaskRow(const QString& taskId, const QString& actionDisplayName,
+                                 int status, const QString& startTime) {
     auto* item = new QTreeWidgetItem;
     item->setData(0, Qt::UserRole, taskId);
     item->setText(0, statusText(status));
-    item->setText(1, pluginDisplayName);
-    item->setText(2, actionDisplayName);
-    item->setText(3, startTime);
+    item->setText(1, actionDisplayName);
+    item->setText(2, startTime);
+    item->setText(3, QStringLiteral("-"));
     item->setText(4, QStringLiteral("-"));
-    item->setText(5, QStringLiteral("-"));
 
     QFont f = item->font(0);
     f.setBold(true);
@@ -186,11 +186,11 @@ void TaskCenterPage::updateTaskRow(const QString& taskId, int status,
     item->setForeground(0, QColor(statusColor(status)));
 
     if (status == TaskRecord::Running) {
-        item->setText(4, QStringLiteral("运行中"));
+        item->setText(3, QStringLiteral("运行中"));
     }
 
     if (status == TaskRecord::Completed || status == TaskRecord::Failed || status == TaskRecord::Cancelled) {
-        QString startStr = item->text(3);
+        QString startStr = item->text(2);
         QDateTime startDt = QDateTime::fromString(startStr, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
         if (!startDt.isValid()) {
             startDt = QDateTime::fromString(startStr, QStringLiteral("HH:mm:ss"));
@@ -208,11 +208,11 @@ void TaskCenterPage::updateTaskRow(const QString& taskId, int status,
         qint64 secs = startDt.secsTo(endDt);
         if (secs < 0) secs = 0;
         if (secs < 60) {
-            item->setText(5, QStringLiteral("%1秒").arg(secs));
+            item->setText(4, QStringLiteral("%1秒").arg(secs));
         } else {
-            item->setText(5, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
+            item->setText(4, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
         }
-        item->setText(4, status == TaskRecord::Completed ? QStringLiteral("100%") : QStringLiteral("-"));
+        item->setText(3, status == TaskRecord::Completed ? QStringLiteral("100%") : QStringLiteral("-"));
     }
 }
 
@@ -221,7 +221,7 @@ void TaskCenterPage::updateTaskProgress(const QString& taskId, double percent) {
     if (!item) return;
 
     int value = std::clamp(static_cast<int>(percent * 100.0), 0, 100);
-    item->setText(4, QStringLiteral("%1%").arg(value));
+    item->setText(3, QStringLiteral("%1%").arg(value));
 }
 
 void TaskCenterPage::removeTaskRows(const QStringList& taskIds) {
@@ -240,33 +240,37 @@ void TaskCenterPage::refreshAll() {
     logDisplay_->clear();
     currentLogTaskId_.clear();
 
-    auto tasks = TaskManager::instance().recentTasks();
+    if (currentGroup_.isEmpty()) {
+        taskCountLabel_->setText(QStringLiteral("共 0 个任务"));
+        return;
+    }
+
+    auto tasks = TaskManager::instance().recentTasks(currentGroup_);
     for (const auto& rec : tasks) {
         auto* item = new QTreeWidgetItem;
         item->setData(0, Qt::UserRole, rec.id);
         item->setText(0, statusText(static_cast<int>(rec.status)));
-        item->setText(1, rec.pluginDisplayName.isEmpty() ? rec.pluginName : rec.pluginDisplayName);
-        item->setText(2, rec.actionDisplayName.isEmpty() ? rec.actionKey : rec.actionDisplayName);
-        item->setText(3, rec.startTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+        item->setText(1, rec.actionDisplayName.isEmpty() ? rec.actionKey : rec.actionDisplayName);
+        item->setText(2, rec.startTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
 
         if (rec.status == TaskRecord::Running) {
-            item->setText(4, QStringLiteral("运行中"));
+            item->setText(3, QStringLiteral("运行中"));
         } else if (rec.status == TaskRecord::Completed) {
-            item->setText(4, QStringLiteral("100%"));
+            item->setText(3, QStringLiteral("100%"));
         } else {
-            item->setText(4, QStringLiteral("-"));
+            item->setText(3, QStringLiteral("-"));
         }
 
         if (rec.endTime.isValid() && rec.startTime.isValid()) {
             qint64 secs = rec.startTime.secsTo(rec.endTime);
             if (secs < 0) secs = 0;
             if (secs < 60) {
-                item->setText(5, QStringLiteral("%1秒").arg(secs));
+                item->setText(4, QStringLiteral("%1秒").arg(secs));
             } else {
-                item->setText(5, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
+                item->setText(4, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
             }
         } else {
-            item->setText(5, QStringLiteral("-"));
+            item->setText(4, QStringLiteral("-"));
         }
 
         QFont f = item->font(0);
@@ -322,7 +326,7 @@ void TaskCenterPage::onCurrentItemChanged(QTreeWidgetItem* current, QTreeWidgetI
 
     currentLogTaskId_ = taskId;
 
-    auto logs = TaskManager::instance().logsForTask(taskId);
+    auto logs = TaskManager::instance().logsForTask(currentGroup_, taskId);
     logDisplay_->clear();
     for (const auto& entry : logs) {
         QString timestamp = QDateTime::fromString(entry.timestamp, Qt::ISODate).toString(QStringLiteral("HH:mm:ss"));
@@ -337,7 +341,7 @@ void TaskCenterPage::onCurrentItemChanged(QTreeWidgetItem* current, QTreeWidgetI
         logDisplay_->append(html);
     }
 
-    int status = TaskManager::instance().findTask(taskId).status;
+    int status = TaskManager::instance().findTask(currentGroup_, taskId).status;
     bool canRerun = (status == TaskRecord::Completed ||
                      status == TaskRecord::Failed ||
                      status == TaskRecord::Cancelled);
@@ -351,7 +355,7 @@ void TaskCenterPage::onItemDoubleClicked(QTreeWidgetItem* item, int /*column*/) 
     QString taskId = item->data(0, Qt::UserRole).toString();
     if (taskId.isEmpty()) return;
 
-    int status = TaskManager::instance().findTask(taskId).status;
+    int status = TaskManager::instance().findTask(currentGroup_, taskId).status;
     if (status == TaskRecord::Running || status == TaskRecord::Pending) return;
 
     emit editTaskRequested(taskId);
@@ -364,7 +368,7 @@ void TaskCenterPage::onCustomContextMenu(const QPoint& pos) {
     QString taskId = current->data(0, Qt::UserRole).toString();
     if (taskId.isEmpty()) return;
 
-    int status = TaskManager::instance().findTask(taskId).status;
+    int status = TaskManager::instance().findTask(currentGroup_, taskId).status;
     bool canRerun = (status == TaskRecord::Completed ||
                      status == TaskRecord::Failed ||
                      status == TaskRecord::Cancelled);

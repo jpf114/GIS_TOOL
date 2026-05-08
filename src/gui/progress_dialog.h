@@ -1,25 +1,19 @@
 #pragma once
 #include <QDialog>
-#include <memory>
 
-class QProgressBar;
-class QTextEdit;
-class QPushButton;
 class QLabel;
-class QtProgressReporter;
+class QProgressBar;
+class QPushButton;
+class QTextEdit;
 
 class ProgressDialog : public QDialog {
     Q_OBJECT
 public:
-    explicit ProgressDialog(QtProgressReporter* reporter, QWidget* parent = nullptr);
+    explicit ProgressDialog(QWidget* parent = nullptr);
 
-    void setFinished(const QString& message, bool success, bool cancelled = false);
-
-private slots:
-    void onCancel();
-    void onForceQuit();
-    void onProgressChanged(double percent);
-    void onMessageLogged(const QString& msg);
+    void setFinished(const QString& message, bool success, bool cancelled);
+    void updateProgress(double percent);
+    void appendLog(const QString& message);
 
 private:
     QLabel* statusLabel_ = nullptr;
@@ -27,5 +21,4 @@ private:
     QTextEdit* logEdit_ = nullptr;
     QPushButton* cancelButton_ = nullptr;
     QPushButton* forceQuitButton_ = nullptr;
-    QtProgressReporter* reporter_ = nullptr;
 };

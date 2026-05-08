@@ -15,7 +15,6 @@ class ParamWidget;
 class NavPanel;
 class QProgressBar;
 class QPushButton;
-class QtProgressReporter;
 class QTabWidget;
 class TaskCenterPage;
 
@@ -84,7 +83,6 @@ private:
     QLabel* statusPluginCountLabel_ = nullptr;
     QLabel* statusSubFunctionCountLabel_ = nullptr;
     QProgressBar* statusProgressBar_ = nullptr;
-    QtProgressReporter* reporter_ = nullptr;
 
     QTabWidget* tabWidget_ = nullptr;
     TaskCenterPage* taskCenterPage_ = nullptr;

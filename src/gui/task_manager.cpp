@@ -12,13 +12,14 @@ TaskManager& TaskManager::instance() {
 }
 
 TaskManager::TaskManager(QObject* parent)
-    : QObject(parent) {
-    QString dbPath = QCoreApplication::applicationDirPath()
-        + QStringLiteral("/gis_tasks.db");
-    TaskDatabase::instance().initialize(dbPath);
+    : QObject(parent) {}
+
+void TaskManager::initializeGroup(const QString& displayGroup) {
+    TaskDatabase::instance().initializeGroup(displayGroup);
 }
 
 QString TaskManager::submitTask(
+    const QString& displayGroup,
     const QString& pluginName,
     const QString& actionKey,
     const std::map<std::string, gis::framework::ParamValue>& params,
@@ -26,6 +27,7 @@ QString TaskManager::submitTask(
     const QString& actionDisplayName) {
 
     TaskRecord rec;
+    rec.displayGroup = displayGroup;
     rec.pluginName = pluginName;
     rec.actionKey = actionKey;
     rec.pluginDisplayName = pluginDisplayName.isEmpty() ? pluginName : pluginDisplayName;
@@ -34,14 +36,15 @@ QString TaskManager::submitTask(
     rec.startTime = QDateTime::currentDateTime();
     rec.status = TaskRecord::Pending;
 
-    QString id = TaskDatabase::instance().insertTask(rec);
+    QString id = TaskDatabase::instance().insertTask(displayGroup, rec);
     if (!id.isEmpty()) {
-        emit taskSubmitted(id);
+        emit taskSubmitted(displayGroup, id);
     }
     return id;
 }
 
 void TaskManager::updateAndRerunTask(
+    const QString& displayGroup,
     const QString& id,
     const std::map<std::string, gis::framework::ParamValue>& newParams) {
 
@@ -72,19 +75,21 @@ void TaskManager::updateAndRerunTask(
     QString paramsJson = QJsonDocument(paramsObj).toJson(QJsonDocument::Compact);
     QString startTime = QDateTime::currentDateTime().toString(Qt::ISODate);
 
-    TaskDatabase::instance().updateTaskParams(id, paramsJson,
+    TaskDatabase::instance().updateTaskParams(displayGroup, id, paramsJson,
         static_cast<int>(TaskRecord::Pending), startTime);
-    emit taskSubmitted(id);
+    emit taskSubmitted(displayGroup, id);
 }
 
-void TaskManager::updateTaskStatus(const QString& id, TaskRecord::Status status) {
-    TaskDatabase::instance().updateTaskStatus(id, static_cast<int>(status));
+void TaskManager::updateTaskStatus(const QString& displayGroup,
+                                    const QString& id, TaskRecord::Status status) {
+    TaskDatabase::instance().updateTaskStatus(displayGroup, id, static_cast<int>(status));
     if (status == TaskRecord::Running) {
-        emit taskStarted(id);
+        emit taskStarted(displayGroup, id);
     }
 }
 
-void TaskManager::finishTask(const QString& id, const gis::framework::Result& result) {
+void TaskManager::finishTask(const QString& displayGroup, const QString& id,
+                              const gis::framework::Result& result) {
     int status;
     if (result.success) status = TaskRecord::Completed;
     else if (result.isCancelled) status = TaskRecord::Cancelled;
@@ -93,40 +98,44 @@ void TaskManager::finishTask(const QString& id, const gis::framework::Result& re
     QString endTime = QDateTime::currentDateTime().toString(Qt::ISODate);
 
     TaskDatabase::instance().updateTaskResult(
-        id, status,
+        displayGroup, id, status,
         QString::fromUtf8(result.message),
         QString::fromUtf8(result.message),
         QString::fromUtf8(result.outputPath),
         endTime);
 
-    emit taskFinished(id);
+    emit taskFinished(displayGroup, id);
 }
 
-void TaskManager::deleteTasks(const QStringList& ids) {
-    TaskDatabase::instance().deleteTasks(ids);
+void TaskManager::deleteTasks(const QString& displayGroup, const QStringList& ids) {
+    TaskDatabase::instance().deleteTasks(displayGroup, ids);
 }
 
-void TaskManager::clearHistory() {
-    TaskDatabase::instance().clearHistory();
+void TaskManager::clearHistory(const QString& displayGroup) {
+    TaskDatabase::instance().clearHistory(displayGroup);
 }
 
-void TaskManager::appendLog(const QString& taskId, const QString& message, int level) {
-    TaskDatabase::instance().appendLog(taskId, message, level);
-    emit logAppended(taskId, message);
+void TaskManager::appendLog(const QString& displayGroup, const QString& taskId,
+                             const QString& message, int level) {
+    TaskDatabase::instance().appendLog(displayGroup, taskId, message, level);
+    emit logAppended(displayGroup, taskId, message);
 }
 
-QList<TaskLogEntry> TaskManager::logsForTask(const QString& taskId) const {
-    return TaskDatabase::instance().logsForTask(taskId);
+QList<TaskLogEntry> TaskManager::logsForTask(const QString& displayGroup,
+                                              const QString& taskId) const {
+    return TaskDatabase::instance().logsForTask(displayGroup, taskId);
 }
 
-const TaskRecord TaskManager::findTask(const QString& id) const {
-    return TaskDatabase::instance().findTask(id);
+const TaskRecord TaskManager::findTask(const QString& displayGroup,
+                                        const QString& id) const {
+    return TaskDatabase::instance().findTask(displayGroup, id);
 }
 
-QList<TaskRecord> TaskManager::recentTasks(int limit) const {
-    return TaskDatabase::instance().recentTasks(limit);
+QList<TaskRecord> TaskManager::recentTasks(const QString& displayGroup,
+                                            int limit) const {
+    return TaskDatabase::instance().recentTasks(displayGroup, limit);
 }
 
-int TaskManager::taskCount() const {
-    return TaskDatabase::instance().taskCount();
+int TaskManager::taskCount(const QString& displayGroup) const {
+    return TaskDatabase::instance().taskCount(displayGroup);
 }

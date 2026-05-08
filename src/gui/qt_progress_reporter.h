@@ -7,7 +7,7 @@
 class QtProgressReporter : public QObject, public gis::core::ProgressReporter {
     Q_OBJECT
 public:
-    explicit QtProgressReporter(QObject* parent = nullptr);
+    explicit QtProgressReporter(const QString& taskId, QObject* parent = nullptr);
 
     void onProgress(double percent) override;
     void onMessage(const std::string& msg) override;
@@ -15,11 +15,11 @@ public:
 
     void cancel();
     void reset();
-    void setCurrentTaskId(const QString& taskId);
-    QString currentTaskId() const { return m_currentTaskId; }
+
+    QString taskId() const { return taskId_; }
 
 signals:
-    void progressChanged(double percent);
+    void progressChanged(const QString& taskId, double percent);
     void messageLogged(const QString& taskId, const QString& msg);
 
 private:
@@ -29,7 +29,7 @@ private:
     double m_lastProgressValue{-1.0};
     std::chrono::steady_clock::time_point m_lastProgressTime{};
     bool m_firstProgress{true};
-    QString m_currentTaskId;
+    QString taskId_;
 
     static constexpr double kProgressDelta = 0.01;
     static constexpr int kProgressIntervalMs = 50;
