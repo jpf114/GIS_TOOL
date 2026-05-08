@@ -172,7 +172,17 @@ inline QString globalStyleSheet() {
         "QScrollBar::handle:horizontal:hover { background: #AFBFCE; }"
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }"
         "QStatusBar { background: %4; border-top: 1px solid %5; color: %9; font-size: 12px; }"
-        "QSplitter::handle { background: #DCE5EF; }")
+        "QSplitter::handle { background: #DCE5EF; }"
+        "QTabWidget::pane { border: none; background: %3; }"
+        "QTabBar::tab { background: transparent; color: %10; padding: 10px 24px; font-size: 13px; border-bottom: 2px solid transparent; margin-right: 4px; }"
+        "QTabBar::tab:selected { color: %2; border-bottom: 2px solid %7; font-weight: 600; }"
+        "QTabBar::tab:hover:!selected { color: %9; }"
+        "QTreeWidget { border: 1px solid %5; border-radius: %19px; background: white; alternate-background-color: #F8FAFB; }"
+        "QTreeWidget::item { padding: 6px 4px; border-bottom: 1px solid #F0F3F7; }"
+        "QTreeWidget::item:selected { background: %8; color: %7; }"
+        "QTreeWidget::item:hover { background: #F5F8FC; }"
+        "QHeaderView::section { background: #F8FAFB; color: %10; font-size: 12px; font-weight: 600; padding: 8px 6px; border: none; border-bottom: 1px solid %5; }"
+        "QTextEdit#logTerminal { border: 1px solid %5; border-radius: 6px; background: #1E2A36; color: #D4DAE2; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px; padding: 8px; }")
         .arg(Color::kWindowBg)
         .arg(Color::kTextPrimary)
         .arg(Color::kPagePanelBg)

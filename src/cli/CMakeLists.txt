@@ -29,13 +29,11 @@ target_link_libraries(gis-cli PRIVATE
 add_custom_command(TARGET gis-cli POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         ${CMAKE_BINARY_DIR}/plugins
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${GIS_VCPKG_RUNTIME_BIN_DIR}
-        $<TARGET_FILE_DIR:gis-cli>
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:gis-cli>/plugins
-    COMMAND_EXPAND_LISTS
 )
+
+gis_copy_minimal_runtime(gis-cli)
 
 foreach(GIS_PLUGIN_TARGET IN LISTS GIS_PLUGIN_TARGETS)
     add_custom_command(TARGET gis-cli POST_BUILD

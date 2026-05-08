@@ -1,5 +1,4 @@
 #include "mainwindow.h"
-
 #include "execute_worker.h"
 #include "nav_panel.h"
 #include "param_widget.h"
@@ -8,14 +7,23 @@
 #include "style_constants.h"
 #include "gui_data_support.h"
 #include "icon_manager.h"
+#include "settings_manager.h"
+#include "task_manager.h"
+#include "task_center_page.h"
+#include "task_database.h"
 
 #include <gis/core/runtime_env.h>
 
 #include <QApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QPainter>
 #include <QPixmap>
 #include <QProgressBar>
@@ -24,6 +32,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStyle>
+#include <QTabWidget>
 #include <QThread>
 #include <QVBoxLayout>
 
@@ -911,6 +920,7 @@ void initIconManager() {
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
+    setAcceptDrops(true);
     initIconManager();
     reporter_ = new QtProgressReporter(this);
     setupUi();
@@ -1007,21 +1017,13 @@ void MainWindow::setupUi() {
     rightPanel->setObjectName(QStringLiteral("pagePanel"));
 
     auto* rightLayout = new QVBoxLayout(rightPanel);
-    rightLayout->setContentsMargins(
-        20,
-        20,
-        20,
-        18);
+    rightLayout->setContentsMargins(20, 20, 20, 18);
     rightLayout->setSpacing(gis::style::Size::kCardSpacing);
 
     auto* titleCard = new QFrame;
     titleCard->setObjectName(QStringLiteral("heroCard"));
     auto* titleLayout = new QVBoxLayout(titleCard);
-    titleLayout->setContentsMargins(
-        22,
-        20,
-        22,
-        20);
+    titleLayout->setContentsMargins(22, 20, 22, 20);
     titleLayout->setSpacing(10);
 
     auto* headerTopLayout = new QHBoxLayout;
@@ -1081,11 +1083,7 @@ void MainWindow::setupUi() {
     auto* executionCard = new QFrame;
     executionCard->setObjectName(QStringLiteral("execCard"));
     auto* executionLayout = new QVBoxLayout(executionCard);
-    executionLayout->setContentsMargins(
-        18,
-        18,
-        18,
-        18);
+    executionLayout->setContentsMargins(18, 18, 18, 18);
     executionLayout->setSpacing(12);
 
     auto* execHeaderLayout = new QHBoxLayout;
@@ -1126,14 +1124,54 @@ void MainWindow::setupUi() {
 
     rightLayout->addWidget(executionCard);
 
+    tabWidget_ = new QTabWidget;
+    tabWidget_->setObjectName(QStringLiteral("pagePanel"));
+    tabWidget_->setTabPosition(QTabWidget::North);
+    tabWidget_->addTab(rightPanel, QStringLiteral("功能配置"));
+
+    taskCenterPage_ = new TaskCenterPage;
+    tabWidget_->addTab(taskCenterPage_, QStringLiteral("任务中心"));
+
+    connect(taskCenterPage_, &TaskCenterPage::rerunTaskRequested,
+            this, &MainWindow::onRerunTask);
+    connect(taskCenterPage_, &TaskCenterPage::editTaskRequested,
+            this, &MainWindow::onEditTask);
+    connect(taskCenterPage_, &TaskCenterPage::deleteTasksRequested,
+            this, &MainWindow::onDeleteTasks);
+    connect(taskCenterPage_, &TaskCenterPage::clearHistoryRequested,
+            this, &MainWindow::onClearHistory);
+    connect(taskCenterPage_, &TaskCenterPage::clearLogsRequested,
+            this, &MainWindow::onClearLogsForTask);
+    connect(taskCenterPage_, &TaskCenterPage::clearAllLogsRequested,
+            this, &MainWindow::onClearAllLogs);
+
+    connect(&TaskManager::instance(), &TaskManager::taskSubmitted,
+            this, [this](const QString& id) {
+        auto rec = TaskManager::instance().findTask(id);
+        if (rec.id.isEmpty()) return;
+        taskCenterPage_->addTaskRow(rec.id, rec.pluginName, rec.actionKey,
+            static_cast<int>(rec.status),
+            rec.startTime.toString(QStringLiteral("HH:mm:ss")));
+    });
+    connect(&TaskManager::instance(), &TaskManager::taskFinished,
+            this, [this](const QString& id) {
+        auto rec = TaskManager::instance().findTask(id);
+        if (rec.id.isEmpty()) return;
+        taskCenterPage_->updateTaskRow(id, static_cast<int>(rec.status),
+            rec.endTime.toString(QStringLiteral("HH:mm:ss")));
+    });
+    connect(&TaskManager::instance(), &TaskManager::logAppended,
+            taskCenterPage_, &TaskCenterPage::appendLog);
+
     auto* splitter = new QSplitter(Qt::Horizontal);
     splitter->setChildrenCollapsible(false);
     splitter->setHandleWidth(1);
+
     splitter->addWidget(navPanel_);
-    splitter->addWidget(rightPanel);
+    splitter->addWidget(tabWidget_);
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
-    splitter->setSizes({gis::style::Size::kSidebarWidth, gis::style::Size::kWindowDefaultWidth - gis::style::Size::kSidebarWidth});
+    splitter->setSizes({gis::style::Size::kSidebarWidth, 800});
 
     mainLayout->addWidget(splitter);
 
@@ -1350,6 +1388,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
 
 void MainWindow::onSubFunctionSelected(const std::string& pluginName,
                                        const std::string& actionKey) {
+    currentEditingTaskId_.clear();
     currentPlugin_ = pluginManager_.find(pluginName);
     if (!currentPlugin_) {
         paramWidget_->clear();
@@ -1429,7 +1468,13 @@ void MainWindow::onExecute() {
         return;
     }
 
-    runPluginWithParams(params);
+    if (!currentEditingTaskId_.isEmpty()) {
+        TaskManager::instance().updateAndRerunTask(currentEditingTaskId_, params);
+        currentEditingTaskId_.clear();
+        runPluginWithParams(params);
+    } else {
+        runPluginWithParams(params);
+    }
 }
 
 void MainWindow::onParamValuesChanged() {
@@ -1579,6 +1624,13 @@ void MainWindow::runPluginWithParams(
     lastExecutionSuccess_ = false;
     lastExecutionCancelled_ = false;
     lastExecutionMessage_.clear();
+
+    auto taskId = TaskManager::instance().submitTask(
+        QString::fromStdString(currentPlugin_->name()),
+        currentActionKey_,
+        params);
+
+    reporter_->setCurrentTaskId(taskId);
     lastExecutionRawMessage_.clear();
     if (resultSummaryLabel_) {
         resultSummaryLabel_->setStyleSheet(QString());
@@ -1599,6 +1651,10 @@ void MainWindow::runPluginWithParams(
     }
     executeButton_->setEnabled(false);
 
+    if (tabWidget_) {
+        tabWidget_->setCurrentIndex(1);
+    }
+
     auto* worker = new ExecuteWorker;
     worker->setup(currentPlugin_, params, reporter_);
 
@@ -1607,9 +1663,20 @@ void MainWindow::runPluginWithParams(
 
     auto* progressDialog = new ProgressDialog(reporter_);
 
+    connect(reporter_, &QtProgressReporter::messageLogged,
+            this, [this](const QString& taskId, const QString& msg) {
+        if (!taskId.isEmpty()) {
+            TaskManager::instance().appendLog(taskId, msg);
+        }
+    });
+
+    connect(thread, &QThread::started, this, [taskId]() {
+        TaskManager::instance().updateTaskStatus(taskId, TaskRecord::Running);
+    });
     connect(thread, &QThread::started, worker, &ExecuteWorker::run);
     connect(worker, &ExecuteWorker::finished, this,
-            [this, progressDialog](const gis::framework::Result& result) {
+            [this, progressDialog, taskId](const gis::framework::Result& result) {
+                TaskManager::instance().finishTask(taskId, result);
                 const QString localizedMessage =
                     QString::fromUtf8(gis::gui::localizeResultMessage(result.message));
                 QString message = localizedMessage;
@@ -1621,6 +1688,10 @@ void MainWindow::runPluginWithParams(
                 progressDialog->setFinished(message, result.success, cancelled);
 
                 if (result.success) {
+                    if (!result.outputPath.empty()) {
+                        SettingsManager::instance().addRecentFile(
+                            QString::fromUtf8(result.outputPath));
+                    }
                     QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result));
                     resultSummaryLabel_->setText(
                         QStringLiteral("✓ 执行成功\n%1").arg(summary));
@@ -1685,5 +1756,98 @@ void MainWindow::runPluginWithParams(
     thread->start();
     progressDialog->setWindowFlags(progressDialog->windowFlags() & ~Qt::WindowModal);
     progressDialog->show();
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
+    if (event->mimeData()->hasUrls()) {
+        event->acceptProposedAction();
+    }
+}
+
+void MainWindow::dropEvent(QDropEvent* event) {
+    if (!event->mimeData()->hasUrls()) return;
+
+    const auto urls = event->mimeData()->urls();
+    if (urls.isEmpty()) return;
+
+    QString filePath = urls.first().toLocalFile();
+    if (filePath.isEmpty()) return;
+
+    if (paramWidget_ && paramWidget_->hasParam("input")) {
+        paramWidget_->setStringValue("input", filePath.toStdString());
+        syncDerivedParams();
+        refreshExecuteButtonState();
+        refreshParamValidationState();
+    }
+
+    event->acceptProposedAction();
+}
+
+void MainWindow::onRerunTask(const QString& taskId) {
+    auto rec = TaskManager::instance().findTask(taskId);
+    if (rec.id.isEmpty()) return;
+    currentPlugin_ = nullptr;
+    for (auto* plugin : pluginManager_.plugins()) {
+        if (plugin->name() == rec.pluginName.toStdString()) {
+            currentPlugin_ = plugin;
+            break;
+        }
+    }
+    if (!currentPlugin_) return;
+
+    currentActionKey_ = rec.actionKey;
+    currentEditingTaskId_.clear();
+    resetDerivedParamTracking();
+
+    auto newId = TaskManager::instance().submitTask(rec.pluginName, rec.actionKey, rec.params);
+    runPluginWithParams(rec.params);
+}
+
+void MainWindow::onEditTask(const QString& taskId) {
+    auto rec = TaskManager::instance().findTask(taskId);
+    if (rec.id.isEmpty()) return;
+
+    selectPluginByName(rec.pluginName.toStdString());
+    selectActionByKey(rec.actionKey.toStdString());
+
+    for (const auto& [key, value] : rec.params) {
+        std::visit([this, &key](const auto& v) {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, std::string>) {
+                paramWidget_->setStringValue(key, v);
+            } else if constexpr (std::is_same_v<T, int>) {
+                paramWidget_->setStringValue(key, std::to_string(v));
+            } else if constexpr (std::is_same_v<T, double>) {
+                paramWidget_->setStringValue(key, std::to_string(v));
+            } else if constexpr (std::is_same_v<T, bool>) {
+                paramWidget_->setStringValue(key, v ? "true" : "false");
+            }
+        }, value);
+    }
+
+    currentEditingTaskId_ = taskId;
+    if (tabWidget_) {
+        tabWidget_->setCurrentIndex(0);
+    }
+}
+
+void MainWindow::onDeleteTasks(const QStringList& taskIds) {
+    TaskManager::instance().deleteTasks(taskIds);
+    taskCenterPage_->removeTaskRows(taskIds);
+}
+
+void MainWindow::onClearHistory() {
+    TaskManager::instance().clearHistory();
+    taskCenterPage_->refreshAll();
+}
+
+void MainWindow::onClearLogsForTask(const QString& taskId) {
+    TaskDatabase::instance().clearLogsForTask(taskId);
+    taskCenterPage_->clearLogDisplay();
+}
+
+void MainWindow::onClearAllLogs() {
+    TaskDatabase::instance().clearAllLogs();
+    taskCenterPage_->clearLogDisplay();
 }
 

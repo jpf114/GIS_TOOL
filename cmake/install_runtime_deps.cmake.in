@@ -32,68 +32,6 @@ set(_gis_runtime_libraries
     "${_gis_install_plugin_dir}/plugin_raster_render.dll"
 )
 
-file(REMOVE
-    "${_gis_install_plugin_dir}/plugin_utility.dll"
-    "${CMAKE_INSTALL_PREFIX}/plugins/plugin_utility.dll"
-    "${_gis_install_bin_dir}/gmock.dll"
-    "${_gis_install_bin_dir}/gmock_main.dll"
-    "${_gis_install_bin_dir}/gtest.dll"
-    "${_gis_install_bin_dir}/gtest_main.dll"
-    "${_gis_install_bin_dir}/Qt6Test.dll"
-    "${_gis_install_bin_dir}/advapi32.dll"
-    "${_gis_install_bin_dir}/authz.dll"
-    "${_gis_install_bin_dir}/bcrypt.dll"
-    "${_gis_install_bin_dir}/crypt32.dll"
-    "${_gis_install_bin_dir}/d3d11.dll"
-    "${_gis_install_bin_dir}/d3d12.dll"
-    "${_gis_install_bin_dir}/dbghelp.dll"
-    "${_gis_install_bin_dir}/dwmapi.dll"
-    "${_gis_install_bin_dir}/dwrite.dll"
-    "${_gis_install_bin_dir}/dxgi.dll"
-    "${_gis_install_bin_dir}/gdi32.dll"
-    "${_gis_install_bin_dir}/iphlpapi.dll"
-    "${_gis_install_bin_dir}/kernel32.dll"
-    "${_gis_install_bin_dir}/mpr.dll"
-    "${_gis_install_bin_dir}/netapi32.dll"
-    "${_gis_install_bin_dir}/ntdll.dll"
-    "${_gis_install_bin_dir}/ole32.dll"
-    "${_gis_install_bin_dir}/oleaut32.dll"
-    "${_gis_install_bin_dir}/secur32.dll"
-    "${_gis_install_bin_dir}/shell32.dll"
-    "${_gis_install_bin_dir}/shlwapi.dll"
-    "${_gis_install_bin_dir}/user32.dll"
-    "${_gis_install_bin_dir}/userenv.dll"
-    "${_gis_install_bin_dir}/uxtheme.dll"
-    "${_gis_install_bin_dir}/version.dll"
-    "${_gis_install_bin_dir}/winmm.dll"
-    "${_gis_install_bin_dir}/ws2_32.dll"
-    "${_gis_install_bin_dir}/onnxruntime.dll"
-    "${_gis_install_bin_dir}/onnxruntime_providers_shared.dll"
-    "${_gis_install_bin_dir}/libprotobuf-lite.dll"
-    "${_gis_install_bin_dir}/libprotoc.dll"
-    "${_gis_install_bin_dir}/re2.dll"
-    "${_gis_install_bin_dir}/date-tz.dll"
-    "${_gis_install_bin_dir}/dbus-1-3.dll"
-    "${_gis_install_bin_dir}/Qt6DBus.dll"
-    "${_gis_install_bin_dir}/libecpg.dll"
-    "${_gis_install_bin_dir}/libecpg_compat.dll"
-    "${_gis_install_bin_dir}/libpgtypes.dll"
-    "${_gis_install_bin_dir}/charset-1.dll"
-    "${_gis_install_bin_dir}/hdf5_cpp.dll"
-    "${_gis_install_bin_dir}/hdf5_hl_cpp.dll"
-    "${_gis_install_bin_dir}/pkgconf-7.dll"
-    "${_gis_install_bin_dir}/Qt6PrintSupport.dll"
-    "${_gis_install_bin_dir}/Qt6Sql.dll"
-    "${_gis_install_bin_dir}/Qt6Xml.dll"
-    "${_gis_install_bin_dir}/Qt6Concurrent.dll"
-    "${_gis_install_bin_dir}/Qt6Network.dll"
-    "${_gis_install_bin_dir}/Qt6OpenGL.dll"
-    "${_gis_install_bin_dir}/Qt6OpenGLWidgets.dll"
-    "${_gis_install_bin_dir}/opencv_objdetect4.dll"
-    "${_gis_install_bin_dir}/opencv_highgui4.dll"
-    "${_gis_install_bin_dir}/opencv_videoio4.dll"
-)
-
 set(_gis_can_scan_runtime_deps TRUE)
 
 if(WIN32)
@@ -112,7 +50,7 @@ if(WIN32)
         set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${_gis_objdump_command}")
     else()
         set(_gis_can_scan_runtime_deps FALSE)
-        message(WARNING "No dumpbin/objdump tool found, fallback to copying vcpkg runtime DLLs directly.")
+        message(WARNING "No dumpbin/objdump tool found, fallback to copying minimal runtime DLLs directly.")
     endif()
 endif()
 
@@ -137,7 +75,7 @@ if(_gis_can_scan_runtime_deps)
 
     if(_gis_unresolved_deps)
         list(JOIN _gis_unresolved_deps "\n  " _gis_unresolved_text)
-        message(FATAL_ERROR "Unresolved runtime dependencies:\n  ${_gis_unresolved_text}")
+        message(WARNING "Unresolved runtime dependencies (may need manual install):\n  ${_gis_unresolved_text}")
     endif()
 
     set(_gis_filtered_resolved_deps)
@@ -153,6 +91,15 @@ if(_gis_can_scan_runtime_deps)
 
     list(REMOVE_DUPLICATES _gis_filtered_resolved_deps)
 
+    message(STATUS "Resolved runtime deps: ${_gis_filtered_resolved_deps}")
+
+    if(NOT _gis_filtered_resolved_deps)
+        set(_gis_can_scan_runtime_deps FALSE)
+        message(WARNING "GET_RUNTIME_DEPENDENCIES found no dependencies, falling back to minimal DLL list.")
+    endif()
+endif()
+
+if(_gis_can_scan_runtime_deps)
     foreach(_gis_dep IN LISTS _gis_filtered_resolved_deps)
         file(INSTALL
             DESTINATION "${_gis_install_bin_dir}"
@@ -161,31 +108,99 @@ if(_gis_can_scan_runtime_deps)
         )
     endforeach()
 else()
-    set(_gis_exclude_dll_names
-        gmock.dll gmock_main.dll gtest.dll gtest_main.dll Qt6Test.dll
-        onnxruntime.dll onnxruntime_providers_shared.dll
-        libprotobuf-lite.dll libprotoc.dll
-        re2.dll date-tz.dll
-        dbus-1-3.dll Qt6DBus.dll
-        libecpg.dll libecpg_compat.dll libpgtypes.dll charset-1.dll
-        hdf5_cpp.dll hdf5_hl_cpp.dll
-        pkgconf-7.dll
-        Qt6PrintSupport.dll Qt6Sql.dll Qt6Xml.dll
-        Qt6Concurrent.dll Qt6Network.dll
-        Qt6OpenGL.dll Qt6OpenGLWidgets.dll
-        opencv_objdetect4.dll
-        opencv_highgui4.dll opencv_videoio4.dll
+    set(_gis_minimal_dlls
+        abseil_dll.dll
+        aec.dll
+        brotlicommon.dll
+        brotlidec.dll
+        bz2.dll
+        deflate.dll
+        double-conversion.dll
+        fontconfig-1.dll
+        freetype.dll
+        freexl-1.dll
+        gdal.dll
+        geos.dll
+        geos_c.dll
+        geotiff.dll
+        gif.dll
+        harfbuzz.dll
+        harfbuzz-subset.dll
+        harfbuzz-raster.dll
+        harfbuzz-vector.dll
+        hdf5.dll
+        hdf5_hl.dll
+        Iex-3_4.dll
+        iconv-2.dll
+        IlmThread-3_4.dll
+        Imath-3_2.dll
+        jpeg62.dll
+        json-c.dll
+        Lerc.dll
+        libcrypto-3-x64.dll
+        libcurl.dll
+        libexpat.dll
+        liblzma.dll
+        libpng16.dll
+        libpq.dll
+        libprotobuf.dll
+        libssl-3-x64.dll
+        libsharpyuv.dll
+        libwebp.dll
+        libxml2.dll
+        lz4.dll
+        md4c.dll
+        md4c-html.dll
+        minizip.dll
+        netcdf.dll
+        opencv_calib3d4.dll
+        opencv_core4.dll
+        opencv_dnn4.dll
+        opencv_features2d4.dll
+        opencv_flann4.dll
+        opencv_highgui4.dll
+        opencv_imgcodecs4.dll
+        opencv_imgproc4.dll
+        opencv_ml4.dll
+        opencv_stitching4.dll
+        opencv_video4.dll
+        opencv_videoio4.dll
+        OpenEXR-3_4.dll
+        OpenEXRCore-3_4.dll
+        openjp2.dll
+        pcre2-16.dll
+        pcre2-8.dll
+        proj_9.dll
+        qhull_r.dll
+        Qt6Core.dll
+        Qt6Gui.dll
+        Qt6Sql.dll
+        Qt6Svg.dll
+        Qt6Widgets.dll
+        spatialite.dll
+        sqlite3.dll
+        szip.dll
+        tinyxml2.dll
+        tiff.dll
+        turbojpeg.dll
+        uriparser.dll
+        zlib1.dll
+        zstd.dll
+        icudt78.dll
+        icuin78.dll
+        icuio78.dll
+        icutu78.dll
+        icuuc78.dll
     )
-    file(GLOB _gis_vcpkg_runtime_dlls "@GIS_VCPKG_RELEASE_BIN_DIR@/*.dll")
-    foreach(_gis_dep IN LISTS _gis_vcpkg_runtime_dlls)
-        get_filename_component(_gis_dep_name "${_gis_dep}" NAME)
-        if(_gis_dep_name IN_LIST _gis_exclude_dll_names)
-            continue()
+
+    foreach(_gis_dll_name IN LISTS _gis_minimal_dlls)
+        set(_gis_dll_path "@GIS_VCPKG_RELEASE_BIN_DIR@/${_gis_dll_name}")
+        if(EXISTS "${_gis_dll_path}")
+            file(INSTALL
+                DESTINATION "${_gis_install_bin_dir}"
+                TYPE SHARED_LIBRARY
+                FILES "${_gis_dll_path}"
+            )
         endif()
-        file(INSTALL
-            DESTINATION "${_gis_install_bin_dir}"
-            TYPE SHARED_LIBRARY
-            FILES "${_gis_dep}"
-        )
     endforeach()
 endif()

@@ -50,8 +50,11 @@ set(GIS_VCPKG_PROJ_DATA_DIR "${GIS_VCPKG_SHARE_DIR}/proj")
 set(GIS_VCPKG_GDAL_DATA_DIR "${GIS_VCPKG_SHARE_DIR}/gdal")
 set(GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR "${GIS_VCPKG_INSTALLED_DIR}/Qt6/plugins/platforms")
 set(GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR "${GIS_VCPKG_INSTALLED_DIR}/debug/Qt6/plugins/platforms")
+set(GIS_VCPKG_RELEASE_QT_DIR "${GIS_VCPKG_INSTALLED_DIR}/Qt6")
+set(GIS_VCPKG_DEBUG_QT_DIR "${GIS_VCPKG_INSTALLED_DIR}/debug/Qt6")
 set(GIS_INSTALL_PLUGIN_DIR "${CMAKE_INSTALL_BINDIR}/plugins")
 set(GIS_INSTALL_PLATFORM_DIR "${CMAKE_INSTALL_BINDIR}/platforms")
+set(GIS_INSTALL_SQLDRIVERS_DIR "${CMAKE_INSTALL_BINDIR}/sqldrivers")
 
 file(TO_CMAKE_PATH "${GIS_VCPKG_INSTALLED_DIR}" GIS_VCPKG_INSTALLED_DIR)
 file(TO_CMAKE_PATH "${GIS_VCPKG_RELEASE_BIN_DIR}" GIS_VCPKG_RELEASE_BIN_DIR)
@@ -61,6 +64,8 @@ file(TO_CMAKE_PATH "${GIS_VCPKG_PROJ_DATA_DIR}" GIS_VCPKG_PROJ_DATA_DIR)
 file(TO_CMAKE_PATH "${GIS_VCPKG_GDAL_DATA_DIR}" GIS_VCPKG_GDAL_DATA_DIR)
 file(TO_CMAKE_PATH "${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}" GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR)
 file(TO_CMAKE_PATH "${GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR}" GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR)
+file(TO_CMAKE_PATH "${GIS_VCPKG_RELEASE_QT_DIR}" GIS_VCPKG_RELEASE_QT_DIR)
+file(TO_CMAKE_PATH "${GIS_VCPKG_DEBUG_QT_DIR}" GIS_VCPKG_DEBUG_QT_DIR)
 
 set(GIS_VCPKG_RUNTIME_BIN_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_BIN_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_BIN_DIR}>")
 set(GIS_VCPKG_QT_PLATFORMS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}>")
@@ -102,25 +107,28 @@ add_subdirectory(src/plugins/terrain)
 add_subdirectory(src/plugins/classification)
 add_subdirectory(src/plugins/spindex)
 add_subdirectory(src/plugins/vector)
+include("${CMAKE_SOURCE_DIR}/cmake/gis_runtime_dlls.cmake")
+
 add_subdirectory(src/cli)
 
-# Copy vcpkg runtime DLLs to plugins directory so plugin DLLs can find their dependencies
 add_custom_target(copy_runtime_dlls ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/plugins
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/share/proj
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/share/gdal
     COMMAND ${CMAKE_COMMAND} -E rm -f
         ${CMAKE_BINARY_DIR}/plugins/plugin_utility.dll
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${GIS_VCPKG_RUNTIME_BIN_DIR}
-        ${CMAKE_BINARY_DIR}/plugins
+)
+
+gis_copy_minimal_runtime(copy_runtime_dlls DEST_DIR "${CMAKE_BINARY_DIR}/plugins")
+
+add_custom_command(TARGET copy_runtime_dlls POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${GIS_VCPKG_PROJ_DATA_DIR}
         ${CMAKE_BINARY_DIR}/share/proj
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${GIS_VCPKG_GDAL_DATA_DIR}
         ${CMAKE_BINARY_DIR}/share/gdal
-    COMMENT "Copying runtime DLLs to plugins directory"
+    COMMENT "Copying runtime DLLs and data to plugins directory"
 )
 
 install(DIRECTORY
@@ -138,24 +146,9 @@ install(DIRECTORY
     DESTINATION "${CMAKE_INSTALL_DATADIR}/icons"
 )
 
-install(CODE [[
-    file(REMOVE
-        "${CMAKE_INSTALL_PREFIX}/bin/plugins/plugin_utility.dll"
-        "${CMAKE_INSTALL_PREFIX}/bin/plugins/plugin_raster_inspect.lib"
-        "${CMAKE_INSTALL_PREFIX}/bin/plugins/plugin_raster_manage.lib"
-        "${CMAKE_INSTALL_PREFIX}/bin/plugins/plugin_raster_render.lib"
-        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_utility.dll"
-        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_inspect.dll"
-        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_inspect.lib"
-        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_manage.dll"
-        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_manage.lib"
-        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_render.dll"
-        "${CMAKE_INSTALL_PREFIX}/plugins/plugin_raster_render.lib"
-    )
-]])
-
 if(GIS_BUILD_GUI)
-    find_package(Qt6 COMPONENTS Core Gui Widgets Svg REQUIRED)
+    find_package(Qt6 COMPONENTS Core Gui Widgets Svg Sql REQUIRED)
+    find_package(SQLite3 REQUIRED)
     add_subdirectory(src/gui)
 endif()
 

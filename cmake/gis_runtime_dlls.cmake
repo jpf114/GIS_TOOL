@@ -1,0 +1,203 @@
+set(GIS_RUNTIME_DLLS
+    aec.dll
+    brotlicommon.dll
+    brotlidec.dll
+    brotlienc.dll
+    bz2.dll
+    charset-1.dll
+    deflate.dll
+    double-conversion.dll
+    fontconfig-1.dll
+    freetype.dll
+    freexl-1.dll
+    gdal.dll
+    geos.dll
+    geos_c.dll
+    geotiff.dll
+    gif.dll
+    harfbuzz.dll
+    harfbuzz-raster.dll
+    harfbuzz-subset.dll
+    harfbuzz-vector.dll
+    hdf5.dll
+    hdf5_hl.dll
+    Iex-3_4.dll
+    iconv-2.dll
+    IlmThread-3_4.dll
+    Imath-3_2.dll
+    icudt78.dll
+    icuin78.dll
+    icuio78.dll
+    icutu78.dll
+    icuuc78.dll
+    jpeg62.dll
+    json-c.dll
+    Lerc.dll
+    libcrypto-3-x64.dll
+    libcurl.dll
+    libexpat.dll
+    liblzma.dll
+    libpng16.dll
+    libpq.dll
+    libprotobuf.dll
+    libsharpyuv.dll
+    libssl-3-x64.dll
+    libwebp.dll
+    libxml2.dll
+    lz4.dll
+    md4c.dll
+    md4c-html.dll
+    minizip.dll
+    netcdf.dll
+    opencv_calib3d4.dll
+    opencv_core4.dll
+    opencv_dnn4.dll
+    opencv_features2d4.dll
+    opencv_flann4.dll
+    opencv_highgui4.dll
+    opencv_imgcodecs4.dll
+    opencv_imgproc4.dll
+    opencv_ml4.dll
+    opencv_stitching4.dll
+    opencv_video4.dll
+    opencv_videoio4.dll
+    openjp2.dll
+    OpenEXR-3_4.dll
+    OpenEXRCore-3_4.dll
+    pcre2-16.dll
+    pcre2-8.dll
+    proj_9.dll
+    qhull_r.dll
+    Qt6Core.dll
+    Qt6Gui.dll
+    Qt6Sql.dll
+    Qt6Svg.dll
+    Qt6Widgets.dll
+    spatialite.dll
+    sqlite3.dll
+    szip.dll
+    tiff.dll
+    tinyxml2.dll
+    turbojpeg.dll
+    uriparser.dll
+    zlib1.dll
+    zstd.dll
+)
+
+set(GIS_RUNTIME_DLLS_DEBUG
+    abseil_dll.dll
+    aecd.dll
+    brotlicommon.dll
+    brotlidec.dll
+    brotlienc.dll
+    bz2d.dll
+    charset-1.dll
+    deflated.dll
+    double-conversion.dll
+    fontconfig-1d.dll
+    freetyped.dll
+    freexl-1.dll
+    gdald.dll
+    geos_cd.dll
+    geosd.dll
+    geotiff_d.dll
+    gif.dll
+    harfbuzz.dll
+    harfbuzz-rasterd.dll
+    harfbuzz-subsetd.dll
+    harfbuzz-vectord.dll
+    hdf5d.dll
+    hdf5_hld.dll
+    Iex-3_4_d.dll
+    iconv-2.dll
+    IlmThread-3_4_d.dll
+    Imath-3_2_d.dll
+    icudtd78.dll
+    icuind78.dll
+    icuiod78.dll
+    icutud78.dll
+    icuucd78.dll
+    jpeg62.dll
+    json-c.dll
+    Lerc.dll
+    libcrypto-3-x64.dll
+    libcurl-d.dll
+    libexpatd.dll
+    liblzmad.dll
+    libpng16d.dll
+    libpq.dll
+    libprotobufd.dll
+    libsharpyuv.dll
+    libssl-3-x64.dll
+    libwebpd.dll
+    libxml2d.dll
+    lz4d.dll
+    md4cd.dll
+    md4c-htmld.dll
+    minizip.dll
+    netcdf.dll
+    opencv_calib3d4d.dll
+    opencv_core4d.dll
+    opencv_dnn4d.dll
+    opencv_features2d4d.dll
+    opencv_flann4d.dll
+    opencv_highgui4d.dll
+    opencv_imgcodecs4d.dll
+    opencv_imgproc4d.dll
+    opencv_ml4d.dll
+    opencv_stitching4d.dll
+    opencv_video4d.dll
+    opencv_videoio4d.dll
+    openjp2.dll
+    OpenEXR-3_4_d.dll
+    OpenEXRCore-3_4_d.dll
+    pcre2-16d.dll
+    pcre2-8d.dll
+    proj_9_d.dll
+    qhull_rd.dll
+    Qt6Cored.dll
+    Qt6Guid.dll
+    Qt6Sqld.dll
+    Qt6Svgd.dll
+    Qt6Widgetsd.dll
+    spatialited.dll
+    sqlite3.dll
+    szip.dll
+    tiffd.dll
+    tinyxml2d.dll
+    turbojpegd.dll
+    uriparserd.dll
+    zlibd1.dll
+    zstdd.dll
+)
+
+function(gis_copy_minimal_runtime target_name)
+    cmake_parse_arguments(ARG "" "DEST_DIR" "" ${ARGN})
+
+    if(ARG_DEST_DIR)
+        set(_dest "${ARG_DEST_DIR}")
+    else()
+        set(_dest "$<TARGET_FILE_DIR:${target_name}>")
+    endif()
+
+    add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_dest}"
+    )
+
+    foreach(_dll IN LISTS GIS_RUNTIME_DLLS)
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${GIS_VCPKG_RELEASE_BIN_DIR}/${_dll}"
+                "${_dest}/${_dll}"
+        )
+    endforeach()
+
+    foreach(_dll IN LISTS GIS_RUNTIME_DLLS_DEBUG)
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                -D_SRC="${GIS_VCPKG_DEBUG_BIN_DIR}/${_dll}"
+                -D_DST="${_dest}/${_dll}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/copy_if_exists.cmake"
+        )
+    endforeach()
+endfunction()

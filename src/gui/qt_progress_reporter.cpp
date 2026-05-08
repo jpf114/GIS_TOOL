@@ -29,7 +29,7 @@ void QtProgressReporter::onProgress(double percent) {
 }
 
 void QtProgressReporter::onMessage(const std::string& msg) {
-    emit messageLogged(QString::fromUtf8(msg.c_str()));
+    emit messageLogged(m_currentTaskId, QString::fromUtf8(msg.c_str()));
 }
 
 bool QtProgressReporter::isCancelled() const {
@@ -45,4 +45,8 @@ void QtProgressReporter::reset() {
     m_lastProgressValue = -1.0;
     m_firstProgress = true;
     m_lastProgressTime = std::chrono::steady_clock::now();
+}
+
+void QtProgressReporter::setCurrentTaskId(const QString& taskId) {
+    m_currentTaskId = taskId;
 }

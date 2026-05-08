@@ -16,6 +16,8 @@ class NavPanel;
 class QProgressBar;
 class QPushButton;
 class QtProgressReporter;
+class QTabWidget;
+class TaskCenterPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -40,6 +42,12 @@ private slots:
                                const std::string& actionKey);
     void onExecute();
     void onParamValuesChanged();
+    void onRerunTask(const QString& taskId);
+    void onEditTask(const QString& taskId);
+    void onDeleteTasks(const QStringList& taskIds);
+    void onClearHistory();
+    void onClearLogsForTask(const QString& taskId);
+    void onClearAllLogs();
 
 private:
     void loadPlugins();
@@ -52,6 +60,9 @@ private:
     void refreshParamValidationState();
     void runPluginWithParams(const std::map<std::string, gis::framework::ParamValue>& params);
     void resetDerivedParamTracking();
+
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
     static const std::map<std::string, std::map<std::string, std::set<std::string>>>& actionParamVisibilityMap();
     static std::set<std::string> visibleParamsForAction(
@@ -76,6 +87,10 @@ private:
     QLabel* statusExecutionLabel_ = nullptr;
     QProgressBar* statusProgressBar_ = nullptr;
     QtProgressReporter* reporter_ = nullptr;
+
+    QTabWidget* tabWidget_ = nullptr;
+    TaskCenterPage* taskCenterPage_ = nullptr;
+    QString currentEditingTaskId_;
 
     gis::framework::PluginManager pluginManager_;
     gis::framework::IGisPlugin* currentPlugin_ = nullptr;

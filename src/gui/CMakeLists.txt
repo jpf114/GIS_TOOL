@@ -14,6 +14,10 @@ add_executable(gis-gui
     execute_worker.cpp
     qt_progress_reporter.cpp
     icon_manager.cpp
+    settings_manager.cpp
+    task_manager.cpp
+    task_database.cpp
+    task_center_page.cpp
 )
 
 set(GIS_PLUGIN_TARGETS
@@ -42,6 +46,8 @@ target_link_libraries(gis-gui PRIVATE
     Qt6::Gui
     Qt6::Widgets
     Qt6::Svg
+    Qt6::Sql
+    SQLite3::SQLite3
     PROJ::proj
 )
 
@@ -73,19 +79,19 @@ if(EXISTS "${GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR}/qwindowsd.pdb" OR
     set(GIS_COPY_QT_PLATFORM_PDB ON)
 endif()
 
-# Copy plugins directory next to executable (same as CLI)
+# Copy plugins directory next to executable
 add_custom_command(TARGET gis-gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         ${CMAKE_BINARY_DIR}/plugins
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${GIS_VCPKG_RUNTIME_BIN_DIR}
-        $<TARGET_FILE_DIR:gis-gui>
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:gis-gui>/platforms
     COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:gis-gui>/plugins
-    COMMAND_EXPAND_LISTS
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        $<TARGET_FILE_DIR:gis-gui>/sqldrivers
 )
+
+gis_copy_minimal_runtime(gis-gui)
 
 foreach(GIS_PLUGIN_TARGET IN LISTS GIS_PLUGIN_TARGETS)
     add_custom_command(TARGET gis-gui POST_BUILD
@@ -121,6 +127,16 @@ if(GIS_COPY_QT_PLATFORM_PDB)
     )
 endif()
 
+set(GIS_VCPKG_QT_SQLDRIVERS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_DIR}/plugins/sqldrivers>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_QT_DIR}/plugins/sqldrivers>")
+set(GIS_QT_SQLITE_DLL "$<$<CONFIG:Debug>:qsqlited.dll>$<$<NOT:$<CONFIG:Debug>>:qsqlite.dll>")
+
+add_custom_command(TARGET gis-gui POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${GIS_VCPKG_QT_SQLDRIVERS_DIR}/${GIS_QT_SQLITE_DLL}
+        $<TARGET_FILE_DIR:gis-gui>/sqldrivers/${GIS_QT_SQLITE_DLL}
+    COMMAND_EXPAND_LISTS
+)
+
 install(TARGETS gis-gui
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
@@ -133,6 +149,14 @@ if(GIS_COPY_QT_PLATFORM_DLL)
         DESTINATION ${GIS_INSTALL_PLATFORM_DIR}
     )
 endif()
+
+set(GIS_VCPKG_RELEASE_QT_SQLDRIVERS_DIR "${GIS_VCPKG_INSTALLED_DIR}/Qt6/plugins/sqldrivers")
+
+install(FILES
+    "${GIS_VCPKG_RELEASE_QT_SQLDRIVERS_DIR}/qsqlite.dll"
+    CONFIGURATIONS Release
+    DESTINATION ${GIS_INSTALL_SQLDRIVERS_DIR}
+)
 
 add_custom_command(TARGET gis-gui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

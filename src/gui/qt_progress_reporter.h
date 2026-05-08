@@ -15,10 +15,11 @@ public:
 
     void cancel();
     void reset();
+    void setCurrentTaskId(const QString& taskId);
 
 signals:
     void progressChanged(double percent);
-    void messageLogged(const QString& msg);
+    void messageLogged(const QString& taskId, const QString& msg);
 
 private:
     bool shouldEmitProgress(double percent) const;
@@ -27,6 +28,7 @@ private:
     double m_lastProgressValue{-1.0};
     std::chrono::steady_clock::time_point m_lastProgressTime{};
     bool m_firstProgress{true};
+    QString m_currentTaskId;
 
     static constexpr double kProgressDelta = 0.01;
     static constexpr int kProgressIntervalMs = 50;
