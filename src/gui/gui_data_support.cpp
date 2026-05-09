@@ -159,6 +159,7 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
 
     if (pluginName == "cutting") {
         if (action == "split") return {};
+        if (action == "tile") return {};
         return ".tif";
     }
 
@@ -968,6 +969,7 @@ std::string localizeResultMessage(const std::string& message) {
         {"Reclassify completed successfully", "重分类完成"},
         {"Raster overlay completed successfully", "栅格叠加完成"},
         {"Proximity map created", "欧氏距离计算完成"},
+        {"Tile generation completed", "栅格切片完成"},
     };
 
     const auto it = kKnownMessages.find(message);
@@ -1048,6 +1050,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         const std::string outputPath = stringParam("output");
         if (endsWithOneOf(outputPath, {".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"})) {
             return ActionValidationIssue{"output", "参数“输出目录”应填写目录，不应填写单个栅格文件名"};
+        }
+    }
+
+    if (pluginName == "cutting" && actionKey == "tile") {
+        const std::string outputPath = stringParam("output");
+        if (endsWithOneOf(outputPath, {".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"})) {
+            return ActionValidationIssue{"output", "参数“输出目录”应填写目录，不应填写单个格格文件名"};
         }
     }
 

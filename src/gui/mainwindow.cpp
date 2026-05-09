@@ -187,6 +187,7 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("raster_overlay"), QStringLiteral("栅格叠加")},
         {QStringLiteral("zonal_stats"), QStringLiteral("分区统计")},
         {QStringLiteral("proximity"), QStringLiteral("欧氏距离")},
+        {QStringLiteral("tile"), QStringLiteral("栅格切片")},
     };
 
     const auto it = kLabels.find(actionKey);
