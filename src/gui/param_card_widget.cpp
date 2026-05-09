@@ -4,6 +4,7 @@
 #include "style_constants.h"
 #include "gui_data_support.h"
 #include "icon_manager.h"
+#include "settings_manager.h"
 
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
@@ -29,6 +30,7 @@
 #include <QStyledItemDelegate>
 #include <QStyle>
 #include <QInputDialog>
+#include <QMenu>
 #include <QMessageBox>
 #include <QStringList>
 
@@ -390,6 +392,31 @@ void ParamCardWidget::addParam(const gis::framework::ParamSpec& spec) {
 
     QWidget* inputWidget = createParamWidget(spec, entry);
 
+    QString tooltipText = QString::fromUtf8(spec.description);
+    if (!tooltipText.isEmpty()) {
+        if (spec.required) {
+            tooltipText += QStringLiteral("\n（必填参数）");
+        }
+        const auto* minInt = std::get_if<int>(&spec.minValue);
+        const auto* maxInt = std::get_if<int>(&spec.maxValue);
+        const auto* minDbl = std::get_if<double>(&spec.minValue);
+        const auto* maxDbl = std::get_if<double>(&spec.maxValue);
+        if ((minInt && *minInt != 0) || (maxInt && *maxInt != 0) ||
+            (minDbl && *minDbl != 0.0) || (maxDbl && *maxDbl != 0.0)) {
+            tooltipText += QStringLiteral("\n范围：");
+            if (minInt) tooltipText += QString::number(*minInt);
+            else if (minDbl) tooltipText += QString::number(*minDbl);
+            tooltipText += QStringLiteral(" ~ ");
+            if (maxInt) tooltipText += QString::number(*maxInt);
+            else if (maxDbl) tooltipText += QString::number(*maxDbl);
+        }
+        inputWidget->setToolTip(tooltipText);
+        if (entry.lineEdit) entry.lineEdit->setToolTip(tooltipText);
+        if (entry.comboBox) entry.comboBox->setToolTip(tooltipText);
+        if (entry.spinBox) entry.spinBox->setToolTip(tooltipText);
+        if (entry.intSpinBox) entry.intSpinBox->setToolTip(tooltipText);
+    }
+
     paramsLayout_->addWidget(labelWidget, paramsRow_, 0, Qt::AlignTop);
     paramsLayout_->addWidget(inputWidget, paramsRow_, 1, Qt::AlignTop);
     paramsRow_++;
@@ -495,6 +522,29 @@ QWidget* ParamCardWidget::createFileWidget(const gis::framework::ParamSpec& spec
             }
         });
         layout->addWidget(browseBtn);
+
+        if (!isOutput && !isDir) {
+            auto* recentBtn = new QPushButton(QStringLiteral("最近"));
+            recentBtn->setObjectName(QStringLiteral("browseButton"));
+            recentBtn->setFixedWidth(36);
+            recentBtn->setToolTip(QStringLiteral("从最近使用的文件中选择"));
+            connect(recentBtn, &QPushButton::clicked, this, [lineEdit, recentBtn]() {
+                auto recent = SettingsManager::instance().recentFiles();
+                if (recent.isEmpty()) {
+                    return;
+                }
+                auto* menu = new QMenu;
+                for (const auto& path : recent) {
+                    QFileInfo fi(path);
+                    menu->addAction(fi.fileName(), [lineEdit, path]() {
+                        lineEdit->setText(path);
+                    });
+                }
+                menu->setAttribute(Qt::WA_DeleteOnClose);
+                menu->popup(recentBtn->mapToGlobal(recentBtn->rect().bottomLeft()));
+            });
+            layout->addWidget(recentBtn);
+        }
     } else {
         auto* crsBtn = new QPushButton(QStringLiteral("选择"));
         crsBtn->setObjectName(QStringLiteral("browseButton"));

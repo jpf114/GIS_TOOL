@@ -18,7 +18,8 @@ public:
 
     void addTaskRow(const QString& taskId, const QString& actionDisplayName,
                     int status, const QString& startTime);
-    void updateTaskRow(const QString& taskId, int status, const QString& endTime);
+    void updateTaskRow(const QString& taskId, int status, const QString& endTime,
+                       qint64 durationMs = 0);
     void updateTaskProgress(const QString& taskId, double percent);
     void removeTaskRows(const QStringList& taskIds);
     void refreshAll();

@@ -27,6 +27,7 @@ struct TaskRecord {
     gis::framework::Result result;
     QDateTime startTime;
     QDateTime endTime;
+    qint64 durationMs = 0;
     enum Status { Pending, Running, Completed, Cancelled, Failed } status = Pending;
 };
 

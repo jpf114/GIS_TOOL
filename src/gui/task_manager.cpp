@@ -97,12 +97,19 @@ void TaskManager::finishTask(const QString& displayGroup, const QString& id,
 
     QString endTime = QDateTime::currentDateTime().toString(Qt::ISODate);
 
+    auto rec = TaskDatabase::instance().findTask(displayGroup, id);
+    qint64 durationMs = 0;
+    if (rec.startTime.isValid()) {
+        durationMs = rec.startTime.msecsTo(QDateTime::currentDateTime());
+    }
+
     TaskDatabase::instance().updateTaskResult(
         displayGroup, id, status,
         QString::fromUtf8(result.message),
         QString::fromUtf8(result.message),
         QString::fromUtf8(result.outputPath),
-        endTime);
+        endTime,
+        durationMs);
 
     emit taskFinished(displayGroup, id);
 }

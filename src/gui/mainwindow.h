@@ -16,6 +16,8 @@ class NavPanel;
 class QProgressBar;
 class QPushButton;
 class QTabWidget;
+class QCheckBox;
+class QLineEdit;
 class TaskCenterPage;
 
 class MainWindow : public QMainWindow {
@@ -59,6 +61,8 @@ private:
     void refreshParamValidationState();
     void runPluginWithParams(const std::map<std::string, gis::framework::ParamValue>& params);
     void resetDerivedParamTracking();
+    void updateBatchCount();
+    QStringList scanBatchFiles() const;
 
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
@@ -87,6 +91,12 @@ private:
     QTabWidget* tabWidget_ = nullptr;
     TaskCenterPage* taskCenterPage_ = nullptr;
     QString currentEditingTaskId_;
+
+    QCheckBox* batchCheckBox_ = nullptr;
+    QLineEdit* batchDirEdit_ = nullptr;
+    QPushButton* batchDirButton_ = nullptr;
+    QLineEdit* batchFilterEdit_ = nullptr;
+    QLabel* batchCountLabel_ = nullptr;
 
     gis::framework::PluginManager pluginManager_;
     gis::framework::IGisPlugin* currentPlugin_ = nullptr;

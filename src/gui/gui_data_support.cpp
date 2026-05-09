@@ -970,6 +970,10 @@ std::string localizeResultMessage(const std::string& message) {
         {"Raster overlay completed successfully", "栅格叠加完成"},
         {"Proximity map created", "欧氏距离计算完成"},
         {"Tile generation completed", "栅格切片完成"},
+        {"Zonal statistics completed", "分区统计完成"},
+        {"COG generation completed", "COG 生成完成"},
+        {"Histogram match completed", "直方图匹配完成"},
+        {"Band math completed", "波段运算完成"},
     };
 
     const auto it = kKnownMessages.find(message);
@@ -984,7 +988,28 @@ std::string localizeResultMessage(const std::string& message) {
         return "矢量信息读取完成";
     }
 
-    return message;
+    std::string msg = message;
+
+    if (msg.find("Cannot open") != std::string::npos || msg.find("No such file") != std::string::npos) {
+        return "无法打开文件：" + msg + "\n建议：请检查文件路径是否正确，文件是否存在。";
+    }
+    if (msg.find("Permission denied") != std::string::npos) {
+        return "权限不足：" + msg + "\n建议：请检查文件是否被其他程序占用，或是否有写入权限。";
+    }
+    if (msg.find("out of memory") != std::string::npos || msg.find("OutOfMemory") != std::string::npos) {
+        return "内存不足：" + msg + "\n建议：请尝试处理更小的数据范围，或先分块处理。";
+    }
+    if (msg.find("band") != std::string::npos && msg.find("does not exist") != std::string::npos) {
+        return "波段不存在：" + msg + "\n建议：请检查波段序号是否超出输入数据的波段数量。";
+    }
+    if (msg.find("Unsupported format") != std::string::npos || msg.find("not recognized") != std::string::npos) {
+        return "格式不支持：" + msg + "\n建议：请确认输入文件格式是否受支持（如 TIFF、GeoJSON、SHP 等）。";
+    }
+    if (msg.find("Cancelled") != std::string::npos) {
+        return "操作已取消";
+    }
+
+    return msg;
 }
 
 std::string buildResultSummaryText(const gis::framework::Result& result) {

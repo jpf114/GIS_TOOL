@@ -21,7 +21,8 @@ public:
     bool updateTaskStatus(const QString& displayGroup, const QString& id, int status);
     bool updateTaskResult(const QString& displayGroup, const QString& id, int status,
                           const QString& resultMsg, const QString& resultRaw,
-                          const QString& outputPath, const QString& endTime);
+                          const QString& outputPath, const QString& endTime,
+                          qint64 durationMs = 0);
     bool updateTaskParams(const QString& displayGroup, const QString& id,
                           const QString& paramsJson, int status, const QString& startTime);
     bool deleteTasks(const QString& displayGroup, const QStringList& ids);

@@ -30,18 +30,45 @@ QString TaskRunner::run(
 
     if (taskId.isEmpty()) return {};
 
-    auto reporter = std::make_unique<QtProgressReporter>(taskId);
+    QueuedTask qt;
+    qt.plugin = plugin;
+    qt.displayGroup = displayGroup;
+    qt.pluginName = pluginName;
+    qt.actionKey = actionKey;
+    qt.params = params;
+    qt.pluginDisplayName = pluginDisplayName;
+    qt.actionDisplayName = actionDisplayName;
+    qt.taskId = taskId;
+
+    queue_.enqueue(qt);
+    emit queueChanged(queue_.size());
+
+    processQueue();
+    return taskId;
+}
+
+void TaskRunner::processQueue() {
+    if (!runningTaskId_.isEmpty()) return;
+    if (queue_.isEmpty()) return;
+
+    QueuedTask task = queue_.dequeue();
+    emit queueChanged(queue_.size());
+    startTask(task);
+}
+
+void TaskRunner::startTask(const QueuedTask& task) {
+    auto reporter = std::make_unique<QtProgressReporter>(task.taskId);
     auto* reporterPtr = reporter.get();
 
     auto ctx = std::make_shared<TaskContext>();
-    ctx->taskId = taskId;
-    ctx->displayGroup = displayGroup;
+    ctx->taskId = task.taskId;
+    ctx->displayGroup = task.displayGroup;
     ctx->reporter = std::move(reporter);
-    activeTasks_[taskId] = ctx;
-    runningTaskId_ = taskId;
+    activeTasks_[task.taskId] = ctx;
+    runningTaskId_ = task.taskId;
 
     auto* worker = new ExecuteWorker;
-    worker->setup(plugin, params, reporterPtr);
+    worker->setup(task.plugin, task.params, reporterPtr);
 
     auto* thread = new QThread;
     worker->moveToThread(thread);
@@ -59,20 +86,21 @@ QString TaskRunner::run(
         emit taskLogMessage(dg, tid, msg);
     });
 
-    connect(thread, &QThread::started, this, [this, displayGroup, taskId]() {
-        TaskManager::instance().updateTaskStatus(displayGroup, taskId, TaskRecord::Running);
-        emit taskStarted(displayGroup, taskId);
+    connect(thread, &QThread::started, this, [this, dg = task.displayGroup, tid = task.taskId]() {
+        TaskManager::instance().updateTaskStatus(dg, tid, TaskRecord::Running);
+        emit taskStarted(dg, tid);
     });
     connect(thread, &QThread::started, worker, &ExecuteWorker::run);
 
     connect(worker, &ExecuteWorker::finished, this,
-            [this, displayGroup, taskId](const gis::framework::Result& result) {
-        TaskManager::instance().finishTask(displayGroup, taskId, result);
-        emit taskFinished(displayGroup, taskId, result.success, result.isCancelled);
-        activeTasks_.remove(taskId);
-        if (runningTaskId_ == taskId) {
+            [this, dg = task.displayGroup, tid = task.taskId](const gis::framework::Result& result) {
+        TaskManager::instance().finishTask(dg, tid, result);
+        emit taskFinished(dg, tid, result.success, result.isCancelled);
+        activeTasks_.remove(tid);
+        if (runningTaskId_ == tid) {
             runningTaskId_.clear();
         }
+        processQueue();
     });
 
     connect(worker, &ExecuteWorker::finished, thread, &QThread::quit);
@@ -80,7 +108,6 @@ QString TaskRunner::run(
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
 
     thread->start();
-    return taskId;
 }
 
 void TaskRunner::cancelTask(const QString& taskId) {
@@ -96,4 +123,8 @@ bool TaskRunner::isRunning() const {
 
 QString TaskRunner::runningTaskId() const {
     return runningTaskId_;
+}
+
+int TaskRunner::queuedCount() const {
+    return queue_.size();
 }

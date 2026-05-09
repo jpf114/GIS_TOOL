@@ -178,18 +178,22 @@ void TaskCenterPage::addTaskRow(const QString& taskId, const QString& actionDisp
 }
 
 void TaskCenterPage::updateTaskRow(const QString& taskId, int status,
-                                    const QString& endTime) {
+                                    const QString& endTime, qint64 durationMs) {
     auto* item = findItemByTaskId(taskId);
     if (!item) return;
 
     item->setText(0, statusText(status));
     item->setForeground(0, QColor(statusColor(status)));
 
-    if (status == TaskRecord::Running) {
-        item->setText(3, QStringLiteral("运行中"));
-    }
-
-    if (status == TaskRecord::Completed || status == TaskRecord::Failed || status == TaskRecord::Cancelled) {
+    if (durationMs > 0) {
+        qint64 secs = durationMs / 1000;
+        qint64 ms = durationMs % 1000;
+        if (secs < 60) {
+            item->setText(4, QStringLiteral("%1.%2秒").arg(secs).arg(ms / 100));
+        } else {
+            item->setText(4, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
+        }
+    } else {
         QString startStr = item->text(2);
         QDateTime startDt = QDateTime::fromString(startStr, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
         if (!startDt.isValid()) {
@@ -212,8 +216,8 @@ void TaskCenterPage::updateTaskRow(const QString& taskId, int status,
         } else {
             item->setText(4, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
         }
-        item->setText(3, status == TaskRecord::Completed ? QStringLiteral("100%") : QStringLiteral("-"));
     }
+    item->setText(3, status == TaskRecord::Completed ? QStringLiteral("100%") : QStringLiteral("-"));
 }
 
 void TaskCenterPage::updateTaskProgress(const QString& taskId, double percent) {
@@ -261,7 +265,15 @@ void TaskCenterPage::refreshAll() {
             item->setText(3, QStringLiteral("-"));
         }
 
-        if (rec.endTime.isValid() && rec.startTime.isValid()) {
+        if (rec.durationMs > 0) {
+            qint64 secs = rec.durationMs / 1000;
+            qint64 ms = rec.durationMs % 1000;
+            if (secs < 60) {
+                item->setText(4, QStringLiteral("%1.%2秒").arg(secs).arg(ms / 100));
+            } else {
+                item->setText(4, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
+            }
+        } else if (rec.endTime.isValid() && rec.startTime.isValid()) {
             qint64 secs = rec.startTime.secsTo(rec.endTime);
             if (secs < 0) secs = 0;
             if (secs < 60) {

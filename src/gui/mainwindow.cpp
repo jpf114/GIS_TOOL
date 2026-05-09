@@ -22,8 +22,13 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QCheckBox>
+#include <QLineEdit>
+#include <QFileDialog>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QDir>
+#include <QFileInfo>
 #include <QPainter>
 #include <QPixmap>
 #include <QProgressBar>
@@ -48,6 +53,19 @@
 namespace {
 
 constexpr const char* kRasterToolsGroupName = "raster_tools";
+
+QString formatDuration(qint64 ms) {
+    if (ms < 1000) {
+        return QStringLiteral("%1 ms").arg(ms);
+    }
+    double seconds = ms / 1000.0;
+    if (seconds < 60) {
+        return QStringLiteral("%1 s").arg(seconds, 0, 'f', 1);
+    }
+    int mins = static_cast<int>(seconds) / 60;
+    double secs = seconds - mins * 60;
+    return QStringLiteral("%1 m %2 s").arg(mins).arg(secs, 0, 'f', 0);
+}
 
 bool isRasterToolsMember(const std::string& pluginName) {
     return pluginName == "raster_math"
@@ -1101,6 +1119,64 @@ void MainWindow::setupUi() {
 
     executionLayout->addLayout(execHeaderLayout);
 
+    auto* batchLayout = new QHBoxLayout;
+    batchLayout->setSpacing(8);
+
+    batchCheckBox_ = new QCheckBox(QStringLiteral("批量处理"));
+    batchCheckBox_->setObjectName(QStringLiteral("batchCheckBox"));
+    batchCheckBox_->setToolTip(QStringLiteral("开启后可选择输入目录，对目录下所有匹配文件执行同一算法"));
+    batchLayout->addWidget(batchCheckBox_);
+
+    batchDirEdit_ = new QLineEdit;
+    batchDirEdit_->setPlaceholderText(QStringLiteral("输入目录..."));
+    batchDirEdit_->setVisible(false);
+    batchLayout->addWidget(batchDirEdit_, 1);
+
+    batchDirButton_ = new QPushButton(QStringLiteral("..."));
+    batchDirButton_->setFixedWidth(32);
+    batchDirButton_->setVisible(false);
+    batchLayout->addWidget(batchDirButton_);
+
+    batchFilterEdit_ = new QLineEdit(QStringLiteral("*.tif"));
+    batchFilterEdit_->setPlaceholderText(QStringLiteral("文件过滤"));
+    batchFilterEdit_->setFixedWidth(80);
+    batchFilterEdit_->setVisible(false);
+    batchFilterEdit_->setToolTip(QStringLiteral("支持通配符，如 *.tif、*.tif *.img"));
+    batchLayout->addWidget(batchFilterEdit_);
+
+    batchCountLabel_ = new QLabel;
+    batchCountLabel_->setVisible(false);
+    batchLayout->addWidget(batchCountLabel_);
+
+    executionLayout->addLayout(batchLayout);
+
+    connect(batchCheckBox_, &QCheckBox::toggled, this, [this](bool checked) {
+        batchDirEdit_->setVisible(checked);
+        batchDirButton_->setVisible(checked);
+        batchFilterEdit_->setVisible(checked);
+        batchCountLabel_->setVisible(checked);
+        if (!checked) batchCountLabel_->clear();
+        refreshExecuteButtonState();
+    });
+
+    connect(batchDirButton_, &QPushButton::clicked, this, [this]() {
+        QString dir = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("选择批量输入目录"),
+            SettingsManager::instance().lastInputDirectory());
+        if (!dir.isEmpty()) {
+            batchDirEdit_->setText(dir);
+            updateBatchCount();
+        }
+    });
+
+    connect(batchDirEdit_, &QLineEdit::textChanged, this, [this]() {
+        updateBatchCount();
+    });
+
+    connect(batchFilterEdit_, &QLineEdit::textChanged, this, [this]() {
+        updateBatchCount();
+    });
+
     resultSummaryLabel_ = new QLabel;
     resultSummaryLabel_->setWordWrap(true);
     resultSummaryLabel_->setObjectName(QStringLiteral("execSummary"));
@@ -1148,7 +1224,8 @@ void MainWindow::setupUi() {
         auto rec = TaskManager::instance().findTask(displayGroup, id);
         if (rec.id.isEmpty()) return;
         taskCenterPage_->updateTaskRow(id, static_cast<int>(rec.status),
-            rec.endTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+            rec.endTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
+            rec.durationMs);
     });
     connect(&TaskRunner::instance(), &TaskRunner::taskLogMessage,
             taskCenterPage_, &TaskCenterPage::appendLog);
@@ -1443,6 +1520,65 @@ void MainWindow::onExecute() {
         return;
     }
 
+    if (batchCheckBox_ && batchCheckBox_->isChecked()) {
+        QStringList files = scanBatchFiles();
+        if (files.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("批量处理"),
+                                 QStringLiteral("未找到匹配的文件，请检查输入目录和过滤条件。"));
+            return;
+        }
+
+        const auto specs = effectiveParamSpecs();
+        auto baseParams = collectExecutionParams();
+
+        std::string inputKey = "input";
+        std::string outputKey = "output";
+        bool hasOutput = false;
+        for (const auto& spec : specs) {
+            if (spec.key == "output" || spec.key.find("output") != std::string::npos) {
+                outputKey = spec.key;
+                hasOutput = true;
+                break;
+            }
+        }
+
+        std::string baseOutput;
+        if (hasOutput) {
+            auto it = baseParams.find(outputKey);
+            if (it != baseParams.end()) {
+                baseOutput = std::get<std::string>(it->second);
+            }
+        }
+
+        int submitted = 0;
+        for (const auto& filePath : files) {
+            auto params = baseParams;
+            params[inputKey] = filePath.toStdString();
+
+            if (hasOutput && !baseOutput.empty()) {
+                QFileInfo fi(filePath);
+                QString outPath = QString::fromStdString(baseOutput);
+                QFileInfo outFi(outPath);
+                QString derivedOutput = outFi.dir().filePath(
+                    fi.completeBaseName() + QStringLiteral("_%1.%2")
+                        .arg(currentActionKey_)
+                        .arg(outFi.suffix().isEmpty() ? QStringLiteral("tif") : outFi.suffix()));
+                params[outputKey] = derivedOutput.toStdString();
+            }
+
+            runPluginWithParams(params);
+            submitted++;
+        }
+
+        resultSummaryLabel_->setStyleSheet(QString());
+        resultSummaryLabel_->setText(
+            QStringLiteral("批量处理：已提交 %1 个任务到队列").arg(submitted));
+        if (tabWidget_) {
+            tabWidget_->setCurrentIndex(1);
+        }
+        return;
+    }
+
     const auto specs = effectiveParamSpecs();
     auto params = collectExecutionParams();
     std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
@@ -1496,7 +1632,17 @@ void MainWindow::refreshExecuteButtonState() {
 
     const auto state = gis::gui::buildExecuteButtonState(hasSelection, validationMessage);
     executeButton_->setEnabled(state.enabled);
-    executeButton_->setToolTip(QString::fromUtf8(state.tooltip));
+
+    int queued = TaskRunner::instance().queuedCount();
+    bool running = TaskRunner::instance().isRunning();
+    if (running && queued > 0) {
+        executeButton_->setToolTip(
+            QStringLiteral("执行处理（队列中 %1 个任务）").arg(queued));
+    } else if (running) {
+        executeButton_->setToolTip(QStringLiteral("执行处理（任务运行中，新任务将自动排队）"));
+    } else {
+        executeButton_->setToolTip(QString::fromUtf8(state.tooltip));
+    }
 }
 
 void MainWindow::refreshParamValidationState() {
@@ -1611,6 +1757,31 @@ void MainWindow::runPluginWithParams(
     lastExecutionMessage_.clear();
     lastExecutionRawMessage_.clear();
 
+    for (const auto& [key, value] : params) {
+        if (key.find("output") == std::string::npos) continue;
+        const auto* strVal = std::get_if<std::string>(&value);
+        if (!strVal || strVal->empty()) continue;
+
+        QString outputPath = QString::fromStdString(*strVal);
+        QFileInfo fi(outputPath);
+        QDir dir = fi.absoluteDir();
+
+        if (!dir.exists()) {
+            if (!dir.mkpath(QStringLiteral("."))) {
+                QMessageBox::warning(this, QStringLiteral("目录创建失败"),
+                    QStringLiteral("无法创建输出目录：%1").arg(dir.absolutePath()));
+                return;
+            }
+        }
+
+        if (fi.exists()) {
+            auto ret = QMessageBox::question(this, QStringLiteral("文件已存在"),
+                QStringLiteral("输出文件已存在，是否覆盖？\n%1").arg(outputPath),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (ret != QMessageBox::Yes) return;
+        }
+    }
+
     const QString displayGroup = QString::fromStdString(
         displayGroupForPlugin(currentPlugin_->name()));
     const QString pluginDisplayName = currentDisplayGroupKey_ == kRasterToolsGroupName
@@ -1660,19 +1831,29 @@ void MainWindow::runPluginWithParams(
                     QString::fromUtf8(result.result.outputPath));
             }
             QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result.result));
+            if (result.durationMs > 0) {
+                summary += QStringLiteral("\n耗时: %1").arg(formatDuration(result.durationMs));
+            }
             resultSummaryLabel_->setText(
                 QStringLiteral("✓ 执行成功\n%1").arg(summary));
             resultSummaryLabel_->setStyleSheet(
                 QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
             statusBar()->showMessage(QStringLiteral("执行成功"));
         } else if (cancelled) {
-            resultSummaryLabel_->setText(QStringLiteral("✖ 已取消"));
+            QString cancelText = QStringLiteral("✖ 已取消");
+            if (result.durationMs > 0) {
+                cancelText += QStringLiteral("\n耗时: %1").arg(formatDuration(result.durationMs));
+            }
+            resultSummaryLabel_->setText(cancelText);
             resultSummaryLabel_->setStyleSheet(
                 QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
             statusBar()->showMessage(QStringLiteral("执行已取消"));
         } else {
-            resultSummaryLabel_->setText(
-                QStringLiteral("✖ 执行失败\n%1").arg(localizedMessage));
+            QString failText = QStringLiteral("✖ 执行失败\n%1").arg(localizedMessage);
+            if (result.durationMs > 0) {
+                failText += QStringLiteral("\n耗时: %1").arg(formatDuration(result.durationMs));
+            }
+            resultSummaryLabel_->setText(failText);
             resultSummaryLabel_->setStyleSheet(
                 QStringLiteral("color: %1;").arg(gis::style::Color::kError));
             statusBar()->showMessage(QStringLiteral("执行失败：") + localizedMessage);
@@ -1685,6 +1866,37 @@ void MainWindow::runPluginWithParams(
         refreshExecuteButtonState();
         emit executionFinished(success);
     });
+}
+
+QStringList MainWindow::scanBatchFiles() const {
+    QStringList results;
+    if (!batchCheckBox_ || !batchCheckBox_->isChecked()) return results;
+
+    QString dirPath = batchDirEdit_->text().trimmed();
+    if (dirPath.isEmpty()) return results;
+
+    QDir dir(dirPath);
+    if (!dir.exists()) return results;
+
+    QString filterText = batchFilterEdit_ ? batchFilterEdit_->text().trimmed() : QStringLiteral("*.tif");
+    QStringList filters = filterText.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (filters.isEmpty()) filters << QStringLiteral("*.tif");
+
+    QFileInfoList entries = dir.entryInfoList(filters, QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
+    for (const auto& fi : entries) {
+        results << fi.absoluteFilePath();
+    }
+    return results;
+}
+
+void MainWindow::updateBatchCount() {
+    if (!batchCountLabel_) return;
+    QStringList files = scanBatchFiles();
+    if (files.isEmpty()) {
+        batchCountLabel_->setText(QStringLiteral("未找到匹配文件"));
+    } else {
+        batchCountLabel_->setText(QStringLiteral("匹配 %1 个文件").arg(files.size()));
+    }
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
