@@ -183,6 +183,10 @@ QString genericActionDisplayName(const QString& actionKey) {
         {QStringLiteral("hole_check"), QStringLiteral("孔洞检查")},
         {QStringLiteral("dangling_endpoint_check"), QStringLiteral("悬挂端点检查")},
         {QStringLiteral("sliver_remove"), QStringLiteral("碎片面消除")},
+        {QStringLiteral("reclassify"), QStringLiteral("重分类")},
+        {QStringLiteral("raster_overlay"), QStringLiteral("栅格叠加")},
+        {QStringLiteral("zonal_stats"), QStringLiteral("分区统计")},
+        {QStringLiteral("proximity"), QStringLiteral("欧氏距离")},
     };
 
     const auto it = kLabels.find(actionKey);

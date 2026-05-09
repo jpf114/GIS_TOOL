@@ -17,10 +17,20 @@ CMakeSettings.json
 
 # OS
 Thumbs.db
+desktop.ini
 .DS_Store
 
 # vcpkg
 vcpkg_installed/
+
+# Runtime databases
+*.db
+
+# Logs and temp
+*.log
+*.tmp
+*.bak
+*.orig
 
 # Local verification assets
 data/
@@ -29,3 +39,7 @@ tmp/
 # Superpowers brainstorm
 .superpowers/
 docs/superpowers/
+
+# Python cache
+__pycache__/
+*.pyc

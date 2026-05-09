@@ -91,8 +91,20 @@ std::string defaultSuffixForOutput(const std::string& pluginName,
         return inputExt;
     }
 
+    if (pluginName == "raster_math") {
+        if (action == "band_math") return ".tif";
+        if (action == "reclassify") return ".tif";
+        if (action == "raster_overlay") return ".tif";
+    }
+
     if (pluginName == "raster_manage") {
         if (action == "cog") {
+            return ".tif";
+        }
+        if (action == "zonal_stats") {
+            return ".json";
+        }
+        if (action == "proximity") {
             return ".tif";
         }
         return inputExt;
@@ -953,6 +965,9 @@ std::string localizeResultMessage(const std::string& message) {
         {"Vector clip completed successfully", "矢量裁切完成"},
         {"Vector union completed successfully", "并集处理完成"},
         {"Vector difference completed successfully", "差集处理完成"},
+        {"Reclassify completed successfully", "重分类完成"},
+        {"Raster overlay completed successfully", "栅格叠加完成"},
+        {"Proximity map created", "欧氏距离计算完成"},
     };
 
     const auto it = kKnownMessages.find(message);
