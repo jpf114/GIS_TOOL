@@ -1386,6 +1386,9 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "watershed"),
+        QStringLiteral("watershed"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("processing", "contour"),
         QStringLiteral("contour"));
     EXPECT_NE(
@@ -1473,6 +1476,8 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "watershed").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("processing", "contour").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "edge").isEmpty());
@@ -1527,6 +1532,12 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
 }
 
 TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* watershedConfig =
+        gis::gui::findActionUiConfig("processing", "watershed");
+    ASSERT_NE(watershedConfig, nullptr);
+    EXPECT_TRUE(watershedConfig->visibleKeys.count("marker_input") > 0);
+    EXPECT_TRUE(watershedConfig->requiredKeys.count("output") > 0);
+
     const auto* contourConfig =
         gis::gui::findActionUiConfig("processing", "contour");
     ASSERT_NE(contourConfig, nullptr);
