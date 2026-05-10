@@ -1386,6 +1386,9 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "contour"),
+        QStringLiteral("contour"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("processing", "edge"),
         QStringLiteral("edge"));
     EXPECT_NE(
@@ -1470,6 +1473,8 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "contour").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("processing", "edge").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "template_match").isEmpty());
@@ -1522,6 +1527,12 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
 }
 
 TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* contourConfig =
+        gis::gui::findActionUiConfig("processing", "contour");
+    ASSERT_NE(contourConfig, nullptr);
+    EXPECT_TRUE(contourConfig->visibleKeys.count("min_area") > 0);
+    EXPECT_TRUE(contourConfig->requiredKeys.count("output") > 0);
+
     const auto* edgeConfig =
         gis::gui::findActionUiConfig("processing", "edge");
     ASSERT_NE(edgeConfig, nullptr);
@@ -1843,6 +1854,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(sobelDyText, nullptr);
     EXPECT_FALSE(sobelDyText->displayName.isEmpty());
     EXPECT_FALSE(sobelDyText->description.isEmpty());
+
+    const auto* minAreaText = gis::gui::findCommonParamText("min_area");
+    ASSERT_NE(minAreaText, nullptr);
+    EXPECT_FALSE(minAreaText->displayName.isEmpty());
+    EXPECT_FALSE(minAreaText->description.isEmpty());
 
     const auto* levelsText = gis::gui::findCommonParamText("levels");
     ASSERT_NE(levelsText, nullptr);

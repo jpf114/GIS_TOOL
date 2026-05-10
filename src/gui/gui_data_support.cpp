@@ -100,6 +100,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"high_threshold", {QStringLiteral("High Threshold"), QStringLiteral("Upper threshold used by edge detection.")}},
         {"sobel_dx", {QStringLiteral("Sobel DX"), QStringLiteral("Sobel derivative order in the X direction.")}},
         {"sobel_dy", {QStringLiteral("Sobel DY"), QStringLiteral("Sobel derivative order in the Y direction.")}},
+        {"min_area", {QStringLiteral("Min Area"), QStringLiteral("Minimum area threshold used for contour extraction.")}},
         {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("NoData value to write.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
@@ -140,6 +141,12 @@ actionSpecificParamTextStorage() {
 const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& actionUiConfigStorage() {
     static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
         {"processing", {
+            {"contour", {
+                QStringLiteral("Contour"),
+                QStringLiteral("Extract contours from raster targets."),
+                {"input", "output", "band", "min_area"},
+                {"input", "output"}
+            }},
             {"edge", {
                 QStringLiteral("Edge"),
                 QStringLiteral("Detect raster edges with configurable methods."),
