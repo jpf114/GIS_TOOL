@@ -1394,6 +1394,12 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
     EXPECT_NE(
         gis::gui::actionDisplayName("vector", "buffer"),
         QStringLiteral("buffer"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("projection", "info"),
+        QStringLiteral("info"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("vector", "clip"),
+        QStringLiteral("clip"));
     EXPECT_EQ(
         gis::gui::actionDisplayName("processing", "unknown_action"),
         QStringLiteral("unknown_action"));
@@ -1402,6 +1408,10 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "gabor_filter").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("projection", "info").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("vector", "clip").isEmpty());
     EXPECT_TRUE(
         gis::gui::actionDescription("processing", "unknown_action").isEmpty());
 }
@@ -1422,6 +1432,16 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     const auto* projectionConfig = gis::gui::findActionUiConfig("projection", "reproject");
     ASSERT_NE(projectionConfig, nullptr);
     EXPECT_TRUE(projectionConfig->requiredKeys.count("dst_srs") > 0);
+
+    const auto* projectionInfoConfig = gis::gui::findActionUiConfig("projection", "info");
+    ASSERT_NE(projectionInfoConfig, nullptr);
+    EXPECT_TRUE(projectionInfoConfig->visibleKeys.count("input") > 0);
+    EXPECT_TRUE(projectionInfoConfig->requiredKeys.count("input") > 0);
+
+    const auto* vectorClipConfig = gis::gui::findActionUiConfig("vector", "clip");
+    ASSERT_NE(vectorClipConfig, nullptr);
+    EXPECT_TRUE(vectorClipConfig->visibleKeys.count("clip_vector") > 0);
+    EXPECT_TRUE(vectorClipConfig->requiredKeys.count("clip_vector") > 0);
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1444,6 +1464,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(layerText, nullptr);
     EXPECT_FALSE(layerText->displayName.isEmpty());
     EXPECT_FALSE(layerText->description.isEmpty());
+
+    const auto* clipVectorText = gis::gui::findCommonParamText("clip_vector");
+    ASSERT_NE(clipVectorText, nullptr);
+    EXPECT_FALSE(clipVectorText->displayName.isEmpty());
+    EXPECT_FALSE(clipVectorText->description.isEmpty());
 
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");
@@ -1468,6 +1493,18 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(reprojectInputText, nullptr);
     EXPECT_FALSE(reprojectInputText->displayName.isEmpty());
     EXPECT_FALSE(reprojectInputText->description.isEmpty());
+
+    const auto* mergeBandsInputText =
+        gis::gui::findActionSpecificParamText("cutting", "merge_bands", "input");
+    ASSERT_NE(mergeBandsInputText, nullptr);
+    EXPECT_FALSE(mergeBandsInputText->displayName.isEmpty());
+    EXPECT_FALSE(mergeBandsInputText->description.isEmpty());
+
+    const auto* mergeBandsBandsText =
+        gis::gui::findActionSpecificParamText("cutting", "merge_bands", "bands");
+    ASSERT_NE(mergeBandsBandsText, nullptr);
+    EXPECT_FALSE(mergeBandsBandsText->displayName.isEmpty());
+    EXPECT_FALSE(mergeBandsBandsText->description.isEmpty());
 
     EXPECT_EQ(
         gis::gui::findActionSpecificParamText("processing", "gabor_filter", "missing_param"),

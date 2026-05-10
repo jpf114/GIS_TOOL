@@ -72,6 +72,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"dst_srs", {QStringLiteral("鐩爣鍧愭爣绯?"), QStringLiteral("Target spatial reference.")}},
         {"layer", {QStringLiteral("鍥惧眰鍚?"), QStringLiteral("Layer name to process.")}},
         {"distance", {QStringLiteral("璺濈"), QStringLiteral("Distance parameter.")}},
+        {"clip_vector", {QStringLiteral("瑁佸垏鐭㈤噺"), QStringLiteral("Overlay vector path for clipping.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
     return kTexts;
@@ -88,6 +89,10 @@ actionSpecificParamTextStorage() {
         {"cutting", {
             {"split", {
                 {"output", {QStringLiteral("杈撳嚭鐩綍"), QStringLiteral("Output directory for split tiles.")}},
+            }},
+            {"merge_bands", {
+                {"input", {QStringLiteral("杈撳叆鏂囦欢"), QStringLiteral("Primary single-band raster path.")}},
+                {"bands", {QStringLiteral("娉㈡鍒楄〃"), QStringLiteral("Additional single-band raster paths.")}},
             }},
         }},
         {"processing", {
@@ -129,6 +134,12 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "layer", "distance"},
                 {"input", "output"}
             }},
+            {"clip", {
+                QStringLiteral("Clip"),
+                QStringLiteral("Clip vector features with an overlay layer."),
+                {"input", "output", "layer", "clip_vector"},
+                {"input", "output", "clip_vector"}
+            }},
         }},
         {"projection", {
             {"reproject", {
@@ -136,6 +147,12 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 QStringLiteral("Reproject raster or vector data."),
                 {"input", "output", "dst_srs", "src_srs", "resample"},
                 {"input", "output", "dst_srs"}
+            }},
+            {"info", {
+                QStringLiteral("Info"),
+                QStringLiteral("Inspect spatial reference information."),
+                {"input"},
+                {"input"}
             }},
         }},
     };
