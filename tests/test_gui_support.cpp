@@ -1386,6 +1386,9 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "stats"),
+        QStringLiteral("stats"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("processing", "gabor_filter"),
         QStringLiteral("gabor_filter"));
     EXPECT_NE(
@@ -1440,9 +1443,6 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
         gis::gui::actionDisplayName("raster_manage", "overviews"),
         QStringLiteral("overviews"));
     EXPECT_NE(
-        gis::gui::actionDisplayName("raster_manage", "overviews"),
-        QStringLiteral("overviews"));
-    EXPECT_NE(
         gis::gui::actionDisplayName("raster_manage", "cog"),
         QStringLiteral("cog"));
     EXPECT_NE(
@@ -1454,6 +1454,8 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 }
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
+    EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "stats").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "gabor_filter").isEmpty());
     EXPECT_FALSE(
@@ -1487,8 +1489,6 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
         gis::gui::actionDescription("raster_manage", "overviews").isEmpty());
     EXPECT_FALSE(
-        gis::gui::actionDescription("raster_manage", "overviews").isEmpty());
-    EXPECT_FALSE(
         gis::gui::actionDescription("raster_manage", "cog").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("raster_manage", "nodata").isEmpty());
@@ -1497,6 +1497,12 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
 }
 
 TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* statsConfig = gis::gui::findActionUiConfig("processing", "stats");
+    ASSERT_NE(statsConfig, nullptr);
+    EXPECT_TRUE(statsConfig->visibleKeys.count("input") > 0);
+    EXPECT_TRUE(statsConfig->visibleKeys.count("band") > 0);
+    EXPECT_TRUE(statsConfig->requiredKeys.count("input") > 0);
+
     const auto* config = gis::gui::findActionUiConfig("processing", "gabor_filter");
     ASSERT_NE(config, nullptr);
     EXPECT_NE(config->displayName, QStringLiteral("gabor_filter"));
@@ -1679,6 +1685,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(resampleText, nullptr);
     EXPECT_FALSE(resampleText->displayName.isEmpty());
     EXPECT_FALSE(resampleText->description.isEmpty());
+
+    const auto* bandText = gis::gui::findCommonParamText("band");
+    ASSERT_NE(bandText, nullptr);
+    EXPECT_FALSE(bandText->displayName.isEmpty());
+    EXPECT_FALSE(bandText->description.isEmpty());
 
     const auto* methodText = gis::gui::findCommonParamText("method");
     ASSERT_NE(methodText, nullptr);

@@ -73,6 +73,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"src_srs", {QStringLiteral("Source SRS"), QStringLiteral("Source spatial reference.")}},
         {"srs", {QStringLiteral("SRS"), QStringLiteral("Spatial reference to assign.")}},
         {"resample", {QStringLiteral("Resample"), QStringLiteral("Resampling method.")}},
+        {"band", {QStringLiteral("Band"), QStringLiteral("Raster band index to process.")}},
         {"x", {QStringLiteral("X 鍧愭爣"), QStringLiteral("X coordinate to transform.")}},
         {"y", {QStringLiteral("Y 鍧愭爣"), QStringLiteral("Y coordinate to transform.")}},
         {"layer", {QStringLiteral("鍥惧眰鍚?"), QStringLiteral("Layer name to process.")}},
@@ -125,6 +126,12 @@ actionSpecificParamTextStorage() {
 const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& actionUiConfigStorage() {
     static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
         {"processing", {
+            {"stats", {
+                QStringLiteral("Stats"),
+                QStringLiteral("Inspect basic statistics for a raster band."),
+                {"input", "band"},
+                {"input"}
+            }},
             {"gabor_filter", {
                 QStringLiteral("Gabor 婊ゆ尝"),
                 QStringLiteral("Gabor texture filtering."),
