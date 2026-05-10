@@ -1398,8 +1398,14 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
         gis::gui::actionDisplayName("projection", "info"),
         QStringLiteral("info"));
     EXPECT_NE(
+        gis::gui::actionDisplayName("projection", "transform"),
+        QStringLiteral("transform"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("vector", "clip"),
         QStringLiteral("clip"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("vector", "filter"),
+        QStringLiteral("filter"));
     EXPECT_EQ(
         gis::gui::actionDisplayName("processing", "unknown_action"),
         QStringLiteral("unknown_action"));
@@ -1411,7 +1417,11 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
         gis::gui::actionDescription("projection", "info").isEmpty());
     EXPECT_FALSE(
+        gis::gui::actionDescription("projection", "transform").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("vector", "clip").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("vector", "filter").isEmpty());
     EXPECT_TRUE(
         gis::gui::actionDescription("processing", "unknown_action").isEmpty());
 }
@@ -1442,6 +1452,18 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     ASSERT_NE(vectorClipConfig, nullptr);
     EXPECT_TRUE(vectorClipConfig->visibleKeys.count("clip_vector") > 0);
     EXPECT_TRUE(vectorClipConfig->requiredKeys.count("clip_vector") > 0);
+
+    const auto* projectionTransformConfig =
+        gis::gui::findActionUiConfig("projection", "transform");
+    ASSERT_NE(projectionTransformConfig, nullptr);
+    EXPECT_TRUE(projectionTransformConfig->visibleKeys.count("x") > 0);
+    EXPECT_TRUE(projectionTransformConfig->visibleKeys.count("y") > 0);
+    EXPECT_TRUE(projectionTransformConfig->requiredKeys.count("dst_srs") > 0);
+
+    const auto* vectorFilterConfig = gis::gui::findActionUiConfig("vector", "filter");
+    ASSERT_NE(vectorFilterConfig, nullptr);
+    EXPECT_TRUE(vectorFilterConfig->visibleKeys.count("where") > 0);
+    EXPECT_TRUE(vectorFilterConfig->visibleKeys.count("extent") > 0);
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1469,6 +1491,21 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(clipVectorText, nullptr);
     EXPECT_FALSE(clipVectorText->displayName.isEmpty());
     EXPECT_FALSE(clipVectorText->description.isEmpty());
+
+    const auto* whereText = gis::gui::findCommonParamText("where");
+    ASSERT_NE(whereText, nullptr);
+    EXPECT_FALSE(whereText->displayName.isEmpty());
+    EXPECT_FALSE(whereText->description.isEmpty());
+
+    const auto* xText = gis::gui::findCommonParamText("x");
+    ASSERT_NE(xText, nullptr);
+    EXPECT_FALSE(xText->displayName.isEmpty());
+    EXPECT_FALSE(xText->description.isEmpty());
+
+    const auto* yText = gis::gui::findCommonParamText("y");
+    ASSERT_NE(yText, nullptr);
+    EXPECT_FALSE(yText->displayName.isEmpty());
+    EXPECT_FALSE(yText->description.isEmpty());
 
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");

@@ -70,7 +70,10 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"output", {QStringLiteral("杈撳嚭鏂囦欢"), QStringLiteral("Output result path.")}},
         {"reference", {QStringLiteral("鍙傝€冩枃浠?"), QStringLiteral("Reference data path.")}},
         {"dst_srs", {QStringLiteral("鐩爣鍧愭爣绯?"), QStringLiteral("Target spatial reference.")}},
+        {"x", {QStringLiteral("X 鍧愭爣"), QStringLiteral("X coordinate to transform.")}},
+        {"y", {QStringLiteral("Y 鍧愭爣"), QStringLiteral("Y coordinate to transform.")}},
         {"layer", {QStringLiteral("鍥惧眰鍚?"), QStringLiteral("Layer name to process.")}},
+        {"where", {QStringLiteral("Where"), QStringLiteral("SQL WHERE expression.")}},
         {"distance", {QStringLiteral("璺濈"), QStringLiteral("Distance parameter.")}},
         {"clip_vector", {QStringLiteral("瑁佸垏鐭㈤噺"), QStringLiteral("Overlay vector path for clipping.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
@@ -140,6 +143,12 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "layer", "clip_vector"},
                 {"input", "output", "clip_vector"}
             }},
+            {"filter", {
+                QStringLiteral("Filter"),
+                QStringLiteral("Filter vector features by attribute or extent."),
+                {"input", "output", "layer", "where", "extent"},
+                {"input", "output"}
+            }},
         }},
         {"projection", {
             {"reproject", {
@@ -153,6 +162,12 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 QStringLiteral("Inspect spatial reference information."),
                 {"input"},
                 {"input"}
+            }},
+            {"transform", {
+                QStringLiteral("Transform"),
+                QStringLiteral("Transform a coordinate between spatial references."),
+                {"src_srs", "dst_srs", "x", "y"},
+                {"dst_srs"}
             }},
         }},
     };
