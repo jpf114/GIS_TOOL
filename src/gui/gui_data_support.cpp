@@ -82,6 +82,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"bins", {QStringLiteral("Bins"), QStringLiteral("Histogram bin count.")}},
         {"method", {QStringLiteral("Method"), QStringLiteral("Primary processing method.")}},
         {"change_method", {QStringLiteral("Change Method"), QStringLiteral("Method used for change detection.")}},
+        {"ecc_motion", {QStringLiteral("ECC Motion"), QStringLiteral("Motion model used by ECC registration.")}},
         {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("NoData value to write.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
@@ -221,6 +222,18 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 QStringLiteral("Detect changes between reference and input rasters."),
                 {"reference", "input", "output", "change_method", "threshold", "band"},
                 {"reference", "input", "output"}
+            }},
+            {"ecc_register", {
+                QStringLiteral("ECC Register"),
+                QStringLiteral("Register raster data using ECC optimization."),
+                {"reference", "input", "output", "ecc_motion", "ecc_iterations", "ecc_epsilon", "resample", "band"},
+                {"reference", "input", "output"}
+            }},
+            {"corner", {
+                QStringLiteral("Corner"),
+                QStringLiteral("Detect corner features from raster data."),
+                {"input", "output", "corner_method", "max_corners", "quality_level", "min_distance", "band"},
+                {"input"}
             }},
         }},
         {"raster_manage", {

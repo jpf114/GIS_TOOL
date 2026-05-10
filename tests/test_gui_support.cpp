@@ -1428,6 +1428,12 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
         gis::gui::actionDisplayName("matching", "change"),
         QStringLiteral("change"));
     EXPECT_NE(
+        gis::gui::actionDisplayName("matching", "ecc_register"),
+        QStringLiteral("ecc_register"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("matching", "corner"),
+        QStringLiteral("corner"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("raster_manage", "overviews"),
         QStringLiteral("overviews"));
     EXPECT_NE(
@@ -1466,6 +1472,10 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
         gis::gui::actionDescription("matching", "register").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("matching", "change").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("matching", "ecc_register").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("matching", "corner").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("raster_manage", "overviews").isEmpty());
     EXPECT_FALSE(
@@ -1575,6 +1585,20 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     EXPECT_TRUE(matchingChangeConfig->visibleKeys.count("change_method") > 0);
     EXPECT_TRUE(matchingChangeConfig->visibleKeys.count("threshold") > 0);
     EXPECT_TRUE(matchingChangeConfig->requiredKeys.count("reference") > 0);
+
+    const auto* matchingEccConfig =
+        gis::gui::findActionUiConfig("matching", "ecc_register");
+    ASSERT_NE(matchingEccConfig, nullptr);
+    EXPECT_TRUE(matchingEccConfig->visibleKeys.count("ecc_motion") > 0);
+    EXPECT_TRUE(matchingEccConfig->visibleKeys.count("ecc_iterations") > 0);
+    EXPECT_TRUE(matchingEccConfig->requiredKeys.count("output") > 0);
+
+    const auto* matchingCornerConfig =
+        gis::gui::findActionUiConfig("matching", "corner");
+    ASSERT_NE(matchingCornerConfig, nullptr);
+    EXPECT_TRUE(matchingCornerConfig->visibleKeys.count("corner_method") > 0);
+    EXPECT_TRUE(matchingCornerConfig->visibleKeys.count("max_corners") > 0);
+    EXPECT_TRUE(matchingCornerConfig->requiredKeys.count("input") > 0);
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1652,6 +1676,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(changeMethodText, nullptr);
     EXPECT_FALSE(changeMethodText->displayName.isEmpty());
     EXPECT_FALSE(changeMethodText->description.isEmpty());
+
+    const auto* eccMotionText = gis::gui::findCommonParamText("ecc_motion");
+    ASSERT_NE(eccMotionText, nullptr);
+    EXPECT_FALSE(eccMotionText->displayName.isEmpty());
+    EXPECT_FALSE(eccMotionText->description.isEmpty());
 
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");
