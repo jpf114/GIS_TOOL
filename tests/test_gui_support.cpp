@@ -1440,6 +1440,9 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
         gis::gui::actionDisplayName("raster_manage", "overviews"),
         QStringLiteral("overviews"));
     EXPECT_NE(
+        gis::gui::actionDisplayName("raster_manage", "overviews"),
+        QStringLiteral("overviews"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("raster_manage", "cog"),
         QStringLiteral("cog"));
     EXPECT_NE(
@@ -1481,6 +1484,8 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
         gis::gui::actionDescription("matching", "corner").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("matching", "stitch").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("raster_manage", "overviews").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("raster_manage", "overviews").isEmpty());
     EXPECT_FALSE(
@@ -1558,6 +1563,7 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     ASSERT_NE(rasterOverviewsConfig, nullptr);
     EXPECT_TRUE(rasterOverviewsConfig->visibleKeys.count("levels") > 0);
     EXPECT_TRUE(rasterOverviewsConfig->visibleKeys.count("resample") > 0);
+    EXPECT_TRUE(rasterOverviewsConfig->requiredKeys.count("input") > 0);
 
     const auto* rasterCogConfig =
         gis::gui::findActionUiConfig("raster_manage", "cog");
@@ -1610,6 +1616,7 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     ASSERT_NE(matchingStitchConfig, nullptr);
     EXPECT_TRUE(matchingStitchConfig->visibleKeys.count("stitch_confidence") > 0);
     EXPECT_TRUE(matchingStitchConfig->requiredKeys.count("output") > 0);
+
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1697,6 +1704,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(stitchConfidenceText, nullptr);
     EXPECT_FALSE(stitchConfidenceText->displayName.isEmpty());
     EXPECT_FALSE(stitchConfidenceText->description.isEmpty());
+
+    const auto* levelsText = gis::gui::findCommonParamText("levels");
+    ASSERT_NE(levelsText, nullptr);
+    EXPECT_FALSE(levelsText->displayName.isEmpty());
+    EXPECT_FALSE(levelsText->description.isEmpty());
 
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");

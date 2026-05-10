@@ -80,6 +80,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"distance", {QStringLiteral("璺濈"), QStringLiteral("Distance parameter.")}},
         {"clip_vector", {QStringLiteral("瑁佸垏鐭㈤噺"), QStringLiteral("Overlay vector path for clipping.")}},
         {"bins", {QStringLiteral("Bins"), QStringLiteral("Histogram bin count.")}},
+        {"levels", {QStringLiteral("Levels"), QStringLiteral("Overview levels to build.")}},
         {"method", {QStringLiteral("Method"), QStringLiteral("Primary processing method.")}},
         {"change_method", {QStringLiteral("Change Method"), QStringLiteral("Method used for change detection.")}},
         {"ecc_motion", {QStringLiteral("ECC Motion"), QStringLiteral("Motion model used by ECC registration.")}},
