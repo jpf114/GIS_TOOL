@@ -1386,6 +1386,9 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "enhance"),
+        QStringLiteral("enhance"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("processing", "filter"),
         QStringLiteral("filter"));
     EXPECT_NE(
@@ -1461,6 +1464,8 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "enhance").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("processing", "filter").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "threshold").isEmpty());
@@ -1507,6 +1512,12 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
 }
 
 TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* enhanceConfig = gis::gui::findActionUiConfig("processing", "enhance");
+    ASSERT_NE(enhanceConfig, nullptr);
+    EXPECT_TRUE(enhanceConfig->visibleKeys.count("enhance_type") > 0);
+    EXPECT_TRUE(enhanceConfig->visibleKeys.count("clip_limit") > 0);
+    EXPECT_TRUE(enhanceConfig->requiredKeys.count("output") > 0);
+
     const auto* filterConfig = gis::gui::findActionUiConfig("processing", "filter");
     ASSERT_NE(filterConfig, nullptr);
     EXPECT_TRUE(filterConfig->visibleKeys.count("filter_type") > 0);
@@ -1762,6 +1773,21 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(sigmaText, nullptr);
     EXPECT_FALSE(sigmaText->displayName.isEmpty());
     EXPECT_FALSE(sigmaText->description.isEmpty());
+
+    const auto* enhanceTypeText = gis::gui::findCommonParamText("enhance_type");
+    ASSERT_NE(enhanceTypeText, nullptr);
+    EXPECT_FALSE(enhanceTypeText->displayName.isEmpty());
+    EXPECT_FALSE(enhanceTypeText->description.isEmpty());
+
+    const auto* clipLimitText = gis::gui::findCommonParamText("clip_limit");
+    ASSERT_NE(clipLimitText, nullptr);
+    EXPECT_FALSE(clipLimitText->displayName.isEmpty());
+    EXPECT_FALSE(clipLimitText->description.isEmpty());
+
+    const auto* gammaText = gis::gui::findCommonParamText("gamma");
+    ASSERT_NE(gammaText, nullptr);
+    EXPECT_FALSE(gammaText->displayName.isEmpty());
+    EXPECT_FALSE(gammaText->description.isEmpty());
 
     const auto* levelsText = gis::gui::findCommonParamText("levels");
     ASSERT_NE(levelsText, nullptr);

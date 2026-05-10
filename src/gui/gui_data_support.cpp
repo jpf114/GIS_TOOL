@@ -91,6 +91,9 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"filter_type", {QStringLiteral("Filter Type"), QStringLiteral("Spatial filter algorithm to apply.")}},
         {"kernel_size", {QStringLiteral("Kernel Size"), QStringLiteral("Kernel size used by the filter.")}},
         {"sigma", {QStringLiteral("Sigma"), QStringLiteral("Sigma parameter used by Gaussian-style filters.")}},
+        {"enhance_type", {QStringLiteral("Enhance Type"), QStringLiteral("Enhancement method to apply.")}},
+        {"clip_limit", {QStringLiteral("Clip Limit"), QStringLiteral("Clip limit used by CLAHE enhancement.")}},
+        {"gamma", {QStringLiteral("Gamma"), QStringLiteral("Gamma value used for contrast correction.")}},
         {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("NoData value to write.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
@@ -131,6 +134,12 @@ actionSpecificParamTextStorage() {
 const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& actionUiConfigStorage() {
     static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
         {"processing", {
+            {"enhance", {
+                QStringLiteral("Enhance"),
+                QStringLiteral("Enhance raster appearance and contrast."),
+                {"input", "output", "band", "enhance_type", "clip_limit", "gamma"},
+                {"input", "output"}
+            }},
             {"filter", {
                 QStringLiteral("Filter"),
                 QStringLiteral("Apply spatial filtering to raster data."),
