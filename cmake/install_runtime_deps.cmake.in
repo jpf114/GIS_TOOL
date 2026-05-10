@@ -147,6 +147,9 @@ else()
         libssl-3-x64.dll
         libsharpyuv.dll
         libwebp.dll
+        libwebpdecoder.dll
+        libwebpdemux.dll
+        libwebpmux.dll
         libxml2.dll
         lz4.dll
         md4c.dll
@@ -200,6 +203,21 @@ else()
                 DESTINATION "${_gis_install_bin_dir}"
                 TYPE SHARED_LIBRARY
                 FILES "${_gis_dll_path}"
+            )
+        endif()
+    endforeach()
+endif()
+
+file(GLOB _gis_installed_plugin_dlls "${_gis_install_plugin_dir}/plugin_*.dll")
+if(_gis_installed_plugin_dlls)
+    file(GLOB _gis_installed_bin_dlls "${_gis_install_bin_dir}/*.dll")
+    foreach(_gis_bin_dll IN LISTS _gis_installed_bin_dlls)
+        get_filename_component(_gis_bin_dll_name "${_gis_bin_dll}" NAME)
+        if(NOT _gis_bin_dll_name MATCHES "^plugin_" AND NOT _gis_bin_dll_name MATCHES "^gis-")
+            file(INSTALL
+                DESTINATION "${_gis_install_plugin_dir}"
+                TYPE SHARED_LIBRARY
+                FILES "${_gis_bin_dll}"
             )
         endif()
     endforeach()

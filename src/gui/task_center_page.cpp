@@ -189,9 +189,12 @@ void TaskCenterPage::updateTaskRow(const QString& taskId, int status,
         qint64 secs = durationMs / 1000;
         qint64 ms = durationMs % 1000;
         if (secs < 60) {
-            item->setText(4, QStringLiteral("%1.%2秒").arg(secs).arg(ms / 100));
+            double seconds = durationMs / 1000.0;
+            item->setText(4, QStringLiteral("%1秒").arg(seconds, 0, 'f', 1));
         } else {
-            item->setText(4, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
+            int mins = static_cast<int>(secs) / 60;
+            int remainSecs = static_cast<int>(secs) % 60;
+            item->setText(4, QStringLiteral("%1分%2秒").arg(mins).arg(remainSecs));
         }
     } else {
         QString startStr = item->text(2);
@@ -267,11 +270,13 @@ void TaskCenterPage::refreshAll() {
 
         if (rec.durationMs > 0) {
             qint64 secs = rec.durationMs / 1000;
-            qint64 ms = rec.durationMs % 1000;
             if (secs < 60) {
-                item->setText(4, QStringLiteral("%1.%2秒").arg(secs).arg(ms / 100));
+                double seconds = rec.durationMs / 1000.0;
+                item->setText(4, QStringLiteral("%1秒").arg(seconds, 0, 'f', 1));
             } else {
-                item->setText(4, QStringLiteral("%1分%2秒").arg(secs / 60).arg(secs % 60));
+                int mins = static_cast<int>(secs) / 60;
+                int remainSecs = static_cast<int>(secs) % 60;
+                item->setText(4, QStringLiteral("%1分%2秒").arg(mins).arg(remainSecs));
             }
         } else if (rec.endTime.isValid() && rec.startTime.isValid()) {
             qint64 secs = rec.startTime.secsTo(rec.endTime);

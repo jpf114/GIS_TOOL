@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-- 当前版本：`v0.5.0`
+- 当前版本：`v0.6.0`
 - 标准构建目录：
   - `build/debug`
   - `build/release`
@@ -12,7 +12,7 @@
 - 依赖统一复用全局 `vcpkg`
   - 当前项目约定路径：`D:\Develop\vcpkg`
 
-### 最新验收状态（2026-05-06）
+### 最新验收状态（2026-05-10）
 
 - `cmake --build build/debug --config Debug` 通过
 - `cmake --build build/release --config Release` 通过
@@ -20,6 +20,8 @@
 - `cmake --install build/release --config Release` 通过
 - `install/bin/gis-cli.exe --list` 正常，可列出 13 个插件
 - `install/bin/gis-gui.exe -platform offscreen --self-test` 正常
+- CLI Release 全插件加载验证通过（13/13）
+- GUI 任务队列、批量处理、耗时统计、错误人性化功能正常
 - `cmake --build build/release --config Release --target real_matching_regression` 通过
 - `cmake --build build/release --config Release --target real_matching_regression_full` 通过
 - `cmake --build build/release --config Release --target real_raster_regression` 通过

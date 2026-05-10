@@ -34,6 +34,7 @@ add_custom_command(TARGET gis-cli POST_BUILD
 )
 
 gis_copy_minimal_runtime(gis-cli)
+gis_copy_minimal_runtime(gis-cli DEST_DIR $<TARGET_FILE_DIR:gis-cli>/plugins)
 
 foreach(GIS_PLUGIN_TARGET IN LISTS GIS_PLUGIN_TARGETS)
     add_custom_command(TARGET gis-cli POST_BUILD

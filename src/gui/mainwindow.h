@@ -49,6 +49,10 @@ private slots:
     void onClearHistory();
     void onClearLogsForTask(const QString& taskId);
     void onClearAllLogs();
+    void onTaskRunnerFinished(const QString& displayGroup,
+                              const QString& taskId,
+                              bool success,
+                              bool cancelled);
 
 private:
     void loadPlugins();
@@ -60,6 +64,8 @@ private:
     void refreshExecuteButtonState();
     void refreshParamValidationState();
     void runPluginWithParams(const std::map<std::string, gis::framework::ParamValue>& params);
+    void runPluginWithParams(const std::map<std::string, gis::framework::ParamValue>& params,
+                             bool skipOverwritePrompt);
     void resetDerivedParamTracking();
     void updateBatchCount();
     QStringList scanBatchFiles() const;
@@ -97,6 +103,8 @@ private:
     QPushButton* batchDirButton_ = nullptr;
     QLineEdit* batchFilterEdit_ = nullptr;
     QLabel* batchCountLabel_ = nullptr;
+
+    QMap<QString, QString> pendingResultTaskIds_;
 
     gis::framework::PluginManager pluginManager_;
     gis::framework::IGisPlugin* currentPlugin_ = nullptr;

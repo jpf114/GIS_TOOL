@@ -957,6 +957,9 @@ MainWindow::MainWindow(QWidget* parent)
         }
     });
 
+    connect(&TaskRunner::instance(), &TaskRunner::taskFinished,
+            this, &MainWindow::onTaskRunnerFinished);
+
     loadPlugins();
 }
 
@@ -1566,7 +1569,7 @@ void MainWindow::onExecute() {
                 params[outputKey] = derivedOutput.toStdString();
             }
 
-            runPluginWithParams(params);
+            runPluginWithParams(params, true);
             submitted++;
         }
 
@@ -1752,6 +1755,12 @@ void MainWindow::resetDerivedParamTracking() {
 
 void MainWindow::runPluginWithParams(
     const std::map<std::string, gis::framework::ParamValue>& params) {
+    runPluginWithParams(params, false);
+}
+
+void MainWindow::runPluginWithParams(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    bool skipOverwritePrompt) {
     lastExecutionSuccess_ = false;
     lastExecutionCancelled_ = false;
     lastExecutionMessage_.clear();
@@ -1768,13 +1777,15 @@ void MainWindow::runPluginWithParams(
 
         if (!dir.exists()) {
             if (!dir.mkpath(QStringLiteral("."))) {
-                QMessageBox::warning(this, QStringLiteral("目录创建失败"),
-                    QStringLiteral("无法创建输出目录：%1").arg(dir.absolutePath()));
+                if (!skipOverwritePrompt) {
+                    QMessageBox::warning(this, QStringLiteral("目录创建失败"),
+                        QStringLiteral("无法创建输出目录：%1").arg(dir.absolutePath()));
+                }
                 return;
             }
         }
 
-        if (fi.exists()) {
+        if (fi.exists() && !skipOverwritePrompt) {
             auto ret = QMessageBox::question(this, QStringLiteral("文件已存在"),
                 QStringLiteral("输出文件已存在，是否覆盖？\n%1").arg(outputPath),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
@@ -1810,62 +1821,7 @@ void MainWindow::runPluginWithParams(
         tabWidget_->setCurrentIndex(1);
     }
 
-    connect(&TaskRunner::instance(), &TaskRunner::taskFinished,
-            this,
-            [this, taskId, displayGroup](
-                const QString& dg, const QString& tid,
-                bool success, bool cancelled) {
-        if (tid != taskId) return;
-
-        auto result = TaskManager::instance().findTask(dg, tid);
-        const QString localizedMessage =
-            QString::fromUtf8(gis::gui::localizeResultMessage(result.result.message));
-        lastExecutionSuccess_ = success;
-        lastExecutionCancelled_ = cancelled;
-        lastExecutionMessage_ = localizedMessage;
-        lastExecutionRawMessage_ = QString::fromUtf8(result.result.message);
-
-        if (success) {
-            if (!result.result.outputPath.empty()) {
-                SettingsManager::instance().addRecentFile(
-                    QString::fromUtf8(result.result.outputPath));
-            }
-            QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result.result));
-            if (result.durationMs > 0) {
-                summary += QStringLiteral("\n耗时: %1").arg(formatDuration(result.durationMs));
-            }
-            resultSummaryLabel_->setText(
-                QStringLiteral("✓ 执行成功\n%1").arg(summary));
-            resultSummaryLabel_->setStyleSheet(
-                QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
-            statusBar()->showMessage(QStringLiteral("执行成功"));
-        } else if (cancelled) {
-            QString cancelText = QStringLiteral("✖ 已取消");
-            if (result.durationMs > 0) {
-                cancelText += QStringLiteral("\n耗时: %1").arg(formatDuration(result.durationMs));
-            }
-            resultSummaryLabel_->setText(cancelText);
-            resultSummaryLabel_->setStyleSheet(
-                QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
-            statusBar()->showMessage(QStringLiteral("执行已取消"));
-        } else {
-            QString failText = QStringLiteral("✖ 执行失败\n%1").arg(localizedMessage);
-            if (result.durationMs > 0) {
-                failText += QStringLiteral("\n耗时: %1").arg(formatDuration(result.durationMs));
-            }
-            resultSummaryLabel_->setText(failText);
-            resultSummaryLabel_->setStyleSheet(
-                QStringLiteral("color: %1;").arg(gis::style::Color::kError));
-            statusBar()->showMessage(QStringLiteral("执行失败：") + localizedMessage);
-        }
-
-        if (statusProgressBar_) {
-            statusProgressBar_->setRange(0, 100);
-            statusProgressBar_->setValue(success ? 100 : 0);
-        }
-        refreshExecuteButtonState();
-        emit executionFinished(success);
-    });
+    pendingResultTaskIds_[taskId] = displayGroup;
 }
 
 QStringList MainWindow::scanBatchFiles() const {
@@ -1989,5 +1945,62 @@ void MainWindow::onClearLogsForTask(const QString& taskId) {
 void MainWindow::onClearAllLogs() {
     TaskDatabase::instance().clearAllLogs(taskCenterPage_->currentGroup());
     taskCenterPage_->clearLogDisplay();
+}
+
+void MainWindow::onTaskRunnerFinished(const QString& displayGroup,
+                                       const QString& taskId,
+                                       bool success,
+                                       bool cancelled) {
+    if (!pendingResultTaskIds_.contains(taskId)) return;
+    pendingResultTaskIds_.remove(taskId);
+
+    auto result = TaskManager::instance().findTask(displayGroup, taskId);
+    const QString localizedMessage =
+        QString::fromUtf8(gis::gui::localizeResultMessage(result.result.message));
+    lastExecutionSuccess_ = success;
+    lastExecutionCancelled_ = cancelled;
+    lastExecutionMessage_ = localizedMessage;
+    lastExecutionRawMessage_ = QString::fromUtf8(result.result.message);
+
+    if (success) {
+        if (!result.result.outputPath.empty()) {
+            SettingsManager::instance().addRecentFile(
+                QString::fromUtf8(result.result.outputPath));
+        }
+        QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result.result));
+        if (result.durationMs > 0) {
+            summary += QStringLiteral("\n耗时: %1").arg(formatDuration(result.durationMs));
+        }
+        resultSummaryLabel_->setText(
+            QStringLiteral("✓ 执行成功\n%1").arg(summary));
+        resultSummaryLabel_->setStyleSheet(
+            QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
+        statusBar()->showMessage(QStringLiteral("执行成功"));
+    } else if (cancelled) {
+        QString cancelText = QStringLiteral("✖ 已取消");
+        if (result.durationMs > 0) {
+            cancelText += QStringLiteral("\n耗时: %1").arg(formatDuration(result.durationMs));
+        }
+        resultSummaryLabel_->setText(cancelText);
+        resultSummaryLabel_->setStyleSheet(
+            QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
+        statusBar()->showMessage(QStringLiteral("执行已取消"));
+    } else {
+        QString failText = QStringLiteral("✖ 执行失败\n%1").arg(localizedMessage);
+        if (result.durationMs > 0) {
+            failText += QStringLiteral("\n耗时: %1").arg(formatDuration(result.durationMs));
+        }
+        resultSummaryLabel_->setText(failText);
+        resultSummaryLabel_->setStyleSheet(
+            QStringLiteral("color: %1;").arg(gis::style::Color::kError));
+        statusBar()->showMessage(QStringLiteral("执行失败：") + localizedMessage);
+    }
+
+    if (statusProgressBar_) {
+        statusProgressBar_->setRange(0, 100);
+        statusProgressBar_->setValue(success ? 100 : 0);
+    }
+    refreshExecuteButtonState();
+    emit executionFinished(success);
 }
 

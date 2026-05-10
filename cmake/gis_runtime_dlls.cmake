@@ -1,4 +1,5 @@
 set(GIS_RUNTIME_DLLS
+    abseil_dll.dll
     aec.dll
     brotlicommon.dll
     brotlidec.dll
@@ -43,6 +44,9 @@ set(GIS_RUNTIME_DLLS
     libsharpyuv.dll
     libssl-3-x64.dll
     libwebp.dll
+    libwebpdecoder.dll
+    libwebpdemux.dll
+    libwebpmux.dll
     libxml2.dll
     lz4.dll
     md4c.dll
@@ -85,31 +89,30 @@ set(GIS_RUNTIME_DLLS
 )
 
 set(GIS_RUNTIME_DLLS_DEBUG
-    abseil_dll.dll
     aecd.dll
-    brotlicommon.dll
-    brotlidec.dll
-    brotlienc.dll
+    brotlicommond.dll
+    brotlidecd.dll
+    brotliencd.dll
     bz2d.dll
-    charset-1.dll
+    charset-1d.dll
     deflated.dll
-    double-conversion.dll
+    double-conversiond.dll
     fontconfig-1d.dll
     freetyped.dll
-    freexl-1.dll
+    freexld.dll
     gdald.dll
     geos_cd.dll
     geosd.dll
     geotiff_d.dll
-    gif.dll
-    harfbuzz.dll
+    gifd.dll
+    harfbuzzd.dll
     harfbuzz-rasterd.dll
     harfbuzz-subsetd.dll
     harfbuzz-vectord.dll
     hdf5d.dll
     hdf5_hld.dll
     Iex-3_4_d.dll
-    iconv-2.dll
+    iconv-2d.dll
     IlmThread-3_4_d.dll
     Imath-3_2_d.dll
     icudtd78.dll
@@ -117,25 +120,28 @@ set(GIS_RUNTIME_DLLS_DEBUG
     icuiod78.dll
     icutud78.dll
     icuucd78.dll
-    jpeg62.dll
-    json-c.dll
-    Lerc.dll
-    libcrypto-3-x64.dll
+    jpeg62d.dll
+    json-cd.dll
+    Lercd.dll
+    libcrypto-3-x64d.dll
     libcurl-d.dll
     libexpatd.dll
     liblzmad.dll
     libpng16d.dll
-    libpq.dll
+    libpqd.dll
     libprotobufd.dll
-    libsharpyuv.dll
-    libssl-3-x64.dll
+    libsharpyuvd.dll
+    libssl-3-x64d.dll
     libwebpd.dll
+    libwebpdecoderd.dll
+    libwebpdemuxd.dll
+    libwebpmuxd.dll
     libxml2d.dll
     lz4d.dll
     md4cd.dll
     md4c-htmld.dll
-    minizip.dll
-    netcdf.dll
+    minizipd.dll
+    netcdfd.dll
     opencv_calib3d4d.dll
     opencv_core4d.dll
     opencv_dnn4d.dll
@@ -148,7 +154,7 @@ set(GIS_RUNTIME_DLLS_DEBUG
     opencv_stitching4d.dll
     opencv_video4d.dll
     opencv_videoio4d.dll
-    openjp2.dll
+    openjp2d.dll
     OpenEXR-3_4_d.dll
     OpenEXRCore-3_4_d.dll
     pcre2-16d.dll
@@ -161,8 +167,8 @@ set(GIS_RUNTIME_DLLS_DEBUG
     Qt6Svgd.dll
     Qt6Widgetsd.dll
     spatialited.dll
-    sqlite3.dll
-    szip.dll
+    sqlite3d.dll
+    szipd.dll
     tiffd.dll
     tinyxml2d.dll
     turbojpegd.dll
