@@ -1401,11 +1401,20 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
         gis::gui::actionDisplayName("projection", "transform"),
         QStringLiteral("transform"));
     EXPECT_NE(
+        gis::gui::actionDisplayName("projection", "assign_srs"),
+        QStringLiteral("assign_srs"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("vector", "clip"),
         QStringLiteral("clip"));
     EXPECT_NE(
         gis::gui::actionDisplayName("vector", "filter"),
         QStringLiteral("filter"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("raster_inspect", "info"),
+        QStringLiteral("info"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("raster_inspect", "histogram"),
+        QStringLiteral("histogram"));
     EXPECT_EQ(
         gis::gui::actionDisplayName("processing", "unknown_action"),
         QStringLiteral("unknown_action"));
@@ -1419,9 +1428,15 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
         gis::gui::actionDescription("projection", "transform").isEmpty());
     EXPECT_FALSE(
+        gis::gui::actionDescription("projection", "assign_srs").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("vector", "clip").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("vector", "filter").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("raster_inspect", "info").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("raster_inspect", "histogram").isEmpty());
     EXPECT_TRUE(
         gis::gui::actionDescription("processing", "unknown_action").isEmpty());
 }
@@ -1464,6 +1479,23 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     ASSERT_NE(vectorFilterConfig, nullptr);
     EXPECT_TRUE(vectorFilterConfig->visibleKeys.count("where") > 0);
     EXPECT_TRUE(vectorFilterConfig->visibleKeys.count("extent") > 0);
+
+    const auto* projectionAssignConfig =
+        gis::gui::findActionUiConfig("projection", "assign_srs");
+    ASSERT_NE(projectionAssignConfig, nullptr);
+    EXPECT_TRUE(projectionAssignConfig->visibleKeys.count("srs") > 0);
+    EXPECT_TRUE(projectionAssignConfig->requiredKeys.count("srs") > 0);
+
+    const auto* rasterInfoConfig =
+        gis::gui::findActionUiConfig("raster_inspect", "info");
+    ASSERT_NE(rasterInfoConfig, nullptr);
+    EXPECT_TRUE(rasterInfoConfig->requiredKeys.count("input") > 0);
+
+    const auto* rasterHistogramConfig =
+        gis::gui::findActionUiConfig("raster_inspect", "histogram");
+    ASSERT_NE(rasterHistogramConfig, nullptr);
+    EXPECT_TRUE(rasterHistogramConfig->visibleKeys.count("bins") > 0);
+    EXPECT_TRUE(rasterHistogramConfig->visibleKeys.count("band") > 0);
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1506,6 +1538,16 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(yText, nullptr);
     EXPECT_FALSE(yText->displayName.isEmpty());
     EXPECT_FALSE(yText->description.isEmpty());
+
+    const auto* srsText = gis::gui::findCommonParamText("srs");
+    ASSERT_NE(srsText, nullptr);
+    EXPECT_FALSE(srsText->displayName.isEmpty());
+    EXPECT_FALSE(srsText->description.isEmpty());
+
+    const auto* binsText = gis::gui::findCommonParamText("bins");
+    ASSERT_NE(binsText, nullptr);
+    EXPECT_FALSE(binsText->displayName.isEmpty());
+    EXPECT_FALSE(binsText->description.isEmpty());
 
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");
