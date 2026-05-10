@@ -1386,6 +1386,9 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "edge"),
+        QStringLiteral("edge"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("processing", "template_match"),
         QStringLiteral("template_match"));
     EXPECT_NE(
@@ -1467,6 +1470,8 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "edge").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("processing", "template_match").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "enhance").isEmpty());
@@ -1517,6 +1522,14 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
 }
 
 TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* edgeConfig =
+        gis::gui::findActionUiConfig("processing", "edge");
+    ASSERT_NE(edgeConfig, nullptr);
+    EXPECT_TRUE(edgeConfig->visibleKeys.count("edge_method") > 0);
+    EXPECT_TRUE(edgeConfig->visibleKeys.count("low_threshold") > 0);
+    EXPECT_TRUE(edgeConfig->visibleKeys.count("sobel_dx") > 0);
+    EXPECT_TRUE(edgeConfig->requiredKeys.count("output") > 0);
+
     const auto* templateMatchConfig =
         gis::gui::findActionUiConfig("processing", "template_match");
     ASSERT_NE(templateMatchConfig, nullptr);
@@ -1805,6 +1818,31 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(gammaText, nullptr);
     EXPECT_FALSE(gammaText->displayName.isEmpty());
     EXPECT_FALSE(gammaText->description.isEmpty());
+
+    const auto* edgeMethodText = gis::gui::findCommonParamText("edge_method");
+    ASSERT_NE(edgeMethodText, nullptr);
+    EXPECT_FALSE(edgeMethodText->displayName.isEmpty());
+    EXPECT_FALSE(edgeMethodText->description.isEmpty());
+
+    const auto* lowThresholdText = gis::gui::findCommonParamText("low_threshold");
+    ASSERT_NE(lowThresholdText, nullptr);
+    EXPECT_FALSE(lowThresholdText->displayName.isEmpty());
+    EXPECT_FALSE(lowThresholdText->description.isEmpty());
+
+    const auto* highThresholdText = gis::gui::findCommonParamText("high_threshold");
+    ASSERT_NE(highThresholdText, nullptr);
+    EXPECT_FALSE(highThresholdText->displayName.isEmpty());
+    EXPECT_FALSE(highThresholdText->description.isEmpty());
+
+    const auto* sobelDxText = gis::gui::findCommonParamText("sobel_dx");
+    ASSERT_NE(sobelDxText, nullptr);
+    EXPECT_FALSE(sobelDxText->displayName.isEmpty());
+    EXPECT_FALSE(sobelDxText->description.isEmpty());
+
+    const auto* sobelDyText = gis::gui::findCommonParamText("sobel_dy");
+    ASSERT_NE(sobelDyText, nullptr);
+    EXPECT_FALSE(sobelDyText->displayName.isEmpty());
+    EXPECT_FALSE(sobelDyText->description.isEmpty());
 
     const auto* levelsText = gis::gui::findCommonParamText("levels");
     ASSERT_NE(levelsText, nullptr);

@@ -95,6 +95,11 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"enhance_type", {QStringLiteral("Enhance Type"), QStringLiteral("Enhancement method to apply.")}},
         {"clip_limit", {QStringLiteral("Clip Limit"), QStringLiteral("Clip limit used by CLAHE enhancement.")}},
         {"gamma", {QStringLiteral("Gamma"), QStringLiteral("Gamma value used for contrast correction.")}},
+        {"edge_method", {QStringLiteral("Edge Method"), QStringLiteral("Edge detection method to apply.")}},
+        {"low_threshold", {QStringLiteral("Low Threshold"), QStringLiteral("Lower threshold used by edge detection.")}},
+        {"high_threshold", {QStringLiteral("High Threshold"), QStringLiteral("Upper threshold used by edge detection.")}},
+        {"sobel_dx", {QStringLiteral("Sobel DX"), QStringLiteral("Sobel derivative order in the X direction.")}},
+        {"sobel_dy", {QStringLiteral("Sobel DY"), QStringLiteral("Sobel derivative order in the Y direction.")}},
         {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("NoData value to write.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
@@ -135,6 +140,12 @@ actionSpecificParamTextStorage() {
 const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& actionUiConfigStorage() {
     static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
         {"processing", {
+            {"edge", {
+                QStringLiteral("Edge"),
+                QStringLiteral("Detect raster edges with configurable methods."),
+                {"input", "output", "band", "edge_method", "low_threshold", "high_threshold", "sobel_dx", "sobel_dy"},
+                {"input", "output"}
+            }},
             {"template_match", {
                 QStringLiteral("Template Match"),
                 QStringLiteral("Match template raster content inside the input raster."),
