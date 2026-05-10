@@ -1008,6 +1008,11 @@ std::set<std::string> MainWindow::visibleParamsForAction(
 }
 
 QString MainWindow::actionDescription(const std::string& pluginName, const QString& actionKey) {
+    if (const QString sharedDescription =
+            gis::gui::actionDescription(pluginName, actionKey.toStdString());
+        !sharedDescription.isEmpty()) {
+        return sharedDescription;
+    }
     if (const auto* config = findActionUiConfig(pluginName, actionKey.toStdString())) {
         return config->description;
     }
@@ -1312,26 +1317,38 @@ std::vector<gis::framework::ParamSpec> MainWindow::effectiveParamSpecs() const {
         return {};
     }
 
-    const auto* config = findActionUiConfig(
-        currentPlugin_->name(), currentActionKey_.toStdString());
+    const auto actionKey = currentActionKey_.toStdString();
+    const auto* sharedConfig = gis::gui::findActionUiConfig(
+        currentPlugin_->name(), actionKey);
+    const auto* config = sharedConfig ? sharedConfig : findActionUiConfig(
+        currentPlugin_->name(), actionKey);
     auto visibleKeys = visibleParamsForAction(
-        currentPlugin_->name(), currentActionKey_.toStdString());
+        currentPlugin_->name(), actionKey);
     const std::set<std::string> requiredKeys = config ? config->requiredKeys : std::set<std::string>{};
     auto filtered = gis::gui::buildEffectiveGuiParamSpecs(
         currentPlugin_->name(),
-        currentActionKey_.toStdString(),
+        actionKey,
         currentPlugin_->paramSpecs(),
         visibleKeys,
         requiredKeys);
     for (auto& adjustedSpec : filtered) {
-        if (const auto it = commonParamTextStorage().find(adjustedSpec.key); it != commonParamTextStorage().end()) {
+        if (const auto* sharedText = gis::gui::findCommonParamText(adjustedSpec.key)) {
+            adjustedSpec.displayName = sharedText->displayName.toUtf8().toStdString();
+            adjustedSpec.description = sharedText->description.toUtf8().toStdString();
+        } else if (const auto it = commonParamTextStorage().find(adjustedSpec.key);
+                   it != commonParamTextStorage().end()) {
             adjustedSpec.displayName = it->second.displayName.toUtf8().toStdString();
             adjustedSpec.description = it->second.description.toUtf8().toStdString();
         }
-        if (const auto* actionText = findActionSpecificParamText(
-                currentPlugin_->name(), currentActionKey_.toStdString(), adjustedSpec.key)) {
+        if (const auto* actionText = gis::gui::findActionSpecificParamText(
+                currentPlugin_->name(), actionKey, adjustedSpec.key);
+            actionText != nullptr) {
             adjustedSpec.displayName = actionText->displayName.toUtf8().toStdString();
             adjustedSpec.description = actionText->description.toUtf8().toStdString();
+        } else if (const auto* localActionText = findActionSpecificParamText(
+                       currentPlugin_->name(), actionKey, adjustedSpec.key)) {
+            adjustedSpec.displayName = localActionText->displayName.toUtf8().toStdString();
+            adjustedSpec.description = localActionText->description.toUtf8().toStdString();
         }
     }
     return filtered;

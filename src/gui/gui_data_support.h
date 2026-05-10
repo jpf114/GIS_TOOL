@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <QString>
+
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
 
@@ -38,6 +40,18 @@ struct BindableParamOption {
 struct ActionValidationIssue {
     std::string key;
     std::string message;
+};
+
+struct ActionUiConfig {
+    QString displayName;
+    QString description;
+    std::set<std::string> visibleKeys;
+    std::set<std::string> requiredKeys;
+};
+
+struct ParamText {
+    QString displayName;
+    QString description;
 };
 
 struct FileParamUiConfig {
@@ -107,6 +121,14 @@ DerivedOutputUpdate computeDerivedExpressionUpdate(const std::string& currentVal
                                                    const std::string& action,
                                                    const std::string& presetKey);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
+QString actionDisplayName(const std::string& pluginName, const std::string& actionKey);
+QString actionDescription(const std::string& pluginName, const std::string& actionKey);
+const ActionUiConfig* findActionUiConfig(const std::string& pluginName,
+                                         const std::string& actionKey);
+const ParamText* findCommonParamText(const std::string& paramKey);
+const ParamText* findActionSpecificParamText(const std::string& pluginName,
+                                             const std::string& actionKey,
+                                             const std::string& paramKey);
 std::string localizeResultMessage(const std::string& message);
 std::string buildResultSummaryText(const gis::framework::Result& result);
 std::string validateExecutionParams(

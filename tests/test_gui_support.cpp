@@ -1384,6 +1384,63 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
     EXPECT_EQ(ready.statusObjectName, "statusBadgeReady");
 }
 
+TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
+    EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "gabor_filter"),
+        QStringLiteral("gabor_filter"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("projection", "reproject"),
+        QStringLiteral("reproject"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("processing", "unknown_action"),
+        QStringLiteral("unknown_action"));
+}
+
+TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
+    EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "gabor_filter").isEmpty());
+    EXPECT_TRUE(
+        gis::gui::actionDescription("processing", "unknown_action").isEmpty());
+}
+
+TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* config = gis::gui::findActionUiConfig("processing", "gabor_filter");
+    ASSERT_NE(config, nullptr);
+    EXPECT_NE(config->displayName, QStringLiteral("gabor_filter"));
+    EXPECT_FALSE(config->description.isEmpty());
+    EXPECT_TRUE(config->visibleKeys.count("input") > 0);
+    EXPECT_TRUE(config->visibleKeys.count("output") > 0);
+    EXPECT_TRUE(config->requiredKeys.count("input") > 0);
+}
+
+TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
+    const auto* commonText = gis::gui::findCommonParamText("input");
+    ASSERT_NE(commonText, nullptr);
+    EXPECT_FALSE(commonText->displayName.isEmpty());
+    EXPECT_FALSE(commonText->description.isEmpty());
+
+    const auto* referenceText = gis::gui::findCommonParamText("reference");
+    ASSERT_NE(referenceText, nullptr);
+    EXPECT_FALSE(referenceText->displayName.isEmpty());
+    EXPECT_FALSE(referenceText->description.isEmpty());
+
+    const auto* actionText = gis::gui::findActionSpecificParamText(
+        "classification", "feature_stats", "vector_output");
+    ASSERT_NE(actionText, nullptr);
+    EXPECT_FALSE(actionText->displayName.isEmpty());
+    EXPECT_FALSE(actionText->description.isEmpty());
+
+    const auto* splitOutputText =
+        gis::gui::findActionSpecificParamText("cutting", "split", "output");
+    ASSERT_NE(splitOutputText, nullptr);
+    EXPECT_FALSE(splitOutputText->displayName.isEmpty());
+    EXPECT_FALSE(splitOutputText->description.isEmpty());
+
+    EXPECT_EQ(
+        gis::gui::findActionSpecificParamText("processing", "gabor_filter", "missing_param"),
+        nullptr);
+}
+
 TEST(GuiSupportTest, ResolveHighlightedParamKeyPrefersFrameworkValidationThenActionIssue) {
     std::vector<gis::framework::ParamSpec> specs = {
         {"input", "输入文件", "", gis::framework::ParamType::FilePath, true},

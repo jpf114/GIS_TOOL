@@ -46,6 +46,68 @@ std::string trim(const std::string& value) {
     return value.substr(begin, end - begin + 1);
 }
 
+QString genericActionDisplayName(const std::string& actionKey) {
+    static const std::map<std::string, QString> kLabels = {
+        {"gabor_filter", QStringLiteral("Gabor 婊ゆ尝")},
+        {"feature_stats", QStringLiteral("鍦扮墿鍒嗙被缁熻")},
+        {"reproject", QStringLiteral("Reproject")},
+    };
+
+    const auto it = kLabels.find(actionKey);
+    if (it != kLabels.end()) {
+        return it->second;
+    }
+    return QString::fromStdString(actionKey);
+}
+
+const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
+    static const std::map<std::string, gis::gui::ParamText> kTexts = {
+        {"input", {QStringLiteral("杈撳叆鏂囦欢"), QStringLiteral("Input data path.")}},
+        {"output", {QStringLiteral("杈撳嚭鏂囦欢"), QStringLiteral("Output result path.")}},
+        {"reference", {QStringLiteral("鍙傝€冩枃浠?"), QStringLiteral("Reference data path.")}},
+    };
+    return kTexts;
+}
+
+const std::map<std::string, std::map<std::string, std::map<std::string, gis::gui::ParamText>>>&
+actionSpecificParamTextStorage() {
+    static const std::map<std::string, std::map<std::string, std::map<std::string, gis::gui::ParamText>>> kTexts = {
+        {"classification", {
+            {"feature_stats", {
+                {"vector_output", {QStringLiteral("鍒嗙被闈㈣緭鍑?"), QStringLiteral("Optional classified polygon output.")}},
+            }},
+        }},
+        {"cutting", {
+            {"split", {
+                {"output", {QStringLiteral("杈撳嚭鐩綍"), QStringLiteral("Output directory for split tiles.")}},
+            }},
+        }},
+    };
+    return kTexts;
+}
+
+const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& actionUiConfigStorage() {
+    static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
+        {"processing", {
+            {"gabor_filter", {
+                QStringLiteral("Gabor 婊ゆ尝"),
+                QStringLiteral("Gabor texture filtering."),
+                {"input", "output", "band", "kernel_size", "sigma", "gabor_theta", "gabor_lambda", "gabor_gamma", "gabor_psi"},
+                {"input", "output"}
+            }},
+        }},
+        {"classification", {
+            {"feature_stats", {
+                QStringLiteral("鍦扮墿鍒嗙被缁熻"),
+                QStringLiteral("Classification feature statistics."),
+                {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"},
+                {"vector", "class_map", "rasters", "output"}
+            }},
+        }},
+    };
+    return kConfigs;
+}
+
 bool startsWithOutputKey(const std::string& key) {
     return key == "output" || key.find("output") != std::string::npos;
 }
@@ -950,6 +1012,65 @@ DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
     }
 
     return info;
+}
+
+QString actionDisplayName(const std::string& pluginName, const std::string& actionKey) {
+    if (const auto* config = findActionUiConfig(pluginName, actionKey);
+        config && !config->displayName.isEmpty()) {
+        return config->displayName;
+    }
+    return genericActionDisplayName(actionKey);
+}
+
+QString actionDescription(const std::string& pluginName, const std::string& actionKey) {
+    if (const auto* config = findActionUiConfig(pluginName, actionKey)) {
+        return config->description;
+    }
+    return {};
+}
+
+const ActionUiConfig* findActionUiConfig(const std::string& pluginName,
+                                         const std::string& actionKey) {
+    const auto& all = actionUiConfigStorage();
+    const auto pluginIt = all.find(pluginName);
+    if (pluginIt == all.end()) {
+        return nullptr;
+    }
+
+    const auto actionIt = pluginIt->second.find(actionKey);
+    if (actionIt == pluginIt->second.end()) {
+        return nullptr;
+    }
+
+    return &actionIt->second;
+}
+
+const ParamText* findCommonParamText(const std::string& paramKey) {
+    const auto& all = commonParamTextStorage();
+    const auto it = all.find(paramKey);
+    if (it == all.end()) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
+const ParamText* findActionSpecificParamText(const std::string& pluginName,
+                                             const std::string& actionKey,
+                                             const std::string& paramKey) {
+    const auto& all = actionSpecificParamTextStorage();
+    const auto pluginIt = all.find(pluginName);
+    if (pluginIt == all.end()) {
+        return nullptr;
+    }
+    const auto actionIt = pluginIt->second.find(actionKey);
+    if (actionIt == pluginIt->second.end()) {
+        return nullptr;
+    }
+    const auto paramIt = actionIt->second.find(paramKey);
+    if (paramIt == actionIt->second.end()) {
+        return nullptr;
+    }
+    return &paramIt->second;
 }
 
 std::string localizeResultMessage(const std::string& message) {
