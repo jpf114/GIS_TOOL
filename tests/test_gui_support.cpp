@@ -1386,6 +1386,9 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "filter"),
+        QStringLiteral("filter"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("processing", "threshold"),
         QStringLiteral("threshold"));
     EXPECT_NE(
@@ -1458,6 +1461,8 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "filter").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("processing", "threshold").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "stats").isEmpty());
@@ -1502,6 +1507,12 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
 }
 
 TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* filterConfig = gis::gui::findActionUiConfig("processing", "filter");
+    ASSERT_NE(filterConfig, nullptr);
+    EXPECT_TRUE(filterConfig->visibleKeys.count("filter_type") > 0);
+    EXPECT_TRUE(filterConfig->visibleKeys.count("kernel_size") > 0);
+    EXPECT_TRUE(filterConfig->requiredKeys.count("output") > 0);
+
     const auto* thresholdConfig = gis::gui::findActionUiConfig("processing", "threshold");
     ASSERT_NE(thresholdConfig, nullptr);
     EXPECT_TRUE(thresholdConfig->visibleKeys.count("threshold_value") > 0);
@@ -1736,6 +1747,21 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(maxValueText, nullptr);
     EXPECT_FALSE(maxValueText->displayName.isEmpty());
     EXPECT_FALSE(maxValueText->description.isEmpty());
+
+    const auto* filterTypeText = gis::gui::findCommonParamText("filter_type");
+    ASSERT_NE(filterTypeText, nullptr);
+    EXPECT_FALSE(filterTypeText->displayName.isEmpty());
+    EXPECT_FALSE(filterTypeText->description.isEmpty());
+
+    const auto* kernelSizeText = gis::gui::findCommonParamText("kernel_size");
+    ASSERT_NE(kernelSizeText, nullptr);
+    EXPECT_FALSE(kernelSizeText->displayName.isEmpty());
+    EXPECT_FALSE(kernelSizeText->description.isEmpty());
+
+    const auto* sigmaText = gis::gui::findCommonParamText("sigma");
+    ASSERT_NE(sigmaText, nullptr);
+    EXPECT_FALSE(sigmaText->displayName.isEmpty());
+    EXPECT_FALSE(sigmaText->description.isEmpty());
 
     const auto* levelsText = gis::gui::findCommonParamText("levels");
     ASSERT_NE(levelsText, nullptr);

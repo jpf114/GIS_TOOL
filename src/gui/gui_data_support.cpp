@@ -88,6 +88,9 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"stitch_confidence", {QStringLiteral("Stitch Confidence"), QStringLiteral("Confidence threshold used for stitching.")}},
         {"threshold_value", {QStringLiteral("Threshold Value"), QStringLiteral("Threshold value used for segmentation.")}},
         {"max_value", {QStringLiteral("Max Value"), QStringLiteral("Maximum output value after thresholding.")}},
+        {"filter_type", {QStringLiteral("Filter Type"), QStringLiteral("Spatial filter algorithm to apply.")}},
+        {"kernel_size", {QStringLiteral("Kernel Size"), QStringLiteral("Kernel size used by the filter.")}},
+        {"sigma", {QStringLiteral("Sigma"), QStringLiteral("Sigma parameter used by Gaussian-style filters.")}},
         {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("NoData value to write.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
@@ -128,6 +131,12 @@ actionSpecificParamTextStorage() {
 const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& actionUiConfigStorage() {
     static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
         {"processing", {
+            {"filter", {
+                QStringLiteral("Filter"),
+                QStringLiteral("Apply spatial filtering to raster data."),
+                {"input", "output", "band", "filter_type", "kernel_size", "sigma"},
+                {"input", "output"}
+            }},
             {"threshold", {
                 QStringLiteral("Threshold"),
                 QStringLiteral("Segment raster data by thresholding."),
