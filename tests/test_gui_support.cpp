@@ -1386,6 +1386,9 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "skeleton"),
+        QStringLiteral("skeleton"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("processing", "watershed"),
         QStringLiteral("watershed"));
     EXPECT_NE(
@@ -1476,6 +1479,8 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "skeleton").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("processing", "watershed").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "contour").isEmpty());
@@ -1532,6 +1537,12 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
 }
 
 TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* skeletonConfig =
+        gis::gui::findActionUiConfig("processing", "skeleton");
+    ASSERT_NE(skeletonConfig, nullptr);
+    EXPECT_TRUE(skeletonConfig->visibleKeys.count("band") > 0);
+    EXPECT_TRUE(skeletonConfig->requiredKeys.count("output") > 0);
+
     const auto* watershedConfig =
         gis::gui::findActionUiConfig("processing", "watershed");
     ASSERT_NE(watershedConfig, nullptr);

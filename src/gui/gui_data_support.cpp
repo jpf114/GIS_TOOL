@@ -141,6 +141,12 @@ actionSpecificParamTextStorage() {
 const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& actionUiConfigStorage() {
     static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
         {"processing", {
+            {"skeleton", {
+                QStringLiteral("Skeleton"),
+                QStringLiteral("Extract morphological skeletons from raster targets."),
+                {"input", "output", "band"},
+                {"input", "output"}
+            }},
             {"watershed", {
                 QStringLiteral("Watershed"),
                 QStringLiteral("Segment raster targets with watershed processing."),
