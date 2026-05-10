@@ -1414,6 +1414,14 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     EXPECT_TRUE(config->visibleKeys.count("input") > 0);
     EXPECT_TRUE(config->visibleKeys.count("output") > 0);
     EXPECT_TRUE(config->requiredKeys.count("input") > 0);
+
+    const auto* vectorConfig = gis::gui::findActionUiConfig("vector", "buffer");
+    ASSERT_NE(vectorConfig, nullptr);
+    EXPECT_TRUE(vectorConfig->visibleKeys.count("distance") > 0);
+
+    const auto* projectionConfig = gis::gui::findActionUiConfig("projection", "reproject");
+    ASSERT_NE(projectionConfig, nullptr);
+    EXPECT_TRUE(projectionConfig->requiredKeys.count("dst_srs") > 0);
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1432,6 +1440,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     EXPECT_FALSE(dstSrsText->displayName.isEmpty());
     EXPECT_FALSE(dstSrsText->description.isEmpty());
 
+    const auto* layerText = gis::gui::findCommonParamText("layer");
+    ASSERT_NE(layerText, nullptr);
+    EXPECT_FALSE(layerText->displayName.isEmpty());
+    EXPECT_FALSE(layerText->description.isEmpty());
+
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");
     ASSERT_NE(actionText, nullptr);
@@ -1449,6 +1462,12 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(templateFileText, nullptr);
     EXPECT_FALSE(templateFileText->displayName.isEmpty());
     EXPECT_FALSE(templateFileText->description.isEmpty());
+
+    const auto* reprojectInputText =
+        gis::gui::findActionSpecificParamText("projection", "reproject", "input");
+    ASSERT_NE(reprojectInputText, nullptr);
+    EXPECT_FALSE(reprojectInputText->displayName.isEmpty());
+    EXPECT_FALSE(reprojectInputText->description.isEmpty());
 
     EXPECT_EQ(
         gis::gui::findActionSpecificParamText("processing", "gabor_filter", "missing_param"),

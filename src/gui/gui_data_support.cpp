@@ -52,6 +52,9 @@ QString genericActionDisplayName(const std::string& actionKey) {
         {"feature_stats", QStringLiteral("鍦扮墿鍒嗙被缁熻")},
         {"reproject", QStringLiteral("Reproject")},
         {"buffer", QStringLiteral("Buffer")},
+        {"info", QStringLiteral("Info")},
+        {"clip", QStringLiteral("Clip")},
+        {"template_match", QStringLiteral("Template Match")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -67,6 +70,9 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"output", {QStringLiteral("杈撳嚭鏂囦欢"), QStringLiteral("Output result path.")}},
         {"reference", {QStringLiteral("鍙傝€冩枃浠?"), QStringLiteral("Reference data path.")}},
         {"dst_srs", {QStringLiteral("鐩爣鍧愭爣绯?"), QStringLiteral("Target spatial reference.")}},
+        {"layer", {QStringLiteral("鍥惧眰鍚?"), QStringLiteral("Layer name to process.")}},
+        {"distance", {QStringLiteral("璺濈"), QStringLiteral("Distance parameter.")}},
+        {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
     return kTexts;
 }
@@ -89,6 +95,11 @@ actionSpecificParamTextStorage() {
                 {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
             }},
         }},
+        {"projection", {
+            {"reproject", {
+                {"input", {QStringLiteral("杈撳叆鏂囦欢"), QStringLiteral("Raster or vector input path.")}},
+            }},
+        }},
     };
     return kTexts;
 }
@@ -109,6 +120,22 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 QStringLiteral("Classification feature statistics."),
                 {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"},
                 {"vector", "class_map", "rasters", "output"}
+            }},
+        }},
+        {"vector", {
+            {"buffer", {
+                QStringLiteral("Buffer"),
+                QStringLiteral("Create vector buffers."),
+                {"input", "output", "layer", "distance"},
+                {"input", "output"}
+            }},
+        }},
+        {"projection", {
+            {"reproject", {
+                QStringLiteral("Reproject"),
+                QStringLiteral("Reproject raster or vector data."),
+                {"input", "output", "dst_srs", "src_srs", "resample"},
+                {"input", "output", "dst_srs"}
             }},
         }},
     };
