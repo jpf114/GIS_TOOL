@@ -1386,6 +1386,9 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "template_match"),
+        QStringLiteral("template_match"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("processing", "enhance"),
         QStringLiteral("enhance"));
     EXPECT_NE(
@@ -1464,6 +1467,8 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "template_match").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("processing", "enhance").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "filter").isEmpty());
@@ -1512,6 +1517,13 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
 }
 
 TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* templateMatchConfig =
+        gis::gui::findActionUiConfig("processing", "template_match");
+    ASSERT_NE(templateMatchConfig, nullptr);
+    EXPECT_TRUE(templateMatchConfig->visibleKeys.count("template_file") > 0);
+    EXPECT_TRUE(templateMatchConfig->visibleKeys.count("match_method") > 0);
+    EXPECT_TRUE(templateMatchConfig->requiredKeys.count("template_file") > 0);
+
     const auto* enhanceConfig = gis::gui::findActionUiConfig("processing", "enhance");
     ASSERT_NE(enhanceConfig, nullptr);
     EXPECT_TRUE(enhanceConfig->visibleKeys.count("enhance_type") > 0);
@@ -1728,6 +1740,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(methodText, nullptr);
     EXPECT_FALSE(methodText->displayName.isEmpty());
     EXPECT_FALSE(methodText->description.isEmpty());
+
+    const auto* matchMethodText = gis::gui::findCommonParamText("match_method");
+    ASSERT_NE(matchMethodText, nullptr);
+    EXPECT_FALSE(matchMethodText->displayName.isEmpty());
+    EXPECT_FALSE(matchMethodText->description.isEmpty());
 
     const auto* nodataValueText = gis::gui::findCommonParamText("nodata_value");
     ASSERT_NE(nodataValueText, nullptr);

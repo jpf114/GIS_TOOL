@@ -83,6 +83,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"bins", {QStringLiteral("Bins"), QStringLiteral("Histogram bin count.")}},
         {"levels", {QStringLiteral("Levels"), QStringLiteral("Overview levels to build.")}},
         {"method", {QStringLiteral("Method"), QStringLiteral("Primary processing method.")}},
+        {"match_method", {QStringLiteral("Match Method"), QStringLiteral("Matching method used to compare input and template data.")}},
         {"change_method", {QStringLiteral("Change Method"), QStringLiteral("Method used for change detection.")}},
         {"ecc_motion", {QStringLiteral("ECC Motion"), QStringLiteral("Motion model used by ECC registration.")}},
         {"stitch_confidence", {QStringLiteral("Stitch Confidence"), QStringLiteral("Confidence threshold used for stitching.")}},
@@ -134,6 +135,12 @@ actionSpecificParamTextStorage() {
 const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& actionUiConfigStorage() {
     static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
         {"processing", {
+            {"template_match", {
+                QStringLiteral("Template Match"),
+                QStringLiteral("Match template raster content inside the input raster."),
+                {"input", "output", "band", "template_file", "match_method"},
+                {"input", "output", "template_file"}
+            }},
             {"enhance", {
                 QStringLiteral("Enhance"),
                 QStringLiteral("Enhance raster appearance and contrast."),
