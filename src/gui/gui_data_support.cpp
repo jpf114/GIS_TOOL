@@ -81,6 +81,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"clip_vector", {QStringLiteral("瑁佸垏鐭㈤噺"), QStringLiteral("Overlay vector path for clipping.")}},
         {"bins", {QStringLiteral("Bins"), QStringLiteral("Histogram bin count.")}},
         {"method", {QStringLiteral("Method"), QStringLiteral("Primary processing method.")}},
+        {"change_method", {QStringLiteral("Change Method"), QStringLiteral("Method used for change detection.")}},
         {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("NoData value to write.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
@@ -208,6 +209,18 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 QStringLiteral("Match feature points between reference and input rasters."),
                 {"reference", "input", "output", "method", "match_method", "max_points", "ratio_test", "band"},
                 {"reference", "input"}
+            }},
+            {"register", {
+                QStringLiteral("Register"),
+                QStringLiteral("Register input raster to reference raster using matched features."),
+                {"reference", "input", "output", "method", "match_method", "transform", "resample", "max_points", "ratio_test", "band"},
+                {"reference", "input", "output"}
+            }},
+            {"change", {
+                QStringLiteral("Change"),
+                QStringLiteral("Detect changes between reference and input rasters."),
+                {"reference", "input", "output", "change_method", "threshold", "band"},
+                {"reference", "input", "output"}
             }},
         }},
         {"raster_manage", {

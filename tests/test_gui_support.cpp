@@ -1422,6 +1422,12 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
         gis::gui::actionDisplayName("matching", "match"),
         QStringLiteral("match"));
     EXPECT_NE(
+        gis::gui::actionDisplayName("matching", "register"),
+        QStringLiteral("register"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("matching", "change"),
+        QStringLiteral("change"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("raster_manage", "overviews"),
         QStringLiteral("overviews"));
     EXPECT_NE(
@@ -1456,6 +1462,10 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
         gis::gui::actionDescription("matching", "detect").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("matching", "match").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("matching", "register").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("matching", "change").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("raster_manage", "overviews").isEmpty());
     EXPECT_FALSE(
@@ -1551,6 +1561,20 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     ASSERT_NE(rasterNodataConfig, nullptr);
     EXPECT_TRUE(rasterNodataConfig->visibleKeys.count("nodata_value") > 0);
     EXPECT_TRUE(rasterNodataConfig->requiredKeys.count("input") > 0);
+
+    const auto* matchingRegisterConfig =
+        gis::gui::findActionUiConfig("matching", "register");
+    ASSERT_NE(matchingRegisterConfig, nullptr);
+    EXPECT_TRUE(matchingRegisterConfig->visibleKeys.count("transform") > 0);
+    EXPECT_TRUE(matchingRegisterConfig->visibleKeys.count("resample") > 0);
+    EXPECT_TRUE(matchingRegisterConfig->requiredKeys.count("output") > 0);
+
+    const auto* matchingChangeConfig =
+        gis::gui::findActionUiConfig("matching", "change");
+    ASSERT_NE(matchingChangeConfig, nullptr);
+    EXPECT_TRUE(matchingChangeConfig->visibleKeys.count("change_method") > 0);
+    EXPECT_TRUE(matchingChangeConfig->visibleKeys.count("threshold") > 0);
+    EXPECT_TRUE(matchingChangeConfig->requiredKeys.count("reference") > 0);
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1623,6 +1647,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(nodataValueText, nullptr);
     EXPECT_FALSE(nodataValueText->displayName.isEmpty());
     EXPECT_FALSE(nodataValueText->description.isEmpty());
+
+    const auto* changeMethodText = gis::gui::findCommonParamText("change_method");
+    ASSERT_NE(changeMethodText, nullptr);
+    EXPECT_FALSE(changeMethodText->displayName.isEmpty());
+    EXPECT_FALSE(changeMethodText->description.isEmpty());
 
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");
