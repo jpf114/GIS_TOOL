@@ -1415,6 +1415,15 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
     EXPECT_NE(
         gis::gui::actionDisplayName("raster_inspect", "histogram"),
         QStringLiteral("histogram"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("matching", "detect"),
+        QStringLiteral("detect"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("raster_manage", "overviews"),
+        QStringLiteral("overviews"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("raster_manage", "cog"),
+        QStringLiteral("cog"));
     EXPECT_EQ(
         gis::gui::actionDisplayName("processing", "unknown_action"),
         QStringLiteral("unknown_action"));
@@ -1437,6 +1446,12 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
         gis::gui::actionDescription("raster_inspect", "info").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("raster_inspect", "histogram").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("matching", "detect").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("raster_manage", "overviews").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("raster_manage", "cog").isEmpty());
     EXPECT_TRUE(
         gis::gui::actionDescription("processing", "unknown_action").isEmpty());
 }
@@ -1496,6 +1511,23 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     ASSERT_NE(rasterHistogramConfig, nullptr);
     EXPECT_TRUE(rasterHistogramConfig->visibleKeys.count("bins") > 0);
     EXPECT_TRUE(rasterHistogramConfig->visibleKeys.count("band") > 0);
+
+    const auto* matchingDetectConfig =
+        gis::gui::findActionUiConfig("matching", "detect");
+    ASSERT_NE(matchingDetectConfig, nullptr);
+    EXPECT_TRUE(matchingDetectConfig->visibleKeys.count("method") > 0);
+    EXPECT_TRUE(matchingDetectConfig->requiredKeys.count("input") > 0);
+
+    const auto* rasterOverviewsConfig =
+        gis::gui::findActionUiConfig("raster_manage", "overviews");
+    ASSERT_NE(rasterOverviewsConfig, nullptr);
+    EXPECT_TRUE(rasterOverviewsConfig->visibleKeys.count("levels") > 0);
+    EXPECT_TRUE(rasterOverviewsConfig->visibleKeys.count("resample") > 0);
+
+    const auto* rasterCogConfig =
+        gis::gui::findActionUiConfig("raster_manage", "cog");
+    ASSERT_NE(rasterCogConfig, nullptr);
+    EXPECT_TRUE(rasterCogConfig->requiredKeys.count("output") > 0);
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1548,6 +1580,21 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(binsText, nullptr);
     EXPECT_FALSE(binsText->displayName.isEmpty());
     EXPECT_FALSE(binsText->description.isEmpty());
+
+    const auto* srcSrsText = gis::gui::findCommonParamText("src_srs");
+    ASSERT_NE(srcSrsText, nullptr);
+    EXPECT_FALSE(srcSrsText->displayName.isEmpty());
+    EXPECT_FALSE(srcSrsText->description.isEmpty());
+
+    const auto* resampleText = gis::gui::findCommonParamText("resample");
+    ASSERT_NE(resampleText, nullptr);
+    EXPECT_FALSE(resampleText->displayName.isEmpty());
+    EXPECT_FALSE(resampleText->description.isEmpty());
+
+    const auto* methodText = gis::gui::findCommonParamText("method");
+    ASSERT_NE(methodText, nullptr);
+    EXPECT_FALSE(methodText->displayName.isEmpty());
+    EXPECT_FALSE(methodText->description.isEmpty());
 
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");

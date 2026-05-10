@@ -70,7 +70,9 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"output", {QStringLiteral("杈撳嚭鏂囦欢"), QStringLiteral("Output result path.")}},
         {"reference", {QStringLiteral("鍙傝€冩枃浠?"), QStringLiteral("Reference data path.")}},
         {"dst_srs", {QStringLiteral("鐩爣鍧愭爣绯?"), QStringLiteral("Target spatial reference.")}},
+        {"src_srs", {QStringLiteral("Source SRS"), QStringLiteral("Source spatial reference.")}},
         {"srs", {QStringLiteral("SRS"), QStringLiteral("Spatial reference to assign.")}},
+        {"resample", {QStringLiteral("Resample"), QStringLiteral("Resampling method.")}},
         {"x", {QStringLiteral("X 鍧愭爣"), QStringLiteral("X coordinate to transform.")}},
         {"y", {QStringLiteral("Y 鍧愭爣"), QStringLiteral("Y coordinate to transform.")}},
         {"layer", {QStringLiteral("鍥惧眰鍚?"), QStringLiteral("Layer name to process.")}},
@@ -78,6 +80,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"distance", {QStringLiteral("璺濈"), QStringLiteral("Distance parameter.")}},
         {"clip_vector", {QStringLiteral("瑁佸垏鐭㈤噺"), QStringLiteral("Overlay vector path for clipping.")}},
         {"bins", {QStringLiteral("Bins"), QStringLiteral("Histogram bin count.")}},
+        {"method", {QStringLiteral("Method"), QStringLiteral("Primary processing method.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
     return kTexts;
@@ -190,6 +193,28 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 QStringLiteral("Inspect raster dataset information."),
                 {"input"},
                 {"input"}
+            }},
+        }},
+        {"matching", {
+            {"detect", {
+                QStringLiteral("Detect"),
+                QStringLiteral("Detect feature points from raster data."),
+                {"input", "output", "method", "max_points", "band"},
+                {"input"}
+            }},
+        }},
+        {"raster_manage", {
+            {"overviews", {
+                QStringLiteral("Overviews"),
+                QStringLiteral("Build raster overviews."),
+                {"input", "levels", "resample"},
+                {"input"}
+            }},
+            {"cog", {
+                QStringLiteral("COG"),
+                QStringLiteral("Convert raster data to Cloud Optimized GeoTIFF."),
+                {"input", "output"},
+                {"input", "output"}
             }},
         }},
     };
