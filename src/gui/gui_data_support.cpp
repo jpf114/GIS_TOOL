@@ -51,6 +51,7 @@ QString genericActionDisplayName(const std::string& actionKey) {
         {"gabor_filter", QStringLiteral("Gabor 婊ゆ尝")},
         {"feature_stats", QStringLiteral("鍦扮墿鍒嗙被缁熻")},
         {"reproject", QStringLiteral("Reproject")},
+        {"buffer", QStringLiteral("Buffer")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -65,6 +66,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"input", {QStringLiteral("杈撳叆鏂囦欢"), QStringLiteral("Input data path.")}},
         {"output", {QStringLiteral("杈撳嚭鏂囦欢"), QStringLiteral("Output result path.")}},
         {"reference", {QStringLiteral("鍙傝€冩枃浠?"), QStringLiteral("Reference data path.")}},
+        {"dst_srs", {QStringLiteral("鐩爣鍧愭爣绯?"), QStringLiteral("Target spatial reference.")}},
     };
     return kTexts;
 }
@@ -80,6 +82,11 @@ actionSpecificParamTextStorage() {
         {"cutting", {
             {"split", {
                 {"output", {QStringLiteral("杈撳嚭鐩綍"), QStringLiteral("Output directory for split tiles.")}},
+            }},
+        }},
+        {"processing", {
+            {"template_match", {
+                {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
             }},
         }},
     };

@@ -1391,6 +1391,9 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
     EXPECT_NE(
         gis::gui::actionDisplayName("projection", "reproject"),
         QStringLiteral("reproject"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("vector", "buffer"),
+        QStringLiteral("buffer"));
     EXPECT_EQ(
         gis::gui::actionDisplayName("processing", "unknown_action"),
         QStringLiteral("unknown_action"));
@@ -1424,6 +1427,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     EXPECT_FALSE(referenceText->displayName.isEmpty());
     EXPECT_FALSE(referenceText->description.isEmpty());
 
+    const auto* dstSrsText = gis::gui::findCommonParamText("dst_srs");
+    ASSERT_NE(dstSrsText, nullptr);
+    EXPECT_FALSE(dstSrsText->displayName.isEmpty());
+    EXPECT_FALSE(dstSrsText->description.isEmpty());
+
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");
     ASSERT_NE(actionText, nullptr);
@@ -1435,6 +1443,12 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(splitOutputText, nullptr);
     EXPECT_FALSE(splitOutputText->displayName.isEmpty());
     EXPECT_FALSE(splitOutputText->description.isEmpty());
+
+    const auto* templateFileText =
+        gis::gui::findActionSpecificParamText("processing", "template_match", "template_file");
+    ASSERT_NE(templateFileText, nullptr);
+    EXPECT_FALSE(templateFileText->displayName.isEmpty());
+    EXPECT_FALSE(templateFileText->description.isEmpty());
 
     EXPECT_EQ(
         gis::gui::findActionSpecificParamText("processing", "gabor_filter", "missing_param"),
