@@ -1386,6 +1386,9 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
+        gis::gui::actionDisplayName("processing", "threshold"),
+        QStringLiteral("threshold"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("processing", "stats"),
         QStringLiteral("stats"));
     EXPECT_NE(
@@ -1455,6 +1458,8 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
+        gis::gui::actionDescription("processing", "threshold").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("processing", "stats").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "gabor_filter").isEmpty());
@@ -1497,6 +1502,12 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
 }
 
 TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
+    const auto* thresholdConfig = gis::gui::findActionUiConfig("processing", "threshold");
+    ASSERT_NE(thresholdConfig, nullptr);
+    EXPECT_TRUE(thresholdConfig->visibleKeys.count("threshold_value") > 0);
+    EXPECT_TRUE(thresholdConfig->visibleKeys.count("max_value") > 0);
+    EXPECT_TRUE(thresholdConfig->requiredKeys.count("output") > 0);
+
     const auto* statsConfig = gis::gui::findActionUiConfig("processing", "stats");
     ASSERT_NE(statsConfig, nullptr);
     EXPECT_TRUE(statsConfig->visibleKeys.count("input") > 0);
@@ -1715,6 +1726,16 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(stitchConfidenceText, nullptr);
     EXPECT_FALSE(stitchConfidenceText->displayName.isEmpty());
     EXPECT_FALSE(stitchConfidenceText->description.isEmpty());
+
+    const auto* thresholdValueText = gis::gui::findCommonParamText("threshold_value");
+    ASSERT_NE(thresholdValueText, nullptr);
+    EXPECT_FALSE(thresholdValueText->displayName.isEmpty());
+    EXPECT_FALSE(thresholdValueText->description.isEmpty());
+
+    const auto* maxValueText = gis::gui::findCommonParamText("max_value");
+    ASSERT_NE(maxValueText, nullptr);
+    EXPECT_FALSE(maxValueText->displayName.isEmpty());
+    EXPECT_FALSE(maxValueText->description.isEmpty());
 
     const auto* levelsText = gis::gui::findCommonParamText("levels");
     ASSERT_NE(levelsText, nullptr);

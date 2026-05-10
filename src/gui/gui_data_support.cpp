@@ -86,6 +86,8 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"change_method", {QStringLiteral("Change Method"), QStringLiteral("Method used for change detection.")}},
         {"ecc_motion", {QStringLiteral("ECC Motion"), QStringLiteral("Motion model used by ECC registration.")}},
         {"stitch_confidence", {QStringLiteral("Stitch Confidence"), QStringLiteral("Confidence threshold used for stitching.")}},
+        {"threshold_value", {QStringLiteral("Threshold Value"), QStringLiteral("Threshold value used for segmentation.")}},
+        {"max_value", {QStringLiteral("Max Value"), QStringLiteral("Maximum output value after thresholding.")}},
         {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("NoData value to write.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
@@ -126,6 +128,12 @@ actionSpecificParamTextStorage() {
 const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& actionUiConfigStorage() {
     static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
         {"processing", {
+            {"threshold", {
+                QStringLiteral("Threshold"),
+                QStringLiteral("Segment raster data by thresholding."),
+                {"input", "output", "band", "method", "threshold_value", "max_value"},
+                {"input", "output"}
+            }},
             {"stats", {
                 QStringLiteral("Stats"),
                 QStringLiteral("Inspect basic statistics for a raster band."),
