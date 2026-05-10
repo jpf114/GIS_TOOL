@@ -83,6 +83,7 @@ const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
         {"method", {QStringLiteral("Method"), QStringLiteral("Primary processing method.")}},
         {"change_method", {QStringLiteral("Change Method"), QStringLiteral("Method used for change detection.")}},
         {"ecc_motion", {QStringLiteral("ECC Motion"), QStringLiteral("Motion model used by ECC registration.")}},
+        {"stitch_confidence", {QStringLiteral("Stitch Confidence"), QStringLiteral("Confidence threshold used for stitching.")}},
         {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("NoData value to write.")}},
         {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
     };
@@ -234,6 +235,12 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 QStringLiteral("Detect corner features from raster data."),
                 {"input", "output", "corner_method", "max_corners", "quality_level", "min_distance", "band"},
                 {"input"}
+            }},
+            {"stitch", {
+                QStringLiteral("Stitch"),
+                QStringLiteral("Stitch multiple raster inputs into a panorama."),
+                {"input", "output", "stitch_confidence"},
+                {"input", "output"}
             }},
         }},
         {"raster_manage", {

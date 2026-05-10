@@ -1434,6 +1434,9 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
         gis::gui::actionDisplayName("matching", "corner"),
         QStringLiteral("corner"));
     EXPECT_NE(
+        gis::gui::actionDisplayName("matching", "stitch"),
+        QStringLiteral("stitch"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("raster_manage", "overviews"),
         QStringLiteral("overviews"));
     EXPECT_NE(
@@ -1476,6 +1479,8 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
         gis::gui::actionDescription("matching", "ecc_register").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("matching", "corner").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("matching", "stitch").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("raster_manage", "overviews").isEmpty());
     EXPECT_FALSE(
@@ -1599,6 +1604,12 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
     EXPECT_TRUE(matchingCornerConfig->visibleKeys.count("corner_method") > 0);
     EXPECT_TRUE(matchingCornerConfig->visibleKeys.count("max_corners") > 0);
     EXPECT_TRUE(matchingCornerConfig->requiredKeys.count("input") > 0);
+
+    const auto* matchingStitchConfig =
+        gis::gui::findActionUiConfig("matching", "stitch");
+    ASSERT_NE(matchingStitchConfig, nullptr);
+    EXPECT_TRUE(matchingStitchConfig->visibleKeys.count("stitch_confidence") > 0);
+    EXPECT_TRUE(matchingStitchConfig->requiredKeys.count("output") > 0);
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1681,6 +1692,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(eccMotionText, nullptr);
     EXPECT_FALSE(eccMotionText->displayName.isEmpty());
     EXPECT_FALSE(eccMotionText->description.isEmpty());
+
+    const auto* stitchConfidenceText = gis::gui::findCommonParamText("stitch_confidence");
+    ASSERT_NE(stitchConfidenceText, nullptr);
+    EXPECT_FALSE(stitchConfidenceText->displayName.isEmpty());
+    EXPECT_FALSE(stitchConfidenceText->description.isEmpty());
 
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");
