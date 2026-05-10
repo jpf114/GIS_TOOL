@@ -1419,11 +1419,17 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
         gis::gui::actionDisplayName("matching", "detect"),
         QStringLiteral("detect"));
     EXPECT_NE(
+        gis::gui::actionDisplayName("matching", "match"),
+        QStringLiteral("match"));
+    EXPECT_NE(
         gis::gui::actionDisplayName("raster_manage", "overviews"),
         QStringLiteral("overviews"));
     EXPECT_NE(
         gis::gui::actionDisplayName("raster_manage", "cog"),
         QStringLiteral("cog"));
+    EXPECT_NE(
+        gis::gui::actionDisplayName("raster_manage", "nodata"),
+        QStringLiteral("nodata"));
     EXPECT_EQ(
         gis::gui::actionDisplayName("processing", "unknown_action"),
         QStringLiteral("unknown_action"));
@@ -1449,9 +1455,13 @@ TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_FALSE(
         gis::gui::actionDescription("matching", "detect").isEmpty());
     EXPECT_FALSE(
+        gis::gui::actionDescription("matching", "match").isEmpty());
+    EXPECT_FALSE(
         gis::gui::actionDescription("raster_manage", "overviews").isEmpty());
     EXPECT_FALSE(
         gis::gui::actionDescription("raster_manage", "cog").isEmpty());
+    EXPECT_FALSE(
+        gis::gui::actionDescription("raster_manage", "nodata").isEmpty());
     EXPECT_TRUE(
         gis::gui::actionDescription("processing", "unknown_action").isEmpty());
 }
@@ -1528,6 +1538,19 @@ TEST(GuiSupportTest, ActionUiConfigLookupReturnsVisibleAndRequiredKeys) {
         gis::gui::findActionUiConfig("raster_manage", "cog");
     ASSERT_NE(rasterCogConfig, nullptr);
     EXPECT_TRUE(rasterCogConfig->requiredKeys.count("output") > 0);
+
+    const auto* matchingMatchConfig =
+        gis::gui::findActionUiConfig("matching", "match");
+    ASSERT_NE(matchingMatchConfig, nullptr);
+    EXPECT_TRUE(matchingMatchConfig->visibleKeys.count("reference") > 0);
+    EXPECT_TRUE(matchingMatchConfig->visibleKeys.count("ratio_test") > 0);
+    EXPECT_TRUE(matchingMatchConfig->requiredKeys.count("reference") > 0);
+
+    const auto* rasterNodataConfig =
+        gis::gui::findActionUiConfig("raster_manage", "nodata");
+    ASSERT_NE(rasterNodataConfig, nullptr);
+    EXPECT_TRUE(rasterNodataConfig->visibleKeys.count("nodata_value") > 0);
+    EXPECT_TRUE(rasterNodataConfig->requiredKeys.count("input") > 0);
 }
 
 TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
@@ -1595,6 +1618,11 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(methodText, nullptr);
     EXPECT_FALSE(methodText->displayName.isEmpty());
     EXPECT_FALSE(methodText->description.isEmpty());
+
+    const auto* nodataValueText = gis::gui::findCommonParamText("nodata_value");
+    ASSERT_NE(nodataValueText, nullptr);
+    EXPECT_FALSE(nodataValueText->displayName.isEmpty());
+    EXPECT_FALSE(nodataValueText->description.isEmpty());
 
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");

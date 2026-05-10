@@ -85,7 +85,7 @@ add_custom_command(TARGET gis_tests POST_BUILD
 )
 
 include(GoogleTest)
-gtest_discover_tests(gis_tests DISCOVERY_MODE PRE_TEST)
+gtest_add_tests(TARGET gis_tests)
 
 if(TARGET gis-gui)
     add_test(
