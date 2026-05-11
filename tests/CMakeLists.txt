@@ -9,6 +9,7 @@ add_executable(gis_tests
     test_support.cpp
     ../src/gui/custom_index_preset_store.cpp
     ../src/gui/gui_data_support.cpp
+    ../src/gui/task_center_page.cpp
     ../src/gui/task_manager.cpp
     ../src/gui/task_database.cpp
 )
@@ -21,6 +22,7 @@ target_link_libraries(gis_tests PRIVATE
     opencv_imgproc
     Qt6::Core
     Qt6::Sql
+    Qt6::Widgets
     GTest::gtest
 )
 
@@ -82,6 +84,22 @@ add_custom_command(TARGET gis_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:plugin_test_lifecycle>
         $<TARGET_FILE_DIR:gis_tests>/$<TARGET_FILE_NAME:plugin_test_lifecycle>
+)
+
+set(GIS_TEST_QT_PLATFORMS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}>")
+set(GIS_TEST_QT_WINDOWS_DLL "$<$<CONFIG:Debug>:qwindowsd.dll>$<$<NOT:$<CONFIG:Debug>>:qwindows.dll>")
+set(GIS_TEST_QT_OFFSCREEN_DLL "$<$<CONFIG:Debug>:qoffscreend.dll>$<$<NOT:$<CONFIG:Debug>>:qoffscreen.dll>")
+
+add_custom_command(TARGET gis_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        $<TARGET_FILE_DIR:gis_tests>/platforms
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${GIS_TEST_QT_PLATFORMS_DIR}/${GIS_TEST_QT_WINDOWS_DLL}
+        $<TARGET_FILE_DIR:gis_tests>/platforms/${GIS_TEST_QT_WINDOWS_DLL}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${GIS_TEST_QT_PLATFORMS_DIR}/${GIS_TEST_QT_OFFSCREEN_DLL}
+        $<TARGET_FILE_DIR:gis_tests>/platforms/${GIS_TEST_QT_OFFSCREEN_DLL}
+    COMMAND_EXPAND_LISTS
 )
 
 set(GIS_TEST_QT_SQLDRIVERS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_DIR}/plugins/sqldrivers>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_QT_DIR}/plugins/sqldrivers>")

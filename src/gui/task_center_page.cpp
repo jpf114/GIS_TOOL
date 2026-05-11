@@ -45,12 +45,12 @@ void TaskCenterPage::setupUi() {
     taskHeaderLayout->addWidget(taskTitleLabel);
 
     taskCountLabel_ = new QLabel(QStringLiteral("共 0 个任务"));
-    taskCountLabel_->setObjectName(QStringLiteral("heroMeta"));
+    taskCountLabel_->setObjectName(QStringLiteral("taskCountLabel"));
     taskHeaderLayout->addWidget(taskCountLabel_);
     taskHeaderLayout->addStretch();
 
     clearHistoryButton_ = new QPushButton(QStringLiteral("清空历史"));
-    clearHistoryButton_->setObjectName(QStringLiteral("secondaryButton"));
+    clearHistoryButton_->setObjectName(QStringLiteral("clearHistoryButton"));
     connect(clearHistoryButton_, &QPushButton::clicked, this, [this]() {
         emit clearHistoryRequested();
     });
@@ -59,6 +59,7 @@ void TaskCenterPage::setupUi() {
     taskListLayout->addLayout(taskHeaderLayout);
 
     taskTree_ = new QTreeWidget;
+    taskTree_->setObjectName(QStringLiteral("taskTree"));
     taskTree_->setAlternatingRowColors(true);
     taskTree_->setRootIsDecorated(false);
     taskTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -106,12 +107,12 @@ void TaskCenterPage::setupUi() {
     logHeaderLayout->addWidget(logTitleLabel);
 
     logTaskLabel_ = new QLabel;
-    logTaskLabel_->setObjectName(QStringLiteral("heroMeta"));
+    logTaskLabel_->setObjectName(QStringLiteral("logTaskLabel"));
     logHeaderLayout->addWidget(logTaskLabel_);
     logHeaderLayout->addStretch();
 
     clearLogButton_ = new QPushButton(QStringLiteral("清空日志"));
-    clearLogButton_->setObjectName(QStringLiteral("secondaryButton"));
+    clearLogButton_->setObjectName(QStringLiteral("clearLogButton"));
     connect(clearLogButton_, &QPushButton::clicked, this, [this]() {
         if (currentLogTaskId_.isEmpty()) {
             emit clearAllLogsRequested();
@@ -129,7 +130,7 @@ void TaskCenterPage::setupUi() {
     logLayout->addWidget(logDisplay_);
 
     rerunButton_ = new QPushButton(QStringLiteral("重新执行"));
-    rerunButton_->setObjectName(QStringLiteral("primaryButton"));
+    rerunButton_->setObjectName(QStringLiteral("rerunButton"));
     rerunButton_->setEnabled(false);
     connect(rerunButton_, &QPushButton::clicked, this, [this]() {
         auto* current = taskTree_->currentItem();

@@ -14,8 +14,14 @@
 #include <optional>
 #include <string>
 
+#include <QPushButton>
+#include <QCoreApplication>
+#include <QTextEdit>
+#include <QTreeWidget>
+
 #include "../src/gui/custom_index_preset_store.h"
 #include "../src/gui/gui_data_support.h"
+#include "../src/gui/task_center_page.h"
 #include "../src/gui/task_manager.h"
 #include "test_support.h"
 
@@ -641,6 +647,108 @@ TEST(GuiSupportTest, TaskManagerRerunResetsParamsAndClearsLogs) {
     EXPECT_EQ(std::get<std::string>(record.params.at("input")), "D:/data/b.tif");
     EXPECT_EQ(std::get<std::string>(record.params.at("output")), "D:/data/out2.tif");
     EXPECT_TRUE(taskManager.logsForTask(group, taskId).isEmpty());
+}
+
+TEST(GuiSupportTest, TaskCenterPageRefreshesCompletedTaskAndShowsLogs) {
+    const QString group = uniqueTaskGroupName("task_center_completed");
+    auto& taskManager = TaskManager::instance();
+    taskManager.initializeGroup(group);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string("D:/data/roads.shp");
+    params["output"] = std::string("D:/data/roads_buffer.gpkg");
+
+    const QString taskId = taskManager.submitTask(
+        group, QStringLiteral("vector"), QStringLiteral("buffer"), params,
+        QStringLiteral("矢量工具"), QStringLiteral("缓冲区"));
+    ASSERT_FALSE(taskId.isEmpty());
+    taskManager.appendLog(group, taskId, QStringLiteral("准备执行"), 0);
+
+    gis::framework::Result result;
+    result.success = true;
+    result.outputPath = "D:/data/roads_buffer.gpkg";
+    result.message = "缓冲区处理完成";
+    taskManager.finishTask(group, taskId, result);
+
+    TaskCenterPage page;
+    page.setCurrentGroup(group);
+
+    auto* taskTree = page.findChild<QTreeWidget*>(QStringLiteral("taskTree"));
+    auto* rerunButton = page.findChild<QPushButton*>(QStringLiteral("rerunButton"));
+    auto* logDisplay = page.findChild<QTextEdit*>(QStringLiteral("logTerminal"));
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_NE(rerunButton, nullptr);
+    ASSERT_NE(logDisplay, nullptr);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 1);
+
+    auto* item = taskTree->topLevelItem(0);
+    ASSERT_NE(item, nullptr);
+    EXPECT_EQ(item->data(0, Qt::UserRole).toString(), taskId);
+
+    taskTree->setCurrentItem(item);
+    QCoreApplication::processEvents();
+
+    EXPECT_TRUE(rerunButton->isEnabled());
+    EXPECT_NE(logDisplay->toPlainText().indexOf(QStringLiteral("准备执行")), -1);
+}
+
+TEST(GuiSupportTest, TaskCenterPageOnlyAllowsCompletedTaskRerun) {
+    const QString group = uniqueTaskGroupName("task_center_status");
+    auto& taskManager = TaskManager::instance();
+    taskManager.initializeGroup(group);
+
+    std::map<std::string, gis::framework::ParamValue> pendingParams;
+    pendingParams["input"] = std::string("D:/data/a.tif");
+    pendingParams["output"] = std::string("D:/data/out_pending.tif");
+    const QString pendingTaskId = taskManager.submitTask(
+        group, QStringLiteral("processing"), QStringLiteral("filter"), pendingParams,
+        QStringLiteral("处理工具"), QStringLiteral("空间滤波"));
+    ASSERT_FALSE(pendingTaskId.isEmpty());
+
+    std::map<std::string, gis::framework::ParamValue> completedParams;
+    completedParams["input"] = std::string("D:/data/b.tif");
+    completedParams["output"] = std::string("D:/data/out_done.tif");
+    const QString completedTaskId = taskManager.submitTask(
+        group, QStringLiteral("processing"), QStringLiteral("filter"), completedParams,
+        QStringLiteral("处理工具"), QStringLiteral("空间滤波"));
+    ASSERT_FALSE(completedTaskId.isEmpty());
+
+    gis::framework::Result result;
+    result.success = true;
+    result.outputPath = "D:/data/out_done.tif";
+    result.message = "空间滤波完成";
+    taskManager.finishTask(group, completedTaskId, result);
+
+    TaskCenterPage page;
+    page.setCurrentGroup(group);
+
+    auto* taskTree = page.findChild<QTreeWidget*>(QStringLiteral("taskTree"));
+    auto* rerunButton = page.findChild<QPushButton*>(QStringLiteral("rerunButton"));
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_NE(rerunButton, nullptr);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 2);
+
+    QTreeWidgetItem* pendingItem = nullptr;
+    QTreeWidgetItem* completedItem = nullptr;
+    for (int i = 0; i < taskTree->topLevelItemCount(); ++i) {
+        auto* item = taskTree->topLevelItem(i);
+        if (item->data(0, Qt::UserRole).toString() == pendingTaskId) {
+            pendingItem = item;
+        } else if (item->data(0, Qt::UserRole).toString() == completedTaskId) {
+            completedItem = item;
+        }
+    }
+
+    ASSERT_NE(pendingItem, nullptr);
+    ASSERT_NE(completedItem, nullptr);
+
+    taskTree->setCurrentItem(pendingItem);
+    QCoreApplication::processEvents();
+    EXPECT_FALSE(rerunButton->isEnabled());
+
+    taskTree->setCurrentItem(completedItem);
+    QCoreApplication::processEvents();
+    EXPECT_TRUE(rerunButton->isEnabled());
 }
 
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {

@@ -1,10 +1,14 @@
 #include <gtest/gtest.h>
-#include <QCoreApplication>
+#include <QApplication>
+#include <QByteArray>
 #include <gis/core/runtime_env.h>
 #include <gis/core/gdal_wrapper.h>
 
 int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", QByteArray("offscreen"));
+    }
+    QApplication app(argc, argv);
     gis::core::initRuntimeEnvironment();
     gis::core::initGDAL();
 
