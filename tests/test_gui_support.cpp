@@ -16,6 +16,7 @@
 
 #include <QPushButton>
 #include <QCoreApplication>
+#include <QLabel>
 #include <QTextEdit>
 #include <QTreeWidget>
 
@@ -749,6 +750,88 @@ TEST(GuiSupportTest, TaskCenterPageOnlyAllowsCompletedTaskRerun) {
     taskTree->setCurrentItem(completedItem);
     QCoreApplication::processEvents();
     EXPECT_TRUE(rerunButton->isEnabled());
+}
+
+TEST(GuiSupportTest, TaskCenterPageRerunButtonEmitsSelectedTaskId) {
+    const QString group = uniqueTaskGroupName("task_center_rerun_signal");
+    auto& taskManager = TaskManager::instance();
+    taskManager.initializeGroup(group);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string("D:/data/in.tif");
+    params["output"] = std::string("D:/data/out.tif");
+    const QString taskId = taskManager.submitTask(
+        group, QStringLiteral("processing"), QStringLiteral("filter"), params,
+        QStringLiteral("处理工具"), QStringLiteral("空间滤波"));
+    ASSERT_FALSE(taskId.isEmpty());
+
+    gis::framework::Result result;
+    result.success = true;
+    result.outputPath = "D:/data/out.tif";
+    result.message = "空间滤波完成";
+    taskManager.finishTask(group, taskId, result);
+
+    TaskCenterPage page;
+    page.setCurrentGroup(group);
+
+    auto* taskTree = page.findChild<QTreeWidget*>(QStringLiteral("taskTree"));
+    auto* rerunButton = page.findChild<QPushButton*>(QStringLiteral("rerunButton"));
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_NE(rerunButton, nullptr);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 1);
+
+    QString emittedTaskId;
+    QObject::connect(&page, &TaskCenterPage::rerunTaskRequested,
+                     [&emittedTaskId](const QString& id) { emittedTaskId = id; });
+
+    taskTree->setCurrentItem(taskTree->topLevelItem(0));
+    QCoreApplication::processEvents();
+    rerunButton->click();
+
+    EXPECT_EQ(emittedTaskId, taskId);
+}
+
+TEST(GuiSupportTest, TaskCenterPageClearLogButtonUsesTaskScopeAfterSelection) {
+    const QString group = uniqueTaskGroupName("task_center_clear_log_signal");
+    auto& taskManager = TaskManager::instance();
+    taskManager.initializeGroup(group);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string("D:/data/roads.shp");
+    params["output"] = std::string("D:/data/roads_buffer.gpkg");
+    const QString taskId = taskManager.submitTask(
+        group, QStringLiteral("vector"), QStringLiteral("buffer"), params,
+        QStringLiteral("矢量工具"), QStringLiteral("缓冲区"));
+    ASSERT_FALSE(taskId.isEmpty());
+    taskManager.appendLog(group, taskId, QStringLiteral("准备执行"), 0);
+
+    TaskCenterPage page;
+    page.setCurrentGroup(group);
+
+    auto* taskTree = page.findChild<QTreeWidget*>(QStringLiteral("taskTree"));
+    auto* clearLogButton = page.findChild<QPushButton*>(QStringLiteral("clearLogButton"));
+    auto* logTaskLabel = page.findChild<QLabel*>(QStringLiteral("logTaskLabel"));
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_NE(clearLogButton, nullptr);
+    ASSERT_NE(logTaskLabel, nullptr);
+
+    int clearAllCount = 0;
+    QString clearedTaskId;
+    QObject::connect(&page, &TaskCenterPage::clearAllLogsRequested,
+                     [&clearAllCount]() { ++clearAllCount; });
+    QObject::connect(&page, &TaskCenterPage::clearLogsRequested,
+                     [&clearedTaskId](const QString& id) { clearedTaskId = id; });
+
+    clearLogButton->click();
+    EXPECT_EQ(clearAllCount, 1);
+    EXPECT_TRUE(clearedTaskId.isEmpty());
+
+    taskTree->setCurrentItem(taskTree->topLevelItem(0));
+    QCoreApplication::processEvents();
+    clearLogButton->click();
+
+    EXPECT_EQ(clearedTaskId, taskId);
+    EXPECT_NE(logTaskLabel->text().indexOf(taskId), -1);
 }
 
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {
