@@ -920,6 +920,71 @@ TEST(GuiSupportTest, TaskCenterPageRemoveTaskRowsUpdatesCountLabel) {
     EXPECT_NE(countLabel->text().indexOf(QStringLiteral("0")), -1);
 }
 
+TEST(GuiSupportTest, TaskCenterPageSetLogForTaskAndClearLogDisplayWorkTogether) {
+    TaskCenterPage page;
+
+    auto* logDisplay = page.findChild<QTextEdit*>(QStringLiteral("logTerminal"));
+    auto* logTaskLabel = page.findChild<QLabel*>(QStringLiteral("logTaskLabel"));
+    ASSERT_NE(logDisplay, nullptr);
+    ASSERT_NE(logTaskLabel, nullptr);
+
+    page.setLogForTask(
+        QStringLiteral("T0099"),
+        QStringList{QStringLiteral("第一行日志"), QStringLiteral("第二行日志")});
+    EXPECT_NE(logDisplay->toPlainText().indexOf(QStringLiteral("第一行日志")), -1);
+    EXPECT_NE(logDisplay->toPlainText().indexOf(QStringLiteral("第二行日志")), -1);
+
+    page.clearLogDisplay();
+    EXPECT_TRUE(logDisplay->toPlainText().isEmpty());
+    EXPECT_TRUE(logTaskLabel->text().isEmpty());
+}
+
+TEST(GuiSupportTest, TaskCenterPageSwitchingGroupRefreshesListAndClearsOldLogs) {
+    auto& taskManager = TaskManager::instance();
+    const QString firstGroup = uniqueTaskGroupName("task_center_group_a");
+    const QString secondGroup = uniqueTaskGroupName("task_center_group_b");
+    taskManager.initializeGroup(firstGroup);
+    taskManager.initializeGroup(secondGroup);
+
+    std::map<std::string, gis::framework::ParamValue> firstParams;
+    firstParams["input"] = std::string("D:/data/a.tif");
+    firstParams["output"] = std::string("D:/data/a_out.tif");
+    const QString firstTaskId = taskManager.submitTask(
+        firstGroup, QStringLiteral("processing"), QStringLiteral("filter"), firstParams,
+        QStringLiteral("处理工具"), QStringLiteral("空间滤波"));
+    ASSERT_FALSE(firstTaskId.isEmpty());
+    taskManager.appendLog(firstGroup, firstTaskId, QStringLiteral("第一组日志"), 0);
+
+    std::map<std::string, gis::framework::ParamValue> secondParams;
+    secondParams["input"] = std::string("D:/data/b.tif");
+    secondParams["output"] = std::string("D:/data/b_out.tif");
+    const QString secondTaskId = taskManager.submitTask(
+        secondGroup, QStringLiteral("vector"), QStringLiteral("buffer"), secondParams,
+        QStringLiteral("矢量工具"), QStringLiteral("缓冲区"));
+    ASSERT_FALSE(secondTaskId.isEmpty());
+
+    TaskCenterPage page;
+    auto* taskTree = page.findChild<QTreeWidget*>(QStringLiteral("taskTree"));
+    auto* logDisplay = page.findChild<QTextEdit*>(QStringLiteral("logTerminal"));
+    auto* countLabel = page.findChild<QLabel*>(QStringLiteral("taskCountLabel"));
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_NE(logDisplay, nullptr);
+    ASSERT_NE(countLabel, nullptr);
+
+    page.setCurrentGroup(firstGroup);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 1);
+    taskTree->setCurrentItem(taskTree->topLevelItem(0));
+    QCoreApplication::processEvents();
+    EXPECT_NE(logDisplay->toPlainText().indexOf(QStringLiteral("第一组日志")), -1);
+    EXPECT_NE(countLabel->text().indexOf(QStringLiteral("1")), -1);
+
+    page.setCurrentGroup(secondGroup);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 1);
+    EXPECT_EQ(taskTree->topLevelItem(0)->data(0, Qt::UserRole).toString(), secondTaskId);
+    EXPECT_TRUE(logDisplay->toPlainText().isEmpty());
+    EXPECT_NE(countLabel->text().indexOf(QStringLiteral("1")), -1);
+}
+
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {
     GDALAllRegister();
     gis::tests::ensureDirectory(guiSupportTestDir());
