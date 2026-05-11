@@ -1054,6 +1054,45 @@ int makeGeorefRpcInput(const std::string& rasterPath) {
     return 0;
 }
 
+int printVectorFeatureCount(const std::string& inputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+    OGRRegisterAll();
+
+    GDALDataset* ds = static_cast<GDALDataset*>(
+        GDALOpenEx(inputPath.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr));
+    if (!ds) {
+        std::cerr << "Failed to open vector dataset: " << inputPath << "\n";
+        return 1;
+    }
+
+    OGRLayer* layer = ds->GetLayer(0);
+    if (!layer) {
+        GDALClose(ds);
+        std::cerr << "Failed to get first vector layer: " << inputPath << "\n";
+        return 1;
+    }
+
+    std::cout << layer->GetFeatureCount();
+    GDALClose(ds);
+    return 0;
+}
+
+int printRasterBandCount(const std::string& inputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    GDALDataset* ds = static_cast<GDALDataset*>(GDALOpen(inputPath.c_str(), GA_ReadOnly));
+    if (!ds) {
+        std::cerr << "Failed to open raster dataset: " << inputPath << "\n";
+        return 1;
+    }
+
+    std::cout << ds->GetRasterCount();
+    GDALClose(ds);
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1145,6 +1184,12 @@ int main(int argc, char* argv[]) {
     }
     if (command == "georef-rpc-input") {
         return makeGeorefRpcInput(argv[2]);
+    }
+    if (command == "vector-feature-count") {
+        return printVectorFeatureCount(argv[2]);
+    }
+    if (command == "raster-band-count") {
+        return printRasterBandCount(argv[2]);
     }
 
     std::cerr << "Unknown command: " << command << "\n";

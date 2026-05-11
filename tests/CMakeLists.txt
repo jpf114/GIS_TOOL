@@ -248,6 +248,17 @@ if(TARGET gis-gui)
     )
 
     add_test(
+        NAME gui_vector_filter_extent_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DINPUT_PATH=${CMAKE_CURRENT_SOURCE_DIR}/data/gui_vector_input.geojson
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_filter_extent/output.geojson
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_filter_extent/gui_vector_filter_extent.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_filter_extent_regression.cmake
+    )
+
+    add_test(
         NAME gui_vector_clip_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
@@ -1256,6 +1267,16 @@ if(TARGET gis-gui)
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_merge_bands/output.tif
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_merge_bands/gui_cutting_merge_bands.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_cutting_merge_bands_regression.cmake
+    )
+
+    add_test(
+        NAME gui_cutting_merge_bands_list_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_merge_bands_list/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_merge_bands_list/gui_cutting_merge_bands_list.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_cutting_merge_bands_list_regression.cmake
     )
 endif()
 
