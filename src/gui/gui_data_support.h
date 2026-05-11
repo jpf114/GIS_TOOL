@@ -117,6 +117,8 @@ const std::string& rasterToolsGroupKey();
 const std::vector<std::string>& rasterToolsPluginNames();
 bool isRasterToolsMember(const std::string& pluginName);
 std::string displayGroupForPlugin(const std::string& pluginName);
+QString rasterToolsGroupDisplayName();
+QString rasterToolsGroupDescription();
 std::vector<std::string> spindexCustomIndexPresetValues();
 std::string spindexCustomIndexPresetExpression(const std::string& presetKey);
 DerivedOutputUpdate computeDerivedExpressionUpdate(const std::string& currentValue,

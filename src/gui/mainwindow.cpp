@@ -333,10 +333,6 @@ void MainWindow::selectActionByKey(const std::string& actionKey) {
     onSubFunctionSelected(pluginName, actionKey);
 }
 
-QString MainWindow::actionDescription(const std::string& pluginName, const QString& actionKey) {
-    return gis::gui::actionDescription(pluginName, actionKey.toStdString());
-}
-
 void MainWindow::setupUi() {
     setWindowTitle(QStringLiteral("GIS 工具台"));
     resize(gis::style::Size::kWindowDefaultWidth, gis::style::Size::kWindowDefaultHeight);
@@ -731,12 +727,12 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
 
     const bool isRasterToolsGroup = pluginName == gis::gui::rasterToolsGroupKey();
     const QString groupName = isRasterToolsGroup
-        ? QStringLiteral("栅格工具")
+        ? gis::gui::rasterToolsGroupDisplayName()
         : QString::fromUtf8(currentPlugin_->displayName());
 
     functionTitleLabel_->setText(groupName);
     functionDescLabel_->setText(isRasterToolsGroup
-        ? QStringLiteral("集中提供栅格管理、检查、渲染与波段运算相关子功能。")
+        ? gis::gui::rasterToolsGroupDescription()
         : QString::fromUtf8(currentPlugin_->description()));
     if (functionIconLabel_) {
         functionIconLabel_->setPixmap(badgeIconPixmap(
@@ -806,12 +802,12 @@ void MainWindow::onSubFunctionSelected(const std::string& pluginName,
         currentPlugin_->name(), currentActionKey_.toStdString());
     functionTitleLabel_->setText(displayName);
 
-    QString desc = actionDescription(currentPlugin_->name(), currentActionKey_);
+    QString desc = gis::gui::actionDescription(currentPlugin_->name(), currentActionKey_.toStdString());
     functionDescLabel_->setText(desc.isEmpty()
         ? QString::fromUtf8(currentPlugin_->description()) : desc);
     if (functionMetaLabel_) {
         const QString groupName = currentDisplayGroupKey_ == gis::gui::rasterToolsGroupKey()
-            ? QStringLiteral("栅格工具")
+            ? gis::gui::rasterToolsGroupDisplayName()
             : QString::fromUtf8(currentPlugin_->displayName());
         functionMetaLabel_->setText(
             QStringLiteral("当前主功能：%1  |  当前子功能：%2")
@@ -1122,7 +1118,7 @@ void MainWindow::runPluginWithParams(
     const QString displayGroup = QString::fromStdString(
         gis::gui::displayGroupForPlugin(currentPlugin_->name()));
     const QString pluginDisplayName = currentDisplayGroupKey_ == gis::gui::rasterToolsGroupKey()
-        ? QStringLiteral("栅格工具")
+        ? gis::gui::rasterToolsGroupDisplayName()
         : QString::fromUtf8(currentPlugin_->displayName());
     const QString actionDisplayName = gis::gui::actionDisplayName(
         currentPlugin_->name(), currentActionKey_.toStdString());

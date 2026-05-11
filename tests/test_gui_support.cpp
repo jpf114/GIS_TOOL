@@ -1405,6 +1405,13 @@ TEST(GuiSupportTest, RasterToolsPluginOrderStaysStable) {
     EXPECT_EQ(gis::gui::rasterToolsPluginNames(), expected);
 }
 
+TEST(GuiSupportTest, RasterToolsGroupDisplayTextStaysCentralized) {
+    EXPECT_EQ(gis::gui::rasterToolsGroupDisplayName(), QStringLiteral("栅格工具"));
+    EXPECT_EQ(
+        gis::gui::rasterToolsGroupDescription(),
+        QStringLiteral("集中提供栅格管理、检查、渲染与波段运算相关子功能。"));
+}
+
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_EQ(
         gis::gui::actionDisplayName("processing", "gabor_filter"),

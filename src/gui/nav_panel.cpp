@@ -211,7 +211,7 @@ void NavPanel::setPlugins(const std::vector<gis::framework::IGisPlugin*>& plugin
 
         const std::string displayGroupName = gis::gui::displayGroupForPlugin(pluginName);
         const QString displayName = gis::gui::isRasterToolsMember(pluginName)
-            ? QStringLiteral("栅格工具")
+            ? gis::gui::rasterToolsGroupDisplayName()
             : QString::fromUtf8(plugin->displayName());
         const std::string iconKind = gis::gui::isRasterToolsMember(pluginName)
             ? gis::gui::rasterToolsGroupKey()
@@ -310,7 +310,9 @@ void NavPanel::setSubFunctions(const std::vector<SubFunctionItem>& items) {
 }
 
 void NavPanel::setCurrentPluginSelection(const std::string& pluginName) {
-    const std::string displayGroupName = displayGroupForPlugin(pluginName);
+    const std::string displayGroupName = pluginName.empty()
+        ? std::string{}
+        : gis::gui::displayGroupForPlugin(pluginName);
     if (pluginName.empty()) {
         for (auto& entry : pluginButtonMap_) {
             entry.first->setChecked(false);
@@ -398,7 +400,7 @@ void NavPanel::onPluginButtonClicked(const std::string& pluginName) {
 
 void NavPanel::onSubFunctionButtonClicked(const std::string& pluginName,
                                           const std::string& actionKey) {
-    const std::string currentGroup = displayGroupForPlugin(pluginName);
+    const std::string currentGroup = gis::gui::displayGroupForPlugin(pluginName);
     const bool pluginAlreadySelected = currentPluginButton_ &&
         pluginButtonMap_.count(currentPluginButton_) &&
         pluginButtonMap_[currentPluginButton_] == currentGroup;
@@ -410,9 +412,3 @@ void NavPanel::onSubFunctionButtonClicked(const std::string& pluginName,
     emit subFunctionSelected(pluginName, actionKey);
 }
 
-std::string NavPanel::displayGroupForPlugin(const std::string& pluginName) const {
-    if (pluginName.empty()) {
-        return {};
-    }
-    return gis::gui::displayGroupForPlugin(pluginName);
-}

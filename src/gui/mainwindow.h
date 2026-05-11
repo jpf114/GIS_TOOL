@@ -73,9 +73,6 @@ private:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
 
-    static QString actionDescription(const std::string& pluginName,
-                                     const QString& actionKey);
-
     NavPanel* navPanel_ = nullptr;
     QLabel* functionIconLabel_ = nullptr;
     QLabel* functionTitleLabel_ = nullptr;

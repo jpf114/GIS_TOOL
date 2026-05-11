@@ -41,7 +41,6 @@ private:
     void onPluginButtonClicked(const std::string& pluginName);
     void onSubFunctionButtonClicked(const std::string& pluginName,
                                     const std::string& actionKey);
-    std::string displayGroupForPlugin(const std::string& pluginName) const;
 
     QFrame* sidebarFrame_ = nullptr;
     QLabel* titleLabel_ = nullptr;

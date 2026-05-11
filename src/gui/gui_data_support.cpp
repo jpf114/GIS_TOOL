@@ -702,6 +702,14 @@ std::string displayGroupForPlugin(const std::string& pluginName) {
     return isRasterToolsMember(pluginName) ? kRasterToolsGroupName : pluginName;
 }
 
+QString rasterToolsGroupDisplayName() {
+    return QStringLiteral("栅格工具");
+}
+
+QString rasterToolsGroupDescription() {
+    return QStringLiteral("集中提供栅格管理、检查、渲染与波段运算相关子功能。");
+}
+
 DataKind detectDataKind(const std::string& path) {
     static const std::unordered_set<std::string> rasterExts = {
         ".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"
@@ -2202,5 +2210,4 @@ std::string resolveHighlightedParamKey(
 }
 
 } // namespace gis::gui
-
 
