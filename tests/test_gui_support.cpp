@@ -834,6 +834,92 @@ TEST(GuiSupportTest, TaskCenterPageClearLogButtonUsesTaskScopeAfterSelection) {
     EXPECT_NE(logTaskLabel->text().indexOf(taskId), -1);
 }
 
+TEST(GuiSupportTest, TaskCenterPageDoubleClickOnlyEditsFinishedTask) {
+    const QString group = uniqueTaskGroupName("task_center_edit_signal");
+    auto& taskManager = TaskManager::instance();
+    taskManager.initializeGroup(group);
+
+    std::map<std::string, gis::framework::ParamValue> pendingParams;
+    pendingParams["input"] = std::string("D:/data/pending.tif");
+    pendingParams["output"] = std::string("D:/data/pending_out.tif");
+    const QString pendingTaskId = taskManager.submitTask(
+        group, QStringLiteral("processing"), QStringLiteral("filter"), pendingParams,
+        QStringLiteral("处理工具"), QStringLiteral("空间滤波"));
+    ASSERT_FALSE(pendingTaskId.isEmpty());
+
+    std::map<std::string, gis::framework::ParamValue> finishedParams;
+    finishedParams["input"] = std::string("D:/data/finished.tif");
+    finishedParams["output"] = std::string("D:/data/finished_out.tif");
+    const QString finishedTaskId = taskManager.submitTask(
+        group, QStringLiteral("processing"), QStringLiteral("filter"), finishedParams,
+        QStringLiteral("处理工具"), QStringLiteral("空间滤波"));
+    ASSERT_FALSE(finishedTaskId.isEmpty());
+
+    gis::framework::Result result;
+    result.success = true;
+    result.outputPath = "D:/data/finished_out.tif";
+    result.message = "空间滤波完成";
+    taskManager.finishTask(group, finishedTaskId, result);
+
+    TaskCenterPage page;
+    page.setCurrentGroup(group);
+
+    auto* taskTree = page.findChild<QTreeWidget*>(QStringLiteral("taskTree"));
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 2);
+
+    QTreeWidgetItem* pendingItem = nullptr;
+    QTreeWidgetItem* finishedItem = nullptr;
+    for (int i = 0; i < taskTree->topLevelItemCount(); ++i) {
+        auto* item = taskTree->topLevelItem(i);
+        const QString taskId = item->data(0, Qt::UserRole).toString();
+        if (taskId == pendingTaskId) {
+            pendingItem = item;
+        } else if (taskId == finishedTaskId) {
+            finishedItem = item;
+        }
+    }
+    ASSERT_NE(pendingItem, nullptr);
+    ASSERT_NE(finishedItem, nullptr);
+
+    QString editedTaskId;
+    QObject::connect(&page, &TaskCenterPage::editTaskRequested,
+                     [&editedTaskId](const QString& id) { editedTaskId = id; });
+
+    QMetaObject::invokeMethod(
+        &page, "onItemDoubleClicked", Qt::DirectConnection,
+        Q_ARG(QTreeWidgetItem*, pendingItem), Q_ARG(int, 0));
+    EXPECT_TRUE(editedTaskId.isEmpty());
+
+    QMetaObject::invokeMethod(
+        &page, "onItemDoubleClicked", Qt::DirectConnection,
+        Q_ARG(QTreeWidgetItem*, finishedItem), Q_ARG(int, 0));
+    EXPECT_EQ(editedTaskId, finishedTaskId);
+}
+
+TEST(GuiSupportTest, TaskCenterPageRemoveTaskRowsUpdatesCountLabel) {
+    TaskCenterPage page;
+    page.addTaskRow(QStringLiteral("T0001"), QStringLiteral("缓冲区"), TaskRecord::Pending,
+                    QStringLiteral("2026-05-11 12:00:00"));
+    page.addTaskRow(QStringLiteral("T0002"), QStringLiteral("空间滤波"), TaskRecord::Completed,
+                    QStringLiteral("2026-05-11 12:01:00"));
+
+    auto* taskTree = page.findChild<QTreeWidget*>(QStringLiteral("taskTree"));
+    auto* countLabel = page.findChild<QLabel*>(QStringLiteral("taskCountLabel"));
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_NE(countLabel, nullptr);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 2);
+    EXPECT_NE(countLabel->text().indexOf(QStringLiteral("2")), -1);
+
+    page.removeTaskRows(QStringList{QStringLiteral("T0001")});
+    ASSERT_EQ(taskTree->topLevelItemCount(), 1);
+    EXPECT_NE(countLabel->text().indexOf(QStringLiteral("1")), -1);
+
+    page.removeTaskRows(QStringList{QStringLiteral("T0002")});
+    ASSERT_EQ(taskTree->topLevelItemCount(), 0);
+    EXPECT_NE(countLabel->text().indexOf(QStringLiteral("0")), -1);
+}
+
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {
     GDALAllRegister();
     gis::tests::ensureDirectory(guiSupportTestDir());
