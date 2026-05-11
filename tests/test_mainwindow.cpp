@@ -13,6 +13,7 @@
 #include "../src/gui/mainwindow.h"
 #undef private
 
+#include "../src/gui/param_widget.h"
 #include "../src/gui/task_center_page.h"
 #include "../src/gui/task_manager.h"
 #include "../src/gui/task_database.h"
@@ -55,11 +56,15 @@ void configureSettingsForTest() {
 QString createFinishedTask(const QString& displayGroup,
                            const gis::framework::Result& result,
                            const QString& pluginName = QStringLiteral("vector"),
-                           const QString& actionKey = QStringLiteral("buffer")) {
+                           const QString& actionKey = QStringLiteral("buffer"),
+                           const std::map<std::string, gis::framework::ParamValue>& overrideParams = {}) {
     TaskManager::instance().initializeGroup(displayGroup);
     std::map<std::string, gis::framework::ParamValue> params;
     params["input"] = std::string("D:/data/input.geojson");
     params["output"] = std::string("D:/data/output.gpkg");
+    for (const auto& [key, value] : overrideParams) {
+        params[key] = value;
+    }
 
     const QString taskId = TaskManager::instance().submitTask(
         displayGroup,
@@ -243,6 +248,68 @@ TEST(MainWindowTest, DeleteTasksRemovesTaskRowsAndDatabaseRecords) {
     EXPECT_EQ(taskTree->topLevelItemCount(), 1);
 }
 
+TEST(MainWindowTest, EditTaskLoadsTaskParamsAndSwitchesBackToConfigTab) {
+    configureSettingsForTest();
+
+    const QString displayGroup = uniqueMainWindowGroup("edit");
+    const std::map<std::string, gis::framework::ParamValue> params = {
+        {"input", std::string("D:/data/edit_input.geojson")},
+        {"output", std::string("D:/data/edit_output.gpkg")}
+    };
+    const QString taskId = createFinishedTask(
+        displayGroup,
+        gis::framework::Result::ok("edit success"),
+        QStringLiteral("vector"),
+        QStringLiteral("buffer"),
+        params);
+
+    MainWindow window;
+    ASSERT_FALSE(window.pluginManager_.plugins().empty());
+    ASSERT_NE(window.taskCenterPage_, nullptr);
+    ASSERT_NE(window.tabWidget_, nullptr);
+    ASSERT_NE(window.paramWidget_, nullptr);
+
+    window.taskCenterPage_->setCurrentGroup(displayGroup);
+    window.tabWidget_->setCurrentIndex(1);
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(
+        &window,
+        "onEditTask",
+        Q_ARG(QString, taskId)));
+
+    ASSERT_NE(window.currentPlugin_, nullptr);
+    EXPECT_EQ(window.currentPlugin_->name(), "vector");
+    EXPECT_EQ(window.currentActionKey_, QStringLiteral("buffer"));
+    EXPECT_EQ(window.currentEditingTaskId_, taskId);
+    EXPECT_EQ(window.tabWidget_->currentIndex(), 0);
+    EXPECT_EQ(window.paramWidget_->stringValue("input"), "D:/data/edit_input.geojson");
+    EXPECT_EQ(window.paramWidget_->stringValue("output"), "D:/data/edit_output.gpkg");
+}
+
+TEST(MainWindowTest, ClearHistoryRemovesAllTaskRowsAndRecords) {
+    configureSettingsForTest();
+
+    const QString displayGroup = uniqueMainWindowGroup("clear_history");
+    createFinishedTask(displayGroup, gis::framework::Result::ok("history a"));
+    createFinishedTask(displayGroup, gis::framework::Result::ok("history b"));
+
+    MainWindow window;
+    ASSERT_NE(window.taskCenterPage_, nullptr);
+    window.taskCenterPage_->setCurrentGroup(displayGroup);
+    window.taskCenterPage_->refreshAll();
+
+    auto* taskTree = findTaskTree(window.taskCenterPage_);
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 2);
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(
+        &window,
+        "onClearHistory"));
+
+    EXPECT_EQ(TaskManager::instance().taskCount(displayGroup), 0);
+    EXPECT_EQ(taskTree->topLevelItemCount(), 0);
+}
+
 TEST(MainWindowTest, ClearLogsForTaskClearsDatabaseAndCurrentDisplay) {
     configureSettingsForTest();
 
@@ -278,5 +345,38 @@ TEST(MainWindowTest, ClearLogsForTaskClearsDatabaseAndCurrentDisplay) {
 
     EXPECT_TRUE(TaskManager::instance().logsForTask(displayGroup, taskId).isEmpty());
     EXPECT_TRUE(logTaskLabel->text().contains(taskId));
+    EXPECT_TRUE(logDisplay->toPlainText().isEmpty());
+}
+
+TEST(MainWindowTest, ClearAllLogsClearsDatabaseAndCurrentDisplay) {
+    configureSettingsForTest();
+
+    const QString displayGroup = uniqueMainWindowGroup("clear_all_logs");
+    const QString taskId = createFinishedTask(
+        displayGroup,
+        gis::framework::Result::ok("logs all success"));
+    TaskManager::instance().appendLog(displayGroup, taskId, QStringLiteral("日志甲"));
+    TaskManager::instance().appendLog(displayGroup, taskId, QStringLiteral("日志乙"));
+
+    MainWindow window;
+    ASSERT_NE(window.taskCenterPage_, nullptr);
+    window.taskCenterPage_->setCurrentGroup(displayGroup);
+    window.taskCenterPage_->refreshAll();
+
+    auto* taskTree = findTaskTree(window.taskCenterPage_);
+    auto* logDisplay = findLogDisplay(window.taskCenterPage_);
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_NE(logDisplay, nullptr);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 1);
+    taskTree->setCurrentItem(taskTree->topLevelItem(0));
+
+    EXPECT_EQ(TaskManager::instance().logsForTask(displayGroup, taskId).size(), 2);
+    EXPECT_TRUE(logDisplay->toPlainText().contains(QStringLiteral("日志甲")));
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(
+        &window,
+        "onClearAllLogs"));
+
+    EXPECT_TRUE(TaskManager::instance().logsForTask(displayGroup, taskId).isEmpty());
     EXPECT_TRUE(logDisplay->toPlainText().isEmpty());
 }
