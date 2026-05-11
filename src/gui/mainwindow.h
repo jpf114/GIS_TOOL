@@ -73,11 +73,6 @@ private:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
 
-    static const std::map<std::string, std::map<std::string, std::set<std::string>>>& actionParamVisibilityMap();
-    static std::set<std::string> visibleParamsForAction(
-        const std::string& pluginName,
-        const std::string& actionKey);
-
     static QString actionDescription(const std::string& pluginName,
                                      const QString& actionKey);
 

@@ -49,7 +49,7 @@ target_link_libraries(gis-gui PRIVATE
     Qt6::Widgets
     Qt6::Svg
     Qt6::Sql
-    SQLite3::SQLite3
+    unofficial::sqlite3::sqlite3
     PROJ::proj
 )
 

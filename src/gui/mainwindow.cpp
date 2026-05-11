@@ -78,143 +78,6 @@ std::string displayGroupForPlugin(const std::string& pluginName) {
     return isRasterToolsMember(pluginName) ? std::string{kRasterToolsGroupName} : pluginName;
 }
 
-struct ActionUiConfig {
-    QString displayName;
-    QString description;
-    std::set<std::string> visibleKeys;
-    std::set<std::string> requiredKeys;
-};
-
-struct ParamText {
-    QString displayName;
-    QString description;
-};
-
-QString genericActionDisplayName(const QString& actionKey) {
-    static const std::map<QString, QString> kLabels = {
-        {QStringLiteral("reproject"), QStringLiteral("\351\207\215\346\212\225\345\275\261")},
-        {QStringLiteral("info"), QStringLiteral("\344\277\241\346\201\257\346\237\245\347\234\213")},
-        {QStringLiteral("transform"), QStringLiteral("\345\235\220\346\240\207\350\275\254\346\215\242")},
-        {QStringLiteral("assign_srs"), QStringLiteral("\350\265\213\344\272\210\345\235\220\346\240\207\347\263\273")},
-        {QStringLiteral("clip"), QStringLiteral("\350\243\201\345\210\207")},
-        {QStringLiteral("mosaic"), QStringLiteral("\351\225\266\345\265\214")},
-        {QStringLiteral("split"), QStringLiteral("\345\210\206\345\235\227")},
-        {QStringLiteral("merge_bands"), QStringLiteral("\346\263\242\346\256\265\345\220\210\345\271\266")},
-        {QStringLiteral("detect"), QStringLiteral("\347\211\271\345\276\201\346\243\200\346\265\213")},
-        {QStringLiteral("match"), QStringLiteral("\347\211\271\345\276\201\345\214\271\351\205\215")},
-        {QStringLiteral("register"), QStringLiteral("\345\275\261\345\203\217\351\205\215\345\207\206")},
-        {QStringLiteral("change"), QStringLiteral("\345\217\230\345\214\226\346\243\200\346\265\213")},
-        {QStringLiteral("ecc_register"), QStringLiteral("ECC \351\205\215\345\207\206")},
-        {QStringLiteral("corner"), QStringLiteral("\350\247\222\347\202\271\346\243\200\346\265\213")},
-        {QStringLiteral("stitch"), QStringLiteral("\345\233\276\345\203\217\346\213\274\346\216\245")},
-        {QStringLiteral("threshold"), QStringLiteral("\351\230\210\345\200\274\345\210\206\345\211\262")},
-        {QStringLiteral("filter"), QStringLiteral("\346\273\244\346\263\242")},
-        {QStringLiteral("enhance"), QStringLiteral("\345\242\236\345\274\272")},
-        {QStringLiteral("band_math"), QStringLiteral("\346\263\242\346\256\265\350\277\220\347\256\227")},
-        {QStringLiteral("stats"), QStringLiteral("\347\273\237\350\256\241\344\277\241\346\201\257")},
-        {QStringLiteral("edge"), QStringLiteral("\350\276\271\347\274\230\346\243\200\346\265\213")},
-        {QStringLiteral("contour"), QStringLiteral("\350\275\256\345\273\223\346\217\220\345\217\226")},
-        {QStringLiteral("template_match"), QStringLiteral("\346\250\241\346\235\277\345\214\271\351\205\215")},
-        {QStringLiteral("pansharpen"), QStringLiteral("\345\205\250\350\211\262\351\224\220\345\214\226")},
-        {QStringLiteral("hough"), QStringLiteral("\351\234\215\345\244\253\345\217\230\346\215\242")},
-        {QStringLiteral("skeleton"), QStringLiteral("\351\252\250\346\236\266\346\217\220\345\217\226")},
-        {QStringLiteral("gabor_filter"), QStringLiteral("Gabor \346\273\244\346\263\242")},
-        {QStringLiteral("glcm_texture"), QStringLiteral("GLCM \347\272\271\347\220\206")},
-        {QStringLiteral("mean_shift_filter"), QStringLiteral("Mean Shift \346\273\242\346\263\242")},
-        {QStringLiteral("connected_components"), QStringLiteral("\350\277\236\351\200\232\347\273\204\344\273\266")},
-        {QStringLiteral("kmeans"), QStringLiteral("K-Means")},
-        {QStringLiteral("overviews"), QStringLiteral("\351\207\221\345\255\227\345\241\224")},
-        {QStringLiteral("nodata"), QStringLiteral("NoData \350\256\276\347\275\256")},
-        {QStringLiteral("cog"), QStringLiteral("COG \347\224\237\346\210\220")},
-        {QStringLiteral("histogram"), QStringLiteral("\347\233\264\346\226\271\345\233\276")},
-        {QStringLiteral("colormap"), QStringLiteral("\344\274\252\345\275\251\350\211\262")},
-        {QStringLiteral("histogram_match"), QStringLiteral("\347\233\264\346\226\271\345\233\276\345\214\271\351\205\215")},
-        {QStringLiteral("dos_correction"), QStringLiteral("DOS \346\240\241\346\255\243")},
-        {QStringLiteral("radiometric_calibration"), QStringLiteral("\350\276\220\345\260\204\345\256\232\346\240\207")},
-        {QStringLiteral("gcp_register"), QStringLiteral("\346\216\247\345\210\266\347\202\271\351\205\215\345\207\206")},
-        {QStringLiteral("cosine_correction"), QStringLiteral("\344\275\231\345\274\246\346\240\241\346\255\243")},
-        {QStringLiteral("minnaert_correction"), QStringLiteral("Minnaert \346\240\241\346\255\243")},
-        {QStringLiteral("c_correction"), QStringLiteral("C \346\240\241\346\255\243")},
-        {QStringLiteral("percentile_stretch"), QStringLiteral("百分位拉伸")},
-        {QStringLiteral("rpc_orthorectify"), QStringLiteral("RPC \346\255\243\345\260\204\346\240\241\346\255\243")},
-        {QStringLiteral("slope"), QStringLiteral("\345\235\241\345\272\246")},
-        {QStringLiteral("aspect"), QStringLiteral("\345\235\241\345\220\221")},
-        {QStringLiteral("hillshade"), QStringLiteral("\345\261\261\344\275\223\351\230\264\345\275\261")},
-        {QStringLiteral("tpi"), QStringLiteral("TPI")},
-        {QStringLiteral("curvature"), QStringLiteral("\346\233\262\347\216\207")},
-        {QStringLiteral("roughness"), QStringLiteral("\347\262\227\347\263\231\345\272\246")},
-        {QStringLiteral("fill_sinks"), QStringLiteral("\345\241\253\346\264\274")},
-        {QStringLiteral("flow_direction"), QStringLiteral("\346\265\201\345\220\221")},
-        {QStringLiteral("flow_accumulation"), QStringLiteral("\346\261\207\346\265\201\347\264\257\347\247\257")},
-        {QStringLiteral("stream_extract"), QStringLiteral("\346\262\263\347\275\221\346\217\220\345\217\226")},
-        {QStringLiteral("profile_extract"), QStringLiteral("\345\211\226\351\235\242\346\217\220\345\217\226")},
-        {QStringLiteral("viewshed"), QStringLiteral("\350\247\206\345\237\237\345\210\206\346\236\220")},
-        {QStringLiteral("viewshed_multi"), QStringLiteral("\345\244\232\347\202\271\350\247\206\345\237\237")},
-        {QStringLiteral("cut_fill"), QStringLiteral("\345\241\253\346\214\226\346\226\271")},
-        {QStringLiteral("reservoir_volume"), QStringLiteral("\345\272\223\345\256\271\350\256\241\347\256\227")},
-        {QStringLiteral("svm_classify"), QStringLiteral("SVM \345\210\206\347\261\273")},
-        {QStringLiteral("random_forest_classify"), QStringLiteral("\351\232\217\346\234\272\346\243\256\346\236\227\345\210\206\347\261\273")},
-        {QStringLiteral("max_likelihood_classify"), QStringLiteral("\346\234\200\345\244\247\344\274\274\347\204\266\345\210\206\347\261\273")},
-        {QStringLiteral("ndvi"), QStringLiteral("NDVI")},
-        {QStringLiteral("ndmi"), QStringLiteral("NDMI")},
-        {QStringLiteral("evi"), QStringLiteral("EVI")},
-        {QStringLiteral("evi2"), QStringLiteral("EVI2")},
-        {QStringLiteral("savi"), QStringLiteral("SAVI")},
-        {QStringLiteral("osavi"), QStringLiteral("OSAVI")},
-        {QStringLiteral("gndvi"), QStringLiteral("GNDVI")},
-        {QStringLiteral("ndwi"), QStringLiteral("NDWI")},
-        {QStringLiteral("mndwi"), QStringLiteral("MNDWI")},
-        {QStringLiteral("ndbi"), QStringLiteral("NDBI")},
-        {QStringLiteral("bsi"), QStringLiteral("BSI")},
-        {QStringLiteral("arvi"), QStringLiteral("ARVI")},
-        {QStringLiteral("nbr"), QStringLiteral("NBR")},
-        {QStringLiteral("awei"), QStringLiteral("AWEI")},
-        {QStringLiteral("ui"), QStringLiteral("UI")},
-        {QStringLiteral("bi"), QStringLiteral("BI")},
-        {QStringLiteral("custom_index"), QStringLiteral("自定义指数")},
-        {QStringLiteral("buffer"), QStringLiteral("\347\274\223\345\206\262\345\214\272")},
-        {QStringLiteral("rasterize"), QStringLiteral("\346\240\205\346\240\274\345\214\226")},
-        {QStringLiteral("polygonize"), QStringLiteral("\351\235\242\347\237\242\351\207\217\345\214\226")},
-        {QStringLiteral("convert"), QStringLiteral("\346\240\274\345\274\217\350\275\254\346\215\242")},
-        {QStringLiteral("union"), QStringLiteral("\345\271\266\351\233\206")},
-        {QStringLiteral("difference"), QStringLiteral("\345\267\256\351\233\206")},
-        {QStringLiteral("dissolve"), QStringLiteral("\350\236\215\345\220\210")},
-        {QStringLiteral("simplify"), QStringLiteral("简化")},
-        {QStringLiteral("repair"), QStringLiteral("修复")},
-        {QStringLiteral("geom_metrics"), QStringLiteral("几何属性")},
-        {QStringLiteral("nearest"), QStringLiteral("最近邻")},
-        {QStringLiteral("spatial_join"), QStringLiteral("空间连接")},
-        {QStringLiteral("adjacency"), QStringLiteral("邻接关系")},
-        {QStringLiteral("overlap_check"), QStringLiteral("重叠检查")},
-        {QStringLiteral("topology_check"), QStringLiteral("拓扑检查")},
-        {QStringLiteral("convex_hull"), QStringLiteral("凸包")},
-        {QStringLiteral("centroid"), QStringLiteral("质心")},
-        {QStringLiteral("envelope"), QStringLiteral("外包矩形")},
-        {QStringLiteral("boundary"), QStringLiteral("边界提取")},
-        {QStringLiteral("multipart_check"), QStringLiteral("多部件检查")},
-        {QStringLiteral("singlepart"), QStringLiteral("转单部件")},
-        {QStringLiteral("vertices_extract"), QStringLiteral("顶点提取")},
-        {QStringLiteral("endpoints_extract"), QStringLiteral("端点提取")},
-        {QStringLiteral("midpoints_extract"), QStringLiteral("中点提取")},
-        {QStringLiteral("interior_point"), QStringLiteral("内部点")},
-        {QStringLiteral("duplicate_point_check"), QStringLiteral("重复点检查")},
-        {QStringLiteral("hole_check"), QStringLiteral("孔洞检查")},
-        {QStringLiteral("dangling_endpoint_check"), QStringLiteral("悬挂端点检查")},
-        {QStringLiteral("sliver_remove"), QStringLiteral("碎片面消除")},
-        {QStringLiteral("reclassify"), QStringLiteral("重分类")},
-        {QStringLiteral("raster_overlay"), QStringLiteral("栅格叠加")},
-        {QStringLiteral("zonal_stats"), QStringLiteral("分区统计")},
-        {QStringLiteral("proximity"), QStringLiteral("欧氏距离")},
-        {QStringLiteral("tile"), QStringLiteral("栅格切片")},
-    };
-
-    const auto it = kLabels.find(actionKey);
-    if (it != kLabels.end()) {
-        return it->second;
-    }
-    return actionKey;
-}
-
 QString actionIconText(const QString& actionKey) {
     return actionKey.isEmpty() ? QStringLiteral("default") : actionKey;
 }
@@ -278,497 +141,6 @@ QIcon executeIcon() {
     return QIcon(pixmap);
 }
 
-const std::map<std::string, ParamText>& commonParamTextStorage() {
-    static const std::map<std::string, ParamText> kTexts = {
-        {"input", {QStringLiteral("输入文件"), QStringLiteral("输入数据路径；多文件场景请使用英文逗号分隔。")}},
-        {"output", {QStringLiteral("输出文件"), QStringLiteral("输出结果路径；建议按功能选择正确后缀。")}},
-        {"reference", {QStringLiteral("参考文件"), QStringLiteral("参考数据路径，常用于匹配、配准或变化检测。")}},
-        {"dst_srs", {QStringLiteral("目标坐标系"), QStringLiteral("目标坐标参考系，例如 EPSG:3857。")}},
-        {"src_srs", {QStringLiteral("源坐标系"), QStringLiteral("源坐标参考系，留空时尽量使用数据自带坐标系。")}},
-        {"srs", {QStringLiteral("坐标系"), QStringLiteral("要写入数据的坐标参考系。")}},
-        {"resample", {QStringLiteral("重采样方式"), QStringLiteral("输出计算或重投影时采用的重采样算法。")}},
-        {"gcp_file", {QStringLiteral("控制点文件"), QStringLiteral("CSV 表头应包含 pixel_x,pixel_y,map_x,map_y，可选 map_z。")}},
-        {"metadata_file", {QStringLiteral("元数据文件"), QStringLiteral("可选，用于自动读取辐射定标增益和偏移量。")}},
-        {"dem_file", {QStringLiteral("DEM 文件"), QStringLiteral("RPC 正射校正使用的可选 DEM 文件。")}},
-        {"slope_raster", {QStringLiteral("坡度栅格"), QStringLiteral("坡度栅格文件，像元值单位应为度。")}},
-        {"aspect_raster", {QStringLiteral("坡向栅格"), QStringLiteral("坡向栅格文件，像元值单位应为度。")}},
-        {"sun_zenith_deg", {QStringLiteral("太阳天顶角"), QStringLiteral("太阳天顶角，单位为度。")}},
-        {"sun_azimuth_deg", {QStringLiteral("太阳方位角"), QStringLiteral("太阳方位角，单位为度。")}},
-        {"minnaert_k", {QStringLiteral("Minnaert 系数"), QStringLiteral("Minnaert 地形校正系数，通常取正数。")}},
-        {"c_value", {QStringLiteral("C 系数"), QStringLiteral("C 地形校正系数，通常不小于 0。")}},
-        {"dark_percentile", {QStringLiteral("暗像元百分位"), QStringLiteral("简化 QUAC 使用的暗像元百分位。")}},
-        {"bright_percentile", {QStringLiteral("亮像元百分位"), QStringLiteral("简化 QUAC 使用的亮像元百分位。")}},
-        {"rpc_height", {QStringLiteral("固定高程"), QStringLiteral("不使用 DEM 时的固定高程值。")}},
-        {"x", {QStringLiteral("X 坐标"), QStringLiteral("待转换点的 X 坐标。")}},
-        {"y", {QStringLiteral("Y 坐标"), QStringLiteral("待转换点的 Y 坐标。")}},
-        {"extent", {QStringLiteral("空间范围"), QStringLiteral("矩形范围 xmin, ymin, xmax, ymax。")}},
-        {"cutline", {QStringLiteral("裁切矢量"), QStringLiteral("用于裁切影像的矢量文件。")}},
-        {"tile_size", {QStringLiteral("分块大小"), QStringLiteral("切块时每块的像素尺寸。")}},
-        {"overlap", {QStringLiteral("重叠像素"), QStringLiteral("相邻分块之间的重叠像素数。")}},
-        {"bands", {QStringLiteral("波段列表"), QStringLiteral("按功能填写逗号分隔列表，例如 1,1,1 或 band1.tif,band2.tif。")}},
-        {"layer", {QStringLiteral("图层名"), QStringLiteral("要处理的图层名称，留空时通常使用第一个图层。")}},
-        {"where", {QStringLiteral("属性过滤"), QStringLiteral("SQL WHERE 条件表达式。")}},
-        {"distance", {QStringLiteral("距离"), QStringLiteral("缓冲区或相关分析的距离值。")}},
-        {"clip_vector", {QStringLiteral("裁切矢量"), QStringLiteral("用于裁切当前输入矢量的叠加矢量文件。")}},
-        {"resolution", {QStringLiteral("分辨率"), QStringLiteral("输出栅格的像元大小。")}},
-        {"attribute", {QStringLiteral("属性字段"), QStringLiteral("用于栅格化写值的字段名。")}},
-        {"band", {QStringLiteral("波段号"), QStringLiteral("要处理的波段序号，从 1 开始。")}},
-        {"format", {QStringLiteral("输出格式"), QStringLiteral("输出数据格式。")}},
-        {"overlay_vector", {QStringLiteral("叠加矢量"), QStringLiteral("用于并集、差集或交集分析的第二个矢量文件。")}},
-        {"nearest_vector", {QStringLiteral("目标图层"), QStringLiteral("最近邻分析使用的目标矢量文件。")}},
-        {"nearest_field", {QStringLiteral("目标字段"), QStringLiteral("可选，将最近邻要素的该字段值写入结果。")}},
-        {"join_vector", {QStringLiteral("连接图层"), QStringLiteral("空间连接使用的目标矢量文件。")}},
-        {"join_field", {QStringLiteral("连接字段"), QStringLiteral("可选，将匹配要素的该字段值汇总写入结果。")}},
-        {"dissolve_field", {QStringLiteral("融合字段"), QStringLiteral("按该字段值对相邻要素进行融合。")}},
-        {"tolerance", {QStringLiteral("简化容差"), QStringLiteral("Douglas-Peucker 简化容差，单位与图层坐标单位一致。")}},
-        {"method", {QStringLiteral("方法"), QStringLiteral("当前算法使用的主要处理方法。")}},
-        {"match_method", {QStringLiteral("匹配方法"), QStringLiteral("特征或模板匹配所采用的方法。")}},
-        {"max_points", {QStringLiteral("最大特征点数"), QStringLiteral("允许检测的最大特征点数量。")}},
-        {"ratio_test", {QStringLiteral("比率阈值"), QStringLiteral("Lowe 比率测试阈值。")}},
-        {"transform", {QStringLiteral("变换模型"), QStringLiteral("配准时使用的几何变换模型。")}},
-        {"change_method", {QStringLiteral("变化方法"), QStringLiteral("变化检测的计算方式。")}},
-        {"threshold", {QStringLiteral("阈值"), QStringLiteral("变化检测或相关处理的阈值。")}},
-        {"ecc_motion", {QStringLiteral("ECC 运动模型"), QStringLiteral("ECC 配准采用的运动模型。")}},
-        {"ecc_iterations", {QStringLiteral("ECC 迭代次数"), QStringLiteral("ECC 配准最大迭代次数。")}},
-        {"ecc_epsilon", {QStringLiteral("ECC 收敛阈值"), QStringLiteral("ECC 配准终止的收敛阈值。")}},
-        {"corner_method", {QStringLiteral("角点方法"), QStringLiteral("角点检测采用的算法。")}},
-        {"max_corners", {QStringLiteral("最大角点数"), QStringLiteral("最多输出的角点数量。")}},
-        {"quality_level", {QStringLiteral("质量阈值"), QStringLiteral("角点质量控制阈值。")}},
-        {"min_distance", {QStringLiteral("最小间距"), QStringLiteral("角点之间的最小距离。")}},
-        {"stitch_confidence", {QStringLiteral("拼接置信度"), QStringLiteral("图像拼接的置信度阈值。")}},
-        {"threshold_value", {QStringLiteral("阈值值"), QStringLiteral("阈值分割时使用的数值阈值。")}},
-        {"max_value", {QStringLiteral("最大值"), QStringLiteral("阈值分割输出的最大像素值。")}},
-        {"preset", {QStringLiteral("表达式预设"), QStringLiteral("可选择内置或自定义表达式预设，并自动带入表达式框。")}},
-        {"filter_type", {QStringLiteral("滤波类型"), QStringLiteral("空间滤波算法类型。")}},
-        {"kernel_size", {QStringLiteral("核大小"), QStringLiteral("滤波核或结构元素大小。")}},
-        {"sigma", {QStringLiteral("Sigma"), QStringLiteral("高斯等滤波的 sigma 参数。")}},
-        {"enhance_type", {QStringLiteral("增强类型"), QStringLiteral("影像增强算法类型。")}},
-        {"clip_limit", {QStringLiteral("裁剪限制"), QStringLiteral("CLAHE 的裁剪限制参数。")}},
-        {"gamma", {QStringLiteral("Gamma"), QStringLiteral("Gamma 校正参数。")}},
-        {"expression", {QStringLiteral("表达式"), QStringLiteral("波段运算表达式，例如 B1+B2。")}},
-        {"edge_method", {QStringLiteral("边缘方法"), QStringLiteral("边缘检测算法类型。")}},
-        {"low_threshold", {QStringLiteral("低阈值"), QStringLiteral("边缘检测的低阈值。")}},
-        {"high_threshold", {QStringLiteral("高阈值"), QStringLiteral("边缘检测的高阈值。")}},
-        {"sobel_dx", {QStringLiteral("Sobel dx"), QStringLiteral("Sobel 的 x 方向导数阶数。")}},
-        {"sobel_dy", {QStringLiteral("Sobel dy"), QStringLiteral("Sobel 的 y 方向导数阶数。")}},
-        {"min_area", {QStringLiteral("最小面积"), QStringLiteral("轮廓筛选的最小面积。")}},
-        {"template_file", {QStringLiteral("模板文件"), QStringLiteral("用于模板匹配的模板影像，建议使用栅格文件。")}},
-        {"pan_file", {QStringLiteral("全色影像"), QStringLiteral("全色锐化所需的高分辨率全色影像。")}},
-        {"pan_method", {QStringLiteral("融合方法"), QStringLiteral("全色锐化采用的融合方法。")}},
-        {"hough_type", {QStringLiteral("霍夫类型"), QStringLiteral("霍夫检测类型，例如直线或圆。")}},
-        {"hough_threshold", {QStringLiteral("霍夫阈值"), QStringLiteral("霍夫变换累加器阈值。")}},
-        {"min_line_length", {QStringLiteral("最小线长"), QStringLiteral("霍夫直线检测的最小线段长度。")}},
-        {"max_line_gap", {QStringLiteral("最大线间隙"), QStringLiteral("霍夫直线检测允许的最大线段间隙。")}},
-        {"min_radius", {QStringLiteral("最小半径"), QStringLiteral("霍夫圆检测的最小半径。")}},
-        {"max_radius", {QStringLiteral("最大半径"), QStringLiteral("霍夫圆检测的最大半径。")}},
-        {"circle_param2", {QStringLiteral("圆检测阈值"), QStringLiteral("霍夫圆检测的累加器阈值。")}},
-        {"marker_input", {QStringLiteral("标记输入"), QStringLiteral("分水岭分割的外部标记输入。")}},
-        {"k", {QStringLiteral("聚类数"), QStringLiteral("K-Means 的聚类类别数。")}},
-        {"max_iter", {QStringLiteral("最大迭代"), QStringLiteral("K-Means 的最大迭代次数。")}},
-        {"epsilon_kmeans", {QStringLiteral("收敛阈值"), QStringLiteral("K-Means 的终止收敛阈值。")}},
-        {"gabor_theta", {QStringLiteral("方向角"), QStringLiteral("Gabor 滤波核方向角，单位为弧度。")}},
-        {"gabor_lambda", {QStringLiteral("波长"), QStringLiteral("Gabor 条纹的波长，控制纹理尺度。")}},
-        {"gabor_gamma", {QStringLiteral("纵横比"), QStringLiteral("Gabor 滤波核的纵横比，控制方向性。")}},
-        {"gabor_psi", {QStringLiteral("相位偏移"), QStringLiteral("Gabor 滤波核的相位偏移。")}},
-        {"glcm_metric", {QStringLiteral("纹理指标"), QStringLiteral("GLCM 输出指标，可选对比度、同质性、能量、熵。")}},
-        {"glcm_levels", {QStringLiteral("灰度级数"), QStringLiteral("量化灰度级数，值越大纹理区分越细。")}},
-        {"spatial_radius", {QStringLiteral("空间半径"), QStringLiteral("Mean Shift 在空间域的邻域半径。")}},
-        {"color_radius", {QStringLiteral("颜色半径"), QStringLiteral("Mean Shift 在颜色域的邻域半径。")}},
-        {"pyramid_level", {QStringLiteral("金字塔层数"), QStringLiteral("Mean Shift 使用的金字塔层数。")}},
-        {"levels", {QStringLiteral("金字塔层级"), QStringLiteral("金字塔缩放层级，多个值用空格分隔。")}},
-        {"nodata_value", {QStringLiteral("NoData 值"), QStringLiteral("要写入的 NoData 数值。")}},
-        {"bins", {QStringLiteral("分箱数"), QStringLiteral("直方图的分箱数量。")}},
-        {"cmap", {QStringLiteral("颜色映射"), QStringLiteral("伪彩色映射方案。")}},
-        {"dark_object_value", {QStringLiteral("暗像元值"), QStringLiteral("DOS 校正使用的暗像元值，小于 0 表示自动估计。")}},
-        {"gain", {QStringLiteral("增益"), QStringLiteral("辐射定标的增益系数。")}},
-        {"offset", {QStringLiteral("偏移"), QStringLiteral("辐射定标的偏移量。")}},
-        {"red_band", {QStringLiteral("红光波段"), QStringLiteral("计算 NDVI、SAVI、OSAVI、EVI2、BI 等指数使用的红光波段序号。")}},
-        {"nir_band", {QStringLiteral("近红外波段"), QStringLiteral("计算 NDVI、NDMI、SAVI、OSAVI、EVI2、NBR 等指数使用的近红外波段序号。")}},
-        {"blue_band", {QStringLiteral("蓝光波段"), QStringLiteral("计算 EVI、ARVI、BSI 使用的蓝光波段序号。")}},
-        {"green_band", {QStringLiteral("绿光波段"), QStringLiteral("计算 GNDVI、NDWI、MNDWI、AWEI 使用的绿光波段序号。")}},
-        {"swir1_band", {QStringLiteral("短波红外1波段"), QStringLiteral("计算 NDMI、MNDWI、NDBI、BSI、AWEI 使用的短波红外1波段序号。")}},
-        {"swir2_band", {QStringLiteral("短波红外2波段"), QStringLiteral("计算 NBR、AWEI、UI 使用的短波红外2波段序号。")}},
-        {"l_value", {QStringLiteral("L 参数"), QStringLiteral("SAVI 或 EVI 使用的 L 参数。")}},
-        {"g_value", {QStringLiteral("G 参数"), QStringLiteral("EVI 使用的增益参数 G。")}},
-        {"c1", {QStringLiteral("C1 参数"), QStringLiteral("EVI 使用的 C1 参数。")}},
-        {"c2", {QStringLiteral("C2 参数"), QStringLiteral("EVI 使用的 C2 参数。")}},
-        {"vector", {QStringLiteral("输入面矢量"), QStringLiteral("参与统计的面矢量文件路径。")}},
-        {"feature_id_field", {QStringLiteral("要素 ID 字段"), QStringLiteral("可选，用于标识每个面要素的唯一字段名。")}},
-        {"feature_name_field", {QStringLiteral("要素名称字段"), QStringLiteral("可选，用于读取面要素名称的字段名。")}},
-        {"training_csv", {QStringLiteral("训练样本 CSV"), QStringLiteral("监督分类训练样本文件，默认使用 label 列和其余特征列。")}},
-        {"label_column", {QStringLiteral("标签列"), QStringLiteral("训练样本 CSV 中保存类别标签的列名。")}},
-        {"class_map", {QStringLiteral("分类映射"), QStringLiteral("分类值到分类名称的 JSON 映射文件，例如 {\"1\":\"耕地\",\"2\":\"林地\"}。")}},
-        {"rasters", {QStringLiteral("分类栅格列表"), QStringLiteral("多个分类栅格路径，使用英文逗号分隔，例如 a.tif,b.tif。")}},
-        {"nodatas", {QStringLiteral("NoData 列表"), QStringLiteral("与分类栅格一一对应的 NoData 列表，使用英文逗号分隔，例如 0,0,255。")}},
-        {"target_epsg", {QStringLiteral("目标 EPSG"), QStringLiteral("可选，显式指定统计时使用的目标投影坐标系。")}},
-        {"vector_output", {QStringLiteral("分类面输出"), QStringLiteral("可选，输出分类面结果，当前仅支持 .gpkg。")}},
-        {"raster_output", {QStringLiteral("分类栅格输出"), QStringLiteral("可选，输出分类栅格结果，当前仅支持 .tif 或 .tiff。")}},
-    };
-    return kTexts;
-}
-
-const ParamText* findActionSpecificParamText(const std::string& pluginName,
-                                             const std::string& actionKey,
-                                             const std::string& paramKey) {
-    static const std::map<std::string, std::map<std::string, std::map<std::string, ParamText>>> kTexts = {
-        {"cutting", {
-            {"split", {
-                {"output", {QStringLiteral("输出目录"), QStringLiteral("分块输出目录，图块会自动命名为 tile_x_y.tif。")}},
-            }},
-            {"merge_bands", {
-                {"input", {QStringLiteral("输入文件"), QStringLiteral("可填写一个或多个单波段栅格路径，使用英文逗号分隔。")}},
-                {"bands", {QStringLiteral("波段列表"), QStringLiteral("补充更多单波段栅格路径，使用英文逗号分隔。")}},
-            }},
-        }},
-        {"projection", {
-            {"reproject", {
-                {"input", {QStringLiteral("输入文件"), QStringLiteral("支持栅格或矢量数据，输出格式由输出后缀决定。")}},
-            }},
-            {"transform", {
-                {"src_srs", {QStringLiteral("源坐标系"), QStringLiteral("源坐标系，留空时默认按 EPSG:4326 解释输入坐标。")}},
-            }},
-        }},
-        {"processing", {
-            {"filter", {
-                {"kernel_size", {QStringLiteral("核大小"), QStringLiteral("滤波核大小，建议填写大于等于 3 的奇数。")}},
-            }},
-            {"template_match", {
-                {"template_file", {QStringLiteral("模板文件"), QStringLiteral("模板影像路径，尺寸需小于等于输入影像。")}},
-            }},
-            {"watershed", {
-                {"marker_input", {QStringLiteral("标记输入"), QStringLiteral("可选外部标记栅格，0 表示背景，1/2/3 表示不同种子区域。")}},
-            }},
-            {"gabor_filter", {
-                {"kernel_size", {QStringLiteral("核大小"), QStringLiteral("Gabor 核大小，建议填写大于等于 3 的奇数。")}},
-                {"gabor_theta", {QStringLiteral("方向角"), QStringLiteral("填写弧度值，例如 0、1.57、3.14。")}},
-                {"gabor_lambda", {QStringLiteral("波长"), QStringLiteral("纹理波长，值越大响应尺度越粗。")}},
-                {"gabor_gamma", {QStringLiteral("纵横比"), QStringLiteral("控制条纹拉伸，常用 0.3 到 1.0。")}},
-            }},
-            {"glcm_texture", {
-                {"kernel_size", {QStringLiteral("窗口大小"), QStringLiteral("局部纹理窗口大小，建议填写大于等于 3 的奇数。")}},
-                {"glcm_levels", {QStringLiteral("灰度级数"), QStringLiteral("量化灰度级数，常用 8 或 16。")}},
-            }},
-            {"mean_shift_filter", {
-                {"spatial_radius", {QStringLiteral("空间半径"), QStringLiteral("值越大，空间上合并得越平滑。")}},
-                {"color_radius", {QStringLiteral("颜色半径"), QStringLiteral("值越大，灰度相近区域越容易被合并。")}},
-                {"pyramid_level", {QStringLiteral("金字塔层数"), QStringLiteral("通常填写 0 或 1，值越大速度越快但更粗。")}},
-            }},
-        }},
-        {"raster_manage", {
-            {"nodata", {
-                {"band", {QStringLiteral("波段序号"), QStringLiteral("填写 0 表示对全部波段设置 NoData；填写 1、2、3... 表示单个波段。")}},
-            }},
-        }},
-        {"terrain", {
-            {"hillshade", {
-                {"azimuth", {QStringLiteral("方位角"), QStringLiteral("常用 315 度，表示西北方向照射。")}},
-                {"altitude", {QStringLiteral("高度角"), QStringLiteral("常用 45 度，值越小阴影越长。")}},
-            }},
-            {"tpi", {
-                {"z_factor", {QStringLiteral("高程缩放"), QStringLiteral("用于在计算局部高差前统一缩放 DEM 高程值。")}},
-            }},
-            {"roughness", {
-                {"z_factor", {QStringLiteral("高程缩放"), QStringLiteral("用于在计算局部起伏前统一缩放 DEM 高程值。")}},
-            }},
-            {"fill_sinks", {
-                {"z_factor", {QStringLiteral("高程缩放"), QStringLiteral("用于在填洼前统一缩放 DEM 高程值。")}},
-            }},
-            {"flow_direction", {
-                {"z_factor", {QStringLiteral("高程缩放"), QStringLiteral("用于在计算 D8 流向前统一缩放 DEM 高程值。")}},
-            }},
-            {"flow_accumulation", {
-                {"z_factor", {QStringLiteral("高程缩放"), QStringLiteral("用于在计算汇流累积量前统一缩放 DEM 高程值。")}},
-            }},
-            {"stream_extract", {
-                {"accum_threshold", {QStringLiteral("汇流阈值"), QStringLiteral("累计上游像元数量达到该阈值时输出为河网像元。")}},
-            }},
-            {"profile_extract", {
-                {"profile_path", {QStringLiteral("剖面路径"), QStringLiteral("填写折线路径，格式示例：116.0,40.0;116.01,39.99。")}},
-            }},
-            {"viewshed", {
-                {"observer_x", {QStringLiteral("观察点 X"), QStringLiteral("填写观察点经度或投影坐标 X。")}},
-                {"observer_y", {QStringLiteral("观察点 Y"), QStringLiteral("填写观察点纬度或投影坐标 Y。")}},
-                {"observer_height", {QStringLiteral("观察点高度"), QStringLiteral("观察者相对地表的离地高度，常用 1.5 或 2。")}},
-                {"target_height", {QStringLiteral("目标高度"), QStringLiteral("目标相对地表的离地高度，默认 0。")}},
-                {"max_distance", {QStringLiteral("最大距离"), QStringLiteral("填写 0 表示不限制；否则按数据坐标单位限制计算范围。")}},
-            }},
-            {"viewshed_multi", {
-                {"observer_points", {QStringLiteral("观察点列表"), QStringLiteral("填写多个观察点，格式示例：116.0,40.0;116.01,39.99。")}},
-                {"observer_height", {QStringLiteral("观察点高度"), QStringLiteral("所有观察点共用同一离地高度，常用 1.5 或 2。")}},
-                {"target_height", {QStringLiteral("目标高度"), QStringLiteral("目标相对地表的离地高度，默认 0。")}},
-                {"max_distance", {QStringLiteral("最大距离"), QStringLiteral("填写 0 表示不限制；否则按数据坐标单位限制计算范围。")}},
-            }},
-            {"cut_fill", {
-                {"reference", {QStringLiteral("参考 DEM"), QStringLiteral("填写基准地表 DEM，系统将输出 input - reference 的高差结果。")}},
-            }},
-            {"reservoir_volume", {
-                {"water_level", {QStringLiteral("水位高程"), QStringLiteral("填写目标蓄水水位，系统将输出对应水深栅格并统计面积与库容。")}},
-            }},
-        }},
-        {"classification", {
-            {"feature_stats", {
-                {"output", {QStringLiteral("统计输出"), QStringLiteral("统计结果输出路径，仅支持 .json 或 .csv。")}},
-                {"class_map", {QStringLiteral("分类映射"), QStringLiteral("JSON 文件，例如 {\"1\":\"耕地\",\"2\":\"林地\"}。")}},
-                {"rasters", {QStringLiteral("分类栅格列表"), QStringLiteral("多个分类栅格路径，使用英文逗号分隔，顺序即优先级。")}},
-                {"bands", {QStringLiteral("波段列表"), QStringLiteral("与分类栅格一一对应，使用英文逗号分隔，默认全部为 1。")}},
-                {"nodatas", {QStringLiteral("NoData 列表"), QStringLiteral("与分类栅格一一对应，使用英文逗号分隔，默认全部为 0。")}},
-            }},
-            {"svm_classify", {
-                {"training_csv", {QStringLiteral("训练样本 CSV"), QStringLiteral("CSV 表头需包含标签列和特征列，例如 label,b1,b2。")}},
-                {"bands", {QStringLiteral("波段列表"), QStringLiteral("与训练样本特征列一一对应，例如 1,2。留空则默认使用全部波段。")}},
-                {"label_column", {QStringLiteral("标签列"), QStringLiteral("训练样本 CSV 中的类别标签列名，默认 label。")}},
-            }},
-            {"random_forest_classify", {
-                {"training_csv", {QStringLiteral("训练样本 CSV"), QStringLiteral("CSV 表头需包含标签列和特征列，例如 label,b1,b2。")}},
-                {"bands", {QStringLiteral("波段列表"), QStringLiteral("与训练样本特征列一一对应，例如 1,2。留空则默认使用全部波段。")}},
-                {"label_column", {QStringLiteral("标签列"), QStringLiteral("训练样本 CSV 中的类别标签列名，默认 label。")}},
-            }},
-            {"max_likelihood_classify", {
-                {"training_csv", {QStringLiteral("训练样本 CSV"), QStringLiteral("CSV 表头需包含标签列和特征列，例如 label,b1,b2。")}},
-                {"bands", {QStringLiteral("波段列表"), QStringLiteral("与训练样本特征列一一对应，例如 1,2。留空则默认使用全部波段。")}},
-                {"label_column", {QStringLiteral("标签列"), QStringLiteral("训练样本 CSV 中的类别标签列名，默认 label。")}},
-            }},
-        }},
-        {"georef", {
-            {"dos_correction", {
-                {"dark_object_value", {QStringLiteral("暗像元值"), QStringLiteral("小于 0 时自动使用当前波段最小值作为暗像元值。")}},
-            }},
-            {"radiometric_calibration", {
-                {"gain", {QStringLiteral("增益"), QStringLiteral("按 output = input * gain + offset 执行辐射定标。")}},
-                {"offset", {QStringLiteral("偏移"), QStringLiteral("辐射定标偏移量，可为负值。")}},
-                {"metadata_file", {QStringLiteral("元数据文件"), QStringLiteral("可选，自动读取辐射定标系数；填写后将优先使用文件中的系数。")}},
-            }},
-            {"gcp_register", {
-                {"gcp_file", {QStringLiteral("控制点文件"), QStringLiteral("CSV 表头应包含 pixel_x,pixel_y,map_x,map_y，可选 map_z。")}},
-                {"dst_srs", {QStringLiteral("目标坐标系"), QStringLiteral("控制点地图坐标对应的坐标系，例如 EPSG:4326。")}},
-                {"resample", {QStringLiteral("重采样方式"), QStringLiteral("配准输出时使用的重采样算法。")}},
-            }},
-            {"cosine_correction", {
-                {"slope_raster", {QStringLiteral("坡度栅格"), QStringLiteral("坡度栅格文件，像元值单位应为度。")}},
-                {"aspect_raster", {QStringLiteral("坡向栅格"), QStringLiteral("坡向栅格文件，像元值单位应为度。")}},
-                {"sun_zenith_deg", {QStringLiteral("太阳天顶角"), QStringLiteral("太阳天顶角，单位为度。")}},
-                {"sun_azimuth_deg", {QStringLiteral("太阳方位角"), QStringLiteral("太阳方位角，单位为度。")}},
-            }},
-            {"minnaert_correction", {
-                {"slope_raster", {QStringLiteral("坡度栅格"), QStringLiteral("坡度栅格文件，像元值单位应为度。")}},
-                {"aspect_raster", {QStringLiteral("坡向栅格"), QStringLiteral("坡向栅格文件，像元值单位应为度。")}},
-                {"sun_zenith_deg", {QStringLiteral("太阳天顶角"), QStringLiteral("太阳天顶角，单位为度。")}},
-                {"sun_azimuth_deg", {QStringLiteral("太阳方位角"), QStringLiteral("太阳方位角，单位为度。")}},
-                {"minnaert_k", {QStringLiteral("Minnaert 系数"), QStringLiteral("Minnaert 地形校正系数，通常取正数。")}},
-            }},
-            {"c_correction", {
-                {"slope_raster", {QStringLiteral("坡度栅格"), QStringLiteral("坡度栅格文件，像元值单位应为度。")}},
-                {"aspect_raster", {QStringLiteral("坡向栅格"), QStringLiteral("坡向栅格文件，像元值单位应为度。")}},
-                {"sun_zenith_deg", {QStringLiteral("太阳天顶角"), QStringLiteral("太阳天顶角，单位为度。")}},
-                {"sun_azimuth_deg", {QStringLiteral("太阳方位角"), QStringLiteral("太阳方位角，单位为度。")}},
-                {"c_value", {QStringLiteral("C 系数"), QStringLiteral("C 地形校正系数，通常不小于 0。")}},
-            }},
-            {"percentile_stretch", {
-                {"dark_percentile", {QStringLiteral("暗像元百分位"), QStringLiteral("百分位拉伸使用的暗端百分位。")}},
-                {"bright_percentile", {QStringLiteral("亮像元百分位"), QStringLiteral("百分位拉伸使用的亮端百分位。")}},
-            }},
-            {"rpc_orthorectify", {
-                {"dst_srs", {QStringLiteral("目标坐标系"), QStringLiteral("RPC 正射校正输出坐标系，例如 EPSG:4326。")}},
-                {"dem_file", {QStringLiteral("DEM 文件"), QStringLiteral("可选 DEM 文件；不填时使用固定高程。")}},
-                {"rpc_height", {QStringLiteral("固定高程"), QStringLiteral("不使用 DEM 时的固定高程值。")}},
-                {"resample", {QStringLiteral("重采样方式"), QStringLiteral("正射校正输出时使用的重采样算法。")}},
-            }},
-        }},
-        {"vector", {
-            {"convert", {
-                {"output", {QStringLiteral("输出文件"), QStringLiteral("输出路径应与输出格式一致，例如 .geojson、.gpkg、.shp。")}},
-            }},
-        }},
-    };
-
-    const auto pluginIt = kTexts.find(pluginName);
-    if (pluginIt == kTexts.end()) {
-        return nullptr;
-    }
-    const auto actionIt = pluginIt->second.find(actionKey);
-    if (actionIt == pluginIt->second.end()) {
-        return nullptr;
-    }
-    const auto paramIt = actionIt->second.find(paramKey);
-    if (paramIt == actionIt->second.end()) {
-        return nullptr;
-    }
-    return &paramIt->second;
-}
-const std::map<std::string, std::map<std::string, ActionUiConfig>>& actionUiConfigStorage() {
-    static const std::map<std::string, std::map<std::string, ActionUiConfig>> kConfigs = {
-        {"projection", {
-            {"reproject", {QStringLiteral("重投影"), QStringLiteral("将栅格或矢量数据重投影到目标坐标系。"), {"input", "output", "dst_srs", "src_srs", "resample"}, {"input", "output", "dst_srs"}}},
-            {"info", {QStringLiteral("栅格坐标信息"), QStringLiteral("查看栅格坐标参考、范围和分辨率信息。"), {"input"}, {"input"}}},
-            {"transform", {QStringLiteral("坐标转换"), QStringLiteral("将单个坐标点从源坐标系转换到目标坐标系。"), {"src_srs", "dst_srs", "x", "y"}, {"dst_srs"}}},
-            {"assign_srs", {QStringLiteral("赋予栅格坐标系"), QStringLiteral("为没有坐标参考的栅格数据直接写入坐标系定义。"), {"input", "srs"}, {"input", "srs"}}},
-        }},
-        {"cutting", {
-            {"clip", {QStringLiteral("裁切"), QStringLiteral("按范围或裁切矢量裁切影像，范围和裁切矢量至少填写一个。"), {"input", "output", "extent", "cutline"}, {"input", "output"}}},
-            {"mosaic", {QStringLiteral("镶嵌"), QStringLiteral("将多幅影像拼接为一幅，可选统一目标坐标系和重采样方式。"), {"input", "output", "dst_srs", "resample"}, {"input", "output"}}},
-            {"split", {QStringLiteral("分块"), QStringLiteral("按固定块大小切分影像，可设置重叠像素。"), {"input", "output", "tile_size", "overlap"}, {"input", "output"}}},
-            {"merge_bands", {QStringLiteral("波段合并"), QStringLiteral("将多个单波段文件按顺序合并为多波段栅格。"), {"input", "bands", "output"}, {"output"}}},
-        }},
-        {"matching", {
-            {"detect", {QStringLiteral("特征检测"), QStringLiteral("提取关键点并可导出为 JSON。"), {"input", "output", "method", "max_points", "band"}, {"input"}}},
-            {"match", {QStringLiteral("特征匹配"), QStringLiteral("比较参考影像和待匹配影像，输出匹配点统计。"), {"reference", "input", "output", "method", "match_method", "max_points", "ratio_test", "band"}, {"reference", "input"}}},
-            {"register", {QStringLiteral("影像配准"), QStringLiteral("根据特征点匹配结果生成配准后的输出影像。"), {"reference", "input", "output", "method", "match_method", "transform", "resample", "max_points", "ratio_test", "band"}, {"reference", "input", "output"}}},
-            {"change", {QStringLiteral("变化检测"), QStringLiteral("对前后两景影像执行变化检测并输出变化图。"), {"reference", "input", "output", "change_method", "threshold", "band"}, {"reference", "input", "output"}}},
-            {"ecc_register", {QStringLiteral("ECC 配准"), QStringLiteral("使用 ECC 优化进行影像精配准。"), {"reference", "input", "output", "ecc_motion", "ecc_iterations", "ecc_epsilon", "resample", "band"}, {"reference", "input", "output"}}},
-            {"corner", {QStringLiteral("角点检测"), QStringLiteral("提取 Harris 或 Shi-Tomasi 角点。"), {"input", "output", "corner_method", "max_corners", "quality_level", "min_distance", "band"}, {"input"}}},
-            {"stitch", {QStringLiteral("图像拼接"), QStringLiteral("将多幅输入影像拼接为一张全景结果。"), {"input", "output", "stitch_confidence"}, {"input", "output"}}},
-        }},
-        {"processing", {
-            {"threshold", {QStringLiteral("阈值分割"), QStringLiteral("按指定阈值方法生成分割结果。"), {"input", "output", "band", "method", "threshold_value", "max_value"}, {"input", "output"}}},
-            {"filter", {QStringLiteral("空间滤波"), QStringLiteral("对影像执行平滑、形态学等滤波操作。"), {"input", "output", "band", "filter_type", "kernel_size", "sigma"}, {"input", "output"}}},
-            {"enhance", {QStringLiteral("影像增强"), QStringLiteral("执行均衡化、CLAHE、归一化、Gamma 等增强。"), {"input", "output", "band", "enhance_type", "clip_limit", "gamma"}, {"input", "output"}}},
-            {"stats", {QStringLiteral("统计信息"), QStringLiteral("统计指定波段的基础数值信息。"), {"input", "band"}, {"input"}}},
-            {"edge", {QStringLiteral("边缘检测"), QStringLiteral("执行 Canny、Sobel、Laplacian、Scharr 等边缘检测。"), {"input", "output", "band", "edge_method", "low_threshold", "high_threshold", "sobel_dx", "sobel_dy"}, {"input", "output"}}},
-            {"contour", {QStringLiteral("轮廓提取"), QStringLiteral("根据轮廓面积阈值提取目标轮廓。"), {"input", "output", "band", "min_area"}, {"input", "output"}}},
-            {"template_match", {QStringLiteral("模板匹配"), QStringLiteral("使用模板影像在输入影像中查找匹配目标。"), {"input", "output", "band", "template_file", "match_method"}, {"input", "output", "template_file"}}},
-            {"pansharpen", {QStringLiteral("全色锐化"), QStringLiteral("将多光谱影像与全色影像进行融合。"), {"input", "output", "pan_file", "pan_method"}, {"input", "output", "pan_file"}}},
-            {"hough", {QStringLiteral("霍夫变换"), QStringLiteral("检测直线或圆形结构。"), {"input", "output", "band", "hough_type", "hough_threshold", "min_line_length", "max_line_gap", "min_radius", "max_radius", "circle_param2"}, {"input", "output"}}},
-            {"watershed", {QStringLiteral("分水岭分割"), QStringLiteral("执行分水岭分割，可选外部标记输入。"), {"input", "output", "band", "marker_input"}, {"input", "output"}}},
-            {"skeleton", {QStringLiteral("骨架提取"), QStringLiteral("对二值目标执行形态学骨架提取。"), {"input", "output", "band"}, {"input", "output"}}},
-            {"gabor_filter", {QStringLiteral("Gabor 滤波"), QStringLiteral("按给定方向和尺度提取纹理响应。"), {"input", "output", "band", "kernel_size", "sigma", "gabor_theta", "gabor_lambda", "gabor_gamma", "gabor_psi"}, {"input", "output"}}},
-            {"glcm_texture", {QStringLiteral("GLCM 纹理"), QStringLiteral("按局部窗口计算灰度共生矩阵纹理特征。"), {"input", "output", "band", "kernel_size", "glcm_metric", "glcm_levels"}, {"input", "output"}}},
-            {"mean_shift_filter", {QStringLiteral("Mean Shift 滤波"), QStringLiteral("按空间和灰度邻域执行 Mean Shift 平滑滤波。"), {"input", "output", "band", "spatial_radius", "color_radius", "pyramid_level"}, {"input", "output"}}},
-            {"connected_components", {QStringLiteral("连通组件"), QStringLiteral("对二值目标执行连通组件标记并输出标签栅格。"), {"input", "output", "band"}, {"input", "output"}}},
-            {"kmeans", {QStringLiteral("K-Means 分割"), QStringLiteral("按聚类数对影像全部波段执行 K-Means 分割。"), {"input", "output", "k", "max_iter", "epsilon_kmeans"}, {"input", "output"}}},
-        }},
-        {"raster_math", {
-            {"band_math", {QStringLiteral("波段运算"), QStringLiteral("按表达式对多波段影像进行计算。"), {"input", "output", "expression"}, {"input", "output", "expression"}}},
-        }},
-        {"raster_inspect", {
-            {"histogram", {QStringLiteral("直方图"), QStringLiteral("统计指定波段的直方图，可选输出为 JSON。"), {"input", "output", "band", "bins"}, {"input"}}},
-            {"info", {QStringLiteral("栅格信息"), QStringLiteral("查看栅格驱动、范围、波段和统计信息。"), {"input"}, {"input"}}},
-        }},
-        {"raster_manage", {
-            {"overviews", {QStringLiteral("金字塔"), QStringLiteral("为影像构建多级金字塔，提高浏览性能。"), {"input", "levels", "resample"}, {"input"}}},
-            {"nodata", {QStringLiteral("NoData 设置"), QStringLiteral("为单波段或全部波段写入 NoData 值。"), {"input", "band", "nodata_value"}, {"input"}}},
-            {"cog", {QStringLiteral("COG 生成"), QStringLiteral("将输入栅格转换为 Cloud Optimized GeoTIFF。"), {"input", "output"}, {"input", "output"}}},
-        }},
-        {"georef", {
-            {"dos_correction", {QStringLiteral("DOS 大气校正"), QStringLiteral("对单波段栅格执行简化暗像元大气校正。"), {"input", "output", "band", "dark_object_value"}, {"input", "output"}}},
-            {"radiometric_calibration", {QStringLiteral("辐射定标"), QStringLiteral("按给定 gain/offset 或元数据文件中的系数对单波段栅格执行辐射定标。"), {"input", "output", "band", "gain", "offset", "metadata_file"}, {"input", "output"}}},
-            {"gcp_register", {QStringLiteral("控制点配准"), QStringLiteral("根据控制点 CSV 对输入影像执行轻量几何配准。"), {"input", "output", "gcp_file", "dst_srs", "resample"}, {"input", "output", "gcp_file", "dst_srs"}}},
-            {"cosine_correction", {QStringLiteral("余弦校正"), QStringLiteral("根据坡度、坡向和太阳角度对单波段栅格执行余弦地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg"}, {"input", "output", "slope_raster", "aspect_raster"}}},
-            {"minnaert_correction", {QStringLiteral("Minnaert 校正"), QStringLiteral("根据坡度、坡向、太阳角度和 Minnaert 系数执行单波段地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg", "minnaert_k"}, {"input", "output", "slope_raster", "aspect_raster"}}},
-            {"c_correction", {QStringLiteral("C 校正"), QStringLiteral("根据坡度、坡向、太阳角度和 C 系数执行单波段地形校正。"), {"input", "output", "band", "slope_raster", "aspect_raster", "sun_zenith_deg", "sun_azimuth_deg", "c_value"}, {"input", "output", "slope_raster", "aspect_raster"}}},
-            {"percentile_stretch", {QStringLiteral("百分位拉伸"), QStringLiteral("按多波段亮暗百分位对输入影像执行线性拉伸归一化。"), {"input", "output", "dark_percentile", "bright_percentile"}, {"input", "output"}}},
-            {"rpc_orthorectify", {QStringLiteral("RPC 正射校正"), QStringLiteral("基于影像 RPC 元数据执行轻量正射校正，可选 DEM 参与。"), {"input", "output", "dst_srs", "dem_file", "rpc_height", "resample"}, {"input", "output", "dst_srs"}}},
-        }},
-        {"terrain", {
-            {"slope", {QStringLiteral("坡度"), QStringLiteral("根据 DEM 计算坡度栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"aspect", {QStringLiteral("坡向"), QStringLiteral("根据 DEM 计算坡向栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"hillshade", {QStringLiteral("山体阴影"), QStringLiteral("根据 DEM 生成山体阴影效果图。"), {"input", "output", "band", "z_factor", "azimuth", "altitude"}, {"input", "output"}}},
-            {"tpi", {QStringLiteral("TPI"), QStringLiteral("按 3x3 邻域计算地形位置指数。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"curvature", {QStringLiteral("曲率"), QStringLiteral("按 3x3 邻域计算 DEM 表面曲率近似值。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"profile_curvature", {QStringLiteral("剖面曲率"), QStringLiteral("按 3x3 邻域估算沿坡向的剖面曲率。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"plan_curvature", {QStringLiteral("平面曲率"), QStringLiteral("按 3x3 邻域估算垂直坡向的平面曲率。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"tri", {QStringLiteral("TRI"), QStringLiteral("按 3x3 邻域计算地形崎岖度指数 TRI。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"roughness", {QStringLiteral("粗糙度"), QStringLiteral("按 3x3 邻域计算地表粗糙度。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"fill_sinks", {QStringLiteral("填洼"), QStringLiteral("按 3x3 邻域迭代填平局部洼地。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"flow_direction", {QStringLiteral("流向"), QStringLiteral("按 D8 规则输出每个像元的主流向编码。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"flow_accumulation", {QStringLiteral("汇流累积"), QStringLiteral("沿 D8 主流向累计上游像元数量。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"stream_extract", {QStringLiteral("河网提取"), QStringLiteral("基于汇流累积量阈值提取河网栅格。"), {"input", "output", "band", "z_factor", "accum_threshold"}, {"input", "output"}}},
-            {"watershed", {QStringLiteral("流域划分"), QStringLiteral("按 D8 主流向自动生成流域编号栅格。"), {"input", "output", "band", "z_factor"}, {"input", "output"}}},
-            {"profile_extract", {QStringLiteral("剖面提取"), QStringLiteral("沿折线路径采样 DEM 高程并导出 CSV。"), {"input", "output", "band", "profile_path"}, {"input", "output", "profile_path"}}},
-            {"viewshed", {QStringLiteral("视域分析"), QStringLiteral("以单个观察点为中心计算可视域范围。"), {"input", "output", "band", "observer_x", "observer_y", "observer_height", "target_height", "max_distance"}, {"input", "output", "observer_x", "observer_y"}}},
-            {"viewshed_multi", {QStringLiteral("多点视域"), QStringLiteral("以多个观察点为中心合并可视域范围。"), {"input", "output", "band", "observer_points", "observer_height", "target_height", "max_distance"}, {"input", "output", "observer_points"}}},
-            {"cut_fill", {QStringLiteral("填挖方"), QStringLiteral("比较当前 DEM 与参考 DEM，输出高差并统计填挖体积。"), {"reference", "input", "output", "band"}, {"reference", "input", "output"}}},
-            {"reservoir_volume", {QStringLiteral("库容计算"), QStringLiteral("按指定水位计算蓄水深度，并统计淹没面积和库容。"), {"input", "output", "band", "water_level"}, {"input", "output", "water_level"}}},
-        }},
-        {"classification", {
-            {"feature_stats", {QStringLiteral("地物分类统计"), QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"), {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"}, {"vector", "class_map", "rasters", "output"}}},
-            {"svm_classify", {QStringLiteral("SVM 分类"), QStringLiteral("使用训练样本 CSV 对多波段栅格执行监督分类。"), {"input", "output", "training_csv", "label_column", "bands"}, {"input", "output", "training_csv"}}},
-            {"random_forest_classify", {QStringLiteral("随机森林分类"), QStringLiteral("使用训练样本 CSV 对多波段栅格执行随机森林监督分类。"), {"input", "output", "training_csv", "label_column", "bands"}, {"input", "output", "training_csv"}}},
-            {"max_likelihood_classify", {QStringLiteral("最大似然分类"), QStringLiteral("使用训练样本 CSV 对多波段栅格执行最大似然监督分类。"), {"input", "output", "training_csv", "label_column", "bands"}, {"input", "output", "training_csv"}}},
-        }},
-        {"spindex", {
-            {"ndvi", {QStringLiteral("NDVI"), QStringLiteral("根据红光与近红外波段计算 NDVI。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},
-            {"ndmi", {QStringLiteral("NDMI"), QStringLiteral("根据近红外与短波红外1波段计算归一化水分指数 NDMI。"), {"input", "output", "nir_band", "swir1_band"}, {"input", "output"}}},
-            {"evi", {QStringLiteral("EVI"), QStringLiteral("根据蓝光、红光与近红外波段计算增强植被指数 EVI。"), {"input", "output", "blue_band", "red_band", "nir_band", "g_value", "c1", "c2", "l_value"}, {"input", "output"}}},
-            {"evi2", {QStringLiteral("EVI2"), QStringLiteral("根据红光与近红外波段计算双波段增强植被指数 EVI2。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},
-            {"savi", {QStringLiteral("SAVI"), QStringLiteral("根据红光与近红外波段计算土壤调节植被指数 SAVI。"), {"input", "output", "red_band", "nir_band", "l_value"}, {"input", "output"}}},
-            {"osavi", {QStringLiteral("OSAVI"), QStringLiteral("根据红光与近红外波段计算优化土壤调节植被指数 OSAVI。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},
-            {"gndvi", {QStringLiteral("GNDVI"), QStringLiteral("根据绿光与近红外波段计算 GNDVI。"), {"input", "output", "green_band", "nir_band"}, {"input", "output"}}},
-            {"ndwi", {QStringLiteral("NDWI"), QStringLiteral("根据绿光与近红外波段计算 NDWI。"), {"input", "output", "green_band", "nir_band"}, {"input", "output"}}},
-            {"mndwi", {QStringLiteral("MNDWI"), QStringLiteral("根据绿光与短波红外1波段计算 MNDWI。"), {"input", "output", "green_band", "swir1_band"}, {"input", "output"}}},
-            {"ndbi", {QStringLiteral("NDBI"), QStringLiteral("根据短波红外1与近红外波段计算 NDBI。"), {"input", "output", "swir1_band", "nir_band"}, {"input", "output"}}},
-            {"bsi", {QStringLiteral("BSI"), QStringLiteral("根据蓝光、红光、近红外与短波红外1波段计算裸土指数 BSI。"), {"input", "output", "blue_band", "red_band", "nir_band", "swir1_band"}, {"input", "output"}}},
-            {"arvi", {QStringLiteral("ARVI"), QStringLiteral("根据蓝光、红光与近红外波段计算大气校正植被指数 ARVI。"), {"input", "output", "blue_band", "red_band", "nir_band"}, {"input", "output"}}},
-            {"nbr", {QStringLiteral("NBR"), QStringLiteral("根据近红外与短波红外2波段计算归一化烧毁比 NBR。"), {"input", "output", "nir_band", "swir2_band"}, {"input", "output"}}},
-            {"awei", {QStringLiteral("AWEI"), QStringLiteral("根据绿光、近红外、短波红外1和短波红外2波段计算自动水体提取指数 AWEI。"), {"input", "output", "green_band", "nir_band", "swir1_band", "swir2_band"}, {"input", "output"}}},
-            {"ui", {QStringLiteral("UI"), QStringLiteral("根据近红外与短波红外2波段计算城市指数 UI。"), {"input", "output", "nir_band", "swir2_band"}, {"input", "output"}}},
-            {"bi", {QStringLiteral("BI"), QStringLiteral("根据红光与近红外波段计算烧焦指数 BI。"), {"input", "output", "red_band", "nir_band"}, {"input", "output"}}},
-            {"custom_index", {QStringLiteral("自定义指数"), QStringLiteral("按表达式组合多波段并输出自定义指数结果，可直接使用 B1/B2 或 RED/NIR/GREEN 等别名。"), {"input", "output", "preset", "expression", "blue_band", "green_band", "red_band", "nir_band", "swir1_band", "swir2_band"}, {"input", "output", "expression"}}},
-        }},
-        {"raster_render", {
-            {"colormap", {QStringLiteral("伪彩色"), QStringLiteral("对单波段影像应用伪彩色映射。"), {"input", "output", "band", "cmap"}, {"input", "output"}}},
-            {"histogram_match", {QStringLiteral("直方图匹配"), QStringLiteral("将输入影像的灰度分布匹配到参考影像。"), {"input", "reference", "output", "band"}, {"input", "reference", "output"}}},
-        }},
-        {"vector", {
-            {"info", {QStringLiteral("矢量信息"), QStringLiteral("查看矢量图层、字段和空间参考信息。"), {"input", "layer"}, {"input"}}},
-            {"filter", {QStringLiteral("空间过滤"), QStringLiteral("按属性条件或空间范围过滤要素，二者至少填写一个。"), {"input", "output", "layer", "where", "extent"}, {"input", "output"}}},
-            {"buffer", {QStringLiteral("缓冲区"), QStringLiteral("为要素生成指定距离的缓冲区。"), {"input", "output", "layer", "distance"}, {"input", "output"}}},
-            {"clip", {QStringLiteral("矢量裁切"), QStringLiteral("使用裁切矢量对输入矢量执行裁切。"), {"input", "output", "layer", "clip_vector"}, {"input", "output", "clip_vector"}}},
-            {"rasterize", {QStringLiteral("栅格化"), QStringLiteral("按分辨率将矢量图层转换为栅格。"), {"input", "output", "layer", "resolution", "attribute"}, {"input", "output"}}},
-            {"polygonize", {QStringLiteral("面矢量化"), QStringLiteral("将栅格指定波段转为矢量面。"), {"input", "output", "band"}, {"input", "output"}}},
-            {"convert", {QStringLiteral("格式转换"), QStringLiteral("将矢量数据转换到目标格式。"), {"input", "output", "layer", "format"}, {"input", "output"}}},
-            {"union", {QStringLiteral("并集"), QStringLiteral("对输入矢量和叠加矢量执行并集分析。"), {"input", "output", "layer", "overlay_vector"}, {"input", "output", "overlay_vector"}}},
-            {"difference", {QStringLiteral("差集"), QStringLiteral("从输入矢量中扣除叠加矢量区域。"), {"input", "output", "layer", "overlay_vector"}, {"input", "output", "overlay_vector"}}},
-            {"intersect", {QStringLiteral("交集"), QStringLiteral("提取输入矢量与叠加矢量的重叠部分。"), {"input", "output", "layer", "overlay_vector"}, {"input", "output", "overlay_vector"}}},
-            {"dissolve", {QStringLiteral("融合"), QStringLiteral("按字段或整体融合相邻要素。"), {"input", "output", "layer", "dissolve_field"}, {"input", "output"}}},
-            {"simplify", {QStringLiteral("简化"), QStringLiteral("按 Douglas-Peucker 算法简化线或面要素。"), {"input", "output", "layer", "tolerance"}, {"input", "output", "tolerance"}}},
-            {"repair", {QStringLiteral("修复"), QStringLiteral("尝试修复无效几何并输出新的矢量数据。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"geom_metrics", {QStringLiteral("几何属性"), QStringLiteral("为要素计算面积、长度、紧凑度、圆形度和走向等几何属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"nearest", {QStringLiteral("最近邻"), QStringLiteral("为每个输入要素寻找目标图层中的最近邻要素，并写入距离与标识。"), {"input", "output", "layer", "nearest_vector", "nearest_field"}, {"input", "output", "nearest_vector"}}},
-            {"spatial_join", {QStringLiteral("空间连接"), QStringLiteral("按空间相交关系将连接图层信息写回输入要素。"), {"input", "output", "layer", "join_vector", "join_field"}, {"input", "output", "join_vector"}}},
-            {"adjacency", {QStringLiteral("邻接关系"), QStringLiteral("分析同一面图层中要素之间的邻接关系，并导出 CSV 邻接表。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"overlap_check", {QStringLiteral("重叠检查"), QStringLiteral("分析同一面图层中存在面积重叠的要素对，并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"topology_check", {QStringLiteral("拓扑检查"), QStringLiteral("检查空几何、无效几何、重复面和重叠面，并导出 CSV 问题清单。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"convex_hull", {QStringLiteral("凸包"), QStringLiteral("按要素生成最小凸包面，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"centroid", {QStringLiteral("质心"), QStringLiteral("按要素生成质心点，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"envelope", {QStringLiteral("外包矩形"), QStringLiteral("按要素生成外包矩形面，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"boundary", {QStringLiteral("边界提取"), QStringLiteral("按要素提取面边界线，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"multipart_check", {QStringLiteral("多部件检查"), QStringLiteral("检查多部件要素并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"singlepart", {QStringLiteral("转单部件"), QStringLiteral("将多部件要素拆分为多个单部件要素，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"vertices_extract", {QStringLiteral("顶点提取"), QStringLiteral("提取要素顶点为点图层，并附带来源要素和顶点序号。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"endpoints_extract", {QStringLiteral("端点提取"), QStringLiteral("提取线要素起点和终点为点图层，并附带来源要素与端点类型。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"midpoints_extract", {QStringLiteral("中点提取"), QStringLiteral("提取线要素几何中点为点图层，并附带来源要素。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"interior_point", {QStringLiteral("内部点"), QStringLiteral("提取面要素内部点为点图层，保持原有属性字段。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"duplicate_point_check", {QStringLiteral("重复点检查"), QStringLiteral("检查坐标完全重复的点要素并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"hole_check", {QStringLiteral("孔洞检查"), QStringLiteral("检查面要素内环孔洞并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"dangling_endpoint_check", {QStringLiteral("悬挂端点检查"), QStringLiteral("检查线要素未连接的端点并导出 CSV 结果表。"), {"input", "output", "layer"}, {"input", "output"}}},
-            {"sliver_remove", {QStringLiteral("碎片面消除"), QStringLiteral("按最小面积阈值移除碎片多边形，输出清理后的面图层。"), {"input", "output", "layer", "min_area"}, {"input", "output", "min_area"}}},
-        }},
-    };
-    return kConfigs;
-}
-
-const ActionUiConfig* findActionUiConfig(const std::string& pluginName, const std::string& actionKey) {
-    const auto& all = actionUiConfigStorage();
-    const auto pluginIt = all.find(pluginName);
-    if (pluginIt == all.end()) {
-        return nullptr;
-    }
-
-    const auto actionIt = pluginIt->second.find(actionKey);
-    if (actionIt == pluginIt->second.end()) {
-        return nullptr;
-    }
-
-    return &actionIt->second;
-}
-
-QString actionDisplayName(const std::string& pluginName, const QString& actionKey) {
-    if (const auto* config = findActionUiConfig(pluginName, actionKey.toStdString());
-        config && !config->displayName.isEmpty()) {
-        return config->displayName;
-    }
-    return genericActionDisplayName(actionKey);
-}
 
 std::vector<NavPanel::SubFunctionItem> collectSubFunctionItems(
     gis::framework::PluginManager& pluginManager,
@@ -787,7 +159,7 @@ std::vector<NavPanel::SubFunctionItem> collectSubFunctionItems(
                 items.push_back({
                     pluginName,
                     action,
-                    actionDisplayName(pluginName, QString::fromStdString(action)).toUtf8().toStdString()
+                    gis::gui::actionDisplayName(pluginName, action).toUtf8().toStdString()
                 });
             }
             break;
@@ -826,18 +198,7 @@ int displayPluginCount(const std::vector<gis::framework::IGisPlugin*>& plugins) 
     return static_cast<int>(groups.size());
 }
 
-const std::map<std::string, std::map<std::string, std::set<std::string>>>& actionVisibilityMapStorage() {
-    static const std::map<std::string, std::map<std::string, std::set<std::string>>> kMap = [] {
-        std::map<std::string, std::map<std::string, std::set<std::string>>> result;
-        for (const auto& [pluginName, actionMap] : actionUiConfigStorage()) {
-            for (const auto& [actionKey, config] : actionMap) {
-                result[pluginName][actionKey] = config.visibleKeys;
-            }
-        }
-        return result;
-    }();
-    return kMap;
-}
+
 
 bool isZeroExtent(const std::array<double, 4>& extent) {
     return extent[0] == 0.0 && extent[1] == 0.0 && extent[2] == 0.0 && extent[3] == 0.0;
@@ -986,37 +347,8 @@ void MainWindow::selectActionByKey(const std::string& actionKey) {
     onSubFunctionSelected(pluginName, actionKey);
 }
 
-const std::map<std::string, std::map<std::string, std::set<std::string>>>& MainWindow::actionParamVisibilityMap() {
-    return actionVisibilityMapStorage();
-}
-
-std::set<std::string> MainWindow::visibleParamsForAction(
-    const std::string& pluginName,
-    const std::string& actionKey) {
-    const auto& all = actionParamVisibilityMap();
-    const auto pluginIt = all.find(pluginName);
-    if (pluginIt == all.end()) {
-        return {};
-    }
-
-    const auto actionIt = pluginIt->second.find(actionKey);
-    if (actionIt == pluginIt->second.end()) {
-        return {};
-    }
-
-    return actionIt->second;
-}
-
 QString MainWindow::actionDescription(const std::string& pluginName, const QString& actionKey) {
-    if (const QString sharedDescription =
-            gis::gui::actionDescription(pluginName, actionKey.toStdString());
-        !sharedDescription.isEmpty()) {
-        return sharedDescription;
-    }
-    if (const auto* config = findActionUiConfig(pluginName, actionKey.toStdString())) {
-        return config->description;
-    }
-    return {};
+    return gis::gui::actionDescription(pluginName, actionKey.toStdString());
 }
 
 void MainWindow::setupUi() {
@@ -1318,12 +650,10 @@ std::vector<gis::framework::ParamSpec> MainWindow::effectiveParamSpecs() const {
     }
 
     const auto actionKey = currentActionKey_.toStdString();
-    const auto* sharedConfig = gis::gui::findActionUiConfig(
+    const auto* config = gis::gui::findActionUiConfig(
         currentPlugin_->name(), actionKey);
-    const auto* config = sharedConfig ? sharedConfig : findActionUiConfig(
-        currentPlugin_->name(), actionKey);
-    auto visibleKeys = visibleParamsForAction(
-        currentPlugin_->name(), actionKey);
+    const std::set<std::string> visibleKeys =
+        config ? config->visibleKeys : std::set<std::string>{};
     const std::set<std::string> requiredKeys = config ? config->requiredKeys : std::set<std::string>{};
     auto filtered = gis::gui::buildEffectiveGuiParamSpecs(
         currentPlugin_->name(),
@@ -1335,20 +665,12 @@ std::vector<gis::framework::ParamSpec> MainWindow::effectiveParamSpecs() const {
         if (const auto* sharedText = gis::gui::findCommonParamText(adjustedSpec.key)) {
             adjustedSpec.displayName = sharedText->displayName.toUtf8().toStdString();
             adjustedSpec.description = sharedText->description.toUtf8().toStdString();
-        } else if (const auto it = commonParamTextStorage().find(adjustedSpec.key);
-                   it != commonParamTextStorage().end()) {
-            adjustedSpec.displayName = it->second.displayName.toUtf8().toStdString();
-            adjustedSpec.description = it->second.description.toUtf8().toStdString();
         }
         if (const auto* actionText = gis::gui::findActionSpecificParamText(
                 currentPlugin_->name(), actionKey, adjustedSpec.key);
             actionText != nullptr) {
             adjustedSpec.displayName = actionText->displayName.toUtf8().toStdString();
             adjustedSpec.description = actionText->description.toUtf8().toStdString();
-        } else if (const auto* localActionText = findActionSpecificParamText(
-                       currentPlugin_->name(), actionKey, adjustedSpec.key)) {
-            adjustedSpec.displayName = localActionText->displayName.toUtf8().toStdString();
-            adjustedSpec.description = localActionText->description.toUtf8().toStdString();
         }
     }
     return filtered;
@@ -1494,7 +816,8 @@ void MainWindow::onSubFunctionSelected(const std::string& pluginName,
         functionIconLabel_->setPixmap(badgeIconPixmap(actionIconText(currentActionKey_), QColor("#EAF3FF"), QColor("#2F7CF6")));
     }
 
-    QString displayName = actionDisplayName(currentPlugin_->name(), currentActionKey_);
+    QString displayName = gis::gui::actionDisplayName(
+        currentPlugin_->name(), currentActionKey_.toStdString());
     functionTitleLabel_->setText(displayName);
 
     QString desc = actionDescription(currentPlugin_->name(), currentActionKey_);
@@ -1815,7 +1138,8 @@ void MainWindow::runPluginWithParams(
     const QString pluginDisplayName = currentDisplayGroupKey_ == kRasterToolsGroupName
         ? QStringLiteral("栅格工具")
         : QString::fromUtf8(currentPlugin_->displayName());
-    const QString actionDisplayName = ::actionDisplayName(currentPlugin_->name(), currentActionKey_);
+    const QString actionDisplayName = gis::gui::actionDisplayName(
+        currentPlugin_->name(), currentActionKey_.toStdString());
 
     auto taskId = TaskRunner::instance().run(
         currentPlugin_, displayGroup,

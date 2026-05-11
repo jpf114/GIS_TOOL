@@ -148,7 +148,7 @@ install(DIRECTORY
 
 if(GIS_BUILD_GUI)
     find_package(Qt6 COMPONENTS Core Gui Widgets Svg Sql REQUIRED)
-    find_package(SQLite3 REQUIRED)
+    find_package(unofficial-sqlite3 CONFIG REQUIRED)
     add_subdirectory(src/gui)
 endif()
 
