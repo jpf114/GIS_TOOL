@@ -15,6 +15,7 @@
 
 #include "../src/gui/param_widget.h"
 #include "../src/gui/task_center_page.h"
+#include "../src/gui/task_runner.h"
 #include "../src/gui/task_manager.h"
 #include "../src/gui/task_database.h"
 #include "../src/gui/settings_manager.h"
@@ -24,6 +25,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -88,6 +90,20 @@ QLabel* findLogTaskLabel(TaskCenterPage* page) {
 
 QTextEdit* findLogDisplay(TaskCenterPage* page) {
     return page ? page->findChild<QTextEdit*>(QStringLiteral("logTerminal")) : nullptr;
+}
+
+template <typename Predicate>
+bool waitForCondition(Predicate predicate,
+                      std::chrono::milliseconds timeout = std::chrono::milliseconds(3000)) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        QCoreApplication::processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return predicate();
 }
 
 } // namespace
@@ -284,6 +300,57 @@ TEST(MainWindowTest, EditTaskLoadsTaskParamsAndSwitchesBackToConfigTab) {
     EXPECT_EQ(window.tabWidget_->currentIndex(), 0);
     EXPECT_EQ(window.paramWidget_->stringValue("input"), "D:/data/edit_input.geojson");
     EXPECT_EQ(window.paramWidget_->stringValue("output"), "D:/data/edit_output.gpkg");
+}
+
+TEST(MainWindowTest, RerunTaskCreatesNewTaskRecordAndClearsEditingState) {
+    configureSettingsForTest();
+
+    const QString displayGroup = QStringLiteral("vector");
+    TaskManager::instance().initializeGroup(displayGroup);
+    TaskManager::instance().clearHistory(displayGroup);
+    TaskDatabase::instance().clearAllLogs(displayGroup);
+
+    const QString rerunOutput = QString::fromStdString(
+        (mainWindowTestDir() / "rerun_output.gpkg").generic_string());
+    const std::map<std::string, gis::framework::ParamValue> params = {
+        {"input", std::string("D:/data/missing_input.geojson")},
+        {"output", rerunOutput.toStdString()}
+    };
+    const QString taskId = createFinishedTask(
+        displayGroup,
+        gis::framework::Result::fail("original failure"),
+        QStringLiteral("vector"),
+        QStringLiteral("buffer"),
+        params);
+
+    MainWindow window;
+    ASSERT_NE(window.taskCenterPage_, nullptr);
+    window.taskCenterPage_->setCurrentGroup(displayGroup);
+    window.currentEditingTaskId_ = QStringLiteral("editing-placeholder");
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(
+        &window,
+        "onRerunTask",
+        Q_ARG(QString, taskId)));
+
+    EXPECT_TRUE(window.currentEditingTaskId_.isEmpty());
+    EXPECT_EQ(window.currentActionKey_, QStringLiteral("buffer"));
+    ASSERT_NE(window.currentPlugin_, nullptr);
+    EXPECT_EQ(window.currentPlugin_->name(), "vector");
+
+    ASSERT_TRUE(waitForCondition([&]() {
+        return TaskManager::instance().taskCount(displayGroup) >= 2
+            && !TaskRunner::instance().isRunning()
+            && TaskRunner::instance().queuedCount() == 0;
+    }));
+
+    const auto recent = TaskManager::instance().recentTasks(displayGroup, 2);
+    ASSERT_GE(recent.size(), 2);
+    EXPECT_NE(recent[0].id, taskId);
+    EXPECT_EQ(recent[0].pluginName, QStringLiteral("vector"));
+    EXPECT_EQ(recent[0].actionKey, QStringLiteral("buffer"));
+    EXPECT_EQ(recent[0].params.at("input"), params.at("input"));
+    EXPECT_EQ(recent[0].params.at("output"), params.at("output"));
 }
 
 TEST(MainWindowTest, ClearHistoryRemovesAllTaskRowsAndRecords) {
