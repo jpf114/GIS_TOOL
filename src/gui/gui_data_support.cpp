@@ -1181,6 +1181,25 @@ std::string buildTextParamPlaceholder(const std::string& pluginName,
     return spec.description;
 }
 
+bool usesMultiFileTextPicker(const std::string& pluginName,
+                             const std::string& action,
+                             const std::string& paramKey) {
+    return (pluginName == "classification" && action == "feature_stats" && paramKey == "rasters")
+        || (pluginName == "cutting" && action == "merge_bands" && paramKey == "bands");
+}
+
+std::string multiFileTextPickerFilter(const std::string& pluginName,
+                                      const std::string& action,
+                                      const std::string& paramKey) {
+    Q_UNUSED(pluginName);
+    Q_UNUSED(action);
+    Q_UNUSED(paramKey);
+    return
+        "栅格文件 (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp);;"
+        "GeoTIFF (*.tif *.tiff);;IMG (*.img);;VRT (*.vrt);;"
+        "JPEG (*.jpg *.jpeg);;PNG (*.png);;BMP (*.bmp);;所有文件 (*)";
+}
+
 std::vector<std::string> spindexCustomIndexPresetValues() {
     auto values = gis::core::spindexCustomIndexPresetValues();
     for (const auto& preset : loadCustomIndexUserPresets()) {
@@ -2210,4 +2229,3 @@ std::string resolveHighlightedParamKey(
 }
 
 } // namespace gis::gui
-

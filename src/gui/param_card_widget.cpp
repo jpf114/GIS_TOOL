@@ -250,25 +250,6 @@ QIcon browseIcon() {
     return QIcon(pixmap);
 }
 
-bool usesMultiFileTextPicker(const std::string& pluginName,
-                             const std::string& actionKey,
-                             const std::string& paramKey) {
-    return (pluginName == "classification" && actionKey == "feature_stats" && paramKey == "rasters")
-        || (pluginName == "cutting" && actionKey == "merge_bands" && paramKey == "bands");
-}
-
-QString multiFileTextPickerFilter(const std::string& pluginName,
-                                  const std::string& actionKey,
-                                  const std::string& paramKey) {
-    Q_UNUSED(pluginName);
-    Q_UNUSED(actionKey);
-    Q_UNUSED(paramKey);
-    return QStringLiteral(
-        "栅格文件 (*.tif *.tiff *.img *.vrt *.png *.jpg *.jpeg *.bmp);;"
-        "GeoTIFF (*.tif *.tiff);;IMG (*.img);;VRT (*.vrt);;"
-        "JPEG (*.jpg *.jpeg);;PNG (*.png);;BMP (*.bmp);;所有文件 (*)");
-}
-
 bool isCustomIndexPresetEnum(const std::string& pluginName,
                              const std::string& actionKey,
                              const std::string& paramKey) {
@@ -771,7 +752,7 @@ QWidget* ParamCardWidget::createBoolWidget(const gis::framework::ParamSpec& spec
 
 QWidget* ParamCardWidget::createTextWidget(const gis::framework::ParamSpec& spec,
                                             ParamWidgetEntry& entry) {
-    if (usesMultiFileTextPicker(pluginName_, actionKey_, spec.key)) {
+    if (gis::gui::usesMultiFileTextPicker(pluginName_, actionKey_, spec.key)) {
         auto* container = new QWidget;
         auto* layout = new QHBoxLayout(container);
         layout->setContentsMargins(0, 0, 0, 0);
@@ -795,7 +776,8 @@ QWidget* ParamCardWidget::createTextWidget(const gis::framework::ParamSpec& spec
         browseBtn->setObjectName(QStringLiteral("browseButton"));
         browseBtn->setIcon(browseIcon());
         browseBtn->setIconSize(QSize(14, 14));
-        const QString filter = multiFileTextPickerFilter(pluginName_, actionKey_, spec.key);
+        const QString filter = QString::fromUtf8(
+            gis::gui::multiFileTextPickerFilter(pluginName_, actionKey_, spec.key));
         connect(browseBtn, &QPushButton::clicked, this, [lineEdit, filter]() {
             const QStringList files = QFileDialog::getOpenFileNames(
                 nullptr, QStringLiteral("选择文件"), QString(), filter);

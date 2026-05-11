@@ -550,6 +550,23 @@ TEST(GuiSupportTest, BuildTextParamPlaceholderProvidesFormatExamples) {
         std::string::npos);
 }
 
+TEST(GuiSupportTest, MultiFileTextPickerRulesStayCentralized) {
+    EXPECT_TRUE(
+        gis::gui::usesMultiFileTextPicker("classification", "feature_stats", "rasters"));
+    EXPECT_TRUE(
+        gis::gui::usesMultiFileTextPicker("cutting", "merge_bands", "bands"));
+    EXPECT_FALSE(
+        gis::gui::usesMultiFileTextPicker("cutting", "merge_bands", "input"));
+    EXPECT_FALSE(
+        gis::gui::usesMultiFileTextPicker("matching", "stitch", "input"));
+
+    const std::string filter =
+        gis::gui::multiFileTextPickerFilter("classification", "feature_stats", "rasters");
+    EXPECT_NE(filter.find("*.tif"), std::string::npos);
+    EXPECT_NE(filter.find("*.img"), std::string::npos);
+    EXPECT_NE(filter.find("所有文件"), std::string::npos);
+}
+
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {
     GDALAllRegister();
     gis::tests::ensureDirectory(guiSupportTestDir());

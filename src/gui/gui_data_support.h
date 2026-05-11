@@ -113,6 +113,12 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
 std::string buildTextParamPlaceholder(const std::string& pluginName,
                                       const std::string& action,
                                       const gis::framework::ParamSpec& spec);
+bool usesMultiFileTextPicker(const std::string& pluginName,
+                             const std::string& action,
+                             const std::string& paramKey);
+std::string multiFileTextPickerFilter(const std::string& pluginName,
+                                      const std::string& action,
+                                      const std::string& paramKey);
 const std::string& rasterToolsGroupKey();
 const std::vector<std::string>& rasterToolsPluginNames();
 bool isRasterToolsMember(const std::string& pluginName);
