@@ -57,13 +57,13 @@ const std::vector<std::string> kRasterToolsPluginNames = {
 
 QString genericActionDisplayName(const std::string& actionKey) {
     static const std::map<std::string, QString> kLabels = {
-        {"gabor_filter", QStringLiteral("Gabor 婊ゆ尝")},
-        {"feature_stats", QStringLiteral("鍦扮墿鍒嗙被缁熻")},
-        {"reproject", QStringLiteral("Reproject")},
-        {"buffer", QStringLiteral("Buffer")},
-        {"info", QStringLiteral("Info")},
-        {"clip", QStringLiteral("Clip")},
-        {"template_match", QStringLiteral("Template Match")},
+        {"gabor_filter", QStringLiteral("Gabor 滤波")},
+        {"feature_stats", QStringLiteral("地物分类统计")},
+        {"reproject", QStringLiteral("重投影")},
+        {"buffer", QStringLiteral("缓冲区")},
+        {"info", QStringLiteral("信息查看")},
+        {"clip", QStringLiteral("裁切")},
+        {"template_match", QStringLiteral("模板匹配")},
     };
 
     const auto it = kLabels.find(actionKey);
@@ -75,43 +75,43 @@ QString genericActionDisplayName(const std::string& actionKey) {
 
 const std::map<std::string, gis::gui::ParamText>& commonParamTextStorage() {
     static const std::map<std::string, gis::gui::ParamText> kTexts = {
-        {"input", {QStringLiteral("杈撳叆鏂囦欢"), QStringLiteral("Input data path.")}},
-        {"output", {QStringLiteral("杈撳嚭鏂囦欢"), QStringLiteral("Output result path.")}},
-        {"reference", {QStringLiteral("鍙傝€冩枃浠?"), QStringLiteral("Reference data path.")}},
-        {"dst_srs", {QStringLiteral("鐩爣鍧愭爣绯?"), QStringLiteral("Target spatial reference.")}},
-        {"src_srs", {QStringLiteral("Source SRS"), QStringLiteral("Source spatial reference.")}},
-        {"srs", {QStringLiteral("SRS"), QStringLiteral("Spatial reference to assign.")}},
-        {"resample", {QStringLiteral("Resample"), QStringLiteral("Resampling method.")}},
-        {"band", {QStringLiteral("Band"), QStringLiteral("Raster band index to process.")}},
-        {"x", {QStringLiteral("X 鍧愭爣"), QStringLiteral("X coordinate to transform.")}},
-        {"y", {QStringLiteral("Y 鍧愭爣"), QStringLiteral("Y coordinate to transform.")}},
-        {"layer", {QStringLiteral("鍥惧眰鍚?"), QStringLiteral("Layer name to process.")}},
-        {"where", {QStringLiteral("Where"), QStringLiteral("SQL WHERE expression.")}},
-        {"distance", {QStringLiteral("璺濈"), QStringLiteral("Distance parameter.")}},
-        {"clip_vector", {QStringLiteral("瑁佸垏鐭㈤噺"), QStringLiteral("Overlay vector path for clipping.")}},
-        {"bins", {QStringLiteral("Bins"), QStringLiteral("Histogram bin count.")}},
-        {"levels", {QStringLiteral("Levels"), QStringLiteral("Overview levels to build.")}},
-        {"method", {QStringLiteral("Method"), QStringLiteral("Primary processing method.")}},
-        {"match_method", {QStringLiteral("Match Method"), QStringLiteral("Matching method used to compare input and template data.")}},
-        {"change_method", {QStringLiteral("Change Method"), QStringLiteral("Method used for change detection.")}},
-        {"ecc_motion", {QStringLiteral("ECC Motion"), QStringLiteral("Motion model used by ECC registration.")}},
-        {"stitch_confidence", {QStringLiteral("Stitch Confidence"), QStringLiteral("Confidence threshold used for stitching.")}},
-        {"threshold_value", {QStringLiteral("Threshold Value"), QStringLiteral("Threshold value used for segmentation.")}},
-        {"max_value", {QStringLiteral("Max Value"), QStringLiteral("Maximum output value after thresholding.")}},
-        {"filter_type", {QStringLiteral("Filter Type"), QStringLiteral("Spatial filter algorithm to apply.")}},
-        {"kernel_size", {QStringLiteral("Kernel Size"), QStringLiteral("Kernel size used by the filter.")}},
-        {"sigma", {QStringLiteral("Sigma"), QStringLiteral("Sigma parameter used by Gaussian-style filters.")}},
-        {"enhance_type", {QStringLiteral("Enhance Type"), QStringLiteral("Enhancement method to apply.")}},
-        {"clip_limit", {QStringLiteral("Clip Limit"), QStringLiteral("Clip limit used by CLAHE enhancement.")}},
-        {"gamma", {QStringLiteral("Gamma"), QStringLiteral("Gamma value used for contrast correction.")}},
-        {"edge_method", {QStringLiteral("Edge Method"), QStringLiteral("Edge detection method to apply.")}},
-        {"low_threshold", {QStringLiteral("Low Threshold"), QStringLiteral("Lower threshold used by edge detection.")}},
-        {"high_threshold", {QStringLiteral("High Threshold"), QStringLiteral("Upper threshold used by edge detection.")}},
-        {"sobel_dx", {QStringLiteral("Sobel DX"), QStringLiteral("Sobel derivative order in the X direction.")}},
-        {"sobel_dy", {QStringLiteral("Sobel DY"), QStringLiteral("Sobel derivative order in the Y direction.")}},
-        {"min_area", {QStringLiteral("Min Area"), QStringLiteral("Minimum area threshold used for contour extraction.")}},
-        {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("NoData value to write.")}},
-        {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
+        {"input", {QStringLiteral("输入文件"), QStringLiteral("输入数据路径；多文件场景请使用英文逗号分隔。")}},
+        {"output", {QStringLiteral("输出文件"), QStringLiteral("输出结果路径；建议按功能选择正确后缀。")}},
+        {"reference", {QStringLiteral("参考文件"), QStringLiteral("参考数据路径，常用于匹配、配准或变化检测。")}},
+        {"dst_srs", {QStringLiteral("目标坐标系"), QStringLiteral("目标坐标参考系，例如 EPSG:3857。")}},
+        {"src_srs", {QStringLiteral("源坐标系"), QStringLiteral("源坐标参考系，留空时尽量使用数据自带坐标系。")}},
+        {"srs", {QStringLiteral("坐标系"), QStringLiteral("要写入数据的坐标参考系。")}},
+        {"resample", {QStringLiteral("重采样方式"), QStringLiteral("输出计算或重投影时采用的重采样算法。")}},
+        {"band", {QStringLiteral("波段号"), QStringLiteral("要处理的波段序号，从 1 开始。")}},
+        {"x", {QStringLiteral("X 坐标"), QStringLiteral("待转换点的 X 坐标。")}},
+        {"y", {QStringLiteral("Y 坐标"), QStringLiteral("待转换点的 Y 坐标。")}},
+        {"layer", {QStringLiteral("图层名"), QStringLiteral("要处理的图层名称，留空时通常使用第一个图层。")}},
+        {"where", {QStringLiteral("属性过滤"), QStringLiteral("SQL WHERE 条件表达式。")}},
+        {"distance", {QStringLiteral("距离"), QStringLiteral("缓冲区或相关分析的距离值。")}},
+        {"clip_vector", {QStringLiteral("裁切矢量"), QStringLiteral("用于裁切当前输入矢量的叠加矢量文件。")}},
+        {"bins", {QStringLiteral("柱数"), QStringLiteral("直方图统计的分桶数量。")}},
+        {"levels", {QStringLiteral("金字塔层级"), QStringLiteral("需要构建的金字塔层级列表。")}},
+        {"method", {QStringLiteral("方法"), QStringLiteral("当前算法使用的主要处理方法。")}},
+        {"match_method", {QStringLiteral("匹配方法"), QStringLiteral("特征或模板匹配所采用的方法。")}},
+        {"change_method", {QStringLiteral("变化方法"), QStringLiteral("变化检测的计算方式。")}},
+        {"ecc_motion", {QStringLiteral("ECC 运动模型"), QStringLiteral("ECC 配准采用的运动模型。")}},
+        {"stitch_confidence", {QStringLiteral("拼接置信度"), QStringLiteral("图像拼接的置信度阈值。")}},
+        {"threshold_value", {QStringLiteral("阈值值"), QStringLiteral("阈值分割时使用的数值阈值。")}},
+        {"max_value", {QStringLiteral("最大值"), QStringLiteral("阈值分割输出的最大像素值。")}},
+        {"filter_type", {QStringLiteral("滤波类型"), QStringLiteral("空间滤波算法类型。")}},
+        {"kernel_size", {QStringLiteral("核大小"), QStringLiteral("滤波核或结构元素大小。")}},
+        {"sigma", {QStringLiteral("Sigma"), QStringLiteral("高斯等滤波的 sigma 参数。")}},
+        {"enhance_type", {QStringLiteral("增强类型"), QStringLiteral("影像增强算法类型。")}},
+        {"clip_limit", {QStringLiteral("裁剪限制"), QStringLiteral("CLAHE 的裁剪限制参数。")}},
+        {"gamma", {QStringLiteral("Gamma"), QStringLiteral("Gamma 校正参数。")}},
+        {"edge_method", {QStringLiteral("边缘方法"), QStringLiteral("边缘检测算法类型。")}},
+        {"low_threshold", {QStringLiteral("低阈值"), QStringLiteral("边缘检测的低阈值。")}},
+        {"high_threshold", {QStringLiteral("高阈值"), QStringLiteral("边缘检测的高阈值。")}},
+        {"sobel_dx", {QStringLiteral("Sobel dx"), QStringLiteral("Sobel 的 x 方向导数阶数。")}},
+        {"sobel_dy", {QStringLiteral("Sobel dy"), QStringLiteral("Sobel 的 y 方向导数阶数。")}},
+        {"min_area", {QStringLiteral("最小面积"), QStringLiteral("轮廓筛选的最小面积。")}},
+        {"nodata_value", {QStringLiteral("NoData"), QStringLiteral("写入的 NoData 值。")}},
+        {"template_file", {QStringLiteral("模板文件"), QStringLiteral("用于模板匹配的模板影像，建议使用栅格文件。")}},
     };
     return kTexts;
 }
@@ -121,26 +121,26 @@ actionSpecificParamTextStorage() {
     static const std::map<std::string, std::map<std::string, std::map<std::string, gis::gui::ParamText>>> kTexts = {
         {"classification", {
             {"feature_stats", {
-                {"vector_output", {QStringLiteral("鍒嗙被闈㈣緭鍑?"), QStringLiteral("Optional classified polygon output.")}},
+                {"vector_output", {QStringLiteral("分类面输出"), QStringLiteral("可选，输出分类面结果，当前仅支持 .gpkg。")}},
             }},
         }},
         {"cutting", {
             {"split", {
-                {"output", {QStringLiteral("杈撳嚭鐩綍"), QStringLiteral("Output directory for split tiles.")}},
+                {"output", {QStringLiteral("输出目录"), QStringLiteral("分块输出目录，图块会自动命名为 tile_x_y.tif。")}},
             }},
             {"merge_bands", {
-                {"input", {QStringLiteral("杈撳叆鏂囦欢"), QStringLiteral("Primary single-band raster path.")}},
-                {"bands", {QStringLiteral("娉㈡鍒楄〃"), QStringLiteral("Additional single-band raster paths.")}},
+                {"input", {QStringLiteral("输入文件"), QStringLiteral("可填写一个或多个单波段栅格路径，使用英文逗号分隔。")}},
+                {"bands", {QStringLiteral("波段列表"), QStringLiteral("补充更多单波段栅格路径，使用英文逗号分隔。")}},
             }},
         }},
         {"processing", {
             {"template_match", {
-                {"template_file", {QStringLiteral("妯℃澘鏂囦欢"), QStringLiteral("Template raster path.")}},
+                {"template_file", {QStringLiteral("模板文件"), QStringLiteral("模板影像路径，尺寸需小于等于输入影像。")}},
             }},
         }},
         {"projection", {
             {"reproject", {
-                {"input", {QStringLiteral("杈撳叆鏂囦欢"), QStringLiteral("Raster or vector input path.")}},
+                {"input", {QStringLiteral("输入文件"), QStringLiteral("支持栅格或矢量数据，输出格式由输出后缀决定。")}},
             }},
         }},
     };
@@ -151,194 +151,194 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
     static const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>> kConfigs = {
         {"processing", {
             {"skeleton", {
-                QStringLiteral("Skeleton"),
-                QStringLiteral("Extract morphological skeletons from raster targets."),
+                QStringLiteral("骨架提取"),
+                QStringLiteral("对二值目标执行形态学骨架提取。"),
                 {"input", "output", "band"},
                 {"input", "output"}
             }},
             {"watershed", {
-                QStringLiteral("Watershed"),
-                QStringLiteral("Segment raster targets with watershed processing."),
+                QStringLiteral("分水岭分割"),
+                QStringLiteral("执行分水岭分割，可选外部标记输入。"),
                 {"input", "output", "band", "marker_input"},
                 {"input", "output"}
             }},
             {"contour", {
-                QStringLiteral("Contour"),
-                QStringLiteral("Extract contours from raster targets."),
+                QStringLiteral("轮廓提取"),
+                QStringLiteral("根据轮廓面积阈值提取目标轮廓。"),
                 {"input", "output", "band", "min_area"},
                 {"input", "output"}
             }},
             {"edge", {
-                QStringLiteral("Edge"),
-                QStringLiteral("Detect raster edges with configurable methods."),
+                QStringLiteral("边缘检测"),
+                QStringLiteral("执行 Canny、Sobel、Laplacian、Scharr 等边缘检测。"),
                 {"input", "output", "band", "edge_method", "low_threshold", "high_threshold", "sobel_dx", "sobel_dy"},
                 {"input", "output"}
             }},
             {"template_match", {
-                QStringLiteral("Template Match"),
-                QStringLiteral("Match template raster content inside the input raster."),
+                QStringLiteral("模板匹配"),
+                QStringLiteral("使用模板影像在输入影像中查找匹配目标。"),
                 {"input", "output", "band", "template_file", "match_method"},
                 {"input", "output", "template_file"}
             }},
             {"enhance", {
-                QStringLiteral("Enhance"),
-                QStringLiteral("Enhance raster appearance and contrast."),
+                QStringLiteral("影像增强"),
+                QStringLiteral("执行均衡化、CLAHE、归一化、Gamma 等增强处理。"),
                 {"input", "output", "band", "enhance_type", "clip_limit", "gamma"},
                 {"input", "output"}
             }},
             {"filter", {
-                QStringLiteral("Filter"),
-                QStringLiteral("Apply spatial filtering to raster data."),
+                QStringLiteral("空间滤波"),
+                QStringLiteral("对影像执行平滑、形态学等滤波处理。"),
                 {"input", "output", "band", "filter_type", "kernel_size", "sigma"},
                 {"input", "output"}
             }},
             {"threshold", {
-                QStringLiteral("Threshold"),
-                QStringLiteral("Segment raster data by thresholding."),
+                QStringLiteral("阈值分割"),
+                QStringLiteral("按指定阈值方法生成分割结果。"),
                 {"input", "output", "band", "method", "threshold_value", "max_value"},
                 {"input", "output"}
             }},
             {"stats", {
-                QStringLiteral("Stats"),
-                QStringLiteral("Inspect basic statistics for a raster band."),
+                QStringLiteral("统计信息"),
+                QStringLiteral("统计指定波段的基础数值信息。"),
                 {"input", "band"},
                 {"input"}
             }},
             {"gabor_filter", {
-                QStringLiteral("Gabor 婊ゆ尝"),
-                QStringLiteral("Gabor texture filtering."),
+                QStringLiteral("Gabor 滤波"),
+                QStringLiteral("按给定方向和尺度提取纹理响应。"),
                 {"input", "output", "band", "kernel_size", "sigma", "gabor_theta", "gabor_lambda", "gabor_gamma", "gabor_psi"},
                 {"input", "output"}
             }},
         }},
         {"classification", {
             {"feature_stats", {
-                QStringLiteral("鍦扮墿鍒嗙被缁熻"),
-                QStringLiteral("Classification feature statistics."),
+                QStringLiteral("地物分类统计"),
+                QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"),
                 {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"},
                 {"vector", "class_map", "rasters", "output"}
             }},
         }},
         {"vector", {
             {"buffer", {
-                QStringLiteral("Buffer"),
-                QStringLiteral("Create vector buffers."),
+                QStringLiteral("缓冲区"),
+                QStringLiteral("为要素生成指定距离的缓冲区。"),
                 {"input", "output", "layer", "distance"},
                 {"input", "output"}
             }},
             {"clip", {
-                QStringLiteral("Clip"),
-                QStringLiteral("Clip vector features with an overlay layer."),
+                QStringLiteral("矢量裁切"),
+                QStringLiteral("使用裁切矢量对输入矢量执行裁切。"),
                 {"input", "output", "layer", "clip_vector"},
                 {"input", "output", "clip_vector"}
             }},
             {"filter", {
-                QStringLiteral("Filter"),
-                QStringLiteral("Filter vector features by attribute or extent."),
+                QStringLiteral("空间过滤"),
+                QStringLiteral("按属性条件或空间范围过滤要素，二者至少填写一个。"),
                 {"input", "output", "layer", "where", "extent"},
                 {"input", "output"}
             }},
         }},
         {"projection", {
             {"reproject", {
-                QStringLiteral("Reproject"),
-                QStringLiteral("Reproject raster or vector data."),
+                QStringLiteral("重投影"),
+                QStringLiteral("将栅格或矢量数据重投影到目标坐标系。"),
                 {"input", "output", "dst_srs", "src_srs", "resample"},
                 {"input", "output", "dst_srs"}
             }},
             {"info", {
-                QStringLiteral("Info"),
-                QStringLiteral("Inspect spatial reference information."),
+                QStringLiteral("栅格坐标信息"),
+                QStringLiteral("查看栅格坐标参考、范围和分辨率信息。"),
                 {"input"},
                 {"input"}
             }},
             {"transform", {
-                QStringLiteral("Transform"),
-                QStringLiteral("Transform a coordinate between spatial references."),
+                QStringLiteral("坐标转换"),
+                QStringLiteral("将单个坐标点从源坐标系转换到目标坐标系。"),
                 {"src_srs", "dst_srs", "x", "y"},
                 {"dst_srs"}
             }},
             {"assign_srs", {
-                QStringLiteral("Assign SRS"),
-                QStringLiteral("Assign spatial reference metadata to raster data."),
+                QStringLiteral("赋予栅格坐标系"),
+                QStringLiteral("为没有坐标参考的栅格数据直接写入坐标系定义。"),
                 {"input", "srs"},
                 {"input", "srs"}
             }},
         }},
         {"raster_inspect", {
             {"histogram", {
-                QStringLiteral("Histogram"),
-                QStringLiteral("Inspect raster histogram statistics."),
+                QStringLiteral("直方图"),
+                QStringLiteral("统计指定波段的直方图，可选输出为 JSON。"),
                 {"input", "output", "band", "bins"},
                 {"input"}
             }},
             {"info", {
-                QStringLiteral("Info"),
-                QStringLiteral("Inspect raster dataset information."),
+                QStringLiteral("栅格信息"),
+                QStringLiteral("查看栅格驱动、范围、波段和统计信息。"),
                 {"input"},
                 {"input"}
             }},
         }},
         {"matching", {
             {"detect", {
-                QStringLiteral("Detect"),
-                QStringLiteral("Detect feature points from raster data."),
+                QStringLiteral("特征检测"),
+                QStringLiteral("提取关键点，并可导出为 JSON。"),
                 {"input", "output", "method", "max_points", "band"},
                 {"input"}
             }},
             {"match", {
-                QStringLiteral("Match"),
-                QStringLiteral("Match feature points between reference and input rasters."),
+                QStringLiteral("特征匹配"),
+                QStringLiteral("比较参考影像和待匹配影像，输出匹配点统计。"),
                 {"reference", "input", "output", "method", "match_method", "max_points", "ratio_test", "band"},
                 {"reference", "input"}
             }},
             {"register", {
-                QStringLiteral("Register"),
-                QStringLiteral("Register input raster to reference raster using matched features."),
+                QStringLiteral("影像配准"),
+                QStringLiteral("根据特征点匹配结果生成配准后的输出影像。"),
                 {"reference", "input", "output", "method", "match_method", "transform", "resample", "max_points", "ratio_test", "band"},
                 {"reference", "input", "output"}
             }},
             {"change", {
-                QStringLiteral("Change"),
-                QStringLiteral("Detect changes between reference and input rasters."),
+                QStringLiteral("变化检测"),
+                QStringLiteral("对前后两景影像执行变化检测并输出变化图。"),
                 {"reference", "input", "output", "change_method", "threshold", "band"},
                 {"reference", "input", "output"}
             }},
             {"ecc_register", {
-                QStringLiteral("ECC Register"),
-                QStringLiteral("Register raster data using ECC optimization."),
+                QStringLiteral("ECC 配准"),
+                QStringLiteral("使用 ECC 优化进行影像精配准。"),
                 {"reference", "input", "output", "ecc_motion", "ecc_iterations", "ecc_epsilon", "resample", "band"},
                 {"reference", "input", "output"}
             }},
             {"corner", {
-                QStringLiteral("Corner"),
-                QStringLiteral("Detect corner features from raster data."),
+                QStringLiteral("角点检测"),
+                QStringLiteral("提取 Harris 或 Shi-Tomasi 角点。"),
                 {"input", "output", "corner_method", "max_corners", "quality_level", "min_distance", "band"},
                 {"input"}
             }},
             {"stitch", {
-                QStringLiteral("Stitch"),
-                QStringLiteral("Stitch multiple raster inputs into a panorama."),
+                QStringLiteral("图像拼接"),
+                QStringLiteral("将多幅输入影像拼接为一张全景结果。"),
                 {"input", "output", "stitch_confidence"},
                 {"input", "output"}
             }},
         }},
         {"raster_manage", {
             {"overviews", {
-                QStringLiteral("Overviews"),
-                QStringLiteral("Build raster overviews."),
+                QStringLiteral("金字塔"),
+                QStringLiteral("为影像构建多级金字塔，提高浏览性能。"),
                 {"input", "levels", "resample"},
                 {"input"}
             }},
             {"cog", {
-                QStringLiteral("COG"),
-                QStringLiteral("Convert raster data to Cloud Optimized GeoTIFF."),
+                QStringLiteral("COG 生成"),
+                QStringLiteral("将输入栅格转换为 Cloud Optimized GeoTIFF。"),
                 {"input", "output"},
                 {"input", "output"}
             }},
             {"nodata", {
-                QStringLiteral("NoData"),
-                QStringLiteral("Assign NoData to raster bands."),
+                QStringLiteral("NoData 设置"),
+                QStringLiteral("为单波段或全部波段写入 NoData 值。"),
                 {"input", "band", "nodata_value"},
                 {"input"}
             }},

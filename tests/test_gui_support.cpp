@@ -1406,6 +1406,18 @@ TEST(GuiSupportTest, RasterToolsPluginOrderStaysStable) {
 }
 
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("processing", "gabor_filter"),
+        QStringLiteral("Gabor 滤波"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("classification", "feature_stats"),
+        QStringLiteral("地物分类统计"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("projection", "reproject"),
+        QStringLiteral("重投影"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("vector", "buffer"),
+        QStringLiteral("缓冲区"));
     EXPECT_NE(
         gis::gui::actionDisplayName("processing", "skeleton"),
         QStringLiteral("skeleton"));
@@ -1499,6 +1511,12 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
 }
 
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
+    EXPECT_EQ(
+        gis::gui::actionDescription("processing", "gabor_filter"),
+        QStringLiteral("按给定方向和尺度提取纹理响应。"));
+    EXPECT_EQ(
+        gis::gui::actionDescription("classification", "feature_stats"),
+        QStringLiteral("按面要素范围对多源分类栅格执行优先级统计，可输出统计表、分类面和分类栅格。"));
     EXPECT_FALSE(
         gis::gui::actionDescription("processing", "skeleton").isEmpty());
     EXPECT_FALSE(
@@ -1742,16 +1760,20 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     ASSERT_NE(commonText, nullptr);
     EXPECT_FALSE(commonText->displayName.isEmpty());
     EXPECT_FALSE(commonText->description.isEmpty());
+    EXPECT_EQ(commonText->displayName, QStringLiteral("输入文件"));
+    EXPECT_EQ(commonText->description, QStringLiteral("输入数据路径；多文件场景请使用英文逗号分隔。"));
 
     const auto* referenceText = gis::gui::findCommonParamText("reference");
     ASSERT_NE(referenceText, nullptr);
     EXPECT_FALSE(referenceText->displayName.isEmpty());
     EXPECT_FALSE(referenceText->description.isEmpty());
+    EXPECT_EQ(referenceText->displayName, QStringLiteral("参考文件"));
 
     const auto* dstSrsText = gis::gui::findCommonParamText("dst_srs");
     ASSERT_NE(dstSrsText, nullptr);
     EXPECT_FALSE(dstSrsText->displayName.isEmpty());
     EXPECT_FALSE(dstSrsText->description.isEmpty());
+    EXPECT_EQ(dstSrsText->displayName, QStringLiteral("目标坐标系"));
 
     const auto* layerText = gis::gui::findCommonParamText("layer");
     ASSERT_NE(layerText, nullptr);
@@ -1911,38 +1933,38 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     const auto* actionText = gis::gui::findActionSpecificParamText(
         "classification", "feature_stats", "vector_output");
     ASSERT_NE(actionText, nullptr);
-    EXPECT_FALSE(actionText->displayName.isEmpty());
-    EXPECT_FALSE(actionText->description.isEmpty());
+    EXPECT_EQ(actionText->displayName, QStringLiteral("分类面输出"));
+    EXPECT_EQ(actionText->description, QStringLiteral("可选，输出分类面结果，当前仅支持 .gpkg。"));
 
     const auto* splitOutputText =
         gis::gui::findActionSpecificParamText("cutting", "split", "output");
     ASSERT_NE(splitOutputText, nullptr);
-    EXPECT_FALSE(splitOutputText->displayName.isEmpty());
-    EXPECT_FALSE(splitOutputText->description.isEmpty());
+    EXPECT_EQ(splitOutputText->displayName, QStringLiteral("输出目录"));
+    EXPECT_EQ(splitOutputText->description, QStringLiteral("分块输出目录，图块会自动命名为 tile_x_y.tif。"));
 
     const auto* templateFileText =
         gis::gui::findActionSpecificParamText("processing", "template_match", "template_file");
     ASSERT_NE(templateFileText, nullptr);
-    EXPECT_FALSE(templateFileText->displayName.isEmpty());
-    EXPECT_FALSE(templateFileText->description.isEmpty());
+    EXPECT_EQ(templateFileText->displayName, QStringLiteral("模板文件"));
+    EXPECT_EQ(templateFileText->description, QStringLiteral("模板影像路径，尺寸需小于等于输入影像。"));
 
     const auto* reprojectInputText =
         gis::gui::findActionSpecificParamText("projection", "reproject", "input");
     ASSERT_NE(reprojectInputText, nullptr);
-    EXPECT_FALSE(reprojectInputText->displayName.isEmpty());
-    EXPECT_FALSE(reprojectInputText->description.isEmpty());
+    EXPECT_EQ(reprojectInputText->displayName, QStringLiteral("输入文件"));
+    EXPECT_EQ(reprojectInputText->description, QStringLiteral("支持栅格或矢量数据，输出格式由输出后缀决定。"));
 
     const auto* mergeBandsInputText =
         gis::gui::findActionSpecificParamText("cutting", "merge_bands", "input");
     ASSERT_NE(mergeBandsInputText, nullptr);
-    EXPECT_FALSE(mergeBandsInputText->displayName.isEmpty());
-    EXPECT_FALSE(mergeBandsInputText->description.isEmpty());
+    EXPECT_EQ(mergeBandsInputText->displayName, QStringLiteral("输入文件"));
+    EXPECT_EQ(mergeBandsInputText->description, QStringLiteral("可填写一个或多个单波段栅格路径，使用英文逗号分隔。"));
 
     const auto* mergeBandsBandsText =
         gis::gui::findActionSpecificParamText("cutting", "merge_bands", "bands");
     ASSERT_NE(mergeBandsBandsText, nullptr);
-    EXPECT_FALSE(mergeBandsBandsText->displayName.isEmpty());
-    EXPECT_FALSE(mergeBandsBandsText->description.isEmpty());
+    EXPECT_EQ(mergeBandsBandsText->displayName, QStringLiteral("波段列表"));
+    EXPECT_EQ(mergeBandsBandsText->description, QStringLiteral("补充更多单波段栅格路径，使用英文逗号分隔。"));
 
     EXPECT_EQ(
         gis::gui::findActionSpecificParamText("processing", "gabor_filter", "missing_param"),
