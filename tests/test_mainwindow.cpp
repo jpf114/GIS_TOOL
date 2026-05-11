@@ -302,6 +302,76 @@ TEST(MainWindowTest, EditTaskLoadsTaskParamsAndSwitchesBackToConfigTab) {
     EXPECT_EQ(window.paramWidget_->stringValue("output"), "D:/data/edit_output.gpkg");
 }
 
+TEST(MainWindowTest, EditTaskRestoresExtentParamValues) {
+    configureSettingsForTest();
+
+    const QString displayGroup = QStringLiteral("vector");
+    TaskManager::instance().initializeGroup(displayGroup);
+    const std::map<std::string, gis::framework::ParamValue> params = {
+        {"input", std::string("D:/data/extent_input.geojson")},
+        {"output", std::string("D:/data/extent_output.geojson")},
+        {"extent", std::array<double, 4>{1.25, 2.5, 110.75, 220.125}}
+    };
+    const QString taskId = createFinishedTask(
+        displayGroup,
+        gis::framework::Result::ok("extent success"),
+        QStringLiteral("vector"),
+        QStringLiteral("filter"),
+        params);
+
+    MainWindow window;
+    ASSERT_NE(window.taskCenterPage_, nullptr);
+    window.taskCenterPage_->setCurrentGroup(displayGroup);
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(
+        &window,
+        "onEditTask",
+        Q_ARG(QString, taskId)));
+
+    const auto collected = window.paramWidget_->collectParams();
+    const auto it = collected.find("extent");
+    ASSERT_NE(it, collected.end());
+    const auto* extent = std::get_if<std::array<double, 4>>(&it->second);
+    ASSERT_NE(extent, nullptr);
+    EXPECT_DOUBLE_EQ((*extent)[0], 1.25);
+    EXPECT_DOUBLE_EQ((*extent)[1], 2.5);
+    EXPECT_DOUBLE_EQ((*extent)[2], 110.75);
+    EXPECT_DOUBLE_EQ((*extent)[3], 220.125);
+}
+
+TEST(MainWindowTest, EditTaskRestoresMultiFileListAsCommaSeparatedText) {
+    configureSettingsForTest();
+
+    const QString displayGroup = QStringLiteral("cutting");
+    TaskManager::instance().initializeGroup(displayGroup);
+    const std::map<std::string, gis::framework::ParamValue> params = {
+        {"input", std::string("D:/data/base_band.tif")},
+        {"output", std::string("D:/data/merge_output.tif")},
+        {"bands", std::vector<std::string>{
+            "D:/data/band_1.tif",
+            "D:/data/band_2.tif",
+            "D:/data/band_3.tif"}}
+    };
+    const QString taskId = createFinishedTask(
+        displayGroup,
+        gis::framework::Result::ok("bands success"),
+        QStringLiteral("cutting"),
+        QStringLiteral("merge_bands"),
+        params);
+
+    MainWindow window;
+    ASSERT_NE(window.taskCenterPage_, nullptr);
+    window.taskCenterPage_->setCurrentGroup(displayGroup);
+
+    ASSERT_TRUE(QMetaObject::invokeMethod(
+        &window,
+        "onEditTask",
+        Q_ARG(QString, taskId)));
+
+    EXPECT_EQ(window.paramWidget_->stringValue("bands"),
+              "D:/data/band_1.tif, D:/data/band_2.tif, D:/data/band_3.tif");
+}
+
 TEST(MainWindowTest, RerunTaskCreatesNewTaskRecordAndClearsEditingState) {
     configureSettingsForTest();
 

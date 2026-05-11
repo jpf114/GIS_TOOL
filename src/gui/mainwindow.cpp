@@ -1240,6 +1240,17 @@ void MainWindow::onEditTask(const QString& taskId) {
                 paramWidget_->setStringValue(key, std::to_string(v));
             } else if constexpr (std::is_same_v<T, bool>) {
                 paramWidget_->setStringValue(key, v ? "true" : "false");
+            } else if constexpr (std::is_same_v<T, std::vector<std::string>>) {
+                std::ostringstream oss;
+                for (size_t i = 0; i < v.size(); ++i) {
+                    if (i > 0) {
+                        oss << ", ";
+                    }
+                    oss << v[i];
+                }
+                paramWidget_->setStringValue(key, oss.str());
+            } else if constexpr (std::is_same_v<T, std::array<double, 4>>) {
+                paramWidget_->setExtentValue(key, v);
             }
         }, value);
     }
