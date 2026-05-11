@@ -985,6 +985,56 @@ TEST(GuiSupportTest, TaskCenterPageSwitchingGroupRefreshesListAndClearsOldLogs) 
     EXPECT_NE(countLabel->text().indexOf(QStringLiteral("1")), -1);
 }
 
+TEST(GuiSupportTest, TaskCenterPageUpdateTaskProgressUpdatesPercentText) {
+    TaskCenterPage page;
+    page.addTaskRow(QStringLiteral("T0101"), QStringLiteral("空间滤波"), TaskRecord::Running,
+                    QStringLiteral("2026-05-11 12:10:00"));
+
+    auto* taskTree = page.findChild<QTreeWidget*>(QStringLiteral("taskTree"));
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 1);
+
+    page.updateTaskProgress(QStringLiteral("T0101"), 0.426);
+    EXPECT_EQ(taskTree->topLevelItem(0)->text(3), QStringLiteral("42%"));
+
+    page.updateTaskProgress(QStringLiteral("T0101"), 1.4);
+    EXPECT_EQ(taskTree->topLevelItem(0)->text(3), QStringLiteral("100%"));
+}
+
+TEST(GuiSupportTest, TaskCenterPageUpdateTaskRowSetsCompletedStatusAndDuration) {
+    TaskCenterPage page;
+    page.addTaskRow(QStringLiteral("T0102"), QStringLiteral("缓冲区"), TaskRecord::Running,
+                    QStringLiteral("2026-05-11 12:00:00"));
+
+    auto* taskTree = page.findChild<QTreeWidget*>(QStringLiteral("taskTree"));
+    ASSERT_NE(taskTree, nullptr);
+    ASSERT_EQ(taskTree->topLevelItemCount(), 1);
+
+    page.updateTaskRow(QStringLiteral("T0102"), TaskRecord::Completed,
+                       QStringLiteral("2026-05-11 12:00:05"), 5200);
+
+    auto* item = taskTree->topLevelItem(0);
+    ASSERT_NE(item, nullptr);
+    EXPECT_EQ(item->text(0), QStringLiteral("已完成"));
+    EXPECT_EQ(item->text(3), QStringLiteral("100%"));
+    EXPECT_NE(item->text(4).indexOf(QStringLiteral("5.2")), -1);
+}
+
+TEST(GuiSupportTest, TaskCenterPageAppendLogOnlyUpdatesCurrentTaskView) {
+    TaskCenterPage page;
+    page.setLogForTask(QStringLiteral("T0103"), QStringList{QStringLiteral("初始日志")});
+
+    auto* logDisplay = page.findChild<QTextEdit*>(QStringLiteral("logTerminal"));
+    ASSERT_NE(logDisplay, nullptr);
+
+    page.appendLog(QStringLiteral("T0104"), QStringLiteral("别的任务日志"));
+    EXPECT_EQ(logDisplay->toPlainText().indexOf(QStringLiteral("别的任务日志")), -1);
+
+    page.appendLog(QStringLiteral("T0103"), QStringLiteral("完成"));
+    EXPECT_NE(logDisplay->toPlainText().indexOf(QStringLiteral("初始日志")), -1);
+    EXPECT_NE(logDisplay->toPlainText().indexOf(QStringLiteral("完成")), -1);
+}
+
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {
     GDALAllRegister();
     gis::tests::ensureDirectory(guiSupportTestDir());
