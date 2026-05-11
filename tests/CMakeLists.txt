@@ -6,12 +6,24 @@ add_executable(gis_tests
     test_framework.cpp
     test_plugins.cpp
     test_gui_support.cpp
+    test_mainwindow.cpp
     test_support.cpp
     ../src/gui/custom_index_preset_store.cpp
     ../src/gui/gui_data_support.cpp
+    ../src/gui/gdal_config.cpp
+    ../src/gui/mainwindow.cpp
+    ../src/gui/nav_panel.cpp
+    ../src/gui/param_card_widget.cpp
+    ../src/gui/param_widget.cpp
+    ../src/gui/crs_dialog.cpp
+    ../src/gui/execute_worker.cpp
+    ../src/gui/qt_progress_reporter.cpp
+    ../src/gui/icon_manager.cpp
+    ../src/gui/settings_manager.cpp
     ../src/gui/task_center_page.cpp
     ../src/gui/task_manager.cpp
     ../src/gui/task_database.cpp
+    ../src/gui/task_runner.cpp
 )
 
 target_link_libraries(gis_tests PRIVATE
@@ -20,8 +32,11 @@ target_link_libraries(gis_tests PRIVATE
     GDAL::GDAL
     opencv_core
     opencv_imgproc
+    PROJ::proj
     Qt6::Core
+    Qt6::Gui
     Qt6::Sql
+    Qt6::Svg
     Qt6::Widgets
     GTest::gtest
 )
