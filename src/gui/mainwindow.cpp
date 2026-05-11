@@ -52,8 +52,6 @@
 
 namespace {
 
-constexpr const char* kRasterToolsGroupName = "raster_tools";
-
 QString formatDuration(qint64 ms) {
     if (ms < 1000) {
         return QStringLiteral("%1 ms").arg(ms);
@@ -65,17 +63,6 @@ QString formatDuration(qint64 ms) {
     int mins = static_cast<int>(seconds) / 60;
     double secs = seconds - mins * 60;
     return QStringLiteral("%1 m %2 s").arg(mins).arg(secs, 0, 'f', 0);
-}
-
-bool isRasterToolsMember(const std::string& pluginName) {
-    return pluginName == "raster_math"
-        || pluginName == "raster_inspect"
-        || pluginName == "raster_manage"
-        || pluginName == "raster_render";
-}
-
-std::string displayGroupForPlugin(const std::string& pluginName) {
-    return isRasterToolsMember(pluginName) ? std::string{kRasterToolsGroupName} : pluginName;
 }
 
 QString actionIconText(const QString& actionKey) {
@@ -166,11 +153,10 @@ std::vector<NavPanel::SubFunctionItem> collectSubFunctionItems(
         }
     };
 
-    if (selectionKey == kRasterToolsGroupName) {
-        appendPluginActions("raster_manage");
-        appendPluginActions("raster_inspect");
-        appendPluginActions("raster_render");
-        appendPluginActions("raster_math");
+    if (selectionKey == gis::gui::rasterToolsGroupKey()) {
+        for (const auto& pluginName : gis::gui::rasterToolsPluginNames()) {
+            appendPluginActions(pluginName);
+        }
         return items;
     }
 
@@ -193,7 +179,7 @@ std::string resolveGroupedActionPlugin(
 int displayPluginCount(const std::vector<gis::framework::IGisPlugin*>& plugins) {
     std::set<std::string> groups;
     for (const auto* plugin : plugins) {
-        groups.insert(displayGroupForPlugin(plugin->name()));
+        groups.insert(gis::gui::displayGroupForPlugin(plugin->name()));
     }
     return static_cast<int>(groups.size());
 }
@@ -721,7 +707,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     resetDerivedParamTracking();
     currentDisplayGroupKey_ = pluginName;
     currentPlugin_ = pluginManager_.find(pluginName);
-    if (!currentPlugin_ && pluginName != kRasterToolsGroupName) {
+    if (!currentPlugin_ && pluginName != gis::gui::rasterToolsGroupKey()) {
         paramWidget_->clear();
         currentActionKey_.clear();
         functionTitleLabel_->setText(QStringLiteral("请选择功能"));
@@ -743,7 +729,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
         return;
     }
 
-    const bool isRasterToolsGroup = pluginName == kRasterToolsGroupName;
+    const bool isRasterToolsGroup = pluginName == gis::gui::rasterToolsGroupKey();
     const QString groupName = isRasterToolsGroup
         ? QStringLiteral("栅格工具")
         : QString::fromUtf8(currentPlugin_->displayName());
@@ -793,7 +779,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
 
     if (taskCenterPage_) {
         taskCenterPage_->setCurrentGroup(
-            QString::fromStdString(displayGroupForPlugin(pluginName)));
+            QString::fromStdString(gis::gui::displayGroupForPlugin(pluginName)));
     }
 }
 
@@ -808,7 +794,7 @@ void MainWindow::onSubFunctionSelected(const std::string& pluginName,
     }
 
     resetDerivedParamTracking();
-    currentDisplayGroupKey_ = displayGroupForPlugin(pluginName);
+    currentDisplayGroupKey_ = gis::gui::displayGroupForPlugin(pluginName);
     currentActionKey_ = QString::fromStdString(actionKey);
     navPanel_->setCurrentPluginSelection(pluginName);
     navPanel_->setCurrentSubFunctionSelection(pluginName, actionKey);
@@ -824,7 +810,7 @@ void MainWindow::onSubFunctionSelected(const std::string& pluginName,
     functionDescLabel_->setText(desc.isEmpty()
         ? QString::fromUtf8(currentPlugin_->description()) : desc);
     if (functionMetaLabel_) {
-        const QString groupName = currentDisplayGroupKey_ == kRasterToolsGroupName
+        const QString groupName = currentDisplayGroupKey_ == gis::gui::rasterToolsGroupKey()
             ? QStringLiteral("栅格工具")
             : QString::fromUtf8(currentPlugin_->displayName());
         functionMetaLabel_->setText(
@@ -847,7 +833,7 @@ void MainWindow::onSubFunctionSelected(const std::string& pluginName,
 
     if (taskCenterPage_) {
         taskCenterPage_->setCurrentGroup(
-            QString::fromStdString(displayGroupForPlugin(pluginName)));
+            QString::fromStdString(gis::gui::displayGroupForPlugin(pluginName)));
     }
 }
 
@@ -1134,8 +1120,8 @@ void MainWindow::runPluginWithParams(
     }
 
     const QString displayGroup = QString::fromStdString(
-        displayGroupForPlugin(currentPlugin_->name()));
-    const QString pluginDisplayName = currentDisplayGroupKey_ == kRasterToolsGroupName
+        gis::gui::displayGroupForPlugin(currentPlugin_->name()));
+    const QString pluginDisplayName = currentDisplayGroupKey_ == gis::gui::rasterToolsGroupKey()
         ? QStringLiteral("栅格工具")
         : QString::fromUtf8(currentPlugin_->displayName());
     const QString actionDisplayName = gis::gui::actionDisplayName(

@@ -1,4 +1,5 @@
 #include "nav_panel.h"
+#include "gui_data_support.h"
 #include "style_constants.h"
 #include "icon_manager.h"
 
@@ -18,15 +19,6 @@
 #include <filesystem>
 
 namespace {
-
-constexpr const char* kRasterToolsGroupName = "raster_tools";
-
-bool isRasterToolsMember(const std::string& pluginName) {
-    return pluginName == "raster_math"
-        || pluginName == "raster_inspect"
-        || pluginName == "raster_manage"
-        || pluginName == "raster_render";
-}
 
 QString collapsedPluginText(const std::string& pluginName, const QString& displayName) {
     Q_UNUSED(pluginName);
@@ -205,9 +197,9 @@ void NavPanel::setPlugins(const std::vector<gis::framework::IGisPlugin*>& plugin
     bool rasterToolsCreated = false;
     for (auto* plugin : plugins) {
         const std::string pluginName = plugin->name();
-        if (isRasterToolsMember(pluginName)) {
-            pluginGroupKeyMap_[pluginName] = kRasterToolsGroupName;
-            groupMembersMap_[kRasterToolsGroupName].push_back(pluginName);
+        if (gis::gui::isRasterToolsMember(pluginName)) {
+            pluginGroupKeyMap_[pluginName] = gis::gui::rasterToolsGroupKey();
+            groupMembersMap_[gis::gui::rasterToolsGroupKey()].push_back(pluginName);
             if (rasterToolsCreated) {
                 continue;
             }
@@ -217,14 +209,12 @@ void NavPanel::setPlugins(const std::vector<gis::framework::IGisPlugin*>& plugin
             groupMembersMap_[pluginName].push_back(pluginName);
         }
 
-        const std::string displayGroupName = isRasterToolsMember(pluginName)
-            ? std::string{kRasterToolsGroupName}
-            : pluginName;
-        const QString displayName = isRasterToolsMember(pluginName)
+        const std::string displayGroupName = gis::gui::displayGroupForPlugin(pluginName);
+        const QString displayName = gis::gui::isRasterToolsMember(pluginName)
             ? QStringLiteral("栅格工具")
             : QString::fromUtf8(plugin->displayName());
-        const std::string iconKind = isRasterToolsMember(pluginName)
-            ? std::string{kRasterToolsGroupName}
+        const std::string iconKind = gis::gui::isRasterToolsMember(pluginName)
+            ? gis::gui::rasterToolsGroupKey()
             : pluginName;
 
         auto* groupWidget = new QWidget;
@@ -424,12 +414,5 @@ std::string NavPanel::displayGroupForPlugin(const std::string& pluginName) const
     if (pluginName.empty()) {
         return {};
     }
-    if (pluginGroupMap_.find(pluginName) != pluginGroupMap_.end()) {
-        return pluginName;
-    }
-    const auto it = pluginGroupKeyMap_.find(pluginName);
-    if (it != pluginGroupKeyMap_.end()) {
-        return it->second;
-    }
-    return pluginName;
+    return gis::gui::displayGroupForPlugin(pluginName);
 }

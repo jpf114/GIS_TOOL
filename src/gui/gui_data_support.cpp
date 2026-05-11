@@ -46,6 +46,15 @@ std::string trim(const std::string& value) {
     return value.substr(begin, end - begin + 1);
 }
 
+const std::string kRasterToolsGroupName = "raster_tools";
+
+const std::vector<std::string> kRasterToolsPluginNames = {
+    "raster_manage",
+    "raster_inspect",
+    "raster_render",
+    "raster_math",
+};
+
 QString genericActionDisplayName(const std::string& actionKey) {
     static const std::map<std::string, QString> kLabels = {
         {"gabor_filter", QStringLiteral("Gabor 婊ゆ尝")},
@@ -675,6 +684,23 @@ std::optional<int> intParamValue(
 } // namespace
 
 namespace gis::gui {
+
+const std::string& rasterToolsGroupKey() {
+    return kRasterToolsGroupName;
+}
+
+const std::vector<std::string>& rasterToolsPluginNames() {
+    return kRasterToolsPluginNames;
+}
+
+bool isRasterToolsMember(const std::string& pluginName) {
+    return std::find(kRasterToolsPluginNames.begin(), kRasterToolsPluginNames.end(), pluginName)
+        != kRasterToolsPluginNames.end();
+}
+
+std::string displayGroupForPlugin(const std::string& pluginName) {
+    return isRasterToolsMember(pluginName) ? kRasterToolsGroupName : pluginName;
+}
 
 DataKind detectDataKind(const std::string& path) {
     static const std::unordered_set<std::string> rasterExts = {

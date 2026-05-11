@@ -1384,6 +1384,27 @@ TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {
     EXPECT_EQ(ready.statusObjectName, "statusBadgeReady");
 }
 
+TEST(GuiSupportTest, RasterToolsGroupingRulesStayCentralized) {
+    EXPECT_EQ(gis::gui::rasterToolsGroupKey(), "raster_tools");
+    EXPECT_TRUE(gis::gui::isRasterToolsMember("raster_manage"));
+    EXPECT_TRUE(gis::gui::isRasterToolsMember("raster_inspect"));
+    EXPECT_TRUE(gis::gui::isRasterToolsMember("raster_render"));
+    EXPECT_TRUE(gis::gui::isRasterToolsMember("raster_math"));
+    EXPECT_FALSE(gis::gui::isRasterToolsMember("projection"));
+    EXPECT_EQ(gis::gui::displayGroupForPlugin("raster_manage"), "raster_tools");
+    EXPECT_EQ(gis::gui::displayGroupForPlugin("projection"), "projection");
+}
+
+TEST(GuiSupportTest, RasterToolsPluginOrderStaysStable) {
+    const std::vector<std::string> expected = {
+        "raster_manage",
+        "raster_inspect",
+        "raster_render",
+        "raster_math",
+    };
+    EXPECT_EQ(gis::gui::rasterToolsPluginNames(), expected);
+}
+
 TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey) {
     EXPECT_NE(
         gis::gui::actionDisplayName("processing", "skeleton"),
