@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -15,6 +16,7 @@
 
 #include "../src/gui/custom_index_preset_store.h"
 #include "../src/gui/gui_data_support.h"
+#include "../src/gui/task_manager.h"
 #include "test_support.h"
 
 namespace fs = std::filesystem;
@@ -31,6 +33,11 @@ struct DatasetCloser {
 
 fs::path guiSupportTestDir() {
     return gis::tests::defaultTestOutputDir("test_gui_support_output");
+}
+
+QString uniqueTaskGroupName(const char* suffix) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    return QStringLiteral("gui_support_%1_%2").arg(QString::fromUtf8(suffix)).arg(now);
 }
 
 std::string exportWktFromEpsg(int epsg) {
@@ -565,6 +572,75 @@ TEST(GuiSupportTest, MultiFileTextPickerRulesStayCentralized) {
     EXPECT_NE(filter.find("*.tif"), std::string::npos);
     EXPECT_NE(filter.find("*.img"), std::string::npos);
     EXPECT_NE(filter.find("所有文件"), std::string::npos);
+}
+
+TEST(GuiSupportTest, TaskManagerPersistsExecutionLifecycle) {
+    const QString group = uniqueTaskGroupName("lifecycle");
+    auto& taskManager = TaskManager::instance();
+    taskManager.initializeGroup(group);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string("D:/data/roads.shp");
+    params["output"] = std::string("D:/data/roads_buffer.gpkg");
+
+    const QString taskId = taskManager.submitTask(
+        group, QStringLiteral("vector"), QStringLiteral("buffer"), params,
+        QStringLiteral("矢量工具"), QStringLiteral("缓冲区"));
+    ASSERT_FALSE(taskId.isEmpty());
+
+    taskManager.updateTaskStatus(group, taskId, TaskRecord::Running);
+    taskManager.appendLog(group, taskId, QStringLiteral("开始执行"), 0);
+
+    gis::framework::Result result;
+    result.success = true;
+    result.outputPath = "D:/data/roads_buffer.gpkg";
+    result.message = "缓冲区处理完成";
+    taskManager.finishTask(group, taskId, result);
+
+    const TaskRecord record = taskManager.findTask(group, taskId);
+    EXPECT_EQ(record.id, taskId);
+    EXPECT_EQ(record.status, TaskRecord::Completed);
+    EXPECT_EQ(record.pluginName, QStringLiteral("vector"));
+    EXPECT_EQ(record.actionKey, QStringLiteral("buffer"));
+    EXPECT_EQ(record.actionDisplayName, QStringLiteral("缓冲区"));
+    EXPECT_GT(record.durationMs, 0);
+    EXPECT_EQ(std::get<std::string>(record.params.at("output")), "D:/data/roads_buffer.gpkg");
+
+    const auto logs = taskManager.logsForTask(group, taskId);
+    ASSERT_EQ(logs.size(), 1);
+    EXPECT_EQ(logs.front().message, QStringLiteral("开始执行"));
+
+    const auto recent = taskManager.recentTasks(group, 10);
+    ASSERT_FALSE(recent.isEmpty());
+    EXPECT_EQ(recent.front().id, taskId);
+}
+
+TEST(GuiSupportTest, TaskManagerRerunResetsParamsAndClearsLogs) {
+    const QString group = uniqueTaskGroupName("rerun");
+    auto& taskManager = TaskManager::instance();
+    taskManager.initializeGroup(group);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string("D:/data/a.tif");
+    params["output"] = std::string("D:/data/out1.tif");
+
+    const QString taskId = taskManager.submitTask(
+        group, QStringLiteral("processing"), QStringLiteral("filter"), params,
+        QStringLiteral("处理工具"), QStringLiteral("空间滤波"));
+    ASSERT_FALSE(taskId.isEmpty());
+
+    taskManager.appendLog(group, taskId, QStringLiteral("旧日志"), 1);
+
+    std::map<std::string, gis::framework::ParamValue> newParams;
+    newParams["input"] = std::string("D:/data/b.tif");
+    newParams["output"] = std::string("D:/data/out2.tif");
+    taskManager.updateAndRerunTask(group, taskId, newParams);
+
+    const TaskRecord record = taskManager.findTask(group, taskId);
+    EXPECT_EQ(record.status, TaskRecord::Pending);
+    EXPECT_EQ(std::get<std::string>(record.params.at("input")), "D:/data/b.tif");
+    EXPECT_EQ(std::get<std::string>(record.params.at("output")), "D:/data/out2.tif");
+    EXPECT_TRUE(taskManager.logsForTask(group, taskId).isEmpty());
 }
 
 TEST(GuiSupportTest, InspectRasterAutoFillInfoReadsCrsAndExtent) {

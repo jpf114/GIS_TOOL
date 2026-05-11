@@ -9,6 +9,8 @@ add_executable(gis_tests
     test_support.cpp
     ../src/gui/custom_index_preset_store.cpp
     ../src/gui/gui_data_support.cpp
+    ../src/gui/task_manager.cpp
+    ../src/gui/task_database.cpp
 )
 
 target_link_libraries(gis_tests PRIVATE
@@ -18,12 +20,17 @@ target_link_libraries(gis_tests PRIVATE
     opencv_core
     opencv_imgproc
     Qt6::Core
+    Qt6::Sql
     GTest::gtest
 )
 
 if(MSVC)
     target_compile_options(gis_tests PRIVATE /utf-8)
 endif()
+
+set_target_properties(gis_tests PROPERTIES
+    AUTOMOC ON
+)
 
 add_library(plugin_test_lifecycle SHARED
     plugins/test_lifecycle_plugin.cpp
@@ -77,6 +84,18 @@ add_custom_command(TARGET gis_tests POST_BUILD
         $<TARGET_FILE_DIR:gis_tests>/$<TARGET_FILE_NAME:plugin_test_lifecycle>
 )
 
+set(GIS_TEST_QT_SQLDRIVERS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_DIR}/plugins/sqldrivers>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_QT_DIR}/plugins/sqldrivers>")
+set(GIS_TEST_QT_SQLITE_DLL "$<$<CONFIG:Debug>:qsqlited.dll>$<$<NOT:$<CONFIG:Debug>>:qsqlite.dll>")
+
+add_custom_command(TARGET gis_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        $<TARGET_FILE_DIR:gis_tests>/sqldrivers
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${GIS_TEST_QT_SQLDRIVERS_DIR}/${GIS_TEST_QT_SQLITE_DLL}
+        $<TARGET_FILE_DIR:gis_tests>/sqldrivers/${GIS_TEST_QT_SQLITE_DLL}
+    COMMAND_EXPAND_LISTS
+)
+
 # Copy vcpkg runtime DLLs next to test executable so plugin DLLs can find dependencies
 add_custom_command(TARGET gis_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -85,7 +104,10 @@ add_custom_command(TARGET gis_tests POST_BUILD
 )
 
 include(GoogleTest)
-gtest_add_tests(TARGET gis_tests)
+gtest_discover_tests(gis_tests
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:gis_tests>
+    DISCOVERY_TIMEOUT 60
+)
 
 if(TARGET gis-gui)
     add_test(
