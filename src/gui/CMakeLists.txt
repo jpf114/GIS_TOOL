@@ -120,7 +120,7 @@ if(GIS_COPY_QT_PLATFORM_DLL)
         COMMAND_EXPAND_LISTS
     )
 else()
-    message(WARNING "未在全局 vcpkg 中找到 Qt 平台插件 DLL，构建将跳过 qwindows 插件拷贝。")
+    message(WARNING "鏈湪鍏ㄥ眬 vcpkg 涓壘鍒?Qt 骞冲彴鎻掍欢 DLL锛屾瀯寤哄皢璺宠繃 qwindows 鎻掍欢鎷疯礉銆?)
 endif()
 
 if(GIS_COPY_QT_PLATFORM_PDB)
