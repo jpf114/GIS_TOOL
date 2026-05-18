@@ -1294,6 +1294,48 @@ TEST(GuiSupportTest, BuildBatchCountTextReflectsMatchCount) {
     EXPECT_EQ(gis::gui::buildBatchCountText(3), QStringLiteral("匹配 3 个文件"));
 }
 
+TEST(GuiSupportTest, BuildBatchExecutionStateTracksRunningProgress) {
+    const auto state = gis::gui::buildBatchExecutionState(5, 1, 0, true, false);
+    EXPECT_EQ(state.completedCount, 2);
+    EXPECT_EQ(state.failedCount, 0);
+    EXPECT_EQ(state.succeededCount, 2);
+    EXPECT_FALSE(state.finished);
+    EXPECT_EQ(state.statusMessage, QStringLiteral("批量处理: 2/5 完成 (成功 2, 失败 0)"));
+    EXPECT_TRUE(state.summaryText.isEmpty());
+    EXPECT_TRUE(state.summaryTone.empty());
+}
+
+TEST(GuiSupportTest, BuildBatchExecutionStateBuildsFinishedSummaryForMixedResults) {
+    const auto state = gis::gui::buildBatchExecutionState(3, 2, 0, false, false);
+    EXPECT_EQ(state.completedCount, 3);
+    EXPECT_EQ(state.failedCount, 1);
+    EXPECT_EQ(state.succeededCount, 2);
+    EXPECT_TRUE(state.finished);
+    EXPECT_EQ(state.statusMessage, QStringLiteral("批量处理: 3/3 完成 (成功 2, 失败 1)"));
+    EXPECT_EQ(state.summaryText, QStringLiteral("批量处理完成: 成功 2, 失败 1 (共 3)"));
+    EXPECT_EQ(state.summaryTone, "warning");
+}
+
+TEST(GuiSupportTest, BuildBatchExecutionStateBuildsFinishedSummaryForAllSuccess) {
+    const auto state = gis::gui::buildBatchExecutionState(2, 1, 0, true, false);
+    EXPECT_EQ(state.completedCount, 2);
+    EXPECT_EQ(state.failedCount, 0);
+    EXPECT_EQ(state.succeededCount, 2);
+    EXPECT_TRUE(state.finished);
+    EXPECT_EQ(state.summaryText, QStringLiteral("✓ 批量处理全部成功 (2 个文件)"));
+    EXPECT_EQ(state.summaryTone, "success");
+}
+
+TEST(GuiSupportTest, BuildBatchExecutionStateTreatsCancellationAsNonFailure) {
+    const auto state = gis::gui::buildBatchExecutionState(2, 1, 1, false, true);
+    EXPECT_EQ(state.completedCount, 2);
+    EXPECT_EQ(state.failedCount, 1);
+    EXPECT_EQ(state.succeededCount, 1);
+    EXPECT_TRUE(state.finished);
+    EXPECT_EQ(state.summaryText, QStringLiteral("批量处理完成: 成功 1, 失败 1 (共 2)"));
+    EXPECT_EQ(state.summaryTone, "warning");
+}
+
 TEST(GuiSupportTest, BuildResultSummaryTextUsesChineseLabels) {
     gis::framework::Result result;
     result.success = true;

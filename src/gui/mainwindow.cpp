@@ -1285,6 +1285,43 @@ void MainWindow::onTaskRunnerFinished(const QString& displayGroup,
     lastExecutionMessage_ = localizedMessage;
     lastExecutionRawMessage_ = QString::fromUtf8(result.result.message);
 
+    if (isBatchMode_) {
+        const auto batchState = gis::gui::buildBatchExecutionState(
+            batchTotalCount_,
+            batchCompletedCount_,
+            batchFailedCount_,
+            success,
+            cancelled);
+        batchCompletedCount_ = batchState.completedCount;
+        batchFailedCount_ = batchState.failedCount;
+
+        statusBar()->showMessage(batchState.statusMessage);
+
+        if (batchState.finished) {
+            isBatchMode_ = false;
+            resultSummaryLabel_->setText(batchState.summaryText);
+            if (batchState.summaryTone == "success") {
+                resultSummaryLabel_->setStyleSheet(
+                    QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
+            } else if (batchState.summaryTone == "error") {
+                resultSummaryLabel_->setStyleSheet(
+                    QStringLiteral("color: %1;").arg(gis::style::Color::kError));
+            } else if (batchState.summaryTone == "warning") {
+                resultSummaryLabel_->setStyleSheet(
+                    QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
+            }
+            if (viewResultButton_) viewResultButton_->setVisible(false);
+        }
+
+        if (statusProgressBar_) {
+            statusProgressBar_->setRange(0, batchTotalCount_);
+            statusProgressBar_->setValue(batchCompletedCount_);
+        }
+        refreshExecuteButtonState();
+        emit executionFinished(success);
+        return;
+    }
+
     if (success) {
         if (!result.result.outputPath.empty()) {
             SettingsManager::instance().addRecentFile(

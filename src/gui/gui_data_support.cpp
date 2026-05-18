@@ -1413,6 +1413,41 @@ QString buildBatchCountText(int matchCount) {
         : QStringLiteral("未找到匹配文件");
 }
 
+BatchExecutionState buildBatchExecutionState(int totalCount,
+                                             int completedCount,
+                                             int failedCount,
+                                             bool success,
+                                             bool cancelled) {
+    BatchExecutionState state;
+    state.completedCount = completedCount + 1;
+    state.failedCount = failedCount + ((!success && !cancelled) ? 1 : 0);
+    state.succeededCount = state.completedCount - state.failedCount;
+    state.finished = totalCount > 0 && state.completedCount >= totalCount;
+    state.statusMessage = QStringLiteral("批量处理: %1/%2 完成 (成功 %3, 失败 %4)")
+        .arg(state.completedCount)
+        .arg(totalCount)
+        .arg(state.succeededCount)
+        .arg(state.failedCount);
+
+    if (!state.finished) {
+        return state;
+    }
+
+    if (state.failedCount == 0) {
+        state.summaryText = QStringLiteral("✓ 批量处理全部成功 (%1 个文件)")
+            .arg(state.succeededCount);
+        state.summaryTone = "success";
+        return state;
+    }
+
+    state.summaryText = QStringLiteral("批量处理完成: 成功 %1, 失败 %2 (共 %3)")
+        .arg(state.succeededCount)
+        .arg(state.failedCount)
+        .arg(totalCount);
+    state.summaryTone = state.failedCount == totalCount ? "error" : "warning";
+    return state;
+}
+
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
     DataAutoFillInfo info;
     const std::string normalizedPath = firstInputPath(path);

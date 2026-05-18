@@ -99,6 +99,16 @@ struct ExecuteButtonState {
     std::string statusObjectName;
 };
 
+struct BatchExecutionState {
+    int completedCount = 0;
+    int failedCount = 0;
+    int succeededCount = 0;
+    bool finished = false;
+    QString statusMessage;
+    QString summaryText;
+    std::string summaryTone;
+};
+
 struct GroupSelectionText {
     QString title;
     QString description;
@@ -200,6 +210,11 @@ DerivedParamSyncResult computeDerivedParamSyncResult(
     const DerivedParamTracking& tracking);
 QStringList collectBatchFiles(const QString& dirPath, const QString& filterText);
 QString buildBatchCountText(int matchCount);
+BatchExecutionState buildBatchExecutionState(int totalCount,
+                                             int completedCount,
+                                             int failedCount,
+                                             bool success,
+                                             bool cancelled);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
 QString actionDisplayName(const std::string& pluginName, const std::string& actionKey);
 QString actionDescription(const std::string& pluginName, const std::string& actionKey);
