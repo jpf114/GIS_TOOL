@@ -876,6 +876,12 @@ void MainWindow::onExecute() {
             }
         }
 
+        isBatchMode_ = true;
+        batchTotalCount_ = files.size();
+        batchCompletedCount_ = 0;
+        batchFailedCount_ = 0;
+        batchTaskIds_.clear();
+
         int submitted = 0;
         for (const auto& filePath : files) {
             auto params = baseParams;
