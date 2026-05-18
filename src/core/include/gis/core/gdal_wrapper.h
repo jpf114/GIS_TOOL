@@ -66,4 +66,17 @@ bool buildOverviews(GDALDataset* ds, const std::vector<int>& levels,
                     const std::string& resampling = "NEAREST",
                     ProgressReporter* progress = nullptr);
 
+struct ProcessingMetadata {
+    std::string sourceFile;
+    std::string sourceCrs;
+    std::string processingAlgorithm;
+    std::string processingVersion;
+    std::string processingTime;
+    std::map<std::string, std::string> algorithmParams;
+};
+
+bool writeProcessingMetadata(const std::string& rasterPath, const ProcessingMetadata& metadata);
+bool writeProcessingMetadata(GDALDataset* ds, const ProcessingMetadata& metadata);
+ProcessingMetadata readProcessingMetadata(GDALDataset* ds);
+
 } // namespace gis::core

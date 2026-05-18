@@ -231,4 +231,89 @@ bool buildOverviews(GDALDataset* ds, const std::vector<int>& levels,
     return err == CE_None;
 }
 
+namespace {
+
+std::string currentTimestamp() {
+    std::time_t now = std::time(nullptr);
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&now));
+    return std::string(buf);
+}
+
+} // namespace
+
+bool writeProcessingMetadata(GDALDataset* ds, const ProcessingMetadata& metadata) {
+    if (!ds) return false;
+
+    char** papszMD = nullptr;
+    auto addItem = [&](const char* key, const std::string& val) {
+        if (!val.empty()) {
+            papszMD = CSLSetNameValue(papszMD, key, val.c_str());
+        }
+    };
+
+    addItem("GIS_SOURCE_FILE", metadata.sourceFile);
+    addItem("GIS_SOURCE_CRS", metadata.sourceCrs);
+    addItem("GIS_PROCESSING_ALGORITHM", metadata.processingAlgorithm);
+    addItem("GIS_PROCESSING_VERSION", metadata.processingVersion);
+    addItem("GIS_PROCESSING_TIME",
+            metadata.processingTime.empty() ? currentTimestamp() : metadata.processingTime);
+
+    for (const auto& [k, v] : metadata.algorithmParams) {
+        addItem(("GIS_PARAM_" + k).c_str(), v);
+    }
+
+    CPLErr err = ds->SetMetadata(papszMD, "GIS_PROCESSING");
+    CSLDestroy(papszMD);
+    ds->FlushCache();
+    return err == CE_None;
+}
+
+bool writeProcessingMetadata(const std::string& rasterPath, const ProcessingMetadata& metadata) {
+    char** openOptions = nullptr;
+    openOptions = CSLSetNameValue(openOptions, "IGNORE_COG_LAYOUT_BREAK", "YES");
+    GDALDataset* raw = static_cast<GDALDataset*>(
+        GDALOpenEx(rasterPath.c_str(),
+                   GDAL_OF_RASTER | GDAL_OF_UPDATE,
+                   nullptr, openOptions, nullptr));
+    CSLDestroy(openOptions);
+    if (!raw) return false;
+    bool ok = writeProcessingMetadata(raw, metadata);
+    GDALClose(raw);
+    return ok;
+}
+
+ProcessingMetadata readProcessingMetadata(GDALDataset* ds) {
+    ProcessingMetadata result;
+    if (!ds) return result;
+
+    char** papszMD = ds->GetMetadata("GIS_PROCESSING");
+    if (!papszMD) return result;
+
+    auto getItem = [&](const char* key) -> std::string {
+        const char* val = CSLFetchNameValue(papszMD, key);
+        return val ? std::string(val) : std::string();
+    };
+
+    result.sourceFile = getItem("GIS_SOURCE_FILE");
+    result.sourceCrs = getItem("GIS_SOURCE_CRS");
+    result.processingAlgorithm = getItem("GIS_PROCESSING_ALGORITHM");
+    result.processingVersion = getItem("GIS_PROCESSING_VERSION");
+    result.processingTime = getItem("GIS_PROCESSING_TIME");
+
+    int count = CSLCount(papszMD);
+    for (int i = 0; i < count; ++i) {
+        std::string entry(papszMD[i]);
+        auto pos = entry.find('=');
+        if (pos == std::string::npos) continue;
+        std::string key = entry.substr(0, pos);
+        if (key.rfind("GIS_PARAM_", 0) == 0) {
+            std::string paramKey = key.substr(10);
+            result.algorithmParams[paramKey] = entry.substr(pos + 1);
+        }
+    }
+
+    return result;
+}
+
 } // namespace gis::core
