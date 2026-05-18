@@ -98,6 +98,12 @@ private:
 
     QMap<QString, QString> pendingResultTaskIds_;
 
+    int batchTotalCount_ = 0;
+    int batchCompletedCount_ = 0;
+    int batchFailedCount_ = 0;
+    QStringList batchTaskIds_;
+    bool isBatchMode_ = false;
+
     gis::framework::PluginManager pluginManager_;
     gis::framework::IGisPlugin* currentPlugin_ = nullptr;
     std::string currentDisplayGroupKey_;
