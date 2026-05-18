@@ -11,6 +11,7 @@
 #include "task_runner.h"
 #include "task_database.h"
 #include "task_center_page.h"
+#include "result_preview_page.h"
 
 #include <gis/core/runtime_env.h>
 
@@ -35,6 +36,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QStyle>
 #include <QTabWidget>
@@ -1079,9 +1081,55 @@ void MainWindow::resetDerivedParamTracking() {
     lastAutoExtent_.reset();
 }
 
+void MainWindow::resetResultPreviewState() {
+    if (viewResultButton_) {
+        viewResultButton_->setVisible(false);
+    }
+    if (paramPreviewStack_) {
+        paramPreviewStack_->setCurrentIndex(0);
+    }
+}
+
+void MainWindow::showResultPreview(const QString& outputPath,
+                                   const std::map<std::string, std::string>& metadata) {
+    if (!viewResultButton_ || !resultPreviewPage_) {
+        return;
+    }
+    if (outputPath.isEmpty()) {
+        resetResultPreviewState();
+        return;
+    }
+
+    viewResultButton_->setVisible(true);
+    resultPreviewPage_->showResult(outputPath, QString(), metadata);
+}
+
 void MainWindow::runPluginWithParams(
     const std::map<std::string, gis::framework::ParamValue>& params) {
     runPluginWithParams(params, false);
+}
+
+void MainWindow::resetResultPreviewState() {
+    if (viewResultButton_) {
+        viewResultButton_->setVisible(false);
+    }
+    if (paramPreviewStack_) {
+        paramPreviewStack_->setCurrentIndex(0);
+    }
+}
+
+void MainWindow::showResultPreview(const QString& outputPath,
+                                   const std::map<std::string, std::string>& metadata) {
+    if (!viewResultButton_ || !resultPreviewPage_) {
+        return;
+    }
+    if (outputPath.isEmpty()) {
+        resetResultPreviewState();
+        return;
+    }
+
+    viewResultButton_->setVisible(true);
+    resultPreviewPage_->showResult(outputPath, QString(), metadata);
 }
 
 void MainWindow::runPluginWithParams(
@@ -1307,7 +1355,7 @@ void MainWindow::onTaskRunnerFinished(const QString& displayGroup,
                 resultSummaryLabel_->setStyleSheet(
                     QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
             }
-            if (viewResultButton_) viewResultButton_->setVisible(false);
+            resetResultPreviewState();
         }
 
         if (statusProgressBar_) {

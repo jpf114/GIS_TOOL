@@ -20,6 +20,10 @@ add_executable(gis-gui
     task_database.cpp
     task_center_page.cpp
     task_runner.cpp
+    result_preview_page.cpp
+    raster_preview_widget.cpp
+    vector_preview_widget.cpp
+    stats_preview_widget.cpp
 )
 
 set(GIS_PLUGIN_TARGETS
