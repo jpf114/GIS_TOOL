@@ -109,8 +109,8 @@ std::vector<Workflow> WorkflowPresets::allPresets() {
 
 Workflow WorkflowPresets::remoteSensingPreprocess() {
     Workflow wf;
-    wf.name = "閬ユ劅棰勫鐞嗘祦姘寸嚎";
-    wf.description = "杈愬皠瀹氭爣 鈫?澶ф皵鏍℃(DOS) 鈫?瑁佸垏";
+    wf.name = "遥感预处理";
+    wf.description = "依次执行辐射定标、大气校正（DOS）和裁切。";
 
     WorkflowStep s1;
     s1.pluginName = "georef";
@@ -138,8 +138,8 @@ Workflow WorkflowPresets::remoteSensingPreprocess() {
 
 Workflow WorkflowPresets::terrainAnalysis() {
     Workflow wf;
-    wf.name = "鍦板舰鍒嗘瀽宸ヤ綔娴?;
-    wf.description = "濉醇 鈫?娴佸悜 鈫?姹囨祦绱Н 鈫?娌崇綉鎻愬彇";
+    wf.name = "地形分析";
+    wf.description = "依次执行填洼、流向、汇流累积和河网提取。";
 
     WorkflowStep s1;
     s1.pluginName = "terrain";
@@ -174,8 +174,8 @@ Workflow WorkflowPresets::terrainAnalysis() {
 
 Workflow WorkflowPresets::changeDetection() {
     Workflow wf;
-    wf.name = "鍙樺寲妫€娴嬫祦绋?;
-    wf.description = "褰卞儚閰嶅噯 鈫?鍙樺寲妫€娴?;
+    wf.name = "变化检测";
+    wf.description = "先执行影像配准，再进行变化检测。";
 
     WorkflowStep s1;
     s1.pluginName = "matching";

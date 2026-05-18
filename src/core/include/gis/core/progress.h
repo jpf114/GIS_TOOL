@@ -6,7 +6,7 @@ namespace gis::core {
 
 class CancelledException : public std::runtime_error {
 public:
-    explicit CancelledException(const std::string& msg = "鎿嶄綔宸插彇娑?)
+    explicit CancelledException(const std::string& msg = "操作已取消")
         : std::runtime_error(msg) {}
 };
 
