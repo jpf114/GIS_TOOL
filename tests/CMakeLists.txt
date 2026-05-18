@@ -24,6 +24,12 @@ add_executable(gis_tests
     ../src/gui/task_manager.cpp
     ../src/gui/task_database.cpp
     ../src/gui/task_runner.cpp
+    ../src/gui/result_preview_page.cpp
+    ../src/gui/raster_preview_widget.cpp
+    ../src/gui/vector_preview_widget.cpp
+    ../src/gui/stats_preview_widget.cpp
+    ../src/gui/workflow_page.cpp
+    ../src/gui/welcome_dialog.cpp
 )
 
 target_link_libraries(gis_tests PRIVATE
@@ -267,6 +273,16 @@ if(TARGET gis-gui)
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_clip/output.geojson
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/vector_clip/gui_vector_clip.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_vector_clip_regression.cmake
+    )
+
+    add_test(
+        NAME gui_cutting_clip_cutline_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_clip_cutline/output.tif
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_clip_cutline/gui_cutting_clip_cutline.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_cutting_clip_cutline_regression.cmake
     )
 
     add_test(
@@ -1277,6 +1293,15 @@ if(TARGET gis-gui)
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_merge_bands_list/output.tif
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/cutting_merge_bands_list/gui_cutting_merge_bands_list.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_cutting_merge_bands_list_regression.cmake
+    )
+
+    add_test(
+        NAME gui_matching_match_content_offscreen
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_match_content/output.json
+            -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_match_content/gui_matching_match_content.png
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_match_content_regression.cmake
     )
 endif()
 
