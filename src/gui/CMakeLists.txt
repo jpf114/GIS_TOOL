@@ -25,6 +25,7 @@ add_executable(gis-gui
     vector_preview_widget.cpp
     stats_preview_widget.cpp
     workflow_page.cpp
+    welcome_dialog.cpp
 )
 
 set(GIS_PLUGIN_TARGETS

@@ -13,6 +13,7 @@
 #include "task_center_page.h"
 #include "result_preview_page.h"
 #include "workflow_page.h"
+#include "welcome_dialog.h"
 
 #include <gis/core/runtime_env.h>
 
