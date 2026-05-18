@@ -76,6 +76,9 @@ int main(int argc, char* argv[])
 
     const QStringList arguments = QCoreApplication::arguments();
     const bool selfTestMode = arguments.contains(QStringLiteral("--self-test"));
+    if (selfTestMode || arguments.contains(QStringLiteral("--auto-execute"))) {
+        gis::gui::markFirstRunComplete();
+    }
     std::optional<QString> screenshotPath;
     std::optional<QString> statusFilePath;
     std::optional<std::string> selectedPlugin;
@@ -156,7 +159,7 @@ int main(int argc, char* argv[])
                 status.insert(QStringLiteral("success"), false);
                 status.insert(QStringLiteral("cancelled"), false);
                 status.insert(QStringLiteral("message"),
-                    QStringLiteral("以下参数未能应用到当前界面：%1").arg(failedKeys));
+                    QStringLiteral("浠ヤ笅鍙傛暟鏈兘搴旂敤鍒板綋鍓嶇晫闈細%1").arg(failedKeys));
                 status.insert(QStringLiteral("raw_message"),
                     QStringLiteral("failed_to_apply_param:%1").arg(failedKeys));
 
