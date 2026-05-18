@@ -9,41 +9,78 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: 检出仓库
-        uses: actions/checkout@v4
+      - name: 妫€鍑轰粨搴?        uses: actions/checkout@v4
 
-      - name: 安装 vcpkg
+      - name: 缂撳瓨 vcpkg 宸插畨瑁呭寘
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\installed
+          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-windows-
+
+      - name: 瀹夎 vcpkg
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-          C:\vcpkg\bootstrap-vcpkg.bat
+          if (-not (Test-Path C:\vcpkg\vcpkg.exe)) {
+            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+            C:\vcpkg\bootstrap-vcpkg.bat
+          }
 
-      - name: 安装依赖
+      - name: 瀹夎渚濊禆
         shell: pwsh
         env:
           VCPKG_ROOT: C:\vcpkg
         run: |
           C:\vcpkg\vcpkg.exe install gdal opencv4 proj gtest qtbase --triplet x64-windows
 
-      - name: 配置
+      - name: 閰嶇疆 Debug
         shell: pwsh
         env:
           VCPKG_ROOT: C:\vcpkg
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
+          cmake -S . -B build/debug --preset debug
 
-      - name: 构建
+      - name: 閰嶇疆 Release
+        shell: pwsh
+        env:
+          VCPKG_ROOT: C:\vcpkg
+        run: |
+          cmake -S . -B build/release --preset release
+
+      - name: 鏋勫缓 Debug
         shell: pwsh
         run: |
-          cmake --build build --config Debug
-          cmake --build build --config Release
+          cmake --build build/debug --config Debug
 
-      - name: 执行 Debug 测试
+      - name: 鏋勫缓 Release
         shell: pwsh
         run: |
-          ctest --test-dir build -C Debug --output-on-failure
+          cmake --build build/release --config Release
 
-      - name: 执行 Release 关键测试
+      - name: 鎵ц Debug 鍏ㄩ噺娴嬭瘯
         shell: pwsh
         run: |
-          ctest --test-dir build -C Release --output-on-failure -R "FrameworkTest\.CliListLoadsRealPlugins|PluginTest\.(Matching|Projection|Utility|ProcessingTemplateMatch|ProcessingPansharpen)"
+          ctest --test-dir build/debug -C Debug --output-on-failure
+
+      - name: 鎵ц Release 鍏ㄩ噺娴嬭瘯
+        shell: pwsh
+        run: |
+          ctest --test-dir build/release -C Release --output-on-failure
+
+      - name: 瀹夎 Release
+        shell: pwsh
+        run: |
+          cmake --install build/release --config Release
+
+      - name: 鎵撳寘鏋勫缓浜х墿
+        shell: pwsh
+        run: |
+          Compress-Archive -Path install -DestinationPath gis-tool-win64.zip
+
+      - name: 涓婁紶鏋勫缓浜х墿
+        uses: actions/upload-artifact@v4
+        with:
+          name: gis-tool-win64
+          path: gis-tool-win64.zip
