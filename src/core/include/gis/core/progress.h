@@ -6,7 +6,7 @@ namespace gis::core {
 
 class CancelledException : public std::runtime_error {
 public:
-    explicit CancelledException(const std::string& msg = "操作已取消")
+    explicit CancelledException(const std::string& msg = "鎿嶄綔宸插彇娑?)
         : std::runtime_error(msg) {}
 };
 
@@ -28,6 +28,13 @@ class CliProgress : public ProgressReporter {
 public:
     void onProgress(double percent) override;
     void onMessage(const std::string& msg) override;
+    bool isCancelled() const override { return false; }
+};
+
+class NullProgressReporter : public ProgressReporter {
+public:
+    void onProgress(double) override {}
+    void onMessage(const std::string&) override {}
     bool isCancelled() const override { return false; }
 };
 
