@@ -19,132 +19,132 @@ namespace gis::plugins {
 std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "选择要执行的子功能",
+            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"clip", "mosaic", "split", "merge_bands", "tile"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入影像文件路径(多文件用逗号分隔，merge_bands 时可不填)",
+            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞(澶氭枃浠剁敤閫楀彿鍒嗛殧锛宮erge_bands 鏃跺彲涓嶅～)",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "输出影像文件路径",
+            "output", "杈撳嚭鏂囦欢", "杈撳嚭褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "extent", "裁切范围", "矩形范围(xmin,ymin,xmax,ymax)",
+            "extent", "瑁佸垏鑼冨洿", "鐭╁舰鑼冨洿(xmin,ymin,xmax,ymax)",
             gis::framework::ParamType::Extent, false, std::array<double,4>{0,0,0,0}
         },
         gis::framework::ParamSpec{
-            "cutline", "裁切矢量", "用于裁切的矢量文件路径",
+            "cutline", "瑁佸垏鐭㈤噺", "鐢ㄤ簬瑁佸垏鐨勭煝閲忔枃浠惰矾寰?,
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "tile_size", "分块大小", "分块切割时每块的像素大小",
+            "tile_size", "鍒嗗潡澶у皬", "鍒嗗潡鍒囧壊鏃舵瘡鍧楃殑鍍忕礌澶у皬",
             gis::framework::ParamType::Int, false, int{1024},
             int{1}, int{65536}
         },
         gis::framework::ParamSpec{
-            "overlap", "重叠像素数", "分块切割时块间的重叠像素数",
+            "overlap", "閲嶅彔鍍忕礌鏁?, "鍒嗗潡鍒囧壊鏃跺潡闂寸殑閲嶅彔鍍忕礌鏁?,
             gis::framework::ParamType::Int, false, int{0},
             int{0}, int{65536}
         },
         gis::framework::ParamSpec{
-            "bands", "波段列表", "合并波段时各波段对应的文件路径(逗号分隔)",
+            "bands", "娉㈡鍒楄〃", "鍚堝苟娉㈡鏃跺悇娉㈡瀵瑰簲鐨勬枃浠惰矾寰?閫楀彿鍒嗛殧)",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "dst_srs", "目标坐标系", "镶嵌时统一的目标坐标系",
+            "dst_srs", "鐩爣鍧愭爣绯?, "闀跺祵鏃剁粺涓€鐨勭洰鏍囧潗鏍囩郴",
             gis::framework::ParamType::CRS, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "resample", "重采样方法", "重采样算法",
+            "resample", "閲嶉噰鏍锋柟娉?, "閲嶉噰鏍风畻娉?,
             gis::framework::ParamType::Enum, false, std::string{"nearest"},
             int{0}, int{0},
             {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average"}
         },
         gis::framework::ParamSpec{
-            "tile_scheme", "瓦片编号方案", "XYZ(y=0在北)或TMS(y=0在南)",
+            "tile_scheme", "鐡︾墖缂栧彿鏂规", "XYZ(y=0鍦ㄥ寳)鎴朤MS(y=0鍦ㄥ崡)",
             gis::framework::ParamType::Enum, false, std::string{"xyz"},
             int{0}, int{0},
             {"xyz", "tms"}
         },
         gis::framework::ParamSpec{
-            "profile", "切片剖面", "mercator=EPSG:3857, geodetic=EPSG:4326, raster=不重投影",
+            "profile", "鍒囩墖鍓栭潰", "mercator=EPSG:3857, geodetic=EPSG:4326, raster=涓嶉噸鎶曞奖",
             gis::framework::ParamType::Enum, false, std::string{"mercator"},
             int{0}, int{0},
             {"mercator", "geodetic", "raster"}
         },
         gis::framework::ParamSpec{
-            "min_zoom", "最小缩放层级", "瓦片金字塔的最小缩放层级",
+            "min_zoom", "鏈€灏忕缉鏀惧眰绾?, "鐡︾墖閲戝瓧濉旂殑鏈€灏忕缉鏀惧眰绾?,
             gis::framework::ParamType::Int, false, int{0},
             int{0}, int{30}
         },
         gis::framework::ParamSpec{
-            "max_zoom", "最大缩放层级", "瓦片金字塔的最大缩放层级，-1表示自动计算",
+            "max_zoom", "鏈€澶х缉鏀惧眰绾?, "鐡︾墖閲戝瓧濉旂殑鏈€澶х缉鏀惧眰绾э紝-1琛ㄧず鑷姩璁＄畻",
             gis::framework::ParamType::Int, false, int{-1},
             int{-1}, int{30}
         },
         gis::framework::ParamSpec{
-            "tile_pixel_size", "瓦片像素尺寸", "每个瓦片的像素宽高",
+            "tile_pixel_size", "鐡︾墖鍍忕礌灏哄", "姣忎釜鐡︾墖鐨勫儚绱犲楂?,
             gis::framework::ParamType::Int, false, int{256},
             int{128}, int{1024}
         },
         gis::framework::ParamSpec{
-            "overview_resampling", "概览重采样", "金字塔概览图的重采样方法",
+            "overview_resampling", "姒傝閲嶉噰鏍?, "閲戝瓧濉旀瑙堝浘鐨勯噸閲囨牱鏂规硶",
             gis::framework::ParamType::Enum, false, std::string{"nearest"},
             int{0}, int{0},
             {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average", "mode"}
         },
         gis::framework::ParamSpec{
-            "output_format", "瓦片输出格式", "瓦片图像格式",
+            "output_format", "鐡︾墖杈撳嚭鏍煎紡", "鐡︾墖鍥惧儚鏍煎紡",
             gis::framework::ParamType::Enum, false, std::string{"png"},
             int{0}, int{0},
             {"png", "jpeg", "webp", "gtiff"}
         },
         gis::framework::ParamSpec{
-            "jpeg_quality", "JPEG压缩质量", "JPEG/WebP压缩质量(1-100)",
+            "jpeg_quality", "JPEG鍘嬬缉璐ㄩ噺", "JPEG/WebP鍘嬬缉璐ㄩ噺(1-100)",
             gis::framework::ParamType::Int, false, int{75},
             int{1}, int{100}
         },
         gis::framework::ParamSpec{
-            "add_alpha", "添加透明通道", "为瓦片添加Alpha透明通道，NoData区域变透明",
+            "add_alpha", "娣诲姞閫忔槑閫氶亾", "涓虹摝鐗囨坊鍔燗lpha閫忔槑閫氶亾锛孨oData鍖哄煙鍙橀€忔槑",
             gis::framework::ParamType::Bool, false, bool{true}
         },
         gis::framework::ParamSpec{
-            "nodata_value", "NoData值", "指定输入NoData值，覆盖文件内已有值",
+            "nodata_value", "NoData鍊?, "鎸囧畾杈撳叆NoData鍊硷紝瑕嗙洊鏂囦欢鍐呭凡鏈夊€?,
             gis::framework::ParamType::Double, false, double{-9999.0},
             double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "skip_blank", "跳过空白瓦片", "跳过全透明或全NoData的空白瓦片",
+            "skip_blank", "璺宠繃绌虹櫧鐡︾墖", "璺宠繃鍏ㄩ€忔槑鎴栧叏NoData鐨勭┖鐧界摝鐗?,
             gis::framework::ParamType::Bool, false, bool{true}
         },
         gis::framework::ParamSpec{
-            "resume", "续切模式", "仅生成缺失的瓦片文件",
+            "resume", "缁垏妯″紡", "浠呯敓鎴愮己澶辩殑鐡︾墖鏂囦欢",
             gis::framework::ParamType::Bool, false, bool{false}
         },
         gis::framework::ParamSpec{
-            "tile_extent", "切片范围", "自定义切片范围(xmin,ymin,xmax,ymax WGS84)，留空使用全图",
+            "tile_extent", "鍒囩墖鑼冨洿", "鑷畾涔夊垏鐗囪寖鍥?xmin,ymin,xmax,ymax WGS84)锛岀暀绌轰娇鐢ㄥ叏鍥?,
             gis::framework::ParamType::Extent, false, std::array<double,4>{0,0,0,0}
         },
         gis::framework::ParamSpec{
-            "webviewer", "Web预览页面", "生成Web地图预览页面",
+            "webviewer", "Web棰勮椤甸潰", "鐢熸垚Web鍦板浘棰勮椤甸潰",
             gis::framework::ParamType::Enum, false, std::string{"none"},
             int{0}, int{0},
             {"none", "leaflet", "openlayers", "all"}
         },
         gis::framework::ParamSpec{
-            "title", "地图标题", "Web预览页面的地图标题",
+            "title", "鍦板浘鏍囬", "Web棰勮椤甸潰鐨勫湴鍥炬爣棰?,
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "copyright", "版权信息", "Web预览页面的版权信息",
+            "copyright", "鐗堟潈淇℃伅", "Web棰勮椤甸潰鐨勭増鏉冧俊鎭?,
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "num_threads", "并行线程数", "瓦片生成的并行线程数",
+            "num_threads", "骞惰绾跨▼鏁?, "鐡︾墖鐢熸垚鐨勫苟琛岀嚎绋嬫暟",
             gis::framework::ParamType::Int, false, int{1},
             int{1}, int{64}
         },
@@ -165,6 +165,18 @@ gis::framework::Result CuttingPlugin::execute(
 
     return gis::framework::Result::fail("Unknown action: " + action);
 }
+
+namespace {
+
+gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
+    gis::core::ProcessingMetadata meta;
+    meta.sourceFile = input;
+    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
+    meta.processingAlgorithm = algorithm;
+    return meta;
+}
+
+} // namespace
 
 static std::vector<std::string> splitString(const std::string& s, char delim) {
     std::vector<std::string> tokens;
@@ -260,6 +272,12 @@ gis::framework::Result CuttingPlugin::doClip(
         GDALClose(dstHandle);
     }
 
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "cutting.clip");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
 
     progress.onProgress(1.0);
@@ -325,6 +343,12 @@ gis::framework::Result CuttingPlugin::doMosaic(
     }
 
     GDALClose(dstHandle);
+
+    {
+        auto meta = buildMetadata(inputFiles[0], srcDatasets[0].get(), "cutting.mosaic");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
     progress.onMessage("Mosaic completed.");
@@ -395,6 +419,8 @@ gis::framework::Result CuttingPlugin::doSplit(
             GDALTranslateOptionsFree(translateOpts);
 
             if (dstHandle) GDALClose(dstHandle);
+
+            gis::core::writeProcessingMetadata(tilePath, buildMetadata(input, srcDS.get(), "cutting.split"));
 
             tileIdx++;
             double pct = 0.1 + 0.9 * static_cast<double>(tileIdx) / totalTiles;
@@ -497,6 +523,13 @@ gis::framework::Result CuttingPlugin::doMergeBands(
     }
 
     GDALClose(dstHandle);
+
+    {
+        auto firstDs = gis::core::openRaster(bandFiles[0], true);
+        auto meta = buildMetadata(bandFiles[0], firstDs.get(), "cutting.merge_bands");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
     progress.onMessage("Band merge completed.");

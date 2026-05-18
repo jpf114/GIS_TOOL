@@ -23,52 +23,64 @@
 
 namespace gis::plugins {
 
+namespace {
+
+gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
+    gis::core::ProcessingMetadata meta;
+    meta.sourceFile = input;
+    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
+    meta.processingAlgorithm = algorithm;
+    return meta;
+}
+
+} // namespace
+
 std::vector<gis::framework::ParamSpec> RasterManagePlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "选择要执行的子功能",
+            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"overviews", "nodata", "cog", "zonal_stats", "proximity"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入影像文件路径",
+            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "COG 生成结果路径",
+            "output", "杈撳嚭鏂囦欢", "COG 鐢熸垚缁撴灉璺緞",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "band", "波段序号", "波段序号，填写 0 表示全部波段，从 1 开始表示单波段",
+            "band", "娉㈡搴忓彿", "娉㈡搴忓彿锛屽～鍐?0 琛ㄧず鍏ㄩ儴娉㈡锛屼粠 1 寮€濮嬭〃绀哄崟娉㈡",
             gis::framework::ParamType::Int, false, int{1},
             int{0}, int{999}
         },
         gis::framework::ParamSpec{
-            "levels", "金字塔层级", "金字塔缩放层级，例如 2 4 8 16",
+            "levels", "閲戝瓧濉斿眰绾?, "閲戝瓧濉旂缉鏀惧眰绾э紝渚嬪 2 4 8 16",
             gis::framework::ParamType::String, false, std::string{"2 4 8 16"}
         },
         gis::framework::ParamSpec{
-            "resample", "重采样方式", "金字塔重采样算法",
+            "resample", "閲嶉噰鏍锋柟寮?, "閲戝瓧濉旈噸閲囨牱绠楁硶",
             gis::framework::ParamType::Enum, false, std::string{"nearest"},
             int{0}, int{0},
             {"nearest", "gaussian", "cubic", "average", "mode"}
         },
         gis::framework::ParamSpec{
-            "nodata_value", "NoData 值", "要写入的 NoData 数值",
+            "nodata_value", "NoData 鍊?, "瑕佸啓鍏ョ殑 NoData 鏁板€?,
             gis::framework::ParamType::Double, false, double{0.0},
             double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "vector", "矢量分区文件", "用于分区统计的面矢量文件",
+            "vector", "鐭㈤噺鍒嗗尯鏂囦欢", "鐢ㄤ簬鍒嗗尯缁熻鐨勯潰鐭㈤噺鏂囦欢",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "feature_id_field", "要素 ID 字段", "用于标识每个面要素的唯一字段名",
+            "feature_id_field", "瑕佺礌 ID 瀛楁", "鐢ㄤ簬鏍囪瘑姣忎釜闈㈣绱犵殑鍞竴瀛楁鍚?,
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "max_distance", "最大距离", "欧氏距离计算的最大搜索距离（0=无限制）",
+            "max_distance", "鏈€澶ц窛绂?, "娆ф皬璺濈璁＄畻鐨勬渶澶ф悳绱㈣窛绂伙紙0=鏃犻檺鍒讹級",
             gis::framework::ParamType::Double, false, double{0.0},
             double{0.0}, double{1e15}
         },
@@ -135,6 +147,14 @@ gis::framework::Result RasterManagePlugin::doBuildOverviews(
 
     progress.throwIfCancelled();
 
+    {
+        gis::core::ProcessingMetadata meta;
+        meta.sourceFile = input;
+        meta.processingAlgorithm = "raster_manage.overviews";
+        ds.reset();
+        gis::core::writeProcessingMetadata(input, meta);
+    }
+
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Overviews built successfully: " + levelsStr, input);
 }
@@ -192,6 +212,13 @@ gis::framework::Result RasterManagePlugin::doBuildCog(
     }
 
     GDALClose(dstHandle);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "raster_manage.cog");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -222,6 +249,12 @@ gis::framework::Result RasterManagePlugin::doSetNoData(
             ds->GetRasterBand(b)->SetNoDataValue(nodataVal);
         }
         progress.throwIfCancelled();
+
+        {
+            auto meta = buildMetadata(input, ds.get(), "raster_manage.nodata");
+            gis::core::writeProcessingMetadata(input, meta);
+        }
+
         progress.onProgress(1.0);
         return gis::framework::Result::ok(
             "NoData set to " + std::to_string(nodataVal) + " for all " +
@@ -235,6 +268,12 @@ gis::framework::Result RasterManagePlugin::doSetNoData(
 
     rasterBand->SetNoDataValue(nodataVal);
     progress.throwIfCancelled();
+
+    {
+        auto meta = buildMetadata(input, ds.get(), "raster_manage.nodata");
+        gis::core::writeProcessingMetadata(input, meta);
+    }
+
     progress.onProgress(1.0);
     return gis::framework::Result::ok(
         "NoData set to " + std::to_string(nodataVal) + " for band " + std::to_string(band), input);
@@ -517,6 +556,11 @@ gis::framework::Result RasterManagePlugin::doProximity(
         gis::core::matToGdalTiff(outputMat, srcDS.get(), output, b);
 
         progress.onProgress(0.1 + 0.85 * static_cast<double>(b) / bandCount);
+    }
+
+    {
+        auto meta = buildMetadata(input, srcDS.get(), "raster_manage.euclidean_distance");
+        gis::core::writeProcessingMetadata(output, meta);
     }
 
     progress.throwIfCancelled();

@@ -25,6 +25,14 @@ void ensureParentDirectoryForFile(const std::string& path) {
     std::filesystem::create_directories(fsPath.parent_path());
 }
 
+gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
+    gis::core::ProcessingMetadata meta;
+    meta.sourceFile = input;
+    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
+    meta.processingAlgorithm = algorithm;
+    return meta;
+}
+
 } // namespace
 
 static std::vector<std::string> splitString(const std::string& s, char delim) {
@@ -42,112 +50,112 @@ static std::vector<std::string> splitString(const std::string& s, char delim) {
 std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "选择要执行的子功能",
+            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"detect", "match", "register", "change", "ecc_register", "corner", "stitch"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入影像文件路径",
+            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "reference", "参考影像", "参考影像文件路径(match/register/change)",
+            "reference", "鍙傝€冨奖鍍?, "鍙傝€冨奖鍍忔枃浠惰矾寰?match/register/change)",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "输出文件路径",
+            "output", "杈撳嚭鏂囦欢", "杈撳嚭鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "method", "特征方法", "特征检测/匹配方法",
+            "method", "鐗瑰緛鏂规硶", "鐗瑰緛妫€娴?鍖归厤鏂规硶",
             gis::framework::ParamType::Enum, false, std::string{"sift"},
             int{0}, int{0},
             {"sift", "orb", "akaze"}
         },
         gis::framework::ParamSpec{
-            "match_method", "匹配方法", "特征匹配算法",
+            "match_method", "鍖归厤鏂规硶", "鐗瑰緛鍖归厤绠楁硶",
             gis::framework::ParamType::Enum, false, std::string{"bf"},
             int{0}, int{0},
             {"bf", "flann"}
         },
         gis::framework::ParamSpec{
-            "max_points", "最大特征点数", "检测的最大特征点数量",
+            "max_points", "鏈€澶х壒寰佺偣鏁?, "妫€娴嬬殑鏈€澶х壒寰佺偣鏁伴噺",
             gis::framework::ParamType::Int, false, int{5000},
             int{1}, int{100000}
         },
         gis::framework::ParamSpec{
-            "ratio_test", "Lowe比率阈值", "Lowe比率测试阈值(0-1)",
+            "ratio_test", "Lowe姣旂巼闃堝€?, "Lowe姣旂巼娴嬭瘯闃堝€?0-1)",
             gis::framework::ParamType::Double, false, double{0.75},
             double{0.0}, double{1.0}
         },
         gis::framework::ParamSpec{
-            "transform", "变换模型", "配准变换模型",
+            "transform", "鍙樻崲妯″瀷", "閰嶅噯鍙樻崲妯″瀷",
             gis::framework::ParamType::Enum, false, std::string{"affine"},
             int{0}, int{0},
             {"affine", "projective", "similarity", "translation"}
         },
         gis::framework::ParamSpec{
-            "resample", "重采样方式", "配准重采样方式",
+            "resample", "閲嶉噰鏍锋柟寮?, "閰嶅噯閲嶉噰鏍锋柟寮?,
             gis::framework::ParamType::Enum, false, std::string{"bilinear"},
             int{0}, int{0},
             {"nearest", "bilinear", "cubic"}
         },
         gis::framework::ParamSpec{
-            "change_method", "变化检测方法", "变化检测算法",
+            "change_method", "鍙樺寲妫€娴嬫柟娉?, "鍙樺寲妫€娴嬬畻娉?,
             gis::framework::ParamType::Enum, false, std::string{"differencing"},
             int{0}, int{0},
             {"differencing", "ratio", "pcd"}
         },
         gis::framework::ParamSpec{
-            "threshold", "变化阈值", "变化检测阈值(0=自动)",
+            "threshold", "鍙樺寲闃堝€?, "鍙樺寲妫€娴嬮槇鍊?0=鑷姩)",
             gis::framework::ParamType::Double, false, double{0.0},
             double{0.0}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "band", "波段序号", "处理的波段序号(从1开始)",
+            "band", "娉㈡搴忓彿", "澶勭悊鐨勬尝娈靛簭鍙?浠?寮€濮?",
             gis::framework::ParamType::Int, false, int{1},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "ecc_motion", "ECC运动模型", "ECC配准的运动模型",
+            "ecc_motion", "ECC杩愬姩妯″瀷", "ECC閰嶅噯鐨勮繍鍔ㄦā鍨?,
             gis::framework::ParamType::Enum, false, std::string{"affine"},
             int{0}, int{0},
             {"translation", "euclidean", "affine", "homography"}
         },
         gis::framework::ParamSpec{
-            "ecc_iterations", "ECC迭代次数", "ECC配准最大迭代次数",
+            "ecc_iterations", "ECC杩唬娆℃暟", "ECC閰嶅噯鏈€澶ц凯浠ｆ鏁?,
             gis::framework::ParamType::Int, false, int{200},
             int{1}, int{10000}
         },
         gis::framework::ParamSpec{
-            "ecc_epsilon", "ECC收敛阈值", "ECC配准收敛阈值",
+            "ecc_epsilon", "ECC鏀舵暃闃堝€?, "ECC閰嶅噯鏀舵暃闃堝€?,
             gis::framework::ParamType::Double, false, double{1e-6},
             double{1e-10}, double{1.0}
         },
         gis::framework::ParamSpec{
-            "corner_method", "角点方法", "角点检测方法",
+            "corner_method", "瑙掔偣鏂规硶", "瑙掔偣妫€娴嬫柟娉?,
             gis::framework::ParamType::Enum, false, std::string{"harris"},
             int{0}, int{0},
             {"harris", "shi_tomasi"}
         },
         gis::framework::ParamSpec{
-            "max_corners", "最大角点数", "检测的最大角点数量",
+            "max_corners", "鏈€澶ц鐐规暟", "妫€娴嬬殑鏈€澶ц鐐规暟閲?,
             gis::framework::ParamType::Int, false, int{5000},
             int{1}, int{100000}
         },
         gis::framework::ParamSpec{
-            "quality_level", "质量水平", "角点检测质量水平(0-1)",
+            "quality_level", "璐ㄩ噺姘村钩", "瑙掔偣妫€娴嬭川閲忔按骞?0-1)",
             gis::framework::ParamType::Double, false, double{0.01},
             double{0.0}, double{1.0}
         },
         gis::framework::ParamSpec{
-            "min_distance", "最小间距", "角点之间的最小欧氏距离",
+            "min_distance", "鏈€灏忛棿璺?, "瑙掔偣涔嬮棿鐨勬渶灏忔姘忚窛绂?,
             gis::framework::ParamType::Double, false, double{10.0},
             double{0.0}, double{10000.0}
         },
         gis::framework::ParamSpec{
-            "stitch_confidence", "拼接置信度", "图像拼接的置信度阈值",
+            "stitch_confidence", "鎷兼帴缃俊搴?, "鍥惧儚鎷兼帴鐨勭疆淇″害闃堝€?,
             gis::framework::ParamType::Double, false, double{0.5},
             double{0.0}, double{1.0}
         },
@@ -490,6 +498,14 @@ gis::framework::Result MatchingPlugin::doRegister(
 
     progress.onMessage("Writing output: " + output);
     gis::core::matToGdalTiff(warped, reference, output, band);
+
+    {
+        auto refDs = gis::core::openRaster(reference, true);
+        auto meta = buildMetadata(input, refDs.get(), "matching.register");
+        meta.algorithmParams["transform"] = transformType;
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -577,6 +593,15 @@ gis::framework::Result MatchingPlugin::doChange(
     cv::Mat outFloat;
     changeMap.convertTo(outFloat, CV_32F);
     gis::core::matToGdalTiff(outFloat, reference, output, band);
+
+    {
+        auto refDs = gis::core::openRaster(reference, true);
+        auto meta = buildMetadata(input, refDs.get(), "matching.change");
+        meta.algorithmParams["method"] = changeMethod;
+        meta.algorithmParams["threshold"] = std::to_string(threshVal);
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -686,6 +711,14 @@ gis::framework::Result MatchingPlugin::doEccRegister(
 
     progress.onMessage("Writing output: " + output);
     gis::core::matToGdalTiff(warped, reference, output, band);
+
+    {
+        auto refDs = gis::core::openRaster(reference, true);
+        auto meta = buildMetadata(input, refDs.get(), "matching.ecc_register");
+        meta.algorithmParams["motion_type"] = eccMotion;
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -874,6 +907,14 @@ gis::framework::Result MatchingPlugin::doStitch(
 
     progress.onMessage("Writing output: " + output);
     gis::core::matToGdalTiff(outFloat, inputFiles[0], output, 1);
+
+    {
+        auto firstDs = gis::core::openRaster(inputFiles[0], true);
+        auto meta = buildMetadata(input, firstDs.get(), "matching.stitch");
+        meta.algorithmParams["input_count"] = std::to_string(inputFiles.size());
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 

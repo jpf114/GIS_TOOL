@@ -23,6 +23,14 @@ namespace gis::plugins {
 
 namespace {
 
+gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
+    gis::core::ProcessingMetadata meta;
+    meta.sourceFile = input;
+    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
+    meta.processingAlgorithm = algorithm;
+    return meta;
+}
+
 namespace fs = std::filesystem;
 
 std::string trim(const std::string& value) {
@@ -272,7 +280,7 @@ bool loadRadiometricCoefficients(const std::string& metadataFile,
 std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "几何校正与辐射处理功能",
+            "action", "瀛愬姛鑳?, "鍑犱綍鏍℃涓庤緪灏勫鐞嗗姛鑳?,
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0}, {
                 "dos_correction", "radiometric_calibration", "gcp_register",
@@ -281,94 +289,94 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
             }
         },
         gis::framework::ParamSpec{
-            "input", "输入栅格", "待处理栅格影像路径",
+            "input", "杈撳叆鏍呮牸", "寰呭鐞嗘爡鏍煎奖鍍忚矾寰?,
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出栅格", "输出结果栅格路径",
+            "output", "杈撳嚭鏍呮牸", "杈撳嚭缁撴灉鏍呮牸璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "band", "波段序号", "待处理波段序号，从 1 开始",
+            "band", "娉㈡搴忓彿", "寰呭鐞嗘尝娈靛簭鍙凤紝浠?1 寮€濮?,
             gis::framework::ParamType::Int, false, int{1},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "dark_object_value", "暗像元值", "小于 0 时自动使用当前波段最小值",
+            "dark_object_value", "鏆楀儚鍏冨€?, "灏忎簬 0 鏃惰嚜鍔ㄤ娇鐢ㄥ綋鍓嶆尝娈垫渶灏忓€?,
             gis::framework::ParamType::Double, false, double{-1.0},
             double{-1e6}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "gain", "增益", "辐射定标增益系数",
+            "gain", "澧炵泭", "杈愬皠瀹氭爣澧炵泭绯绘暟",
             gis::framework::ParamType::Double, false, double{1.0},
             double{-1e6}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "offset", "偏移", "辐射定标偏移量",
+            "offset", "鍋忕Щ", "杈愬皠瀹氭爣鍋忕Щ閲?,
             gis::framework::ParamType::Double, false, double{0.0},
             double{-1e6}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "metadata_file", "元数据文件", "可选，自动读取辐射定标系数的元数据文件",
+            "metadata_file", "鍏冩暟鎹枃浠?, "鍙€夛紝鑷姩璇诲彇杈愬皠瀹氭爣绯绘暟鐨勫厓鏁版嵁鏂囦欢",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "gcp_file", "控制点文件", "CSV 控制点文件，表头应包含 pixel_x,pixel_y,map_x,map_y",
+            "gcp_file", "鎺у埗鐐规枃浠?, "CSV 鎺у埗鐐规枃浠讹紝琛ㄥご搴斿寘鍚?pixel_x,pixel_y,map_x,map_y",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "dst_srs", "目标坐标系", "目标坐标系，例如 EPSG:4326（RPC正射校正默认 EPSG:4326）",
+            "dst_srs", "鐩爣鍧愭爣绯?, "鐩爣鍧愭爣绯伙紝渚嬪 EPSG:4326锛圧PC姝ｅ皠鏍℃榛樿 EPSG:4326锛?,
             gis::framework::ParamType::CRS, false, std::string{"EPSG:4326"}
         },
         gis::framework::ParamSpec{
-            "resample", "重采样方法", "控制点配准后的重采样算法",
+            "resample", "閲嶉噰鏍锋柟娉?, "鎺у埗鐐归厤鍑嗗悗鐨勯噸閲囨牱绠楁硶",
             gis::framework::ParamType::Enum, false, std::string{"nearest"},
             int{0}, int{0}, {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average"}
         },
         gis::framework::ParamSpec{
-            "slope_raster", "坡度栅格", "坡度栅格文件，像元值单位为度",
+            "slope_raster", "鍧″害鏍呮牸", "鍧″害鏍呮牸鏂囦欢锛屽儚鍏冨€煎崟浣嶄负搴?,
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "aspect_raster", "坡向栅格", "坡向栅格文件，像元值单位为度",
+            "aspect_raster", "鍧″悜鏍呮牸", "鍧″悜鏍呮牸鏂囦欢锛屽儚鍏冨€煎崟浣嶄负搴?,
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "sun_zenith_deg", "太阳天顶角", "太阳天顶角，单位为度",
+            "sun_zenith_deg", "澶槼澶╅《瑙?, "澶槼澶╅《瑙掞紝鍗曚綅涓哄害",
             gis::framework::ParamType::Double, false, double{30.0},
             double{0.0}, double{90.0}
         },
         gis::framework::ParamSpec{
-            "sun_azimuth_deg", "太阳方位角", "太阳方位角，单位为度",
+            "sun_azimuth_deg", "澶槼鏂逛綅瑙?, "澶槼鏂逛綅瑙掞紝鍗曚綅涓哄害",
             gis::framework::ParamType::Double, false, double{180.0},
             double{0.0}, double{360.0}
         },
         gis::framework::ParamSpec{
-            "minnaert_k", "Minnaert 系数", "Minnaert 地形校正系数",
+            "minnaert_k", "Minnaert 绯绘暟", "Minnaert 鍦板舰鏍℃绯绘暟",
             gis::framework::ParamType::Double, false, double{0.5},
             double{0.0}, double{1.0}
         },
         gis::framework::ParamSpec{
-            "c_value", "C 系数", "C 地形校正系数",
+            "c_value", "C 绯绘暟", "C 鍦板舰鏍℃绯绘暟",
             gis::framework::ParamType::Double, false, double{0.1},
             double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
-            "dark_percentile", "暗像元百分位", "简化 QUAC 使用的暗像元百分位",
+            "dark_percentile", "鏆楀儚鍏冪櫨鍒嗕綅", "绠€鍖?QUAC 浣跨敤鐨勬殫鍍忓厓鐧惧垎浣?,
             gis::framework::ParamType::Double, false, double{1.0},
             double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
-            "bright_percentile", "亮像元百分位", "简化 QUAC 使用的亮像元百分位",
+            "bright_percentile", "浜儚鍏冪櫨鍒嗕綅", "绠€鍖?QUAC 浣跨敤鐨勪寒鍍忓厓鐧惧垎浣?,
             gis::framework::ParamType::Double, false, double{99.0},
             double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
-            "dem_file", "DEM 文件", "RPC 正射校正使用的可选 DEM 文件",
+            "dem_file", "DEM 鏂囦欢", "RPC 姝ｅ皠鏍℃浣跨敤鐨勫彲閫?DEM 鏂囦欢",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "rpc_height", "固定高程", "不使用 DEM 时的固定高程值",
+            "rpc_height", "鍥哄畾楂樼▼", "涓嶄娇鐢?DEM 鏃剁殑鍥哄畾楂樼▼鍊?,
             gis::framework::ParamType::Double, false, double{0.0},
             double{-10000.0}, double{10000.0}
         },
@@ -444,6 +452,13 @@ gis::framework::Result GeorefPlugin::doDosCorrection(
     progress.throwIfCancelled();
     progress.onProgress(0.75);
     gis::core::matToGdalTiff(corrected, input, output, band);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "georef.dos");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -490,6 +505,13 @@ gis::framework::Result GeorefPlugin::doRadiometricCalibration(
     progress.throwIfCancelled();
     progress.onProgress(0.75);
     gis::core::matToGdalTiff(calibrated, input, output, band);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "georef.radiometric");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -604,6 +626,13 @@ gis::framework::Result GeorefPlugin::doGcpRegister(
     }
 
     GDALClose(dstHandle);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "georef.gcp_register");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -682,6 +711,13 @@ gis::framework::Result GeorefPlugin::doCosineCorrection(
     progress.throwIfCancelled();
     progress.onProgress(0.8);
     gis::core::matToGdalTiff(corrected, input, output, band);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "georef.cosine_correction");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -761,6 +797,13 @@ gis::framework::Result GeorefPlugin::doMinnaertCorrection(
     progress.throwIfCancelled();
     progress.onProgress(0.8);
     gis::core::matToGdalTiff(corrected, input, output, band);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "georef.minnaert_correction");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -842,6 +885,13 @@ gis::framework::Result GeorefPlugin::doCCorrection(
     progress.throwIfCancelled();
     progress.onProgress(0.8);
     gis::core::matToGdalTiff(corrected, input, output, band);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "georef.c_correction");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -916,6 +966,12 @@ gis::framework::Result GeorefPlugin::doQuacCorrection(
     progress.throwIfCancelled();
     progress.onProgress(0.8);
     gis::core::matsToGdalTiff(correctedBands, srcDs.get(), output);
+
+    {
+        auto meta = buildMetadata(input, srcDs.get(), "georef.percentile_stretch");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -993,6 +1049,12 @@ gis::framework::Result GeorefPlugin::doRpcOrthorectify(
     }
 
     GDALClose(dstHandle);
+
+    {
+        auto meta = buildMetadata(input, srcDs.get(), "georef.rpc_orthorectify");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 

@@ -15,6 +15,14 @@ namespace gis::plugins {
 
 namespace {
 
+gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
+    gis::core::ProcessingMetadata meta;
+    meta.sourceFile = input;
+    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
+    meta.processingAlgorithm = algorithm;
+    return meta;
+}
+
 void ensureParentDirectoryForFile(const std::string& path) {
     const std::filesystem::path fsPath(path);
     if (!fsPath.has_parent_path()) {
@@ -96,30 +104,30 @@ void copyRasterGeoMetadata(GDALDataset* srcDS, GDALDataset* dstDS) {
 std::vector<gis::framework::ParamSpec> RasterRenderPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "选择要执行的子功能",
+            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"colormap", "histogram_match"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入影像文件路径",
+            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "reference", "参考影像", "直方图匹配使用的参考影像路径",
+            "reference", "鍙傝€冨奖鍍?, "鐩存柟鍥惧尮閰嶄娇鐢ㄧ殑鍙傝€冨奖鍍忚矾寰?,
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "输出结果路径",
+            "output", "杈撳嚭鏂囦欢", "杈撳嚭缁撴灉璺緞",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "band", "波段序号", "处理的波段序号，从 1 开始",
+            "band", "娉㈡搴忓彿", "澶勭悊鐨勬尝娈靛簭鍙凤紝浠?1 寮€濮?,
             gis::framework::ParamType::Int, false, int{1},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "cmap", "颜色映射", "伪彩色映射方案",
+            "cmap", "棰滆壊鏄犲皠", "浼僵鑹叉槧灏勬柟妗?,
             gis::framework::ParamType::Enum, false, std::string{"jet"},
             int{0}, int{0},
             {"jet", "viridis", "hot", "cool", "spring", "summer", "autumn", "winter", "bone", "hsv", "rainbow", "ocean"}
@@ -199,6 +207,13 @@ gis::framework::Result RasterRenderPlugin::doColormap(
     }
 
     GDALClose(dstDS);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "raster_render.colormap");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Colormap applied: " + cmap, output);
@@ -270,6 +285,13 @@ gis::framework::Result RasterRenderPlugin::doHistogramMatch(
         matchedFloat.data, matchedFloat.cols, matchedFloat.rows, GDT_Float32, 0, 0);
 
     GDALClose(dstDS);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "raster_render.histogram_match");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 

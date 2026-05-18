@@ -17,221 +17,221 @@ namespace gis::plugins {
 std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "选择要执行的子功能",
+            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "skeleton", "gabor_filter", "glcm_texture", "mean_shift_filter", "connected_components", "kmeans"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入影像文件路径",
+            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "输出影像文件路径",
+            "output", "杈撳嚭鏂囦欢", "杈撳嚭褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "band", "波段序号", "处理的波段序号(从1开始)",
+            "band", "娉㈡搴忓彿", "澶勭悊鐨勬尝娈靛簭鍙?浠?寮€濮?",
             gis::framework::ParamType::Int, false, int{1},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "method", "方法", "处理方法",
+            "method", "鏂规硶", "澶勭悊鏂规硶",
             gis::framework::ParamType::Enum, false, std::string{"otsu"},
             int{0}, int{0},
             {"binary", "binary_inv", "truncate", "tozero", "otsu", "adaptive_gaussian", "adaptive_mean"}
         },
         gis::framework::ParamSpec{
-            "threshold_value", "阈值", "阈值大小",
+            "threshold_value", "闃堝€?, "闃堝€煎ぇ灏?,
             gis::framework::ParamType::Double, false, double{128.0},
             double{0.0}, double{65535.0}
         },
         gis::framework::ParamSpec{
-            "max_value", "最大值", "阈值化后的最大值",
+            "max_value", "鏈€澶у€?, "闃堝€煎寲鍚庣殑鏈€澶у€?,
             gis::framework::ParamType::Double, false, double{255.0},
             double{0.0}, double{65535.0}
         },
         gis::framework::ParamSpec{
-            "filter_type", "滤波类型", "滤波算法",
+            "filter_type", "婊ゆ尝绫诲瀷", "婊ゆ尝绠楁硶",
             gis::framework::ParamType::Enum, false, std::string{"gaussian"},
             int{0}, int{0},
             {"gaussian", "median", "bilateral", "morph_open", "morph_close", "morph_dilate", "morph_erode"}
         },
         gis::framework::ParamSpec{
-            "kernel_size", "核大小", "滤波核大小(奇数，Gabor默认9)",
+            "kernel_size", "鏍稿ぇ灏?, "婊ゆ尝鏍稿ぇ灏?濂囨暟锛孏abor榛樿9)",
             gis::framework::ParamType::Int, false, int{5},
             int{1}, int{101}
         },
         gis::framework::ParamSpec{
-            "sigma", "sigma值", "高斯滤波sigma参数(Gabor默认2.0)",
+            "sigma", "sigma鍊?, "楂樻柉婊ゆ尝sigma鍙傛暟(Gabor榛樿2.0)",
             gis::framework::ParamType::Double, false, double{1.5},
             double{0.0}, double{1000.0}
         },
         gis::framework::ParamSpec{
-            "gabor_theta", "方向角", "Gabor滤波核的方向角（弧度）",
+            "gabor_theta", "鏂瑰悜瑙?, "Gabor婊ゆ尝鏍哥殑鏂瑰悜瑙掞紙寮у害锛?,
             gis::framework::ParamType::Double, false, double{0.0},
             double{0.0}, double{6.2832}
         },
         gis::framework::ParamSpec{
-            "gabor_lambda", "波长", "Gabor滤波核的波长",
+            "gabor_lambda", "娉㈤暱", "Gabor婊ゆ尝鏍哥殑娉㈤暱",
             gis::framework::ParamType::Double, false, double{8.0},
             double{0.001}, double{1000.0}
         },
         gis::framework::ParamSpec{
-            "gabor_gamma", "纵横比", "Gabor滤波核的纵横比",
+            "gabor_gamma", "绾垫í姣?, "Gabor婊ゆ尝鏍哥殑绾垫í姣?,
             gis::framework::ParamType::Double, false, double{0.5},
             double{0.001}, double{10.0}
         },
         gis::framework::ParamSpec{
-            "gabor_psi", "相位偏移", "Gabor滤波核的相位偏移",
+            "gabor_psi", "鐩镐綅鍋忕Щ", "Gabor婊ゆ尝鏍哥殑鐩镐綅鍋忕Щ",
             gis::framework::ParamType::Double, false, double{0.0},
             double{-3.1416}, double{3.1416}
         },
         gis::framework::ParamSpec{
-            "glcm_metric", "纹理指标", "GLCM输出的纹理指标类型",
+            "glcm_metric", "绾圭悊鎸囨爣", "GLCM杈撳嚭鐨勭汗鐞嗘寚鏍囩被鍨?,
             gis::framework::ParamType::Enum, false, std::string{"contrast"},
             int{0}, int{0},
             {"contrast", "homogeneity", "energy", "entropy"}
         },
         gis::framework::ParamSpec{
-            "glcm_levels", "灰度级数", "GLCM量化灰度级数",
+            "glcm_levels", "鐏板害绾ф暟", "GLCM閲忓寲鐏板害绾ф暟",
             gis::framework::ParamType::Int, false, int{8},
             int{2}, int{256}
         },
         gis::framework::ParamSpec{
-            "spatial_radius", "空间半径", "Mean Shift空间窗口半径",
+            "spatial_radius", "绌洪棿鍗婂緞", "Mean Shift绌洪棿绐楀彛鍗婂緞",
             gis::framework::ParamType::Double, false, double{10.0},
             double{0.001}, double{1000.0}
         },
         gis::framework::ParamSpec{
-            "color_radius", "颜色半径", "Mean Shift颜色窗口半径",
+            "color_radius", "棰滆壊鍗婂緞", "Mean Shift棰滆壊绐楀彛鍗婂緞",
             gis::framework::ParamType::Double, false, double{20.0},
             double{0.001}, double{1000.0}
         },
         gis::framework::ParamSpec{
-            "pyramid_level", "金字塔层数", "Mean Shift金字塔层数",
+            "pyramid_level", "閲戝瓧濉斿眰鏁?, "Mean Shift閲戝瓧濉斿眰鏁?,
             gis::framework::ParamType::Int, false, int{1},
             int{0}, int{10}
         },
         gis::framework::ParamSpec{
-            "enhance_type", "增强类型", "增强算法",
+            "enhance_type", "澧炲己绫诲瀷", "澧炲己绠楁硶",
             gis::framework::ParamType::Enum, false, std::string{"equalize"},
             int{0}, int{0},
             {"equalize", "clahe", "normalize", "log", "gamma"}
         },
         gis::framework::ParamSpec{
-            "clip_limit", "CLAHE裁剪限制", "CLAHE算法的裁剪限制参数",
+            "clip_limit", "CLAHE瑁佸壀闄愬埗", "CLAHE绠楁硶鐨勮鍓檺鍒跺弬鏁?,
             gis::framework::ParamType::Double, false, double{2.0},
             double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
-            "gamma", "Gamma值", "Gamma校正参数",
+            "gamma", "Gamma鍊?, "Gamma鏍℃鍙傛暟",
             gis::framework::ParamType::Double, false, double{1.0},
             double{0.001}, double{100.0}
         },
         gis::framework::ParamSpec{
-            "edge_method", "边缘检测方法", "边缘检测算子",
+            "edge_method", "杈圭紭妫€娴嬫柟娉?, "杈圭紭妫€娴嬬畻瀛?,
             gis::framework::ParamType::Enum, false, std::string{"canny"},
             int{0}, int{0},
             {"canny", "sobel", "laplacian", "scharr"}
         },
         gis::framework::ParamSpec{
-            "low_threshold", "低阈值", "Canny边缘检测低阈值",
+            "low_threshold", "浣庨槇鍊?, "Canny杈圭紭妫€娴嬩綆闃堝€?,
             gis::framework::ParamType::Double, false, double{50.0},
             double{0.0}, double{65535.0}
         },
         gis::framework::ParamSpec{
-            "high_threshold", "高阈值", "Canny边缘检测高阈值",
+            "high_threshold", "楂橀槇鍊?, "Canny杈圭紭妫€娴嬮珮闃堝€?,
             gis::framework::ParamType::Double, false, double{150.0},
             double{0.0}, double{65535.0}
         },
         gis::framework::ParamSpec{
-            "sobel_dx", "Sobel dx", "Sobel x方向导数阶数",
+            "sobel_dx", "Sobel dx", "Sobel x鏂瑰悜瀵兼暟闃舵暟",
             gis::framework::ParamType::Int, false, int{1},
             int{0}, int{2}
         },
         gis::framework::ParamSpec{
-            "sobel_dy", "Sobel dy", "Sobel y方向导数阶数",
+            "sobel_dy", "Sobel dy", "Sobel y鏂瑰悜瀵兼暟闃舵暟",
             gis::framework::ParamType::Int, false, int{1},
             int{0}, int{2}
         },
         gis::framework::ParamSpec{
-            "min_area", "最小面积", "轮廓过滤的最小面积(像素)",
+            "min_area", "鏈€灏忛潰绉?, "杞粨杩囨护鐨勬渶灏忛潰绉?鍍忕礌)",
             gis::framework::ParamType::Double, false, double{100.0},
             double{0.0}, double{1e9}
         },
         gis::framework::ParamSpec{
-            "template_file", "模板文件", "模板匹配的模板影像路径",
+            "template_file", "妯℃澘鏂囦欢", "妯℃澘鍖归厤鐨勬ā鏉垮奖鍍忚矾寰?,
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "match_method", "匹配方法", "模板匹配算法",
+            "match_method", "鍖归厤鏂规硶", "妯℃澘鍖归厤绠楁硶",
             gis::framework::ParamType::Enum, false, std::string{"ccoeff_normed"},
             int{0}, int{0},
             {"sqdiff", "sqdiff_normed", "ccorr", "ccorr_normed", "ccoeff", "ccoeff_normed"}
         },
         gis::framework::ParamSpec{
-            "pan_file", "全色影像", "全色锐化用的高分辨率全色影像路径",
+            "pan_file", "鍏ㄨ壊褰卞儚", "鍏ㄨ壊閿愬寲鐢ㄧ殑楂樺垎杈ㄧ巼鍏ㄨ壊褰卞儚璺緞",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "pan_method", "融合方法", "全色锐化融合算法",
+            "pan_method", "铻嶅悎鏂规硶", "鍏ㄨ壊閿愬寲铻嶅悎绠楁硶",
             gis::framework::ParamType::Enum, false, std::string{"brovey"},
             int{0}, int{0},
             {"brovey", "simple_mean", "ihs"}
         },
         gis::framework::ParamSpec{
-            "hough_type", "霍夫类型", "霍夫变换检测类型",
+            "hough_type", "闇嶅か绫诲瀷", "闇嶅か鍙樻崲妫€娴嬬被鍨?,
             gis::framework::ParamType::Enum, false, std::string{"lines"},
             int{0}, int{0},
             {"lines", "circles"}
         },
         gis::framework::ParamSpec{
-            "hough_threshold", "霍夫阈值", "霍夫变换累加器阈值",
+            "hough_threshold", "闇嶅か闃堝€?, "闇嶅か鍙樻崲绱姞鍣ㄩ槇鍊?,
             gis::framework::ParamType::Double, false, double{50.0},
             double{0.0}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "min_line_length", "最小线长", "霍夫直线检测的最小线段长度",
+            "min_line_length", "鏈€灏忕嚎闀?, "闇嶅か鐩寸嚎妫€娴嬬殑鏈€灏忕嚎娈甸暱搴?,
             gis::framework::ParamType::Double, false, double{50.0},
             double{0.0}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "max_line_gap", "最大线间隙", "霍夫直线检测的最大间隙",
+            "max_line_gap", "鏈€澶х嚎闂撮殭", "闇嶅か鐩寸嚎妫€娴嬬殑鏈€澶ч棿闅?,
             gis::framework::ParamType::Double, false, double{10.0},
             double{0.0}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "min_radius", "最小半径", "霍夫圆检测的最小半径",
+            "min_radius", "鏈€灏忓崐寰?, "闇嶅か鍦嗘娴嬬殑鏈€灏忓崐寰?,
             gis::framework::ParamType::Int, false, int{1},
             int{0}, int{65536}
         },
         gis::framework::ParamSpec{
-            "max_radius", "最大半径", "霍夫圆检测的最大半径(0=自动)",
+            "max_radius", "鏈€澶у崐寰?, "闇嶅か鍦嗘娴嬬殑鏈€澶у崐寰?0=鑷姩)",
             gis::framework::ParamType::Int, false, int{0},
             int{0}, int{65536}
         },
         gis::framework::ParamSpec{
-            "circle_param2", "圆检测参数", "霍夫圆检测的累加器阈值",
+            "circle_param2", "鍦嗘娴嬪弬鏁?, "闇嶅か鍦嗘娴嬬殑绱姞鍣ㄩ槇鍊?,
             gis::framework::ParamType::Double, false, double{30.0},
             double{0.0}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "marker_input", "标记输入", "分水岭分割的种子标记文件(不指定则自动生成)",
+            "marker_input", "鏍囪杈撳叆", "鍒嗘按宀垎鍓茬殑绉嶅瓙鏍囪鏂囦欢(涓嶆寚瀹氬垯鑷姩鐢熸垚)",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "k", "聚类数", "K-Means聚类的类别数",
+            "k", "鑱氱被鏁?, "K-Means鑱氱被鐨勭被鍒暟",
             gis::framework::ParamType::Int, false, int{5},
             int{1}, int{1000}
         },
         gis::framework::ParamSpec{
-            "max_iter", "最大迭代", "K-Means最大迭代次数",
+            "max_iter", "鏈€澶ц凯浠?, "K-Means鏈€澶ц凯浠ｆ鏁?,
             gis::framework::ParamType::Int, false, int{100},
             int{1}, int{100000}
         },
         gis::framework::ParamSpec{
-            "epsilon_kmeans", "收敛阈值", "K-Means收敛阈值",
+            "epsilon_kmeans", "鏀舵暃闃堝€?, "K-Means鏀舵暃闃堝€?,
             gis::framework::ParamType::Double, false, double{0.001},
             double{0.0}, double{100.0}
         },
@@ -264,6 +264,19 @@ gis::framework::Result ProcessingPlugin::execute(
     return gis::framework::Result::fail("Unknown action: " + action);
 }
 
+namespace {
+
+gis::core::ProcessingMetadata buildMetadata(const std::string& input, const std::string& algorithm) {
+    gis::core::ProcessingMetadata meta;
+    meta.sourceFile = input;
+    auto srcDs = gis::core::openRaster(input, true);
+    meta.sourceCrs = gis::core::getSRSWKT(srcDs.get());
+    meta.processingAlgorithm = algorithm;
+    return meta;
+}
+
+} // namespace
+
 static cv::Mat readBandAsMat(const std::string& path, int bandIndex,
                               gis::core::ProgressReporter& progress) {
     progress.onMessage("Reading band " + std::to_string(bandIndex) + " from " + path);
@@ -272,7 +285,8 @@ static cv::Mat readBandAsMat(const std::string& path, int bandIndex,
 
 static gis::framework::Result writeMatOutput(
     const cv::Mat& mat, const std::string& inputPath, const std::string& outputPath,
-    int bandIndex, gis::core::ProgressReporter& progress) {
+    int bandIndex, gis::core::ProgressReporter& progress,
+    const std::string& algorithm = "") {
 
     if (outputPath.empty()) {
         return gis::framework::Result::fail("output is required");
@@ -280,6 +294,12 @@ static gis::framework::Result writeMatOutput(
 
     progress.onMessage("Writing output: " + outputPath);
     gis::core::matToGdalTiff(mat, inputPath, outputPath, bandIndex);
+
+    if (!algorithm.empty()) {
+        auto meta = buildMetadata(inputPath, algorithm);
+        gis::core::writeProcessingMetadata(outputPath, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Processing completed successfully", outputPath);
@@ -337,7 +357,7 @@ gis::framework::Result ProcessingPlugin::doThreshold(
 
     cv::Mat outFloat;
     result.convertTo(outFloat, CV_32F, 1.0 / 255.0);
-    return writeMatOutput(outFloat, input, output, band, progress);
+    return writeMatOutput(outFloat, input, output, band, progress, "processing.threshold");
 }
 
 gis::framework::Result ProcessingPlugin::doFilter(
@@ -398,7 +418,7 @@ gis::framework::Result ProcessingPlugin::doFilter(
     progress.throwIfCancelled();
 
     progress.onProgress(0.7);
-    return writeMatOutput(result, input, output, band, progress);
+    return writeMatOutput(result, input, output, band, progress, "processing.filter");
 }
 
 gis::framework::Result ProcessingPlugin::doEnhance(
@@ -467,7 +487,7 @@ gis::framework::Result ProcessingPlugin::doEnhance(
     progress.throwIfCancelled();
 
     progress.onProgress(0.7);
-    return writeMatOutput(result, input, output, band, progress);
+    return writeMatOutput(result, input, output, band, progress, "processing.enhance");
 }
 
 gis::framework::Result ProcessingPlugin::doStats(
@@ -600,7 +620,7 @@ gis::framework::Result ProcessingPlugin::doEdge(
 
     cv::Mat outFloat;
     result.convertTo(outFloat, CV_32F, 1.0 / 255.0);
-    return writeMatOutput(outFloat, input, output, band, progress);
+    return writeMatOutput(outFloat, input, output, band, progress, "processing.edge");
 }
 
 gis::framework::Result ProcessingPlugin::doContour(
@@ -657,7 +677,7 @@ gis::framework::Result ProcessingPlugin::doContour(
     cv::Mat outFloat;
     resultImg.convertTo(outFloat, CV_32F, 1.0 / 255.0);
 
-    auto result = writeMatOutput(outFloat, input, output, band, progress);
+    auto result = writeMatOutput(outFloat, input, output, band, progress, "processing.contour");
     result.metadata["total_contours"] = std::to_string(contours.size());
     result.metadata["kept_contours"] = std::to_string(keptCount);
     return result;
@@ -730,7 +750,7 @@ gis::framework::Result ProcessingPlugin::doTemplateMatch(
     cv::Mat outFloat;
     matchResult.convertTo(outFloat, CV_32F);
 
-    auto result = writeMatOutput(outFloat, input, output, band, progress);
+    auto result = writeMatOutput(outFloat, input, output, band, progress, "processing.template_match");
     result.metadata["match_x"] = std::to_string(matchLoc.x);
     result.metadata["match_y"] = std::to_string(matchLoc.y);
     result.metadata["match_score"] = std::to_string(matchVal);
@@ -859,6 +879,12 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
     progress.onProgress(0.8);
 
     gis::core::matsToGdalTiff(sharpenedBands, msDS.get(), output);
+
+    {
+        auto meta = buildMetadata(input, "processing.pansharpen");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -945,7 +971,7 @@ gis::framework::Result ProcessingPlugin::doHough(
     cv::Mat outFloat;
     resultImg.convertTo(outFloat, CV_32F, 1.0 / 255.0);
 
-    auto result = writeMatOutput(outFloat, input, output, band, progress);
+    auto result = writeMatOutput(outFloat, input, output, band, progress, "processing.hough");
     result.metadata["hough_type"] = houghType;
     result.metadata["detect_count"] = std::to_string(detectCount);
     return result;
@@ -1038,7 +1064,7 @@ gis::framework::Result ProcessingPlugin::doWatershed(
 
     progress.onMessage("Watershed segmentation: " + std::to_string(segmentCount) + " segments");
 
-    auto result = writeMatOutput(resultImg, input, output, band, progress);
+    auto result = writeMatOutput(resultImg, input, output, band, progress, "processing.watershed");
     result.metadata["segment_count"] = std::to_string(segmentCount);
     return result;
 }
@@ -1088,7 +1114,7 @@ gis::framework::Result ProcessingPlugin::doSkeleton(
 
     cv::Mat outFloat;
     skeleton.convertTo(outFloat, CV_32F, 1.0 / 255.0);
-    auto result = writeMatOutput(outFloat, input, output, band, progress);
+    auto result = writeMatOutput(outFloat, input, output, band, progress, "processing.skeleton");
     result.metadata["action"] = "skeleton";
     return result;
 }
@@ -1135,7 +1161,7 @@ gis::framework::Result ProcessingPlugin::doGaborFilter(
     progress.throwIfCancelled();
 
     progress.onProgress(0.7);
-    auto execResult = writeMatOutput(result, input, output, band, progress);
+    auto execResult = writeMatOutput(result, input, output, band, progress, "processing.gabor_filter");
     execResult.metadata["action"] = "gabor_filter";
     execResult.metadata["kernel_size"] = std::to_string(kernelSize);
     execResult.metadata["sigma"] = std::to_string(sigma);
@@ -1233,7 +1259,7 @@ gis::framework::Result ProcessingPlugin::doGlcmTexture(
     cv::Mat normalized;
     cv::normalize(result, normalized, 0.0, 1.0, cv::NORM_MINMAX, CV_32F);
 
-    auto execResult = writeMatOutput(normalized, input, output, band, progress);
+    auto execResult = writeMatOutput(normalized, input, output, band, progress, "processing.glcm_texture");
     execResult.metadata["action"] = "glcm_texture";
     execResult.metadata["metric"] = metric;
     execResult.metadata["kernel_size"] = std::to_string(kernelSize);
@@ -1280,7 +1306,7 @@ gis::framework::Result ProcessingPlugin::doMeanShiftSegment(
     progress.throwIfCancelled();
 
     progress.onProgress(0.75);
-    auto execResult = writeMatOutput(result, input, output, band, progress);
+    auto execResult = writeMatOutput(result, input, output, band, progress, "processing.mean_shift_filter");
     execResult.metadata["action"] = "mean_shift_filter";
     execResult.metadata["spatial_radius"] = std::to_string(spatialRadius);
     execResult.metadata["color_radius"] = std::to_string(colorRadius);
@@ -1316,7 +1342,7 @@ gis::framework::Result ProcessingPlugin::doConnectedComponents(
 
     cv::Mat outFloat;
     labels.convertTo(outFloat, CV_32F);
-    auto result = writeMatOutput(outFloat, input, output, band, progress);
+    auto result = writeMatOutput(outFloat, input, output, band, progress, "processing.connected_components");
     result.metadata["action"] = "connected_components";
     result.metadata["component_count"] = std::to_string(std::max(0, componentCount - 1));
     return result;
@@ -1389,7 +1415,7 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     progress.onMessage("K-Means completed: " + std::to_string(k) +
                         " clusters, compactness=" + std::to_string(compactness));
 
-    auto result = writeMatOutput(resultImg, input, output, 1, progress);
+    auto result = writeMatOutput(resultImg, input, output, 1, progress, "processing.kmeans");
     result.metadata["k"] = std::to_string(k);
     result.metadata["compactness"] = std::to_string(compactness);
     result.metadata["bands"] = std::to_string(bands);

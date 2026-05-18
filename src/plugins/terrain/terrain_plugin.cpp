@@ -71,6 +71,14 @@ std::string trim(const std::string& value) {
     return value.substr(begin, end - begin + 1);
 }
 
+gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
+    gis::core::ProcessingMetadata meta;
+    meta.sourceFile = input;
+    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
+    meta.processingAlgorithm = algorithm;
+    return meta;
+}
+
 SurfaceDerivatives computeSurfaceDerivatives(const cv::Mat& elevation) {
     SurfaceDerivatives derivs;
     cv::Sobel(elevation, derivs.zx, CV_32F, 1, 0, 3, 1.0 / 8.0, 0.0, cv::BORDER_REPLICATE);
@@ -155,6 +163,14 @@ gis::framework::Result runDemProcess(
     }
 
     GDALClose(outHandle);
+    auto meta = buildMetadata(input, srcDs.get(), "terrain." + std::string(processName));
+    meta.algorithmParams["band"] = std::to_string(band);
+    meta.algorithmParams["z_factor"] = std::to_string(zFactor);
+    if (std::string(processName) == "hillshade") {
+        meta.algorithmParams["azimuth"] = std::to_string(azimuth);
+        meta.algorithmParams["altitude"] = std::to_string(altitude);
+    }
+    gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -292,6 +308,11 @@ gis::framework::Result runLocalTerrainProcess(
 
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(result, srcDs.get(), output, band);
+    auto meta = buildMetadata(input, srcDs.get(), "terrain." + action);
+    meta.algorithmParams["band"] = std::to_string(band);
+    meta.algorithmParams["z_factor"] = std::to_string(zFactor);
+    meta.algorithmParams["window_size"] = "3";
+    gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -608,6 +629,13 @@ gis::framework::Result runHydrologyTerrainProcess(
     progress.onProgress(0.8);
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(result, srcDs.get(), output, band);
+    auto meta = buildMetadata(input, srcDs.get(), "terrain." + action);
+    meta.algorithmParams["band"] = std::to_string(band);
+    meta.algorithmParams["z_factor"] = std::to_string(zFactor);
+    if (action == "stream_extract") {
+        meta.algorithmParams["accum_threshold"] = std::to_string(accumulationThreshold);
+    }
+    gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -632,14 +660,14 @@ std::vector<ProfilePoint> parseProfilePath(const std::string& text) {
         }
         const auto comma = token.find(',');
         if (comma == std::string::npos) {
-            throw std::runtime_error("profile_path 格式应为 x1,y1;x2,y2;...");
+            throw std::runtime_error("profile_path 鏍煎紡搴斾负 x1,y1;x2,y2;...");
         }
         const std::string xText = trim(token.substr(0, comma));
         const std::string yText = trim(token.substr(comma + 1));
         points.push_back(ProfilePoint{std::stod(xText), std::stod(yText)});
     }
     if (points.size() < 2) {
-        throw std::runtime_error("profile_path 至少需要两个点");
+        throw std::runtime_error("profile_path 鑷冲皯闇€瑕佷袱涓偣");
     }
     return points;
 }
@@ -655,14 +683,14 @@ std::vector<ProfilePoint> parseObserverPoints(const std::string& text) {
         }
         const auto comma = token.find(',');
         if (comma == std::string::npos) {
-            throw std::runtime_error("observer_points 格式应为 x1,y1;x2,y2;...");
+            throw std::runtime_error("observer_points 鏍煎紡搴斾负 x1,y1;x2,y2;...");
         }
         const std::string xText = trim(token.substr(0, comma));
         const std::string yText = trim(token.substr(comma + 1));
         points.push_back(ProfilePoint{std::stod(xText), std::stod(yText)});
     }
     if (points.empty()) {
-        throw std::runtime_error("observer_points 至少需要一个点");
+        throw std::runtime_error("observer_points 鑷冲皯闇€瑕佷竴涓偣");
     }
     return points;
 }
@@ -847,6 +875,14 @@ gis::framework::Result runViewshedProcess(
     }
 
     GDALClose(outHandle);
+    auto meta = buildMetadata(input, srcDs.get(), "terrain.viewshed");
+    meta.algorithmParams["band"] = std::to_string(band);
+    meta.algorithmParams["observer_x"] = std::to_string(observerX);
+    meta.algorithmParams["observer_y"] = std::to_string(observerY);
+    meta.algorithmParams["observer_height"] = std::to_string(observerHeight);
+    meta.algorithmParams["target_height"] = std::to_string(targetHeight);
+    meta.algorithmParams["max_distance"] = std::to_string(maxDistance);
+    gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -946,6 +982,13 @@ gis::framework::Result runViewshedMultiProcess(
     }
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(merged, srcDs.get(), output, band);
+    auto meta = buildMetadata(input, srcDs.get(), "terrain.viewshed_multi");
+    meta.algorithmParams["band"] = std::to_string(band);
+    meta.algorithmParams["observer_count"] = std::to_string(observerPoints.size());
+    meta.algorithmParams["observer_height"] = std::to_string(observerHeight);
+    meta.algorithmParams["target_height"] = std::to_string(targetHeight);
+    meta.algorithmParams["max_distance"] = std::to_string(maxDistance);
+    gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -1033,6 +1076,12 @@ gis::framework::Result runCutFillProcess(
     }
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(diff, inputDs.get(), output, band);
+    auto meta = buildMetadata(input, inputDs.get(), "terrain.cut_fill");
+    meta.algorithmParams["band"] = std::to_string(band);
+    meta.algorithmParams["fill_volume"] = std::to_string(fillVolume);
+    meta.algorithmParams["cut_volume"] = std::to_string(cutVolume);
+    meta.algorithmParams["net_volume"] = std::to_string(fillVolume - cutVolume);
+    gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -1097,6 +1146,12 @@ gis::framework::Result runReservoirVolumeProcess(
     }
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(depth, srcDs.get(), output, band);
+    auto meta = buildMetadata(input, srcDs.get(), "terrain.reservoir_volume");
+    meta.algorithmParams["band"] = std::to_string(band);
+    meta.algorithmParams["water_level"] = std::to_string(waterLevel);
+    meta.algorithmParams["reservoir_area"] = std::to_string(reservoirArea);
+    meta.algorithmParams["reservoir_volume"] = std::to_string(reservoirVolume);
+    gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -1114,83 +1169,83 @@ gis::framework::Result runReservoirVolumeProcess(
 std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "操作", "地形分析操作类型",
+            "action", "鎿嶄綔", "鍦板舰鍒嗘瀽鎿嶄綔绫诲瀷",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"slope", "aspect", "hillshade", "tpi", "curvature", "profile_curvature", "plan_curvature", "tri", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "viewshed_multi", "cut_fill", "reservoir_volume"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入 DEM 文件路径",
+            "input", "杈撳叆鏂囦欢", "杈撳叆 DEM 鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "reference", "参考文件", "参考 DEM 文件路径",
+            "reference", "鍙傝€冩枃浠?, "鍙傝€?DEM 鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "输出结果文件路径",
+            "output", "杈撳嚭鏂囦欢", "杈撳嚭缁撴灉鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "band", "波段", "输入影像的波段号，默认为 1 波段",
+            "band", "娉㈡", "杈撳叆褰卞儚鐨勬尝娈靛彿锛岄粯璁や负 1 娉㈡",
             gis::framework::ParamType::Int, false, int{1},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "z_factor", "高程缩放", "高程值缩放因子",
+            "z_factor", "楂樼▼缂╂斁", "楂樼▼鍊肩缉鏀惧洜瀛?,
             gis::framework::ParamType::Double, false, double{1.0},
             double{0.001}, double{10000.0}
         },
         gis::framework::ParamSpec{
-            "azimuth", "方位角", "光源方位角（度）",
+            "azimuth", "鏂逛綅瑙?, "鍏夋簮鏂逛綅瑙掞紙搴︼級",
             gis::framework::ParamType::Double, false, double{315.0},
             double{0.0}, double{360.0}
         },
         gis::framework::ParamSpec{
-            "altitude", "高度角", "光源高度角（度）",
+            "altitude", "楂樺害瑙?, "鍏夋簮楂樺害瑙掞紙搴︼級",
             gis::framework::ParamType::Double, false, double{45.0},
             double{0.0}, double{90.0}
         },
         gis::framework::ParamSpec{
-            "accum_threshold", "累积阈值", "水流累积提取阈值",
+            "accum_threshold", "绱Н闃堝€?, "姘存祦绱Н鎻愬彇闃堝€?,
             gis::framework::ParamType::Double, false, double{10.0},
             double{0.0}, double{1e9}
         },
         gis::framework::ParamSpec{
-            "profile_path", "剖面路径", "剖面线坐标串 x1,y1;x2,y2;...",
+            "profile_path", "鍓栭潰璺緞", "鍓栭潰绾垮潗鏍囦覆 x1,y1;x2,y2;...",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "observer_x", "观测点 X", "观测点坐标 X",
+            "observer_x", "瑙傛祴鐐?X", "瑙傛祴鐐瑰潗鏍?X",
             gis::framework::ParamType::Double, false, double{0.0},
             double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "observer_y", "观测点 Y", "观测点坐标 Y",
+            "observer_y", "瑙傛祴鐐?Y", "瑙傛祴鐐瑰潗鏍?Y",
             gis::framework::ParamType::Double, false, double{0.0},
             double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "observer_points", "观测点列表", "多个观测点坐标 x1,y1;x2,y2;...",
+            "observer_points", "瑙傛祴鐐瑰垪琛?, "澶氫釜瑙傛祴鐐瑰潗鏍?x1,y1;x2,y2;...",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "observer_height", "观测高度", "观测者离地高度",
+            "observer_height", "瑙傛祴楂樺害", "瑙傛祴鑰呯鍦伴珮搴?,
             gis::framework::ParamType::Double, false, double{2.0},
             double{0.0}, double{10000.0}
         },
         gis::framework::ParamSpec{
-            "target_height", "目标高度", "目标物离地高度",
+            "target_height", "鐩爣楂樺害", "鐩爣鐗╃鍦伴珮搴?,
             gis::framework::ParamType::Double, false, double{0.0},
             double{0.0}, double{10000.0}
         },
         gis::framework::ParamSpec{
-            "max_distance", "最大距离", "最大可视距离，0 表示不限",
+            "max_distance", "鏈€澶ц窛绂?, "鏈€澶у彲瑙嗚窛绂伙紝0 琛ㄧず涓嶉檺",
             gis::framework::ParamType::Double, false, double{0.0},
             double{0.0}, double{1e9}
         },
         gis::framework::ParamSpec{
-            "water_level", "水位", "水库水位高程值",
+            "water_level", "姘翠綅", "姘村簱姘翠綅楂樼▼鍊?,
             gis::framework::ParamType::Double, false, double{0.0},
             double{-10000.0}, double{10000.0}
         },

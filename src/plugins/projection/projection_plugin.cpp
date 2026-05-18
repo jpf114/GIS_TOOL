@@ -171,50 +171,61 @@ void removeExistingVectorOutput(const std::string& output, const std::string& fo
     fs::remove(fs::u8path(output));
 }
 
+gis::core::ProcessingMetadata buildMetadata(
+    const std::string& sourceFile,
+    const std::string& sourceCrs,
+    const std::string& algorithm) {
+    gis::core::ProcessingMetadata metadata;
+    metadata.sourceFile = sourceFile;
+    metadata.sourceCrs = sourceCrs;
+    metadata.processingAlgorithm = algorithm;
+    return metadata;
+}
+
 } // namespace
 
 std::vector<gis::framework::ParamSpec> ProjectionPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "选择要执行的子功能",
+            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"reproject", "info", "transform", "assign_srs"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入影像文件路径",
+            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "输出影像文件路径",
+            "output", "杈撳嚭鏂囦欢", "杈撳嚭褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "dst_srs", "目标坐标系", "目标坐标系(EPSG代号或WKT字符串)",
+            "dst_srs", "鐩爣鍧愭爣绯?, "鐩爣鍧愭爣绯?EPSG浠ｅ彿鎴朩KT瀛楃涓?",
             gis::framework::ParamType::CRS, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "src_srs", "源坐标系", "源坐标系(EPSG代号或WKT字符串)，覆盖影像自带坐标系",
+            "src_srs", "婧愬潗鏍囩郴", "婧愬潗鏍囩郴(EPSG浠ｅ彿鎴朩KT瀛楃涓?锛岃鐩栧奖鍍忚嚜甯﹀潗鏍囩郴",
             gis::framework::ParamType::CRS, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "resample", "重采样方法", "重采样算法",
+            "resample", "閲嶉噰鏍锋柟娉?, "閲嶉噰鏍风畻娉?,
             gis::framework::ParamType::Enum, false, std::string{"nearest"},
             int{0}, int{0},
             {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average", "mode"}
         },
         gis::framework::ParamSpec{
-            "x", "X坐标", "待转换的X坐标(经度)",
+            "x", "X鍧愭爣", "寰呰浆鎹㈢殑X鍧愭爣(缁忓害)",
             gis::framework::ParamType::Double, false, double{0},
             double{-1e9}, double{1e9}
         },
         gis::framework::ParamSpec{
-            "y", "Y坐标", "待转换的Y坐标(纬度)",
+            "y", "Y鍧愭爣", "寰呰浆鎹㈢殑Y鍧愭爣(绾害)",
             gis::framework::ParamType::Double, false, double{0},
             double{-1e9}, double{1e9}
         },
         gis::framework::ParamSpec{
-            "srs", "坐标系", "指定坐标系(EPSG代号或WKT字符串)，用于assign_srs",
+            "srs", "鍧愭爣绯?, "鎸囧畾鍧愭爣绯?EPSG浠ｅ彿鎴朩KT瀛楃涓?锛岀敤浜巃ssign_srs",
             gis::framework::ParamType::CRS, false, std::string{}
         },
     };
@@ -299,6 +310,23 @@ gis::framework::Result ProjectionPlugin::doReproject(
             output.c_str(), nullptr, 1, &vectorSrcHandle, translateOptions, &usageError);
 
         GDALVectorTranslateOptionsFree(translateOptions);
+
+        std::string vectorSourceCrs = srcSrs;
+        if (vectorSourceCrs.empty()) {
+            OGRLayerH hLayer = GDALDatasetGetLayer(vectorSrcHandle, 0);
+            if (hLayer) {
+                OGRSpatialReferenceH hSRS = OGR_L_GetSpatialRef(hLayer);
+                if (hSRS) {
+                    char* layerWkt = nullptr;
+                    OSRExportToWkt(hSRS, &layerWkt);
+                    if (layerWkt) {
+                        vectorSourceCrs = layerWkt;
+                        CPLFree(layerWkt);
+                    }
+                }
+            }
+        }
+
         GDALClose(vectorSrcHandle);
 
         if (!dstHandle || usageError) {
@@ -309,6 +337,8 @@ gis::framework::Result ProjectionPlugin::doReproject(
                 "Vector reprojection failed: " + std::string(CPLGetLastErrorMsg()));
         }
 
+        auto vecMetadata = buildMetadata(input, vectorSourceCrs, "projection.reproject");
+        gis::core::writeProcessingMetadata(static_cast<GDALDataset*>(dstHandle), vecMetadata);
         GDALClose(dstHandle);
         progress.throwIfCancelled();
         progress.onProgress(1.0);
@@ -363,6 +393,14 @@ gis::framework::Result ProjectionPlugin::doReproject(
     }
 
     GDALClose(dstHandle);
+
+    std::string rasterSourceCrs = srcSrs;
+    if (rasterSourceCrs.empty()) {
+        rasterSourceCrs = gis::core::getSRSWKT(srcDS.get());
+    }
+    auto rasterMetadata = buildMetadata(input, rasterSourceCrs, "projection.reproject");
+    gis::core::writeProcessingMetadata(output, rasterMetadata);
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
     progress.onMessage("Reprojection completed.");
@@ -506,6 +544,8 @@ gis::framework::Result ProjectionPlugin::doAssignSRS(
         return gis::framework::Result::fail("Failed to set projection: " + std::string(CPLGetLastErrorMsg()));
     }
 
+    auto assignMetadata = buildMetadata(input, "", "projection.assign_srs");
+    gis::core::writeProcessingMetadata(ds.get(), assignMetadata);
     ds.reset();
     CPLFree(wktOut);
 

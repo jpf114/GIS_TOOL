@@ -19,6 +19,14 @@ namespace gis::plugins {
 
 namespace {
 
+gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
+    gis::core::ProcessingMetadata meta;
+    meta.sourceFile = input;
+    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
+    meta.processingAlgorithm = algorithm;
+    return meta;
+}
+
 static double evalExpression(const std::string& expr,
                              const std::map<std::string, double>& bandValues) {
     std::string e = expr;
@@ -113,59 +121,59 @@ static double evalExpression(const std::string& expr,
 std::vector<gis::framework::ParamSpec> RasterMathPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "子功能", "选择要执行的子功能",
+            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"band_math", "reclassify", "raster_overlay"}
         },
         gis::framework::ParamSpec{
-            "input", "输入文件", "输入影像文件路径",
+            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出文件", "输出影像文件路径",
+            "output", "杈撳嚭鏂囦欢", "杈撳嚭褰卞儚鏂囦欢璺緞",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "expression", "表达式", "波段运算表达式，例如 B1+B2",
+            "expression", "琛ㄨ揪寮?, "娉㈡杩愮畻琛ㄨ揪寮忥紝渚嬪 B1+B2",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "reclass_rules", "重分类规则", "每行一条规则，格式：旧值 or 旧最小值,旧最大值:新值\n例如: 1:10 / 2,5:20 / 6-9:30",
+            "reclass_rules", "閲嶅垎绫昏鍒?, "姣忚涓€鏉¤鍒欙紝鏍煎紡锛氭棫鍊?or 鏃ф渶灏忓€?鏃ф渶澶у€?鏂板€糪n渚嬪: 1:10 / 2,5:20 / 6-9:30",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "default_value", "默认值", "未匹配到规则时的默认赋值，留空则保持原值",
+            "default_value", "榛樿鍊?, "鏈尮閰嶅埌瑙勫垯鏃剁殑榛樿璧嬪€硷紝鐣欑┖鍒欎繚鎸佸師鍊?,
             gis::framework::ParamType::Double, false, double{0.0},
             double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "keep_unmatched", "保留未匹配", "对于未匹配到规则的值：勾选=保留原值，不勾选=赋默认值",
+            "keep_unmatched", "淇濈暀鏈尮閰?, "瀵逛簬鏈尮閰嶅埌瑙勫垯鐨勫€硷細鍕鹃€?淇濈暀鍘熷€硷紝涓嶅嬀閫?璧嬮粯璁ゅ€?,
             gis::framework::ParamType::Bool, false, bool{true}
         },
         gis::framework::ParamSpec{
-            "reclass_mode", "重分类模式", "manual=自定义规则, interval=等间隔自动划分",
+            "reclass_mode", "閲嶅垎绫绘ā寮?, "manual=鑷畾涔夎鍒? interval=绛夐棿闅旇嚜鍔ㄥ垝鍒?,
             gis::framework::ParamType::Enum, false, std::string{"manual"},
             int{0}, int{0},
             {"manual", "interval"}
         },
         gis::framework::ParamSpec{
-            "interval_step", "间隔大小", "等间隔模式的步长，manual 模式忽略此参数",
+            "interval_step", "闂撮殧澶у皬", "绛夐棿闅旀ā寮忕殑姝ラ暱锛宮anual 妯″紡蹇界暐姝ゅ弬鏁?,
             gis::framework::ParamType::Double, false, double{1.0},
             double{0.0}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "overlay_input", "叠加影像", "叠加分析的第二幅影像路径",
+            "overlay_input", "鍙犲姞褰卞儚", "鍙犲姞鍒嗘瀽鐨勭浜屽箙褰卞儚璺緞",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "overlay_method", "叠加方式", "叠加运算逻辑",
+            "overlay_method", "鍙犲姞鏂瑰紡", "鍙犲姞杩愮畻閫昏緫",
             gis::framework::ParamType::Enum, false, std::string{"max"},
             int{0}, int{0},
             {"max", "min", "mean", "sum", "subtract", "multiply", "divide", "and", "or", "cond"}
         },
         gis::framework::ParamSpec{
-            "cond_expression", "条件表达式", "仅叠加方式为 cond 时生效\n例如: A > 100 & B > 50，满足赋 1，否则赋 0",
+            "cond_expression", "鏉′欢琛ㄨ揪寮?, "浠呭彔鍔犳柟寮忎负 cond 鏃剁敓鏁圽n渚嬪: A > 100 & B > 50锛屾弧瓒宠祴 1锛屽惁鍒欒祴 0",
             gis::framework::ParamType::String, false, std::string{}
         },
     };
@@ -232,6 +240,13 @@ gis::framework::Result RasterMathPlugin::doBandMath(
     progress.onProgress(0.9);
     progress.onMessage("Writing output: " + output);
     gis::core::matToGdalTiff(result, input, output, 1);
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "raster_math.band_math");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Processing completed successfully", output);
@@ -403,6 +418,12 @@ gis::framework::Result RasterMathPlugin::doReclassify(
         progress.onProgress(progressFrac);
     }
 
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "raster_math.reclassify");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.onProgress(1.0);
     return gis::framework::Result::ok("Reclassify completed successfully", output);
 }
@@ -562,6 +583,12 @@ gis::framework::Result RasterMathPlugin::doRasterOverlay(
         gis::core::matToGdalTiff(result, input, output, b);
         const double progressFrac = 0.05 + 0.9 * static_cast<double>(b) / bands;
         progress.onProgress(progressFrac);
+    }
+
+    {
+        auto srcDs = gis::core::openRaster(input, true);
+        auto meta = buildMetadata(input, srcDs.get(), "raster_math.overlay");
+        gis::core::writeProcessingMetadata(output, meta);
     }
 
     progress.onProgress(1.0);

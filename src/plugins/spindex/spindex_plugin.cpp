@@ -20,6 +20,14 @@ namespace gis::plugins {
 
 namespace {
 
+gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
+    gis::core::ProcessingMetadata meta;
+    meta.sourceFile = input;
+    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
+    meta.processingAlgorithm = algorithm;
+    return meta;
+}
+
 int getBandIndex(const std::map<std::string, gis::framework::ParamValue>& params,
                  const char* key,
                  int defaultValue,
@@ -258,6 +266,12 @@ gis::framework::Result doCustomIndex(const std::string& input,
 
     progress.onProgress(0.85);
     gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+    {
+        auto meta = buildMetadata(input, ds.get(), "spindex.custom_index");
+        gis::core::writeProcessingMetadata(output, meta);
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -278,77 +292,77 @@ gis::framework::Result doCustomIndex(const std::string& input,
 std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "操作", "选择要执行的光谱指数算法",
+            "action", "鎿嶄綔", "閫夋嫨瑕佹墽琛岀殑鍏夎氨鎸囨暟绠楁硶",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"ndvi", "ndmi", "evi", "evi2", "savi", "osavi", "gndvi", "ndwi", "mndwi", "ndbi", "bsi", "arvi", "nbr", "awei", "ui", "bi", "custom_index"}
         },
         gis::framework::ParamSpec{
-            "preset", "预设表达式", "选择内置的指数表达式预设，仅自定义指数时使用",
+            "preset", "棰勮琛ㄨ揪寮?, "閫夋嫨鍐呯疆鐨勬寚鏁拌〃杈惧紡棰勮锛屼粎鑷畾涔夋寚鏁版椂浣跨敤",
             gis::framework::ParamType::Enum, false, std::string{"none"},
             int{0}, int{0},
             gis::core::spindexCustomIndexPresetValues()
         },
         gis::framework::ParamSpec{
-            "input", "输入栅格", "待计算指数的多波段栅格",
+            "input", "杈撳叆鏍呮牸", "寰呰绠楁寚鏁扮殑澶氭尝娈垫爡鏍?,
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "输出栅格", "指数计算结果输出路径",
+            "output", "杈撳嚭鏍呮牸", "鎸囨暟璁＄畻缁撴灉杈撳嚭璺緞",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "red_band", "红光波段", "红光波段序号",
+            "red_band", "绾㈠厜娉㈡", "绾㈠厜娉㈡搴忓彿",
             gis::framework::ParamType::Int, false, int{3},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "nir_band", "近红外波段", "近红外波段序号",
+            "nir_band", "杩戠孩澶栨尝娈?, "杩戠孩澶栨尝娈靛簭鍙?,
             gis::framework::ParamType::Int, false, int{4},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "blue_band", "蓝光波段", "蓝光波段序号",
+            "blue_band", "钃濆厜娉㈡", "钃濆厜娉㈡搴忓彿",
             gis::framework::ParamType::Int, false, int{1},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "green_band", "绿光波段", "绿光波段序号",
+            "green_band", "缁垮厜娉㈡", "缁垮厜娉㈡搴忓彿",
             gis::framework::ParamType::Int, false, int{2},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "swir1_band", "短波红外1波段", "短波红外1波段序号",
+            "swir1_band", "鐭尝绾㈠1娉㈡", "鐭尝绾㈠1娉㈡搴忓彿",
             gis::framework::ParamType::Int, false, int{5},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "swir2_band", "短波红外2波段", "短波红外2波段序号",
+            "swir2_band", "鐭尝绾㈠2娉㈡", "鐭尝绾㈠2娉㈡搴忓彿",
             gis::framework::ParamType::Int, false, int{6},
             int{1}, int{999}
         },
         gis::framework::ParamSpec{
-            "l_value", "L 参数", "SAVI 与 EVI 使用的 L 参数",
+            "l_value", "L 鍙傛暟", "SAVI 涓?EVI 浣跨敤鐨?L 鍙傛暟",
             gis::framework::ParamType::Double, false, double{0.5},
             double{0.0}, double{1.0}
         },
         gis::framework::ParamSpec{
-            "g_value", "G 参数", "EVI 使用的增益参数 G",
+            "g_value", "G 鍙傛暟", "EVI 浣跨敤鐨勫鐩婂弬鏁?G",
             gis::framework::ParamType::Double, false, double{2.5},
             double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
-            "c1", "C1 参数", "EVI 使用的 C1 参数",
+            "c1", "C1 鍙傛暟", "EVI 浣跨敤鐨?C1 鍙傛暟",
             gis::framework::ParamType::Double, false, double{6.0},
             double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
-            "c2", "C2 参数", "EVI 使用的 C2 参数",
+            "c2", "C2 鍙傛暟", "EVI 浣跨敤鐨?C2 鍙傛暟",
             gis::framework::ParamType::Double, false, double{7.5},
             double{0.0}, double{100.0}
         },
         gis::framework::ParamSpec{
-            "expression", "表达式", "自定义指数表达式，例如 (B4-B1)/(B4+B1)",
+            "expression", "琛ㄨ揪寮?, "鑷畾涔夋寚鏁拌〃杈惧紡锛屼緥濡?(B4-B1)/(B4+B1)",
             gis::framework::ParamType::String, false, std::string{}
         },
     };
@@ -426,6 +440,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.ndvi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
 
@@ -452,6 +472,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.ndmi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("NDMI", output, indexMat);
@@ -472,6 +498,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.gndvi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("GNDVI", output, indexMat);
@@ -492,6 +524,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.ndwi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("NDWI", output, indexMat);
@@ -512,6 +550,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.mndwi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("MNDWI", output, indexMat);
@@ -532,6 +576,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.ndbi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("NDBI", output, indexMat);
@@ -562,6 +612,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.bsi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("BSI", output, indexMat);
@@ -587,6 +643,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.arvi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("ARVI", output, indexMat);
@@ -607,6 +669,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.nbr");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("NBR", output, indexMat);
@@ -635,6 +703,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.awei");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("AWEI", output, indexMat);
@@ -655,6 +729,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.ui");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("UI", output, indexMat);
@@ -679,6 +759,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.bi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("BI", output, indexMat);
@@ -701,6 +787,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.savi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("SAVI", output, indexMat);
@@ -722,6 +814,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.osavi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("OSAVI", output, indexMat);
@@ -752,6 +850,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.evi");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("EVI", output, indexMat);
@@ -773,6 +877,12 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             progress.throwIfCancelled();
             progress.onProgress(0.8);
             gis::core::matToGdalTiff(indexMat, input, output, 1);
+
+            {
+                auto meta = buildMetadata(input, ds.get(), "spindex.evi2");
+                gis::core::writeProcessingMetadata(output, meta);
+            }
+
             progress.throwIfCancelled();
             progress.onProgress(1.0);
             return buildIndexResult("EVI2", output, indexMat);
