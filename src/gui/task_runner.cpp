@@ -93,7 +93,29 @@ void TaskRunner::startTask(const QueuedTask& task) {
     connect(thread, &QThread::started, worker, &ExecuteWorker::run);
 
     connect(worker, &ExecuteWorker::finished, this,
-            [this, dg = task.displayGroup, tid = task.taskId](const gis::framework::Result& result) {
+            [this, dg = task.displayGroup, tid = task.taskId, task](const gis::framework::Result& result) {
+        if (!result.success && !result.isCancelled && task.retryCount < QueuedTask::kMaxRetries) {
+            activeTasks_.remove(tid);
+            if (runningTaskId_ == tid) {
+                runningTaskId_.clear();
+            }
+
+            QueuedTask retryTask = task;
+            retryTask.retryCount++;
+            auto retryId = TaskManager::instance().submitTask(
+                dg, task.pluginName, task.actionKey, task.params,
+                task.pluginDisplayName, task.actionDisplayName);
+            if (!retryId.isEmpty()) {
+                retryTask.taskId = retryId;
+                queue_.prepend(retryTask);
+                emit queueChanged(queue_.size());
+                TaskManager::instance().appendLog(dg, retryId,
+                    QStringLiteral("鑷姩閲嶈瘯 (绗?%1 娆?").arg(retryTask.retryCount));
+            }
+            processQueue();
+            return;
+        }
+
         TaskManager::instance().finishTask(dg, tid, result);
         emit taskFinished(dg, tid, result.success, result.isCancelled);
         activeTasks_.remove(tid);

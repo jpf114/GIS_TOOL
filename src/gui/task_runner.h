@@ -29,6 +29,8 @@ struct QueuedTask {
     QString pluginDisplayName;
     QString actionDisplayName;
     QString taskId;
+    int retryCount = 0;
+    static const int kMaxRetries = 1;
 };
 
 class TaskRunner : public QObject {
