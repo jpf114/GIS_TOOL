@@ -10,6 +10,7 @@
 #include <QSaveFile>
 #include <QTimer>
 #include "mainwindow.h"
+#include "welcome_dialog.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/runtime_env.h>
 
