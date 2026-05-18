@@ -5,6 +5,9 @@ add_library(gis_core
     src/opencv_wrapper.cpp
     src/runtime_env.cpp
     src/spindex_presets.cpp
+    src/block_processor.cpp
+    src/logger.cpp
+    src/perf_monitor.cpp
 )
 
 target_include_directories(gis_core PUBLIC
