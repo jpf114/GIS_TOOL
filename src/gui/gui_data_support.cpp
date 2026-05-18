@@ -9,6 +9,8 @@
 #include <ogr_spatialref.h>
 #include <ogrsf_frmts.h>
 
+#include <QDir>
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -637,6 +639,14 @@ bool endsWithOneOf(const std::string& path, const std::vector<std::string>& suff
         }
     }
     return false;
+}
+
+QStringList batchFiltersFromText(const QString& filterText) {
+    QStringList filters = filterText.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (filters.isEmpty()) {
+        filters << QStringLiteral("*.tif");
+    }
+    return filters;
 }
 
 std::optional<std::array<double, 4>> extentParamValue(
@@ -1374,6 +1384,33 @@ DerivedParamSyncResult computeDerivedParamSyncResult(
     }
 
     return result;
+}
+
+QStringList collectBatchFiles(const QString& dirPath, const QString& filterText) {
+    QStringList results;
+    if (dirPath.trimmed().isEmpty()) {
+        return results;
+    }
+
+    QDir dir(dirPath.trimmed());
+    if (!dir.exists()) {
+        return results;
+    }
+
+    const QFileInfoList entries = dir.entryInfoList(
+        batchFiltersFromText(filterText),
+        QDir::Files | QDir::NoDotAndDotDot,
+        QDir::Name);
+    for (const auto& fileInfo : entries) {
+        results << fileInfo.absoluteFilePath();
+    }
+    return results;
+}
+
+QString buildBatchCountText(int matchCount) {
+    return matchCount > 0
+        ? QStringLiteral("匹配 %1 个文件").arg(matchCount)
+        : QStringLiteral("未找到匹配文件");
 }
 
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {

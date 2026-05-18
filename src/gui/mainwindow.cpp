@@ -1157,32 +1157,14 @@ void MainWindow::runPluginWithParams(
 QStringList MainWindow::scanBatchFiles() const {
     QStringList results;
     if (!batchCheckBox_ || !batchCheckBox_->isChecked()) return results;
-
-    QString dirPath = batchDirEdit_->text().trimmed();
-    if (dirPath.isEmpty()) return results;
-
-    QDir dir(dirPath);
-    if (!dir.exists()) return results;
-
-    QString filterText = batchFilterEdit_ ? batchFilterEdit_->text().trimmed() : QStringLiteral("*.tif");
-    QStringList filters = filterText.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-    if (filters.isEmpty()) filters << QStringLiteral("*.tif");
-
-    QFileInfoList entries = dir.entryInfoList(filters, QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
-    for (const auto& fi : entries) {
-        results << fi.absoluteFilePath();
-    }
-    return results;
+    return gis::gui::collectBatchFiles(
+        batchDirEdit_ ? batchDirEdit_->text() : QString{},
+        batchFilterEdit_ ? batchFilterEdit_->text() : QStringLiteral("*.tif"));
 }
 
 void MainWindow::updateBatchCount() {
     if (!batchCountLabel_) return;
-    QStringList files = scanBatchFiles();
-    if (files.isEmpty()) {
-        batchCountLabel_->setText(QStringLiteral("未找到匹配文件"));
-    } else {
-        batchCountLabel_->setText(QStringLiteral("匹配 %1 个文件").arg(files.size()));
-    }
+    batchCountLabel_->setText(gis::gui::buildBatchCountText(scanBatchFiles().size()));
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event) {

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <QString>
+#include <QStringList>
 
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
@@ -197,6 +198,8 @@ DerivedParamSyncResult computeDerivedParamSyncResult(
     const std::string& inputPath,
     const DataAutoFillInfo& inputInfo,
     const DerivedParamTracking& tracking);
+QStringList collectBatchFiles(const QString& dirPath, const QString& filterText);
+QString buildBatchCountText(int matchCount);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
 QString actionDisplayName(const std::string& pluginName, const std::string& actionKey);
 QString actionDescription(const std::string& pluginName, const std::string& actionKey);

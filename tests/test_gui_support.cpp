@@ -1266,6 +1266,34 @@ TEST(GuiSupportTest, ComputeDerivedParamSyncResultPreservesManualValues) {
     EXPECT_TRUE(result.tracking.extent == (std::array<double, 4>{100.0, 20.0, 110.0, 30.0}));
 }
 
+TEST(GuiSupportTest, CollectBatchFilesUsesDefaultAndCustomFilters) {
+    gis::tests::ensureDirectory(guiSupportTestDir());
+    const fs::path batchDir = guiSupportTestDir() / "batch_inputs";
+    gis::tests::ensureDirectory(batchDir);
+
+    std::ofstream(batchDir / "a.tif").put('\n');
+    std::ofstream(batchDir / "b.img").put('\n');
+    std::ofstream(batchDir / "c.txt").put('\n');
+
+    const QStringList defaultFiles = gis::gui::collectBatchFiles(
+        QString::fromStdString(batchDir.string()),
+        QString());
+    ASSERT_EQ(defaultFiles.size(), 1);
+    EXPECT_TRUE(defaultFiles.front().endsWith(QStringLiteral("a.tif")));
+
+    const QStringList customFiles = gis::gui::collectBatchFiles(
+        QString::fromStdString(batchDir.string()),
+        QStringLiteral("*.tif *.img"));
+    ASSERT_EQ(customFiles.size(), 2);
+    EXPECT_TRUE(customFiles[0].endsWith(QStringLiteral("a.tif")));
+    EXPECT_TRUE(customFiles[1].endsWith(QStringLiteral("b.img")));
+}
+
+TEST(GuiSupportTest, BuildBatchCountTextReflectsMatchCount) {
+    EXPECT_EQ(gis::gui::buildBatchCountText(0), QStringLiteral("未找到匹配文件"));
+    EXPECT_EQ(gis::gui::buildBatchCountText(3), QStringLiteral("匹配 3 个文件"));
+}
+
 TEST(GuiSupportTest, BuildResultSummaryTextUsesChineseLabels) {
     gis::framework::Result result;
     result.success = true;
