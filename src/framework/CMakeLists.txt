@@ -1,5 +1,6 @@
 add_library(gis_framework
     src/plugin_manager.cpp
+    src/workflow.cpp
 )
 
 target_include_directories(gis_framework PUBLIC

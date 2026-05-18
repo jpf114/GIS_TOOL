@@ -24,6 +24,7 @@ add_executable(gis-gui
     raster_preview_widget.cpp
     vector_preview_widget.cpp
     stats_preview_widget.cpp
+    workflow_page.cpp
 )
 
 set(GIS_PLUGIN_TARGETS
