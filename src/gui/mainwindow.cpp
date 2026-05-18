@@ -312,6 +312,10 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::onTaskRunnerFinished);
 
     loadPlugins();
+
+    if (gis::gui::isFirstRun()) {
+        gis::gui::showWelcomeDialog(this);
+    }
 }
 
 MainWindow::~MainWindow() = default;
