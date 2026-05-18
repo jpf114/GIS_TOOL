@@ -77,6 +77,20 @@ struct ExecuteButtonState {
     std::string statusObjectName;
 };
 
+struct GroupSelectionText {
+    QString title;
+    QString description;
+    QString metaText;
+    QString statusText;
+};
+
+struct ActionSelectionText {
+    QString title;
+    QString description;
+    QString metaText;
+    QString statusText;
+};
+
 DataKind detectDataKind(const std::string& path);
 bool isSupportedDataPath(const std::string& path);
 std::vector<std::string> collectSupportedDataPaths(const std::vector<std::string>& paths);
@@ -125,6 +139,15 @@ bool isRasterToolsMember(const std::string& pluginName);
 std::string displayGroupForPlugin(const std::string& pluginName);
 QString rasterToolsGroupDisplayName();
 QString rasterToolsGroupDescription();
+GroupSelectionText buildGroupSelectionText(const std::string& pluginName,
+                                          const std::string& pluginDisplayName,
+                                          const std::string& pluginDescription,
+                                          int subFunctionCount);
+ActionSelectionText buildActionSelectionText(const std::string& displayGroupKey,
+                                            const std::string& actionPluginName,
+                                            const std::string& pluginDisplayName,
+                                            const std::string& pluginDescription,
+                                            const std::string& actionKey);
 std::vector<std::string> spindexCustomIndexPresetValues();
 std::string spindexCustomIndexPresetExpression(const std::string& presetKey);
 DerivedOutputUpdate computeDerivedExpressionUpdate(const std::string& currentValue,

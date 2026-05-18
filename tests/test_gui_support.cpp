@@ -162,6 +162,45 @@ TEST(GuiSupportTest, DataOriginDisplayNameIsChinese) {
     EXPECT_EQ(gis::gui::dataOriginDisplayName(gis::gui::DataOrigin::Output), "输出结果");
 }
 
+TEST(GuiSupportTest, BuildGroupSelectionTextUsesRasterToolsSharedCopy) {
+    const auto text = gis::gui::buildGroupSelectionText(
+        "raster_tools",
+        "ignored",
+        "ignored",
+        4);
+
+    EXPECT_EQ(text.title, QStringLiteral("栅格工具"));
+    EXPECT_TRUE(text.description.contains(QStringLiteral("栅格")));
+    EXPECT_EQ(text.metaText, QStringLiteral("当前主功能：栅格工具  |  子功能数：4"));
+    EXPECT_EQ(text.statusText, QStringLiteral("当前主功能：栅格工具"));
+}
+
+TEST(GuiSupportTest, BuildActionSelectionTextFallsBackToPluginDescription) {
+    const auto text = gis::gui::buildActionSelectionText(
+        "terrain",
+        "terrain",
+        "地形分析",
+        "地形分析插件描述",
+        "unknown_action");
+
+    EXPECT_EQ(text.title, QStringLiteral("unknown_action"));
+    EXPECT_EQ(text.description, QStringLiteral("地形分析插件描述"));
+    EXPECT_EQ(text.metaText, QStringLiteral("当前主功能：地形分析  |  当前子功能：unknown_action"));
+    EXPECT_EQ(text.statusText, QStringLiteral("当前子功能：unknown_action"));
+}
+
+TEST(GuiSupportTest, BuildActionSelectionTextUsesGroupTitleForRasterTools) {
+    const auto text = gis::gui::buildActionSelectionText(
+        "raster_tools",
+        "raster_inspect",
+        "栅格渲染",
+        "渲染插件描述",
+        "info");
+
+    EXPECT_EQ(text.title, QStringLiteral("栅格信息"));
+    EXPECT_EQ(text.metaText, QStringLiteral("当前主功能：栅格工具  |  当前子功能：栅格信息"));
+}
+
 TEST(GuiSupportTest, OutputDataOriginIncludesOutputOnly) {
     EXPECT_FALSE(gis::gui::isOutputDataOrigin(gis::gui::DataOrigin::Input));
     EXPECT_TRUE(gis::gui::isOutputDataOrigin(gis::gui::DataOrigin::Output));

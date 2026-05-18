@@ -710,6 +710,52 @@ QString rasterToolsGroupDescription() {
     return QStringLiteral("集中提供栅格管理、检查、渲染与波段运算相关子功能。");
 }
 
+GroupSelectionText buildGroupSelectionText(const std::string& pluginName,
+                                           const std::string& pluginDisplayName,
+                                           const std::string& pluginDescription,
+                                           int subFunctionCount) {
+    const bool isRasterToolsGroup = pluginName == kRasterToolsGroupName;
+    const QString title = isRasterToolsGroup
+        ? rasterToolsGroupDisplayName()
+        : QString::fromUtf8(pluginDisplayName);
+    const QString description = isRasterToolsGroup
+        ? rasterToolsGroupDescription()
+        : QString::fromUtf8(pluginDescription);
+
+    return {
+        title,
+        description,
+        QStringLiteral("当前主功能：%1  |  子功能数：%2")
+            .arg(title)
+            .arg(subFunctionCount),
+        QStringLiteral("当前主功能：%1").arg(title),
+    };
+}
+
+ActionSelectionText buildActionSelectionText(const std::string& displayGroupKey,
+                                             const std::string& actionPluginName,
+                                             const std::string& pluginDisplayName,
+                                             const std::string& pluginDescription,
+                                             const std::string& actionKey) {
+    const QString title = actionDisplayName(actionPluginName, actionKey);
+    const QString description = [&]() {
+        const QString desc = actionDescription(actionPluginName, actionKey);
+        return desc.isEmpty() ? QString::fromUtf8(pluginDescription) : desc;
+    }();
+    const QString groupTitle = displayGroupKey == kRasterToolsGroupName
+        ? rasterToolsGroupDisplayName()
+        : QString::fromUtf8(pluginDisplayName);
+
+    return {
+        title,
+        description,
+        QStringLiteral("当前主功能：%1  |  当前子功能：%2")
+            .arg(groupTitle)
+            .arg(title),
+        QStringLiteral("当前子功能：%1").arg(title),
+    };
+}
+
 DataKind detectDataKind(const std::string& path) {
     static const std::unordered_set<std::string> rasterExts = {
         ".tif", ".tiff", ".img", ".vrt", ".png", ".jpg", ".jpeg", ".bmp"
