@@ -6,7 +6,7 @@ if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
 endif()
 set(VCPKG_MANIFEST_MODE OFF CACHE BOOL "Use shared global vcpkg installation" FORCE)
 
-project(gis-tool VERSION 0.6.0 LANGUAGES CXX)
+project(gis-tool VERSION 1.0.0 LANGUAGES CXX)
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Default install path" FORCE)
@@ -38,10 +38,10 @@ elseif(DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "${CMAKE_TOOLCHAIN_FILE}")
 endif()
 
 if(GIS_VCPKG_ROOT STREQUAL "")
-    message(FATAL_ERROR "未设置环境变量 VCPKG_ROOT，且无法从 CMAKE_TOOLCHAIN_FILE 推断全局 vcpkg 目录。")
+    message(FATAL_ERROR "鏈缃幆澧冨彉閲?VCPKG_ROOT锛屼笖鏃犳硶浠?CMAKE_TOOLCHAIN_FILE 鎺ㄦ柇鍏ㄥ眬 vcpkg 鐩綍銆?)
 endif()
 
-set(GIS_VCPKG_TRIPLET "x64-windows" CACHE STRING "全局 vcpkg triplet")
+set(GIS_VCPKG_TRIPLET "x64-windows" CACHE STRING "鍏ㄥ眬 vcpkg triplet")
 set(GIS_VCPKG_INSTALLED_DIR "${GIS_VCPKG_ROOT}/installed/${GIS_VCPKG_TRIPLET}")
 set(GIS_VCPKG_RELEASE_BIN_DIR "${GIS_VCPKG_INSTALLED_DIR}/bin")
 set(GIS_VCPKG_DEBUG_BIN_DIR "${GIS_VCPKG_INSTALLED_DIR}/debug/bin")
@@ -77,15 +77,15 @@ configure_file(
 )
 
 if(NOT EXISTS "${GIS_VCPKG_INSTALLED_DIR}")
-    message(FATAL_ERROR "未找到全局 vcpkg 安装目录: ${GIS_VCPKG_INSTALLED_DIR}")
+    message(FATAL_ERROR "鏈壘鍒板叏灞€ vcpkg 瀹夎鐩綍: ${GIS_VCPKG_INSTALLED_DIR}")
 endif()
 
 if(NOT EXISTS "${GIS_VCPKG_PROJ_DATA_DIR}")
-    message(FATAL_ERROR "未找到 PROJ 数据目录: ${GIS_VCPKG_PROJ_DATA_DIR}")
+    message(FATAL_ERROR "鏈壘鍒?PROJ 鏁版嵁鐩綍: ${GIS_VCPKG_PROJ_DATA_DIR}")
 endif()
 
 if(NOT EXISTS "${GIS_VCPKG_GDAL_DATA_DIR}")
-    message(FATAL_ERROR "未找到 GDAL 数据目录: ${GIS_VCPKG_GDAL_DATA_DIR}")
+    message(FATAL_ERROR "鏈壘鍒?GDAL 鏁版嵁鐩綍: ${GIS_VCPKG_GDAL_DATA_DIR}")
 endif()
 
 find_package(GDAL REQUIRED)
