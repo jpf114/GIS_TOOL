@@ -726,14 +726,15 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     }
 
     const bool isRasterToolsGroup = pluginName == gis::gui::rasterToolsGroupKey();
-    const QString groupName = isRasterToolsGroup
-        ? gis::gui::rasterToolsGroupDisplayName()
-        : QString::fromUtf8(currentPlugin_->displayName());
+    const auto groupText = gis::gui::buildGroupSelectionText(
+        pluginName,
+        currentPlugin_->displayName(),
+        currentPlugin_->description(),
+        0);
+    const QString groupName = groupText.title;
 
-    functionTitleLabel_->setText(groupName);
-    functionDescLabel_->setText(isRasterToolsGroup
-        ? gis::gui::rasterToolsGroupDescription()
-        : QString::fromUtf8(currentPlugin_->description()));
+    functionTitleLabel_->setText(groupText.title);
+    functionDescLabel_->setText(groupText.description);
     if (functionIconLabel_) {
         functionIconLabel_->setPixmap(badgeIconPixmap(
             isRasterToolsGroup ? QStringLiteral("raster_tools") : QString::fromStdString(currentPlugin_->name()),
@@ -746,8 +747,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
                 .arg(groupName));
     }
     if (statusAlgorithmLabel_) {
-        statusAlgorithmLabel_->setText(
-            QStringLiteral("当前算法：%1").arg(groupName));
+        statusAlgorithmLabel_->setText(groupText.statusText);
     }
 
     const auto items = collectSubFunctionItems(pluginManager_, pluginName);
@@ -759,9 +759,11 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     }
     if (functionMetaLabel_) {
         functionMetaLabel_->setText(
-            QStringLiteral("当前主功能：%1  |  子功能数：%2")
-                .arg(groupName)
-                .arg(static_cast<int>(items.size())));
+            gis::gui::buildGroupSelectionText(
+                pluginName,
+                currentPlugin_->displayName(),
+                currentPlugin_->description(),
+                static_cast<int>(items.size())).metaText);
     }
 
     currentActionKey_.clear();
@@ -798,21 +800,16 @@ void MainWindow::onSubFunctionSelected(const std::string& pluginName,
         functionIconLabel_->setPixmap(badgeIconPixmap(actionIconText(currentActionKey_), QColor("#EAF3FF"), QColor("#2F7CF6")));
     }
 
-    QString displayName = gis::gui::actionDisplayName(
-        currentPlugin_->name(), currentActionKey_.toStdString());
-    functionTitleLabel_->setText(displayName);
-
-    QString desc = gis::gui::actionDescription(currentPlugin_->name(), currentActionKey_.toStdString());
-    functionDescLabel_->setText(desc.isEmpty()
-        ? QString::fromUtf8(currentPlugin_->description()) : desc);
+    const auto actionText = gis::gui::buildActionSelectionText(
+        currentDisplayGroupKey_,
+        currentPlugin_->name(),
+        currentPlugin_->displayName(),
+        currentPlugin_->description(),
+        currentActionKey_.toStdString());
+    functionTitleLabel_->setText(actionText.title);
+    functionDescLabel_->setText(actionText.description);
     if (functionMetaLabel_) {
-        const QString groupName = currentDisplayGroupKey_ == gis::gui::rasterToolsGroupKey()
-            ? gis::gui::rasterToolsGroupDisplayName()
-            : QString::fromUtf8(currentPlugin_->displayName());
-        functionMetaLabel_->setText(
-            QStringLiteral("当前主功能：%1  |  当前子功能：%2")
-                .arg(groupName)
-                .arg(displayName));
+        functionMetaLabel_->setText(actionText.metaText);
     }
 
     paramWidget_->setUiContext(currentPlugin_->name(), actionKey);
@@ -825,7 +822,7 @@ void MainWindow::onSubFunctionSelected(const std::string& pluginName,
     refreshExecuteButtonState();
     refreshParamValidationState();
 
-    statusBar()->showMessage(QStringLiteral("当前子功能：%1").arg(displayName));
+    statusBar()->showMessage(actionText.statusText);
 
     if (taskCenterPage_) {
         taskCenterPage_->setCurrentGroup(
