@@ -18,7 +18,9 @@ class QPushButton;
 class QTabWidget;
 class QCheckBox;
 class QLineEdit;
+class QStackedWidget;
 class TaskCenterPage;
+class ResultPreviewPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -67,6 +69,9 @@ private:
     void runPluginWithParams(const std::map<std::string, gis::framework::ParamValue>& params,
                              bool skipOverwritePrompt);
     void resetDerivedParamTracking();
+    void resetResultPreviewState();
+    void showResultPreview(const QString& outputPath,
+                           const std::map<std::string, std::string>& metadata);
     void updateBatchCount();
     QStringList scanBatchFiles() const;
 
@@ -81,6 +86,9 @@ private:
     ParamWidget* paramWidget_ = nullptr;
     QPushButton* executeButton_ = nullptr;
     QLabel* resultSummaryLabel_ = nullptr;
+    QPushButton* viewResultButton_ = nullptr;
+    QStackedWidget* paramPreviewStack_ = nullptr;
+    ResultPreviewPage* resultPreviewPage_ = nullptr;
     QLabel* statusAlgorithmLabel_ = nullptr;
     QLabel* statusPluginCountLabel_ = nullptr;
     QLabel* statusSubFunctionCountLabel_ = nullptr;
