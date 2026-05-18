@@ -70,6 +70,27 @@ struct DerivedOutputUpdate {
     bool shouldApply = false;
 };
 
+struct DerivedParamTracking {
+    std::string outputPath;
+    std::string vectorOutputPath;
+    std::string rasterOutputPath;
+    std::string expressionValue;
+    std::string layerName;
+    std::optional<std::array<double, 4>> extent;
+};
+
+struct DerivedParamSyncResult {
+    DerivedOutputUpdate outputUpdate;
+    DerivedOutputUpdate vectorOutputUpdate;
+    DerivedOutputUpdate rasterOutputUpdate;
+    DerivedOutputUpdate expressionUpdate;
+    bool shouldApplyLayer = false;
+    std::string layerValue;
+    bool shouldApplyExtent = false;
+    std::array<double, 4> extent{0.0, 0.0, 0.0, 0.0};
+    DerivedParamTracking tracking;
+};
+
 struct ExecuteButtonState {
     bool enabled = false;
     std::string tooltip;
@@ -155,6 +176,27 @@ DerivedOutputUpdate computeDerivedExpressionUpdate(const std::string& currentVal
                                                    const std::string& pluginName,
                                                    const std::string& action,
                                                    const std::string& presetKey);
+DerivedParamSyncResult computeDerivedParamSyncResult(
+    const std::string& pluginName,
+    const std::string& action,
+    const std::string& primaryPath,
+    const std::string& formatValue,
+    bool hasOutputParam,
+    const std::string& currentOutputValue,
+    bool hasVectorOutputParam,
+    const std::string& currentVectorOutputValue,
+    bool hasRasterOutputParam,
+    const std::string& currentRasterOutputValue,
+    bool hasExpressionParam,
+    const std::string& currentExpressionValue,
+    const std::string& presetKey,
+    bool hasLayerParam,
+    const std::string& currentLayerValue,
+    bool hasExtentParam,
+    const std::optional<std::array<double, 4>>& currentExtentValue,
+    const std::string& inputPath,
+    const DataAutoFillInfo& inputInfo,
+    const DerivedParamTracking& tracking);
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path);
 QString actionDisplayName(const std::string& pluginName, const std::string& actionKey);
 QString actionDescription(const std::string& pluginName, const std::string& actionKey);

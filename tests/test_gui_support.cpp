@@ -1180,6 +1180,92 @@ TEST(GuiSupportTest, ShouldAutoFillExtentValueAppliesForUnsetZeroOrPreviousAutoV
     EXPECT_FALSE(gis::gui::shouldAutoFillExtentValue(std::nullopt, std::nullopt, false));
 }
 
+TEST(GuiSupportTest, ComputeDerivedParamSyncResultAggregatesAutoUpdates) {
+    gis::gui::DerivedParamTracking tracking;
+    tracking.outputPath = "D:/data/old_vector_buffer.gpkg";
+    tracking.layerName = "old_layer";
+    tracking.extent = std::array<double, 4>{1.0, 2.0, 3.0, 4.0};
+
+    gis::gui::DataAutoFillInfo inputInfo;
+    inputInfo.layerName = "roads";
+    inputInfo.extent = {100.0, 20.0, 110.0, 30.0};
+    inputInfo.hasExtent = true;
+
+    const auto result = gis::gui::computeDerivedParamSyncResult(
+        "vector",
+        "buffer",
+        "D:/data/source.geojson",
+        "",
+        true,
+        "D:/data/old_vector_buffer.gpkg",
+        false,
+        "",
+        false,
+        "",
+        false,
+        "",
+        "",
+        true,
+        "old_layer",
+        true,
+        std::array<double, 4>{1.0, 2.0, 3.0, 4.0},
+        "D:/data/source.gpkg",
+        inputInfo,
+        tracking);
+
+    EXPECT_TRUE(result.outputUpdate.shouldApply);
+    EXPECT_EQ(result.outputUpdate.value, "D:/data/source_vector_buffer.gpkg");
+    EXPECT_TRUE(result.shouldApplyLayer);
+    EXPECT_EQ(result.layerValue, "roads");
+    EXPECT_TRUE(result.shouldApplyExtent);
+    EXPECT_TRUE(result.extent == (std::array<double, 4>{100.0, 20.0, 110.0, 30.0}));
+    EXPECT_EQ(result.tracking.outputPath, "D:/data/source_vector_buffer.gpkg");
+    EXPECT_EQ(result.tracking.layerName, "roads");
+    EXPECT_TRUE(result.tracking.extent == (std::array<double, 4>{100.0, 20.0, 110.0, 30.0}));
+}
+
+TEST(GuiSupportTest, ComputeDerivedParamSyncResultPreservesManualValues) {
+    gis::gui::DerivedParamTracking tracking;
+    tracking.outputPath = "D:/data/source_vector_buffer.gpkg";
+    tracking.layerName = "roads";
+    tracking.extent = std::array<double, 4>{100.0, 20.0, 110.0, 30.0};
+
+    gis::gui::DataAutoFillInfo inputInfo;
+    inputInfo.layerName = "buildings";
+    inputInfo.extent = {200.0, 40.0, 210.0, 50.0};
+    inputInfo.hasExtent = true;
+
+    const auto result = gis::gui::computeDerivedParamSyncResult(
+        "vector",
+        "buffer",
+        "D:/data/changed.geojson",
+        "",
+        true,
+        "D:/data/manual_output.gpkg",
+        false,
+        "",
+        false,
+        "",
+        false,
+        "",
+        "",
+        true,
+        "manual_layer",
+        true,
+        std::array<double, 4>{9.0, 9.0, 9.0, 9.0},
+        "D:/data/changed.gpkg",
+        inputInfo,
+        tracking);
+
+    EXPECT_FALSE(result.outputUpdate.shouldApply);
+    EXPECT_EQ(result.outputUpdate.value, "D:/data/changed_vector_buffer.gpkg");
+    EXPECT_FALSE(result.shouldApplyLayer);
+    EXPECT_FALSE(result.shouldApplyExtent);
+    EXPECT_EQ(result.tracking.outputPath, "D:/data/changed_vector_buffer.gpkg");
+    EXPECT_EQ(result.tracking.layerName, "buildings");
+    EXPECT_TRUE(result.tracking.extent == (std::array<double, 4>{100.0, 20.0, 110.0, 30.0}));
+}
+
 TEST(GuiSupportTest, BuildResultSummaryTextUsesChineseLabels) {
     gis::framework::Result result;
     result.success = true;

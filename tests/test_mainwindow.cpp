@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <gdal_priv.h>
+#include <ogrsf_frmts.h>
+
 #include <QCoreApplication>
 #include <QLabel>
 #include <QMetaObject>
@@ -18,6 +21,7 @@
 #include "../src/gui/task_runner.h"
 #include "../src/gui/task_manager.h"
 #include "../src/gui/task_database.h"
+#include "../src/gui/welcome_dialog.h"
 #include "../src/gui/settings_manager.h"
 #include "test_support.h"
 
@@ -52,6 +56,7 @@ void configureSettingsForTest() {
                        QString::fromStdString(settingsDir.string()));
     QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope,
                        QString::fromStdString(settingsDir.string()));
+    gis::gui::markFirstRunComplete();
     configured = true;
 }
 
@@ -90,6 +95,54 @@ QLabel* findLogTaskLabel(TaskCenterPage* page) {
 
 QTextEdit* findLogDisplay(TaskCenterPage* page) {
     return page ? page->findChild<QTextEdit*>(QStringLiteral("logTerminal")) : nullptr;
+}
+
+struct DatasetCloser {
+    void operator()(GDALDataset* ds) const {
+        if (ds) {
+            GDALClose(ds);
+        }
+    }
+};
+
+fs::path createMainWindowVectorGpkg(const fs::path& path,
+                                    const std::string& layerName = "roads") {
+    GDALAllRegister();
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    EXPECT_NE(driver, nullptr);
+    if (!driver) {
+        return {};
+    }
+
+    if (fs::exists(path)) {
+        fs::remove(path);
+    }
+
+    std::unique_ptr<GDALDataset, DatasetCloser> ds(
+        driver->Create(path.string().c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+    EXPECT_NE(ds, nullptr);
+    if (!ds) {
+        return {};
+    }
+
+    OGRSpatialReference srs;
+    srs.importFromEPSG(4326);
+    auto* layer = ds->CreateLayer(layerName.c_str(), &srs, wkbPolygon, nullptr);
+    EXPECT_NE(layer, nullptr);
+    if (!layer) {
+        return {};
+    }
+
+    OGRFeatureDefn* defn = layer->GetLayerDefn();
+    std::unique_ptr<OGRFeature> feature(OGRFeature::CreateFeature(defn));
+    const char* wktText = "POLYGON ((100 20, 110 20, 110 30, 100 30, 100 20))";
+    char* wkt = const_cast<char*>(wktText);
+    OGRGeometry* geometry = nullptr;
+    EXPECT_EQ(OGRGeometryFactory::createFromWkt(&wkt, nullptr, &geometry), OGRERR_NONE);
+    feature->SetGeometryDirectly(geometry);
+    EXPECT_EQ(layer->CreateFeature(feature.get()), OGRERR_NONE);
+
+    return path;
 }
 
 template <typename Predicate>
@@ -370,6 +423,48 @@ TEST(MainWindowTest, EditTaskRestoresMultiFileListAsCommaSeparatedText) {
 
     EXPECT_EQ(window.paramWidget_->stringValue("bands"),
               "D:/data/band_1.tif, D:/data/band_2.tif, D:/data/band_3.tif");
+}
+
+TEST(MainWindowTest, SettingInputAutoFillsOutputAndKeepsManualOverride) {
+    configureSettingsForTest();
+
+    MainWindow window;
+    window.selectPluginByName("vector");
+    window.selectActionByKey("buffer");
+
+    ASSERT_TRUE(window.setParamValue("input", "D:/data/source.geojson"));
+    EXPECT_EQ(window.paramWidget_->stringValue("output"),
+              "D:/data/source_vector_buffer.gpkg");
+
+    ASSERT_TRUE(window.setParamValue("output", "D:/data/manual_output.gpkg"));
+    ASSERT_TRUE(window.setParamValue("input", "D:/data/changed.geojson"));
+    EXPECT_EQ(window.paramWidget_->stringValue("output"),
+              "D:/data/manual_output.gpkg");
+}
+
+TEST(MainWindowTest, SettingGeoPackageInputAutoFillsLayerAndExtent) {
+    configureSettingsForTest();
+
+    const fs::path gpkgPath = createMainWindowVectorGpkg(
+        mainWindowTestDir() / "autofill_input.gpkg");
+    ASSERT_FALSE(gpkgPath.empty());
+
+    MainWindow window;
+    window.selectPluginByName("vector");
+    window.selectActionByKey("filter");
+
+    ASSERT_TRUE(window.setParamValue("input", gpkgPath.generic_string()));
+    EXPECT_EQ(window.paramWidget_->stringValue("layer"), "roads");
+
+    const auto params = window.paramWidget_->collectParams();
+    const auto it = params.find("extent");
+    ASSERT_NE(it, params.end());
+    const auto* extent = std::get_if<std::array<double, 4>>(&it->second);
+    ASSERT_NE(extent, nullptr);
+    EXPECT_DOUBLE_EQ((*extent)[0], 100.0);
+    EXPECT_DOUBLE_EQ((*extent)[1], 20.0);
+    EXPECT_DOUBLE_EQ((*extent)[2], 110.0);
+    EXPECT_DOUBLE_EQ((*extent)[3], 30.0);
 }
 
 TEST(MainWindowTest, RerunTaskCreatesNewTaskRecordAndClearsEditingState) {

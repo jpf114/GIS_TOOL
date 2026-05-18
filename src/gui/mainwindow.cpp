@@ -1000,68 +1000,75 @@ void MainWindow::syncDerivedParams() {
     const std::string inputPath = paramWidget_->stringValue("input");
     const std::string referencePath = paramWidget_->stringValue("reference");
     const std::string primaryPath = !inputPath.empty() ? inputPath : referencePath;
+    const auto currentExtent = [&]() -> std::optional<std::array<double, 4>> {
+        const auto it = params.find("extent");
+        if (it == params.end()) {
+            return std::nullopt;
+        }
+        if (const auto* extent = std::get_if<std::array<double, 4>>(&it->second)) {
+            return *extent;
+        }
+        return std::nullopt;
+    }();
+    const auto inputInfo = inputPath.empty()
+        ? gis::gui::DataAutoFillInfo{}
+        : gis::gui::inspectDataForAutoFill(inputPath);
 
     isSyncingParams_ = true;
-
-    auto syncOutputField = [&](const std::string& key, std::string& lastAutoPath) {
-        if (!paramWidget_->hasParam(key) || primaryPath.empty()) {
-            return;
-        }
-        const std::string currentValue = paramWidget_->stringValue(key);
-        const std::string formatValue = key == "output" ? paramWidget_->stringValue("format") : std::string{};
-        const auto update = gis::gui::computeDerivedOutputUpdate(
-            currentValue,
-            lastAutoPath,
-            primaryPath,
-            currentPlugin_->name(),
-            actionKey,
-            key,
-            formatValue);
-        if (update.shouldApply) {
-            paramWidget_->setStringValue(key, update.value);
-        }
-        lastAutoPath = update.autoValue;
-    };
-
-    syncOutputField("output", lastAutoOutputPath_);
-    syncOutputField("vector_output", lastAutoVectorOutputPath_);
-    syncOutputField("raster_output", lastAutoRasterOutputPath_);
-
-    if (paramWidget_->hasParam("expression") && paramWidget_->hasParam("preset")) {
-        const std::string currentExpression = paramWidget_->stringValue("expression");
-        const std::string presetKey = paramWidget_->stringValue("preset");
-        const auto update = gis::gui::computeDerivedExpressionUpdate(
-            currentExpression,
+    const auto syncResult = gis::gui::computeDerivedParamSyncResult(
+        currentPlugin_->name(),
+        actionKey,
+        primaryPath,
+        paramWidget_->stringValue("format"),
+        paramWidget_->hasParam("output"),
+        paramWidget_->stringValue("output"),
+        paramWidget_->hasParam("vector_output"),
+        paramWidget_->stringValue("vector_output"),
+        paramWidget_->hasParam("raster_output"),
+        paramWidget_->stringValue("raster_output"),
+        paramWidget_->hasParam("expression"),
+        paramWidget_->stringValue("expression"),
+        paramWidget_->hasParam("preset") ? paramWidget_->stringValue("preset") : std::string{},
+        paramWidget_->hasParam("layer"),
+        paramWidget_->stringValue("layer"),
+        paramWidget_->hasParam("extent"),
+        currentExtent,
+        inputPath,
+        inputInfo,
+        {
+            lastAutoOutputPath_,
+            lastAutoVectorOutputPath_,
+            lastAutoRasterOutputPath_,
             lastAutoExpressionValue_,
-            currentPlugin_->name(),
-            actionKey,
-            presetKey);
-        if (update.shouldApply) {
-            paramWidget_->setStringValue("expression", update.value);
-        }
-        lastAutoExpressionValue_ = update.autoValue;
+            lastAutoLayerName_,
+            lastAutoExtent_,
+        });
+
+    if (syncResult.outputUpdate.shouldApply) {
+        paramWidget_->setStringValue("output", syncResult.outputUpdate.value);
+    }
+    if (syncResult.vectorOutputUpdate.shouldApply) {
+        paramWidget_->setStringValue("vector_output", syncResult.vectorOutputUpdate.value);
+    }
+    if (syncResult.rasterOutputUpdate.shouldApply) {
+        paramWidget_->setStringValue("raster_output", syncResult.rasterOutputUpdate.value);
+    }
+    if (syncResult.expressionUpdate.shouldApply) {
+        paramWidget_->setStringValue("expression", syncResult.expressionUpdate.value);
+    }
+    if (syncResult.shouldApplyLayer) {
+        paramWidget_->setStringValue("layer", syncResult.layerValue);
+    }
+    if (syncResult.shouldApplyExtent) {
+        paramWidget_->setExtentValue("extent", syncResult.extent);
     }
 
-    if (!inputPath.empty()) {
-        const auto info = gis::gui::inspectDataForAutoFill(inputPath);
-        const QString inputPathLower = QString::fromStdString(inputPath).toLower();
-        const std::string currentLayer = paramWidget_->stringValue("layer");
-        if (paramWidget_->hasParam("layer")
-            && !info.layerName.empty()
-            && !inputPathLower.endsWith(QStringLiteral(".shp"))) {
-            if (gis::gui::shouldAutoFillLayerValue(currentLayer, lastAutoLayerName_, info.layerName)) {
-                paramWidget_->setStringValue("layer", info.layerName);
-            }
-            lastAutoLayerName_ = info.layerName;
-        }
-        if (paramWidget_->hasParam("extent")) {
-            const auto extent = extentParamValue(params, "extent");
-            if (gis::gui::shouldAutoFillExtentValue(extent, lastAutoExtent_, info.hasExtent)) {
-                paramWidget_->setExtentValue("extent", info.extent);
-                lastAutoExtent_ = info.extent;
-            }
-        }
-    }
+    lastAutoOutputPath_ = syncResult.tracking.outputPath;
+    lastAutoVectorOutputPath_ = syncResult.tracking.vectorOutputPath;
+    lastAutoRasterOutputPath_ = syncResult.tracking.rasterOutputPath;
+    lastAutoExpressionValue_ = syncResult.tracking.expressionValue;
+    lastAutoLayerName_ = syncResult.tracking.layerName;
+    lastAutoExtent_ = syncResult.tracking.extent;
 
     isSyncingParams_ = false;
 }

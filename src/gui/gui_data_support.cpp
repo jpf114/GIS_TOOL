@@ -1284,6 +1284,98 @@ DerivedOutputUpdate computeDerivedExpressionUpdate(const std::string& currentVal
     return update;
 }
 
+DerivedParamSyncResult computeDerivedParamSyncResult(
+    const std::string& pluginName,
+    const std::string& action,
+    const std::string& primaryPath,
+    const std::string& formatValue,
+    bool hasOutputParam,
+    const std::string& currentOutputValue,
+    bool hasVectorOutputParam,
+    const std::string& currentVectorOutputValue,
+    bool hasRasterOutputParam,
+    const std::string& currentRasterOutputValue,
+    bool hasExpressionParam,
+    const std::string& currentExpressionValue,
+    const std::string& presetKey,
+    bool hasLayerParam,
+    const std::string& currentLayerValue,
+    bool hasExtentParam,
+    const std::optional<std::array<double, 4>>& currentExtentValue,
+    const std::string& inputPath,
+    const DataAutoFillInfo& inputInfo,
+    const DerivedParamTracking& tracking) {
+    DerivedParamSyncResult result;
+    result.tracking = tracking;
+
+    if (hasOutputParam && !primaryPath.empty()) {
+        result.outputUpdate = computeDerivedOutputUpdate(
+            currentOutputValue,
+            tracking.outputPath,
+            primaryPath,
+            pluginName,
+            action,
+            "output",
+            formatValue);
+        result.tracking.outputPath = result.outputUpdate.autoValue;
+    }
+
+    if (hasVectorOutputParam && !primaryPath.empty()) {
+        result.vectorOutputUpdate = computeDerivedOutputUpdate(
+            currentVectorOutputValue,
+            tracking.vectorOutputPath,
+            primaryPath,
+            pluginName,
+            action,
+            "vector_output");
+        result.tracking.vectorOutputPath = result.vectorOutputUpdate.autoValue;
+    }
+
+    if (hasRasterOutputParam && !primaryPath.empty()) {
+        result.rasterOutputUpdate = computeDerivedOutputUpdate(
+            currentRasterOutputValue,
+            tracking.rasterOutputPath,
+            primaryPath,
+            pluginName,
+            action,
+            "raster_output");
+        result.tracking.rasterOutputPath = result.rasterOutputUpdate.autoValue;
+    }
+
+    if (hasExpressionParam) {
+        result.expressionUpdate = computeDerivedExpressionUpdate(
+            currentExpressionValue,
+            tracking.expressionValue,
+            pluginName,
+            action,
+            presetKey);
+        result.tracking.expressionValue = result.expressionUpdate.autoValue;
+    }
+
+    if (!inputPath.empty()) {
+        const QString inputPathLower = QString::fromStdString(inputPath).toLower();
+        if (hasLayerParam
+            && !inputInfo.layerName.empty()
+            && !inputPathLower.endsWith(QStringLiteral(".shp"))) {
+            result.shouldApplyLayer = shouldAutoFillLayerValue(
+                currentLayerValue,
+                tracking.layerName,
+                inputInfo.layerName);
+            result.layerValue = inputInfo.layerName;
+            result.tracking.layerName = inputInfo.layerName;
+        }
+
+        if (hasExtentParam
+            && shouldAutoFillExtentValue(currentExtentValue, tracking.extent, inputInfo.hasExtent)) {
+            result.shouldApplyExtent = true;
+            result.extent = inputInfo.extent;
+            result.tracking.extent = inputInfo.extent;
+        }
+    }
+
+    return result;
+}
+
 DataAutoFillInfo inspectDataForAutoFill(const std::string& path) {
     DataAutoFillInfo info;
     const std::string normalizedPath = firstInputPath(path);
