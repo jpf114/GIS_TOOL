@@ -1275,7 +1275,7 @@ std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const 
         gis::framework::ParamSpec{
             "action", "瀛愬姛鑳?, "鍒嗙被鐩稿叧鍔熻兘",
             gis::framework::ParamType::Enum, true, std::string{},
-            int{0}, int{0}, {"feature_stats", "svm_classify", "random_forest_classify", "max_likelihood_classify"}
+            int{0}, int{0}, {"feature_stats", "svm_classify", "random_forest_classify", "max_likelihood_classify", "accuracy_assessment"}
         },
         gis::framework::ParamSpec{
             "input", "杈撳叆鏍呮牸", "寰呭垎绫荤殑澶氭尝娈垫爡鏍兼枃浠惰矾寰?,
@@ -2083,6 +2083,192 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     return execResult;
 }
 
+gis::framework::Result ClassificationPlugin::doAccuracyAssessment(
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    gis::core::ProgressReporter& progress) {
+
+    const std::string classifiedPath = gis::framework::getParam<std::string>(params, "classified_raster", "");
+    const std::string referencePath = gis::framework::getParam<std::string>(params, "reference_raster", "");
+    const std::string outputPath = gis::framework::getParam<std::string>(params, "output", "");
+
+    if (classifiedPath.empty()) return gis::framework::Result::fail("classified_raster is required");
+    if (referencePath.empty()) return gis::framework::Result::fail("reference_raster is required");
+    if (outputPath.empty()) return gis::framework::Result::fail("output is required");
+
+    progress.throwIfCancelled();
+    progress.onProgress(0.05);
+
+    auto classifiedDs = gis::core::openRaster(classifiedPath, true);
+    if (!classifiedDs) return gis::framework::Result::fail("Cannot open classified raster: " + classifiedPath);
+
+    auto referenceDs = gis::core::openRaster(referencePath, true);
+    if (!referenceDs) return gis::framework::Result::fail("Cannot open reference raster: " + referencePath);
+
+    auto* classifiedBand = classifiedDs->GetRasterBand(1);
+    auto* referenceBand = referenceDs->GetRasterBand(1);
+    if (!classifiedBand || !referenceBand) return gis::framework::Result::fail("Cannot get raster band 1");
+
+    int width = classifiedDs->GetRasterXSize();
+    int height = classifiedDs->GetRasterYSize();
+    int refWidth = referenceDs->GetRasterXSize();
+    int refHeight = referenceDs->GetRasterYSize();
+
+    if (width != refWidth || height != refHeight) {
+        return gis::framework::Result::fail(
+            "Raster dimensions do not match: classified " +
+            std::to_string(width) + "x" + std::to_string(height) +
+            " vs reference " + std::to_string(refWidth) + "x" + std::to_string(refHeight));
+    }
+
+    progress.throwIfCancelled();
+    progress.onProgress(0.1);
+
+    int classifiedNoData = static_cast<int>(classifiedBand->GetNoDataValue());
+    int referenceNoData = static_cast<int>(referenceBand->GetNoDataValue());
+
+    std::vector<int> classifiedBuf(static_cast<size_t>(width));
+    std::vector<int> referenceBuf(static_cast<size_t>(width));
+
+    std::map<int, std::map<int, int64_t>> confusionMatrix;
+    std::set<int> allClasses;
+    int64_t totalValid = 0;
+    int64_t totalCorrect = 0;
+
+    for (int y = 0; y < height; ++y) {
+        classifiedBand->RasterIO(GF_Read, 0, y, width, 1,
+                                 classifiedBuf.data(), width, 1, GDT_Int32, 0, 0);
+        referenceBand->RasterIO(GF_Read, 0, y, width, 1,
+                                referenceBuf.data(), width, 1, GDT_Int32, 0, 0);
+
+        for (int x = 0; x < width; ++x) {
+            int cVal = classifiedBuf[static_cast<size_t>(x)];
+            int rVal = referenceBuf[static_cast<size_t>(x)];
+
+            if (cVal == classifiedNoData || rVal == referenceNoData) continue;
+
+            allClasses.insert(rVal);
+            allClasses.insert(cVal);
+            confusionMatrix[rVal][cVal]++;
+            totalValid++;
+            if (cVal == rVal) totalCorrect++;
+        }
+
+        if (y % 100 == 0) {
+            double prog = 0.1 + 0.7 * static_cast<double>(y) / static_cast<double>(height);
+            progress.onProgress(prog);
+            progress.throwIfCancelled();
+        }
+    }
+
+    progress.onProgress(0.85);
+    progress.throwIfCancelled();
+
+    double overallAccuracy = totalValid > 0 ? static_cast<double>(totalCorrect) / static_cast<double>(totalValid) : 0.0;
+
+    std::vector<int> sortedClasses(allClasses.begin(), allClasses.end());
+    size_t n = sortedClasses.size();
+
+    std::map<int, double> producersAccuracy;
+    std::map<int, double> usersAccuracy;
+
+    for (size_t i = 0; i < n; ++i) {
+        int cls = sortedClasses[i];
+        int64_t colSum = 0;
+        int64_t rowSum = 0;
+        for (size_t j = 0; j < n; ++j) {
+            colSum += confusionMatrix[sortedClasses[j]][cls];
+            rowSum += confusionMatrix[cls][sortedClasses[j]];
+        }
+        producersAccuracy[cls] = colSum > 0 ? static_cast<double>(confusionMatrix[cls][cls]) / static_cast<double>(colSum) : 0.0;
+        usersAccuracy[cls] = rowSum > 0 ? static_cast<double>(confusionMatrix[cls][cls]) / static_cast<double>(rowSum) : 0.0;
+    }
+
+    double kappa = 0.0;
+    if (totalValid > 0) {
+        double pe = 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            int cls = sortedClasses[i];
+            int64_t colSum = 0;
+            int64_t rowSum = 0;
+            for (size_t j = 0; j < n; ++j) {
+                colSum += confusionMatrix[sortedClasses[j]][cls];
+                rowSum += confusionMatrix[cls][sortedClasses[j]];
+            }
+            pe += static_cast<double>(colSum) * static_cast<double>(rowSum);
+        }
+        pe /= static_cast<double>(totalValid) * static_cast<double>(totalValid);
+        kappa = (overallAccuracy - pe) / (1.0 - pe);
+    }
+
+    progress.onProgress(0.9);
+    progress.throwIfCancelled();
+
+    std::ostringstream json;
+    json << "{\n";
+    json << "  \"confusion_matrix\": {\n";
+    for (size_t i = 0; i < n; ++i) {
+        int rowCls = sortedClasses[i];
+        json << "    \"" << rowCls << "\": {";
+        for (size_t j = 0; j < n; ++j) {
+            int colCls = sortedClasses[j];
+            json << "\"" << colCls << "\": " << confusionMatrix[rowCls][colCls];
+            if (j + 1 < n) json << ", ";
+        }
+        json << "}";
+        if (i + 1 < n) json << ",";
+        json << "\n";
+    }
+    json << "  },\n";
+
+    json << "  \"class_names\": [";
+    for (size_t i = 0; i < n; ++i) {
+        json << sortedClasses[i];
+        if (i + 1 < n) json << ", ";
+    }
+    json << "],\n";
+
+    json << "  \"overall_accuracy\": " << std::fixed << std::setprecision(6) << overallAccuracy << ",\n";
+    json << "  \"kappa\": " << std::fixed << std::setprecision(6) << kappa << ",\n";
+
+    json << "  \"producers_accuracy\": {";
+    for (size_t i = 0; i < n; ++i) {
+        json << "\"" << sortedClasses[i] << "\": " << std::fixed << std::setprecision(6) << producersAccuracy[sortedClasses[i]];
+        if (i + 1 < n) json << ", ";
+    }
+    json << "},\n";
+
+    json << "  \"users_accuracy\": {";
+    for (size_t i = 0; i < n; ++i) {
+        json << "\"" << sortedClasses[i] << "\": " << std::fixed << std::setprecision(6) << usersAccuracy[sortedClasses[i]];
+        if (i + 1 < n) json << ", ";
+    }
+    json << "},\n";
+
+    json << "  \"total_samples\": " << totalValid << ",\n";
+    json << "  \"correct_samples\": " << totalCorrect << "\n";
+    json << "}\n";
+
+    {
+        std::ofstream ofs(outputPath);
+        if (!ofs.is_open()) {
+            return gis::framework::Result::fail("Cannot write output: " + outputPath);
+        }
+        ofs << json.str();
+    }
+
+    progress.onProgress(1.0);
+
+    auto result = gis::framework::Result::ok(
+        "绮惧害璇勪及瀹屾垚: OA=" + std::to_string(overallAccuracy) +
+        " Kappa=" + std::to_string(kappa), outputPath);
+    result.metadata["action"] = "accuracy_assessment";
+    result.metadata["overall_accuracy"] = std::to_string(overallAccuracy);
+    result.metadata["kappa"] = std::to_string(kappa);
+    result.metadata["total_samples"] = std::to_string(totalValid);
+    result.metadata["correct_samples"] = std::to_string(totalCorrect);
+    result.metadata["class_count"] = std::to_string(n);
+    return result;
+}
 
 } // namespace gis::plugins
 
