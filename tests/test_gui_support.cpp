@@ -2197,6 +2197,167 @@ TEST(GuiSupportTest, ActionDisplayNameUsesConfiguredValueOrFallsBackToActionKey)
         QStringLiteral("unknown_action"));
 }
 
+TEST(GuiSupportTest, ActionDisplayNameLocalizesSidebarEnglishEntries) {
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("spindex", "ndvi"),
+        QStringLiteral("NDVI（归一化植被指数）"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("spindex", "ui"),
+        QStringLiteral("UI（城镇指数）"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("spindex", "custom_index"),
+        QStringLiteral("自定义指数"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("vector", "rasterize"),
+        QStringLiteral("矢量转栅格"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("vector", "polygonize"),
+        QStringLiteral("栅格转面"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("raster_math", "band_math"),
+        QStringLiteral("波段运算"));
+    EXPECT_EQ(
+        gis::gui::actionDisplayName("georef", "rpc_orthorectify"),
+        QStringLiteral("RPC 正射校正"));
+}
+
+TEST(GuiSupportTest, ActionDisplayNameCoversAllCurrentSidebarActions) {
+    const std::vector<std::pair<std::string, std::string>> actions = {
+        {"classification", "feature_stats"},
+        {"classification", "svm_classify"},
+        {"classification", "random_forest_classify"},
+        {"classification", "max_likelihood_classify"},
+        {"classification", "accuracy_assessment"},
+        {"cutting", "clip"},
+        {"cutting", "mosaic"},
+        {"cutting", "split"},
+        {"cutting", "merge_bands"},
+        {"cutting", "tile"},
+        {"georef", "dos_correction"},
+        {"georef", "radiometric_calibration"},
+        {"georef", "gcp_register"},
+        {"georef", "cosine_correction"},
+        {"georef", "minnaert_correction"},
+        {"georef", "c_correction"},
+        {"georef", "percentile_stretch"},
+        {"georef", "rpc_orthorectify"},
+        {"matching", "detect"},
+        {"matching", "match"},
+        {"matching", "register"},
+        {"matching", "change"},
+        {"matching", "ecc_register"},
+        {"matching", "corner"},
+        {"matching", "stitch"},
+        {"processing", "threshold"},
+        {"processing", "filter"},
+        {"processing", "enhance"},
+        {"processing", "stats"},
+        {"processing", "edge"},
+        {"processing", "contour"},
+        {"processing", "template_match"},
+        {"processing", "pansharpen"},
+        {"processing", "hough"},
+        {"processing", "watershed"},
+        {"processing", "skeleton"},
+        {"processing", "gabor_filter"},
+        {"processing", "glcm_texture"},
+        {"processing", "mean_shift_filter"},
+        {"processing", "connected_components"},
+        {"processing", "kmeans"},
+        {"projection", "reproject"},
+        {"projection", "info"},
+        {"projection", "transform"},
+        {"projection", "assign_srs"},
+        {"raster_inspect", "histogram"},
+        {"raster_inspect", "info"},
+        {"raster_manage", "overviews"},
+        {"raster_manage", "nodata"},
+        {"raster_manage", "cog"},
+        {"raster_manage", "zonal_stats"},
+        {"raster_manage", "proximity"},
+        {"raster_math", "band_math"},
+        {"raster_math", "reclassify"},
+        {"raster_math", "raster_overlay"},
+        {"raster_render", "colormap"},
+        {"raster_render", "histogram_match"},
+        {"spindex", "ndvi"},
+        {"spindex", "ndmi"},
+        {"spindex", "evi"},
+        {"spindex", "evi2"},
+        {"spindex", "savi"},
+        {"spindex", "osavi"},
+        {"spindex", "gndvi"},
+        {"spindex", "ndwi"},
+        {"spindex", "mndwi"},
+        {"spindex", "ndbi"},
+        {"spindex", "bsi"},
+        {"spindex", "arvi"},
+        {"spindex", "nbr"},
+        {"spindex", "awei"},
+        {"spindex", "ui"},
+        {"spindex", "bi"},
+        {"spindex", "custom_index"},
+        {"terrain", "slope"},
+        {"terrain", "aspect"},
+        {"terrain", "hillshade"},
+        {"terrain", "tpi"},
+        {"terrain", "curvature"},
+        {"terrain", "profile_curvature"},
+        {"terrain", "plan_curvature"},
+        {"terrain", "tri"},
+        {"terrain", "roughness"},
+        {"terrain", "fill_sinks"},
+        {"terrain", "flow_direction"},
+        {"terrain", "flow_accumulation"},
+        {"terrain", "stream_extract"},
+        {"terrain", "watershed"},
+        {"terrain", "profile_extract"},
+        {"terrain", "viewshed"},
+        {"terrain", "viewshed_multi"},
+        {"terrain", "cut_fill"},
+        {"terrain", "reservoir_volume"},
+        {"vector", "info"},
+        {"vector", "filter"},
+        {"vector", "buffer"},
+        {"vector", "clip"},
+        {"vector", "rasterize"},
+        {"vector", "polygonize"},
+        {"vector", "convert"},
+        {"vector", "union"},
+        {"vector", "difference"},
+        {"vector", "intersect"},
+        {"vector", "dissolve"},
+        {"vector", "simplify"},
+        {"vector", "repair"},
+        {"vector", "geom_metrics"},
+        {"vector", "nearest"},
+        {"vector", "spatial_join"},
+        {"vector", "adjacency"},
+        {"vector", "overlap_check"},
+        {"vector", "topology_check"},
+        {"vector", "convex_hull"},
+        {"vector", "centroid"},
+        {"vector", "envelope"},
+        {"vector", "boundary"},
+        {"vector", "multipart_check"},
+        {"vector", "singlepart"},
+        {"vector", "vertices_extract"},
+        {"vector", "endpoints_extract"},
+        {"vector", "midpoints_extract"},
+        {"vector", "interior_point"},
+        {"vector", "duplicate_point_check"},
+        {"vector", "hole_check"},
+        {"vector", "dangling_endpoint_check"},
+        {"vector", "sliver_remove"},
+    };
+
+    for (const auto& [pluginName, actionKey] : actions) {
+        const QString displayName = gis::gui::actionDisplayName(pluginName, actionKey);
+        EXPECT_FALSE(displayName.isEmpty()) << pluginName << ":" << actionKey;
+        EXPECT_NE(displayName, QString::fromStdString(actionKey)) << pluginName << ":" << actionKey;
+    }
+}
+
 TEST(GuiSupportTest, ActionDescriptionUsesConfiguredValueOrFallsBackToEmpty) {
     EXPECT_EQ(
         gis::gui::actionDescription("processing", "gabor_filter"),
