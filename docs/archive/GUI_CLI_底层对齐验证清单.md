@@ -76,7 +76,7 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 
 - [run_real_raster_regression.ps1](../../tests/run_real_raster_regression.ps1) 中 `processing_skeleton` 的最大值断言与实际 `Float32` 归一化输出不一致，已改为校验 `1`
 - [run_real_raster_regression.ps1](../../tests/run_real_raster_regression.ps1) 中 `georef_percentile_stretch` 的期望输出文件名误写为 `georef_quac_output.tif`，已改为实际输出名
-- [classification_plugin.cpp](../../src/plugins/classification/classification_plugin.cpp:1243) 中 `feature_stats` 复用了 `classification` 的全局 `input` 必填约束，导致 CLI 先于动作执行被拦截，现已改为按动作分别校验
+- [classification_plugin.cpp](../../src/plugins/classification/classification_plugin.cpp) 中 `feature_stats` 复用了 `classification` 的全局 `input` 必填约束，导致 CLI 先于动作执行被拦截；相关修正位于 `classification_plugin.cpp` 第 `1243` 行附近
 
 ### 3.4 CLI 插件加载验证
 
