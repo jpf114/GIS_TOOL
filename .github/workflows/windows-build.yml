@@ -9,18 +9,21 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: 妫€鍑轰粨搴?        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: 缂撳瓨 vcpkg 宸插畨瑁呭寘
+      - name: Cache vcpkg artifacts
         uses: actions/cache@v4
         with:
           path: |
             C:\vcpkg\installed
+            C:\vcpkg\downloads
+            ~\AppData\Local\vcpkg\archives
           key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
             vcpkg-windows-
 
-      - name: 瀹夎 vcpkg
+      - name: Bootstrap vcpkg
         shell: pwsh
         run: |
           if (-not (Test-Path C:\vcpkg\vcpkg.exe)) {
@@ -28,59 +31,185 @@ jobs:
             C:\vcpkg\bootstrap-vcpkg.bat
           }
 
-      - name: 瀹夎渚濊禆
+      - name: Install manifest dependencies
         shell: pwsh
         env:
           VCPKG_ROOT: C:\vcpkg
         run: |
-          C:\vcpkg\vcpkg.exe install gdal opencv4 proj gtest qtbase --triplet x64-windows
+          function Invoke-WithRetry {
+            param(
+              [scriptblock]$Script,
+              [int]$MaxAttempts = 3,
+              [int]$DelaySeconds = 15
+            )
 
-      - name: 閰嶇疆 Debug
+            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+              try {
+                & $Script
+                if ($LASTEXITCODE -eq 0) {
+                  return
+                }
+              } catch {
+                if ($attempt -ge $MaxAttempts) {
+                  throw
+                }
+              }
+
+              if ($attempt -ge $MaxAttempts) {
+                throw "Command failed after $MaxAttempts attempts."
+              }
+
+              Write-Host "Attempt $attempt failed; retrying in $DelaySeconds seconds..."
+              Start-Sleep -Seconds $DelaySeconds
+            }
+          }
+
+          Invoke-WithRetry {
+            C:\vcpkg\vcpkg.exe install --triplet x64-windows --x-manifest-root=$PWD
+          }
+
+      - name: Configure Debug
         shell: pwsh
         env:
           VCPKG_ROOT: C:\vcpkg
         run: |
-          cmake -S . -B build/debug --preset debug
+          function Invoke-WithRetry {
+            param(
+              [scriptblock]$Script,
+              [int]$MaxAttempts = 3,
+              [int]$DelaySeconds = 15
+            )
 
-      - name: 閰嶇疆 Release
+            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+              try {
+                & $Script
+                if ($LASTEXITCODE -eq 0) {
+                  return
+                }
+              } catch {
+                if ($attempt -ge $MaxAttempts) {
+                  throw
+                }
+              }
+
+              if ($attempt -ge $MaxAttempts) {
+                throw "Command failed after $MaxAttempts attempts."
+              }
+
+              Write-Host "Attempt $attempt failed; retrying in $DelaySeconds seconds..."
+              Start-Sleep -Seconds $DelaySeconds
+            }
+          }
+
+          Invoke-WithRetry {
+            cmake --preset debug --fresh
+          }
+
+      - name: Configure Release
         shell: pwsh
         env:
           VCPKG_ROOT: C:\vcpkg
         run: |
-          cmake -S . -B build/release --preset release
+          function Invoke-WithRetry {
+            param(
+              [scriptblock]$Script,
+              [int]$MaxAttempts = 3,
+              [int]$DelaySeconds = 15
+            )
 
-      - name: 鏋勫缓 Debug
+            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+              try {
+                & $Script
+                if ($LASTEXITCODE -eq 0) {
+                  return
+                }
+              } catch {
+                if ($attempt -ge $MaxAttempts) {
+                  throw
+                }
+              }
+
+              if ($attempt -ge $MaxAttempts) {
+                throw "Command failed after $MaxAttempts attempts."
+              }
+
+              Write-Host "Attempt $attempt failed; retrying in $DelaySeconds seconds..."
+              Start-Sleep -Seconds $DelaySeconds
+            }
+          }
+
+          Invoke-WithRetry {
+            cmake --preset release --fresh
+          }
+
+      - name: Build Debug
         shell: pwsh
         run: |
           cmake --build build/debug --config Debug
 
-      - name: 鏋勫缓 Release
+      - name: Build Release
         shell: pwsh
         run: |
           cmake --build build/release --config Release
 
-      - name: 鎵ц Debug 鍏ㄩ噺娴嬭瘯
+      - name: Test Debug
         shell: pwsh
         run: |
           ctest --test-dir build/debug -C Debug --output-on-failure
 
-      - name: 鎵ц Release 鍏ㄩ噺娴嬭瘯
+      - name: Test Release
         shell: pwsh
         run: |
           ctest --test-dir build/release -C Release --output-on-failure
 
-      - name: 瀹夎 Release
+      - name: Install Release
         shell: pwsh
         run: |
           cmake --install build/release --config Release
 
-      - name: 鎵撳寘鏋勫缓浜х墿
+      - name: Verify installed CLI and GUI
         shell: pwsh
         run: |
-          Compress-Archive -Path install -DestinationPath gis-tool-win64.zip
+          .\install\bin\gis-cli.exe --list
+          .\install\bin\gis-cli.exe vector buffer --input "$PWD\tests\data\gui_vector_projected_input.geojson" --distance 10 --output "$PWD\install-smoke-buffer.geojson"
+          .\install\bin\gis-gui.exe -platform offscreen --self-test
+          Remove-Item -LiteralPath "$PWD\install-smoke-buffer.geojson" -ErrorAction SilentlyContinue
 
-      - name: 涓婁紶鏋勫缓浜х墿
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $nsis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
+          if (-not $nsis) {
+            $candidate = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+            if (Test-Path $candidate) {
+              $nsis = $candidate
+            }
+          }
+          if (-not $nsis) {
+            throw "makensis not found after NSIS installation"
+          }
+          & $nsis installer\installer.nsi
+
+      - name: Package zip artifact
+        shell: pwsh
+        run: |
+          Compress-Archive -Path install -DestinationPath gis-tool-win64.zip -Force
+
+      - name: Upload zip artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gis-tool-win64
+          name: gis-tool-win64-zip
           path: gis-tool-win64.zip
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gis-tool-win64-setup
+          path: gis-toolkit-1.0.0-win64-setup.exe

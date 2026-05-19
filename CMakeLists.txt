@@ -4,7 +4,9 @@ cmake_minimum_required(VERSION 3.21)
 if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
 endif()
-set(VCPKG_MANIFEST_MODE OFF CACHE BOOL "Use shared global vcpkg installation" FORCE)
+if(DEFINED CMAKE_TOOLCHAIN_FILE AND CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg\\.cmake$")
+    set(VCPKG_MANIFEST_MODE ON CACHE BOOL "Use repository-pinned vcpkg manifest dependencies" FORCE)
+endif()
 
 project(gis-tool VERSION 1.0.0 LANGUAGES CXX)
 

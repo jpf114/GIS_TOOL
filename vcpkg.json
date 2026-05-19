@@ -2,6 +2,7 @@
   "name": "gis-tool",
   "version": "1.0.0",
   "description": "GIS toolset based on GDAL and OpenCV with plugin architecture",
+  "builtin-baseline": "42f37e46d37baf7b218966434b91116bddf73461",
   "dependencies": [
     {
       "name": "gdal",
@@ -16,8 +17,9 @@
     {
       "name": "qtbase",
       "default-features": false,
-      "features": ["widgets", "svg"]
-    }
+      "features": ["sql", "widgets"]
+    },
+    "qtsvg"
   ],
   "overrides": []
 }
