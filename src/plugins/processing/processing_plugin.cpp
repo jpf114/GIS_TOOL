@@ -1,4 +1,4 @@
-#include "processing_plugin.h"
+﻿#include "processing_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
 #include <gis/core/error.h>
@@ -17,224 +17,55 @@ namespace gis::plugins {
 std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
+            "action", "动作", "Raster processing action",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"threshold", "filter", "enhance", "stats", "edge", "contour", "template_match", "pansharpen", "hough", "watershed", "skeleton", "gabor_filter", "glcm_texture", "mean_shift_filter", "connected_components", "kmeans"}
         },
-        gis::framework::ParamSpec{
-            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, true, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "output", "杈撳嚭鏂囦欢", "杈撳嚭褰卞儚鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, true, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "band", "娉㈡搴忓彿", "澶勭悊鐨勬尝娈靛簭鍙?浠?寮€濮?",
-            gis::framework::ParamType::Int, false, int{1},
-            int{1}, int{999}
-        },
-        gis::framework::ParamSpec{
-            "method", "鏂规硶", "澶勭悊鏂规硶",
-            gis::framework::ParamType::Enum, false, std::string{"otsu"},
-            int{0}, int{0},
-            {"binary", "binary_inv", "truncate", "tozero", "otsu", "adaptive_gaussian", "adaptive_mean"}
-        },
-        gis::framework::ParamSpec{
-            "threshold_value", "闃堝€?, "闃堝€煎ぇ灏?,
-            gis::framework::ParamType::Double, false, double{128.0},
-            double{0.0}, double{65535.0}
-        },
-        gis::framework::ParamSpec{
-            "max_value", "鏈€澶у€?, "闃堝€煎寲鍚庣殑鏈€澶у€?,
-            gis::framework::ParamType::Double, false, double{255.0},
-            double{0.0}, double{65535.0}
-        },
-        gis::framework::ParamSpec{
-            "filter_type", "婊ゆ尝绫诲瀷", "婊ゆ尝绠楁硶",
-            gis::framework::ParamType::Enum, false, std::string{"gaussian"},
-            int{0}, int{0},
-            {"gaussian", "median", "bilateral", "morph_open", "morph_close", "morph_dilate", "morph_erode"}
-        },
-        gis::framework::ParamSpec{
-            "kernel_size", "鏍稿ぇ灏?, "婊ゆ尝鏍稿ぇ灏?濂囨暟锛孏abor榛樿9)",
-            gis::framework::ParamType::Int, false, int{5},
-            int{1}, int{101}
-        },
-        gis::framework::ParamSpec{
-            "sigma", "sigma鍊?, "楂樻柉婊ゆ尝sigma鍙傛暟(Gabor榛樿2.0)",
-            gis::framework::ParamType::Double, false, double{1.5},
-            double{0.0}, double{1000.0}
-        },
-        gis::framework::ParamSpec{
-            "gabor_theta", "鏂瑰悜瑙?, "Gabor婊ゆ尝鏍哥殑鏂瑰悜瑙掞紙寮у害锛?,
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{0.0}, double{6.2832}
-        },
-        gis::framework::ParamSpec{
-            "gabor_lambda", "娉㈤暱", "Gabor婊ゆ尝鏍哥殑娉㈤暱",
-            gis::framework::ParamType::Double, false, double{8.0},
-            double{0.001}, double{1000.0}
-        },
-        gis::framework::ParamSpec{
-            "gabor_gamma", "绾垫í姣?, "Gabor婊ゆ尝鏍哥殑绾垫í姣?,
-            gis::framework::ParamType::Double, false, double{0.5},
-            double{0.001}, double{10.0}
-        },
-        gis::framework::ParamSpec{
-            "gabor_psi", "鐩镐綅鍋忕Щ", "Gabor婊ゆ尝鏍哥殑鐩镐綅鍋忕Щ",
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{-3.1416}, double{3.1416}
-        },
-        gis::framework::ParamSpec{
-            "glcm_metric", "绾圭悊鎸囨爣", "GLCM杈撳嚭鐨勭汗鐞嗘寚鏍囩被鍨?,
-            gis::framework::ParamType::Enum, false, std::string{"contrast"},
-            int{0}, int{0},
-            {"contrast", "homogeneity", "energy", "entropy"}
-        },
-        gis::framework::ParamSpec{
-            "glcm_levels", "鐏板害绾ф暟", "GLCM閲忓寲鐏板害绾ф暟",
-            gis::framework::ParamType::Int, false, int{8},
-            int{2}, int{256}
-        },
-        gis::framework::ParamSpec{
-            "spatial_radius", "绌洪棿鍗婂緞", "Mean Shift绌洪棿绐楀彛鍗婂緞",
-            gis::framework::ParamType::Double, false, double{10.0},
-            double{0.001}, double{1000.0}
-        },
-        gis::framework::ParamSpec{
-            "color_radius", "棰滆壊鍗婂緞", "Mean Shift棰滆壊绐楀彛鍗婂緞",
-            gis::framework::ParamType::Double, false, double{20.0},
-            double{0.001}, double{1000.0}
-        },
-        gis::framework::ParamSpec{
-            "pyramid_level", "閲戝瓧濉斿眰鏁?, "Mean Shift閲戝瓧濉斿眰鏁?,
-            gis::framework::ParamType::Int, false, int{1},
-            int{0}, int{10}
-        },
-        gis::framework::ParamSpec{
-            "enhance_type", "澧炲己绫诲瀷", "澧炲己绠楁硶",
-            gis::framework::ParamType::Enum, false, std::string{"equalize"},
-            int{0}, int{0},
-            {"equalize", "clahe", "normalize", "log", "gamma"}
-        },
-        gis::framework::ParamSpec{
-            "clip_limit", "CLAHE瑁佸壀闄愬埗", "CLAHE绠楁硶鐨勮鍓檺鍒跺弬鏁?,
-            gis::framework::ParamType::Double, false, double{2.0},
-            double{0.0}, double{100.0}
-        },
-        gis::framework::ParamSpec{
-            "gamma", "Gamma鍊?, "Gamma鏍℃鍙傛暟",
-            gis::framework::ParamType::Double, false, double{1.0},
-            double{0.001}, double{100.0}
-        },
-        gis::framework::ParamSpec{
-            "edge_method", "杈圭紭妫€娴嬫柟娉?, "杈圭紭妫€娴嬬畻瀛?,
-            gis::framework::ParamType::Enum, false, std::string{"canny"},
-            int{0}, int{0},
-            {"canny", "sobel", "laplacian", "scharr"}
-        },
-        gis::framework::ParamSpec{
-            "low_threshold", "浣庨槇鍊?, "Canny杈圭紭妫€娴嬩綆闃堝€?,
-            gis::framework::ParamType::Double, false, double{50.0},
-            double{0.0}, double{65535.0}
-        },
-        gis::framework::ParamSpec{
-            "high_threshold", "楂橀槇鍊?, "Canny杈圭紭妫€娴嬮珮闃堝€?,
-            gis::framework::ParamType::Double, false, double{150.0},
-            double{0.0}, double{65535.0}
-        },
-        gis::framework::ParamSpec{
-            "sobel_dx", "Sobel dx", "Sobel x鏂瑰悜瀵兼暟闃舵暟",
-            gis::framework::ParamType::Int, false, int{1},
-            int{0}, int{2}
-        },
-        gis::framework::ParamSpec{
-            "sobel_dy", "Sobel dy", "Sobel y鏂瑰悜瀵兼暟闃舵暟",
-            gis::framework::ParamType::Int, false, int{1},
-            int{0}, int{2}
-        },
-        gis::framework::ParamSpec{
-            "min_area", "鏈€灏忛潰绉?, "杞粨杩囨护鐨勬渶灏忛潰绉?鍍忕礌)",
-            gis::framework::ParamType::Double, false, double{100.0},
-            double{0.0}, double{1e9}
-        },
-        gis::framework::ParamSpec{
-            "template_file", "妯℃澘鏂囦欢", "妯℃澘鍖归厤鐨勬ā鏉垮奖鍍忚矾寰?,
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "match_method", "鍖归厤鏂规硶", "妯℃澘鍖归厤绠楁硶",
-            gis::framework::ParamType::Enum, false, std::string{"ccoeff_normed"},
-            int{0}, int{0},
-            {"sqdiff", "sqdiff_normed", "ccorr", "ccorr_normed", "ccoeff", "ccoeff_normed"}
-        },
-        gis::framework::ParamSpec{
-            "pan_file", "鍏ㄨ壊褰卞儚", "鍏ㄨ壊閿愬寲鐢ㄧ殑楂樺垎杈ㄧ巼鍏ㄨ壊褰卞儚璺緞",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "pan_method", "铻嶅悎鏂规硶", "鍏ㄨ壊閿愬寲铻嶅悎绠楁硶",
-            gis::framework::ParamType::Enum, false, std::string{"brovey"},
-            int{0}, int{0},
-            {"brovey", "simple_mean", "ihs"}
-        },
-        gis::framework::ParamSpec{
-            "hough_type", "闇嶅か绫诲瀷", "闇嶅か鍙樻崲妫€娴嬬被鍨?,
-            gis::framework::ParamType::Enum, false, std::string{"lines"},
-            int{0}, int{0},
-            {"lines", "circles"}
-        },
-        gis::framework::ParamSpec{
-            "hough_threshold", "闇嶅か闃堝€?, "闇嶅か鍙樻崲绱姞鍣ㄩ槇鍊?,
-            gis::framework::ParamType::Double, false, double{50.0},
-            double{0.0}, double{1e6}
-        },
-        gis::framework::ParamSpec{
-            "min_line_length", "鏈€灏忕嚎闀?, "闇嶅か鐩寸嚎妫€娴嬬殑鏈€灏忕嚎娈甸暱搴?,
-            gis::framework::ParamType::Double, false, double{50.0},
-            double{0.0}, double{1e6}
-        },
-        gis::framework::ParamSpec{
-            "max_line_gap", "鏈€澶х嚎闂撮殭", "闇嶅か鐩寸嚎妫€娴嬬殑鏈€澶ч棿闅?,
-            gis::framework::ParamType::Double, false, double{10.0},
-            double{0.0}, double{1e6}
-        },
-        gis::framework::ParamSpec{
-            "min_radius", "鏈€灏忓崐寰?, "闇嶅か鍦嗘娴嬬殑鏈€灏忓崐寰?,
-            gis::framework::ParamType::Int, false, int{1},
-            int{0}, int{65536}
-        },
-        gis::framework::ParamSpec{
-            "max_radius", "鏈€澶у崐寰?, "闇嶅か鍦嗘娴嬬殑鏈€澶у崐寰?0=鑷姩)",
-            gis::framework::ParamType::Int, false, int{0},
-            int{0}, int{65536}
-        },
-        gis::framework::ParamSpec{
-            "circle_param2", "鍦嗘娴嬪弬鏁?, "闇嶅か鍦嗘娴嬬殑绱姞鍣ㄩ槇鍊?,
-            gis::framework::ParamType::Double, false, double{30.0},
-            double{0.0}, double{1e6}
-        },
-        gis::framework::ParamSpec{
-            "marker_input", "鏍囪杈撳叆", "鍒嗘按宀垎鍓茬殑绉嶅瓙鏍囪鏂囦欢(涓嶆寚瀹氬垯鑷姩鐢熸垚)",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "k", "鑱氱被鏁?, "K-Means鑱氱被鐨勭被鍒暟",
-            gis::framework::ParamType::Int, false, int{5},
-            int{1}, int{1000}
-        },
-        gis::framework::ParamSpec{
-            "max_iter", "鏈€澶ц凯浠?, "K-Means鏈€澶ц凯浠ｆ鏁?,
-            gis::framework::ParamType::Int, false, int{100},
-            int{1}, int{100000}
-        },
-        gis::framework::ParamSpec{
-            "epsilon_kmeans", "鏀舵暃闃堝€?, "K-Means鏀舵暃闃堝€?,
-            gis::framework::ParamType::Double, false, double{0.001},
-            double{0.0}, double{100.0}
-        },
+        gis::framework::ParamSpec{"input", "输入栅格", "Input raster path", gis::framework::ParamType::FilePath, true, std::string{}},
+        gis::framework::ParamSpec{"output", "输出栅格", "Output raster path", gis::framework::ParamType::FilePath, true, std::string{}},
+        gis::framework::ParamSpec{"band", "波段", "Band index", gis::framework::ParamType::Int, false, int{1}, int{1}, int{999}},
+        gis::framework::ParamSpec{"method", "阈值方法", "Thresholding method", gis::framework::ParamType::Enum, false, std::string{"otsu"}, int{0}, int{0}, {"binary", "binary_inv", "truncate", "tozero", "otsu", "adaptive_gaussian", "adaptive_mean"}},
+        gis::framework::ParamSpec{"threshold_value", "阈值", "Threshold value", gis::framework::ParamType::Double, false, double{128.0}, double{0.0}, double{65535.0}},
+        gis::framework::ParamSpec{"max_value", "最大值", "Maximum output value", gis::framework::ParamType::Double, false, double{255.0}, double{0.0}, double{65535.0}},
+        gis::framework::ParamSpec{"filter_type", "滤波类型", "Filter type", gis::framework::ParamType::Enum, false, std::string{"gaussian"}, int{0}, int{0}, {"gaussian", "median", "bilateral", "morph_open", "morph_close", "morph_dilate", "morph_erode"}},
+        gis::framework::ParamSpec{"kernel_size", "核大小", "Kernel size", gis::framework::ParamType::Int, false, int{5}, int{1}, int{101}},
+        gis::framework::ParamSpec{"sigma", "Sigma", "Sigma value", gis::framework::ParamType::Double, false, double{1.5}, double{0.0}, double{1000.0}},
+        gis::framework::ParamSpec{"gabor_theta", "Gabor Theta", "Gabor theta", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{6.2832}},
+        gis::framework::ParamSpec{"gabor_lambda", "Gabor Lambda", "Gabor lambda", gis::framework::ParamType::Double, false, double{8.0}, double{0.001}, double{1000.0}},
+        gis::framework::ParamSpec{"gabor_gamma", "Gabor Gamma", "Gabor gamma", gis::framework::ParamType::Double, false, double{0.5}, double{0.001}, double{10.0}},
+        gis::framework::ParamSpec{"gabor_psi", "Gabor Psi", "Gabor psi", gis::framework::ParamType::Double, false, double{0.0}, double{-3.1416}, double{3.1416}},
+        gis::framework::ParamSpec{"glcm_metric", "GLCM指标", "GLCM metric", gis::framework::ParamType::Enum, false, std::string{"contrast"}, int{0}, int{0}, {"contrast", "homogeneity", "energy", "entropy"}},
+        gis::framework::ParamSpec{"glcm_levels", "GLCM灰度级", "GLCM levels", gis::framework::ParamType::Int, false, int{8}, int{2}, int{256}},
+        gis::framework::ParamSpec{"spatial_radius", "空间半径", "Mean shift spatial radius", gis::framework::ParamType::Double, false, double{10.0}, double{0.001}, double{1000.0}},
+        gis::framework::ParamSpec{"color_radius", "颜色半径", "Mean shift color radius", gis::framework::ParamType::Double, false, double{20.0}, double{0.001}, double{1000.0}},
+        gis::framework::ParamSpec{"pyramid_level", "金字塔层级", "Mean shift pyramid level", gis::framework::ParamType::Int, false, int{1}, int{0}, int{10}},
+        gis::framework::ParamSpec{"enhance_type", "增强类型", "Enhancement type", gis::framework::ParamType::Enum, false, std::string{"equalize"}, int{0}, int{0}, {"equalize", "clahe", "normalize", "log", "gamma"}},
+        gis::framework::ParamSpec{"clip_limit", "CLAHE裁剪限制", "CLAHE clip limit", gis::framework::ParamType::Double, false, double{2.0}, double{0.0}, double{100.0}},
+        gis::framework::ParamSpec{"gamma", "Gamma", "Gamma correction value", gis::framework::ParamType::Double, false, double{1.0}, double{0.001}, double{100.0}},
+        gis::framework::ParamSpec{"edge_method", "边缘方法", "Edge detection method", gis::framework::ParamType::Enum, false, std::string{"canny"}, int{0}, int{0}, {"canny", "sobel", "laplacian", "scharr"}},
+        gis::framework::ParamSpec{"low_threshold", "低阈值", "Low threshold for Canny", gis::framework::ParamType::Double, false, double{50.0}, double{0.0}, double{65535.0}},
+        gis::framework::ParamSpec{"high_threshold", "高阈值", "High threshold for Canny", gis::framework::ParamType::Double, false, double{150.0}, double{0.0}, double{65535.0}},
+        gis::framework::ParamSpec{"sobel_dx", "Sobel dx", "Sobel derivative order in x", gis::framework::ParamType::Int, false, int{1}, int{0}, int{2}},
+        gis::framework::ParamSpec{"sobel_dy", "Sobel dy", "Sobel derivative order in y", gis::framework::ParamType::Int, false, int{1}, int{0}, int{2}},
+        gis::framework::ParamSpec{"min_area", "最小面积", "Minimum area", gis::framework::ParamType::Double, false, double{100.0}, double{0.0}, double{1e9}},
+        gis::framework::ParamSpec{"template_file", "模板文件", "Template image path", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"match_method", "匹配方法", "Template match method", gis::framework::ParamType::Enum, false, std::string{"ccoeff_normed"}, int{0}, int{0}, {"sqdiff", "sqdiff_normed", "ccorr", "ccorr_normed", "ccoeff", "ccoeff_normed"}},
+        gis::framework::ParamSpec{"pan_file", "全色文件", "Panchromatic raster path", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"pan_method", "融合方法", "Pansharpen method", gis::framework::ParamType::Enum, false, std::string{"brovey"}, int{0}, int{0}, {"brovey", "simple_mean", "ihs"}},
+        gis::framework::ParamSpec{"hough_type", "Hough类型", "Hough transform type", gis::framework::ParamType::Enum, false, std::string{"lines"}, int{0}, int{0}, {"lines", "circles"}},
+        gis::framework::ParamSpec{"hough_threshold", "Hough阈值", "Hough threshold", gis::framework::ParamType::Double, false, double{50.0}, double{0.0}, double{1e6}},
+        gis::framework::ParamSpec{"min_line_length", "最小线长", "Minimum line length", gis::framework::ParamType::Double, false, double{50.0}, double{0.0}, double{1e6}},
+        gis::framework::ParamSpec{"max_line_gap", "最大线间距", "Maximum line gap", gis::framework::ParamType::Double, false, double{10.0}, double{0.0}, double{1e6}},
+        gis::framework::ParamSpec{"min_radius", "最小半径", "Minimum circle radius", gis::framework::ParamType::Int, false, int{1}, int{0}, int{65536}},
+        gis::framework::ParamSpec{"max_radius", "最大半径", "Maximum circle radius, 0 means auto", gis::framework::ParamType::Int, false, int{0}, int{0}, int{65536}},
+        gis::framework::ParamSpec{"circle_param2", "圆检测参数2", "Hough circle param2", gis::framework::ParamType::Double, false, double{30.0}, double{0.0}, double{1e6}},
+        gis::framework::ParamSpec{"marker_input", "标记输入", "Marker raster for watershed", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"connectivity", "连通性", "Connectivity for connected components", gis::framework::ParamType::Int, false, int{8}, int{4}, int{8}},
+        gis::framework::ParamSpec{"kmeans_k", "KMeans K", "Number of clusters", gis::framework::ParamType::Int, false, int{4}, int{2}, int{256}},
+        gis::framework::ParamSpec{"max_iter", "最大迭代次数", "Maximum KMeans iterations", gis::framework::ParamType::Int, false, int{100}, int{1}, int{100000}},
+        gis::framework::ParamSpec{"epsilon_kmeans", "收敛阈值", "KMeans convergence epsilon", gis::framework::ParamType::Double, false, double{0.001}, double{0.0}, double{1.0}},
+        gis::framework::ParamSpec{"kmeans_attempts", "KMeans尝试次数", "Number of kmeans attempts", gis::framework::ParamType::Int, false, int{3}, int{1}, int{100}},
     };
 }
 
@@ -1355,13 +1186,16 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     std::string input  = gis::framework::getParam<std::string>(params, "input", "");
     std::string output = gis::framework::getParam<std::string>(params, "output", "");
     int band = gis::framework::getParam<int>(params, "band", 1);
-    int k = gis::framework::getParam<int>(params, "k", 5);
+    int k = gis::framework::getParam<int>(params, "kmeans_k",
+        gis::framework::getParam<int>(params, "k", 5));
     int maxIter = gis::framework::getParam<int>(params, "max_iter", 100);
     double epsilon = gis::framework::getParam<double>(params, "epsilon_kmeans", 0.001);
+    int attempts = gis::framework::getParam<int>(params, "kmeans_attempts", 3);
 
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
     if (k <= 0) return gis::framework::Result::fail("k must be positive");
+    if (attempts <= 0) return gis::framework::Result::fail("kmeans_attempts must be positive");
 
     progress.throwIfCancelled();
 
@@ -1398,7 +1232,7 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     cv::TermCriteria criteria(cv::TermCriteria::MAX_ITER + cv::TermCriteria::EPS,
                                maxIter, epsilon);
     double compactness = cv::kmeans(samples, k, labels, criteria,
-                                     3, cv::KMEANS_PP_CENTERS, centers);
+                                     attempts, cv::KMEANS_PP_CENTERS, centers);
 
     progress.throwIfCancelled();
 
@@ -1425,3 +1259,4 @@ gis::framework::Result ProcessingPlugin::doKMeans(
 } // namespace gis::plugins
 
 GIS_PLUGIN_EXPORT(gis::plugins::ProcessingPlugin)
+

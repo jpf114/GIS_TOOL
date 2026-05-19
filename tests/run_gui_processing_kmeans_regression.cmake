@@ -16,7 +16,8 @@ execute_process(
         --select-action kmeans
         --set-param "input=${INPUT_PATH}"
         --set-param "output=${OUTPUT_PATH}"
-        --set-param "k=3"
+        --set-param "kmeans_k=3"
+        --set-param "kmeans_attempts=3"
         --set-param "max_iter=20"
         --set-param "epsilon_kmeans=0.001"
         --auto-execute

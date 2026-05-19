@@ -26,6 +26,7 @@
 #include "test_support.h"
 
 #include <chrono>
+#include <atomic>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -158,6 +159,35 @@ bool waitForCondition(Predicate predicate,
     }
     return predicate();
 }
+
+class FlakyRetryPlugin final : public gis::framework::IGisPlugin {
+public:
+    std::string name() const override { return "retry_test"; }
+    std::string displayName() const override { return "Retry Test"; }
+    std::string version() const override { return "1.0.0"; }
+    std::string description() const override { return "Fails once, then succeeds."; }
+
+    std::vector<gis::framework::ParamSpec> paramSpecs() const override {
+        return {};
+    }
+
+    gis::framework::Result execute(
+        const std::map<std::string, gis::framework::ParamValue>&,
+        gis::core::ProgressReporter&) override {
+        const int callIndex = ++callCount_;
+        if (callIndex == 1) {
+            return gis::framework::Result::fail("first attempt failed");
+        }
+        return gis::framework::Result::ok("second attempt succeeded");
+    }
+
+    int callCount() const {
+        return callCount_.load();
+    }
+
+private:
+    std::atomic<int> callCount_{0};
+};
 
 } // namespace
 
@@ -516,6 +546,84 @@ TEST(MainWindowTest, RerunTaskCreatesNewTaskRecordAndClearsEditingState) {
     EXPECT_EQ(recent[0].actionKey, QStringLiteral("buffer"));
     EXPECT_EQ(recent[0].params.at("input"), params.at("input"));
     EXPECT_EQ(recent[0].params.at("output"), params.at("output"));
+}
+
+TEST(MainWindowTest, TaskRunnerRetryKeepsOriginalTaskId) {
+    const QString displayGroup = uniqueMainWindowGroup("retry_same_id");
+    TaskManager::instance().initializeGroup(displayGroup);
+    TaskManager::instance().clearHistory(displayGroup);
+    TaskDatabase::instance().clearAllLogs(displayGroup);
+
+    ASSERT_TRUE(waitForCondition([]() {
+        return !TaskRunner::instance().isRunning()
+            && TaskRunner::instance().queuedCount() == 0;
+    }));
+
+    FlakyRetryPlugin plugin;
+    QString finishedTaskId;
+    bool finishedSuccess = false;
+    bool finishedCancelled = true;
+    int finishSignalCount = 0;
+
+    QMetaObject::Connection connection = QObject::connect(
+        &TaskRunner::instance(),
+        &TaskRunner::taskFinished,
+        &TaskRunner::instance(),
+        [&](const QString& group, const QString& taskId, bool success, bool cancelled) {
+            if (group != displayGroup) {
+                return;
+            }
+            finishedTaskId = taskId;
+            finishedSuccess = success;
+            finishedCancelled = cancelled;
+            ++finishSignalCount;
+        });
+
+    const std::map<std::string, gis::framework::ParamValue> params = {
+        {"input", std::string("D:/data/retry_input.geojson")},
+        {"output", std::string("D:/data/retry_output.gpkg")}
+    };
+    const QString taskId = TaskRunner::instance().run(
+        &plugin,
+        displayGroup,
+        QStringLiteral("retry_test"),
+        QStringLiteral("retry_action"),
+        params,
+        QStringLiteral("Retry Test"),
+        QStringLiteral("Retry Action"));
+
+    ASSERT_FALSE(taskId.isEmpty());
+    ASSERT_TRUE(waitForCondition([&]() {
+        return finishSignalCount == 1
+            && !TaskRunner::instance().isRunning()
+            && TaskRunner::instance().queuedCount() == 0;
+    }));
+
+    QObject::disconnect(connection);
+
+    EXPECT_EQ(plugin.callCount(), 2);
+    EXPECT_EQ(finishSignalCount, 1);
+    EXPECT_EQ(finishedTaskId, taskId);
+    EXPECT_TRUE(finishedSuccess);
+    EXPECT_FALSE(finishedCancelled);
+
+    const TaskRecord record = TaskManager::instance().findTask(displayGroup, taskId);
+    EXPECT_EQ(record.id, taskId);
+    EXPECT_EQ(record.status, TaskRecord::Completed);
+    EXPECT_TRUE(record.result.success);
+    EXPECT_EQ(QString::fromStdString(record.result.message),
+              QStringLiteral("second attempt succeeded"));
+
+    const auto logs = TaskManager::instance().logsForTask(displayGroup, taskId);
+    bool sawRetryLog = false;
+    for (const auto& log : logs) {
+        if (log.message.contains(QStringLiteral("自动重试"))) {
+            sawRetryLog = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(sawRetryLog);
+    EXPECT_EQ(TaskManager::instance().taskCount(displayGroup), 1);
 }
 
 TEST(MainWindowTest, ClearHistoryRemovesAllTaskRowsAndRecords) {

@@ -1,4 +1,4 @@
-#include "raster_math_plugin.h"
+﻿#include "raster_math_plugin.h"
 
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
@@ -121,61 +121,22 @@ static double evalExpression(const std::string& expr,
 std::vector<gis::framework::ParamSpec> RasterMathPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
+            "action", "动作", "Raster math action",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"band_math", "reclassify", "raster_overlay"}
         },
-        gis::framework::ParamSpec{
-            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, true, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "output", "杈撳嚭鏂囦欢", "杈撳嚭褰卞儚鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "expression", "琛ㄨ揪寮?, "娉㈡杩愮畻琛ㄨ揪寮忥紝渚嬪 B1+B2",
-            gis::framework::ParamType::String, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "reclass_rules", "閲嶅垎绫昏鍒?, "姣忚涓€鏉¤鍒欙紝鏍煎紡锛氭棫鍊?or 鏃ф渶灏忓€?鏃ф渶澶у€?鏂板€糪n渚嬪: 1:10 / 2,5:20 / 6-9:30",
-            gis::framework::ParamType::String, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "default_value", "榛樿鍊?, "鏈尮閰嶅埌瑙勫垯鏃剁殑榛樿璧嬪€硷紝鐣欑┖鍒欎繚鎸佸師鍊?,
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{-1e15}, double{1e15}
-        },
-        gis::framework::ParamSpec{
-            "keep_unmatched", "淇濈暀鏈尮閰?, "瀵逛簬鏈尮閰嶅埌瑙勫垯鐨勫€硷細鍕鹃€?淇濈暀鍘熷€硷紝涓嶅嬀閫?璧嬮粯璁ゅ€?,
-            gis::framework::ParamType::Bool, false, bool{true}
-        },
-        gis::framework::ParamSpec{
-            "reclass_mode", "閲嶅垎绫绘ā寮?, "manual=鑷畾涔夎鍒? interval=绛夐棿闅旇嚜鍔ㄥ垝鍒?,
-            gis::framework::ParamType::Enum, false, std::string{"manual"},
-            int{0}, int{0},
-            {"manual", "interval"}
-        },
-        gis::framework::ParamSpec{
-            "interval_step", "闂撮殧澶у皬", "绛夐棿闅旀ā寮忕殑姝ラ暱锛宮anual 妯″紡蹇界暐姝ゅ弬鏁?,
-            gis::framework::ParamType::Double, false, double{1.0},
-            double{0.0}, double{1e15}
-        },
-        gis::framework::ParamSpec{
-            "overlay_input", "鍙犲姞褰卞儚", "鍙犲姞鍒嗘瀽鐨勭浜屽箙褰卞儚璺緞",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "overlay_method", "鍙犲姞鏂瑰紡", "鍙犲姞杩愮畻閫昏緫",
-            gis::framework::ParamType::Enum, false, std::string{"max"},
-            int{0}, int{0},
-            {"max", "min", "mean", "sum", "subtract", "multiply", "divide", "and", "or", "cond"}
-        },
-        gis::framework::ParamSpec{
-            "cond_expression", "鏉′欢琛ㄨ揪寮?, "浠呭彔鍔犳柟寮忎负 cond 鏃剁敓鏁圽n渚嬪: A > 100 & B > 50锛屾弧瓒宠祴 1锛屽惁鍒欒祴 0",
-            gis::framework::ParamType::String, false, std::string{}
-        },
+        gis::framework::ParamSpec{"input", "输入栅格", "Input raster path", gis::framework::ParamType::FilePath, true, std::string{}},
+        gis::framework::ParamSpec{"output", "输出栅格", "Output raster path", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"expression", "表达式", "Band math expression such as B1+B2", gis::framework::ParamType::String, false, std::string{}},
+        gis::framework::ParamSpec{"reclass_rules", "重分类规则", "Rules like 1:10 / 2,5:20 / 6-9:30", gis::framework::ParamType::String, false, std::string{}},
+        gis::framework::ParamSpec{"default_value", "默认值", "Default output value for unmatched cells", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
+        gis::framework::ParamSpec{"keep_unmatched", "保留未匹配", "Keep unmatched source values during reclassification", gis::framework::ParamType::Bool, false, bool{true}},
+        gis::framework::ParamSpec{"reclass_mode", "重分类模式", "manual uses explicit rules, interval uses interval_step", gis::framework::ParamType::Enum, false, std::string{"manual"}, int{0}, int{0}, {"manual", "interval"}},
+        gis::framework::ParamSpec{"interval_step", "间隔步长", "Interval size used when reclass_mode=interval", gis::framework::ParamType::Double, false, double{1.0}, double{0.0}, double{1e15}},
+        gis::framework::ParamSpec{"overlay_input", "叠加栅格", "Secondary raster path for overlay", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"overlay_method", "叠加方法", "Overlay reduction method", gis::framework::ParamType::Enum, false, std::string{"max"}, int{0}, int{0}, {"max", "min", "mean", "sum", "subtract", "multiply", "divide", "and", "or", "cond"}},
+        gis::framework::ParamSpec{"cond_expression", "条件表达式", "Condition used when overlay_method=cond", gis::framework::ParamType::String, false, std::string{}},
     };
 }
 
@@ -598,3 +559,4 @@ gis::framework::Result RasterMathPlugin::doRasterOverlay(
 } // namespace gis::plugins
 
 GIS_PLUGIN_EXPORT(gis::plugins::RasterMathPlugin)
+

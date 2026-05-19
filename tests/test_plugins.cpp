@@ -2128,7 +2128,8 @@ TEST_F(PluginTest, ProcessingKMeansExecution) {
     params["action"] = std::string("kmeans");
     params["input"] = input;
     params["output"] = output;
-    params["k"] = 3;
+    params["kmeans_k"] = 3;
+    params["kmeans_attempts"] = 3;
 
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "KMeans failed: " << result.message;

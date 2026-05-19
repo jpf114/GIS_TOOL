@@ -122,6 +122,7 @@ int main(int argc, char* argv[])
     }
 
     MainWindow window;
+    window.setAutomationMode(autoExecute);
     if (selectedPlugin.has_value()) {
         window.selectPluginByName(selectedPlugin.value());
     }

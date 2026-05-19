@@ -5,6 +5,7 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
 set(STATUS_PATH "${OUTPUT_DIR}/status.json")
 set(INPUT_PATH "${OUTPUT_DIR}/split_input.tif")
+set(TILES_OUTPUT_DIR "${OUTPUT_DIR}/tiles")
 file(REMOVE_RECURSE "${OUTPUT_DIR}")
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 gis_gui_prepare_aux_paths("${SCREENSHOT_PATH}" "${STATUS_PATH}")
@@ -16,7 +17,7 @@ execute_process(
         --select-plugin cutting
         --select-action split
         --set-param "input=${INPUT_PATH}"
-        --set-param "output=${OUTPUT_DIR}"
+        --set-param "output=${TILES_OUTPUT_DIR}"
         --set-param "tile_size=8"
         --set-param "overlap=0"
         --auto-execute
@@ -33,6 +34,6 @@ gis_gui_assert_directory_success(
     "${GUI_EXIT_CODE}"
     "${GUI_STDOUT}"
     "${GUI_STDERR}"
-    "${OUTPUT_DIR}"
+    "${TILES_OUTPUT_DIR}"
     "${SCREENSHOT_PATH}"
     "${STATUS_PATH}")

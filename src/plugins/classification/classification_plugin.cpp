@@ -1,4 +1,4 @@
-#include "classification_plugin.h"
+﻿#include "classification_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
@@ -207,12 +207,12 @@ bool parseIntList(const std::string& text, std::vector<int>& values, std::string
             std::size_t index = 0;
             const int value = std::stoi(item, &index);
             if (index != item.size()) {
-                error = "bands 涓瓨鍦ㄦ棤鏁堟暣鏁? " + item;
+                error = "bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊鏆ｉ弫? " + item;
                 return false;
             }
             values.push_back(value);
         } catch (...) {
-            error = "bands 涓瓨鍦ㄦ棤鏁堟暣鏁? " + item;
+            error = "bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊鏆ｉ弫? " + item;
             return false;
         }
     }
@@ -226,12 +226,12 @@ bool parseDoubleList(const std::string& text, std::vector<double>& values, std::
             std::size_t index = 0;
             const double value = std::stod(item, &index);
             if (index != item.size()) {
-                error = "nodatas 涓瓨鍦ㄦ棤鏁堟暟瀛? " + item;
+                error = "nodatas 娑擃厼鐡ㄩ崷銊︽￥閺佸牊鏆熺€? " + item;
                 return false;
             }
             values.push_back(value);
         } catch (...) {
-            error = "nodatas 涓瓨鍦ㄦ棤鏁堟暟瀛? " + item;
+            error = "nodatas 娑擃厼鐡ㄩ崷銊︽￥閺佸牊鏆熺€? " + item;
             return false;
         }
     }
@@ -248,19 +248,19 @@ bool parseCsvHeaderAndRows(
 
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs) {
-        error = "鏃犳硶鎵撳紑璁粌鏍锋湰 CSV: " + path;
+        error = "閺冪姵纭堕幍鎾崇磻鐠侇厾绮岄弽閿嬫拱 CSV: " + path;
         return false;
     }
 
     std::string line;
     if (!std::getline(ifs, line)) {
-        error = "璁粌鏍锋湰 CSV 涓虹┖: " + path;
+        error = "鐠侇厾绮岄弽閿嬫拱 CSV 娑撹櫣鈹? " + path;
         return false;
     }
 
     headers = splitCsv(line);
     if (headers.empty()) {
-        error = "璁粌鏍锋湰 CSV 琛ㄥご涓虹┖: " + path;
+        error = "Training CSV header is missing: " + path;
         return false;
     }
 
@@ -270,14 +270,14 @@ bool parseCsvHeaderAndRows(
             continue;
         }
         if (cols.size() != headers.size()) {
-            error = "璁粌鏍锋湰 CSV 瀛樺湪鍒楁暟涓嶄竴鑷寸殑璁板綍";
+            error = "Training CSV column count is inconsistent.";
             return false;
         }
         rows.push_back(std::move(cols));
     }
 
     if (rows.empty()) {
-        error = "璁粌鏍锋湰 CSV 娌℃湁鏍锋湰璁板綍: " + path;
+        error = "Training CSV does not contain any sample rows: " + path;
         return false;
     }
 
@@ -321,12 +321,12 @@ int tryGetAuthorityEpsg(const OGRSpatialReference* srs) {
 std::string buildTargetProjectionWkt(int epsg) {
     OGRSpatialReference srs;
     if (srs.importFromEPSG(epsg) != OGRERR_NONE) {
-        throw std::runtime_error("鏃犳硶鏋勫缓鐩爣 EPSG 鍧愭爣绯?);
+        throw std::runtime_error("Failed to import target EPSG.");
     }
 
     char* wkt = nullptr;
     if (srs.exportToWkt(&wkt) != OGRERR_NONE || wkt == nullptr) {
-        throw std::runtime_error("鏃犳硶瀵煎嚭鐩爣 EPSG WKT");
+        throw std::runtime_error("Failed to export target projection to WKT.");
     }
 
     std::string result = wkt;
@@ -373,7 +373,7 @@ GdalDatasetPtr makeMemDataset(
     const std::string& projectionWkt) {
     GDALDataset* dataset = driver->Create("", width, height, 1, dataType, nullptr);
     if (dataset == nullptr) {
-        throw std::runtime_error("鏃犳硶鍒涘缓鍐呭瓨鏁版嵁闆?);
+        throw std::runtime_error("Failed to create in-memory raster dataset.");
     }
 
     dataset->SetGeoTransform(const_cast<double*>(geotransform.data()));
@@ -407,12 +407,12 @@ RasterSpatialRefInfo inspectRasterSrs(GDALDataset* dataset) {
 RasterInspectInfo inspectRaster(const RasterTaskInput& input) {
     auto dataset = gis::core::openRaster(input.path, true);
     if (!dataset) {
-        throw std::runtime_error("鏃犳硶鎵撳紑鏍呮牸: " + input.path);
+        throw std::runtime_error("Failed to open raster: " + input.path);
     }
 
     GDALRasterBand* band = dataset->GetRasterBand(input.band);
     if (band == nullptr) {
-        throw std::runtime_error("鏍呮牸娉㈡涓嶅瓨鍦? " + input.path);
+        throw std::runtime_error("Raster band is missing: " + input.path);
     }
 
     const GDALDataType dataType = band->GetRasterDataType();
@@ -423,12 +423,12 @@ RasterInspectInfo inspectRaster(const RasterTaskInput& input) {
         dataType == GDT_Int32 ||
         dataType == GDT_UInt32;
     if (!supported) {
-        throw std::runtime_error("褰撳墠鍙敮鎸佹暣鏁板瀷鍒嗙被鏍呮牸: " + input.path);
+        throw std::runtime_error("Unsupported raster data type: " + input.path);
     }
 
     double gt[6] = {};
     if (dataset->GetGeoTransform(gt) != CE_None) {
-        throw std::runtime_error("鏍呮牸缂哄皯鏈夋晥鍦扮悊鍙樻崲: " + input.path);
+        throw std::runtime_error("Failed to read raster geotransform: " + input.path);
     }
 
     RasterInspectInfo info;
@@ -449,13 +449,13 @@ VectorTaskData openVectorData(
     GDALDataset* rawDataset = static_cast<GDALDataset*>(
         GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
     if (rawDataset == nullptr) {
-        throw std::runtime_error("鏃犳硶鎵撳紑鐭㈤噺: " + path);
+        throw std::runtime_error("Failed to open vector dataset: " + path);
     }
     GdalDatasetPtr dataset(rawDataset, GDALClose);
 
     OGRLayer* layer = dataset->GetLayer(0);
     if (layer == nullptr) {
-        throw std::runtime_error("鐭㈤噺鍥惧眰涓嶅瓨鍦? " + path);
+        throw std::runtime_error("Vector layer is missing: " + path);
     }
 
     VectorTaskData result;
@@ -471,14 +471,14 @@ VectorTaskData openVectorData(
         OGRFeature::DestroyFeature(feature);
 
         if (!item.geometry) {
-            throw std::runtime_error("鐭㈤噺涓瓨鍦ㄦ棤鏁堝嚑浣?);
+            throw std::runtime_error("Vector feature geometry is missing.");
         }
 
         result.features.push_back(std::move(item));
     }
 
     if (result.features.empty()) {
-        throw std::runtime_error("鐭㈤噺涓病鏈夊彲缁熻瑕佺礌");
+        throw std::runtime_error("Vector dataset does not contain any features.");
     }
 
     return result;
@@ -495,7 +495,7 @@ TargetSrsDecision resolveTargetSrs(int configTargetEpsg, const std::vector<Raste
             if (projectedEpsg == 0) {
                 projectedEpsg = raster.srs.epsg;
             } else if (raster.srs.epsg != 0 && projectedEpsg != raster.srs.epsg) {
-                throw std::runtime_error("杈撳叆鏍呮牸瀛樺湪涓嶄竴鑷寸殑鎶曞奖鍧愭爣绯?);
+                throw std::runtime_error("Input rasters use different projected EPSG codes.");
             }
         }
         if (raster.srs.isGeographic) {
@@ -505,17 +505,17 @@ TargetSrsDecision resolveTargetSrs(int configTargetEpsg, const std::vector<Raste
 
     if (configTargetEpsg > 0) {
         if (hasProjected && projectedEpsg != 0 && projectedEpsg != configTargetEpsg) {
-            throw std::runtime_error("target_epsg 涓庤緭鍏ユ姇褰卞潗鏍囩郴涓嶄竴鑷?);
+            throw std::runtime_error("Configured target_epsg conflicts with projected raster EPSG.");
         }
         return {configTargetEpsg, "EPSG:" + std::to_string(configTargetEpsg)};
     }
 
     if (!hasProjected && hasGeographic) {
-        throw std::runtime_error("褰撹緭鍏ユ爡鏍煎叏閮ㄤ负鍦扮悊鍧愭爣绯绘椂锛屽繀椤绘樉寮忔彁渚?target_epsg");
+        throw std::runtime_error("地理坐标栅格必须显式提供 target_epsg。");
     }
 
     if (projectedEpsg <= 0) {
-        throw std::runtime_error("鏃犳硶鑷姩鍐崇瓥鐩爣鍧愭爣绯?);
+        throw std::runtime_error("Failed to determine a projected target EPSG.");
     }
 
     return {projectedEpsg, "EPSG:" + std::to_string(projectedEpsg)};
@@ -528,7 +528,7 @@ RasterGridInfo suggestTargetGrid(const RasterInspectInfo& raster, int targetEpsg
 
     GDALDataset* rawSource = static_cast<GDALDataset*>(GDALOpen(raster.input.path.c_str(), GA_ReadOnly));
     if (rawSource == nullptr) {
-        throw std::runtime_error("鏃犳硶閲嶆柊鎵撳紑鏍呮牸: " + raster.input.path);
+        throw std::runtime_error("Failed to reopen source raster: " + raster.input.path);
     }
     GdalDatasetPtr source(rawSource, GDALClose);
 
@@ -541,13 +541,13 @@ RasterGridInfo suggestTargetGrid(const RasterInspectInfo& raster, int targetEpsg
         0.0,
         nullptr));
     if (rawWarped == nullptr) {
-        throw std::runtime_error("鏃犳硶鎺ㄥ鐩爣缃戞牸: " + raster.input.path);
+        throw std::runtime_error("Failed to build warped VRT: " + raster.input.path);
     }
     GdalDatasetPtr warped(rawWarped, GDALClose);
 
     double gt[6] = {};
     if (warped->GetGeoTransform(gt) != CE_None) {
-        throw std::runtime_error("閲嶆姇褰卞悗鐨勭綉鏍肩己灏戝湴鐞嗗彉鎹?);
+        throw std::runtime_error("Failed to read warped raster geotransform.");
     }
 
     RasterGridInfo grid;
@@ -561,7 +561,7 @@ RasterGridInfo suggestTargetGrid(const RasterInspectInfo& raster, int targetEpsg
 
 RasterGridInfo buildTargetGrid(const std::vector<RasterGridInfo>& grids) {
     if (grids.empty()) {
-        throw std::runtime_error("缂哄皯鍙敤缃戞牸");
+        throw std::runtime_error("No candidate target grids were provided.");
     }
 
     std::size_t bestIndex = 0;
@@ -578,12 +578,12 @@ RasterGridInfo buildTargetGrid(const std::vector<RasterGridInfo>& grids) {
 
 OgrGeometryPtr cloneGeometryToTarget(const OGRGeometry* geometry, int sourceEpsg, int targetEpsg) {
     if (geometry == nullptr) {
-        throw std::runtime_error("鐭㈤噺鍑犱綍涓虹┖");
+        throw std::runtime_error("Source geometry is null.");
     }
 
     OgrGeometryPtr cloned(geometry->clone());
     if (!cloned) {
-        throw std::runtime_error("鐭㈤噺鍑犱綍澶嶅埗澶辫触");
+        throw std::runtime_error("閻垽鍣洪崙鐘辩秿婢跺秴鍩楁径杈Е");
     }
 
     if (sourceEpsg == 0 || sourceEpsg == targetEpsg) {
@@ -593,18 +593,18 @@ OgrGeometryPtr cloneGeometryToTarget(const OGRGeometry* geometry, int sourceEpsg
     OGRSpatialReference sourceSrs;
     OGRSpatialReference targetSrs;
     if (sourceSrs.importFromEPSG(sourceEpsg) != OGRERR_NONE || targetSrs.importFromEPSG(targetEpsg) != OGRERR_NONE) {
-        throw std::runtime_error("鍧愭爣绯绘瀯寤哄け璐?);
+        throw std::runtime_error("Failed to import geometry SRS.");
     }
 
     OGRCoordinateTransformation* transform = OGRCreateCoordinateTransformation(&sourceSrs, &targetSrs);
     if (transform == nullptr) {
-        throw std::runtime_error("鍧愭爣绯昏浆鎹㈠櫒鍒涘缓澶辫触");
+        throw std::runtime_error("Failed to create coordinate transformation.");
     }
 
     const OGRErr transformResult = cloned->transform(transform);
     OCTDestroyCoordinateTransformation(reinterpret_cast<OGRCoordinateTransformationH>(transform));
     if (transformResult != OGRERR_NONE) {
-        throw std::runtime_error("瑕佺礌閲嶆姇褰卞け璐?);
+        throw std::runtime_error("Failed to transform geometry to target SRS.");
     }
 
     return cloned;
@@ -655,7 +655,7 @@ std::vector<unsigned char> buildFeatureMask(
     const std::string& targetProjectionWkt) {
     GDALDriver* memDriver = GetGDALDriverManager()->GetDriverByName("MEM");
     if (memDriver == nullptr) {
-        throw std::runtime_error("鏃犳硶鑾峰彇鍐呭瓨椹卞姩");
+        throw std::runtime_error("閺冪姵纭堕懢宄板絿閸愬懎鐡ㄦす鍗炲З");
     }
 
     auto maskDataset = makeMemDataset(memDriver, window.width, window.height, GDT_Byte, window.geotransform, targetProjectionWkt);
@@ -677,7 +677,7 @@ std::vector<unsigned char> buildFeatureMask(
             nullptr,
             nullptr,
             nullptr) != CE_None) {
-        throw std::runtime_error("瑕佺礌鎺╄啘鏍呮牸鍖栧け璐?);
+        throw std::runtime_error("Failed to rasterize feature mask.");
     }
 
     std::vector<unsigned char> mask(static_cast<std::size_t>(window.width) * static_cast<std::size_t>(window.height), 0);
@@ -694,7 +694,7 @@ std::vector<unsigned char> buildFeatureMask(
             0,
             0,
             nullptr) != CE_None) {
-        throw std::runtime_error("瑕佺礌鎺╄啘璇诲彇澶辫触");
+        throw std::runtime_error("Failed to read feature mask from memory dataset.");
     }
 
     return mask;
@@ -706,18 +706,18 @@ std::vector<int> readRasterAsTargetWindow(
     const std::string& targetProjectionWkt) {
     GDALDataset* rawSource = static_cast<GDALDataset*>(GDALOpen(rasterInput.path.c_str(), GA_ReadOnly));
     if (rawSource == nullptr) {
-        throw std::runtime_error("鏃犳硶鎵撳紑鏍呮牸绐楀彛婧? " + rasterInput.path);
+        throw std::runtime_error("Failed to open raster for reprojection: " + rasterInput.path);
     }
     GdalDatasetPtr source(rawSource, GDALClose);
 
     GDALRasterBand* sourceBand = source->GetRasterBand(rasterInput.band);
     if (sourceBand == nullptr) {
-        throw std::runtime_error("鏍呮牸娉㈡涓嶅瓨鍦? " + rasterInput.path);
+        throw std::runtime_error("閺嶅懏鐗稿▔銏☆唽娑撳秴鐡ㄩ崷? " + rasterInput.path);
     }
 
     GDALDriver* memDriver = GetGDALDriverManager()->GetDriverByName("MEM");
     if (memDriver == nullptr) {
-        throw std::runtime_error("鏃犳硶鑾峰彇鍐呭瓨椹卞姩");
+        throw std::runtime_error("閺冪姵纭堕懢宄板絿閸愬懎鐡ㄦす鍗炲З");
     }
 
     auto targetDataset = makeMemDataset(memDriver, window.width, window.height, GDT_Int32, window.geotransform, targetProjectionWkt);
@@ -736,7 +736,7 @@ std::vector<int> readRasterAsTargetWindow(
             nullptr,
             nullptr,
             nullptr) != CE_None) {
-        throw std::runtime_error("鏍呮牸绐楀彛閲嶉噰鏍峰け璐? " + rasterInput.path);
+        throw std::runtime_error("Failed to reproject raster into target window: " + rasterInput.path);
     }
 
     std::vector<int> data(static_cast<std::size_t>(window.width) * static_cast<std::size_t>(window.height), 0);
@@ -753,7 +753,7 @@ std::vector<int> readRasterAsTargetWindow(
             0,
             0,
             nullptr) != CE_None) {
-        throw std::runtime_error("鏍呮牸绐楀彛璇诲彇澶辫触: " + rasterInput.path);
+        throw std::runtime_error("Failed to read reprojected raster window: " + rasterInput.path);
     }
 
     return data;
@@ -847,7 +847,7 @@ void appendSummaryRecords(FeatureStatsResultData& result) {
 
         auto& summary = summaryByClass[record.classValue];
         summary.featureId = "__summary__";
-        summary.featureName = "姹囨€?;
+        summary.featureName = "summary";
         summary.classValue = record.classValue;
         summary.className = record.className;
         summary.pixelCount += record.pixelCount;
@@ -884,7 +884,7 @@ void writeCsvResult(const std::string& path, const FeatureStatsResultData& resul
     ensureParentDirectory(path);
     std::ofstream out(path, std::ios::binary);
     if (!out) {
-        throw std::runtime_error("鏃犳硶鍐欏嚭 CSV 缁撴灉: " + path);
+        throw std::runtime_error("Failed to create CSV output: " + path);
     }
 
     out << "\xEF\xBB\xBF";
@@ -906,7 +906,7 @@ void writeJsonResult(const std::string& path, const FeatureStatsResultData& resu
     ensureParentDirectory(path);
     std::ofstream out(path, std::ios::binary);
     if (!out) {
-        throw std::runtime_error("鏃犳硶鍐欏嚭 JSON 缁撴灉: " + path);
+        throw std::runtime_error("Failed to create JSON output: " + path);
     }
 
     out << "\xEF\xBB\xBF";
@@ -950,13 +950,13 @@ void writeResult(const FeatureStatsTask& task, const FeatureStatsResultData& res
         writeCsvResult(task.outputPath, result);
         return;
     }
-    throw std::runtime_error("涓嶆敮鎸佺殑杈撳嚭鏍煎紡");
+    throw std::runtime_error("Unsupported output format.");
 }
 
 std::map<int, std::string> loadClassMap(const std::string& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("鏃犳硶鎵撳紑鍒嗙被鏄犲皠鏂囦欢: " + path);
+        throw std::runtime_error("Failed to open class map: " + path);
     }
 
     const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
@@ -970,7 +970,7 @@ std::map<int, std::string> loadClassMap(const std::string& path) {
     }
 
     if (classMap.empty()) {
-        throw std::runtime_error("鍒嗙被鏄犲皠涓虹┖鎴栨牸寮忎笉姝ｇ‘");
+        throw std::runtime_error("Class map is empty or invalid.");
     }
 
     return classMap;
@@ -979,7 +979,7 @@ std::map<int, std::string> loadClassMap(const std::string& path) {
 int getFieldIndexOrThrow(OGRLayer* layer, const char* fieldName) {
     const int index = layer->GetLayerDefn()->GetFieldIndex(fieldName);
     if (index < 0) {
-        throw std::runtime_error("杈撳嚭瀛楁缂哄け");
+        throw std::runtime_error("鏉堟挸鍤€涙顔岀紓鍝勩亼");
     }
     return index;
 }
@@ -995,23 +995,23 @@ FeatureVectorOutputWriter::FeatureVectorOutputWriter(
 
     GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
     if (driver == nullptr) {
-        throw std::runtime_error("鏃犳硶鍒涘缓鐭㈤噺鍒嗙被杈撳嚭椹卞姩");
+        throw std::runtime_error("GPKG driver is unavailable.");
     }
 
     GDALDataset* rawDataset = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
     if (rawDataset == nullptr) {
-        throw std::runtime_error("鏃犳硶鍒涘缓鐭㈤噺鍒嗙被杈撳嚭");
+        throw std::runtime_error("Failed to create vector output dataset.");
     }
     dataset_.reset(rawDataset);
 
     OGRSpatialReference srs;
     if (srs.importFromEPSG(targetEpsg) != OGRERR_NONE) {
-        throw std::runtime_error("鏃犳硶鍒涘缓鐭㈤噺鍒嗙被杈撳嚭鍧愭爣绯?);
+        throw std::runtime_error("Failed to import target EPSG for vector output.");
     }
 
     layer_ = dataset_->CreateLayer(layerName.c_str(), &srs, wkbPolygon, nullptr);
     if (layer_ == nullptr) {
-        throw std::runtime_error("鏃犳硶鍒涘缓鐭㈤噺鍒嗙被杈撳嚭鍥惧眰");
+        throw std::runtime_error("閺冪姵纭堕崚娑樼紦閻垽鍣洪崚鍡欒鏉堟挸鍤崶鎯х湴");
     }
 
     OGRFieldDefn fieldFeatureId("feature_id", OFTString);
@@ -1034,7 +1034,7 @@ FeatureVectorOutputWriter::FeatureVectorOutputWriter(
         layer_->CreateField(&fieldPixelCount) != OGRERR_NONE ||
         layer_->CreateField(&fieldArea) != OGRERR_NONE ||
         layer_->CreateField(&fieldActualSrs) != OGRERR_NONE) {
-        throw std::runtime_error("鏃犳硶鍒涘缓鐭㈤噺鍒嗙被杈撳嚭瀛楁");
+        throw std::runtime_error("Failed to create vector output fields.");
     }
 }
 
@@ -1045,12 +1045,12 @@ void FeatureVectorOutputWriter::writeResolvedRaster(
     const std::array<double, 6>& geotransform,
     const PolygonRecordInfo& info) {
     if (layer_ == nullptr || info.classMap == nullptr) {
-        throw std::runtime_error("鐭㈤噺鍒嗙被杈撳嚭鏈垵濮嬪寲");
+        throw std::runtime_error("Vector output writer is not initialized.");
     }
 
     GDALDriver* memDriver = GetGDALDriverManager()->GetDriverByName("MEM");
     if (memDriver == nullptr) {
-        throw std::runtime_error("鏃犳硶鑾峰彇鍐呭瓨椹卞姩");
+        throw std::runtime_error("閺冪姵纭堕懢宄板絿閸愬懎鐡ㄦす鍗炲З");
     }
 
     const std::string projectionWkt = buildTargetProjectionWkt(std::stoi(info.actualSrs.substr(5)));
@@ -1070,7 +1070,7 @@ void FeatureVectorOutputWriter::writeResolvedRaster(
             0,
             0,
             nullptr) != CE_None) {
-        throw std::runtime_error("鐭㈤噺鍒嗙被杈撳嚭鍐欏叆鍐呭瓨鏍呮牸澶辫触");
+        throw std::runtime_error("Failed to write resolved raster values into memory dataset.");
     }
 
     const int classField = getFieldIndexOrThrow(layer_, "class_value");
@@ -1090,7 +1090,7 @@ void FeatureVectorOutputWriter::writeResolvedRaster(
             nullptr,
             nullptr,
             nullptr) != CE_None) {
-        throw std::runtime_error("鐭㈤噺鍒嗙被杈撳嚭闈㈢煝閲忓寲澶辫触");
+        throw std::runtime_error("Failed to polygonize resolved raster.");
     }
 
     const int featureIdIndex = getFieldIndexOrThrow(layer_, "feature_id");
@@ -1137,7 +1137,7 @@ void FeatureVectorOutputWriter::writeResolvedRaster(
 
         if (layer_->SetFeature(feature) != OGRERR_NONE) {
             OGRFeature::DestroyFeature(feature);
-            throw std::runtime_error("鏇存柊鐭㈤噺鍒嗙被杈撳嚭瑕佺礌澶辫触");
+            throw std::runtime_error("Failed to update vector output feature fields.");
         }
 
         OGRFeature::DestroyFeature(feature);
@@ -1160,13 +1160,13 @@ FeatureRasterOutputWriter::FeatureRasterOutputWriter(
 
     GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
     if (driver == nullptr) {
-        throw std::runtime_error("鏃犳硶鍒涘缓鏍呮牸鍒嗙被杈撳嚭椹卞姩");
+        throw std::runtime_error("GTiff driver is unavailable.");
     }
 
     char const* options[] = {"COMPRESS=LZW", nullptr};
     GDALDataset* rawDataset = driver->Create(path.c_str(), width, height, 1, GDT_Int32, const_cast<char**>(options));
     if (rawDataset == nullptr) {
-        throw std::runtime_error("鏃犳硶鍒涘缓鏍呮牸鍒嗙被杈撳嚭");
+        throw std::runtime_error("Failed to create raster output dataset.");
     }
     dataset_.reset(rawDataset);
 
@@ -1181,13 +1181,13 @@ FeatureRasterOutputWriter::FeatureRasterOutputWriter(
 
 void FeatureRasterOutputWriter::writeWindow(const std::vector<int>& values, int xoff, int yoff, int width, int height) {
     if (!dataset_) {
-        throw std::runtime_error("鏍呮牸鍒嗙被杈撳嚭鏈垵濮嬪寲");
+        throw std::runtime_error("Raster output writer is not initialized.");
     }
 
     GDALRasterBand* band = dataset_->GetRasterBand(1);
     std::vector<int> current(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
     if (band->RasterIO(GF_Read, xoff, yoff, width, height, current.data(), width, height, GDT_Int32, 0, 0, nullptr) != CE_None) {
-        throw std::runtime_error("璇诲彇鏍呮牸鍒嗙被杈撳嚭绐楀彛澶辫触");
+        throw std::runtime_error("Failed to read raster output window.");
     }
 
     for (std::size_t i = 0; i < values.size(); ++i) {
@@ -1197,7 +1197,7 @@ void FeatureRasterOutputWriter::writeWindow(const std::vector<int>& values, int 
     }
 
     if (band->RasterIO(GF_Write, xoff, yoff, width, height, current.data(), width, height, GDT_Int32, 0, 0, nullptr) != CE_None) {
-        throw std::runtime_error("鍐欏叆鏍呮牸鍒嗙被杈撳嚭绐楀彛澶辫触");
+        throw std::runtime_error("Failed to write raster output window.");
     }
 }
 
@@ -1226,7 +1226,7 @@ gis::framework::Result buildTaskFromParams(
 
     const auto rasterPaths = splitCsv(rastersText);
     if (rasterPaths.empty()) {
-        return gis::framework::Result::fail("rasters 涓嶈兘涓虹┖");
+        return gis::framework::Result::fail("rasters is required");
     }
 
     std::vector<int> bands;
@@ -1246,13 +1246,13 @@ gis::framework::Result buildTaskFromParams(
     }
 
     if (!bands.empty() && bands.size() != rasterPaths.size()) {
-        return gis::framework::Result::fail("bands 鏁伴噺蹇呴』涓?rasters 涓€鑷?);
+        return gis::framework::Result::fail("bands count must match rasters count");
     }
     if (!nodatas.empty() && nodatas.size() != rasterPaths.size()) {
-        return gis::framework::Result::fail("nodatas 鏁伴噺蹇呴』涓?rasters 涓€鑷?);
+        return gis::framework::Result::fail("nodatas count must match rasters count");
     }
     if (task.outputFormat.empty()) {
-        return gis::framework::Result::fail("output 鐩墠鍙敮鎸?.json 鎴?.csv");
+        return gis::framework::Result::fail("output must use .json or .csv");
     }
 
     task.rasters.clear();
@@ -1273,98 +1273,98 @@ gis::framework::Result buildTaskFromParams(
 std::vector<gis::framework::ParamSpec> ClassificationPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "瀛愬姛鑳?, "鍒嗙被鐩稿叧鍔熻兘",
+            "action", "动作", "Classification plugin action",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0}, {"feature_stats", "svm_classify", "random_forest_classify", "max_likelihood_classify", "accuracy_assessment"}
         },
         gis::framework::ParamSpec{
-            "input", "杈撳叆鏍呮牸", "寰呭垎绫荤殑澶氭尝娈垫爡鏍兼枃浠惰矾寰?,
+            "input", "输入栅格", "Primary raster input for classification actions",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "vector", "杈撳叆闈㈢煝閲?, "鍙備笌缁熻鐨勯潰鐭㈤噺鏂囦欢璺緞",
+            "vector", "输入矢量", "Vector features used by feature statistics",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "feature_id_field", "瑕佺礌 ID 瀛楁", "鍙€夛紝瑕佺礌鍞竴鏍囪瘑瀛楁鍚?,
+            "feature_id_field", "要素ID字段", "Optional field used as feature id",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "feature_name_field", "瑕佺礌鍚嶇О瀛楁", "鍙€夛紝瑕佺礌鍚嶇О瀛楁鍚?,
+            "feature_name_field", "要素名称字段", "Optional field used as feature name",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "class_map", "鍒嗙被鏄犲皠", "鍒嗙被鍊煎埌鍒嗙被鍚嶇О鐨?JSON 鏄犲皠鏂囦欢璺緞",
+            "class_map", "类别映射", "JSON file mapping class values to class names",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "rasters", "鍒嗙被鏍呮牸鍒楄〃", "澶氫釜鍒嗙被鏍呮牸璺緞锛屼娇鐢ㄩ€楀彿鍒嗛殧锛岄『搴忓嵆浼樺厛绾?,
+            "rasters", "分类栅格列表", "Comma-separated raster paths ordered by priority",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "bands", "娉㈡鍒楄〃", "涓?rasters 瀵瑰簲鐨勬尝娈靛垪琛紝閫楀彿鍒嗛殧锛岄粯璁ゅ叏閮ㄤ负 1",
+            "bands", "波段列表", "Comma-separated band indexes matching rasters",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "nodatas", "NoData 鍒楄〃", "涓?rasters 瀵瑰簲鐨?NoData 鍒楄〃锛岄€楀彿鍒嗛殧锛岄粯璁ゅ叏閮ㄤ负 0",
+            "nodatas", "NoData列表", "Comma-separated nodata values matching rasters",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "target_epsg", "鐩爣 EPSG", "鍙€夛紝鏄惧紡鎸囧畾鐩爣鎶曞奖鍧愭爣绯?,
+            "target_epsg", "目标EPSG", "Explicit projected EPSG used for reprojection and area stats",
             gis::framework::ParamType::Int, false, int{0},
             int{0}, int{99999}
         },
         gis::framework::ParamSpec{
-            "output", "缁熻杈撳嚭", "杈撳嚭缁熻缁撴灉璺緞(feature_stats 鏃?.json/.csv锛屽垎绫绘椂涓哄垎绫绘爡鏍艰緭鍑?",
+            "output", "统计输出", "Feature statistics output path (.json or .csv)",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "vector_output", "鍒嗙被闈㈣緭鍑?, "鍙€夛紝杈撳嚭鍒嗙被闈㈢粨鏋滐紝褰撳墠浠呮敮鎸?.gpkg",
+            "vector_output", "矢量输出", "Optional polygonized vector output (.gpkg)",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "raster_output", "鍒嗙被鏍呮牸杈撳嚭", "鍙€夛紝杈撳嚭鍒嗙被鏍呮牸缁撴灉锛屽綋鍓嶄粎鏀寔 .tif 鎴?.tiff",
+            "raster_output", "栅格输出", "Optional resolved raster output (.tif or .tiff)",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "training_csv", "璁粌鏍锋湰 CSV", "鐩戠潱鍒嗙被璁粌鏍锋湰 CSV锛岄粯璁や娇鐢?label 鍒楀拰鍏朵綑鐗瑰緛鍒?,
+            "training_csv", "训练CSV", "Training sample table with a label column",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "label_column", "鏍囩鍒?, "璁粌鏍锋湰 CSV 涓殑绫诲埆鏍囩鍒楀悕锛岄粯璁?label",
+            "label_column", "标签列", "Label column name in training CSV",
             gis::framework::ParamType::String, false, std::string{"label"}
         },
         gis::framework::ParamSpec{
-            "svm_c", "SVM 鎯╃綒绯绘暟 C", "SVM C_SVC 鎯╃綒绯绘暟锛岄粯璁?2.0",
+            "svm_c", "SVM C", "Penalty parameter for SVM C_SVC",
             gis::framework::ParamType::Double, false, double{2.0},
             double{0.001}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "svm_gamma", "SVM Gamma", "SVM RBF 鏍?gamma 鍙傛暟锛岄粯璁?0.5",
+            "svm_gamma", "SVM Gamma", "Gamma parameter for SVM RBF kernel",
             gis::framework::ParamType::Double, false, double{0.5},
             double{0.0}, double{1e6}
         },
         gis::framework::ParamSpec{
-            "rf_max_depth", "RF 鏈€澶ф繁搴?, "闅忔満妫灄鏈€澶ф爲娣卞害锛岄粯璁?10",
+            "rf_max_depth", "RF最大深度", "Maximum tree depth for random forest",
             gis::framework::ParamType::Int, false, int{10},
             int{1}, int{100}
         },
         gis::framework::ParamSpec{
-            "rf_tree_count", "RF 鏍戞暟閲?, "闅忔満妫灄鏍戞暟閲忥紝榛樿 100",
+            "rf_tree_count", "RF树数量", "Number of trees for random forest",
             gis::framework::ParamType::Int, false, int{100},
             int{1}, int{10000}
         },
         gis::framework::ParamSpec{
-            "rf_min_sample_count", "RF 鏈€灏忔牱鏈暟", "闅忔満妫灄鍙惰妭鐐规渶灏忔牱鏈暟锛岄粯璁?2",
+            "rf_min_sample_count", "RF最小样本数", "Minimum sample count per split for random forest",
             gis::framework::ParamType::Int, false, int{2},
             int{1}, int{1000}
         },
         gis::framework::ParamSpec{
-            "classified_raster", "鍒嗙被缁撴灉鏍呮牸", "绮惧害璇勪及鐢紝寰呰瘎浼扮殑鍒嗙被缁撴灉鏍呮牸",
+            "classified_raster", "分类结果栅格", "Raster produced by a classification workflow",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "reference_raster", "鍙傝€冪湡瀹炴爡鏍?, "绮惧害璇勪及鐢紝鍙傝€冪湡瀹炲垎绫绘爡鏍?,
+            "reference_raster", "参考栅格", "Reference raster used by accuracy assessment",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
     };
@@ -1399,7 +1399,7 @@ gis::framework::Result ClassificationPlugin::execute(
 gis::framework::Result ClassificationPlugin::doFeatureStats(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
-    progress.onMessage("姝ｅ湪鍑嗗鍦扮墿鍒嗙被缁熻浠诲姟...");
+    progress.onMessage("Running feature statistics...");
     progress.throwIfCancelled();
     progress.onProgress(0.05);
 
@@ -1409,16 +1409,16 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
         return parseResult;
     }
 
-    progress.onMessage("姝ｅ湪鍔犺浇鍒嗙被鏄犲皠涓庣煝閲忚绱?..");
+    progress.onMessage("Loading class map and vector features...");
     const auto classMap = loadClassMap(task.classMapPath);
     const auto vectorData = openVectorData(task.vectorPath, task.featureIdField, task.featureNameField);
     if (vectorData.epsg == 0) {
-        throw std::runtime_error("鐭㈤噺缂哄皯鏈夋晥 EPSG锛屽綋鍓嶇増鏈殏涓嶆敮鎸?);
+        throw std::runtime_error("Vector layer is missing a valid EPSG code.");
     }
     progress.throwIfCancelled();
     progress.onProgress(0.2);
 
-    progress.onMessage("姝ｅ湪妫€鏌ユ爡鏍艰緭鍏?..");
+    progress.onMessage("Inspecting raster inputs...");
     std::vector<RasterInspectInfo> rasterInfos;
     rasterInfos.reserve(task.rasters.size());
     for (const auto& raster : task.rasters) {
@@ -1427,7 +1427,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
     progress.throwIfCancelled();
     progress.onProgress(0.35);
 
-    progress.onMessage("姝ｅ湪鍐崇瓥鐩爣鍧愭爣绯讳笌鐩爣缃戞牸...");
+    progress.onMessage("Resolving target projection and grid...");
     const auto targetSrs = resolveTargetSrs(task.targetEpsg, rasterInfos);
     std::vector<RasterGridInfo> grids;
     grids.reserve(rasterInfos.size());
@@ -1473,7 +1473,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
             globalWindow.geotransform);
     }
 
-    progress.onMessage("姝ｅ湪鎵ц鍦扮墿鍒嗙被缁熻...");
+    progress.onMessage("濮濓絽婀幍褑顢戦崷鎵⒖閸掑棛琚紒鐔活吀...");
     FeatureStatsResultData resultData;
     resultData.actualSrs = targetSrs.epsgText;
 
@@ -1555,12 +1555,12 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
         vectorWriter->writeMetadata(fsMetadata);
     }
 
-    progress.onMessage("姝ｅ湪鍐欏嚭缁熻缁撴灉...");
+    progress.onMessage("Writing feature statistics outputs...");
     writeResult(task, resultData);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
-    auto result = gis::framework::Result::ok("鍦扮墿鍒嗙被缁熻瀹屾垚", task.outputPath);
+    auto result = gis::framework::Result::ok("Feature statistics completed", task.outputPath);
     result.metadata["action"] = "feature_stats";
     result.metadata["vector"] = task.vectorPath;
     result.metadata["class_map"] = task.classMapPath;
@@ -1601,7 +1601,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
         return gis::framework::Result::fail(bandError);
     }
 
-    progress.onMessage("姝ｅ湪璇诲彇璁粌鏍锋湰...");
+    progress.onMessage("濮濓絽婀拠璇插絿鐠侇厾绮岄弽閿嬫拱...");
     progress.throwIfCancelled();
     progress.onProgress(0.1);
 
@@ -1620,7 +1620,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
         }
     }
     if (labelIndex < 0) {
-        return gis::framework::Result::fail("璁粌鏍锋湰 CSV 缂哄皯鏍囩鍒? " + task.labelColumn);
+        return gis::framework::Result::fail("Training CSV is missing label column: " + task.labelColumn);
     }
 
     std::vector<int> featureIndices;
@@ -1630,12 +1630,12 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
         }
     }
     if (featureIndices.empty()) {
-        return gis::framework::Result::fail("璁粌鏍锋湰 CSV 缂哄皯鐗瑰緛鍒?);
+        return gis::framework::Result::fail("Training CSV does not contain any feature columns.");
     }
 
     auto ds = gis::core::openRaster(task.inputPath, true);
     if (!ds) {
-        return gis::framework::Result::fail("鏃犳硶鎵撳紑杈撳叆鏍呮牸: " + task.inputPath);
+        return gis::framework::Result::fail("Failed to open input raster: " + task.inputPath);
     }
 
     if (task.bands.empty()) {
@@ -1644,7 +1644,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
         }
     }
     if (featureIndices.size() != task.bands.size()) {
-        return gis::framework::Result::fail("璁粌鏍锋湰鐗瑰緛鍒楁暟閲忓繀椤讳笌 bands 鏁伴噺涓€鑷?);
+        return gis::framework::Result::fail("Training CSV feature count must match bands count.");
     }
 
     cv::Mat trainingSamples(static_cast<int>(rows.size()), static_cast<int>(featureIndices.size()), CV_32F);
@@ -1659,11 +1659,11 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
                     std::stof(rows[rowIndex][featureIndices[featureIndex]]);
             }
         } catch (...) {
-            return gis::framework::Result::fail("璁粌鏍锋湰 CSV 瀛樺湪鏃犳硶瑙ｆ瀽鐨勬暟瀛?);
+            return gis::framework::Result::fail("Training CSV contains invalid numeric values.");
         }
     }
 
-    progress.onMessage("姝ｅ湪璁粌 SVM 鍒嗙被鍣?..");
+    progress.onMessage("濮濓絽婀拋顓犵矊 SVM 閸掑棛琚崳?..");
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1676,10 +1676,10 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     svm->setGamma(svmGamma);
     svm->setTermCriteria(cv::TermCriteria(cv::TermCriteria::MAX_ITER, 1000, 1e-6));
     if (!svm->train(trainingSamples, cv::ml::ROW_SAMPLE, trainingLabels)) {
-        return gis::framework::Result::fail("SVM 璁粌澶辫触");
+        return gis::framework::Result::fail("SVM 鐠侇厾绮屾径杈Е");
     }
 
-    progress.onMessage("姝ｅ湪璇诲彇寰呭垎绫绘尝娈?..");
+    progress.onMessage("Reading raster bands...");
     progress.throwIfCancelled();
     progress.onProgress(0.45);
 
@@ -1687,7 +1687,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     bandMats.reserve(task.bands.size());
     for (int bandIndex : task.bands) {
         if (bandIndex <= 0 || bandIndex > ds->GetRasterCount()) {
-            return gis::framework::Result::fail("bands 涓瓨鍦ㄦ棤鏁堟尝娈靛彿");
+            return gis::framework::Result::fail("bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊灏濆▓闈涘娇");
         }
         bandMats.push_back(gis::core::gdalBandToMat(ds.get(), bandIndex));
     }
@@ -1704,7 +1704,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
         }
     }
 
-    progress.onMessage("姝ｅ湪鎵ц鏍呮牸鍒嗙被...");
+    progress.onMessage("濮濓絽婀幍褑顢戦弽鍛壐閸掑棛琚?..");
     progress.throwIfCancelled();
     progress.onProgress(0.7);
 
@@ -1717,7 +1717,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
         }
     }
 
-    progress.onMessage("姝ｅ湪鍐欏嚭鍒嗙被缁撴灉...");
+    progress.onMessage("Writing classification raster...");
     gis::core::matToGdalTiff(result, ds.get(), task.outputPath, task.bands.front());
     auto svmMetadata = buildProcessingMetadata(ds.get(), task.inputPath, "classification.svm_classify");
     svmMetadata.algorithmParams["svm_c"] = std::to_string(svmC);
@@ -1726,7 +1726,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
-    auto execResult = gis::framework::Result::ok("SVM 鍒嗙被瀹屾垚", task.outputPath);
+    auto execResult = gis::framework::Result::ok("SVM classification completed", task.outputPath);
     execResult.metadata["action"] = "svm_classify";
     execResult.metadata["input"] = task.inputPath;
     execResult.metadata["training_csv"] = task.trainingCsvPath;
@@ -1760,7 +1760,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
         return gis::framework::Result::fail(bandError);
     }
 
-    progress.onMessage("姝ｅ湪璇诲彇璁粌鏍锋湰...");
+    progress.onMessage("濮濓絽婀拠璇插絿鐠侇厾绮岄弽閿嬫拱...");
     progress.throwIfCancelled();
     progress.onProgress(0.1);
 
@@ -1779,7 +1779,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
         }
     }
     if (labelIndex < 0) {
-        return gis::framework::Result::fail("璁粌鏍锋湰 CSV 缂哄皯鏍囩鍒? " + task.labelColumn);
+        return gis::framework::Result::fail("Training CSV is missing label column: " + task.labelColumn);
     }
 
     std::vector<int> featureIndices;
@@ -1789,12 +1789,12 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
         }
     }
     if (featureIndices.empty()) {
-        return gis::framework::Result::fail("璁粌鏍锋湰 CSV 缂哄皯鐗瑰緛鍒?);
+        return gis::framework::Result::fail("Training CSV does not contain any feature columns.");
     }
 
     auto ds = gis::core::openRaster(task.inputPath, true);
     if (!ds) {
-        return gis::framework::Result::fail("鏃犳硶鎵撳紑杈撳叆鏍呮牸: " + task.inputPath);
+        return gis::framework::Result::fail("Failed to open input raster: " + task.inputPath);
     }
 
     if (task.bands.empty()) {
@@ -1803,7 +1803,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
         }
     }
     if (featureIndices.size() != task.bands.size()) {
-        return gis::framework::Result::fail("璁粌鏍锋湰鐗瑰緛鍒楁暟閲忓繀椤讳笌 bands 鏁伴噺涓€鑷?);
+        return gis::framework::Result::fail("Training CSV feature count must match bands count.");
     }
 
     cv::Mat trainingSamples(static_cast<int>(rows.size()), static_cast<int>(featureIndices.size()), CV_32F);
@@ -1818,11 +1818,11 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
                     std::stof(rows[rowIndex][featureIndices[featureIndex]]);
             }
         } catch (...) {
-            return gis::framework::Result::fail("璁粌鏍锋湰 CSV 瀛樺湪鏃犳硶瑙ｆ瀽鐨勬暟瀛?);
+            return gis::framework::Result::fail("Training CSV contains invalid numeric values.");
         }
     }
 
-    progress.onMessage("姝ｅ湪璁粌闅忔満妫灄鍒嗙被鍣?..");
+    progress.onMessage("濮濓絽婀拋顓犵矊闂呭繑婧€濡喗鐏勯崚鍡欒閸?..");
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1838,10 +1838,10 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
     forest->setMaxCategories(std::max(2, static_cast<int>(classValues.size())));
     forest->setTermCriteria(cv::TermCriteria(cv::TermCriteria::MAX_ITER, rfTreeCount, 0));
     if (!forest->train(trainingSamples, cv::ml::ROW_SAMPLE, trainingLabels)) {
-        return gis::framework::Result::fail("闅忔満妫灄璁粌澶辫触");
+        return gis::framework::Result::fail("Random forest training failed.");
     }
 
-    progress.onMessage("姝ｅ湪璇诲彇寰呭垎绫绘尝娈?..");
+    progress.onMessage("Reading raster bands...");
     progress.throwIfCancelled();
     progress.onProgress(0.45);
 
@@ -1849,7 +1849,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
     bandMats.reserve(task.bands.size());
     for (int bandIndex : task.bands) {
         if (bandIndex <= 0 || bandIndex > ds->GetRasterCount()) {
-            return gis::framework::Result::fail("bands 涓瓨鍦ㄦ棤鏁堟尝娈靛彿");
+            return gis::framework::Result::fail("bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊灏濆▓闈涘娇");
         }
         bandMats.push_back(gis::core::gdalBandToMat(ds.get(), bandIndex));
     }
@@ -1866,7 +1866,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
         }
     }
 
-    progress.onMessage("姝ｅ湪鎵ц鏍呮牸鍒嗙被...");
+    progress.onMessage("濮濓絽婀幍褑顢戦弽鍛壐閸掑棛琚?..");
     progress.throwIfCancelled();
     progress.onProgress(0.7);
 
@@ -1879,7 +1879,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
         }
     }
 
-    progress.onMessage("姝ｅ湪鍐欏嚭鍒嗙被缁撴灉...");
+    progress.onMessage("Writing classification raster...");
     gis::core::matToGdalTiff(result, ds.get(), task.outputPath, task.bands.front());
     auto rfMetadata = buildProcessingMetadata(ds.get(), task.inputPath, "classification.random_forest_classify");
     rfMetadata.algorithmParams["rf_max_depth"] = std::to_string(rfMaxDepth);
@@ -1889,7 +1889,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
-    auto execResult = gis::framework::Result::ok("闅忔満妫灄鍒嗙被瀹屾垚", task.outputPath);
+    auto execResult = gis::framework::Result::ok("Random forest classification completed", task.outputPath);
     execResult.metadata["action"] = "random_forest_classify";
     execResult.metadata["input"] = task.inputPath;
     execResult.metadata["training_csv"] = task.trainingCsvPath;
@@ -1923,7 +1923,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
         return gis::framework::Result::fail(bandError);
     }
 
-    progress.onMessage("姝ｅ湪璇诲彇璁粌鏍锋湰...");
+    progress.onMessage("濮濓絽婀拠璇插絿鐠侇厾绮岄弽閿嬫拱...");
     progress.throwIfCancelled();
     progress.onProgress(0.1);
 
@@ -1942,7 +1942,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
         }
     }
     if (labelIndex < 0) {
-        return gis::framework::Result::fail("璁粌鏍锋湰 CSV 缂哄皯鏍囩鍒? " + task.labelColumn);
+        return gis::framework::Result::fail("Training CSV is missing label column: " + task.labelColumn);
     }
 
     std::vector<int> featureIndices;
@@ -1952,12 +1952,12 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
         }
     }
     if (featureIndices.empty()) {
-        return gis::framework::Result::fail("璁粌鏍锋湰 CSV 缂哄皯鐗瑰緛鍒?);
+        return gis::framework::Result::fail("Training CSV does not contain any feature columns.");
     }
 
     auto ds = gis::core::openRaster(task.inputPath, true);
     if (!ds) {
-        return gis::framework::Result::fail("鏃犳硶鎵撳紑杈撳叆鏍呮牸: " + task.inputPath);
+        return gis::framework::Result::fail("Failed to open input raster: " + task.inputPath);
     }
 
     if (task.bands.empty()) {
@@ -1966,7 +1966,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
         }
     }
     if (featureIndices.size() != task.bands.size()) {
-        return gis::framework::Result::fail("璁粌鏍锋湰鐗瑰緛鍒楁暟閲忓繀椤讳笌 bands 鏁伴噺涓€鑷?);
+        return gis::framework::Result::fail("Training CSV feature count must match bands count.");
     }
 
     std::map<int, std::vector<cv::Mat>> classSamples;
@@ -1979,12 +1979,12 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
             }
             classSamples[label].push_back(sample);
         } catch (...) {
-            return gis::framework::Result::fail("璁粌鏍锋湰 CSV 瀛樺湪鏃犳硶瑙ｆ瀽鐨勬暟瀛?);
+            return gis::framework::Result::fail("Training CSV contains invalid numeric values.");
         }
     }
 
     if (classSamples.size() < 2) {
-        return gis::framework::Result::fail("鏈€澶т技鐒跺垎绫昏嚦灏戦渶瑕佷袱涓被鍒?);
+        return gis::framework::Result::fail("At least two classes are required for max likelihood classification.");
     }
 
     struct ClassStats {
@@ -1996,7 +1996,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     std::vector<ClassStats> stats;
     stats.reserve(classSamples.size());
 
-    progress.onMessage("姝ｅ湪浼拌绫诲埆缁熻鍙傛暟...");
+    progress.onMessage("Estimating class statistics...");
     progress.throwIfCancelled();
     progress.onProgress(0.3);
     for (const auto& [label, samples] : classSamples) {
@@ -2024,7 +2024,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
         stats.push_back(std::move(item));
     }
 
-    progress.onMessage("姝ｅ湪璇诲彇寰呭垎绫绘尝娈?..");
+    progress.onMessage("Reading raster bands...");
     progress.throwIfCancelled();
     progress.onProgress(0.45);
 
@@ -2032,7 +2032,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     bandMats.reserve(task.bands.size());
     for (int bandIndex : task.bands) {
         if (bandIndex <= 0 || bandIndex > ds->GetRasterCount()) {
-            return gis::framework::Result::fail("bands 涓瓨鍦ㄦ棤鏁堟尝娈靛彿");
+            return gis::framework::Result::fail("bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊灏濆▓闈涘娇");
         }
         bandMats.push_back(gis::core::gdalBandToMat(ds.get(), bandIndex));
     }
@@ -2042,7 +2042,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     cv::Mat result(height, width, CV_32F);
     cv::Mat sample(1, static_cast<int>(task.bands.size()), CV_32F);
 
-    progress.onMessage("姝ｅ湪鎵ц鏈€澶т技鐒跺垎绫?..");
+    progress.onMessage("濮濓絽婀幍褑顢戦張鈧径褌鎶€閻掕泛鍨庣猾?..");
     progress.throwIfCancelled();
     progress.onProgress(0.7);
     for (int y = 0; y < height; ++y) {
@@ -2066,14 +2066,14 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
         }
     }
 
-    progress.onMessage("姝ｅ湪鍐欏嚭鍒嗙被缁撴灉...");
+    progress.onMessage("Writing classification raster...");
     gis::core::matToGdalTiff(result, ds.get(), task.outputPath, task.bands.front());
     auto mlMetadata = buildProcessingMetadata(ds.get(), task.inputPath, "classification.max_likelihood_classify");
     gis::core::writeProcessingMetadata(task.outputPath, mlMetadata);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
-    auto execResult = gis::framework::Result::ok("鏈€澶т技鐒跺垎绫诲畬鎴?, task.outputPath);
+    auto execResult = gis::framework::Result::ok("Max likelihood classification completed", task.outputPath);
     execResult.metadata["action"] = "max_likelihood_classify";
     execResult.metadata["input"] = task.inputPath;
     execResult.metadata["training_csv"] = task.trainingCsvPath;
@@ -2259,7 +2259,7 @@ gis::framework::Result ClassificationPlugin::doAccuracyAssessment(
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(
-        "绮惧害璇勪及瀹屾垚: OA=" + std::to_string(overallAccuracy) +
+        "缁儳瀹崇拠鍕強鐎瑰本鍨? OA=" + std::to_string(overallAccuracy) +
         " Kappa=" + std::to_string(kappa), outputPath);
     result.metadata["action"] = "accuracy_assessment";
     result.metadata["overall_accuracy"] = std::to_string(overallAccuracy);
@@ -2273,5 +2273,7 @@ gis::framework::Result ClassificationPlugin::doAccuracyAssessment(
 } // namespace gis::plugins
 
 GIS_PLUGIN_EXPORT(gis::plugins::ClassificationPlugin)
+
+
 
 

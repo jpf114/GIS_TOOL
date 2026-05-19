@@ -102,16 +102,12 @@ void TaskRunner::startTask(const QueuedTask& task) {
 
             QueuedTask retryTask = task;
             retryTask.retryCount++;
-            auto retryId = TaskManager::instance().submitTask(
-                dg, task.pluginName, task.actionKey, task.params,
-                task.pluginDisplayName, task.actionDisplayName);
-            if (!retryId.isEmpty()) {
-                retryTask.taskId = retryId;
-                queue_.prepend(retryTask);
-                emit queueChanged(queue_.size());
-                TaskManager::instance().appendLog(dg, retryId,
-                    QStringLiteral("鑷姩閲嶈瘯 (绗?%1 娆?").arg(retryTask.retryCount));
-            }
+            queue_.prepend(retryTask);
+            emit queueChanged(queue_.size());
+            TaskManager::instance().appendLog(
+                dg,
+                tid,
+                QStringLiteral("任务失败后自动重试（第 %1 次）。").arg(retryTask.retryCount));
             processQueue();
             return;
         }

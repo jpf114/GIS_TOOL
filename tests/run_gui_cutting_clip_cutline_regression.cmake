@@ -9,6 +9,7 @@ set(STATUS_PATH "${OUTPUT_DIR}/status.json")
 set(INPUT_PATH "${OUTPUT_DIR}/cutting_clip_cutline_input.tif")
 set(PREP_STATUS_PATH "${OUTPUT_DIR}/prep_status.json")
 gis_gui_prepare_artifact_paths("${OUTPUT_PATH}" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
+file(REMOVE "${INPUT_PATH}" "${INPUT_PATH}.aux.xml")
 file(REMOVE "${PREP_STATUS_PATH}")
 
 execute_process(
@@ -38,7 +39,7 @@ execute_process(
         --select-plugin cutting
         --select-action clip
         --set-param "input=${INPUT_PATH}"
-        --set-param "clip_vector=${CMAKE_CURRENT_LIST_DIR}/data/gui_vector_overlay_mask.geojson"
+        --set-param "cutline=${CMAKE_CURRENT_LIST_DIR}/data/gui_vector_overlay_mask.geojson"
         --set-param "output=${OUTPUT_PATH}"
         --auto-execute
         --quit-on-finish

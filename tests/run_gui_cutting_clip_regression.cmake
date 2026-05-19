@@ -8,6 +8,7 @@ set(STATUS_PATH "${OUTPUT_DIR}/status.json")
 gis_gui_prepare_artifact_paths("${OUTPUT_PATH}" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
 set(INPUT_PATH "${OUTPUT_DIR}/cutting_clip_input.tif")
 set(PREP_STATUS_PATH "${OUTPUT_DIR}/prep_status.json")
+file(REMOVE "${INPUT_PATH}" "${INPUT_PATH}.aux.xml")
 file(REMOVE "${PREP_STATUS_PATH}")
 
 execute_process(

@@ -1,4 +1,4 @@
-#include "terrain_plugin.h"
+﻿#include "terrain_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
@@ -660,14 +660,14 @@ std::vector<ProfilePoint> parseProfilePath(const std::string& text) {
         }
         const auto comma = token.find(',');
         if (comma == std::string::npos) {
-            throw std::runtime_error("profile_path 鏍煎紡搴斾负 x1,y1;x2,y2;...");
+            throw std::runtime_error("profile_path requires at least two points");
         }
         const std::string xText = trim(token.substr(0, comma));
         const std::string yText = trim(token.substr(comma + 1));
         points.push_back(ProfilePoint{std::stod(xText), std::stod(yText)});
     }
     if (points.size() < 2) {
-        throw std::runtime_error("profile_path 鑷冲皯闇€瑕佷袱涓偣");
+        throw std::runtime_error("profile_path requires at least two points");
     }
     return points;
 }
@@ -683,14 +683,14 @@ std::vector<ProfilePoint> parseObserverPoints(const std::string& text) {
         }
         const auto comma = token.find(',');
         if (comma == std::string::npos) {
-            throw std::runtime_error("observer_points 鏍煎紡搴斾负 x1,y1;x2,y2;...");
+            throw std::runtime_error("observer_points requires at least one point");
         }
         const std::string xText = trim(token.substr(0, comma));
         const std::string yText = trim(token.substr(comma + 1));
         points.push_back(ProfilePoint{std::stod(xText), std::stod(yText)});
     }
     if (points.empty()) {
-        throw std::runtime_error("observer_points 鑷冲皯闇€瑕佷竴涓偣");
+        throw std::runtime_error("observer_points requires at least one point");
     }
     return points;
 }
@@ -1169,86 +1169,27 @@ gis::framework::Result runReservoirVolumeProcess(
 std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "鎿嶄綔", "鍦板舰鍒嗘瀽鎿嶄綔绫诲瀷",
+            "action", "动作", "Terrain analysis action",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"slope", "aspect", "hillshade", "tpi", "curvature", "profile_curvature", "plan_curvature", "tri", "roughness", "fill_sinks", "flow_direction", "flow_accumulation", "stream_extract", "watershed", "profile_extract", "viewshed", "viewshed_multi", "cut_fill", "reservoir_volume"}
         },
-        gis::framework::ParamSpec{
-            "input", "杈撳叆鏂囦欢", "杈撳叆 DEM 鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, true, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "reference", "鍙傝€冩枃浠?, "鍙傝€?DEM 鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "output", "杈撳嚭鏂囦欢", "杈撳嚭缁撴灉鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, true, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "band", "娉㈡", "杈撳叆褰卞儚鐨勬尝娈靛彿锛岄粯璁や负 1 娉㈡",
-            gis::framework::ParamType::Int, false, int{1},
-            int{1}, int{999}
-        },
-        gis::framework::ParamSpec{
-            "z_factor", "楂樼▼缂╂斁", "楂樼▼鍊肩缉鏀惧洜瀛?,
-            gis::framework::ParamType::Double, false, double{1.0},
-            double{0.001}, double{10000.0}
-        },
-        gis::framework::ParamSpec{
-            "azimuth", "鏂逛綅瑙?, "鍏夋簮鏂逛綅瑙掞紙搴︼級",
-            gis::framework::ParamType::Double, false, double{315.0},
-            double{0.0}, double{360.0}
-        },
-        gis::framework::ParamSpec{
-            "altitude", "楂樺害瑙?, "鍏夋簮楂樺害瑙掞紙搴︼級",
-            gis::framework::ParamType::Double, false, double{45.0},
-            double{0.0}, double{90.0}
-        },
-        gis::framework::ParamSpec{
-            "accum_threshold", "绱Н闃堝€?, "姘存祦绱Н鎻愬彇闃堝€?,
-            gis::framework::ParamType::Double, false, double{10.0},
-            double{0.0}, double{1e9}
-        },
-        gis::framework::ParamSpec{
-            "profile_path", "鍓栭潰璺緞", "鍓栭潰绾垮潗鏍囦覆 x1,y1;x2,y2;...",
-            gis::framework::ParamType::String, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "observer_x", "瑙傛祴鐐?X", "瑙傛祴鐐瑰潗鏍?X",
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{-1e15}, double{1e15}
-        },
-        gis::framework::ParamSpec{
-            "observer_y", "瑙傛祴鐐?Y", "瑙傛祴鐐瑰潗鏍?Y",
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{-1e15}, double{1e15}
-        },
-        gis::framework::ParamSpec{
-            "observer_points", "瑙傛祴鐐瑰垪琛?, "澶氫釜瑙傛祴鐐瑰潗鏍?x1,y1;x2,y2;...",
-            gis::framework::ParamType::String, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "observer_height", "瑙傛祴楂樺害", "瑙傛祴鑰呯鍦伴珮搴?,
-            gis::framework::ParamType::Double, false, double{2.0},
-            double{0.0}, double{10000.0}
-        },
-        gis::framework::ParamSpec{
-            "target_height", "鐩爣楂樺害", "鐩爣鐗╃鍦伴珮搴?,
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{0.0}, double{10000.0}
-        },
-        gis::framework::ParamSpec{
-            "max_distance", "鏈€澶ц窛绂?, "鏈€澶у彲瑙嗚窛绂伙紝0 琛ㄧず涓嶉檺",
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{0.0}, double{1e9}
-        },
-        gis::framework::ParamSpec{
-            "water_level", "姘翠綅", "姘村簱姘翠綅楂樼▼鍊?,
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{-10000.0}, double{10000.0}
-        },
+        gis::framework::ParamSpec{"input", "输入DEM", "Input DEM path", gis::framework::ParamType::FilePath, true, std::string{}},
+        gis::framework::ParamSpec{"reference", "参考DEM", "Reference DEM path used by cut_fill", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"output", "输出结果", "Output raster or report path", gis::framework::ParamType::FilePath, true, std::string{}},
+        gis::framework::ParamSpec{"band", "波段", "DEM band index", gis::framework::ParamType::Int, false, int{1}, int{1}, int{999}},
+        gis::framework::ParamSpec{"z_factor", "Z因子", "Vertical exaggeration factor", gis::framework::ParamType::Double, false, double{1.0}, double{0.001}, double{10000.0}},
+        gis::framework::ParamSpec{"azimuth", "方位角", "Light azimuth for hillshade", gis::framework::ParamType::Double, false, double{315.0}, double{0.0}, double{360.0}},
+        gis::framework::ParamSpec{"altitude", "高度角", "Light altitude for hillshade", gis::framework::ParamType::Double, false, double{45.0}, double{0.0}, double{90.0}},
+        gis::framework::ParamSpec{"accum_threshold", "汇流阈值", "Threshold used by stream extraction", gis::framework::ParamType::Double, false, double{10.0}, double{0.0}, double{1e9}},
+        gis::framework::ParamSpec{"profile_path", "剖面路径", "Profile points formatted as x1,y1;x2,y2;...", gis::framework::ParamType::String, false, std::string{}},
+        gis::framework::ParamSpec{"observer_x", "观察点X", "Observer X coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
+        gis::framework::ParamSpec{"observer_y", "观察点Y", "Observer Y coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
+        gis::framework::ParamSpec{"observer_points", "观察点集合", "Multiple observer points formatted as x1,y1;x2,y2;...", gis::framework::ParamType::String, false, std::string{}},
+        gis::framework::ParamSpec{"observer_height", "观察高度", "Observer height above terrain", gis::framework::ParamType::Double, false, double{2.0}, double{0.0}, double{10000.0}},
+        gis::framework::ParamSpec{"target_height", "目标高度", "Target height above terrain", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{10000.0}},
+        gis::framework::ParamSpec{"max_distance", "最大距离", "Maximum analysis distance, 0 means unlimited", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{1e9}},
+        gis::framework::ParamSpec{"water_level", "水位", "Water level used by reservoir volume analysis", gis::framework::ParamType::Double, false, double{0.0}, double{-10000.0}, double{10000.0}},
     };
 }
 
@@ -1536,3 +1477,5 @@ gis::framework::Result TerrainPlugin::doReservoirVolume(
 } // namespace gis::plugins
 
 GIS_PLUGIN_EXPORT(gis::plugins::TerrainPlugin)
+
+

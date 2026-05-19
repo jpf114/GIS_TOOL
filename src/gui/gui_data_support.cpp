@@ -182,6 +182,12 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "band", "template_file", "match_method"},
                 {"input", "output", "template_file"}
             }},
+            {"kmeans", {
+                QStringLiteral("KMeans 聚类"),
+                QStringLiteral("对多波段影像执行 KMeans 聚类分割。"),
+                {"input", "output", "kmeans_k", "max_iter", "epsilon_kmeans", "kmeans_attempts"},
+                {"input", "output"}
+            }},
             {"enhance", {
                 QStringLiteral("影像增强"),
                 QStringLiteral("执行均衡化、CLAHE、归一化、Gamma 等增强处理。"),
@@ -2187,9 +2193,9 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
             }
         }
         if (actionKey == "kmeans") {
-            const auto k = intParamValue(params, "k");
+            const auto k = intParamValue(params, "kmeans_k");
             if (k.has_value() && *k <= 0) {
-                return ActionValidationIssue{"k", "参数“聚类数”必须大于 0"};
+                return ActionValidationIssue{"kmeans_k", "参数“聚类数”必须大于 0"};
             }
         }
         if (actionKey == "gabor_filter") {

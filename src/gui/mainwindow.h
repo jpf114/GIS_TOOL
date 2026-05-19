@@ -30,6 +30,7 @@ public:
     void selectPluginByName(const std::string& pluginName);
     void selectActionByKey(const std::string& actionKey);
     bool setParamValue(const std::string& key, const std::string& value);
+    void setAutomationMode(bool enabled);
     void triggerExecute();
     bool lastExecutionSuccess() const;
     bool lastExecutionCancelled() const;
@@ -74,6 +75,9 @@ private:
                            const std::map<std::string, std::string>& metadata);
     void updateBatchCount();
     QStringList scanBatchFiles() const;
+    void reportImmediateExecutionFailure(const QString& title,
+                                         const QString& localizedMessage,
+                                         const QString& rawMessage = QString());
 
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
@@ -123,6 +127,7 @@ private:
     std::string lastAutoExpressionValue_;
     std::string lastAutoLayerName_;
     std::optional<std::array<double, 4>> lastAutoExtent_;
+    bool automationMode_ = false;
     bool lastExecutionSuccess_ = false;
     bool lastExecutionCancelled_ = false;
     QString lastExecutionMessage_;

@@ -1,4 +1,4 @@
-#include "projection_plugin.h"
+﻿#include "projection_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
 #include <gdal_priv.h>
@@ -187,47 +187,19 @@ gis::core::ProcessingMetadata buildMetadata(
 std::vector<gis::framework::ParamSpec> ProjectionPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
+            "action", "动作", "Projection workflow action",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"reproject", "info", "transform", "assign_srs"}
         },
-        gis::framework::ParamSpec{
-            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "output", "杈撳嚭鏂囦欢", "杈撳嚭褰卞儚鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "dst_srs", "鐩爣鍧愭爣绯?, "鐩爣鍧愭爣绯?EPSG浠ｅ彿鎴朩KT瀛楃涓?",
-            gis::framework::ParamType::CRS, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "src_srs", "婧愬潗鏍囩郴", "婧愬潗鏍囩郴(EPSG浠ｅ彿鎴朩KT瀛楃涓?锛岃鐩栧奖鍍忚嚜甯﹀潗鏍囩郴",
-            gis::framework::ParamType::CRS, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "resample", "閲嶉噰鏍锋柟娉?, "閲嶉噰鏍风畻娉?,
-            gis::framework::ParamType::Enum, false, std::string{"nearest"},
-            int{0}, int{0},
-            {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average", "mode"}
-        },
-        gis::framework::ParamSpec{
-            "x", "X鍧愭爣", "寰呰浆鎹㈢殑X鍧愭爣(缁忓害)",
-            gis::framework::ParamType::Double, false, double{0},
-            double{-1e9}, double{1e9}
-        },
-        gis::framework::ParamSpec{
-            "y", "Y鍧愭爣", "寰呰浆鎹㈢殑Y鍧愭爣(绾害)",
-            gis::framework::ParamType::Double, false, double{0},
-            double{-1e9}, double{1e9}
-        },
-        gis::framework::ParamSpec{
-            "srs", "鍧愭爣绯?, "鎸囧畾鍧愭爣绯?EPSG浠ｅ彿鎴朩KT瀛楃涓?锛岀敤浜巃ssign_srs",
-            gis::framework::ParamType::CRS, false, std::string{}
-        },
+        gis::framework::ParamSpec{"input", "输入数据", "Input raster or vector path", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"output", "输出数据", "Output dataset path", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"dst_srs", "目标坐标系", "Target CRS in EPSG or WKT", gis::framework::ParamType::CRS, false, std::string{}},
+        gis::framework::ParamSpec{"src_srs", "源坐标系", "Source CRS override in EPSG or WKT", gis::framework::ParamType::CRS, false, std::string{}},
+        gis::framework::ParamSpec{"resample", "重采样", "Resampling method for reprojection", gis::framework::ParamType::Enum, false, std::string{"nearest"}, int{0}, int{0}, {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average", "mode"}},
+        gis::framework::ParamSpec{"x", "X坐标", "Input X coordinate for transform action", gis::framework::ParamType::Double, false, double{0.0}, double{-1e9}, double{1e9}},
+        gis::framework::ParamSpec{"y", "Y坐标", "Input Y coordinate for transform action", gis::framework::ParamType::Double, false, double{0.0}, double{-1e9}, double{1e9}},
+        gis::framework::ParamSpec{"srs", "坐标系", "Coordinate reference system used by transform or assign_srs", gis::framework::ParamType::CRS, false, std::string{}},
     };
 }
 
@@ -558,3 +530,4 @@ gis::framework::Result ProjectionPlugin::doAssignSRS(
 } // namespace gis::plugins
 
 GIS_PLUGIN_EXPORT(gis::plugins::ProjectionPlugin)
+

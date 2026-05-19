@@ -1,4 +1,4 @@
-#include "cutting_plugin.h"
+﻿#include "cutting_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
 #include <gdal_priv.h>
@@ -19,132 +19,132 @@ namespace gis::plugins {
 std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
+            "action", "动作", "Cutting plugin action",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"clip", "mosaic", "split", "merge_bands", "tile"}
         },
         gis::framework::ParamSpec{
-            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞(澶氭枃浠剁敤閫楀彿鍒嗛殧锛宮erge_bands 鏃跺彲涓嶅～)",
+            "input", "输入栅格", "Primary raster input",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "output", "杈撳嚭鏂囦欢", "杈撳嚭褰卞儚鏂囦欢璺緞",
+            "output", "输出路径", "Output raster or tile directory",
             gis::framework::ParamType::FilePath, true, std::string{}
         },
         gis::framework::ParamSpec{
-            "extent", "瑁佸垏鑼冨洿", "鐭╁舰鑼冨洿(xmin,ymin,xmax,ymax)",
+            "extent", "范围", "Clip extent as xmin,ymin,xmax,ymax",
             gis::framework::ParamType::Extent, false, std::array<double,4>{0,0,0,0}
         },
         gis::framework::ParamSpec{
-            "cutline", "瑁佸垏鐭㈤噺", "鐢ㄤ簬瑁佸垏鐨勭煝閲忔枃浠惰矾寰?,
+            "cutline", "裁切线", "Optional cutline vector path",
             gis::framework::ParamType::FilePath, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "tile_size", "鍒嗗潡澶у皬", "鍒嗗潡鍒囧壊鏃舵瘡鍧楃殑鍍忕礌澶у皬",
+            "tile_size", "分块大小", "Tile size used by split action",
             gis::framework::ParamType::Int, false, int{1024},
             int{1}, int{65536}
         },
         gis::framework::ParamSpec{
-            "overlap", "閲嶅彔鍍忕礌鏁?, "鍒嗗潡鍒囧壊鏃跺潡闂寸殑閲嶅彔鍍忕礌鏁?,
+            "overlap", "重叠像素", "Overlap size used by split action",
             gis::framework::ParamType::Int, false, int{0},
             int{0}, int{65536}
         },
         gis::framework::ParamSpec{
-            "bands", "娉㈡鍒楄〃", "鍚堝苟娉㈡鏃跺悇娉㈡瀵瑰簲鐨勬枃浠惰矾寰?閫楀彿鍒嗛殧)",
+            "bands", "波段列表", "Comma-separated band indexes",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "dst_srs", "鐩爣鍧愭爣绯?, "闀跺祵鏃剁粺涓€鐨勭洰鏍囧潗鏍囩郴",
+            "dst_srs", "目标坐标系", "Destination CRS for reprojection",
             gis::framework::ParamType::CRS, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "resample", "閲嶉噰鏍锋柟娉?, "閲嶉噰鏍风畻娉?,
+            "resample", "重采样", "Resampling method",
             gis::framework::ParamType::Enum, false, std::string{"nearest"},
             int{0}, int{0},
             {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average"}
         },
         gis::framework::ParamSpec{
-            "tile_scheme", "鐡︾墖缂栧彿鏂规", "XYZ(y=0鍦ㄥ寳)鎴朤MS(y=0鍦ㄥ崡)",
+            "tile_scheme", "瓦片方案", "xyz or tms tile scheme",
             gis::framework::ParamType::Enum, false, std::string{"xyz"},
             int{0}, int{0},
             {"xyz", "tms"}
         },
         gis::framework::ParamSpec{
-            "profile", "鍒囩墖鍓栭潰", "mercator=EPSG:3857, geodetic=EPSG:4326, raster=涓嶉噸鎶曞奖",
+            "profile", "瓦片投影", "mercator, geodetic, or raster",
             gis::framework::ParamType::Enum, false, std::string{"mercator"},
             int{0}, int{0},
             {"mercator", "geodetic", "raster"}
         },
         gis::framework::ParamSpec{
-            "min_zoom", "鏈€灏忕缉鏀惧眰绾?, "鐡︾墖閲戝瓧濉旂殑鏈€灏忕缉鏀惧眰绾?,
+            "min_zoom", "最小缩放", "Minimum zoom level for tile output",
             gis::framework::ParamType::Int, false, int{0},
             int{0}, int{30}
         },
         gis::framework::ParamSpec{
-            "max_zoom", "鏈€澶х缉鏀惧眰绾?, "鐡︾墖閲戝瓧濉旂殑鏈€澶х缉鏀惧眰绾э紝-1琛ㄧず鑷姩璁＄畻",
+            "max_zoom", "最大缩放", "Maximum zoom level for tile output",
             gis::framework::ParamType::Int, false, int{-1},
             int{-1}, int{30}
         },
         gis::framework::ParamSpec{
-            "tile_pixel_size", "鐡︾墖鍍忕礌灏哄", "姣忎釜鐡︾墖鐨勫儚绱犲楂?,
+            "tile_pixel_size", "瓦片像素", "Tile pixel size",
             gis::framework::ParamType::Int, false, int{256},
             int{128}, int{1024}
         },
         gis::framework::ParamSpec{
-            "overview_resampling", "姒傝閲嶉噰鏍?, "閲戝瓧濉旀瑙堝浘鐨勯噸閲囨牱鏂规硶",
+            "overview_resampling", "金字塔重采样", "Overview resampling method",
             gis::framework::ParamType::Enum, false, std::string{"nearest"},
             int{0}, int{0},
             {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average", "mode"}
         },
         gis::framework::ParamSpec{
-            "output_format", "鐡︾墖杈撳嚭鏍煎紡", "鐡︾墖鍥惧儚鏍煎紡",
+            "output_format", "输出格式", "Tile image format",
             gis::framework::ParamType::Enum, false, std::string{"png"},
             int{0}, int{0},
             {"png", "jpeg", "webp", "gtiff"}
         },
         gis::framework::ParamSpec{
-            "jpeg_quality", "JPEG鍘嬬缉璐ㄩ噺", "JPEG/WebP鍘嬬缉璐ㄩ噺(1-100)",
+            "jpeg_quality", "JPEG质量", "JPEG/WebP quality 1-100",
             gis::framework::ParamType::Int, false, int{75},
             int{1}, int{100}
         },
         gis::framework::ParamSpec{
-            "add_alpha", "娣诲姞閫忔槑閫氶亾", "涓虹摝鐗囨坊鍔燗lpha閫忔槑閫氶亾锛孨oData鍖哄煙鍙橀€忔槑",
+            "add_alpha", "添加Alpha", "Add alpha channel for transparent nodata",
             gis::framework::ParamType::Bool, false, bool{true}
         },
         gis::framework::ParamSpec{
-            "nodata_value", "NoData鍊?, "鎸囧畾杈撳叆NoData鍊硷紝瑕嗙洊鏂囦欢鍐呭凡鏈夊€?,
+            "nodata_value", "NoData值", "Output nodata value",
             gis::framework::ParamType::Double, false, double{-9999.0},
             double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "skip_blank", "璺宠繃绌虹櫧鐡︾墖", "璺宠繃鍏ㄩ€忔槑鎴栧叏NoData鐨勭┖鐧界摝鐗?,
+            "skip_blank", "跳过空瓦片", "Skip tiles that contain only nodata",
             gis::framework::ParamType::Bool, false, bool{true}
         },
         gis::framework::ParamSpec{
-            "resume", "缁垏妯″紡", "浠呯敓鎴愮己澶辩殑鐡︾墖鏂囦欢",
+            "resume", "断点续跑", "Resume tiling when outputs already exist",
             gis::framework::ParamType::Bool, false, bool{false}
         },
         gis::framework::ParamSpec{
-            "tile_extent", "鍒囩墖鑼冨洿", "鑷畾涔夊垏鐗囪寖鍥?xmin,ymin,xmax,ymax WGS84)锛岀暀绌轰娇鐢ㄥ叏鍥?,
+            "tile_extent", "瓦片范围", "Optional tile extent in WGS84",
             gis::framework::ParamType::Extent, false, std::array<double,4>{0,0,0,0}
         },
         gis::framework::ParamSpec{
-            "webviewer", "Web棰勮椤甸潰", "鐢熸垚Web鍦板浘棰勮椤甸潰",
+            "webviewer", "Web预览", "Generate leaflet/openlayers preview",
             gis::framework::ParamType::Enum, false, std::string{"none"},
             int{0}, int{0},
             {"none", "leaflet", "openlayers", "all"}
         },
         gis::framework::ParamSpec{
-            "title", "鍦板浘鏍囬", "Web棰勮椤甸潰鐨勫湴鍥炬爣棰?,
+            "title", "标题", "Title used by generated web preview",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "copyright", "鐗堟潈淇℃伅", "Web棰勮椤甸潰鐨勭増鏉冧俊鎭?,
+            "copyright", "版权信息", "Copyright text used by generated web preview",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{
-            "num_threads", "骞惰绾跨▼鏁?, "鐡︾墖鐢熸垚鐨勫苟琛岀嚎绋嬫暟",
+            "num_threads", "线程数", "Number of worker threads",
             gis::framework::ParamType::Int, false, int{1},
             int{1}, int{64}
         },
@@ -984,3 +984,4 @@ gis::framework::Result CuttingPlugin::doTile(
 } // namespace gis::plugins
 
 GIS_PLUGIN_EXPORT(gis::plugins::CuttingPlugin)
+

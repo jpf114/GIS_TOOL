@@ -1,4 +1,4 @@
-#include "georef_plugin.h"
+﻿#include "georef_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
@@ -280,7 +280,7 @@ bool loadRadiometricCoefficients(const std::string& metadataFile,
 std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "瀛愬姛鑳?, "鍑犱綍鏍℃涓庤緪灏勫鐞嗗姛鑳?,
+            "action", "动作", "Georeference and radiometric processing action",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0}, {
                 "dos_correction", "radiometric_calibration", "gcp_register",
@@ -288,98 +288,28 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
                 "percentile_stretch", "rpc_orthorectify"
             }
         },
-        gis::framework::ParamSpec{
-            "input", "杈撳叆鏍呮牸", "寰呭鐞嗘爡鏍煎奖鍍忚矾寰?,
-            gis::framework::ParamType::FilePath, true, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "output", "杈撳嚭鏍呮牸", "杈撳嚭缁撴灉鏍呮牸璺緞",
-            gis::framework::ParamType::FilePath, true, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "band", "娉㈡搴忓彿", "寰呭鐞嗘尝娈靛簭鍙凤紝浠?1 寮€濮?,
-            gis::framework::ParamType::Int, false, int{1},
-            int{1}, int{999}
-        },
-        gis::framework::ParamSpec{
-            "dark_object_value", "鏆楀儚鍏冨€?, "灏忎簬 0 鏃惰嚜鍔ㄤ娇鐢ㄥ綋鍓嶆尝娈垫渶灏忓€?,
-            gis::framework::ParamType::Double, false, double{-1.0},
-            double{-1e6}, double{1e6}
-        },
-        gis::framework::ParamSpec{
-            "gain", "澧炵泭", "杈愬皠瀹氭爣澧炵泭绯绘暟",
-            gis::framework::ParamType::Double, false, double{1.0},
-            double{-1e6}, double{1e6}
-        },
-        gis::framework::ParamSpec{
-            "offset", "鍋忕Щ", "杈愬皠瀹氭爣鍋忕Щ閲?,
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{-1e6}, double{1e6}
-        },
-        gis::framework::ParamSpec{
-            "metadata_file", "鍏冩暟鎹枃浠?, "鍙€夛紝鑷姩璇诲彇杈愬皠瀹氭爣绯绘暟鐨勫厓鏁版嵁鏂囦欢",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "gcp_file", "鎺у埗鐐规枃浠?, "CSV 鎺у埗鐐规枃浠讹紝琛ㄥご搴斿寘鍚?pixel_x,pixel_y,map_x,map_y",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "dst_srs", "鐩爣鍧愭爣绯?, "鐩爣鍧愭爣绯伙紝渚嬪 EPSG:4326锛圧PC姝ｅ皠鏍℃榛樿 EPSG:4326锛?,
-            gis::framework::ParamType::CRS, false, std::string{"EPSG:4326"}
-        },
-        gis::framework::ParamSpec{
-            "resample", "閲嶉噰鏍锋柟娉?, "鎺у埗鐐归厤鍑嗗悗鐨勯噸閲囨牱绠楁硶",
-            gis::framework::ParamType::Enum, false, std::string{"nearest"},
-            int{0}, int{0}, {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average"}
-        },
-        gis::framework::ParamSpec{
-            "slope_raster", "鍧″害鏍呮牸", "鍧″害鏍呮牸鏂囦欢锛屽儚鍏冨€煎崟浣嶄负搴?,
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "aspect_raster", "鍧″悜鏍呮牸", "鍧″悜鏍呮牸鏂囦欢锛屽儚鍏冨€煎崟浣嶄负搴?,
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "sun_zenith_deg", "澶槼澶╅《瑙?, "澶槼澶╅《瑙掞紝鍗曚綅涓哄害",
-            gis::framework::ParamType::Double, false, double{30.0},
-            double{0.0}, double{90.0}
-        },
-        gis::framework::ParamSpec{
-            "sun_azimuth_deg", "澶槼鏂逛綅瑙?, "澶槼鏂逛綅瑙掞紝鍗曚綅涓哄害",
-            gis::framework::ParamType::Double, false, double{180.0},
-            double{0.0}, double{360.0}
-        },
-        gis::framework::ParamSpec{
-            "minnaert_k", "Minnaert 绯绘暟", "Minnaert 鍦板舰鏍℃绯绘暟",
-            gis::framework::ParamType::Double, false, double{0.5},
-            double{0.0}, double{1.0}
-        },
-        gis::framework::ParamSpec{
-            "c_value", "C 绯绘暟", "C 鍦板舰鏍℃绯绘暟",
-            gis::framework::ParamType::Double, false, double{0.1},
-            double{0.0}, double{100.0}
-        },
-        gis::framework::ParamSpec{
-            "dark_percentile", "鏆楀儚鍏冪櫨鍒嗕綅", "绠€鍖?QUAC 浣跨敤鐨勬殫鍍忓厓鐧惧垎浣?,
-            gis::framework::ParamType::Double, false, double{1.0},
-            double{0.0}, double{100.0}
-        },
-        gis::framework::ParamSpec{
-            "bright_percentile", "浜儚鍏冪櫨鍒嗕綅", "绠€鍖?QUAC 浣跨敤鐨勪寒鍍忓厓鐧惧垎浣?,
-            gis::framework::ParamType::Double, false, double{99.0},
-            double{0.0}, double{100.0}
-        },
-        gis::framework::ParamSpec{
-            "dem_file", "DEM 鏂囦欢", "RPC 姝ｅ皠鏍℃浣跨敤鐨勫彲閫?DEM 鏂囦欢",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "rpc_height", "鍥哄畾楂樼▼", "涓嶄娇鐢?DEM 鏃剁殑鍥哄畾楂樼▼鍊?,
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{-10000.0}, double{10000.0}
-        },
+        gis::framework::ParamSpec{"input", "输入栅格", "Input raster path", gis::framework::ParamType::FilePath, true, std::string{}},
+        gis::framework::ParamSpec{"output", "输出栅格", "Output raster path", gis::framework::ParamType::FilePath, true, std::string{}},
+        gis::framework::ParamSpec{"band", "波段", "Band index", gis::framework::ParamType::Int, false, int{1}, int{1}, int{999}},
+        gis::framework::ParamSpec{"dark_object_value", "暗目标值", "Dark object value used by DOS", gis::framework::ParamType::Double, false, double{-1.0}, double{-1e6}, double{1e6}},
+        gis::framework::ParamSpec{"gain", "增益", "Radiometric gain", gis::framework::ParamType::Double, false, double{1.0}, double{-1e6}, double{1e6}},
+        gis::framework::ParamSpec{"offset", "偏移", "Radiometric offset", gis::framework::ParamType::Double, false, double{0.0}, double{-1e6}, double{1e6}},
+        gis::framework::ParamSpec{"metadata_file", "元数据文件", "Optional metadata file for gain and offset", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"gcp_file", "GCP文件", "CSV file with pixel_x,pixel_y,map_x,map_y", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"dst_srs", "目标坐标系", "Destination CRS", gis::framework::ParamType::CRS, false, std::string{"EPSG:4326"}},
+        gis::framework::ParamSpec{"resample", "重采样", "Resampling method", gis::framework::ParamType::Enum, false, std::string{"nearest"}, int{0}, int{0}, {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average"}},
+        gis::framework::ParamSpec{"slope_raster", "坡度栅格", "Slope raster path for terrain correction", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"aspect_raster", "坡向栅格", "Aspect raster path for terrain correction", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"sun_zenith_deg", "太阳天顶角", "Sun zenith angle in degrees", gis::framework::ParamType::Double, false, double{30.0}, double{0.0}, double{90.0}},
+        gis::framework::ParamSpec{"sun_azimuth_deg", "太阳方位角", "Sun azimuth angle in degrees", gis::framework::ParamType::Double, false, double{180.0}, double{0.0}, double{360.0}},
+        gis::framework::ParamSpec{"minnaert_k", "Minnaert K", "Minnaert coefficient", gis::framework::ParamType::Double, false, double{0.5}, double{0.0}, double{1.0}},
+        gis::framework::ParamSpec{"c_value", "C值", "C correction coefficient", gis::framework::ParamType::Double, false, double{0.1}, double{0.0}, double{100.0}},
+        gis::framework::ParamSpec{"dark_percentile", "暗百分位", "Dark percentile used by percentile stretch", gis::framework::ParamType::Double, false, double{1.0}, double{0.0}, double{100.0}},
+        gis::framework::ParamSpec{"bright_percentile", "亮百分位", "Bright percentile used by percentile stretch", gis::framework::ParamType::Double, false, double{99.0}, double{0.0}, double{100.0}},
+        gis::framework::ParamSpec{"dem_file", "DEM文件", "DEM file used by RPC orthorectification", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"rpc_height", "RPC高程", "Fallback RPC height when DEM is missing", gis::framework::ParamType::Double, false, double{0.0}, double{-1e6}, double{1e6}},
+        gis::framework::ParamSpec{"x_res", "输出分辨率X", "Output x resolution", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{1e9}},
+        gis::framework::ParamSpec{"y_res", "输出分辨率Y", "Output y resolution", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{1e9}},
     };
 }
 
@@ -1073,3 +1003,4 @@ gis::framework::Result GeorefPlugin::doRpcOrthorectify(
 } // namespace gis::plugins
 
 GIS_PLUGIN_EXPORT(gis::plugins::GeorefPlugin)
+

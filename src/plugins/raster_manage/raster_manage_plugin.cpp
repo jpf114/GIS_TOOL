@@ -1,4 +1,4 @@
-#include "raster_manage_plugin.h"
+﻿#include "raster_manage_plugin.h"
 
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
@@ -38,52 +38,20 @@ gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDatase
 std::vector<gis::framework::ParamSpec> RasterManagePlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
-            "action", "瀛愬姛鑳?, "閫夋嫨瑕佹墽琛岀殑瀛愬姛鑳?,
+            "action", "动作", "Raster management action",
             gis::framework::ParamType::Enum, true, std::string{},
             int{0}, int{0},
             {"overviews", "nodata", "cog", "zonal_stats", "proximity"}
         },
-        gis::framework::ParamSpec{
-            "input", "杈撳叆鏂囦欢", "杈撳叆褰卞儚鏂囦欢璺緞",
-            gis::framework::ParamType::FilePath, true, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "output", "杈撳嚭鏂囦欢", "COG 鐢熸垚缁撴灉璺緞",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "band", "娉㈡搴忓彿", "娉㈡搴忓彿锛屽～鍐?0 琛ㄧず鍏ㄩ儴娉㈡锛屼粠 1 寮€濮嬭〃绀哄崟娉㈡",
-            gis::framework::ParamType::Int, false, int{1},
-            int{0}, int{999}
-        },
-        gis::framework::ParamSpec{
-            "levels", "閲戝瓧濉斿眰绾?, "閲戝瓧濉旂缉鏀惧眰绾э紝渚嬪 2 4 8 16",
-            gis::framework::ParamType::String, false, std::string{"2 4 8 16"}
-        },
-        gis::framework::ParamSpec{
-            "resample", "閲嶉噰鏍锋柟寮?, "閲戝瓧濉旈噸閲囨牱绠楁硶",
-            gis::framework::ParamType::Enum, false, std::string{"nearest"},
-            int{0}, int{0},
-            {"nearest", "gaussian", "cubic", "average", "mode"}
-        },
-        gis::framework::ParamSpec{
-            "nodata_value", "NoData 鍊?, "瑕佸啓鍏ョ殑 NoData 鏁板€?,
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{-1e15}, double{1e15}
-        },
-        gis::framework::ParamSpec{
-            "vector", "鐭㈤噺鍒嗗尯鏂囦欢", "鐢ㄤ簬鍒嗗尯缁熻鐨勯潰鐭㈤噺鏂囦欢",
-            gis::framework::ParamType::FilePath, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "feature_id_field", "瑕佺礌 ID 瀛楁", "鐢ㄤ簬鏍囪瘑姣忎釜闈㈣绱犵殑鍞竴瀛楁鍚?,
-            gis::framework::ParamType::String, false, std::string{}
-        },
-        gis::framework::ParamSpec{
-            "max_distance", "鏈€澶ц窛绂?, "娆ф皬璺濈璁＄畻鐨勬渶澶ф悳绱㈣窛绂伙紙0=鏃犻檺鍒讹級",
-            gis::framework::ParamType::Double, false, double{0.0},
-            double{0.0}, double{1e15}
-        },
+        gis::framework::ParamSpec{"input", "输入栅格", "Input raster path", gis::framework::ParamType::FilePath, true, std::string{}},
+        gis::framework::ParamSpec{"output", "输出结果", "Output path used by cog or derived products", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"band", "波段", "Band index, 0 means all bands when supported", gis::framework::ParamType::Int, false, int{1}, int{0}, int{999}},
+        gis::framework::ParamSpec{"levels", "金字塔层级", "Overview levels separated by spaces, for example 2 4 8 16", gis::framework::ParamType::String, false, std::string{"2 4 8 16"}},
+        gis::framework::ParamSpec{"resample", "重采样", "Resampling method for overview generation", gis::framework::ParamType::Enum, false, std::string{"nearest"}, int{0}, int{0}, {"nearest", "gaussian", "cubic", "average", "mode"}},
+        gis::framework::ParamSpec{"nodata_value", "NoData值", "NoData value to assign", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
+        gis::framework::ParamSpec{"vector", "分区矢量", "Vector path used by zonal statistics", gis::framework::ParamType::FilePath, false, std::string{}},
+        gis::framework::ParamSpec{"feature_id_field", "要素ID字段", "Feature identifier field for zonal statistics output", gis::framework::ParamType::String, false, std::string{}},
+        gis::framework::ParamSpec{"max_distance", "最大距离", "Maximum search distance, 0 means unlimited", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{1e15}},
     };
 }
 
@@ -577,3 +545,4 @@ gis::framework::Result RasterManagePlugin::doProximity(
 } // namespace gis::plugins
 
 GIS_PLUGIN_EXPORT(gis::plugins::RasterManagePlugin)
+
