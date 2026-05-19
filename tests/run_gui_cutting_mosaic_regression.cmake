@@ -5,11 +5,15 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
 get_filename_component(OUTPUT_DIR "${OUTPUT_PATH}" DIRECTORY)
 set(STATUS_PATH "${OUTPUT_DIR}/status.json")
-gis_gui_prepare_artifact_paths("${OUTPUT_PATH}" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
 set(INPUT_PATH_A "${OUTPUT_DIR}/mosaic_input_a.tif")
 set(INPUT_PATH_B "${OUTPUT_DIR}/mosaic_input_b.tif")
 set(PREP_STATUS_A "${OUTPUT_DIR}/prep_a_status.json")
-file(REMOVE "${PREP_STATUS_A}")
+gis_gui_prepare_artifact_paths("${OUTPUT_PATH}" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
+gis_gui_prepare_artifact_paths("${INPUT_PATH_A}" "${OUTPUT_DIR}/prep_a.png" "${PREP_STATUS_A}")
+file(REMOVE
+    "${INPUT_PATH_B}"
+    "${INPUT_PATH_B}.aux.xml"
+    "${OUTPUT_DIR}/prep_a.png")
 
 execute_process(
     COMMAND "${GUI_PATH}"
