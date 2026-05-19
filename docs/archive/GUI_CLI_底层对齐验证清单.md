@@ -74,9 +74,9 @@ ctest --test-dir build/debug -C Debug --output-on-failure
 
 本轮同时修正了 3 处会影响 Release 栅格专项回归的收口问题：
 
-- [tests/run_real_raster_regression.ps1](../../tests/run_real_raster_regression.ps1) 中 `processing_skeleton` 的最大值断言与实际 `Float32` 归一化输出不一致，已改为校验 `1`
-- [tests/run_real_raster_regression.ps1](../../tests/run_real_raster_regression.ps1) 中 `georef_percentile_stretch` 的期望输出文件名误写为 `georef_quac_output.tif`，已改为实际输出名
-- [src/plugins/classification/classification_plugin.cpp](../../src/plugins/classification/classification_plugin.cpp:1243) 中 `feature_stats` 复用了 `classification` 的全局 `input` 必填约束，导致 CLI 先于动作执行被拦截，现已改为按动作分别校验
+- [run_real_raster_regression.ps1](../../tests/run_real_raster_regression.ps1) 中 `processing_skeleton` 的最大值断言与实际 `Float32` 归一化输出不一致，已改为校验 `1`
+- [run_real_raster_regression.ps1](../../tests/run_real_raster_regression.ps1) 中 `georef_percentile_stretch` 的期望输出文件名误写为 `georef_quac_output.tif`，已改为实际输出名
+- [classification_plugin.cpp](../../src/plugins/classification/classification_plugin.cpp:1243) 中 `feature_stats` 复用了 `classification` 的全局 `input` 必填约束，导致 CLI 先于动作执行被拦截，现已改为按动作分别校验
 
 ### 3.4 CLI 插件加载验证
 
@@ -334,8 +334,8 @@ GUI 当前已覆盖的离屏回归共 `112` 项，包含：
 
 本轮最后修正了：
 
-- [tests/run_real_vector_regression.ps1](../../tests/run_real_vector_regression.ps1)
-- [tests/run_real_raster_regression.ps1](../../tests/run_real_raster_regression.ps1)
+- [run_real_vector_regression.ps1](../../tests/run_real_vector_regression.ps1)
+- [run_real_raster_regression.ps1](../../tests/run_real_raster_regression.ps1)
 
 修正内容：
 
