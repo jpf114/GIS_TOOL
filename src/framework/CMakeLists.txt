@@ -1,4 +1,5 @@
 add_library(gis_framework
+    src/action_validation.cpp
     src/plugin_manager.cpp
     src/workflow.cpp
 )

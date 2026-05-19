@@ -19,8 +19,13 @@ CliArgs parseArgs(const std::vector<std::string>& argv) {
                 args.params[key] = val;
             } else {
                 std::string key = arg.substr(2);
-                if (i + 1 < argv.size() && !argv[i + 1].empty() && argv[i + 1][0] != '-') {
-                    args.params[key] = argv[++i];
+                if (i + 1 < argv.size() && !argv[i + 1].empty() && argv[i + 1].substr(0, 2) != "--") {
+                    std::string value = argv[++i];
+                    while (i + 1 < argv.size() && !argv[i + 1].empty() && argv[i + 1].substr(0, 2) != "--") {
+                        value += " ";
+                        value += argv[++i];
+                    }
+                    args.params[key] = value;
                 } else {
                     args.params[key] = "true";
                 }

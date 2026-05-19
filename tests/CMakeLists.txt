@@ -5,6 +5,7 @@ add_executable(gis_tests
     test_core.cpp
     test_framework.cpp
     test_plugins.cpp
+    test_cli_parser.cpp
     test_gui_support.cpp
     test_mainwindow.cpp
     test_support.cpp
@@ -30,6 +31,7 @@ add_executable(gis_tests
     ../src/gui/stats_preview_widget.cpp
     ../src/gui/workflow_page.cpp
     ../src/gui/welcome_dialog.cpp
+    ../src/cli/cli_parser.cpp
 )
 
 target_link_libraries(gis_tests PRIVATE

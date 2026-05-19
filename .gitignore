@@ -8,6 +8,7 @@ cmake-build-*/
 # IDE
 .vs/
 .vscode/
+.claude/
 *.user
 *.suo
 *.sln

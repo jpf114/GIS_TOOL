@@ -1,4 +1,5 @@
 #include <gis/framework/plugin_manager.h>
+#include <gis/framework/action_validation.h>
 #include <gis/core/progress.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/runtime_env.h>
@@ -196,6 +197,18 @@ int main(int argc, char* argv[]) {
     const std::string validationError = gis::framework::validateParams(specs, params);
     if (!validationError.empty()) {
         std::cerr << "Error: " << validationError << std::endl;
+        return 1;
+    }
+
+    std::string action;
+    if (const auto actionIt = params.find("action");
+        actionIt != params.end() && std::holds_alternative<std::string>(actionIt->second)) {
+        action = std::get<std::string>(actionIt->second);
+    }
+    if (const auto issue =
+            gis::framework::validateActionSpecificParams(plugin->name(), action, params);
+        issue.has_value()) {
+        std::cerr << "Error: " << issue->message << std::endl;
         return 1;
     }
 

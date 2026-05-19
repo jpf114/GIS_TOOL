@@ -10,6 +10,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <gis/framework/action_validation.h>
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
 
@@ -38,10 +39,7 @@ struct BindableParamOption {
     std::string displayName;
 };
 
-struct ActionValidationIssue {
-    std::string key;
-    std::string message;
-};
+using ActionValidationIssue = gis::framework::ActionValidationIssue;
 
 struct ActionUiConfig {
     QString displayName;

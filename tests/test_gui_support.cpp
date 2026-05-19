@@ -1436,7 +1436,9 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsMismatchedFeatureStatsBa
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidClassificationSvmValues) {
     std::map<std::string, gis::framework::ParamValue> params;
+    params["input"] = std::string("D:/data/scene.tif");
     params["training_csv"] = std::string("D:/data/samples.json");
+    params["output"] = std::string("D:/data/result.tif");
 
     auto issue = gis::gui::validateActionSpecificParams("classification", "svm_classify", params);
     ASSERT_TRUE(issue.has_value());
@@ -1453,6 +1455,19 @@ TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidClassificationSvm
     issue = gis::gui::validateActionSpecificParams("classification", "svm_classify", params);
     ASSERT_TRUE(issue.has_value());
     EXPECT_EQ(issue->key, "bands");
+}
+
+TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsMissingAccuracyAssessmentInputs) {
+    std::map<std::string, gis::framework::ParamValue> params;
+
+    auto issue = gis::gui::validateActionSpecificParams("classification", "accuracy_assessment", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "classified_raster");
+
+    params["classified_raster"] = std::string("D:/data/classified.tif");
+    issue = gis::gui::validateActionSpecificParams("classification", "accuracy_assessment", params);
+    ASSERT_TRUE(issue.has_value());
+    EXPECT_EQ(issue->key, "reference_raster");
 }
 
 TEST(GuiSupportTest, ValidateActionSpecificParamsRejectsInvalidGeorefDosValues) {
@@ -1901,6 +1916,26 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesProjectionTransformDefaul
     EXPECT_EQ(std::get<std::string>(filtered[0].defaultValue), "EPSG:4326");
     EXPECT_FALSE(filtered[0].required);
     EXPECT_TRUE(filtered[1].required);
+}
+
+TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsPreservesPluginRequiredFlagsWithoutOverrides) {
+    std::vector<gis::framework::ParamSpec> specs = {
+        {"input", "杈撳叆", "", gis::framework::ParamType::FilePath, true},
+        {"output", "杈撳嚭", "", gis::framework::ParamType::FilePath, true},
+        {"format", "鏍煎紡", "", gis::framework::ParamType::String, false}
+    };
+
+    const auto filtered = gis::gui::buildEffectiveGuiParamSpecs(
+        "vector",
+        "convert",
+        specs,
+        {"input", "output", "format"},
+        {});
+
+    ASSERT_EQ(filtered.size(), 3u);
+    EXPECT_TRUE(filtered[0].required);
+    EXPECT_TRUE(filtered[1].required);
+    EXPECT_FALSE(filtered[2].required);
 }
 
 TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesMatchingRanges) {
