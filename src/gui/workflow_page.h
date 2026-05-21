@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QString>
 #include <QThread>
+#include <gis/framework/workflow.h>
 #include <map>
 
 class QComboBox;
@@ -13,8 +14,6 @@ class QProgressBar;
 
 namespace gis::framework {
 class PluginManager;
-struct Workflow;
-struct WorkflowResult;
 }
 
 class WorkflowPage : public QWidget {

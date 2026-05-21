@@ -1,11 +1,27 @@
 cmake_minimum_required(VERSION 3.21)
 
-# vcpkg toolchain integration must happen before project()
-if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+# vcpkg 全局环境 + manifest 模式：使用系统 VCPKG_ROOT 指向的全局 vcpkg 安装
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+    endif()
 endif()
-if(DEFINED CMAKE_TOOLCHAIN_FILE AND CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg\\.cmake$")
-    set(VCPKG_MANIFEST_MODE ON CACHE BOOL "Use repository-pinned vcpkg manifest dependencies" FORCE)
+
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE OR NOT CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg\\.cmake$")
+    message(FATAL_ERROR
+        "未检测到 vcpkg toolchain。\n"
+        "请确保已设置 VCPKG_ROOT 环境变量指向 vcpkg 安装目录，\n"
+        "或通过 -DCMAKE_TOOLCHAIN_FILE=<path>/vcpkg.cmake 显式指定。\n"
+    )
+endif()
+
+# manifest 模式下将依赖安装到项目根目录的 vcpkg_installed/ 下
+set(VCPKG_MANIFEST_MODE ON CACHE BOOL "Use vcpkg manifest dependencies" FORCE)
+set(VCPKG_INSTALLED_DIR "${CMAKE_SOURCE_DIR}/vcpkg_installed" CACHE PATH "vcpkg manifest install directory" FORCE)
+
+# 如果依赖已安装，跳过 vcpkg install 步骤（避免写入全局 vcpkg buildtrees）
+if(EXISTS "${CMAKE_SOURCE_DIR}/vcpkg_installed/x64-windows/share/gdal")
+    set(VCPKG_MANIFEST_INSTALL OFF CACHE BOOL "Skip vcpkg install, deps already installed" FORCE)
 endif()
 
 project(gis-tool VERSION 1.0.0 LANGUAGES CXX)
@@ -31,20 +47,24 @@ endif()
 option(GIS_BUILD_GUI "Build Qt GUI" OFF)
 option(GIS_BUILD_TESTS "Build tests" ON)
 
-set(GIS_VCPKG_ROOT "")
-if(DEFINED ENV{VCPKG_ROOT} AND NOT "$ENV{VCPKG_ROOT}" STREQUAL "")
-    set(GIS_VCPKG_ROOT "$ENV{VCPKG_ROOT}")
-elseif(DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "${CMAKE_TOOLCHAIN_FILE}")
-    get_filename_component(GIS_VCPKG_ROOT "${CMAKE_TOOLCHAIN_FILE}" DIRECTORY)
-    get_filename_component(GIS_VCPKG_ROOT "${GIS_VCPKG_ROOT}/../.." ABSOLUTE)
+if(NOT DEFINED VCPKG_INSTALLED_DIR OR "${VCPKG_INSTALLED_DIR}" STREQUAL "")
+    message(FATAL_ERROR "未检测到 VCPKG_INSTALLED_DIR。请通过 vcpkg toolchain 以 manifest 模式配置工程。")
 endif()
 
-if(GIS_VCPKG_ROOT STREQUAL "")
-    message(FATAL_ERROR "未设置环境变量 VCPKG_ROOT，且无法从 CMAKE_TOOLCHAIN_FILE 推断全局 vcpkg 目录。")
+message(STATUS "vcpkg manifest installed dir: ${VCPKG_INSTALLED_DIR}")
+message(STATUS "vcpkg target triplet: ${VCPKG_TARGET_TRIPLET}")
+
+set(GIS_VCPKG_TRIPLET "${VCPKG_TARGET_TRIPLET}")
+if(GIS_VCPKG_TRIPLET STREQUAL "")
+    message(FATAL_ERROR "未检测到 VCPKG_TARGET_TRIPLET。请通过 vcpkg toolchain 以 manifest 模式配置工程。")
 endif()
 
-set(GIS_VCPKG_TRIPLET "x64-windows" CACHE STRING "全局 vcpkg triplet")
-set(GIS_VCPKG_INSTALLED_DIR "${GIS_VCPKG_ROOT}/installed/${GIS_VCPKG_TRIPLET}")
+set(GIS_VCPKG_INSTALLED_ROOT "${VCPKG_INSTALLED_DIR}")
+set(GIS_VCPKG_INSTALLED_DIR "${GIS_VCPKG_INSTALLED_ROOT}")
+if(EXISTS "${GIS_VCPKG_INSTALLED_ROOT}/${GIS_VCPKG_TRIPLET}")
+    set(GIS_VCPKG_INSTALLED_DIR "${GIS_VCPKG_INSTALLED_ROOT}/${GIS_VCPKG_TRIPLET}")
+endif()
+
 set(GIS_VCPKG_RELEASE_BIN_DIR "${GIS_VCPKG_INSTALLED_DIR}/bin")
 set(GIS_VCPKG_DEBUG_BIN_DIR "${GIS_VCPKG_INSTALLED_DIR}/debug/bin")
 set(GIS_VCPKG_SHARE_DIR "${GIS_VCPKG_INSTALLED_DIR}/share")
@@ -79,7 +99,7 @@ configure_file(
 )
 
 if(NOT EXISTS "${GIS_VCPKG_INSTALLED_DIR}")
-    message(FATAL_ERROR "未找到全局 vcpkg 安装目录: ${GIS_VCPKG_INSTALLED_DIR}")
+    message(FATAL_ERROR "未找到 manifest vcpkg 安装目录: ${GIS_VCPKG_INSTALLED_DIR}")
 endif()
 
 if(NOT EXISTS "${GIS_VCPKG_PROJ_DATA_DIR}")
@@ -117,8 +137,6 @@ add_custom_target(copy_runtime_dlls ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/plugins
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/share/proj
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/share/gdal
-    COMMAND ${CMAKE_COMMAND} -E rm -f
-        ${CMAKE_BINARY_DIR}/plugins/plugin_utility.dll
 )
 
 gis_copy_minimal_runtime(copy_runtime_dlls DEST_DIR "${CMAKE_BINARY_DIR}/plugins")

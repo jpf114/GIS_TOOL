@@ -1,4 +1,4 @@
-﻿﻿#include "mainwindow.h"
+﻿#include "mainwindow.h"
 #include "execute_worker.h"
 #include "gdal_config.h"
 #include "nav_panel.h"

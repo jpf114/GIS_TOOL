@@ -457,3 +457,277 @@ static void collectLinearGeometryParts(const OGRGeometry* geom, std::vector<OGRG
         }
     }
 }
+
+// --- Cached feature structs for topology/overlap checks ---
+
+struct CachedPolygonFeature {
+    GIntBig fid = 0;
+    std::unique_ptr<OGRGeometry> geometry;
+};
+
+struct CachedTopologyFeature {
+    GIntBig fid = 0;
+    bool empty = false;
+    bool invalid = false;
+    std::unique_ptr<OGRGeometry> geometry;
+};
+
+static double polygonIntersectionArea(const OGRGeometry* lhs, const OGRGeometry* rhs) {
+    if (!lhs || !rhs) return 0.0;
+    std::unique_ptr<OGRGeometry> intersection(lhs->Intersection(rhs));
+    if (!intersection || intersection->IsEmpty()) return 0.0;
+    const auto flatType = wkbFlatten(intersection->getGeometryType());
+    if (flatType == wkbPolygon) return intersection->toPolygon()->get_Area();
+    if (flatType == wkbMultiPolygon) return intersection->toMultiPolygon()->get_Area();
+    if (flatType == wkbGeometryCollection) {
+        double total = 0.0;
+        const auto* collection = intersection->toGeometryCollection();
+        for (int i = 0; i < collection->getNumGeometries(); ++i) {
+            const auto* sub = collection->getGeometryRef(i);
+            const auto subType = wkbFlatten(sub->getGeometryType());
+            if (subType == wkbPolygon) total += sub->toPolygon()->get_Area();
+            else if (subType == wkbMultiPolygon) total += sub->toMultiPolygon()->get_Area();
+        }
+        return total;
+    }
+    return 0.0;
+}
+
+// --- Multipart/singlepart helpers ---
+
+static int geometryPartCount(const OGRGeometry* geom) {
+    if (!geom || geom->IsEmpty()) return 0;
+    const auto flatType = wkbFlatten(geom->getGeometryType());
+    switch (flatType) {
+        case wkbMultiPoint:       return geom->toMultiPoint()->getNumGeometries();
+        case wkbMultiLineString:  return geom->toMultiLineString()->getNumGeometries();
+        case wkbMultiPolygon:     return geom->toMultiPolygon()->getNumGeometries();
+        case wkbGeometryCollection: return geom->toGeometryCollection()->getNumGeometries();
+        default:                  return 1;
+    }
+}
+
+static bool isMultipartGeometryType(OGRwkbGeometryType type) {
+    const auto flatType = wkbFlatten(type);
+    return flatType == wkbMultiPoint || flatType == wkbMultiLineString ||
+           flatType == wkbMultiPolygon || flatType == wkbGeometryCollection;
+}
+
+static OGRwkbGeometryType singlepartLayerGeometryType(OGRwkbGeometryType srcType) {
+    switch (wkbFlatten(srcType)) {
+        case wkbPoint:            return wkbPoint;
+        case wkbMultiPoint:       return wkbPoint;
+        case wkbLineString:       return wkbLineString;
+        case wkbMultiLineString:  return wkbLineString;
+        case wkbPolygon:          return wkbPolygon;
+        case wkbMultiPolygon:     return wkbPolygon;
+        default:                  return wkbUnknown;
+    }
+}
+
+static void collectSinglepartGeometries(const OGRGeometry* geom, std::vector<std::unique_ptr<OGRGeometry>>& parts) {
+    if (!geom || geom->IsEmpty()) return;
+    const auto flatType = wkbFlatten(geom->getGeometryType());
+    switch (flatType) {
+        case wkbPoint:
+        case wkbLineString:
+        case wkbPolygon:
+            parts.push_back(std::unique_ptr<OGRGeometry>(geom->clone()));
+            break;
+        case wkbMultiPoint: {
+            const auto* multi = geom->toMultiPoint();
+            for (int i = 0; i < multi->getNumGeometries(); ++i)
+                parts.push_back(std::unique_ptr<OGRGeometry>(multi->getGeometryRef(i)->clone()));
+            break;
+        }
+        case wkbMultiLineString: {
+            const auto* multi = geom->toMultiLineString();
+            for (int i = 0; i < multi->getNumGeometries(); ++i)
+                parts.push_back(std::unique_ptr<OGRGeometry>(multi->getGeometryRef(i)->clone()));
+            break;
+        }
+        case wkbMultiPolygon: {
+            const auto* multi = geom->toMultiPolygon();
+            for (int i = 0; i < multi->getNumGeometries(); ++i)
+                parts.push_back(std::unique_ptr<OGRGeometry>(multi->getGeometryRef(i)->clone()));
+            break;
+        }
+        case wkbGeometryCollection: {
+            const auto* collection = geom->toGeometryCollection();
+            for (int i = 0; i < collection->getNumGeometries(); ++i)
+                collectSinglepartGeometries(collection->getGeometryRef(i), parts);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+// --- Vertex extraction helpers ---
+
+static void appendVertices(const OGRGeometry* geom, std::vector<OGRPoint>& vertices) {
+    if (!geom || geom->IsEmpty()) return;
+    const auto flatType = wkbFlatten(geom->getGeometryType());
+    switch (flatType) {
+        case wkbPoint: {
+            const auto* pt = geom->toPoint();
+            vertices.push_back(OGRPoint(pt->getX(), pt->getY(), pt->getZ()));
+            break;
+        }
+        case wkbLineString: {
+            const auto* line = geom->toLineString();
+            for (int i = 0; i < line->getNumPoints(); ++i)
+                vertices.push_back(OGRPoint(line->getX(i), line->getY(i), line->getZ(i)));
+            break;
+        }
+        case wkbPolygon: {
+            const auto* poly = geom->toPolygon();
+            for (int r = 0; r < poly->getNumInteriorRings() + 1; ++r) {
+                const auto* ring = r == 0 ? poly->getExteriorRing() : poly->getInteriorRing(r - 1);
+                if (!ring) continue;
+                for (int i = 0; i < ring->getNumPoints(); ++i)
+                    vertices.push_back(OGRPoint(ring->getX(i), ring->getY(i), ring->getZ(i)));
+            }
+            break;
+        }
+        case wkbMultiPoint:
+        case wkbMultiLineString:
+        case wkbMultiPolygon:
+        case wkbGeometryCollection: {
+            const auto* collection = geom->toGeometryCollection();
+            for (int i = 0; i < collection->getNumGeometries(); ++i)
+                appendVertices(collection->getGeometryRef(i), vertices);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+// --- Duplicate point check helpers ---
+
+static std::string pointKey(const OGRPoint* point) {
+    if (!point) return "";
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(10) << point->getX() << "," << point->getY();
+    return oss.str();
+}
+
+// --- Hole check helpers ---
+
+static int geometryHoleCount(const OGRGeometry* geom) {
+    if (!geom || geom->IsEmpty()) return 0;
+    const auto flatType = wkbFlatten(geom->getGeometryType());
+    if (flatType == wkbPolygon) return geom->toPolygon()->getNumInteriorRings();
+    if (flatType == wkbMultiPolygon) {
+        int total = 0;
+        const auto* multi = geom->toMultiPolygon();
+        for (int i = 0; i < multi->getNumGeometries(); ++i)
+            total += multi->getGeometryRef(i)->toPolygon()->getNumInteriorRings();
+        return total;
+    }
+    if (flatType == wkbGeometryCollection) {
+        int total = 0;
+        const auto* collection = geom->toGeometryCollection();
+        for (int i = 0; i < collection->getNumGeometries(); ++i)
+            total += geometryHoleCount(collection->getGeometryRef(i));
+        return total;
+    }
+    return 0;
+}
+
+// --- Dangling endpoint check helpers ---
+
+struct DanglingEndpointRecord {
+    GIntBig fid = 0;
+    std::string endpointType;
+    OGRPoint point;
+};
+
+static void appendDanglingEndpoints(const OGRGeometry* geom, std::vector<DanglingEndpointRecord>& endpoints, GIntBig fid) {
+    if (!geom || geom->IsEmpty()) return;
+    const auto flatType = wkbFlatten(geom->getGeometryType());
+    if (flatType == wkbLineString) {
+        const auto* line = geom->toLineString();
+        if (line->getNumPoints() >= 2) {
+            endpoints.push_back({fid, "start", OGRPoint(line->getX(0), line->getY(0))});
+            endpoints.push_back({fid, "end", OGRPoint(line->getX(line->getNumPoints() - 1), line->getY(line->getNumPoints() - 1))});
+        }
+    } else if (flatType == wkbMultiLineString || flatType == wkbGeometryCollection) {
+        const auto* collection = geom->toGeometryCollection();
+        for (int i = 0; i < collection->getNumGeometries(); ++i)
+            appendDanglingEndpoints(collection->getGeometryRef(i), endpoints, fid);
+    }
+}
+
+static std::string danglingEndpointKey(const OGRPoint& point) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(10) << point.getX() << "," << point.getY();
+    return oss.str();
+}
+
+// --- Adjacency helpers ---
+
+static double sharedBoundaryLength(const OGRGeometry* lhs, const OGRGeometry* rhs) {
+    if (!lhs || !rhs) return 0.0;
+    std::unique_ptr<OGRGeometry> intersection(lhs->Intersection(rhs));
+    if (!intersection || intersection->IsEmpty()) return 0.0;
+    const auto flatType = wkbFlatten(intersection->getGeometryType());
+    double total = 0.0;
+    if (flatType == wkbLineString) {
+        total = intersection->toLineString()->get_Length();
+    } else if (flatType == wkbMultiLineString) {
+        const auto* multi = intersection->toMultiLineString();
+        for (int i = 0; i < multi->getNumGeometries(); ++i)
+            total += multi->getGeometryRef(i)->toLineString()->get_Length();
+    } else if (flatType == wkbGeometryCollection) {
+        const auto* collection = intersection->toGeometryCollection();
+        for (int i = 0; i < collection->getNumGeometries(); ++i) {
+            const auto* sub = collection->getGeometryRef(i);
+            const auto subType = wkbFlatten(sub->getGeometryType());
+            if (subType == wkbLineString) total += sub->toLineString()->get_Length();
+            else if (subType == wkbMultiLineString) {
+                const auto* multi = sub->toMultiLineString();
+                for (int j = 0; j < multi->getNumGeometries(); ++j)
+                    total += multi->getGeometryRef(j)->toLineString()->get_Length();
+            }
+        }
+    }
+    return total;
+}
+
+// --- Sliver remove helpers ---
+
+static std::unique_ptr<OGRGeometry> buildSliverFilteredGeometry(
+    const OGRGeometry* geom, double minArea, int& removedCount) {
+    removedCount = 0;
+    if (!geom || geom->IsEmpty()) return nullptr;
+    const auto flatType = wkbFlatten(geom->getGeometryType());
+    if (flatType == wkbPolygon) {
+        const auto* poly = geom->toPolygon();
+        if (!poly->getExteriorRing() || poly->getExteriorRing()->IsEmpty()) return nullptr;
+        const double area = poly->get_Area();
+        if (area < minArea) { ++removedCount; return nullptr; }
+        // Rebuild without interior rings that are too small (slivers)
+        auto result = std::make_unique<OGRPolygon>();
+        result->addRing(poly->getExteriorRing());
+        for (int i = 0; i < poly->getNumInteriorRings(); ++i) {
+            result->addRing(poly->getInteriorRing(i));
+        }
+        return result;
+    }
+    if (flatType == wkbMultiPolygon) {
+        const auto* multi = geom->toMultiPolygon();
+        auto result = std::make_unique<OGRMultiPolygon>();
+        for (int i = 0; i < multi->getNumGeometries(); ++i) {
+            int subRemoved = 0;
+            auto sub = buildSliverFilteredGeometry(multi->getGeometryRef(i), minArea, subRemoved);
+            removedCount += subRemoved;
+            if (sub && !sub->IsEmpty()) result->addGeometry(sub.release());
+        }
+        if (result->IsEmpty()) return nullptr;
+        return result;
+    }
+    // For other geometry types, return as-is
+    return std::unique_ptr<OGRGeometry>(geom->clone());
+}

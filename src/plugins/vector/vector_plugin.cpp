@@ -7,6 +7,7 @@
 #include <gdal_alg.h>
 #include <gdal_utils.h>
 #include <sstream>
+#include <iomanip>
 #include <algorithm>
 #include <cctype>
 #include <filesystem>

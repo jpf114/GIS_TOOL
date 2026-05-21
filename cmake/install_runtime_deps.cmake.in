@@ -109,91 +109,49 @@ if(_gis_can_scan_runtime_deps)
     endforeach()
 else()
     set(_gis_minimal_dlls
-        abseil_dll.dll
-        aec.dll
-        brotlicommon.dll
-        brotlidec.dll
-        bz2.dll
-        deflate.dll
         double-conversion.dll
-        fontconfig-1.dll
-        freetype.dll
-        freexl-1.dll
         gdal.dll
         geos.dll
         geos_c.dll
         geotiff.dll
-        gif.dll
-        harfbuzz.dll
-        harfbuzz-subset.dll
-        harfbuzz-raster.dll
-        harfbuzz-vector.dll
-        hdf5.dll
-        hdf5_hl.dll
-        Iex-3_4.dll
-        iconv-2.dll
-        IlmThread-3_4.dll
-        Imath-3_2.dll
         jpeg62.dll
         json-c.dll
-        Lerc.dll
-        libcrypto-3-x64.dll
-        libcurl.dll
         libexpat.dll
         liblzma.dll
         libpng16.dll
-        libpq.dll
-        libprotobuf.dll
-        libssl-3-x64.dll
-        libsharpyuv.dll
-        libwebp.dll
-        libwebpdecoder.dll
-        libwebpdemux.dll
-        libwebpmux.dll
-        libxml2.dll
-        lz4.dll
         md4c.dll
         md4c-html.dll
-        minizip.dll
-        netcdf.dll
         opencv_calib3d4.dll
         opencv_core4.dll
-        opencv_dnn4.dll
         opencv_features2d4.dll
         opencv_flann4.dll
         opencv_highgui4.dll
         opencv_imgcodecs4.dll
         opencv_imgproc4.dll
         opencv_ml4.dll
+        opencv_objdetect4.dll
+        opencv_photo4.dll
         opencv_stitching4.dll
         opencv_video4.dll
         opencv_videoio4.dll
-        OpenEXR-3_4.dll
-        OpenEXRCore-3_4.dll
-        openjp2.dll
         pcre2-16.dll
+        pcre2-32.dll
         pcre2-8.dll
+        pcre2-posix.dll
         proj_9.dll
-        qhull_r.dll
+        Qt6Concurrent.dll
         Qt6Core.dll
         Qt6Gui.dll
+        Qt6PrintSupport.dll
         Qt6Sql.dll
         Qt6Svg.dll
+        Qt6SvgWidgets.dll
         Qt6Widgets.dll
-        spatialite.dll
+        Qt6Xml.dll
         sqlite3.dll
-        szip.dll
-        tinyxml2.dll
         tiff.dll
         turbojpeg.dll
-        uriparser.dll
         zlib1.dll
-        zstd.dll
-        icudt78.dll
-        icuin78.dll
-        icuio78.dll
-        icutu78.dll
-        icuuc78.dll
     )
 
     foreach(_gis_dll_name IN LISTS _gis_minimal_dlls)

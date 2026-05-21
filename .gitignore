@@ -1,9 +1,6 @@
 # Build
 build/
-build-*/
 install/
-out/
-cmake-build-*/
 
 # IDE
 .vs/
@@ -36,11 +33,3 @@ vcpkg_installed/
 # Local verification assets
 data/
 tmp/
-
-# Superpowers brainstorm
-.superpowers/
-docs/superpowers/
-
-# Python cache
-__pycache__/
-*.pyc

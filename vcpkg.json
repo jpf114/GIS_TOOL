@@ -6,13 +6,19 @@
   "dependencies": [
     {
       "name": "gdal",
-      "default-features": true
+      "default-features": false,
+      "features": ["expat", "geos", "jpeg", "png", "sqlite3"]
     },
     {
       "name": "opencv4",
-      "default-features": true
+      "default-features": false,
+      "features": ["calib3d", "highgui", "jpeg", "png", "thread"]
     },
-    "proj",
+    {
+      "name": "proj",
+      "default-features": false,
+      "features": ["tiff"]
+    },
     "gtest",
     {
       "name": "qtbase",

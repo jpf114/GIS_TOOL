@@ -1,4 +1,4 @@
-﻿#include "terrain_plugin.h"
+#include "terrain_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
