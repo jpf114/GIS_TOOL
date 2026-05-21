@@ -14,6 +14,13 @@ cv::Mat gdalBandToMat(GDALDataset* ds, int bandIndex) {
     int width = ds->GetRasterXSize();
     int height = ds->GetRasterYSize();
 
+    constexpr size_t kMaxPixels = 50000 * 50000;
+    if (static_cast<size_t>(width) * static_cast<size_t>(height) > kMaxPixels) {
+        throw GisError("Raster too large for in-memory processing (" +
+                       std::to_string(width) + "x" + std::to_string(height) +
+                       "). Maximum supported: 50000x50000 pixels.");
+    }
+
     cv::Mat mat(height, width, CV_32F);
     band->RasterIO(GF_Read, 0, 0, width, height,
                    mat.ptr<float>(), width, height, GDT_Float32, 0, 0);

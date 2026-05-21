@@ -16,31 +16,23 @@ gis::framework::Result VectorPlugin::doRasterize(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* layer = getLayer(srcDS, layerName);
-    if (!layer) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot find layer: " + layerName);
+    OGRLayer* layer = getLayer(srcDS.get(), layerName);
+    if (!layer) { return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
     OGREnvelope extent;
-    if (layer->GetExtent(&extent, TRUE) != OGRERR_NONE) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot get layer extent");
+    if (layer->GetExtent(&extent, TRUE) != OGRERR_NONE) { return gis::framework::Result::fail("Cannot get layer extent");
     }
 
     int xSize = static_cast<int>(std::ceil((extent.MaxX - extent.MinX) / resolution));
     int ySize = static_cast<int>(std::ceil((extent.MaxY - extent.MinY) / resolution));
-    if (xSize <= 0 || ySize <= 0) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Invalid raster dimensions");
+    if (xSize <= 0 || ySize <= 0) { return gis::framework::Result::fail("Invalid raster dimensions");
     }
     const long long maxPixels = 500000000LL;
-    if (static_cast<long long>(xSize) * static_cast<long long>(ySize) > maxPixels) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail(
+    if (static_cast<long long>(xSize) * static_cast<long long>(ySize) > maxPixels) { return gis::framework::Result::fail(
             "Output raster too large (" + std::to_string(xSize) + "x" + std::to_string(ySize) +
             " = " + std::to_string(static_cast<long long>(xSize) * ySize) +
             " pixels). Please increase resolution or reduce extent.");
@@ -52,10 +44,8 @@ gis::framework::Result VectorPlugin::doRasterize(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
     ensureParentDirectoryForFile(output);
-    GDALDataset* dstDS = drv->Create(output.c_str(), xSize, ySize, 1, GDT_Float32, nullptr);
-    if (!dstDS) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot create output raster: " + output);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), xSize, ySize, 1, GDT_Float32, nullptr));
+    if (!dstDS) { return gis::framework::Result::fail("Cannot create output raster: " + output);
     }
 
     double adfGT[6];
@@ -94,23 +84,19 @@ gis::framework::Result VectorPlugin::doRasterize(
     GDALRasterizeOptions* rasterizeOpts = GDALRasterizeOptionsNew(
         const_cast<char**>(rasterizeArgs.data()), nullptr);
     if (!rasterizeOpts) {
-        GDALClose(dstDS); GDALClose(srcDS);
         return gis::framework::Result::fail("Failed to create rasterize options");
     }
 
     int errCode = 0;
     GDALDatasetH dstHandle = GDALRasterize(output.c_str(),
-        static_cast<GDALDatasetH>(dstDS),
-        static_cast<GDALDatasetH>(srcDS),
+        static_cast<GDALDatasetH>(dstDS.get()),
+        static_cast<GDALDatasetH>(srcDS.get()),
         rasterizeOpts, &errCode);
     GDALRasterizeOptionsFree(rasterizeOpts);
 
     if (!dstHandle || errCode) {
-        GDALClose(dstDS); GDALClose(srcDS);
         return gis::framework::Result::fail("Rasterize failed: " + std::string(CPLGetLastErrorMsg()));
     }
-
-    GDALClose(dstHandle); GDALClose(srcDS);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -160,7 +146,7 @@ gis::framework::Result VectorPlugin::doPolygonize(
     }
 
     ensureParentDirectoryForFile(output);
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
     if (!dstDS) return gis::framework::Result::fail("Cannot create output file: " + output);
 
     OGRSpatialReference* srs = nullptr;
@@ -171,8 +157,7 @@ gis::framework::Result VectorPlugin::doPolygonize(
     }
 
     OGRLayer* dstLayer = dstDS->CreateLayer("polygonized", srs, wkbPolygon, nullptr);
-    if (!dstLayer) {
-        GDALClose(dstDS); if (srs) delete srs;
+    if (!dstLayer) { if (srs) delete srs;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -193,7 +178,6 @@ gis::framework::Result VectorPlugin::doPolygonize(
         nullptr);
     if (polygonizeErr != CE_None) {
         if (srs) delete srs;
-        GDALClose(dstDS);
         return gis::framework::Result::fail(
             "Polygonize failed: " + std::string(CPLGetLastErrorMsg()));
     }
@@ -207,7 +191,6 @@ gis::framework::Result VectorPlugin::doPolygonize(
     dstLayer->ResetReading();
 
     if (srs) delete srs;
-    GDALClose(dstDS);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -231,19 +214,15 @@ gis::framework::Result VectorPlugin::doConvert(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
-    if (!srcLayer) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot find layer: " + layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
+    if (!srcLayer) { return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
     GDALDriver* drv = getDriverForFormat(format);
-    if (!drv) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Unsupported format: " + format);
+    if (!drv) { return gis::framework::Result::fail("Unsupported format: " + format);
     }
 
     namespace fs = std::filesystem;
@@ -254,16 +233,14 @@ gis::framework::Result VectorPlugin::doConvert(
     }
 
     ensureParentDirectoryForFile(output);
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot create output file: " + output);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+    if (!dstDS) { return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -285,14 +262,14 @@ gis::framework::Result VectorPlugin::doConvert(
         dstFeat->SetFrom(feat);
         if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
             OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
-            GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+            delete srcSRS;
             return gis::framework::Result::fail("Failed to write feature");
         }
         OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
         count++;
     }
 
-    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 

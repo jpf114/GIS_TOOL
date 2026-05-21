@@ -139,20 +139,33 @@ void WorkflowPage::onPresetSelected(int index) {
 }
 
 void WorkflowPage::onExecuteClicked() {
-    if (currentPresetIndex_ < 0) return;
+    if (currentPresetIndex_ < 0 || workflowRunning_) return;
 
     const auto& wf = presets_[static_cast<size_t>(currentPresetIndex_)];
 
     logEdit_->clear();
     progressBar_->setValue(0);
     executeButton_->setEnabled(false);
+    workflowRunning_ = true;
 
     logEdit_->append(QStringLiteral("开始执行工作流: %1").arg(QString::fromStdString(wf.name)));
 
     std::map<std::string, std::string> initialParams;
+    auto wfCopy = wf;
 
-    gis::framework::WorkflowRunner runner(pluginManager_);
-    auto result = runner.execute(wf, initialParams);
+    workflowThread_ = QThread::create([this, wfCopy, initialParams]() {
+        gis::framework::WorkflowRunner runner(pluginManager_);
+        workflowResult_ = runner.execute(wfCopy, initialParams);
+        QMetaObject::invokeMethod(this, &WorkflowPage::onWorkflowFinished);
+    });
+
+    connect(workflowThread_, &QThread::finished, workflowThread_, &QThread::deleteLater);
+    workflowThread_->start();
+}
+
+void WorkflowPage::onWorkflowFinished() {
+    workflowRunning_ = false;
+    const auto& result = workflowResult_;
 
     progressBar_->setValue(result.success ? 100 : (result.totalSteps > 0 ? result.completedSteps * 100 / result.totalSteps : 0));
 

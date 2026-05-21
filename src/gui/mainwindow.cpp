@@ -1,4 +1,4 @@
-﻿#include "mainwindow.h"
+﻿﻿#include "mainwindow.h"
 #include "execute_worker.h"
 #include "gdal_config.h"
 #include "nav_panel.h"
@@ -395,7 +395,7 @@ void MainWindow::setupUi() {
     heroTextLayout->setContentsMargins(0, 0, 0, 0);
     heroTextLayout->setSpacing(2);
 
-    functionTitleLabel_ = new QLabel(QStringLiteral("鐠囩兘鈧瀚ㄩ崝鐔诲厴"));
+    functionTitleLabel_ = new QLabel(QStringLiteral("算法工作台"));
     functionTitleLabel_->setObjectName(QStringLiteral("heroTitle"));
     heroTextLayout->addWidget(functionTitleLabel_);
 
@@ -445,7 +445,7 @@ void MainWindow::setupUi() {
     auto* execHeaderLayout = new QHBoxLayout;
     execHeaderLayout->setSpacing(12);
 
-    auto* execTitleLabel = new QLabel(QStringLiteral("閹笛嗩攽閹貉冨煑"));
+    auto* execTitleLabel = new QLabel(QStringLiteral("任务执行"));
     execTitleLabel->setObjectName(QStringLiteral("cardTitle"));
     execHeaderLayout->addWidget(execTitleLabel);
     execHeaderLayout->addStretch();
@@ -463,13 +463,13 @@ void MainWindow::setupUi() {
     auto* batchLayout = new QHBoxLayout;
     batchLayout->setSpacing(8);
 
-    batchCheckBox_ = new QCheckBox(QStringLiteral("閹靛綊鍣烘径鍕倞"));
+    batchCheckBox_ = new QCheckBox(QStringLiteral("批处理"));
     batchCheckBox_->setObjectName(QStringLiteral("batchCheckBox"));
-    batchCheckBox_->setToolTip(QStringLiteral("瀵偓閸氼垰鎮楅崣顖炩偓澶嬪鏉堟挸鍙嗛惄顔肩秿閿涘苯顕惄顔肩秿娑撳澧嶉張澶婂爱闁板秵鏋冩禒鑸靛⒔鐞涘苯鎮撴稉鈧粻妤佺《"));
+    batchCheckBox_->setToolTip(QStringLiteral("启用后可选择输入目录，对目录下所有匹配文件执行批量处理"));
     batchLayout->addWidget(batchCheckBox_);
 
     batchDirEdit_ = new QLineEdit;
-    batchDirEdit_->setPlaceholderText(QStringLiteral("鏉堟挸鍙嗛惄顔肩秿..."));
+    batchDirEdit_->setPlaceholderText(QStringLiteral("输入目录..."));
     batchDirEdit_->setVisible(false);
     batchLayout->addWidget(batchDirEdit_, 1);
 
@@ -479,10 +479,10 @@ void MainWindow::setupUi() {
     batchLayout->addWidget(batchDirButton_);
 
     batchFilterEdit_ = new QLineEdit(QStringLiteral("*.tif"));
-    batchFilterEdit_->setPlaceholderText(QStringLiteral("閺傚洣娆㈡潻鍥ㄦ姢"));
+    batchFilterEdit_->setPlaceholderText(QStringLiteral("文件过滤"));
     batchFilterEdit_->setFixedWidth(80);
     batchFilterEdit_->setVisible(false);
-    batchFilterEdit_->setToolTip(QStringLiteral("閺€顖涘瘮闁岸鍘ょ粭锔肩礉婵?*.tif閵?.tif *.img"));
+    batchFilterEdit_->setToolTip(QStringLiteral("文件匹配模式，如 *.tif 或 *.tif *.img"));
     batchLayout->addWidget(batchFilterEdit_);
 
     batchCountLabel_ = new QLabel;
@@ -502,7 +502,7 @@ void MainWindow::setupUi() {
 
     connect(batchDirButton_, &QPushButton::clicked, this, [this]() {
         QString dir = QFileDialog::getExistingDirectory(
-            this, QStringLiteral("闁瀚ㄩ幍褰掑櫤鏉堟挸鍙嗛惄顔肩秿"),
+            this, QStringLiteral("选择批处理输入目录"),
             SettingsManager::instance().lastInputDirectory());
         if (!dir.isEmpty()) {
             batchDirEdit_->setText(dir);
@@ -525,7 +525,7 @@ void MainWindow::setupUi() {
     resultSummaryLabel_->setText(QStringLiteral("当前尚未执行任务。选择子功能并补全参数后，即可直接开始运行。"));
     executionLayout->addWidget(resultSummaryLabel_);
 
-    viewResultButton_ = new QPushButton(QStringLiteral("閺屻儳婀呯紒鎾寸亯"));
+    viewResultButton_ = new QPushButton(QStringLiteral("查看结果"));
     viewResultButton_->setObjectName(QStringLiteral("secondaryButton"));
     viewResultButton_->setFixedWidth(120);
     viewResultButton_->setVisible(false);
@@ -541,10 +541,10 @@ void MainWindow::setupUi() {
     tabWidget_ = new QTabWidget;
     tabWidget_->setObjectName(QStringLiteral("pagePanel"));
     tabWidget_->setTabPosition(QTabWidget::North);
-    tabWidget_->addTab(rightPanel, QStringLiteral("閸旂喕鍏橀柊宥囩枂"));
+    tabWidget_->addTab(rightPanel, QStringLiteral("算法工作台"));
 
     taskCenterPage_ = new TaskCenterPage;
-    tabWidget_->addTab(taskCenterPage_, QStringLiteral("娴犺濮熸稉顓炵妇"));
+    tabWidget_->addTab(taskCenterPage_, QStringLiteral("任务中心"));
 
     auto* workflowPage = new WorkflowPage(pluginManager_);
     tabWidget_->addTab(workflowPage, QStringLiteral("工作流"));
@@ -594,9 +594,9 @@ void MainWindow::setupUi() {
     mainLayout->addWidget(navPanel_);
     mainLayout->addWidget(tabWidget_, 1);
 
-    statusPluginCountLabel_ = new QLabel(QStringLiteral("瀹告彃濮炴潪鎴掑瘜閸旂喕鍏橀敍?"));
-    statusAlgorithmLabel_ = new QLabel(QStringLiteral("瑜版挸澧犵粻妤佺《閿涙碍婀柅澶嬪"));
-    statusSubFunctionCountLabel_ = new QLabel(QStringLiteral("瀹告彃濮炴潪钘夌摍閸旂喕鍏橀敍?"));
+    statusPluginCountLabel_ = new QLabel(QStringLiteral("插件组：0"));
+    statusAlgorithmLabel_ = new QLabel(QStringLiteral("当前算法：无"));
+    statusSubFunctionCountLabel_ = new QLabel(QStringLiteral("子功能：0"));
     statusProgressBar_ = new QProgressBar;
     statusProgressBar_->setRange(0, 100);
     statusProgressBar_->setValue(0);
@@ -642,19 +642,19 @@ void MainWindow::loadPlugins() {
     if (plugins.empty()) {
         statusBar()->showMessage(QStringLiteral("未发现可用插件，请检查 plugins 目录"));
         if (statusPluginCountLabel_) {
-            statusPluginCountLabel_->setText(QStringLiteral("瀹告彃濮炴潪鎴掑瘜閸旂喕鍏橀敍?"));
+            statusPluginCountLabel_->setText(QStringLiteral("插件组：0"));
         }
         if (statusSubFunctionCountLabel_) {
-            statusSubFunctionCountLabel_->setText(QStringLiteral("瀹告彃濮炴潪钘夌摍閸旂喕鍏橀敍?"));
+            statusSubFunctionCountLabel_->setText(QStringLiteral("子功能：0"));
         }
         return;
     }
 
     if (statusPluginCountLabel_) {
-        statusPluginCountLabel_->setText(QStringLiteral("瀹告彃濮炴潪鎴掑瘜閸旂喕鍏橀敍?1").arg(displayPluginCount(plugins)));
+        statusPluginCountLabel_->setText(QStringLiteral("插件组：%1").arg(displayPluginCount(plugins)));
     }
     if (statusSubFunctionCountLabel_) {
-        statusSubFunctionCountLabel_->setText(QStringLiteral("瀹告彃濮炴潪钘夌摍閸旂喕鍏橀敍?"));
+        statusSubFunctionCountLabel_->setText(QStringLiteral("子功能：0"));
     }
     statusBar()->showMessage(QStringLiteral("已加载 %1 个插件").arg(plugins.size()));
 }
@@ -759,7 +759,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     if (!currentPlugin_ && pluginName != gis::gui::rasterToolsGroupKey()) {
         paramWidget_->clear();
         currentActionKey_.clear();
-        functionTitleLabel_->setText(QStringLiteral("鐠囩兘鈧瀚ㄩ崝鐔诲厴"));
+        functionTitleLabel_->setText(QStringLiteral("算法工作台"));
         functionDescLabel_->setText(QStringLiteral("从左侧选择主功能和子功能后，这里会显示功能说明和参数配置。"));
         if (functionIconLabel_) {
             functionIconLabel_->setPixmap(badgeIconPixmap(QStringLiteral("default"), QColor("#EAF3FF"), QColor("#2F7CF6")));
@@ -768,10 +768,10 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
             functionMetaLabel_->setText(QStringLiteral("当前状态：等待选择主功能"));
         }
         if (statusAlgorithmLabel_) {
-            statusAlgorithmLabel_->setText(QStringLiteral("瑜版挸澧犵粻妤佺《閿涙碍婀柅澶嬪"));
+            statusAlgorithmLabel_->setText(QStringLiteral("当前算法：无"));
         }
         if (statusSubFunctionCountLabel_) {
-            statusSubFunctionCountLabel_->setText(QStringLiteral("瀹告彃濮炴潪钘夌摍閸旂喕鍏橀敍?"));
+            statusSubFunctionCountLabel_->setText(QStringLiteral("子功能：0"));
         }
         navPanel_->clearSubFunctions();
         refreshExecuteButtonState();
@@ -802,7 +802,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     }
     if (functionMetaLabel_) {
         functionMetaLabel_->setText(
-            QStringLiteral("瑜版挸澧犳稉璇插閼虫枻绱?1  |  鐎涙劕濮涢懗鑺ユ殶閿涙俺娴囬崗銉よ厬")
+            QStringLiteral("已选择主功能 %1  |  请选择子功能开始操作")
                 .arg(groupName));
     }
     if (statusAlgorithmLabel_) {
@@ -814,7 +814,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     navPanel_->setCurrentPluginSelection(pluginName);
     if (statusSubFunctionCountLabel_) {
         statusSubFunctionCountLabel_->setText(
-            QStringLiteral("瀹告彃濮炴潪钘夌摍閸旂喕鍏橀敍?1").arg(static_cast<int>(items.size())));
+            QStringLiteral("子功能：%1").arg(static_cast<int>(items.size())));
     }
     if (functionMetaLabel_) {
         functionMetaLabel_->setText(
@@ -833,7 +833,7 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
     }
     resetResultPreviewState();
     refreshExecuteButtonState();
-    statusBar()->showMessage(QStringLiteral("瑜版挸澧犳稉璇插閼虫枻绱?1").arg(groupName));
+    statusBar()->showMessage(QStringLiteral("已选择主功能 %1").arg(groupName));
 
     if (taskCenterPage_) {
         taskCenterPage_->setCurrentGroup(
@@ -1047,9 +1047,9 @@ void MainWindow::refreshExecuteButtonState() {
     bool running = TaskRunner::instance().isRunning();
     if (running && queued > 0) {
         executeButton_->setToolTip(
-            QStringLiteral("閹笛嗩攽婢跺嫮鎮婇敍鍫ユЕ閸掓ぞ鑵?%1 娑擃亙鎹㈤崝鈽呯礆").arg(queued));
+            QStringLiteral("任务执行中，队列中还有 %1 个任务").arg(queued));
     } else if (running) {
-        executeButton_->setToolTip(QStringLiteral("閹笛嗩攽婢跺嫮鎮婇敍鍫滄崲閸斅ょ箥鐞涘奔鑵戦敍灞炬煀娴犺濮熺亸鍡氬殰閸斻劍甯撻梼鐕傜礆"));
+        executeButton_->setToolTip(QStringLiteral("任务执行中，请等待当前任务完成后再提交新任务"));
     } else {
         executeButton_->setToolTip(QString::fromUtf8(state.tooltip));
     }
@@ -1248,7 +1248,7 @@ void MainWindow::runPluginWithParams(
 
     if (resultSummaryLabel_) {
         resultSummaryLabel_->setStyleSheet(QString());
-        resultSummaryLabel_->setText(QStringLiteral("濮濓絽婀幍褑顢戦敍宀冾嚞缁嬪秴鈧?.."));
+        resultSummaryLabel_->setText(QStringLiteral("任务已提交，正在执行..."));
     }
     if (statusProgressBar_) {
         statusProgressBar_->setRange(0, 0);

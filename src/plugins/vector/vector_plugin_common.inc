@@ -1,9 +1,10 @@
-static GDALDataset* openVector(const std::string& path, bool readOnly = true) {
+static gis::core::GdalDatasetPtr openVector(const std::string& path, bool readOnly = true) {
     const std::string resolvedPath = resolveVectorInputPath(path);
-    return (GDALDataset*)GDALOpenEx(
-        resolvedPath.c_str(),
-        (readOnly ? GDAL_OF_READONLY : GDAL_OF_UPDATE) | GDAL_OF_VECTOR,
-        nullptr, nullptr, nullptr);
+    return gis::core::GdalDatasetPtr(
+        static_cast<GDALDataset*>(GDALOpenEx(
+            resolvedPath.c_str(),
+            (readOnly ? GDAL_OF_READONLY : GDAL_OF_UPDATE) | GDAL_OF_VECTOR,
+            nullptr, nullptr, nullptr)));
 }
 
 static OGRLayer* getLayer(GDALDataset* ds, const std::string& layerName) {

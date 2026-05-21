@@ -15,20 +15,16 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
-    if (!srcLayer) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot find layer: " + layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
+    if (!srcLayer) { return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
     const OGRSpatialReference* srcSRSRef = srcLayer->GetSpatialRef();
     const std::string srsType = detectSrsType(srcSRSRef);
-    if (srsType == "geographic") {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail(
+    if (srsType == "geographic") { return gis::framework::Result::fail(
             "Buffer requires a projected coordinate system. Please reproject the input layer before buffering.");
     }
 
@@ -41,18 +37,14 @@ gis::framework::Result VectorPlugin::doBuffer(
     else if (ext == ".kml") outFormat = "KML";
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
-    if (!drv) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
+    if (!drv) { return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot create output file: " + output);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+    if (!dstDS) { return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
@@ -69,7 +61,7 @@ gis::framework::Result VectorPlugin::doBuffer(
         resultLayerGeometryType(wkbPolygon),
         layerOptionStorage.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -115,7 +107,7 @@ gis::framework::Result VectorPlugin::doBuffer(
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write buffer feature");
                 }
                 OGRFeature::DestroyFeature(dstFeat);
@@ -135,10 +127,10 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, outputLayerName);
+        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, outputLayerName);
     }
     dstLayer->SyncToDisk();
-    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -175,36 +167,27 @@ gis::framework::Result VectorPlugin::doClip(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open input vector: " + input);
 
-    GDALDataset* clipDS = openVector(clipVector, true);
-    if (!clipDS) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot open clip vector: " + clipVector);
+    auto clipDS = openVector(clipVector, true);
+    if (!clipDS) { return gis::framework::Result::fail("Cannot open clip vector: " + clipVector);
     }
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     OGRLayer* clipLayer = clipDS->GetLayer(0);
-    if (!srcLayer || !clipLayer) {
-        GDALClose(clipDS); GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot find required layers");
+    if (!srcLayer || !clipLayer) { return gis::framework::Result::fail("Cannot find required layers");
     }
 
-    if (!areSameCrs(srcLayer->GetSpatialRef(), clipLayer->GetSpatialRef())) {
-        GDALClose(clipDS); GDALClose(srcDS);
-        return failCrsMismatch("Clip");
+    if (!areSameCrs(srcLayer->GetSpatialRef(), clipLayer->GetSpatialRef())) { return failCrsMismatch("Clip");
     }
 
     const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     auto clipEntries = collectNormalizedGeometries(clipLayer);
     const bool useLinearPolygonSegmentation =
         isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(clipEntries) == 2;
-    GDALClose(clipDS);
 
-    if (clipEntries.empty()) {
-        GDALClose(srcDS);
-        return failInvalidGeometry("Clip");
+    if (clipEntries.empty()) { return failInvalidGeometry("Clip");
     }
 
     std::unique_ptr<OGRGeometry> mergedClipGeometry;
@@ -225,18 +208,14 @@ gis::framework::Result VectorPlugin::doClip(
     else if (ext == ".kml") outFormat = "KML";
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
-    if (!drv) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
+    if (!drv) { return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot create output file: " + output);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+    if (!dstDS) { return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
@@ -249,7 +228,7 @@ gis::framework::Result VectorPlugin::doClip(
         resultLayerGeometryType(srcEffectiveType),
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -322,9 +301,9 @@ gis::framework::Result VectorPlugin::doClip(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, srcLayer->GetName());
+        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, srcLayer->GetName());
     }
-    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 

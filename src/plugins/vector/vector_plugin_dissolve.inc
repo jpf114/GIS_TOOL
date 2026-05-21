@@ -1,4 +1,4 @@
-﻿gis::framework::Result VectorPlugin::doDissolve(
+gis::framework::Result VectorPlugin::doDissolve(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
 
@@ -14,16 +14,14 @@
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
-    if (!srcLayer) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot find layer"); }
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
+    if (!srcLayer) { return gis::framework::Result::fail("Cannot find layer"); }
 
     const OGRSpatialReference* srcSRSRef = srcLayer->GetSpatialRef();
-    if (detectSrsType(srcSRSRef) == "geographic") {
-        GDALClose(srcDS);
-        return failProjectedRequired("Dissolve");
+    if (detectSrsType(srcSRSRef) == "geographic") { return failProjectedRequired("Dissolve");
     }
 
     progress.throwIfCancelled();
@@ -65,7 +63,7 @@
     else if (ext == ".gpkg") outFormat = "GPKG";
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
-    if (!drv) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+    if (!drv) { return gis::framework::Result::fail("Cannot get driver"); }
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
@@ -73,8 +71,8 @@
         }
     }
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+    if (!dstDS) { return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
@@ -86,7 +84,7 @@
         wkbMultiPolygon,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -119,7 +117,7 @@
                         dstLayer->RollbackTransaction();
                     }
                     delete result;
-                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
                 result = nullptr;
@@ -138,7 +136,7 @@
                         dstLayer->RollbackTransaction();
                     }
                     delete result;
-                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
                 result = nullptr;
@@ -150,9 +148,9 @@
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "dissolved");
+        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, "dissolved");
     }
-    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 

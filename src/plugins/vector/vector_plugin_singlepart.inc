@@ -1,41 +1,3 @@
-namespace {
-
-static void collectSinglepartGeometries(const OGRGeometry* geom, std::vector<std::unique_ptr<OGRGeometry>>& parts) {
-    if (!geom || geom->IsEmpty()) {
-        return;
-    }
-
-    const auto flatType = wkbFlatten(geom->getGeometryType());
-    if (flatType == wkbMultiPoint || flatType == wkbMultiLineString ||
-        flatType == wkbMultiPolygon || flatType == wkbGeometryCollection) {
-        const auto* collection = geom->toGeometryCollection();
-        for (int i = 0; i < collection->getNumGeometries(); ++i) {
-            collectSinglepartGeometries(collection->getGeometryRef(i), parts);
-        }
-        return;
-    }
-
-    parts.emplace_back(geom->clone());
-}
-
-static OGRwkbGeometryType singlepartLayerGeometryType(OGRwkbGeometryType srcType) {
-    switch (wkbFlatten(srcType)) {
-        case wkbMultiPoint:
-        case wkbPoint:
-            return wkbPoint;
-        case wkbMultiLineString:
-        case wkbLineString:
-            return wkbLineString;
-        case wkbMultiPolygon:
-        case wkbPolygon:
-            return wkbPolygon;
-        default:
-            return wkbUnknown;
-    }
-}
-
-} // namespace
-
 gis::framework::Result VectorPlugin::doSinglepart(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -51,19 +13,17 @@ gis::framework::Result VectorPlugin::doSinglepart(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     if (!srcLayer) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
     const OGRwkbGeometryType srcType = effectiveLayerGeometryType(srcLayer);
     const OGRwkbGeometryType dstType = singlepartLayerGeometryType(srcType);
     if (dstType == wkbUnknown) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Singlepart currently only supports point, line and polygon geometries");
     }
 
@@ -81,16 +41,14 @@ gis::framework::Result VectorPlugin::doSinglepart(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
     if (!dstDS) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
@@ -104,8 +62,6 @@ gis::framework::Result VectorPlugin::doSinglepart(
         dstType,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
         delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
@@ -143,8 +99,6 @@ gis::framework::Result VectorPlugin::doSinglepart(
         for (auto& part : parts) {
             if (!writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(part))) {
                 OGRFeature::DestroyFeature(feat);
-                GDALClose(dstDS);
-                GDALClose(srcDS);
                 delete srcSRS;
                 return gis::framework::Result::fail("Cannot create singlepart feature");
             }
@@ -158,8 +112,6 @@ gis::framework::Result VectorPlugin::doSinglepart(
             static_cast<double>(totalCount));
     }
 
-    GDALClose(dstDS);
-    GDALClose(srcDS);
     delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);

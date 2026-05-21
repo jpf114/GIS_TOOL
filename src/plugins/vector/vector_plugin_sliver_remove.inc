@@ -1,57 +1,3 @@
-namespace {
-
-static std::unique_ptr<OGRGeometry> buildSliverFilteredGeometry(
-    const OGRGeometry* geom,
-    double minArea,
-    int& removedPartCount) {
-    if (!geom || geom->IsEmpty()) {
-        return nullptr;
-    }
-
-    auto filtered = std::make_unique<OGRMultiPolygon>();
-    switch (wkbFlatten(geom->getGeometryType())) {
-        case wkbPolygon: {
-            const auto* polygon = geom->toPolygon();
-            if (!polygon) {
-                return nullptr;
-            }
-            if (polygon->get_Area() < minArea) {
-                ++removedPartCount;
-                return nullptr;
-            }
-            filtered->addGeometry(polygon);
-            break;
-        }
-        case wkbMultiPolygon: {
-            const auto* multiPolygon = geom->toMultiPolygon();
-            if (!multiPolygon) {
-                return nullptr;
-            }
-            for (int i = 0; i < multiPolygon->getNumGeometries(); ++i) {
-                const auto* polygon = multiPolygon->getGeometryRef(i)->toPolygon();
-                if (!polygon) {
-                    continue;
-                }
-                if (polygon->get_Area() < minArea) {
-                    ++removedPartCount;
-                    continue;
-                }
-                filtered->addGeometry(polygon);
-            }
-            break;
-        }
-        default:
-            return nullptr;
-    }
-
-    if (filtered->IsEmpty()) {
-        return nullptr;
-    }
-    return filtered;
-}
-
-} // namespace
-
 gis::framework::Result VectorPlugin::doSliverRemove(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -69,18 +15,16 @@ gis::framework::Result VectorPlugin::doSliverRemove(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     if (!srcLayer) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
     const auto geomType = wkbFlatten(effectiveLayerGeometryType(srcLayer));
     if (geomType != wkbPolygon && geomType != wkbMultiPolygon) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Sliver remove currently only supports polygon layers");
     }
 
@@ -98,16 +42,14 @@ gis::framework::Result VectorPlugin::doSliverRemove(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
     if (!dstDS) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
@@ -121,8 +63,6 @@ gis::framework::Result VectorPlugin::doSliverRemove(
         wkbMultiPolygon,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
         delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
@@ -173,8 +113,6 @@ gis::framework::Result VectorPlugin::doSliverRemove(
 
         if (!writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(filtered))) {
             OGRFeature::DestroyFeature(feat);
-            GDALClose(dstDS);
-            GDALClose(srcDS);
             delete srcSRS;
             return gis::framework::Result::fail("Cannot create sliver-removed feature");
         }
@@ -187,8 +125,6 @@ gis::framework::Result VectorPlugin::doSliverRemove(
             static_cast<double>(totalCount));
     }
 
-    GDALClose(dstDS);
-    GDALClose(srcDS);
     delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);

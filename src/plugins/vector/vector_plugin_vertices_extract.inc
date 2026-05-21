@@ -1,78 +1,3 @@
-namespace {
-
-static void appendVertices(
-    const OGRGeometry* geom,
-    std::vector<OGRPoint>& vertices) {
-    if (!geom || geom->IsEmpty()) {
-        return;
-    }
-
-    switch (wkbFlatten(geom->getGeometryType())) {
-        case wkbPoint: {
-            const auto* point = geom->toPoint();
-            if (point) {
-                vertices.push_back(*point);
-            }
-            break;
-        }
-        case wkbLineString: {
-            const auto* line = geom->toLineString();
-            if (!line) {
-                break;
-            }
-            for (int i = 0; i < line->getNumPoints(); ++i) {
-                OGRPoint point;
-                line->getPoint(i, &point);
-                vertices.push_back(point);
-            }
-            break;
-        }
-        case wkbPolygon: {
-            const auto* polygon = geom->toPolygon();
-            if (!polygon) {
-                break;
-            }
-            const auto* exterior = polygon->getExteriorRing();
-            if (exterior) {
-                for (int i = 0; i < exterior->getNumPoints(); ++i) {
-                    OGRPoint point;
-                    exterior->getPoint(i, &point);
-                    vertices.push_back(point);
-                }
-            }
-            for (int ringIndex = 0; ringIndex < polygon->getNumInteriorRings(); ++ringIndex) {
-                const auto* interior = polygon->getInteriorRing(ringIndex);
-                if (!interior) {
-                    continue;
-                }
-                for (int i = 0; i < interior->getNumPoints(); ++i) {
-                    OGRPoint point;
-                    interior->getPoint(i, &point);
-                    vertices.push_back(point);
-                }
-            }
-            break;
-        }
-        case wkbMultiPoint:
-        case wkbMultiLineString:
-        case wkbMultiPolygon:
-        case wkbGeometryCollection: {
-            const auto* collection = geom->toGeometryCollection();
-            if (!collection) {
-                break;
-            }
-            for (int i = 0; i < collection->getNumGeometries(); ++i) {
-                appendVertices(collection->getGeometryRef(i), vertices);
-            }
-            break;
-        }
-        default:
-            break;
-    }
-}
-
-} // namespace
-
 gis::framework::Result VectorPlugin::doVerticesExtract(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -88,12 +13,11 @@ gis::framework::Result VectorPlugin::doVerticesExtract(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     if (!srcLayer) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
@@ -111,16 +35,14 @@ gis::framework::Result VectorPlugin::doVerticesExtract(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
     if (!dstDS) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
@@ -134,8 +56,6 @@ gis::framework::Result VectorPlugin::doVerticesExtract(
         wkbPoint,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
         delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
@@ -182,8 +102,6 @@ gis::framework::Result VectorPlugin::doVerticesExtract(
                     dstFeat->SetField("vertex_idx", static_cast<int>(i));
                 })) {
                 OGRFeature::DestroyFeature(feat);
-                GDALClose(dstDS);
-                GDALClose(srcDS);
                 delete srcSRS;
                 return gis::framework::Result::fail("Cannot create vertex feature");
             }
@@ -197,8 +115,6 @@ gis::framework::Result VectorPlugin::doVerticesExtract(
             static_cast<double>(totalCount));
     }
 
-    GDALClose(dstDS);
-    GDALClose(srcDS);
     delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);

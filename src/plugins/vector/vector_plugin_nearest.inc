@@ -16,32 +16,25 @@ gis::framework::Result VectorPlugin::doNearest(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    GDALDataset* targetDS = openVector(nearestVector, true);
+    auto targetDS = openVector(nearestVector, true);
     if (!targetDS) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot open nearest vector file: " + nearestVector);
     }
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     OGRLayer* targetLayer = targetDS->GetLayer(0);
     if (!srcLayer || !targetLayer) {
-        GDALClose(targetDS);
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find required layers");
     }
 
     if (!areSameCrs(srcLayer->GetSpatialRef(), targetLayer->GetSpatialRef())) {
-        GDALClose(targetDS);
-        GDALClose(srcDS);
         return failCrsMismatch("Nearest");
     }
 
     if (detectSrsType(srcLayer->GetSpatialRef()) != "projected") {
-        GDALClose(targetDS);
-        GDALClose(srcDS);
         return failProjectedRequired("Nearest");
     }
 
@@ -49,8 +42,6 @@ gis::framework::Result VectorPlugin::doNearest(
     if (!nearestField.empty()) {
         nearestFieldIndex = targetLayer->GetLayerDefn()->GetFieldIndex(nearestField.c_str());
         if (nearestFieldIndex < 0) {
-            GDALClose(targetDS);
-            GDALClose(srcDS);
             return gis::framework::Result::fail("nearest_field not found: " + nearestField);
         }
     }
@@ -69,18 +60,14 @@ gis::framework::Result VectorPlugin::doNearest(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        GDALClose(targetDS);
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
     if (!dstDS) {
-        GDALClose(targetDS);
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
@@ -91,9 +78,6 @@ gis::framework::Result VectorPlugin::doNearest(
         resultLayerGeometryType(srcLayer->GetGeomType()),
         nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(targetDS);
-        GDALClose(srcDS);
         delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
@@ -177,9 +161,6 @@ gis::framework::Result VectorPlugin::doNearest(
         if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
             OGRFeature::DestroyFeature(dstFeat);
             OGRFeature::DestroyFeature(srcFeat);
-            GDALClose(dstDS);
-            GDALClose(targetDS);
-            GDALClose(srcDS);
             delete srcSRS;
             return gis::framework::Result::fail("Cannot create nearest analysis feature");
         }
@@ -191,9 +172,6 @@ gis::framework::Result VectorPlugin::doNearest(
         progress.onProgress(0.35 + 0.55 * static_cast<double>(count) / static_cast<double>(totalCount));
     }
 
-    GDALClose(dstDS);
-    GDALClose(targetDS);
-    GDALClose(srcDS);
     delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);

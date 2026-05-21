@@ -16,26 +16,21 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    GDALDataset* joinDS = openVector(joinVector, true);
+    auto joinDS = openVector(joinVector, true);
     if (!joinDS) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot open join vector file: " + joinVector);
     }
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     OGRLayer* joinLayer = joinDS->GetLayer(0);
     if (!srcLayer || !joinLayer) {
-        GDALClose(joinDS);
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find required layers");
     }
 
     if (!areSameCrs(srcLayer->GetSpatialRef(), joinLayer->GetSpatialRef())) {
-        GDALClose(joinDS);
-        GDALClose(srcDS);
         return failCrsMismatch("Spatial join");
     }
 
@@ -43,8 +38,6 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
     if (!joinField.empty()) {
         joinFieldIndex = joinLayer->GetLayerDefn()->GetFieldIndex(joinField.c_str());
         if (joinFieldIndex < 0) {
-            GDALClose(joinDS);
-            GDALClose(srcDS);
             return gis::framework::Result::fail("join_field not found: " + joinField);
         }
     }
@@ -63,18 +56,14 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        GDALClose(joinDS);
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
     if (!dstDS) {
-        GDALClose(joinDS);
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
@@ -85,9 +74,6 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
         resultLayerGeometryType(effectiveLayerGeometryType(srcLayer)),
         nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(joinDS);
-        GDALClose(srcDS);
         delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
@@ -173,9 +159,6 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
         if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
             OGRFeature::DestroyFeature(dstFeat);
             OGRFeature::DestroyFeature(srcFeat);
-            GDALClose(dstDS);
-            GDALClose(joinDS);
-            GDALClose(srcDS);
             delete srcSRS;
             return gis::framework::Result::fail("Cannot create spatial join feature");
         }
@@ -187,9 +170,6 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
         progress.onProgress(0.35 + 0.55 * static_cast<double>(count) / static_cast<double>(totalCount));
     }
 
-    GDALClose(dstDS);
-    GDALClose(joinDS);
-    GDALClose(srcDS);
     delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);

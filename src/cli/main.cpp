@@ -1,6 +1,7 @@
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/action_validation.h>
 #include <gis/core/progress.h>
+#include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/runtime_env.h>
 #include "cli_parser.h"
@@ -213,7 +214,20 @@ int main(int argc, char* argv[]) {
     }
 
     gis::core::CliProgress progress;
-    auto result = plugin->execute(params, progress);
+    gis::framework::Result result;
+
+    try {
+        result = plugin->execute(params, progress);
+    } catch (const gis::core::CancelledException&) {
+        std::cerr << "Cancelled." << std::endl;
+        return 2;
+    } catch (const gis::core::GisError& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
 
     if (result.success) {
         std::cout << "Success: " << result.message << std::endl;

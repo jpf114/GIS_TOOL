@@ -1,4 +1,4 @@
-﻿gis::framework::Result VectorPlugin::doUnion(
+gis::framework::Result VectorPlugin::doUnion(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
 
@@ -15,38 +15,29 @@
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open input: " + input);
 
-    GDALDataset* overlayDS = openVector(overlayVector, true);
-    if (!overlayDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot open overlay: " + overlayVector); }
+    auto overlayDS = openVector(overlayVector, true);
+    if (!overlayDS) { return gis::framework::Result::fail("Cannot open overlay: " + overlayVector); }
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     OGRLayer* overlayLayer = overlayDS->GetLayer(0);
-    if (!srcLayer || !overlayLayer) {
-        GDALClose(overlayDS); GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot find required layers");
+    if (!srcLayer || !overlayLayer) { return gis::framework::Result::fail("Cannot find required layers");
     }
 
-    if (!areSameCrs(srcLayer->GetSpatialRef(), overlayLayer->GetSpatialRef())) {
-        GDALClose(overlayDS); GDALClose(srcDS);
-        return failCrsMismatch("Union");
+    if (!areSameCrs(srcLayer->GetSpatialRef(), overlayLayer->GetSpatialRef())) { return failCrsMismatch("Union");
     }
 
     const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     auto overlayEntries = collectNormalizedGeometries(overlayLayer);
     const bool usePracticalMixedUnion =
         isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
-    GDALClose(overlayDS);
 
-    if (overlayEntries.empty()) {
-        GDALClose(srcDS);
-        return failInvalidGeometry("Union");
+    if (overlayEntries.empty()) { return failInvalidGeometry("Union");
     }
 
-    if (usePracticalMixedUnion && shouldRejectHighlyOverlappedMixedUnion(overlayEntries)) {
-        GDALClose(srcDS);
-        return gis::framework::Result::fail(
+    if (usePracticalMixedUnion && shouldRejectHighlyOverlappedMixedUnion(overlayEntries)) { return gis::framework::Result::fail(
             "Union detected heavily overlapped polygon overlays for mixed-dimension input. "
             "Please dissolve or simplify the overlay polygons first, or use clip/difference instead.");
     }
@@ -63,7 +54,7 @@
     else if (ext == ".gpkg") outFormat = "GPKG";
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
-    if (!drv) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+    if (!drv) { return gis::framework::Result::fail("Cannot get driver"); }
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
@@ -71,8 +62,8 @@
         }
     }
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+    if (!dstDS) { return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const auto outputGeomType = usePracticalMixedUnion
@@ -87,7 +78,7 @@
         outputGeomType,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -121,7 +112,7 @@
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write union feature");
                 }
                 delete part;
@@ -143,7 +134,7 @@
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write union feature");
                 }
                 count++;
@@ -160,7 +151,7 @@
                         dstLayer->RollbackTransaction();
                     }
                     delete cloned;
-                    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write union feature");
                 }
                 delete cloned;
@@ -176,9 +167,9 @@
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "union");
+        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, "union");
     }
-    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -203,33 +194,26 @@ gis::framework::Result VectorPlugin::doDifference(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open input: " + input);
 
-    GDALDataset* overlayDS = openVector(overlayVector, true);
-    if (!overlayDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot open overlay: " + overlayVector); }
+    auto overlayDS = openVector(overlayVector, true);
+    if (!overlayDS) { return gis::framework::Result::fail("Cannot open overlay: " + overlayVector); }
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     OGRLayer* overlayLayer = overlayDS->GetLayer(0);
-    if (!srcLayer || !overlayLayer) {
-        GDALClose(overlayDS); GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot find required layers");
+    if (!srcLayer || !overlayLayer) { return gis::framework::Result::fail("Cannot find required layers");
     }
 
-    if (!areSameCrs(srcLayer->GetSpatialRef(), overlayLayer->GetSpatialRef())) {
-        GDALClose(overlayDS); GDALClose(srcDS);
-        return failCrsMismatch("Difference");
+    if (!areSameCrs(srcLayer->GetSpatialRef(), overlayLayer->GetSpatialRef())) { return failCrsMismatch("Difference");
     }
 
     const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     auto overlayEntries = collectNormalizedGeometries(overlayLayer);
     const bool useLinearPolygonSegmentation =
         isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
-    GDALClose(overlayDS);
 
-    if (overlayEntries.empty()) {
-        GDALClose(srcDS);
-        return failInvalidGeometry("Difference");
+    if (overlayEntries.empty()) { return failInvalidGeometry("Difference");
     }
 
     std::unique_ptr<OGRGeometry> mergedOverlayGeometry;
@@ -249,7 +233,7 @@ gis::framework::Result VectorPlugin::doDifference(
     else if (ext == ".gpkg") outFormat = "GPKG";
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
-    if (!drv) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+    if (!drv) { return gis::framework::Result::fail("Cannot get driver"); }
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
@@ -257,8 +241,8 @@ gis::framework::Result VectorPlugin::doDifference(
         }
     }
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+    if (!dstDS) { return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
@@ -270,7 +254,7 @@ gis::framework::Result VectorPlugin::doDifference(
         resultLayerGeometryType(srcEffectiveType),
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -358,9 +342,9 @@ gis::framework::Result VectorPlugin::doDifference(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "difference");
+        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, "difference");
     }
-    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
@@ -385,33 +369,26 @@ gis::framework::Result VectorPlugin::doIntersect(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open input: " + input);
 
-    GDALDataset* overlayDS = openVector(overlayVector, true);
-    if (!overlayDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot open overlay: " + overlayVector); }
+    auto overlayDS = openVector(overlayVector, true);
+    if (!overlayDS) { return gis::framework::Result::fail("Cannot open overlay: " + overlayVector); }
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     OGRLayer* overlayLayer = overlayDS->GetLayer(0);
-    if (!srcLayer || !overlayLayer) {
-        GDALClose(overlayDS); GDALClose(srcDS);
-        return gis::framework::Result::fail("Cannot find required layers");
+    if (!srcLayer || !overlayLayer) { return gis::framework::Result::fail("Cannot find required layers");
     }
 
-    if (!areSameCrs(srcLayer->GetSpatialRef(), overlayLayer->GetSpatialRef())) {
-        GDALClose(overlayDS); GDALClose(srcDS);
-        return failCrsMismatch("Intersect");
+    if (!areSameCrs(srcLayer->GetSpatialRef(), overlayLayer->GetSpatialRef())) { return failCrsMismatch("Intersect");
     }
 
     const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     auto overlayEntries = collectNormalizedGeometries(overlayLayer);
     const bool useLinearPolygonSegmentation =
         isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
-    GDALClose(overlayDS);
 
-    if (overlayEntries.empty()) {
-        GDALClose(srcDS);
-        return failInvalidGeometry("Intersect");
+    if (overlayEntries.empty()) { return failInvalidGeometry("Intersect");
     }
 
     std::unique_ptr<OGRGeometry> mergedOverlayGeometry;
@@ -431,7 +408,7 @@ gis::framework::Result VectorPlugin::doIntersect(
     else if (ext == ".gpkg") outFormat = "GPKG";
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
-    if (!drv) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot get driver"); }
+    if (!drv) { return gis::framework::Result::fail("Cannot get driver"); }
 
     if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
         for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
@@ -439,8 +416,8 @@ gis::framework::Result VectorPlugin::doIntersect(
         }
     }
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-    if (!dstDS) { GDALClose(srcDS); return gis::framework::Result::fail("Cannot create output"); }
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+    if (!dstDS) { return gis::framework::Result::fail("Cannot create output"); }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
@@ -452,7 +429,7 @@ gis::framework::Result VectorPlugin::doIntersect(
         resultLayerGeometryType(srcEffectiveType),
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -527,9 +504,9 @@ gis::framework::Result VectorPlugin::doIntersect(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS, dstLayer, useTransactions, "intersect");
+        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, "intersect");
     }
-    GDALClose(dstDS); GDALClose(srcDS); delete srcSRS;
+    delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 

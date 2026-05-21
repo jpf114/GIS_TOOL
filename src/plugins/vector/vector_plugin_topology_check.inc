@@ -1,34 +1,3 @@
-namespace {
-
-struct CachedTopologyFeature {
-    GIntBig fid = -1;
-    bool empty = false;
-    bool invalid = false;
-    std::unique_ptr<OGRGeometry> geometry;
-};
-
-static double polygonIntersectionArea(const OGRGeometry* lhs, const OGRGeometry* rhs) {
-    if (!lhs || !rhs || lhs->IsEmpty() || rhs->IsEmpty()) {
-        return 0.0;
-    }
-
-    std::unique_ptr<OGRGeometry> intersection(lhs->Intersection(rhs));
-    if (!intersection || intersection->IsEmpty()) {
-        return 0.0;
-    }
-
-    switch (wkbFlatten(intersection->getGeometryType())) {
-        case wkbPolygon:
-            return intersection->toPolygon()->get_Area();
-        case wkbMultiPolygon:
-            return intersection->toMultiPolygon()->get_Area();
-        default:
-            return 0.0;
-    }
-}
-
-} // namespace
-
 gis::framework::Result VectorPlugin::doTopologyCheck(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -44,23 +13,20 @@ gis::framework::Result VectorPlugin::doTopologyCheck(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     if (!srcLayer) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer");
     }
 
     const auto geomType = wkbFlatten(effectiveLayerGeometryType(srcLayer));
     if (geomType != wkbPolygon && geomType != wkbMultiPolygon) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Topology check currently only supports polygon layers");
     }
 
     if (detectSrsType(srcLayer->GetSpatialRef()) != "projected") {
-        GDALClose(srcDS);
         return failProjectedRequired("Topology check");
     }
 
@@ -96,7 +62,6 @@ gis::framework::Result VectorPlugin::doTopologyCheck(
     ensureParentDirectoryForFile(output);
     std::ofstream ofs(fs::u8path(output), std::ios::binary | std::ios::trunc);
     if (!ofs.is_open()) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
@@ -144,7 +109,6 @@ gis::framework::Result VectorPlugin::doTopologyCheck(
     }
 
     ofs.close();
-    GDALClose(srcDS);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 

@@ -1,0 +1,3 @@
+[submodule "vcpkg"]
+	path = vcpkg
+	url = D:/Develop/vcpkg

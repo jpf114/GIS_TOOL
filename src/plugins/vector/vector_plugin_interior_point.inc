@@ -13,18 +13,16 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     if (!srcLayer) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
     const auto geomType = wkbFlatten(effectiveLayerGeometryType(srcLayer));
     if (geomType != wkbPolygon && geomType != wkbMultiPolygon) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Interior point currently only supports polygon layers");
     }
 
@@ -42,16 +40,14 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
     if (!dstDS) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
@@ -65,8 +61,6 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
         wkbPoint,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
         delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
@@ -109,8 +103,6 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
 
         if (!writeFeatureWithCopiedFields(dstLayer, feat, &point)) {
             OGRFeature::DestroyFeature(feat);
-            GDALClose(dstDS);
-            GDALClose(srcDS);
             delete srcSRS;
             return gis::framework::Result::fail("Cannot create interior point feature");
         }
@@ -122,8 +114,6 @@ gis::framework::Result VectorPlugin::doInteriorPoint(
             static_cast<double>(totalCount));
     }
 
-    GDALClose(dstDS);
-    GDALClose(srcDS);
     delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);

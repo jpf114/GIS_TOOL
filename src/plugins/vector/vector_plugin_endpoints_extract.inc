@@ -63,18 +63,16 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     if (!srcLayer) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
     const auto geomType = wkbFlatten(effectiveLayerGeometryType(srcLayer));
     if (geomType != wkbLineString && geomType != wkbMultiLineString) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Endpoints extract currently only supports line layers");
     }
 
@@ -92,16 +90,14 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
     ensureParentDirectoryForFile(output);
     removeExistingVectorOutput(output, outFormat);
 
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
     if (!dstDS) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
@@ -115,8 +111,6 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
         wkbPoint,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
         delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
@@ -163,8 +157,6 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
                     dstFeat->SetField("endpoint_type", endpoint.endpointType);
                 })) {
                 OGRFeature::DestroyFeature(feat);
-                GDALClose(dstDS);
-                GDALClose(srcDS);
                 delete srcSRS;
                 return gis::framework::Result::fail("Cannot create endpoint feature");
             }
@@ -178,8 +170,6 @@ gis::framework::Result VectorPlugin::doEndpointsExtract(
             static_cast<double>(totalCount));
     }
 
-    GDALClose(dstDS);
-    GDALClose(srcDS);
     delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);

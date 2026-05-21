@@ -15,17 +15,15 @@ gis::framework::Result VectorPlugin::doSimplify(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     if (!srcLayer) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
     if (detectSrsType(srcLayer->GetSpatialRef()) != "projected") {
-        GDALClose(srcDS);
         return failProjectedRequired("Simplify");
     }
 
@@ -42,7 +40,6 @@ gis::framework::Result VectorPlugin::doSimplify(
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
@@ -53,17 +50,14 @@ gis::framework::Result VectorPlugin::doSimplify(
     }
 
     ensureParentDirectoryForFile(output);
-    GDALDataset* dstDS = drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
     if (!dstDS) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
-        GDALClose(dstDS);
-        GDALClose(srcDS);
         delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
@@ -90,8 +84,6 @@ gis::framework::Result VectorPlugin::doSimplify(
             if (!simplified || simplified->IsEmpty()) {
                 OGRFeature::DestroyFeature(dstFeat);
                 OGRFeature::DestroyFeature(feat);
-                GDALClose(dstDS);
-                GDALClose(srcDS);
                 delete srcSRS;
                 return gis::framework::Result::fail("Simplify failed for one or more features");
             }
@@ -101,8 +93,6 @@ gis::framework::Result VectorPlugin::doSimplify(
         if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
             OGRFeature::DestroyFeature(dstFeat);
             OGRFeature::DestroyFeature(feat);
-            GDALClose(dstDS);
-            GDALClose(srcDS);
             delete srcSRS;
             return gis::framework::Result::fail("Cannot create simplified feature");
         }
@@ -115,8 +105,6 @@ gis::framework::Result VectorPlugin::doSimplify(
             std::max<GIntBig>(1, srcLayer->GetFeatureCount()));
     }
 
-    GDALClose(dstDS);
-    GDALClose(srcDS);
     delete srcSRS;
     progress.throwIfCancelled();
     progress.onProgress(1.0);

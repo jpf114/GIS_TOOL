@@ -13,23 +13,20 @@ gis::framework::Result VectorPlugin::doOverlapCheck(
 
     progress.onProgress(0.1);
 
-    GDALDataset* srcDS = openVector(input, true);
+    auto srcDS = openVector(input, true);
     if (!srcDS) return gis::framework::Result::fail("Cannot open vector file: " + input);
 
-    OGRLayer* srcLayer = getLayer(srcDS, layerName);
+    OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     if (!srcLayer) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot find layer");
     }
 
     const auto geomType = wkbFlatten(effectiveLayerGeometryType(srcLayer));
     if (geomType != wkbPolygon && geomType != wkbMultiPolygon) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Overlap check currently only supports polygon layers");
     }
 
     if (detectSrsType(srcLayer->GetSpatialRef()) != "projected") {
-        GDALClose(srcDS);
         return failProjectedRequired("Overlap check");
     }
 
@@ -58,7 +55,6 @@ gis::framework::Result VectorPlugin::doOverlapCheck(
     ensureParentDirectoryForFile(output);
     std::ofstream ofs(fs::u8path(output), std::ios::binary | std::ios::trunc);
     if (!ofs.is_open()) {
-        GDALClose(srcDS);
         return gis::framework::Result::fail("Cannot create output file: " + output);
     }
 
@@ -105,7 +101,6 @@ gis::framework::Result VectorPlugin::doOverlapCheck(
     }
 
     ofs.close();
-    GDALClose(srcDS);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
