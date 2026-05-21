@@ -1,0 +1,147 @@
+================================================================================
+                     第三方依赖声明 (THIRD-PARTY NOTICES)
+                     gis-tool 版本 1.0.0
+================================================================================
+
+本项目 gis-tool（版本 1.0.0）使用并分发以下第三方开源软件。
+各依赖的版权归其各自作者所有，并按其适用的许可证条款进行分发。
+以下列出本项目直接及间接依赖的所有第三方组件、其许可证类型及许可证文本获取方式。
+
+--------------------------------------------------------------------------------
+一、直接依赖
+--------------------------------------------------------------------------------
+
+1. GDAL — Geospatial Data Abstraction Library
+   版本范围：由 vcpkg manifest 管理（vcpkg.json 中指定）
+   许可证：MIT/X License
+   许可证链接：https://github.com/OSGeo/gdal/blob/master/LICENSE.TXT
+   说明：本项目通过 vcpkg 安装 GDAL，启用了 expat、geos、jpeg、png、sqlite3 特性。
+
+2. OpenCV 4 — Open Source Computer Vision Library
+   版本范围：由 vcpkg manifest 管理（vcpkg.json 中指定）
+   许可证：Apache License 2.0
+   许可证链接：https://github.com/opencv/opencv/blob/master/LICENSE
+   说明：本项目通过 vcpkg 安装 OpenCV 4，启用了 calib3d、highgui、jpeg、png、thread 特性。
+
+3. PROJ — Cartographic Projections and Coordinate Transformations Library
+   版本范围：由 vcpkg manifest 管理（vcpkg.json 中指定）
+   许可证：MIT License
+   许可证链接：https://github.com/OSGeo/PROJ/blob/master/COPYING
+   说明：本项目通过 vcpkg 安装 PROJ，启用了 tiff 特性。
+
+4. GTest — Google Test
+   版本范围：由 vcpkg manifest 管理（vcpkg.json 中指定）
+   许可证：BSD 3-Clause License
+   许可证链接：https://github.com/google/googletest/blob/main/LICENSE
+   说明：仅用于本项目单元测试，不随发布版本分发。
+
+5. Qt6 (qtbase, qtsvg)
+   版本范围：由 vcpkg manifest 管理（vcpkg.json 中指定）
+   许可证：GNU Lesser General Public License v3.0 (LGPL v3) / Commercial License
+   许可证链接：
+     - LGPL v3: https://www.gnu.org/licenses/lgpl-3.0.html
+     - Qt 许可证概览: https://www.qt.io/licensing
+   说明：本项目通过 vcpkg 安装 qtbase（启用 sql、widgets 特性）及 qtsvg。
+         本项目以动态链接方式使用 Qt6，符合 LGPL v3 的分发要求。
+
+--------------------------------------------------------------------------------
+二、间接依赖（通过上述直接依赖传递引入）
+--------------------------------------------------------------------------------
+
+6. SQLite3
+   引入方式：通过 GDAL（sqlite3 特性）及 Qt6（sql 特性）间接引入
+   许可证：Public Domain
+   许可证链接：https://www.sqlite.org/copyright.html
+   说明：SQLite3 代码已进入公共领域，无版权限制。
+
+7. libcurl
+   引入方式：通过 GDAL 间接引入
+   许可证：MIT/X Derivative License
+   许可证链接：https://github.com/curl/curl/blob/master/COPYING
+   说明：libcurl 采用基于 MIT 的自定义许可证，与 MIT 许可证兼容。
+
+8. GEOS — Geometry Engine, Open Source
+   引入方式：通过 GDAL（geos 特性）间接引入
+   许可证：GNU Lesser General Public License v2.1 (LGPL v2.1)
+   许可证链接：https://github.com/libgeos/geos/blob/main/COPYING
+   说明：GEOS 以动态链接方式使用，符合 LGPL v2.1 的分发要求。
+
+9. libjpeg (Independent JPEG Group)
+   引入方式：通过 GDAL（jpeg 特性）及 OpenCV 4（jpeg 特性）间接引入
+   许可证：Independent JPEG Group License
+   许可证链接：https://www.ijg.org/files/README
+   说明：libjpeg 采用 IJG 自有许可证，允许自由使用和分发。
+
+10. libpng — Portable Network Graphics Library
+    引入方式：通过 GDAL（png 特性）及 OpenCV 4（png 特性）间接引入
+    许可证：libpng License
+    许可证链接：http://www.libpng.org/pub/png/src/libpng-LICENSE.txt
+    说明：libpng 许可证与 MIT 许可证兼容，允许自由使用和分发。
+
+11. libtiff — Tag Image File Format Library
+    引入方式：通过 PROJ（tiff 特性）间接引入
+    许可证：libtiff License
+    许可证链接：https://gitlab.com/libtiff/libtiff/-/blob/master/LICENSE.md
+    说明：libtiff 采用基于 MIT 的自定义许可证，允许自由使用和分发。
+
+12. expat — XML Parser Toolkit
+    引入方式：通过 GDAL（expat 特性）间接引入
+    许可证：MIT License
+    许可证链接：https://github.com/libexpat/libexpat/blob/master/expat/COPYING
+    说明：expat 采用 MIT 许可证，允许自由使用和分发。
+
+13. ICU — International Components for Unicode
+    引入方式：通过 Qt6 间接引入
+    许可证：ICU License
+    许可证链接：https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE
+    说明：ICU 许可证与 MIT 许可证兼容，允许自由使用和分发。
+
+14. SpatiaLite
+    引入方式：通过 GDAL 间接引入
+    许可证：Mozilla Public License v1.1 / GNU General Public License v2 or later /
+             GNU Lesser General Public License v2.1 or later (三选一)
+    许可证链接：
+      - MPL v1.1: https://www.mozilla.org/en-US/MPL/1.1/
+      - GPL v2+: https://www.gnu.org/licenses/gpl-2.0.html
+      - LGPL v2.1+: https://www.gnu.org/licenses/lgpl-2.1.html
+    说明：SpatiaLite 采用三许可证模式，用户可选择其中任一许可证条款使用。
+
+--------------------------------------------------------------------------------
+三、LGPL 合规声明
+--------------------------------------------------------------------------------
+
+本项目对采用 LGPL 许可证的依赖（Qt6、GEOS、SpatiaLite）均以动态链接方式使用，
+符合 LGPL 许可证关于允许与专有软件组合分发的要求。用户有权替换这些 LGPL 库的
+相应版本，具体方式为替换本软件安装目录下的对应动态链接库文件。
+
+--------------------------------------------------------------------------------
+四、本项目许可证
+--------------------------------------------------------------------------------
+
+本项目 gis-tool 按 MIT 许可证发布。
+
+MIT License
+
+Copyright (c) 2025 gis-tool contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+                           文件结束
+================================================================================
