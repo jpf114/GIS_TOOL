@@ -10,12 +10,17 @@ namespace gis::core {
 namespace {
 
 void ensureParentDirectoryForFile(const std::string& path) {
-    const std::filesystem::path fsPath(path);
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto canonicalPath = fs::weakly_canonical(fs::path(path), ec);
+    std::string normalizedPath = ec ? path : canonicalPath.string();
+
+    const fs::path fsPath(normalizedPath);
     if (!fsPath.has_parent_path()) {
         return;
     }
 
-    std::filesystem::create_directories(fsPath.parent_path());
+    fs::create_directories(fsPath.parent_path());
 }
 
 } // namespace
@@ -34,8 +39,14 @@ void GdalDatasetDeleter::operator()(GDALDataset* ds) const {
 
 GdalDatasetPtr openRaster(const std::string& path, bool readOnly) {
     initGDAL();
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto canonicalPath = fs::weakly_canonical(fs::path(path), ec);
+    std::string normalizedPath = ec ? path : canonicalPath.string();
+
     auto* ds = static_cast<GDALDataset*>(
-        GDALOpen(path.c_str(), readOnly ? GA_ReadOnly : GA_Update));
+        GDALOpen(normalizedPath.c_str(), readOnly ? GA_ReadOnly : GA_Update));
     if (!ds) {
         throw GisError("Cannot open raster: " + path + " (" + CPLGetLastErrorMsg() + ")");
     }

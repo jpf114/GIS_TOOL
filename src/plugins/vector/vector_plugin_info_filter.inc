@@ -1,3 +1,19 @@
+static bool containsDangerousSqlKeywords(const std::string& sql) {
+    std::string upper = sql;
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    static const std::vector<std::string> dangerous = {
+        "DROP ", "DELETE ", "INSERT ", "UPDATE ", "ALTER ", "CREATE ", "EXEC ", "EXECUTE "
+    };
+    for (const auto& kw : dangerous) {
+        if (upper.find(kw) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 gis::framework::Result VectorPlugin::doInfo(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -109,7 +125,12 @@ gis::framework::Result VectorPlugin::doFilter(
         return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
-    if (!where.empty()) srcLayer->SetAttributeFilter(where.c_str());
+    if (!where.empty()) {
+        if (containsDangerousSqlKeywords(where)) {
+            return gis::framework::Result::fail("WHERE 子句包含不允许的 SQL 关键字");
+        }
+        srcLayer->SetAttributeFilter(where.c_str());
+    }
 
     bool hasExtent = extentArr[0] != 0 || extentArr[1] != 0 ||
                      extentArr[2] != 0 || extentArr[3] != 0;

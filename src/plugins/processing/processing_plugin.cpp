@@ -11,6 +11,7 @@
 #include <map>
 #include <functional>
 #include <stack>
+#include <fstream>
 
 namespace gis::plugins {
 
@@ -115,7 +116,7 @@ static cv::Mat readBandAsMat(const std::string& path, int bandIndex,
 }
 
 static gis::framework::Result writeMatOutput(
-    const cv::Mat& mat, const std::string& inputPath, const std::string& outputPath,
+    cv::Mat& mat, const std::string& inputPath, const std::string& outputPath,
     int bandIndex, gis::core::ProgressReporter& progress,
     const std::string& algorithm = "") {
 
@@ -127,8 +128,38 @@ static gis::framework::Result writeMatOutput(
         return gis::framework::Result::fail("output is required");
     }
 
+    // 读取输入栅格的 NoData 值，并在输出 Mat 中传播 NoData 掩码
+    int srcHasNoData = 0;
+    double srcNoDataVal = 0.0;
+    {
+        auto srcDS = gis::core::openRaster(inputPath, true);
+        if (srcDS && bandIndex >= 1 && bandIndex <= srcDS->GetRasterCount()) {
+            srcNoDataVal = srcDS->GetRasterBand(bandIndex)->GetNoDataValue(&srcHasNoData);
+        }
+    }
+
+    if (srcHasNoData && mat.type() == CV_32F) {
+        float ndVal = static_cast<float>(srcNoDataVal);
+        for (int r = 0; r < mat.rows; ++r) {
+            float* row = mat.ptr<float>(r);
+            for (int c = 0; c < mat.cols; ++c) {
+                if (std::isnan(row[c])) {
+                    row[c] = ndVal;
+                }
+            }
+        }
+    }
+
     progress.onMessage("Writing output: " + outputPath);
     gis::core::matToGdalTiff(mat, inputPath, outputPath, bandIndex);
+
+    // 验证输出文件是否成功创建
+    {
+        std::ifstream verifyFile(outputPath, std::ios::binary);
+        if (!verifyFile.good()) {
+            return gis::framework::Result::fail("写入输出文件失败: " + outputPath);
+        }
+    }
 
     if (!algorithm.empty()) {
         auto meta = buildMetadata(inputPath, algorithm);

@@ -3,8 +3,7 @@ add_library(plugin_raster_manage SHARED
 )
 
 target_include_directories(plugin_raster_manage PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/core/include
-    ${CMAKE_SOURCE_DIR}/src/framework/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(plugin_raster_manage PRIVATE
@@ -14,7 +13,7 @@ target_link_libraries(plugin_raster_manage PRIVATE
 )
 
 set_target_properties(plugin_raster_manage PROPERTIES
-    CXX_STANDARD 17
+    PREFIX ""
     OUTPUT_NAME "plugin_raster_manage"
 )
 

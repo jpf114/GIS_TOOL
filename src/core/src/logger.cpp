@@ -43,15 +43,17 @@ void Logger::log(LogLevel level, const std::string& message, const std::string& 
     entry.timestamp = currentTimestamp();
     entry.source = source;
 
+    std::vector<Sink> sinksCopy;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         entries_.push_back(entry);
         if (entries_.size() > kMaxEntries) {
             entries_.erase(entries_.begin(), entries_.begin() + (entries_.size() - kMaxEntries));
         }
+        sinksCopy = sinks_;  // 在锁内复制
     }
 
-    for (auto& sink : sinks_) {
+    for (auto& sink : sinksCopy) {  // 使用复制后的列表
         sink(entry);
     }
 }
