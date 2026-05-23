@@ -1,6 +1,7 @@
 #include "task_center_page.h"
 #include "task_manager.h"
 #include "style_constants.h"
+#include "gui_data_support.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -444,34 +445,13 @@ QTreeWidgetItem* TaskCenterPage::findItemByTaskId(const QString& taskId) const {
 }
 
 QString TaskCenterPage::statusIcon(int status) {
-    switch (status) {
-    case TaskRecord::Pending:   return QStringLiteral("⏳");
-    case TaskRecord::Running:   return QStringLiteral("▶");
-    case TaskRecord::Completed: return QStringLiteral("✓");
-    case TaskRecord::Cancelled: return QStringLiteral("✖");
-    case TaskRecord::Failed:    return QStringLiteral("✗");
-    default: return QStringLiteral("?");
-    }
+    return gis::gui::taskStatusIcon(static_cast<gis::gui::TaskStatusKind>(status));
 }
 
 QString TaskCenterPage::statusText(int status) {
-    switch (status) {
-    case TaskRecord::Pending:   return QStringLiteral("等待中");
-    case TaskRecord::Running:   return QStringLiteral("运行中");
-    case TaskRecord::Completed: return QStringLiteral("已完成");
-    case TaskRecord::Cancelled: return QStringLiteral("已取消");
-    case TaskRecord::Failed:    return QStringLiteral("失败");
-    default: return QStringLiteral("未知");
-    }
+    return gis::gui::taskStatusText(static_cast<gis::gui::TaskStatusKind>(status));
 }
 
 QString TaskCenterPage::statusColor(int status) {
-    switch (status) {
-    case TaskRecord::Pending:   return gis::style::Color::kWarning;
-    case TaskRecord::Running:   return gis::style::Color::kPrimary;
-    case TaskRecord::Completed: return gis::style::Color::kSuccess;
-    case TaskRecord::Cancelled: return gis::style::Color::kTextMuted;
-    case TaskRecord::Failed:    return gis::style::Color::kError;
-    default: return gis::style::Color::kTextMuted;
-    }
+    return gis::gui::taskStatusColor(static_cast<gis::gui::TaskStatusKind>(status));
 }

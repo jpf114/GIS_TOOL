@@ -1,6 +1,7 @@
 #include "gui_data_support.h"
 
 #include "custom_index_preset_store.h"
+#include "style_constants.h"
 
 #include <gis/core/spindex_presets.h>
 #include <gis/core/gdal_wrapper.h>
@@ -905,6 +906,99 @@ int countDisplayPluginGroups(const std::vector<gis::framework::IGisPlugin*>& plu
         groups.insert(displayGroupForPlugin(plugin->name()));
     }
     return static_cast<int>(groups.size());
+}
+
+gis::framework::IGisPlugin* findPluginByName(
+    gis::framework::PluginManager& pluginManager,
+    const std::string& pluginName) {
+    return pluginManager.find(pluginName);
+}
+
+QString taskStatusIcon(TaskStatusKind status) {
+    switch (status) {
+    case TaskStatusKind::Pending: return QStringLiteral("⏳");
+    case TaskStatusKind::Running: return QStringLiteral("▶");
+    case TaskStatusKind::Completed: return QStringLiteral("✓");
+    case TaskStatusKind::Cancelled: return QStringLiteral("✖");
+    case TaskStatusKind::Failed: return QStringLiteral("✗");
+    }
+    return QStringLiteral("?");
+}
+
+QString taskStatusText(TaskStatusKind status) {
+    switch (status) {
+    case TaskStatusKind::Pending: return QStringLiteral("等待中");
+    case TaskStatusKind::Running: return QStringLiteral("运行中");
+    case TaskStatusKind::Completed: return QStringLiteral("已完成");
+    case TaskStatusKind::Cancelled: return QStringLiteral("已取消");
+    case TaskStatusKind::Failed: return QStringLiteral("失败");
+    }
+    return QStringLiteral("未知");
+}
+
+QString taskStatusColor(TaskStatusKind status) {
+    switch (status) {
+    case TaskStatusKind::Pending: return gis::style::Color::kWarning;
+    case TaskStatusKind::Running: return gis::style::Color::kPrimary;
+    case TaskStatusKind::Completed: return gis::style::Color::kSuccess;
+    case TaskStatusKind::Cancelled: return gis::style::Color::kTextMuted;
+    case TaskStatusKind::Failed: return gis::style::Color::kError;
+    }
+    return gis::style::Color::kTextMuted;
+}
+
+TaskExecutionFeedback buildTaskExecutionFeedback(
+    const gis::framework::Result& result,
+    qint64 durationMs,
+    bool success,
+    bool cancelled) {
+    TaskExecutionFeedback feedback;
+    if (success) {
+        QString summary = QString::fromUtf8(buildResultSummaryText(result));
+        if (durationMs > 0) {
+            summary += QStringLiteral("\n耗时：%1").arg(formatDurationText(durationMs));
+        }
+        feedback.summaryText = QStringLiteral("执行成功\n%1").arg(summary);
+        feedback.summaryTone = QStringLiteral("success");
+        feedback.statusBarMessage = QStringLiteral("执行成功");
+        feedback.showResultPreview = !result.outputPath.empty();
+        return feedback;
+    }
+
+    if (cancelled) {
+        QString cancelText = QStringLiteral("任务已取消");
+        if (durationMs > 0) {
+            cancelText += QStringLiteral("\n耗时：%1").arg(formatDurationText(durationMs));
+        }
+        feedback.summaryText = cancelText;
+        feedback.summaryTone = QStringLiteral("warning");
+        feedback.statusBarMessage = QStringLiteral("执行已取消");
+        return feedback;
+    }
+
+    const QString localizedMessage =
+        QString::fromUtf8(localizeResultMessage(result.message));
+    QString failText = QStringLiteral("执行失败\n%1").arg(localizedMessage);
+    if (durationMs > 0) {
+        failText += QStringLiteral("\n耗时：%1").arg(formatDurationText(durationMs));
+    }
+    feedback.summaryText = failText;
+    feedback.summaryTone = QStringLiteral("error");
+    feedback.statusBarMessage = QStringLiteral("执行失败：") + localizedMessage;
+    return feedback;
+}
+
+QString summaryStyleSheetForTone(const QString& tone) {
+    if (tone == QStringLiteral("success")) {
+        return QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess);
+    }
+    if (tone == QStringLiteral("error")) {
+        return QStringLiteral("color: %1;").arg(gis::style::Color::kError);
+    }
+    if (tone == QStringLiteral("warning")) {
+        return QStringLiteral("color: %1;").arg(gis::style::Color::kWarning);
+    }
+    return QString();
 }
 
 GroupSelectionText buildGroupSelectionText(const std::string& pluginName,
@@ -1818,6 +1912,11 @@ std::string buildResultSummaryText(const gis::framework::Result& result) {
     oss << "状态: " << (result.success ? "成功" : "失败") << "\n";
     oss << "消息: " << localizeResultMessage(result.message);
 
+    const auto summaryIt = result.metadata.find(gis::framework::ResultMetadataKeys::kSummary);
+    if (summaryIt != result.metadata.end() && !summaryIt->second.empty()) {
+        oss << "\n摘要: " << summaryIt->second;
+    }
+
     if (!result.outputPath.empty()) {
         oss << "\n输出: " << result.outputPath;
     }
@@ -1825,6 +1924,9 @@ std::string buildResultSummaryText(const gis::framework::Result& result) {
     if (!result.metadata.empty()) {
         oss << "\n元数据:";
         for (const auto& [key, value] : gis::framework::orderedMetadataEntries(result.metadata)) {
+            if (key == gis::framework::ResultMetadataKeys::kSummary) {
+                continue;
+            }
             oss << "\n- " << key << ": " << value;
         }
     }

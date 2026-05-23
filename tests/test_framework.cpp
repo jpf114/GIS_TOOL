@@ -4,6 +4,7 @@
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/result.h>
 #include <gis/framework/result_display.h>
+#include "../src/gui/gui_data_support.h"
 #include <array>
 #include <cstdio>
 #include <filesystem>
@@ -293,4 +294,27 @@ TEST(FrameworkTest, OrderedMetadataEntriesPreferStandardKeys) {
     EXPECT_EQ(entries[0].first, "action");
     EXPECT_EQ(entries[1].first, "input");
     EXPECT_EQ(entries[2].first, "feature_count");
+}
+
+TEST(FrameworkTest, MergeResultMetadataPreservesExistingKeys) {
+    std::map<std::string, std::string> target = {{"action", "buffer"}};
+    const std::map<std::string, std::string> extra = {
+        {"feature_count", "3"},
+        {"action", "clip"},
+    };
+
+    gis::framework::mergeResultMetadata(target, extra);
+    EXPECT_EQ(target.at("action"), "clip");
+    EXPECT_EQ(target.at("feature_count"), "3");
+}
+
+TEST(FrameworkTest, BuildResultSummaryTextSurfacesSummaryField) {
+    gis::framework::Result result = gis::framework::Result::ok("done", "/tmp/out.tif");
+    result.metadata[gis::framework::ResultMetadataKeys::kSummary] = "bands=3";
+    result.metadata["feature_count"] = "1";
+
+    const std::string summary = gis::gui::buildResultSummaryText(result);
+    EXPECT_NE(summary.find("摘要: bands=3"), std::string::npos);
+    EXPECT_NE(summary.find("feature_count"), std::string::npos);
+    EXPECT_EQ(summary.rfind("__summary__"), std::string::npos);
 }

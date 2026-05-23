@@ -62,4 +62,11 @@ std::vector<std::pair<std::string, std::string>> orderedMetadataEntries(
     return entries;
 }
 
+void mergeResultMetadata(std::map<std::string, std::string>& target,
+                         const std::map<std::string, std::string>& fields) {
+    for (const auto& [key, value] : fields) {
+        target[key] = value;
+    }
+}
+
 } // namespace gis::framework

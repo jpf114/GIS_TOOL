@@ -20,6 +20,9 @@
 #include <QTextEdit>
 #include <QTreeWidget>
 
+#include <gis/framework/result.h>
+#include <gis/framework/result_display.h>
+
 #include "../src/gui/custom_index_preset_store.h"
 #include "../src/gui/gui_data_support.h"
 #include "../src/gui/task_center_page.h"
@@ -2799,4 +2802,30 @@ TEST(GuiSupportTest, FormatDurationTextUsesSecondsForLongerTasks) {
 
 TEST(GuiSupportTest, CountDisplayPluginGroupsReturnsZeroForEmptyList) {
     EXPECT_EQ(gis::gui::countDisplayPluginGroups({}), 0);
+}
+
+TEST(GuiSupportTest, BuildTaskExecutionFeedbackSuccessIncludesSummary) {
+    gis::framework::Result result = gis::framework::Result::ok("done", "/tmp/out.tif");
+    result.metadata[gis::framework::ResultMetadataKeys::kSummary] = "size=10x10";
+
+    const auto feedback = gis::gui::buildTaskExecutionFeedback(result, 1200, true, false);
+    EXPECT_TRUE(feedback.summaryText.contains(QStringLiteral("执行成功")));
+    EXPECT_EQ(feedback.summaryTone, QStringLiteral("success"));
+    EXPECT_TRUE(feedback.showResultPreview);
+}
+
+TEST(GuiSupportTest, BuildTaskExecutionFeedbackFailureUsesLocalizedMessage) {
+    gis::framework::Result result = gis::framework::Result::fail("Cannot open input");
+
+    const auto feedback = gis::gui::buildTaskExecutionFeedback(result, 0, false, false);
+    EXPECT_TRUE(feedback.summaryText.contains(QStringLiteral("执行失败")));
+    EXPECT_TRUE(feedback.summaryText.contains(QStringLiteral("无法打开文件")));
+    EXPECT_EQ(feedback.summaryTone, QStringLiteral("error"));
+}
+
+TEST(GuiSupportTest, TaskStatusTextMapsKnownStates) {
+    EXPECT_EQ(gis::gui::taskStatusText(gis::gui::TaskStatusKind::Completed),
+              QStringLiteral("已完成"));
+    EXPECT_EQ(gis::gui::taskStatusText(gis::gui::TaskStatusKind::Failed),
+              QStringLiteral("失败"));
 }

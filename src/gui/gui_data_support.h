@@ -112,6 +112,21 @@ struct BatchExecutionState {
     std::string summaryTone;
 };
 
+enum class TaskStatusKind {
+    Pending,
+    Running,
+    Completed,
+    Cancelled,
+    Failed,
+};
+
+struct TaskExecutionFeedback {
+    QString summaryText;
+    QString summaryTone;
+    QString statusBarMessage;
+    bool showResultPreview = false;
+};
+
 struct GroupSelectionText {
     QString title;
     QString description;
@@ -189,6 +204,18 @@ std::string resolveGroupedActionPlugin(
     const std::string& selectionKey,
     const std::string& actionKey);
 int countDisplayPluginGroups(const std::vector<gis::framework::IGisPlugin*>& plugins);
+gis::framework::IGisPlugin* findPluginByName(
+    gis::framework::PluginManager& pluginManager,
+    const std::string& pluginName);
+QString taskStatusIcon(TaskStatusKind status);
+QString taskStatusText(TaskStatusKind status);
+QString taskStatusColor(TaskStatusKind status);
+TaskExecutionFeedback buildTaskExecutionFeedback(
+    const gis::framework::Result& result,
+    qint64 durationMs,
+    bool success,
+    bool cancelled);
+QString summaryStyleSheetForTone(const QString& tone);
 GroupSelectionText buildGroupSelectionText(const std::string& pluginName,
                                           const std::string& pluginDisplayName,
                                           const std::string& pluginDescription,

@@ -1159,13 +1159,7 @@ void MainWindow::dropEvent(QDropEvent* event) {
 void MainWindow::onRerunTask(const QString& taskId) {
     auto rec = TaskManager::instance().findTask(taskCenterPage_->currentGroup(), taskId);
     if (rec.id.isEmpty()) return;
-    currentPlugin_ = nullptr;
-    for (auto* plugin : pluginManager_.plugins()) {
-        if (plugin->name() == rec.pluginName.toStdString()) {
-            currentPlugin_ = plugin;
-            break;
-        }
-    }
+    currentPlugin_ = gis::gui::findPluginByName(pluginManager_, rec.pluginName.toStdString());
     if (!currentPlugin_) return;
 
     currentActionKey_ = rec.actionKey;
@@ -1264,16 +1258,8 @@ void MainWindow::onTaskRunnerFinished(const QString& displayGroup,
         if (batchState.finished) {
             isBatchMode_ = false;
             resultSummaryLabel_->setText(batchState.summaryText);
-            if (batchState.summaryTone == "success") {
-                resultSummaryLabel_->setStyleSheet(
-                    QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
-            } else if (batchState.summaryTone == "error") {
-                resultSummaryLabel_->setStyleSheet(
-                    QStringLiteral("color: %1;").arg(gis::style::Color::kError));
-            } else if (batchState.summaryTone == "warning") {
-                resultSummaryLabel_->setStyleSheet(
-                    QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
-            }
+            resultSummaryLabel_->setStyleSheet(
+                gis::gui::summaryStyleSheetForTone(QString::fromStdString(batchState.summaryTone)));
             resetResultPreviewState();
         }
 
@@ -1287,40 +1273,32 @@ void MainWindow::onTaskRunnerFinished(const QString& displayGroup,
     }
 
     if (success) {
-        if (!result.result.outputPath.empty()) {
-            SettingsManager::instance().addRecentFile(
-                QString::fromUtf8(result.result.outputPath));
-        }
-        QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result.result));
-        if (result.durationMs > 0) {
-            summary += QStringLiteral("\n耗时：%1").arg(gis::gui::formatDurationText(result.durationMs));
-        }
-        resultSummaryLabel_->setText(
-            QStringLiteral("执行成功\n%1").arg(summary));
-        resultSummaryLabel_->setStyleSheet(
-            QStringLiteral("color: %1;").arg(gis::style::Color::kSuccess));
-        statusBar()->showMessage(QStringLiteral("执行成功"));
+        const auto feedback = gis::gui::buildTaskExecutionFeedback(
+            result.result, result.durationMs, true, false);
+        resultSummaryLabel_->setText(feedback.summaryText);
+        resultSummaryLabel_->setStyleSheet(gis::gui::summaryStyleSheetForTone(feedback.summaryTone));
+        statusBar()->showMessage(feedback.statusBarMessage);
 
-        showResultPreview(QString::fromUtf8(result.result.outputPath), result.result.metadata);
-    } else if (cancelled) {
-        QString cancelText = QStringLiteral("任务已取消");
-        if (result.durationMs > 0) {
-            cancelText += QStringLiteral("\n耗时：%1").arg(gis::gui::formatDurationText(result.durationMs));
+        if (feedback.showResultPreview) {
+            if (!result.result.outputPath.empty()) {
+                SettingsManager::instance().addRecentFile(
+                    QString::fromUtf8(result.result.outputPath));
+            }
+            showResultPreview(QString::fromUtf8(result.result.outputPath), result.result.metadata);
         }
-        resultSummaryLabel_->setText(cancelText);
-        resultSummaryLabel_->setStyleSheet(
-            QStringLiteral("color: %1;").arg(gis::style::Color::kWarning));
-        statusBar()->showMessage(QStringLiteral("执行已取消"));
+    } else if (cancelled) {
+        const auto feedback = gis::gui::buildTaskExecutionFeedback(
+            result.result, result.durationMs, false, true);
+        resultSummaryLabel_->setText(feedback.summaryText);
+        resultSummaryLabel_->setStyleSheet(gis::gui::summaryStyleSheetForTone(feedback.summaryTone));
+        statusBar()->showMessage(feedback.statusBarMessage);
         resetResultPreviewState();
     } else {
-        QString failText = QStringLiteral("执行失败\n%1").arg(localizedMessage);
-        if (result.durationMs > 0) {
-            failText += QStringLiteral("\n耗时：%1").arg(gis::gui::formatDurationText(result.durationMs));
-        }
-        resultSummaryLabel_->setText(failText);
-        resultSummaryLabel_->setStyleSheet(
-            QStringLiteral("color: %1;").arg(gis::style::Color::kError));
-        statusBar()->showMessage(QStringLiteral("执行失败：") + localizedMessage);
+        const auto feedback = gis::gui::buildTaskExecutionFeedback(
+            result.result, result.durationMs, false, false);
+        resultSummaryLabel_->setText(feedback.summaryText);
+        resultSummaryLabel_->setStyleSheet(gis::gui::summaryStyleSheetForTone(feedback.summaryTone));
+        statusBar()->showMessage(feedback.statusBarMessage);
         resetResultPreviewState();
     }
 
