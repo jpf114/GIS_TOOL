@@ -1,269 +1,285 @@
-﻿# GIS Tool
-
-鍩轰簬 `C++17 + GDAL + OpenCV + PROJ + Qt` 鐨勬彃浠跺紡 GIS / 閬ユ劅绠楁硶宸ヤ綔鍙帮紝鎻愪緵 CLI 鍜?GUI 鍙屽叆鍙ｏ紝褰撳墠浠呮敮鎸?Windows銆?
-## 褰撳墠鐘舵€?
-- 褰撳墠鐗堟湰锛歚v1.0.0`
-- 鏍囧噯鏋勫缓鐩綍锛?  - `build/debug`
-  - `build/release`
-- 榛樿瀹夎涓庝氦浠樺舰鎬侊細`Release`
-- 渚濊禆绠＄悊锛氫粨搴撻攣瀹氱殑 `vcpkg manifest`
-- 褰撳墠浜у搧杈圭晫锛氳仛鐒︾畻娉曞伐浣滃彴锛屼笉鍖呭惈鍦板浘灞曠ず骞冲彴鑳藉姏
-
-### 鏈€杩戜竴娆￠獙鏀惰褰曪紙2026-05-15锛?
-- `cmake --build build/debug --config Debug --target gis_tests` 閫氳繃
-- `ctest --test-dir build/debug -C Debug -N` 鍙戠幇 `405` 涓祴璇?- `ctest --test-dir build/debug -C Debug -R "CoreTest|FrameworkTest" --output-on-failure`锛歚45/45` 閫氳繃
-- `ctest --test-dir build/debug -C Debug -R "gui_smoke_startup" --output-on-failure`锛歚1/1` 閫氳繃
-- `build/debug/src/cli/Debug/gis-cli.exe --list` 姝ｅ父锛屽彲鍒楀嚭 13 涓彃浠?- `build/debug/src/gui/Debug/gis-gui.exe -platform minimal --self-test` 姝ｅ父
-- Debug 鍏ㄩ噺 `ctest --test-dir build/debug -C Debug --output-on-failure` 鏈湴鎵ц瓒呰繃 5 鍒嗛挓锛屾湭鍦ㄥ綋杞窇瀹岋紱鍙戝竷鍓嶄粛闇€瀹屾暣鎵ц
-- GUI 鐨勪换鍔￠槦鍒椼€佹壒閲忓鐞嗐€佽€楁椂缁熻銆侀敊璇彁绀虹瓑涓婚摼鑳藉姏鍙敤
-- `cmake --build build/release --config Release --target real_matching_regression` 閫氳繃
-- `cmake --build build/release --config Release --target real_matching_regression_full` 閫氳繃
-- `cmake --build build/release --config Release --target real_raster_regression` 閫氳繃
-- `cmake --build build/release --config Release --target real_raster_regression_full` 閫氳繃
-- `cmake --build build/release --config Release --target real_vector_regression` 閫氳繃
-- `cmake --build build/release --config Release --target real_vector_regression_full` 閫氳繃
-- `tmp/` 褰撳墠涓虹┖
-
-## 涓昏鑳藉姏鍩?
-- 鎶曞奖杞崲
-- 褰卞儚瑁佸垏涓庨暥宓?- 鐗瑰緛鍖归厤涓庨厤鍑?- 褰卞儚澶勭悊涓庡垎鏋?- 鍒嗙被缁熻
-- 鍑犱綍鏍℃涓庤緪灏勫鐞?- 鍦板舰鍒嗘瀽
-- 鍏夎氨鎸囨暟
-- 鏍呮牸宸ュ叿
-- 鐭㈤噺鏁版嵁澶勭悊
-
-## 鎻掍欢涓庤兘鍔涙槧灏?
-- `projection` -> 鎶曞奖杞崲
-- `cutting` -> 褰卞儚瑁佸垏涓庨暥宓?- `matching` -> 鐗瑰緛鍖归厤涓庨厤鍑?- `processing` -> 褰卞儚澶勭悊涓庡垎鏋?- `classification` -> 鍒嗙被缁熻
-- `georef` -> 鍑犱綍鏍℃涓庤緪灏勫鐞?- `terrain` -> 鍦板舰鍒嗘瀽
-- `spindex` -> 鍏夎氨鎸囨暟
-- `raster_manage / raster_inspect / raster_render / raster_math` -> 鏍呮牸宸ュ叿
-- `vector` -> 鐭㈤噺鏁版嵁澶勭悊
-
-## GUI 褰掑苟璇存槑
-
-- GUI 宸︿晶瀵艰埅宸插皢 `raster_manage / raster_inspect / raster_render / raster_math` 褰掑苟涓哄崟涓€鈥滄爡鏍煎伐鍏封€濆叆鍙?- `classification` 鍦?GUI 涓粺涓€浠モ€滃垎绫荤粺璁♀€濅綔涓轰富椤癸紝鍏蜂綋鍔ㄤ綔浣滀负瀛愬姛鑳藉憟鐜?- GUI 涓?CLI 鏈€缁堥兘钀藉埌鍚屼竴濂楁彃浠舵墽琛岄摼璺?
-## 褰撳墠宸茶ˉ榻愮殑閲嶇偣鑳藉姏
-
-### processing
-
-- `gabor_filter`
-- `glcm_texture`
-- `mean_shift_filter`
-- `skeleton`
-- `connected_components`
-- `pansharpen`
-
-### classification
-
-- `feature_stats`
-- `svm_classify`
-- `random_forest_classify`
-- `max_likelihood_classify`
-
-### georef
-
-- `dos_correction`
-- `radiometric_calibration`
-- `gcp_register`
-- `cosine_correction`
-- `minnaert_correction`
-- `c_correction`
-- `percentile_stretch`
-- `rpc_orthorectify`
-
-### projection
-
-- `info`
-- `transform`
-- `assign_srs`
-- `reproject`
-
-### cutting
-
-- `clip`
-- `mosaic`
-- `split`
-- `merge_bands`
-
-### vector
-
-- `intersect`
-- `simplify`
-- `repair`
-- `geom_metrics`
-- `nearest`
-- `spatial_join`
-- `adjacency`
-- `overlap_check`
-- `topology_check`
-- `convex_hull`
-- `centroid`
-- `envelope`
-- `boundary`
-- `multipart_check`
-- `singlepart`
-- `vertices_extract`
-- `endpoints_extract`
-- `midpoints_extract`
-- `interior_point`
-- `duplicate_point_check`
-- `hole_check`
-- `dangling_endpoint_check`
-- `sliver_remove`
-
-## 瀹屾暣鎬ц鏄?
-浠ヤ笂閲嶇偣鑳藉姏褰撳墠閮藉凡缁忚疮閫氬埌浠ヤ笅灞傜骇锛?
-- 搴曞眰绠楁硶 / 鎻掍欢瀹炵幇
-- CLI 璋冪敤閾捐矾
-- GUI 鎺ュ叆
-- GUI 鍙傛暟鏍￠獙
-- 鎻掍欢娴嬭瘯
-- GUI support 娴嬭瘯
-- GUI 绂诲睆鍥炲綊
-- 鐪熷疄鏁版嵁涓撻」鍥炲綊
-- Release 瀹夎涓庡惎鍔ㄩ獙鏀?
-## 鏋勫缓
-
-### Debug
-
-```powershell
-cmake -S . -B build/debug -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
-cmake --build build/debug --config Debug
-ctest --test-dir build/debug -C Debug --output-on-failure
-```
-
-### Release
-
-```powershell
-cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
-cmake --build build/release --config Release
-cmake --install build/release --config Release
-```
-
-绾﹀畾锛?
-- 鏃ュ父寮€鍙戦獙璇佷娇鐢?`build/debug`
-- 榛樿瀹夎涓庝氦浠樹娇鐢?`build/release`
-- 鍙戝竷鍓嶈嚦灏戞墽琛屼竴娆?`Debug 鍏ㄩ噺娴嬭瘯 + Release 鏋勫缓瀹夎`
-
-## 鍙戝竷鍓嶆爣鍑嗛獙鏀跺熀绾?
-鍙戝竷鍓嶈嚦灏戝畬鏁存墽琛屼竴娆′互涓嬪懡浠わ細
-
-```powershell
-ctest --test-dir build/debug -C Debug --output-on-failure
-ctest --test-dir build/release -C Release --output-on-failure
-cmake --build build/release --config Release --target real_raster_regression
-cmake --build build/release --config Release --target real_matching_regression
-cmake --build build/release --config Release --target real_vector_regression
-```
-
-## 鐪熷疄鏁版嵁涓撻」鍥炲綊
-
-### Debug
-
-```powershell
-cmake --build build/debug --config Debug --target real_matching_regression
-cmake --build build/debug --config Debug --target real_matching_regression_full
-cmake --build build/debug --config Debug --target real_raster_regression
-cmake --build build/debug --config Debug --target real_raster_regression_full
-cmake --build build/debug --config Debug --target real_vector_regression
-cmake --build build/debug --config Debug --target real_vector_regression_full
-```
-
-### Release
-
-```powershell
-cmake --build build/release --config Release --target real_matching_regression
-cmake --build build/release --config Release --target real_matching_regression_full
-cmake --build build/release --config Release --target real_raster_regression
-cmake --build build/release --config Release --target real_raster_regression_full
-cmake --build build/release --config Release --target real_vector_regression
-cmake --build build/release --config Release --target real_vector_regression_full
-```
-
-褰撳墠宸茬‘璁ら€氳繃鐨勪笓椤瑰寘鎷細
-
-- `matching`
-  - `detect / corner / match / register / change`
-  - Release 棰濆瑕嗙洊锛歚ecc_register / stitch`
-- `projection`
-  - `info / transform / assign_srs / reproject`
-- `cutting`
-  - `clip / mosaic / split / merge_bands`
-- `processing`
-  - `pansharpen / gabor_filter / glcm_texture / mean_shift_filter / skeleton / connected_components`
-- `classification`
-  - `feature_stats / svm_classify / random_forest_classify / max_likelihood_classify`
-  - `full` 棰濆瑕嗙洊锛歚feature_stats_csv`
-- `georef`
-  - `dos_correction / radiometric_calibration / gcp_register / cosine_correction / minnaert_correction / c_correction / percentile_stretch / rpc_orthorectify`
-- `spindex`
-  - `ndvi / ndmi / evi / evi2 / savi / osavi / gndvi / ndwi / mndwi / ndbi / bsi / arvi / nbr / awei / ui / bi / custom_index`
-- `terrain`
-  - 褰撳墠宸插缓绔嬪叧閿姩浣滅殑鐪熷疄鏁版嵁鍥炲綊閾捐矾
-- `vector`
-  - 褰撳墠宸插缓绔嬩富閾惧姩浣滅殑鐪熷疄鏁版嵁鍥炲綊閾捐矾
-
-褰撳墠 `real_raster_regression` 鐨勯噸鐐归獙鏀跺彛寰勫涓嬶細
-
-- `classification.feature_stats`
-  - `quick`锛氶獙璇?`json / vector_output / raster_output`
-  - `full`锛氶澶栭獙璇?`csv`
-  - 琛ュ厖鏍￠獙 `actual_srs` 涓?`__summary__`
-- `classification.svm_classify / random_forest_classify / max_likelihood_classify`
-  - 楠岃瘉杈撳嚭灏哄 `24 x 12 x 1`
-  - 楠岃瘉杈撳嚭绫诲瀷 `Float32`
-  - 楠岃瘉绫诲埆鑼冨洿 `1~2`
-- `projection.info / transform / assign_srs / reproject`
-  - 楠岃瘉灏哄銆丒PSG 缂栫爜銆佸潗鏍囪浆鎹㈢粨鏋滀笌閲嶆姇褰辫緭鍑?- `cutting.clip / mosaic / split / merge_bands`
-  - 楠岃瘉杈撳嚭灏哄銆佺摝鐗囨暟閲忋€佹尝娈垫暟閲忎笌鍏抽敭缁熻鍊?- `processing.pansharpen`
-  - 鍥哄畾楠岃瘉 `pan_method=simple_mean`
-- `processing.gabor_filter / glcm_texture / mean_shift_filter`
-  - 楠岃瘉杈撳嚭灏哄 `32 x 32 x 1`
-  - 楠岃瘉杈撳嚭绫诲瀷 `Float32`
-- `processing.skeleton / connected_components`
-  - 楠岃瘉杈撳嚭灏哄 `64 x 64 x 1`
-  - `skeleton` 鏍￠獙鏈€澶у€?`1.0`
-  - `connected_components` 鏍￠獙鏈€澶ф爣绛惧€?`4`
-- `georef`
-  - 8 涓姩浣滅粺涓€鏍￠獙杈撳嚭灏哄銆佽緭鍑虹被鍨嬨€丆RS 鎴栧叧閿粺璁″€?- `spindex`
-  - 鍥哄畾楠岃瘉涓绘祦鎸囨暟杈撳嚭
-  - `custom_index` 浣跨敤 `preset=ndvi_alias / ndmi_alias` 浣滀负绋冲畾楠屾敹鍏ュ彛
-- `terrain`
-  - 褰撳墠棰濆鏍￠獙 `slope / profile_extract / viewshed_multi` 绛夊叧閿粨鏋?
-## 浣跨敤
-
-### 鍒楀嚭鎻掍欢
-
-```powershell
-.\install\bin\gis-cli.exe --list
-```
-
-### 杩愯绠楁硶
-
-```powershell
-.\install\bin\gis-cli.exe <plugin> <action> --input <path> --output <path>
-```
-
-### 鍚姩 GUI
-
-```powershell
-.\install\bin\gis-gui.exe
-```
-
-## 鏂囨。
-
-- [鏂囨。绱㈠紩](./docs/README.md)
-- [褰撳墠鍙戝竷璇存槑](./docs/v1.0.0鍙戝竷璇存槑.md)
-- [绠楁硶璇存槑鎬昏](./docs/绠楁硶璇存槑/鎬昏.md)
-- [鏋舵瀯璁捐鏂囨。](./docs/鏋舵瀯璁捐鏂囨。.md)
-- [鐢ㄦ埛鎵嬪唽](./docs/鐢ㄦ埛鎵嬪唽.md)
-- [鍘嗗彶褰掓。璇存槑](./docs/archive/README.md)
-
-## 璇存槑
-
-- 浠撳簱褰撳墠涓绘枃妗ｇ粺涓€浣跨敤涓枃
-- 鎻愪氦淇℃伅褰撳墠缁熶竴浣跨敤涓枃
-- 褰撳墠闃舵浼樺厛淇濊瘉绠€鍗曘€佸彲缁存姢銆佸彲鍥炲綊
-- `pointcloud` 褰撳墠涓嶈鍏ュ凡瀹屾垚涓绘ā鍧楋紝鐩稿叧渚濊禆鏉′欢灏氭湭婊¤冻
-
+# GIS Tool
+
+基于 `C++17 + GDAL + OpenCV + PROJ + Qt` 的插件式 GIS / 遥感算法工作台，提供 CLI 和 GUI 双入口，当前仅支持 Windows。
+## 当前状态
+- 当前版本：`v1.0.0`
+- 标准构建目录：
+  - `build/debug`
+  - `build/release`
+- 默认安装与交付形态：`Release`
+- 依赖管理：仓库锁定的 `vcpkg manifest`
+- 当前产品边界：聚焦算法工作台，不包含地图展示平台能力
+
+### 最近一次验收记录（2026-05-15）
+- `cmake --build build/debug --config Debug --target gis_tests` 通过
+- `ctest --test-dir build/debug -C Debug -N` 发现 `405` 个测试
+- `ctest --test-dir build/debug -C Debug -R "CoreTest|FrameworkTest" --output-on-failure`：`45/45` 通过
+- `ctest --test-dir build/debug -C Debug -R "gui_smoke_startup" --output-on-failure`：`1/1` 通过
+- `build/debug/src/cli/Debug/gis-cli.exe --list` 正常，可列出 13 个插件
+- `build/debug/src/gui/Debug/gis-gui.exe -platform minimal --self-test` 正常
+- Debug 全量 `ctest --test-dir build/debug -C Debug --output-on-failure` 本地执行超过 5 分钟，未在当轮跑完；发布前仍需完整执行
+- GUI 的任务队列批量处理时统计、错误提示等主链能力可用
+- `cmake --build build/release --config Release --target real_matching_regression` 通过
+- `cmake --build build/release --config Release --target real_matching_regression_full` 通过
+- `cmake --build build/release --config Release --target real_raster_regression` 通过
+- `cmake --build build/release --config Release --target real_raster_regression_full` 通过
+- `cmake --build build/release --config Release --target real_vector_regression` 通过
+- `cmake --build build/release --config Release --target real_vector_regression_full` 通过
+- `tmp/` 当前为空
+
+## 主要能力
+- 投影转换
+- 影像裁切与镶嵌
+- 特征匹配与配准
+- 影像处理与分析
+- 分类统计
+- 几何校正与辐射处理
+- 地形分析
+- 光谱指数
+- 栅格工具
+- 矢量数据处理
+
+## 插件与能力映射
+- `projection` -> 投影转换
+- `cutting` -> 影像裁切与镶嵌
+- `matching` -> 特征匹配与配准
+- `processing` -> 影像处理与分析
+- `classification` -> 分类统计
+- `georef` -> 几何校正与辐射处理
+- `terrain` -> 地形分析
+- `spindex` -> 光谱指数
+- `raster_manage / raster_inspect / raster_render / raster_math` -> 栅格工具
+- `vector` -> 矢量数据处理
+
+## GUI 归并说明
+
+- GUI 左侧导航已将 `raster_manage / raster_inspect / raster_render / raster_math` 归并为单独"栅格工具"入口
+- `classification` 和 GUI 中统一以分类统计作为主项，具体动作作为子功能呈现
+- GUI 和 CLI 最终都落到同一套插件执行链路
+## 当前已补齐的重点能力
+
+### processing
+
+- `gabor_filter`
+- `glcm_texture`
+- `mean_shift_filter`
+- `skeleton`
+- `connected_components`
+- `pansharpen`
+
+### classification
+
+- `feature_stats`
+- `svm_classify`
+- `random_forest_classify`
+- `max_likelihood_classify`
+
+### georef
+
+- `dos_correction`
+- `radiometric_calibration`
+- `gcp_register`
+- `cosine_correction`
+- `minnaert_correction`
+- `c_correction`
+- `percentile_stretch`
+- `rpc_orthorectify`
+
+### projection
+
+- `info`
+- `transform`
+- `assign_srs`
+- `reproject`
+
+### cutting
+
+- `clip`
+- `mosaic`
+- `split`
+- `merge_bands`
+
+### vector
+
+- `intersect`
+- `simplify`
+- `repair`
+- `geom_metrics`
+- `nearest`
+- `spatial_join`
+- `adjacency`
+- `overlap_check`
+- `topology_check`
+- `convex_hull`
+- `centroid`
+- `envelope`
+- `boundary`
+- `multipart_check`
+- `singlepart`
+- `vertices_extract`
+- `endpoints_extract`
+- `midpoints_extract`
+- `interior_point`
+- `duplicate_point_check`
+- `hole_check`
+- `dangling_endpoint_check`
+- `sliver_remove`
+
+## 完整性说明
+以上重点能力当前都已经贯通到以下层级：
+- 底层算法 / 插件实现
+- CLI 调用链路
+- GUI 接入
+- GUI 参数校验
+- 插件测试
+- GUI support 测试
+- GUI 离屏回归
+- 真实数据专项回归
+- Release 安装与启动验收
+## 构建
+
+### Debug
+
+```powershell
+cmake -S . -B build/debug -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
+cmake --build build/debug --config Debug
+ctest --test-dir build/debug -C Debug --output-on-failure
+```
+
+### Release
+
+```powershell
+cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DGIS_BUILD_GUI=ON -DGIS_BUILD_TESTS=ON
+cmake --build build/release --config Release
+cmake --install build/release --config Release
+```
+
+约定：
+- 日常开发验证使用`build/debug`
+- 默认安装与交付使用`build/release`
+- 发布前至少执行一次`Debug 全量测试 + Release 构建安装`
+
+## 发布前标准验收基线
+发布前至少完整执行一次以下命令：
+
+```powershell
+ctest --test-dir build/debug -C Debug --output-on-failure
+ctest --test-dir build/release -C Release --output-on-failure
+cmake --build build/release --config Release --target real_raster_regression
+cmake --build build/release --config Release --target real_matching_regression
+cmake --build build/release --config Release --target real_vector_regression
+```
+
+## 真实数据专项回归
+
+### Debug
+
+```powershell
+cmake --build build/debug --config Debug --target real_matching_regression
+cmake --build build/debug --config Debug --target real_matching_regression_full
+cmake --build build/debug --config Debug --target real_raster_regression
+cmake --build build/debug --config Debug --target real_raster_regression_full
+cmake --build build/debug --config Debug --target real_vector_regression
+cmake --build build/debug --config Debug --target real_vector_regression_full
+```
+
+### Release
+
+```powershell
+cmake --build build/release --config Release --target real_matching_regression
+cmake --build build/release --config Release --target real_matching_regression_full
+cmake --build build/release --config Release --target real_raster_regression
+cmake --build build/release --config Release --target real_raster_regression_full
+cmake --build build/release --config Release --target real_vector_regression
+cmake --build build/release --config Release --target real_vector_regression_full
+```
+
+当前已确认过的专项包括：
+
+- `matching`
+  - `detect / corner / match / register / change`
+  - Release 额外覆盖：`ecc_register / stitch`
+- `projection`
+  - `info / transform / assign_srs / reproject`
+- `cutting`
+  - `clip / mosaic / split / merge_bands`
+- `processing`
+  - `pansharpen / gabor_filter / glcm_texture / mean_shift_filter / skeleton / connected_components`
+- `classification`
+  - `feature_stats / svm_classify / random_forest_classify / max_likelihood_classify`
+  - `full` 额外覆盖：`feature_stats_csv`
+- `georef`
+  - `dos_correction / radiometric_calibration / gcp_register / cosine_correction / minnaert_correction / c_correction / percentile_stretch / rpc_orthorectify`
+- `spindex`
+  - `ndvi / ndmi / evi / evi2 / savi / osavi / gndvi / ndwi / mndwi / ndbi / bsi / arvi / nbr / awei / ui / bi / custom_index`
+- `terrain`
+  - 当前已建立关键动作的真实数据回归链路
+- `vector`
+  - 当前已建立主链动作的真实数据回归链路
+
+当前 `real_raster_regression` 的重点验收口径如下：
+
+- `classification.feature_stats`
+  - `quick`：验收`json / vector_output / raster_output`
+  - `full`：额外验收`csv`
+  - 补充校验 `actual_srs` 和 `__summary__`
+- `classification.svm_classify / random_forest_classify / max_likelihood_classify`
+  - 验证输出尺寸 `24 x 12 x 1`
+  - 验证输出类型 `Float32`
+  - 验证类别范围 `1~2`
+- `projection.info / transform / assign_srs / reproject`
+  - 验证尺寸、EPSG 编码、坐标转换结果与重投影输出
+- `cutting.clip / mosaic / split / merge_bands`
+  - 验证输出尺寸、瓦片数量波段数量与关键统计值
+- `processing.pansharpen`
+  - 固定验证 `pan_method=simple_mean`
+- `processing.gabor_filter / glcm_texture / mean_shift_filter`
+  - 验证输出尺寸 `32 x 32 x 1`
+  - 验证输出类型 `Float32`
+- `processing.skeleton / connected_components`
+  - 验证输出尺寸 `64 x 64 x 1`
+  - `skeleton` 校验最大值`1.0`
+  - `connected_components` 校验最大标签数`4`
+- `georef`
+  - 8 个动作统一校验输出尺寸、输出类型CRS 或关键统计值
+- `spindex`
+  - 固定验证主流指数输出
+  - `custom_index` 使用 `preset=ndvi_alias / ndmi_alias` 作为稳定验收入口
+- `terrain`
+  - 当前额外校验 `slope / profile_extract / viewshed_multi` 等关键结果
+## 使用
+
+### 列出插件
+
+```powershell
+.\install\bin\gis-cli.exe --list
+```
+
+### 运行算法
+
+```powershell
+.\install\bin\gis-cli.exe <plugin> <action> --input <path> --output <path>
+```
+
+### 启动 GUI
+
+```powershell
+.\install\bin\gis-gui.exe
+```
+
+## 文档
+
+- [文档索引](./docs/README.md)
+- [当前发布说明](./docs/v1.0.0发布说明.md)
+- [算法说明总览](./docs/算法说明/总览.md)
+- [架构设计文档](./docs/架构设计文档.md)
+- [用户手册](./docs/用户手册.md)
+- [历史归档说明](./docs/archive/README.md)
+
+## 说明
+
+- 仓库当前主文档统一使用中文
+- 提交信息当前统一使用中文
+- 当前阶段优先保证简单可维护、可回归
+- `pointcloud` 当前不计入已完成主模块，相关依赖条件尚未满足
+
