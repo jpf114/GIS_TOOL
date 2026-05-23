@@ -804,6 +804,15 @@ cmake --build build/release --config Release --target real_vector_regression_ful
 - [历史归档说明](./docs/archive/README.md)
 
 
+- [贡献指南](./CONTRIBUTING.md)
+
+
+- [更新日志](./CHANGELOG.md)
+
+
+- [安全策略](./SECURITY.md)
+
+
 
 
 
