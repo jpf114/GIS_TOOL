@@ -41,6 +41,7 @@
 - `ctest --test-dir build/debug -C Debug -R "gui_smoke_startup"`：`1/1` 通过
 - `ctest -N` 当前发现 `463` 个测试（较此前 `405` 有增加）
 - Debug 全量 `ctest` 与部分 GUI 离屏回归（如 `gui_vector_convert_offscreen`）在本机仍可能出现 Access violation，需结合 Release 构建与 CI 结果继续验收
+- `ctest -R "MainWindowTest|GuiSupportTest.BuildTaskExecutionFeedback|FrameworkTest.MergeResultMetadata"`：`19/19` 通过（2026-05-23）
 
 ### 历史验收记录（2026-05-15）
 

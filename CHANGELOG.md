@@ -17,6 +17,7 @@
 - Workflow / Logger / PerformanceMonitor 能力定级与文档同步
 - GUI 导航目录函数外提至 `gui_data_support`，精简 `MainWindow`
 - CLI / GUI 元数据输出统一为 `orderedMetadataEntries` 顺序
+- 任务执行反馈、任务状态展示与 `ResultMetadataKeys` 收敛到支持层
 - README 补充日常 / 提交前 / 发布前三套测试入口
 
 ### 修复
