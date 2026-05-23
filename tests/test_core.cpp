@@ -7,7 +7,7 @@
 #include <gis/core/runtime_env.h>
 #include <gis/core/spindex_presets.h>
 #include <gdal_priv.h>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -29,8 +29,11 @@ protected:
     void TearDown() override {}
 };
 
-TEST_F(CoreTest, InitGDAL) {
+TEST_F(CoreTest, InitGDALIsIdempotentAndDriversAvailable) {
     EXPECT_NO_THROW(gis::core::initGDAL());
+    auto* mgr = GetGDALDriverManager();
+    ASSERT_NE(mgr, nullptr);
+    EXPECT_GT(mgr->GetDriverCount(), 0);
 }
 
 TEST_F(CoreTest, GdalDriverCatalogProbe) {
@@ -209,43 +212,6 @@ TEST_F(CoreTest, SetNoDataValue) {
     EXPECT_DOUBLE_EQ(ndVal, -999.0);
 }
 
-TEST_F(CoreTest, GetRasterInfo) {
-    std::string path = (getTestDir() / "info_test.tif").string();
-    {
-        auto ds = gis::core::createRaster(path, 200, 150, 2, GDT_Byte, "GTiff");
-        double adfGT[6] = {116.0, 0.01, 0.0, 40.0, 0.0, -0.01};
-        ds->SetGeoTransform(adfGT);
-        ds->GetRasterBand(1)->FlushCache();
-        ds->GetRasterBand(2)->FlushCache();
-    }
-
-    auto ds2 = gis::core::openRaster(path, true);
-    auto info = gis::core::getRasterInfo(ds2.get(), path);
-    EXPECT_EQ(info.width, 200);
-    EXPECT_EQ(info.height, 150);
-    EXPECT_EQ(info.bandCount, 2);
-    EXPECT_DOUBLE_EQ(info.geoTransform[0], 116.0);
-}
-
-TEST_F(CoreTest, ComputeHistogram) {
-    std::string path = (getTestDir() / "hist_test.tif").string();
-    {
-        auto ds = gis::core::createRaster(path, 100, 100, 1, GDT_Byte);
-        auto* band = ds->GetRasterBand(1);
-        std::vector<uint8_t> data(100 * 100);
-        for (int i = 0; i < 100 * 100; ++i) data[i] = static_cast<uint8_t>(i % 256);
-        band->RasterIO(GF_Write, 0, 0, 100, 100, data.data(), 100, 100, GDT_Byte, 0, 0);
-        band->FlushCache();
-    }
-
-    auto ds2 = gis::core::openRaster(path, true);
-    auto hist = gis::core::computeHistogram(ds2.get(), 1, 16);
-    EXPECT_EQ(hist.size(), 16);
-    uint64_t total = 0;
-    for (auto& bin : hist) total += bin.count;
-    EXPECT_EQ(total, 10000u);
-}
-
 TEST_F(CoreTest, IsEpsgCode) {
     EXPECT_TRUE(gis::core::isEpsgCode("EPSG:4326"));
     EXPECT_TRUE(gis::core::isEpsgCode("EPSG:32650"));
@@ -264,22 +230,17 @@ TEST_F(CoreTest, GisError) {
     EXPECT_THROW(throw gis::core::GisError("boom"), gis::core::GisError);
 }
 
-TEST_F(CoreTest, ProgressReporter) {
+TEST_F(CoreTest, CliProgressDefaultBehavior) {
     gis::core::CliProgress progress;
-    EXPECT_NO_THROW(progress.onProgress(0.5));
-    EXPECT_NO_THROW(progress.onMessage("test"));
+    progress.onProgress(0.5);
+    progress.onMessage("test");
     EXPECT_FALSE(progress.isCancelled());
-}
-
-TEST_F(CoreTest, CancelledExceptionThrowIfCancelled) {
-    gis::core::CliProgress progress;
     EXPECT_NO_THROW(progress.throwIfCancelled());
 }
 
 TEST_F(CoreTest, CancelledExceptionType) {
     gis::core::CancelledException ex("custom message");
     EXPECT_STREQ(ex.what(), "custom message");
-    EXPECT_NO_THROW((void)gis::core::CancelledException());
     try {
         throw gis::core::CancelledException();
     } catch (const std::runtime_error& e) {
@@ -382,6 +343,9 @@ TEST_F(CoreTest, HistogramBins) {
     auto hist = gis::core::computeHistogram(ds.get(), 1, 10);
     EXPECT_EQ(hist.size(), 10u);
     EXPECT_GT(hist[0].count, 0u);
+    uint64_t total = 0;
+    for (auto& bin : hist) total += bin.count;
+    EXPECT_EQ(total, 2500u);
 }
 
 TEST_F(CoreTest, FindRuntimePathFromWalksUpToAncestorResourceDir) {

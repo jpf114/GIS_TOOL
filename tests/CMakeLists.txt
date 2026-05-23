@@ -149,17 +149,13 @@ add_custom_command(TARGET gis_tests POST_BUILD
     COMMAND_EXPAND_LISTS
 )
 
-# Copy vcpkg runtime DLLs next to test executable so plugin DLLs can find dependencies
-add_custom_command(TARGET gis_tests POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${GIS_VCPKG_RUNTIME_BIN_DIR}
-        $<TARGET_FILE_DIR:gis_tests>
-)
+gis_copy_minimal_runtime(gis_tests DEST_DIR "$<TARGET_FILE_DIR:gis_tests>")
 
 include(GoogleTest)
 gtest_discover_tests(gis_tests
     WORKING_DIRECTORY $<TARGET_FILE_DIR:gis_tests>
     DISCOVERY_TIMEOUT 60
+    DISCOVERY_MODE PRE_TEST
 )
 
 if(TARGET gis-gui)

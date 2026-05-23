@@ -6,7 +6,7 @@
 
 int main(int argc, char** argv) {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
-        qputenv("QT_QPA_PLATFORM", QByteArray("minimal"));
+        qputenv("QT_QPA_PLATFORM", QByteArray("offscreen"));
     }
     QApplication app(argc, argv);
     gis::core::initRuntimeEnvironment();
