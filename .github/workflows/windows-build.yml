@@ -31,7 +31,7 @@ jobs:
             C:\vcpkg\bootstrap-vcpkg.bat
           }
 
-      - name: Install dependencies
+      - name: Install dependencies (global vcpkg)
         shell: pwsh
         env:
           VCPKG_ROOT: C:\vcpkg

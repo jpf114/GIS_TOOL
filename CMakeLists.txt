@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-# vcpkg 全局环境 + manifest 模式：使用系统 VCPKG_ROOT 指向的全局 vcpkg 安装
+# vcpkg 全局模式：使用 VCPKG_ROOT 指向的全局 vcpkg 安装，vcpkg.json 仅作依赖清单
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
         set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
