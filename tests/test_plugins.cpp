@@ -9,7 +9,7 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_error.h>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -5634,4 +5634,197 @@ TEST_F(PluginTest, MatchingPluginDebugLightweightActionsFailFast) {
     EXPECT_FALSE(stitchResult.success);
     EXPECT_NE(stitchResult.message.find("input is required"), std::string::npos);
 #endif
+}
+
+TEST_F(PluginTest, RasterMathReclassifyExecution) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("e2e_reclassify_input.tif", 30, 30);
+    const std::string output = utf8PathString(getTestDir() / "e2e_reclassify_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("reclassify");
+    params["input"] = input;
+    params["output"] = output;
+    params["reclass_rules"] = std::string("0,127:1\n128,255:2");
+    params["default_value"] = 0.0;
+    params["keep_unmatched"] = false;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+
+    EXPECT_NEAR(readRasterPixel(output, 0, 0), 1.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 20, 5), 2.0f, 1e-4f);
+}
+
+TEST_F(PluginTest, RasterMathRasterOverlayExecution) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    const std::string inputA = createConstantRaster("e2e_overlay_input_a.tif", 20, 20, 10.0f);
+    const std::string inputB = createConstantRaster("e2e_overlay_input_b.tif", 20, 20, 30.0f);
+    const std::string output = utf8PathString(getTestDir() / "e2e_overlay_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("raster_overlay");
+    params["input"] = inputA;
+    params["overlay_input"] = inputB;
+    params["output"] = output;
+    params["overlay_method"] = std::string("sum");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_NEAR(readRasterPixel(output, 5, 5), 40.0f, 1e-4f);
+}
+
+TEST_F(PluginTest, RasterManageZonalStatsExecution) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("e2e_zonal_input.tif", 30, 30);
+    const std::string vectorPath = createPolygonVectorDataset("e2e_zonal_zones.gpkg", 4326);
+    const std::string output = utf8PathString(getTestDir() / "e2e_zonal_output.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("zonal_stats");
+    params["input"] = input;
+    params["vector"] = vectorPath;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+}
+
+TEST_F(PluginTest, RasterManageProximityExecution) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("e2e_proximity_input.tif", 50, 50);
+    const std::string output = utf8PathString(getTestDir() / "e2e_proximity_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("algorithm"), "euclidean_distance_cv");
+
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterXSize(), 50);
+    EXPECT_EQ(outDs->GetRasterYSize(), 50);
+}
+
+TEST_F(PluginTest, MatchingStitchExecution) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    const std::string img1 = createPatternRaster("e2e_stitch_img1.tif");
+    const std::string img2 = createPatternRaster("e2e_stitch_img2.tif");
+    const std::string output = utf8PathString(getTestDir() / "e2e_stitch_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("stitch");
+    params["input"] = img1 + "," + img2;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    if (!result.success) {
+        EXPECT_NE(result.message.find("lightweight"), std::string::npos)
+            << "Unexpected failure: " << result.message;
+        return;
+    }
+    EXPECT_TRUE(fs::exists(output));
+    ASSERT_TRUE(result.metadata.count("input_count") > 0);
+    EXPECT_EQ(result.metadata.at("input_count"), "2");
+    ASSERT_TRUE(result.metadata.count("output_width") > 0);
+    ASSERT_TRUE(result.metadata.count("output_height") > 0);
+    EXPECT_GT(std::stoi(result.metadata.at("output_width")), 0);
+    EXPECT_GT(std::stoi(result.metadata.at("output_height")), 0);
+}
+
+TEST_F(PluginTest, MatchingEccRegisterExecution) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    const std::string reference = createPatternRaster("e2e_ecc_ref.tif");
+    const std::string input = reference;
+    const std::string output = utf8PathString(getTestDir() / "e2e_ecc_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("ecc_register");
+    params["reference"] = reference;
+    params["input"] = input;
+    params["output"] = output;
+    params["ecc_motion"] = std::string("affine");
+    params["ecc_iterations"] = 50;
+    params["ecc_epsilon"] = 1e-5;
+
+    const auto result = p->execute(params, progress_);
+    if (!result.success) {
+        EXPECT_NE(result.message.find("lightweight"), std::string::npos)
+            << "Unexpected failure: " << result.message;
+        return;
+    }
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("motion_type"), "affine");
+    ASSERT_TRUE(result.metadata.count("warp_matrix") > 0);
+
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterXSize(), 96);
+    EXPECT_EQ(outDs->GetRasterYSize(), 96);
+}
+
+TEST_F(PluginTest, ClassificationAccuracyAssessmentExecution) {
+    auto* p = mgr_.find("classification");
+    ASSERT_NE(p, nullptr);
+
+    const std::string classifiedPath = (getTestDir() / "e2e_accuracy_classified.tif").string();
+    const std::string referencePath = (getTestDir() / "e2e_accuracy_reference.tif").string();
+    const std::string outputPath = utf8PathString(getTestDir() / "e2e_accuracy_output.json");
+
+    {
+        auto classifiedDs = gis::core::createRaster(classifiedPath, 20, 10, 1, GDT_Int32);
+        double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+        classifiedDs->SetGeoTransform(adfGT);
+        std::vector<int32_t> data(20 * 10);
+        for (int i = 0; i < 20 * 10; ++i) data[i] = (i < 100) ? 1 : 2;
+        classifiedDs->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, 20, 10,
+            data.data(), 20, 10, GDT_Int32, 0, 0);
+        classifiedDs->GetRasterBand(1)->FlushCache();
+    }
+
+    {
+        auto referenceDs = gis::core::createRaster(referencePath, 20, 10, 1, GDT_Int32);
+        double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+        referenceDs->SetGeoTransform(adfGT);
+        std::vector<int32_t> data(20 * 10);
+        for (int i = 0; i < 20 * 10; ++i) data[i] = (i < 100) ? 1 : 2;
+        referenceDs->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, 20, 10,
+            data.data(), 20, 10, GDT_Int32, 0, 0);
+        referenceDs->GetRasterBand(1)->FlushCache();
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("accuracy_assessment");
+    params["classified_raster"] = classifiedPath;
+    params["reference_raster"] = referencePath;
+    params["output"] = outputPath;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(outputPath));
+    EXPECT_EQ(result.metadata.at("action"), "accuracy_assessment");
+    EXPECT_NEAR(std::stod(result.metadata.at("overall_accuracy")), 1.0, 1e-6);
+    ASSERT_TRUE(result.metadata.count("kappa") > 0);
+    ASSERT_TRUE(result.metadata.count("class_count") > 0);
+    EXPECT_EQ(result.metadata.at("class_count"), "2");
 }
