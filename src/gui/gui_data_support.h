@@ -14,6 +14,11 @@
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
 
+namespace gis::framework {
+class IGisPlugin;
+class PluginManager;
+}
+
 namespace gis::gui {
 
 enum class DataKind {
@@ -114,6 +119,12 @@ struct GroupSelectionText {
     QString statusText;
 };
 
+struct ActionCatalogItem {
+    std::string pluginName;
+    std::string actionKey;
+    std::string displayName;
+};
+
 struct ActionSelectionText {
     QString title;
     QString description;
@@ -169,6 +180,15 @@ bool isRasterToolsMember(const std::string& pluginName);
 std::string displayGroupForPlugin(const std::string& pluginName);
 QString rasterToolsGroupDisplayName();
 QString rasterToolsGroupDescription();
+QString formatDurationText(qint64 durationMs);
+std::vector<ActionCatalogItem> collectActionCatalogItems(
+    gis::framework::PluginManager& pluginManager,
+    const std::string& selectionKey);
+std::string resolveGroupedActionPlugin(
+    gis::framework::PluginManager& pluginManager,
+    const std::string& selectionKey,
+    const std::string& actionKey);
+int countDisplayPluginGroups(const std::vector<gis::framework::IGisPlugin*>& plugins);
 GroupSelectionText buildGroupSelectionText(const std::string& pluginName,
                                           const std::string& pluginDisplayName,
                                           const std::string& pluginDescription,

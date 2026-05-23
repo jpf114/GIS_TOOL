@@ -2,6 +2,7 @@ add_library(gis_framework
     src/action_validation.cpp
     src/plugin_manager.cpp
     src/workflow.cpp
+    src/result_display.cpp
 )
 
 target_include_directories(gis_framework PUBLIC

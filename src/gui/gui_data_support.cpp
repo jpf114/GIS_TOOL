@@ -4,6 +4,8 @@
 
 #include <gis/core/spindex_presets.h>
 #include <gis/core/gdal_wrapper.h>
+#include <gis/framework/plugin_manager.h>
+#include <gis/framework/result_display.h>
 
 #include <gdal_priv.h>
 #include <ogr_spatialref.h>
@@ -16,6 +18,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -831,6 +834,77 @@ QString rasterToolsGroupDisplayName() {
 
 QString rasterToolsGroupDescription() {
     return QStringLiteral("集中提供栅格管理、检查、渲染与波段运算相关子功能。");
+}
+
+QString formatDurationText(qint64 durationMs) {
+    if (durationMs < 1000) {
+        return QStringLiteral("%1 ms").arg(durationMs);
+    }
+    const double seconds = durationMs / 1000.0;
+    if (seconds < 60.0) {
+        return QStringLiteral("%1 s").arg(seconds, 0, 'f', 1);
+    }
+    const int mins = static_cast<int>(seconds) / 60;
+    const double secs = seconds - mins * 60;
+    return QStringLiteral("%1 m %2 s").arg(mins).arg(secs, 0, 'f', 0);
+}
+
+std::vector<ActionCatalogItem> collectActionCatalogItems(
+    gis::framework::PluginManager& pluginManager,
+    const std::string& selectionKey) {
+    std::vector<ActionCatalogItem> items;
+    const auto appendPluginActions = [&](const std::string& pluginName) {
+        auto* plugin = pluginManager.find(pluginName);
+        if (!plugin) {
+            return;
+        }
+        for (const auto& spec : plugin->paramSpecs()) {
+            if (spec.key != "action") {
+                continue;
+            }
+            for (const auto& action : spec.enumValues) {
+                items.push_back({
+                    pluginName,
+                    action,
+                    actionDisplayName(pluginName, action).toUtf8().toStdString(),
+                });
+            }
+            break;
+        }
+    };
+
+    if (selectionKey == rasterToolsGroupKey()) {
+        for (const auto& pluginName : rasterToolsPluginNames()) {
+            appendPluginActions(pluginName);
+        }
+        return items;
+    }
+
+    appendPluginActions(selectionKey);
+    return items;
+}
+
+std::string resolveGroupedActionPlugin(
+    gis::framework::PluginManager& pluginManager,
+    const std::string& selectionKey,
+    const std::string& actionKey) {
+    for (const auto& item : collectActionCatalogItems(pluginManager, selectionKey)) {
+        if (item.actionKey == actionKey) {
+            return item.pluginName;
+        }
+    }
+    return {};
+}
+
+int countDisplayPluginGroups(const std::vector<gis::framework::IGisPlugin*>& plugins) {
+    std::set<std::string> groups;
+    for (const auto* plugin : plugins) {
+        if (!plugin) {
+            continue;
+        }
+        groups.insert(displayGroupForPlugin(plugin->name()));
+    }
+    return static_cast<int>(groups.size());
 }
 
 GroupSelectionText buildGroupSelectionText(const std::string& pluginName,
@@ -1750,7 +1824,7 @@ std::string buildResultSummaryText(const gis::framework::Result& result) {
 
     if (!result.metadata.empty()) {
         oss << "\n元数据:";
-        for (const auto& [key, value] : result.metadata) {
+        for (const auto& [key, value] : gis::framework::orderedMetadataEntries(result.metadata)) {
             oss << "\n- " << key << ": " << value;
         }
     }

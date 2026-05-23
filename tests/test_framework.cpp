@@ -3,10 +3,12 @@
 #include <gis/framework/param_spec.h>
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/result.h>
+#include <gis/framework/result_display.h>
 #include <array>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 
 #include "test_support.h"
@@ -277,4 +279,18 @@ TEST(FrameworkTest, CliRejectsInvalidEnumAction) {
 
     EXPECT_NE(exitCode, 0);
     EXPECT_NE(output.find("取值无效"), std::string::npos) << output;
+}
+
+TEST(FrameworkTest, OrderedMetadataEntriesPreferStandardKeys) {
+    const std::map<std::string, std::string> metadata = {
+        {"feature_count", "3"},
+        {"action", "buffer"},
+        {"input", "a.geojson"},
+    };
+
+    const auto entries = gis::framework::orderedMetadataEntries(metadata);
+    ASSERT_EQ(entries.size(), 3u);
+    EXPECT_EQ(entries[0].first, "action");
+    EXPECT_EQ(entries[1].first, "input");
+    EXPECT_EQ(entries[2].first, "feature_count");
 }

@@ -56,19 +56,6 @@
 
 namespace {
 
-QString formatDuration(qint64 ms) {
-    if (ms < 1000) {
-        return QStringLiteral("%1 ms").arg(ms);
-    }
-    double seconds = ms / 1000.0;
-    if (seconds < 60) {
-        return QStringLiteral("%1 s").arg(seconds, 0, 'f', 1);
-    }
-    int mins = static_cast<int>(seconds) / 60;
-    double secs = seconds - mins * 60;
-    return QStringLiteral("%1 m %2 s").arg(mins).arg(secs, 0, 'f', 0);
-}
-
 QString actionIconText(const QString& actionKey) {
     return actionKey.isEmpty() ? QStringLiteral("default") : actionKey;
 }
@@ -132,151 +119,17 @@ QIcon executeIcon() {
     return QIcon(pixmap);
 }
 
-
-std::vector<NavPanel::SubFunctionItem> collectSubFunctionItems(
-    gis::framework::PluginManager& pluginManager,
-    const std::string& selectionKey) {
+std::vector<NavPanel::SubFunctionItem> toNavSubFunctions(
+    const std::vector<gis::gui::ActionCatalogItem>& catalog) {
     std::vector<NavPanel::SubFunctionItem> items;
-    auto appendPluginActions = [&](const std::string& pluginName) {
-        auto* plugin = pluginManager.find(pluginName);
-        if (!plugin) {
-            return;
-        }
-        for (const auto& spec : plugin->paramSpecs()) {
-            if (spec.key != "action") {
-                continue;
-            }
-            for (const auto& action : spec.enumValues) {
-                items.push_back({
-                    pluginName,
-                    action,
-                    gis::gui::actionDisplayName(pluginName, action).toUtf8().toStdString()
-                });
-            }
-            break;
-        }
-    };
-
-    if (selectionKey == gis::gui::rasterToolsGroupKey()) {
-        for (const auto& pluginName : gis::gui::rasterToolsPluginNames()) {
-            appendPluginActions(pluginName);
-        }
-        return items;
-    }
-
-    appendPluginActions(selectionKey);
-    return items;
-}
-
-std::string resolveGroupedActionPlugin(
-    gis::framework::PluginManager& pluginManager,
-    const std::string& selectionKey,
-    const std::string& actionKey) {
-    for (const auto& item : collectSubFunctionItems(pluginManager, selectionKey)) {
-        if (item.actionKey == actionKey) {
-            return item.pluginName;
-        }
-    }
-    return {};
-}
-
-int displayPluginCount(const std::vector<gis::framework::IGisPlugin*>& plugins) {
-    std::set<std::string> groups;
-    for (const auto* plugin : plugins) {
-        groups.insert(gis::gui::displayGroupForPlugin(plugin->name()));
-    }
-    return static_cast<int>(groups.size());
-}
-
-
-
-bool isZeroExtent(const std::array<double, 4>& extent) {
-    return extent[0] == 0.0 && extent[1] == 0.0 && extent[2] == 0.0 && extent[3] == 0.0;
-}
-
-std::string lowerString(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
-std::vector<std::string> splitCommaList(const std::string& text) {
-    std::vector<std::string> items;
-    std::istringstream iss(text);
-    std::string item;
-    while (std::getline(iss, item, ',')) {
-        const auto begin = item.find_first_not_of(" \t\r\n");
-        if (begin == std::string::npos) {
-            continue;
-        }
-        const auto end = item.find_last_not_of(" \t\r\n");
-        items.push_back(item.substr(begin, end - begin + 1));
+    items.reserve(catalog.size());
+    for (const auto& item : catalog) {
+        items.push_back({item.pluginName, item.actionKey, item.displayName});
     }
     return items;
 }
 
-bool endsWithOneOf(const std::string& path, const std::vector<std::string>& suffixes) {
-    const std::string lowerPath = lowerString(path);
-    for (const auto& suffix : suffixes) {
-        if (lowerPath.size() >= suffix.size() &&
-            lowerPath.compare(lowerPath.size() - suffix.size(), suffix.size(), suffix) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::optional<std::array<double, 4>> extentParamValue(
-    const std::map<std::string, gis::framework::ParamValue>& params,
-    const std::string& key) {
-    const auto it = params.find(key);
-    if (it == params.end()) {
-        return std::nullopt;
-    }
-    if (const auto* arr = std::get_if<std::array<double, 4>>(&it->second)) {
-        return *arr;
-    }
-    return std::nullopt;
-}
-
-std::optional<double> doubleParamValue(
-    const std::map<std::string, gis::framework::ParamValue>& params,
-    const std::string& key) {
-    const auto it = params.find(key);
-    if (it == params.end()) {
-        return std::nullopt;
-    }
-    if (const auto* value = std::get_if<double>(&it->second)) {
-        return *value;
-    }
-    if (const auto* value = std::get_if<int>(&it->second)) {
-        return static_cast<double>(*value);
-    }
-    return std::nullopt;
-}
-
-std::optional<int> intParamValue(
-    const std::map<std::string, gis::framework::ParamValue>& params,
-    const std::string& key) {
-    const auto it = params.find(key);
-    if (it == params.end()) {
-        return std::nullopt;
-    }
-    if (const auto* value = std::get_if<int>(&it->second)) {
-        return *value;
-    }
-    return std::nullopt;
-}
-
-std::optional<gis::gui::ActionValidationIssue> actionSpecificValidationIssue(
-    const std::string& pluginName,
-    const std::string& actionKey,
-    const std::map<std::string, gis::framework::ParamValue>& params) {
-    return gis::gui::validateActionSpecificParams(pluginName, actionKey, params);
-}
-
-}
+} // namespace
 
 namespace {
 
@@ -330,7 +183,8 @@ void MainWindow::selectPluginByName(const std::string& pluginName) {
 void MainWindow::selectActionByKey(const std::string& actionKey) {
     std::string pluginName = currentPlugin_ ? currentPlugin_->name() : std::string{};
     if (pluginName.empty() && !currentDisplayGroupKey_.empty()) {
-        pluginName = resolveGroupedActionPlugin(pluginManager_, currentDisplayGroupKey_, actionKey);
+        pluginName = gis::gui::resolveGroupedActionPlugin(
+            pluginManager_, currentDisplayGroupKey_, actionKey);
     }
     if (pluginName.empty()) {
         return;
@@ -651,7 +505,8 @@ void MainWindow::loadPlugins() {
     }
 
     if (statusPluginCountLabel_) {
-        statusPluginCountLabel_->setText(QStringLiteral("插件组：%1").arg(displayPluginCount(plugins)));
+        statusPluginCountLabel_->setText(
+            QStringLiteral("插件组：%1").arg(gis::gui::countDisplayPluginGroups(plugins)));
     }
     if (statusSubFunctionCountLabel_) {
         statusSubFunctionCountLabel_->setText(QStringLiteral("子功能：0"));
@@ -809,7 +664,8 @@ void MainWindow::onPluginSelected(const std::string& pluginName) {
         statusAlgorithmLabel_->setText(groupText.statusText);
     }
 
-    const auto items = collectSubFunctionItems(pluginManager_, pluginName);
+    const auto catalog = gis::gui::collectActionCatalogItems(pluginManager_, pluginName);
+    const auto items = toNavSubFunctions(catalog);
     navPanel_->setSubFunctions(items);
     navPanel_->setCurrentPluginSelection(pluginName);
     if (statusSubFunctionCountLabel_) {
@@ -987,7 +843,7 @@ void MainWindow::onExecute() {
     auto params = collectExecutionParams();
     std::string validationMessage = gis::gui::validateExecutionParams(specs, params);
     if (validationMessage.empty()) {
-        if (const auto issue = actionSpecificValidationIssue(
+        if (const auto issue = gis::gui::validateActionSpecificParams(
                 currentPlugin_->name(), currentActionKey_.toStdString(), params)) {
             validationMessage = issue->message;
         }
@@ -1033,7 +889,7 @@ void MainWindow::refreshExecuteButtonState() {
             effectiveParamSpecs(),
             params);
         if (validationMessage.empty()) {
-            if (const auto issue = actionSpecificValidationIssue(
+            if (const auto issue = gis::gui::validateActionSpecificParams(
                     currentPlugin_->name(), currentActionKey_.toStdString(), params)) {
                 validationMessage = issue->message;
             }
@@ -1069,7 +925,7 @@ void MainWindow::refreshParamValidationState() {
 
     const auto specs = effectiveParamSpecs();
     const auto params = collectExecutionParams();
-    const auto issue = actionSpecificValidationIssue(
+    const auto issue = gis::gui::validateActionSpecificParams(
         currentPlugin_->name(), currentActionKey_.toStdString(), params);
     paramWidget_->setHighlightedParam(
         gis::gui::resolveHighlightedParamKey(hasSelection, specs, params, issue));
@@ -1437,7 +1293,7 @@ void MainWindow::onTaskRunnerFinished(const QString& displayGroup,
         }
         QString summary = QString::fromUtf8(gis::gui::buildResultSummaryText(result.result));
         if (result.durationMs > 0) {
-            summary += QStringLiteral("\n耗时：%1").arg(formatDuration(result.durationMs));
+            summary += QStringLiteral("\n耗时：%1").arg(gis::gui::formatDurationText(result.durationMs));
         }
         resultSummaryLabel_->setText(
             QStringLiteral("执行成功\n%1").arg(summary));
@@ -1449,7 +1305,7 @@ void MainWindow::onTaskRunnerFinished(const QString& displayGroup,
     } else if (cancelled) {
         QString cancelText = QStringLiteral("任务已取消");
         if (result.durationMs > 0) {
-            cancelText += QStringLiteral("\n耗时：%1").arg(formatDuration(result.durationMs));
+            cancelText += QStringLiteral("\n耗时：%1").arg(gis::gui::formatDurationText(result.durationMs));
         }
         resultSummaryLabel_->setText(cancelText);
         resultSummaryLabel_->setStyleSheet(
@@ -1459,7 +1315,7 @@ void MainWindow::onTaskRunnerFinished(const QString& displayGroup,
     } else {
         QString failText = QStringLiteral("执行失败\n%1").arg(localizedMessage);
         if (result.durationMs > 0) {
-            failText += QStringLiteral("\n耗时：%1").arg(formatDuration(result.durationMs));
+            failText += QStringLiteral("\n耗时：%1").arg(gis::gui::formatDurationText(result.durationMs));
         }
         resultSummaryLabel_->setText(failText);
         resultSummaryLabel_->setStyleSheet(

@@ -1,5 +1,6 @@
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/action_validation.h>
+#include <gis/framework/result_display.h>
 #include <gis/core/progress.h>
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
@@ -236,7 +237,7 @@ int main(int argc, char* argv[]) {
         }
         if (!result.metadata.empty()) {
             std::cout << "Metadata:" << std::endl;
-            for (auto& [key, val] : result.metadata) {
+            for (const auto& [key, val] : gis::framework::orderedMetadataEntries(result.metadata)) {
                 std::cout << "  " << key << ": " << val << std::endl;
             }
         }
