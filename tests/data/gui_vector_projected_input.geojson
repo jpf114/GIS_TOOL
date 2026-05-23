@@ -1,0 +1,26 @@
+{
+  "type": "FeatureCollection",
+  "name": "gui_vector_projected_input",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:3857"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "road_projected"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [12935050.0, 4852100.0],
+          [12935150.0, 4852200.0],
+          [12935250.0, 4852150.0]
+        ]
+      }
+    }
+  ]
+}

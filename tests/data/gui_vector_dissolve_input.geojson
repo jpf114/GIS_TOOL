@@ -1,0 +1,69 @@
+{
+  "type": "FeatureCollection",
+  "name": "gui_vector_dissolve_input",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "parcel_a1",
+        "group_id": "A"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.30, 39.80],
+            [116.35, 39.80],
+            [116.35, 39.85],
+            [116.30, 39.85],
+            [116.30, 39.80]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "parcel_a2",
+        "group_id": "A"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.36, 39.80],
+            [116.41, 39.80],
+            [116.41, 39.85],
+            [116.36, 39.85],
+            [116.36, 39.80]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "parcel_b1",
+        "group_id": "B"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.30, 39.70],
+            [116.35, 39.70],
+            [116.35, 39.75],
+            [116.30, 39.75],
+            [116.30, 39.70]
+          ]
+        ]
+      }
+    }
+  ]
+}

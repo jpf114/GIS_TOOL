@@ -30,6 +30,6 @@ vcpkg_installed/
 *.bak
 *.orig
 
-# Local verification assets
-data/
+# Local verification assets (repo root only; tests/data is tracked)
+/data/
 tmp/
