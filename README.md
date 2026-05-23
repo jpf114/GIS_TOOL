@@ -32,7 +32,17 @@
 
 
 
-### 最近一次验收记录（2026-05-15）
+### 最近一次验收记录（2026-05-23）
+
+- `tests/data` 最小 GeoJSON 夹具已入库，CLI 验证通过：
+  - `vector buffer`（`gui_vector_projected_input.geojson`）→ `tmp/smoke-buffer.gpkg`
+  - `vector convert`（`gui_vector_input.geojson`）→ `tmp/convert-out.geojson`
+- `ctest --test-dir build/debug -C Debug -R "CoreTest|FrameworkTest"`：`42/42` 通过
+- `ctest --test-dir build/debug -C Debug -R "gui_smoke_startup"`：`1/1` 通过
+- `ctest -N` 当前发现 `463` 个测试（较此前 `405` 有增加）
+- Debug 全量 `ctest` 与部分 GUI 离屏回归（如 `gui_vector_convert_offscreen`）在本机仍可能出现 Access violation，需结合 Release 构建与 CI 结果继续验收
+
+### 历史验收记录（2026-05-15）
 
 
 - `cmake --build build/debug --config Debug --target gis_tests` 通过
