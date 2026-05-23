@@ -469,7 +469,24 @@ cmake --install build/release --config Release
 - 发布前至少执行一次`Debug 全量测试 + Release 构建安装`
 
 
+## 测试分层入口
 
+### 日常开发（最小验证）
+
+```powershell
+ctest --test-dir build/debug -C Debug -R "CoreTest|FrameworkTest" --output-on-failure
+ctest --test-dir build/debug -C Debug -R "gui_smoke_startup" --output-on-failure
+```
+
+### 提交前（功能回归）
+
+```powershell
+ctest --test-dir build/debug -C Debug -R "CoreTest|FrameworkTest|PluginTest|GuiSupportTest|MainWindowTest" --output-on-failure
+```
+
+### 发布前（全量验收）
+
+见下方「发布前标准验收基线」。
 
 
 ## 发布前标准验收基线
