@@ -31,7 +31,7 @@ jobs:
             C:\vcpkg\bootstrap-vcpkg.bat
           }
 
-      - name: Install manifest dependencies
+      - name: Install dependencies
         shell: pwsh
         env:
           VCPKG_ROOT: C:\vcpkg
@@ -73,74 +73,14 @@ jobs:
         env:
           VCPKG_ROOT: C:\vcpkg
         run: |
-          function Invoke-WithRetry {
-            param(
-              [scriptblock]$Script,
-              [int]$MaxAttempts = 3,
-              [int]$DelaySeconds = 15
-            )
-
-            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-              try {
-                & $Script
-                if ($LASTEXITCODE -eq 0) {
-                  return
-                }
-              } catch {
-                if ($attempt -ge $MaxAttempts) {
-                  throw
-                }
-              }
-
-              if ($attempt -ge $MaxAttempts) {
-                throw "Command failed after $MaxAttempts attempts."
-              }
-
-              Write-Host "Attempt $attempt failed; retrying in $DelaySeconds seconds..."
-              Start-Sleep -Seconds $DelaySeconds
-            }
-          }
-
-          Invoke-WithRetry {
-            cmake --preset debug --fresh
-          }
+          cmake --preset debug --fresh
 
       - name: Configure Release
         shell: pwsh
         env:
           VCPKG_ROOT: C:\vcpkg
         run: |
-          function Invoke-WithRetry {
-            param(
-              [scriptblock]$Script,
-              [int]$MaxAttempts = 3,
-              [int]$DelaySeconds = 15
-            )
-
-            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-              try {
-                & $Script
-                if ($LASTEXITCODE -eq 0) {
-                  return
-                }
-              } catch {
-                if ($attempt -ge $MaxAttempts) {
-                  throw
-                }
-              }
-
-              if ($attempt -ge $MaxAttempts) {
-                throw "Command failed after $MaxAttempts attempts."
-              }
-
-              Write-Host "Attempt $attempt failed; retrying in $DelaySeconds seconds..."
-              Start-Sleep -Seconds $DelaySeconds
-            }
-          }
-
-          Invoke-WithRetry {
-            cmake --preset release --fresh
-          }
+          cmake --preset release --fresh
 
       - name: Build Debug
         shell: pwsh

@@ -12,7 +12,7 @@
     {
       "name": "opencv4",
       "default-features": false,
-      "features": ["calib3d", "highgui", "jpeg", "png", "thread"]
+      "features": ["calib3d", "jpeg", "ml", "png", "stitching", "thread", "video"]
     },
     {
       "name": "proj",

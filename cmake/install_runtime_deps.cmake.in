@@ -125,33 +125,26 @@ else()
         opencv_core4.dll
         opencv_features2d4.dll
         opencv_flann4.dll
-        opencv_highgui4.dll
         opencv_imgcodecs4.dll
         opencv_imgproc4.dll
         opencv_ml4.dll
-        opencv_objdetect4.dll
-        opencv_photo4.dll
         opencv_stitching4.dll
         opencv_video4.dll
-        opencv_videoio4.dll
         pcre2-16.dll
         pcre2-32.dll
         pcre2-8.dll
         pcre2-posix.dll
         proj_9.dll
-        Qt6Concurrent.dll
         Qt6Core.dll
         Qt6Gui.dll
-        Qt6PrintSupport.dll
         Qt6Sql.dll
         Qt6Svg.dll
-        Qt6SvgWidgets.dll
         Qt6Widgets.dll
         Qt6Xml.dll
         sqlite3.dll
         tiff.dll
         turbojpeg.dll
-        zlib1.dll
+        z.dll
     )
 
     foreach(_gis_dll_name IN LISTS _gis_minimal_dlls)

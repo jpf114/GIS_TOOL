@@ -23,8 +23,7 @@
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/install",
                 "GIS_BUILD_GUI": "ON",
                 "GIS_BUILD_TESTS": "ON",
-                "VCPKG_TARGET_TRIPLET": "x64-windows",
-                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed"
+                "VCPKG_TARGET_TRIPLET": "x64-windows"
             }
         },
         {

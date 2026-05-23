@@ -15,14 +15,7 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE OR NOT CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg\\
     )
 endif()
 
-# manifest 模式下将依赖安装到项目根目录的 vcpkg_installed/ 下
-set(VCPKG_MANIFEST_MODE ON CACHE BOOL "Use vcpkg manifest dependencies" FORCE)
-set(VCPKG_INSTALLED_DIR "${CMAKE_SOURCE_DIR}/vcpkg_installed" CACHE PATH "vcpkg manifest install directory" FORCE)
-
-# 如果依赖已安装，跳过 vcpkg install 步骤（避免写入全局 vcpkg buildtrees）
-if(EXISTS "${CMAKE_SOURCE_DIR}/vcpkg_installed/x64-windows/share/gdal")
-    set(VCPKG_MANIFEST_INSTALL OFF CACHE BOOL "Skip vcpkg install, deps already installed" FORCE)
-endif()
+set(VCPKG_MANIFEST_MODE OFF CACHE BOOL "Use global vcpkg installation instead of manifest mode" FORCE)
 
 project(gis-tool VERSION 1.0.0 LANGUAGES CXX)
 
@@ -48,21 +41,25 @@ option(GIS_BUILD_GUI "Build Qt GUI" OFF)
 option(GIS_BUILD_TESTS "Build tests" ON)
 
 if(NOT DEFINED VCPKG_INSTALLED_DIR OR "${VCPKG_INSTALLED_DIR}" STREQUAL "")
-    message(FATAL_ERROR "未检测到 VCPKG_INSTALLED_DIR。请通过 vcpkg toolchain 以 manifest 模式配置工程。")
+    message(FATAL_ERROR "未检测到 VCPKG_INSTALLED_DIR。请通过 vcpkg toolchain 配置工程。")
 endif()
 
-message(STATUS "vcpkg manifest installed dir: ${VCPKG_INSTALLED_DIR}")
+message(STATUS "vcpkg installed dir: ${VCPKG_INSTALLED_DIR}")
 message(STATUS "vcpkg target triplet: ${VCPKG_TARGET_TRIPLET}")
 
 set(GIS_VCPKG_TRIPLET "${VCPKG_TARGET_TRIPLET}")
 if(GIS_VCPKG_TRIPLET STREQUAL "")
-    message(FATAL_ERROR "未检测到 VCPKG_TARGET_TRIPLET。请通过 vcpkg toolchain 以 manifest 模式配置工程。")
+    message(FATAL_ERROR "未检测到 VCPKG_TARGET_TRIPLET。请通过 vcpkg toolchain 配置工程。")
 endif()
 
 set(GIS_VCPKG_INSTALLED_ROOT "${VCPKG_INSTALLED_DIR}")
 set(GIS_VCPKG_INSTALLED_DIR "${GIS_VCPKG_INSTALLED_ROOT}")
 if(EXISTS "${GIS_VCPKG_INSTALLED_ROOT}/${GIS_VCPKG_TRIPLET}")
     set(GIS_VCPKG_INSTALLED_DIR "${GIS_VCPKG_INSTALLED_ROOT}/${GIS_VCPKG_TRIPLET}")
+endif()
+
+if(NOT EXISTS "${GIS_VCPKG_INSTALLED_DIR}")
+    message(FATAL_ERROR "未找到 vcpkg 安装目录: ${GIS_VCPKG_INSTALLED_DIR}")
 endif()
 
 set(GIS_VCPKG_RELEASE_BIN_DIR "${GIS_VCPKG_INSTALLED_DIR}/bin")
@@ -98,10 +95,6 @@ configure_file(
     @ONLY
 )
 
-if(NOT EXISTS "${GIS_VCPKG_INSTALLED_DIR}")
-    message(FATAL_ERROR "未找到 manifest vcpkg 安装目录: ${GIS_VCPKG_INSTALLED_DIR}")
-endif()
-
 if(NOT EXISTS "${GIS_VCPKG_PROJ_DATA_DIR}")
     message(FATAL_ERROR "未找到 PROJ 数据目录: ${GIS_VCPKG_PROJ_DATA_DIR}")
 endif()
@@ -111,7 +104,7 @@ if(NOT EXISTS "${GIS_VCPKG_GDAL_DATA_DIR}")
 endif()
 
 find_package(GDAL REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d flann calib3d highgui)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d flann calib3d ml imgcodecs)
 find_package(PROJ REQUIRED)
 
 add_subdirectory(src/core)
