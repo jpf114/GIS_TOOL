@@ -10,6 +10,8 @@ target_link_libraries(plugin_cutting PRIVATE
     gis_core
     gis_framework
     GDAL::GDAL
+    opencv_core
+    opencv_imgproc
     opencv_imgcodecs
 )
 

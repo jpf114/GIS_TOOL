@@ -1,11 +1,12 @@
-﻿#include "raster_math_plugin.h"
+#include "raster_math_plugin.h"
 
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
 
 #include <gdal_priv.h>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <cctype>

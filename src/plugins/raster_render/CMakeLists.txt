@@ -10,11 +10,9 @@ target_link_libraries(plugin_raster_render PRIVATE
     gis_core
     gis_framework
     GDAL::GDAL
+    opencv_core
+    opencv_imgproc
 )
-
-if(TARGET opencv_world)
-    target_link_libraries(plugin_raster_render PRIVATE opencv_world)
-endif()
 
 set_target_properties(plugin_raster_render PROPERTIES
     PREFIX ""

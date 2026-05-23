@@ -3,14 +3,15 @@ add_library(plugin_terrain SHARED
 )
 
 target_include_directories(plugin_terrain PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/core/include
-    ${CMAKE_SOURCE_DIR}/src/framework/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(plugin_terrain PRIVATE
     gis_core
     gis_framework
     GDAL::GDAL
+    opencv_core
+    opencv_imgproc
 )
 
 set_target_properties(plugin_terrain PROPERTIES

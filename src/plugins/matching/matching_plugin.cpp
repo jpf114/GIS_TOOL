@@ -1,9 +1,13 @@
-﻿#include "matching_plugin.h"
+#include "matching_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
 #include <gis/core/error.h>
 #include <gdal_priv.h>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/video.hpp>
+#include <opencv2/stitching.hpp>
 #include <opencv2/features2d.hpp>
 #include <sstream>
 #include <fstream>

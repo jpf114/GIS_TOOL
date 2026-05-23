@@ -1,4 +1,4 @@
-﻿#include "spindex_plugin.h"
+#include "spindex_plugin.h"
 
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
@@ -6,7 +6,8 @@
 #include <gis/core/spindex_presets.h>
 
 #include <gdal_priv.h>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <cctype>
 #include <cmath>

@@ -1,11 +1,13 @@
-﻿#include "cutting_plugin.h"
+#include "cutting_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
 #include <gdal_utils.h>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <sstream>
 #include <algorithm>
 #include <filesystem>

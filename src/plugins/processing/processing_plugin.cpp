@@ -4,7 +4,8 @@
 #include <gis/core/error.h>
 #include <gdal_priv.h>
 #include <cpl_conv.h>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #include <sstream>
 #include <cmath>
 #include <algorithm>

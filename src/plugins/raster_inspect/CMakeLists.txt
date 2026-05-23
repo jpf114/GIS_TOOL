@@ -12,10 +12,6 @@ target_link_libraries(plugin_raster_inspect PRIVATE
     GDAL::GDAL
 )
 
-if(TARGET opencv_world)
-    target_link_libraries(plugin_raster_inspect PRIVATE opencv_world)
-endif()
-
 set_target_properties(plugin_raster_inspect PROPERTIES
     PREFIX ""
     OUTPUT_NAME "plugin_raster_inspect"

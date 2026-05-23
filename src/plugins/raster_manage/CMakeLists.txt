@@ -10,6 +10,8 @@ target_link_libraries(plugin_raster_manage PRIVATE
     gis_core
     gis_framework
     GDAL::GDAL
+    opencv_core
+    opencv_imgproc
 )
 
 set_target_properties(plugin_raster_manage PROPERTIES

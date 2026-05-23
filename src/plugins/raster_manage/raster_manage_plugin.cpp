@@ -1,4 +1,4 @@
-﻿#include "raster_manage_plugin.h"
+#include "raster_manage_plugin.h"
 
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
@@ -13,7 +13,8 @@
 #include <ogr_api.h>
 #include <ogr_geometry.h>
 #include <ogrsf_frmts.h>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #include <cstdint>
 #include <fstream>
 #include <sstream>
