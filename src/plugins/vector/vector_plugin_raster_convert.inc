@@ -273,6 +273,10 @@ gis::framework::Result VectorPlugin::doConvert(
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
-    return gis::framework::Result::ok(
+    auto result = gis::framework::Result::ok(
         "Convert completed: " + std::to_string(count) + " features converted to " + format, output);
+    mergeStandardRunMetadata(result, params, "convert");
+    result.metadata["feature_count"] = std::to_string(count);
+    result.metadata["output_format"] = format;
+    return result;
 }

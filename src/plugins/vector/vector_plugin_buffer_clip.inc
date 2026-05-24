@@ -136,6 +136,7 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     auto result = gis::framework::Result::ok(
         "Buffer completed: " + std::to_string(count) + " features processed", output);
+    mergeStandardRunMetadata(result, params, "buffer");
     result.metadata["feature_count"] = std::to_string(count);
     {
         std::ostringstream oss;

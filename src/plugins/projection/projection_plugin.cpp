@@ -1,6 +1,7 @@
 ﻿#include "projection_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
+#include <gis/framework/result_display.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
@@ -315,7 +316,14 @@ gis::framework::Result ProjectionPlugin::doReproject(
         progress.throwIfCancelled();
         progress.onProgress(1.0);
         progress.onMessage("Vector reprojection completed.");
-        return gis::framework::Result::ok("Vector reprojection completed successfully", output);
+        auto vecResult = gis::framework::Result::ok("Vector reprojection completed successfully", output);
+        gis::framework::mergeResultMetadata(vecResult.metadata, {
+            {gis::framework::ResultMetadataKeys::kAction, "reproject"},
+            {gis::framework::ResultMetadataKeys::kInput, input},
+            {gis::framework::ResultMetadataKeys::kOutput, output},
+            {gis::framework::ResultMetadataKeys::kCrs, dstSrs},
+        });
+        return vecResult;
     }
 
     auto srcDS = gis::core::openRaster(input, true);
@@ -377,7 +385,14 @@ gis::framework::Result ProjectionPlugin::doReproject(
     progress.onProgress(1.0);
     progress.onMessage("Reprojection completed.");
 
-    return gis::framework::Result::ok("Reprojection completed successfully", output);
+    auto result = gis::framework::Result::ok("Reprojection completed successfully", output);
+    gis::framework::mergeResultMetadata(result.metadata, {
+        {gis::framework::ResultMetadataKeys::kAction, "reproject"},
+        {gis::framework::ResultMetadataKeys::kInput, input},
+        {gis::framework::ResultMetadataKeys::kOutput, output},
+        {gis::framework::ResultMetadataKeys::kCrs, dstSrs},
+    });
+    return result;
 }
 
 gis::framework::Result ProjectionPlugin::doInfo(

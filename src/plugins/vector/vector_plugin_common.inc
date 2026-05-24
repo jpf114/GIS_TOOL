@@ -1,3 +1,20 @@
+static void mergeStandardRunMetadata(
+    gis::framework::Result& result,
+    const std::map<std::string, gis::framework::ParamValue>& params,
+    const char* action) {
+    std::map<std::string, std::string> fields;
+    fields[gis::framework::ResultMetadataKeys::kAction] = action;
+    const auto input = gis::framework::getParam<std::string>(params, "input", "");
+    const auto output = gis::framework::getParam<std::string>(params, "output", "");
+    if (!input.empty()) {
+        fields[gis::framework::ResultMetadataKeys::kInput] = input;
+    }
+    if (!output.empty()) {
+        fields[gis::framework::ResultMetadataKeys::kOutput] = output;
+    }
+    gis::framework::mergeResultMetadata(result.metadata, fields);
+}
+
 static gis::core::GdalDatasetPtr openVector(const std::string& path, bool readOnly = true) {
     const std::string resolvedPath = resolveVectorInputPath(path);
     return gis::core::GdalDatasetPtr(

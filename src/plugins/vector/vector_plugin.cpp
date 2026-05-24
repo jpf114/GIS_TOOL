@@ -1,6 +1,7 @@
 #include "vector_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
+#include <gis/framework/result_display.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
