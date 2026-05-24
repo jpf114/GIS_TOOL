@@ -88,19 +88,7 @@ add_dependencies(gis_tests
     copy_runtime_dlls
     gui_test_data_helper
     plugin_test_lifecycle
-    plugin_projection
-    plugin_cutting
-    plugin_matching
-    plugin_processing
-    plugin_raster_math
-    plugin_raster_inspect
-    plugin_raster_manage
-    plugin_raster_render
-    plugin_georef
-    plugin_terrain
-    plugin_classification
-    plugin_spindex
-    plugin_vector
+    ${GIS_PLUGIN_TARGETS}
 )
 
 add_custom_command(TARGET gis_tests POST_BUILD

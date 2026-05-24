@@ -3,22 +3,6 @@ add_executable(gis-cli
     cli_parser.cpp
 )
 
-set(GIS_PLUGIN_TARGETS
-    plugin_projection
-    plugin_cutting
-    plugin_matching
-    plugin_processing
-    plugin_raster_math
-    plugin_raster_inspect
-    plugin_raster_manage
-    plugin_raster_render
-    plugin_georef
-    plugin_terrain
-    plugin_classification
-    plugin_spindex
-    plugin_vector
-)
-
 add_dependencies(gis-cli ${GIS_PLUGIN_TARGETS})
 
 target_link_libraries(gis-cli PRIVATE
@@ -36,13 +20,7 @@ add_custom_command(TARGET gis-cli POST_BUILD
 gis_copy_minimal_runtime(gis-cli)
 gis_copy_minimal_runtime(gis-cli DEST_DIR $<TARGET_FILE_DIR:gis-cli>/plugins)
 
-foreach(GIS_PLUGIN_TARGET IN LISTS GIS_PLUGIN_TARGETS)
-    add_custom_command(TARGET gis-cli POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:${GIS_PLUGIN_TARGET}>
-            $<TARGET_FILE_DIR:gis-cli>/plugins/$<TARGET_FILE_NAME:${GIS_PLUGIN_TARGET}>
-    )
-endforeach()
+gis_copy_plugins_to_target_dir(gis-cli $<TARGET_FILE_DIR:gis-cli>/plugins)
 
 install(TARGETS gis-cli
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

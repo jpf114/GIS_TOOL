@@ -28,22 +28,6 @@ add_executable(gis-gui
     welcome_dialog.cpp
 )
 
-set(GIS_PLUGIN_TARGETS
-    plugin_projection
-    plugin_cutting
-    plugin_matching
-    plugin_processing
-    plugin_raster_math
-    plugin_raster_inspect
-    plugin_raster_manage
-    plugin_raster_render
-    plugin_georef
-    plugin_terrain
-    plugin_classification
-    plugin_spindex
-    plugin_vector
-)
-
 add_dependencies(gis-gui ${GIS_PLUGIN_TARGETS})
 
 # Link against our framework and Qt
@@ -107,13 +91,7 @@ add_custom_command(TARGET gis-gui POST_BUILD
 
 gis_copy_minimal_runtime(gis-gui)
 
-foreach(GIS_PLUGIN_TARGET IN LISTS GIS_PLUGIN_TARGETS)
-    add_custom_command(TARGET gis-gui POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:${GIS_PLUGIN_TARGET}>
-            $<TARGET_FILE_DIR:gis-gui>/plugins/$<TARGET_FILE_NAME:${GIS_PLUGIN_TARGET}>
-    )
-endforeach()
+gis_copy_plugins_to_target_dir(gis-gui $<TARGET_FILE_DIR:gis-gui>/plugins)
 
 if(GIS_COPY_QT_PLATFORM_DLL)
     add_custom_command(TARGET gis-gui POST_BUILD
