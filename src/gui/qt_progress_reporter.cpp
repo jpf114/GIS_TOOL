@@ -1,4 +1,5 @@
 #include "qt_progress_reporter.h"
+#include <gis/core/logger.h>
 
 QtProgressReporter::QtProgressReporter(const QString& taskId, QObject* parent)
     : QObject(parent), taskId_(taskId) {}
@@ -29,6 +30,9 @@ void QtProgressReporter::onProgress(double percent) {
 }
 
 void QtProgressReporter::onMessage(const std::string& msg) {
+    if (!msg.empty()) {
+        gis::core::Logger::instance().info(msg, "gui");
+    }
     emit messageLogged(taskId_, QString::fromUtf8(msg.c_str()));
 }
 

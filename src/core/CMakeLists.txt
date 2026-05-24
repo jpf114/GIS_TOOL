@@ -7,6 +7,8 @@ add_library(gis_core
     src/spindex_presets.cpp
     src/block_processor.cpp
     src/logger.cpp
+    src/logger_init.cpp
+    src/text_escape.cpp
     src/perf_monitor.cpp
 )
 

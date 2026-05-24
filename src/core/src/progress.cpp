@@ -1,4 +1,5 @@
 #include <gis/core/progress.h>
+#include <gis/core/logger.h>
 #include <iostream>
 #include <iomanip>
 
@@ -19,6 +20,9 @@ void CliProgress::onProgress(double percent) {
 }
 
 void CliProgress::onMessage(const std::string& msg) {
+    if (!msg.empty()) {
+        Logger::instance().info(msg, "cli");
+    }
     std::cerr << msg << std::endl;
 }
 

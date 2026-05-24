@@ -13,6 +13,7 @@
 #include "welcome_dialog.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/runtime_env.h>
+#include <gis/core/logger_init.h>
 
 #include <algorithm>
 #include <map>
@@ -23,6 +24,7 @@
 int main(int argc, char* argv[])
 {
     gis::core::initRuntimeEnvironment();
+    gis::core::initDefaultLogging();
     // Initialize GDAL (must be done before any GDAL operations)
     gis::core::initGDAL();
 

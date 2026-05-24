@@ -5,6 +5,7 @@
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/runtime_env.h>
+#include <gis/core/logger_init.h>
 #include "cli_parser.h"
 #include <iostream>
 #include <filesystem>
@@ -124,6 +125,7 @@ static std::vector<std::string> collectCliArgs(int argc, char* argv[]) {
 
 int main(int argc, char* argv[]) {
     gis::core::initRuntimeEnvironment();
+    gis::core::initDefaultLogging();
     gis::core::initGDAL();
 
 #ifdef _WIN32
