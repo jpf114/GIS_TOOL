@@ -63,7 +63,8 @@ gis::framework::Result VectorPlugin::doDanglingEndpointCheck(
     for (size_t i = 0; i < endpoints.size(); ++i) {
         const auto& endpoint = endpoints[i];
         if (endpointCountByKey[danglingEndpointKey(endpoint.point)] == 1) {
-            ofs << endpoint.fid << "," << endpoint.endpointType
+            const int typeCode = (endpoint.endpointType == "start") ? 0 : 1;
+            ofs << endpoint.fid << "," << typeCode
                 << "," << endpoint.point.getX()
                 << "," << endpoint.point.getY() << "\n";
             ++issueCount;
