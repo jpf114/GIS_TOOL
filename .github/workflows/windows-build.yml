@@ -152,4 +152,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gis-tool-win64-setup
-          path: gis-toolkit-1.0.0-win64-setup.exe
+          path: installer/gis-toolkit-1.0.0-win64-setup.exe

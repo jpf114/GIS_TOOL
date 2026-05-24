@@ -41,7 +41,7 @@
 - `cmake --build build/release --config Release --target real_raster_regression real_matching_regression real_vector_regression`（quick）均通过
 - `cmake --install build/release --config Release --prefix install` 成功；`install/bin/gis-cli.exe --list`、`gis-gui -platform offscreen --self-test` 通过
 - `ctest --test-dir build/debug -C Debug`：**472/472** 通过（2026-05-24）
-- NSIS 安装包：本机未安装 NSIS，见 [docs/RELEASE.md](docs/RELEASE.md)；CI 已构建 setup.exe
+- NSIS：`installer/gis-toolkit-1.0.0-win64-setup.exe` 本地构建成功（见 [docs/RELEASE.md](docs/RELEASE.md)）
 
 ### 历史验收记录（2026-05-23）
 

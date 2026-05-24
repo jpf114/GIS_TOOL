@@ -23,11 +23,10 @@ install/bin/gis-gui.exe -platform offscreen --self-test
 
 ```powershell
 cmake --install build/release --config Release --prefix install
-cd installer
-makensis installer.nsi
+makensis installer\installer.nsi
 ```
 
-产物：`installer/gis-toolkit-1.0.0-win64-setup.exe`（需将 `install/` 目录置于 `installer/` 同级或通过 CI 复制）。
+产物：`installer/gis-toolkit-1.0.0-win64-setup.exe`（约 64MB，zlib 压缩）。
 
 CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-build.yml) 中 `Build installer` 步骤。
 

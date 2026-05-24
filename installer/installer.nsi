@@ -11,7 +11,7 @@ RequestExecutionLevel admin
 
 Section "MainSection" SEC01
   SetOutPath "$INSTDIR"
-  File /r "install\*.*"
+  File /r "..\install"
 
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\GIS TOOLKIT.lnk" "$INSTDIR\bin\gis-gui.exe"

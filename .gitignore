@@ -33,3 +33,4 @@ vcpkg_installed/
 # Local verification assets (repo root only; tests/data is tracked)
 /data/
 tmp/
+installer/*.exe
