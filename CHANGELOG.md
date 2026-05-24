@@ -2,14 +2,14 @@
 
 本文件记录 GIS TOOL 的版本变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
-## [1.0.0] - 未发布
+## [1.0.0] - 2026-05-24
 
 ### 新增
 
 - Windows 插件式 GIS/遥感算法工作台（CLI + GUI）
-- 13 个算法插件与 NSIS 安装包
+- 13 个算法插件与 NSIS 安装脚本
 - GUI 任务中心、批处理、结果预览、预设工作流
-- 约 405 项 CTest（含 GUI 离屏回归）
+- 472 项 CTest（含 GUI 离屏回归；`debug_only` 用例在 Release 下自动跳过）
 
 ### 变更
 
@@ -24,6 +24,9 @@
 
 - 修正 `.gitignore` 导致 `tests/data` 夹具无法入库的问题
 - 补充 GUI 回归所需最小 GeoJSON 测试夹具
+- GUI 离屏回归默认 Qt 平台与 `qoffscreen.dll` 对齐；修复 screenshot 断言无限递归
+- `geom_metrics` / `nearest` 输出扩展名校验与插件能力一致
+- `dangling_endpoint_check` CSV `endpoint_type` 输出 `0/1`
 
 ### 已知限制
 
