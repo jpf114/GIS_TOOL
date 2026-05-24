@@ -1239,6 +1239,7 @@ if(TARGET gis-gui)
         NAME gui_matching_ecc_register_debug_failure_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGIS_TEST_BUILD_CONFIG=$<CONFIG>
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_ecc_register_debug_failure/output.tif
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_ecc_register_debug_failure/gui_matching_ecc_register_debug_failure.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_ecc_register_debug_failure_regression.cmake
@@ -1251,6 +1252,7 @@ if(TARGET gis-gui)
         NAME gui_matching_stitch_debug_failure_offscreen
         COMMAND ${CMAKE_COMMAND}
             -DGUI_PATH=$<TARGET_FILE:gis-gui>
+            -DGIS_TEST_BUILD_CONFIG=$<CONFIG>
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_stitch_debug_failure/output.tif
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_stitch_debug_failure/gui_matching_stitch_debug_failure.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_stitch_debug_failure_regression.cmake

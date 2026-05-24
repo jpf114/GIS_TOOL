@@ -1,4 +1,4 @@
-﻿if(NOT DEFINED GUI_PATH OR NOT DEFINED SCREENSHOT_PATH)
+if(NOT DEFINED GUI_PATH OR NOT DEFINED SCREENSHOT_PATH)
     message(FATAL_ERROR "Missing required GUI projection transform regression arguments.")
 endif()
 
@@ -9,7 +9,7 @@ set(STATUS_PATH "${OUTPUT_DIR}/status.json")
 gis_gui_prepare_aux_paths("${SCREENSHOT_PATH}" "${STATUS_PATH}")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(

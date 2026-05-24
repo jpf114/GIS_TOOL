@@ -1,4 +1,4 @@
-﻿if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
+if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
     message(FATAL_ERROR "Missing required GUI cutting clip regression arguments.")
 endif()
 
@@ -12,7 +12,7 @@ file(REMOVE "${INPUT_PATH}" "${INPUT_PATH}.aux.xml")
 file(REMOVE "${PREP_STATUS_PATH}")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(
@@ -37,7 +37,7 @@ if(NOT "${PREP_EXIT_CODE}" STREQUAL "0" OR NOT EXISTS "${INPUT_PATH}")
 endif()
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(

@@ -1,0 +1,13 @@
+# Debug-only GUI regressions assert Debug lightweight failure paths.
+macro(gis_gui_skip_unless_debug)
+    set(_gis_test_config "")
+    if(DEFINED GIS_TEST_BUILD_CONFIG)
+        set(_gis_test_config "${GIS_TEST_BUILD_CONFIG}")
+    elseif(DEFINED CTEST_CONFIGURATION_TYPE)
+        set(_gis_test_config "${CTEST_CONFIGURATION_TYPE}")
+    endif()
+    if(_gis_test_config AND NOT _gis_test_config STREQUAL "Debug")
+        message(STATUS "Skipping debug-only GUI regression (${_gis_test_config})")
+        return()
+    endif()
+endmacro()

@@ -1,4 +1,4 @@
-﻿if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH OR
+if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH OR
    NOT DEFINED GUI_TEST_DATA_HELPER_PATH)
     message(FATAL_ERROR "Missing required GUI cutting merge-bands list regression arguments.")
 endif()
@@ -12,7 +12,7 @@ set(INPUT_PATH_B "${OUTPUT_DIR}/merge_list_band_b.tif")
 set(INPUT_PATH_C "${OUTPUT_DIR}/merge_list_band_c.tif")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(
@@ -22,7 +22,7 @@ execute_process(
     ERROR_VARIABLE PREP_A_STDERR
 )
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(
@@ -32,7 +32,7 @@ execute_process(
     ERROR_VARIABLE PREP_B_STDERR
 )
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(
@@ -53,7 +53,7 @@ if(NOT "${PREP_A_EXIT_CODE}" STREQUAL "0" OR
 endif()
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(
@@ -83,7 +83,7 @@ gis_gui_assert_regression_result(
     "${STATUS_PATH}")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(

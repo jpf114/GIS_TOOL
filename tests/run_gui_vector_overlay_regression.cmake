@@ -1,6 +1,8 @@
-﻿if(NOT DEFINED GUI_PATH OR NOT DEFINED ACTION OR NOT DEFINED INPUT_PATH OR NOT DEFINED OVERLAY_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
+if(NOT DEFINED GUI_PATH OR NOT DEFINED ACTION OR NOT DEFINED INPUT_PATH OR NOT DEFINED OVERLAY_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
     message(FATAL_ERROR "Missing required GUI vector overlay regression arguments.")
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_defaults.cmake")
 
 get_filename_component(OUTPUT_DIR "${OUTPUT_PATH}" DIRECTORY)
 get_filename_component(SCREENSHOT_DIR "${SCREENSHOT_PATH}" DIRECTORY)
@@ -10,7 +12,7 @@ file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 file(MAKE_DIRECTORY "${SCREENSHOT_DIR}")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(
@@ -45,7 +47,9 @@ if(OUTPUT_SIZE EQUAL 0)
     message(FATAL_ERROR "GUI vector overlay regression produced an empty output file: ${OUTPUT_PATH}")
 endif()
 
-if(NOT DEFINED GUI_PLATFORM OR NOT GUI_PLATFORM STREQUAL "minimal")
+set(_skip_screenshot FALSE)
+gis_gui_platform_skips_screenshot(_skip_screenshot)
+if(NOT _skip_screenshot)
     if(NOT EXISTS "${SCREENSHOT_PATH}")
         message(FATAL_ERROR "GUI vector overlay regression did not produce screenshot: ${SCREENSHOT_PATH}")
     endif()

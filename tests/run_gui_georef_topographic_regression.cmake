@@ -1,4 +1,4 @@
-﻿if(NOT DEFINED GUI_PATH OR NOT DEFINED GUI_TEST_DATA_HELPER_PATH OR NOT DEFINED ACTION OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
+if(NOT DEFINED GUI_PATH OR NOT DEFINED GUI_TEST_DATA_HELPER_PATH OR NOT DEFINED ACTION OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
     message(FATAL_ERROR "Missing required GUI georef topographic regression arguments.")
 endif()
 
@@ -11,7 +11,7 @@ set(ASPECT_PATH "${OUTPUT_DIR}/topographic_aspect.tif")
 gis_gui_prepare_artifact_paths("${OUTPUT_PATH}" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(
@@ -58,7 +58,7 @@ list(APPEND COMMAND_ARGS
     --status-file "${STATUS_PATH}")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(

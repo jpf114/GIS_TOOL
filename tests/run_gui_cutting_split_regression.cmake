@@ -1,4 +1,4 @@
-﻿if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_DIR OR NOT DEFINED SCREENSHOT_PATH)
+if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_DIR OR NOT DEFINED SCREENSHOT_PATH)
     message(FATAL_ERROR "Missing required GUI cutting split regression arguments.")
 endif()
 
@@ -12,7 +12,7 @@ gis_gui_prepare_aux_paths("${SCREENSHOT_PATH}" "${STATUS_PATH}")
 gis_gui_generate_test_tiff("${INPUT_PATH}")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(

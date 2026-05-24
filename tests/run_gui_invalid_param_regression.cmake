@@ -1,4 +1,4 @@
-﻿if(NOT DEFINED GUI_PATH OR NOT DEFINED INPUT_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
+if(NOT DEFINED GUI_PATH OR NOT DEFINED INPUT_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
     message(FATAL_ERROR "Missing required GUI invalid-param regression arguments.")
 endif()
 
@@ -8,7 +8,7 @@ set(STATUS_PATH "${OUTPUT_DIR}/status.json")
 gis_gui_prepare_artifact_paths("${OUTPUT_PATH}" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(
@@ -43,7 +43,9 @@ if(EXISTS "${OUTPUT_PATH}")
     endif()
 endif()
 
-if(NOT DEFINED GUI_PLATFORM OR NOT GUI_PLATFORM STREQUAL "minimal")
+set(_skip_screenshot FALSE)
+gis_gui_platform_skips_screenshot(_skip_screenshot)
+if(NOT _skip_screenshot)
     if(NOT EXISTS "${SCREENSHOT_PATH}")
         message(FATAL_ERROR "GUI invalid-param regression did not produce screenshot: ${SCREENSHOT_PATH}")
     endif()

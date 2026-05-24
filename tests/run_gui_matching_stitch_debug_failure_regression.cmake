@@ -1,6 +1,9 @@
-﻿if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
+if(NOT DEFINED GUI_PATH OR NOT DEFINED OUTPUT_PATH OR NOT DEFINED SCREENSHOT_PATH)
     message(FATAL_ERROR "Missing required GUI matching stitch debug failure regression arguments.")
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_skip_unless_debug.cmake")
+gis_gui_skip_unless_debug()
 
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
 get_filename_component(OUTPUT_DIR "${OUTPUT_PATH}" DIRECTORY)
@@ -12,7 +15,7 @@ gis_gui_generate_test_bmp("${INPUT_PATH_A}")
 gis_gui_generate_test_bmp("${INPUT_PATH_B}")
 
 if(NOT DEFINED GUI_PLATFORM)
-    set(GUI_PLATFORM minimal)
+    set(GUI_PLATFORM offscreen)
 endif()
 
 execute_process(

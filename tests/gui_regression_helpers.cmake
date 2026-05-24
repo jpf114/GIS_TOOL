@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_defaults.cmake")
+
 function(gis_gui_prepare_output_paths output_path screenshot_path)
     get_filename_component(output_dir "${output_path}" DIRECTORY)
     get_filename_component(screenshot_dir "${screenshot_path}" DIRECTORY)
@@ -60,11 +62,20 @@ function(gis_gui_assert_status_bool actual_value expected_value description)
 endfunction()
 
 function(gis_gui_assert_screenshot_if_supported test_name screenshot_path)
-    if(DEFINED GUI_PLATFORM AND GUI_PLATFORM STREQUAL "minimal")
+    set(skip_screenshot FALSE)
+    gis_gui_platform_skips_screenshot(skip_screenshot)
+    if(skip_screenshot)
         return()
     endif()
 
-    gis_gui_assert_screenshot_if_supported("${test_name}" "${screenshot_path}")
+    if(NOT EXISTS "${screenshot_path}")
+        message(FATAL_ERROR "${test_name} did not produce screenshot: ${screenshot_path}")
+    endif()
+
+    file(SIZE "${screenshot_path}" screenshot_size)
+    if(screenshot_size EQUAL 0)
+        message(FATAL_ERROR "${test_name} produced an empty screenshot: ${screenshot_path}")
+    endif()
 endfunction()
 
 function(gis_gui_assert_regression_result test_name exit_code stdout_text stderr_text output_path screenshot_path status_path)
