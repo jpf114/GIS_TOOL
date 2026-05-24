@@ -531,13 +531,22 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "vector" &&
-        (actionKey == "geom_metrics" || actionKey == "nearest" || actionKey == "adjacency" ||
-         actionKey == "overlap_check" || actionKey == "topology_check" ||
+        (actionKey == "adjacency" || actionKey == "overlap_check" || actionKey == "topology_check" ||
          actionKey == "multipart_check" || actionKey == "duplicate_point_check" ||
          actionKey == "hole_check" || actionKey == "dangling_endpoint_check")) {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".csv"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .csv"};
+        }
+    }
+
+    if (pluginName == "vector" &&
+        (actionKey == "geom_metrics" || actionKey == "nearest")) {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty() &&
+            !endsWithOneOf(outputPath, {".gpkg", ".geojson", ".json", ".shp", ".kml"})) {
+            return ActionValidationIssue{
+                "output", "参数“输出文件”应使用 .gpkg、.geojson、.json、.shp 或 .kml"};
         }
     }
 
