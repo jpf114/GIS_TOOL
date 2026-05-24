@@ -43,6 +43,8 @@
 - `ctest --test-dir build/debug -C Debug`：**472/472** 通过（2026-05-24）
 - NSIS：`installer/gis-toolkit-1.0.0-win64-setup.exe` 本地构建成功（见 [docs/RELEASE.md](docs/RELEASE.md)）
 
+> 更早的验收明细已收敛到 [CHANGELOG.md](CHANGELOG.md) 与 [docs/RELEASE.md](docs/RELEASE.md)；下文仅保留近期摘要。
+
 ### 历史验收记录（2026-05-23）
 
 - `tests/data` 最小 GeoJSON 夹具已入库，CLI 验证通过：

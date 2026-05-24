@@ -17,6 +17,16 @@ install/bin/gis-cli.exe --list
 install/bin/gis-gui.exe -platform offscreen --self-test
 ```
 
+## 依赖版本快照
+
+发布前导出当前全局 vcpkg 安装版本，附在 Release 资产或提交到仓库：
+
+```powershell
+.\scripts\export-vcpkg-versions.ps1
+```
+
+默认输出：[docs/vcpkg-versions.lock.txt](vcpkg-versions.lock.txt)
+
 ## NSIS 安装包
 
 前置：已安装 [NSIS](https://nsis.sourceforge.io/)，且 `makensis` 在 PATH 中。
@@ -43,4 +53,5 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 - Windows 代码签名未配置（SmartScreen 可能提示）
 - `classification` / `georef` 插件版本 0.1.0
-- Logger / PerformanceMonitor 为基础设施，未接入主执行链
+- `PerformanceMonitor` 未接入主执行链；`Logger` 已接入 CLI/GUI 进度消息（任务中心日志仍为 GUI 主路径）
+- 切片预览使用本地 Leaflet 资源（`share/leaflet`），不再依赖 CDN

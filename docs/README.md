@@ -17,6 +17,10 @@
 - [贡献指南](../CONTRIBUTING.md)
 - [更新日志](../CHANGELOG.md)
 - [安全策略](../SECURITY.md)
+- [发布检查清单](./RELEASE.md)
+- [vcpkg 依赖快照](./vcpkg-versions.lock.txt)（由 `scripts/export-vcpkg-versions.ps1` 生成）
+- [GUI 主链职责盘点](./GUI主链职责盘点.md)
+- [插件结果元数据盘点](./插件结果元数据盘点.md)
 - [历史归档说明](./archive/README.md)
 
 ## 建议阅读顺序

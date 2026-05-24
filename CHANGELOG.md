@@ -9,7 +9,7 @@
 - Windows 插件式 GIS/遥感算法工作台（CLI + GUI）
 - 13 个算法插件与 NSIS 安装脚本
 - GUI 任务中心、批处理、结果预览、预设工作流
-- 472 项 CTest（含 GUI 离屏回归；`debug_only` 用例在 Release 下自动跳过）
+- 475 项 CTest（含 GUI 离屏回归；`debug_only` 用例在 Release 下自动跳过）
 
 ### 变更
 
@@ -22,6 +22,9 @@
 
 ### 修复
 
+- 切片预览 HTML：转义 `title`/`copyright`，并改用本地 Leaflet 资源（去除 unpkg CDN）
+- 接入核心 `Logger` 到 CLI/GUI 进度消息路径
+- 统一插件 CMake 列表（`cmake/PluginTargets.cmake`）
 - 修正 `.gitignore` 导致 `tests/data` 夹具无法入库的问题
 - 补充 GUI 回归所需最小 GeoJSON 测试夹具
 - GUI 离屏回归默认 Qt 平台与 `qoffscreen.dll` 对齐；修复 screenshot 断言无限递归
@@ -32,4 +35,4 @@
 
 详见 [docs/v1.0.0发布说明.md](docs/v1.0.0发布说明.md)。
 
-[1.0.0]: https://github.com/your-org/gis-tool/releases/tag/v1.0.0
+[1.0.0]: https://github.com/jpf114/GIS_TOOL/releases/tag/v1.0.0
