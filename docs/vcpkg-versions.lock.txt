@@ -1,0 +1,7 @@
+# GIS TOOL vcpkg dependency snapshot
+# Generated: 2026-05-24 (template — regenerate before release)
+# Triplet: x64-windows
+# Command: .\scripts\export-vcpkg-versions.ps1
+#
+# This file is updated by CI (windows-build.yml) and should be committed with each release.
+# Regenerate locally after `vcpkg install --triplet x64-windows --x-manifest-root=$PWD`.

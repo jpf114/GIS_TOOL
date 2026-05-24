@@ -3,6 +3,7 @@ name: windows-build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build-and-test:
@@ -114,6 +115,20 @@ jobs:
           .\install\bin\gis-cli.exe vector buffer --input "$PWD\tests\data\gui_vector_projected_input.geojson" --distance 10 --output "$PWD\install-smoke-buffer.geojson"
           .\install\bin\gis-gui.exe -platform offscreen --self-test
           Remove-Item -LiteralPath "$PWD\install-smoke-buffer.geojson" -ErrorAction SilentlyContinue
+
+      - name: Real data regression (quick)
+        shell: pwsh
+        env:
+          VCPKG_ROOT: C:\vcpkg
+        run: |
+          cmake --build build/release --config Release --target real_raster_regression real_matching_regression real_vector_regression
+
+      - name: Export vcpkg versions lock
+        shell: pwsh
+        env:
+          VCPKG_ROOT: C:\vcpkg
+        run: |
+          .\scripts\export-vcpkg-versions.ps1 -OutputPath docs\vcpkg-versions.lock.txt
 
       - name: Install NSIS
         shell: pwsh
