@@ -32,7 +32,16 @@
 
 
 
-### 最近一次验收记录（2026-05-24）
+### 最近一次验收记录（2026-05-24，发布前审查收口）
+
+- 切片预览：HTML 转义 + 本地 Leaflet（去除 CDN）
+- 核心 Logger 接入 CLI/GUI 进度消息链
+- `ctest --test-dir build/release -C Release`：**475/475** 通过
+- `ctest --test-dir build/debug -C Debug`：**475/475** 通过
+- `real_raster/matching/vector_regression`（quick）通过
+- `cmake --install` + install smoke 通过
+
+### 历史验收记录（2026-05-24）
 
 - 修复 `PluginTest.VectorDanglingEndpointCheckExecution`：`dangling_endpoint_check` CSV 的 `endpoint_type` 与测试约定对齐为 `0/1`（start/end）
 - 修复 GUI 离屏回归：默认 Qt 平台与 `qoffscreen.dll` 对齐；修复 `gis_gui_assert_screenshot_if_supported` 无限递归；`geom_metrics`/`nearest` 输出扩展名校验与插件一致
@@ -40,7 +49,7 @@
 - `ctest --test-dir build/release -C Release -R "CoreTest|FrameworkTest|PluginTest|GuiSupportTest|MainWindowTest"`：`280/280` 通过
 - `cmake --build build/release --config Release --target real_raster_regression real_matching_regression real_vector_regression`（quick）均通过
 - `cmake --install build/release --config Release --prefix install` 成功；`install/bin/gis-cli.exe --list`、`gis-gui -platform offscreen --self-test` 通过
-- `ctest --test-dir build/debug -C Debug`：**472/472** 通过（2026-05-24）
+- `ctest --test-dir build/debug -C Debug`：**472/472** 通过（2026-05-24，后续增至 **475/475**）
 - NSIS：`installer/gis-toolkit-1.0.0-win64-setup.exe` 本地构建成功（见 [docs/RELEASE.md](docs/RELEASE.md)）
 
 > 更早的验收明细已收敛到 [CHANGELOG.md](CHANGELOG.md) 与 [docs/RELEASE.md](docs/RELEASE.md)；下文仅保留近期摘要。
