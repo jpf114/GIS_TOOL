@@ -6,6 +6,9 @@
 #include <gis/core/progress.h>
 #include <gis/core/runtime_env.h>
 #include <gis/core/spindex_presets.h>
+#include <gis/core/text_escape.h>
+#include <gis/core/logger_init.h>
+#include <gis/core/logger.h>
 #include <gdal_priv.h>
 #include <opencv2/core.hpp>
 #include <filesystem>
@@ -393,4 +396,20 @@ TEST_F(CoreTest, FindPluginDirectoryFromPrefersNearestPluginsDir) {
 
     const auto resolved = gis::core::findPluginDirectoryFrom(exeDir);
     EXPECT_EQ(fs::weakly_canonical(resolved), fs::weakly_canonical(localPluginsDir));
+}
+
+TEST_F(CoreTest, EscapeForHtmlEscapesSpecialCharacters) {
+    EXPECT_EQ(gis::core::escapeForHtml("a&b<c>\"d'e"),
+              "a&amp;b&lt;c&gt;&quot;d&#39;e");
+}
+
+TEST_F(CoreTest, EscapeForJsSingleQuotedEscapesSpecialCharacters) {
+    EXPECT_EQ(gis::core::escapeForJsSingleQuoted("line\nbreak\\quote'"),
+              "line\\nbreak\\\\quote\\'");
+}
+
+TEST_F(CoreTest, InitDefaultLoggingIsIdempotent) {
+    gis::core::initDefaultLogging();
+    gis::core::Logger::instance().info("logger smoke", "CoreTest");
+    EXPECT_NO_THROW(gis::core::initDefaultLogging());
 }
