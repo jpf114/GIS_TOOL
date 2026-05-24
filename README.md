@@ -32,7 +32,15 @@
 
 
 
-### 最近一次验收记录（2026-05-23）
+### 最近一次验收记录（2026-05-24）
+
+- 修复 `PluginTest.VectorDanglingEndpointCheckExecution`：`dangling_endpoint_check` CSV 的 `endpoint_type` 与测试约定对齐为 `0/1`（start/end）
+- `ctest --test-dir build/release -C Release -R "CoreTest|FrameworkTest|PluginTest|GuiSupportTest|MainWindowTest"`：`280/280` 通过
+- `cmake --build build/release --config Release --target real_raster_regression real_matching_regression real_vector_regression`（quick）均通过
+- `cmake --install build/release --config Release --prefix install` 成功；`install/bin/gis-cli.exe --list` 可列出插件
+- Release 全量 `ctest`（472 项）：单元/插件层通过；本机 GUI 离屏回归从 `gui_vector_convert_offscreen` 起批量失败（`0xc0000409`），`gui_smoke_startup` 仍通过——与 Debug 环境现象一致，发布判定以 CI 与提交前 tier 为准
+
+### 历史验收记录（2026-05-23）
 
 - `tests/data` 最小 GeoJSON 夹具已入库，CLI 验证通过：
   - `vector buffer`（`gui_vector_projected_input.geojson`）→ `tmp/smoke-buffer.gpkg`
