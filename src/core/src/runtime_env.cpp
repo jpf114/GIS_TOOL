@@ -79,6 +79,14 @@ bool isPluginLibraryPath(const std::filesystem::directory_entry& entry) {
 
 } // namespace
 
+std::filesystem::path applicationDirectory() {
+    return executableDir();
+}
+
+std::filesystem::path findBundledSharePath(const std::filesystem::path& relativePath) {
+    return findRuntimePath(applicationDirectory(), std::filesystem::path("share") / relativePath);
+}
+
 std::filesystem::path findRuntimePathFrom(
     const std::filesystem::path& startDir,
     const std::filesystem::path& relativePath) {

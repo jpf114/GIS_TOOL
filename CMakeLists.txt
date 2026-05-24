@@ -107,6 +107,8 @@ find_package(GDAL REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d flann calib3d ml imgcodecs)
 find_package(PROJ REQUIRED)
 
+include(${CMAKE_SOURCE_DIR}/cmake/PluginTargets.cmake)
+
 add_subdirectory(src/core)
 add_subdirectory(src/framework)
 add_subdirectory(src/plugins/projection)
@@ -141,6 +143,9 @@ add_custom_command(TARGET copy_runtime_dlls POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${GIS_VCPKG_GDAL_DATA_DIR}
         ${CMAKE_BINARY_DIR}/share/gdal
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/resources/leaflet
+        ${CMAKE_BINARY_DIR}/share/leaflet
     COMMENT "Copying runtime DLLs and data to plugins directory"
 )
 
@@ -157,6 +162,11 @@ install(DIRECTORY
 install(DIRECTORY
     "${CMAKE_SOURCE_DIR}/resources/icons/"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/icons"
+)
+
+install(DIRECTORY
+    "${CMAKE_SOURCE_DIR}/resources/leaflet/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/leaflet"
 )
 
 if(GIS_BUILD_GUI)

@@ -44,59 +44,65 @@
    说明：本项目通过 vcpkg 安装 qtbase（启用 sql、widgets 特性）及 qtsvg。
          本项目以动态链接方式使用 Qt6，符合 LGPL v3 的分发要求。
 
+6. Leaflet
+   版本：1.9.4（随安装包分发的静态资源，位于 resources/leaflet/）
+   许可证：BSD 2-Clause License
+   许可证链接：https://github.com/Leaflet/Leaflet/blob/main/LICENSE
+   说明：仅用于 `cutting` 插件生成的本地瓦片预览 HTML，不从 CDN 加载。
+
 --------------------------------------------------------------------------------
 二、间接依赖（通过上述直接依赖传递引入）
 --------------------------------------------------------------------------------
 
-6. SQLite3
+7. SQLite3
    引入方式：通过 GDAL（sqlite3 特性）及 Qt6（sql 特性）间接引入
    许可证：Public Domain
    许可证链接：https://www.sqlite.org/copyright.html
    说明：SQLite3 代码已进入公共领域，无版权限制。
 
-7. libcurl
+8. libcurl
    引入方式：通过 GDAL 间接引入
    许可证：MIT/X Derivative License
    许可证链接：https://github.com/curl/curl/blob/master/COPYING
    说明：libcurl 采用基于 MIT 的自定义许可证，与 MIT 许可证兼容。
 
-8. GEOS — Geometry Engine, Open Source
+9. GEOS — Geometry Engine, Open Source
    引入方式：通过 GDAL（geos 特性）间接引入
    许可证：GNU Lesser General Public License v2.1 (LGPL v2.1)
    许可证链接：https://github.com/libgeos/geos/blob/main/COPYING
    说明：GEOS 以动态链接方式使用，符合 LGPL v2.1 的分发要求。
 
-9. libjpeg (Independent JPEG Group)
+10. libjpeg (Independent JPEG Group)
    引入方式：通过 GDAL（jpeg 特性）及 OpenCV 4（jpeg 特性）间接引入
    许可证：Independent JPEG Group License
    许可证链接：https://www.ijg.org/files/README
    说明：libjpeg 采用 IJG 自有许可证，允许自由使用和分发。
 
-10. libpng — Portable Network Graphics Library
+11. libpng — Portable Network Graphics Library
     引入方式：通过 GDAL（png 特性）及 OpenCV 4（png 特性）间接引入
     许可证：libpng License
     许可证链接：http://www.libpng.org/pub/png/src/libpng-LICENSE.txt
     说明：libpng 许可证与 MIT 许可证兼容，允许自由使用和分发。
 
-11. libtiff — Tag Image File Format Library
+12. libtiff — Tag Image File Format Library
     引入方式：通过 PROJ（tiff 特性）间接引入
     许可证：libtiff License
     许可证链接：https://gitlab.com/libtiff/libtiff/-/blob/master/LICENSE.md
     说明：libtiff 采用基于 MIT 的自定义许可证，允许自由使用和分发。
 
-12. expat — XML Parser Toolkit
+13. expat — XML Parser Toolkit
     引入方式：通过 GDAL（expat 特性）间接引入
     许可证：MIT License
     许可证链接：https://github.com/libexpat/libexpat/blob/master/expat/COPYING
     说明：expat 采用 MIT 许可证，允许自由使用和分发。
 
-13. ICU — International Components for Unicode
+14. ICU — International Components for Unicode
     引入方式：通过 Qt6 间接引入
     许可证：ICU License
     许可证链接：https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE
     说明：ICU 许可证与 MIT 许可证兼容，允许自由使用和分发。
 
-14. SpatiaLite
+15. SpatiaLite
     引入方式：通过 GDAL 间接引入
     许可证：Mozilla Public License v1.1 / GNU General Public License v2 or later /
              GNU Lesser General Public License v2.1 or later (三选一)

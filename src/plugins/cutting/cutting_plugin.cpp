@@ -1,6 +1,8 @@
 #include "cutting_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
+#include <gis/core/runtime_env.h>
+#include <gis/core/text_escape.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
@@ -634,20 +636,59 @@ static void writeMetadataJson(const std::string& outputDir,
     json.close();
 }
 
+static bool copyLeafletAssetsTo(const std::filesystem::path& outputDir) {
+    std::error_code ec;
+    const auto bundledLeaflet = gis::core::findBundledSharePath("leaflet");
+    if (bundledLeaflet.empty()) {
+        return false;
+    }
+
+    const auto destDir = outputDir / "leaflet";
+    std::filesystem::create_directories(destDir, ec);
+    if (ec) {
+        return false;
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(bundledLeaflet, ec)) {
+        if (ec || !entry.is_regular_file()) {
+            continue;
+        }
+        std::filesystem::copy_file(
+            entry.path(),
+            destDir / entry.path().filename(),
+            std::filesystem::copy_options::overwrite_existing,
+            ec);
+        if (ec) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void writeLeafletHtml(const std::string& outputDir, int minZ, int maxZ,
                               double centerLon, double centerLat,
                               const std::string& title, const std::string& copyright) {
+    const std::string safeTitle = title.empty()
+        ? "Tile Preview"
+        : gis::core::escapeForHtml(title);
+    const std::string safeCopyright = gis::core::escapeForJsSingleQuoted(copyright);
+
+    if (!copyLeafletAssetsTo(outputDir)) {
+        throw std::runtime_error(
+            "Leaflet preview assets not found (expected share/leaflet next to the application).");
+    }
+
     std::ofstream html(outputDir + "/leaflet.html");
     html << "<!DOCTYPE html>\n<html><head><meta charset='utf-8'><title>"
-         << (title.empty() ? "Tile Preview" : title)
+         << safeTitle
          << "</title>\n"
-         << "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>\n"
-         << "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>\n"
+         << "<link rel='stylesheet' href='./leaflet/leaflet.css'/>\n"
+         << "<script src='./leaflet/leaflet.js'></script>\n"
          << "<style>body{margin:0}#map{width:100%;height:100vh}</style></head><body>\n"
          << "<div id='map'></div><script>\n"
          << "var map=L.map('map').setView([" << centerLat << "," << centerLon << "]," << std::max(minZ, std::min(maxZ, minZ+2)) << ");\n"
          << "L.tileLayer('./{z}/{x}/{y}.png',{minZoom:" << minZ << ",maxZoom:" << maxZ
-         << ",attribution:'" << (copyright.empty() ? "" : copyright) << "'}).addTo(map);\n"
+         << ",attribution:'" << safeCopyright << "'}).addTo(map);\n"
          << "</script></body></html>\n";
     html.close();
 }
