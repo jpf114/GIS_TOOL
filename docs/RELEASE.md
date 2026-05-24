@@ -37,7 +37,7 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 3. 附资产：
    - `gis-toolkit-1.0.0-win64-setup.exe`（NSIS）
    - `gis-tool-win64.zip`（CI artifact，含 `install/` 树）
-4. 发布说明正文可复用 [v1.0.0发布说明.md](v1.0.0发布说明.md) 与 [CHANGELOG.md](../CHANGELOG.md)
+4. 发布说明正文可复用 [v1.0.0发布说明.md](v1.0.0发布说明.md)、[CHANGELOG.md](../CHANGELOG.md) 或 [v1.0.0_GITHUB_RELEASE.md](v1.0.0_GITHUB_RELEASE.md)
 
 ## 已知限制
 
