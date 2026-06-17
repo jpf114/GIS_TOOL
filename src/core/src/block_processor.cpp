@@ -55,7 +55,7 @@ void RasterBlockProcessor::process(const std::string& inputPath,
                                     ProgressReporter& progress) {
     auto srcDs = openRaster(inputPath, true);
     if (!srcDs) {
-        throw std::runtime_error("Cannot open input raster: " + inputPath);
+        throw GisError("Cannot open input raster: " + inputPath);
     }
 
     int width = srcDs->GetRasterXSize();
@@ -65,19 +65,16 @@ void RasterBlockProcessor::process(const std::string& inputPath,
     auto blocks = computeBlocks(width, height, config_.blockSize,
                                 config_.overlap, config_.overlapSize);
     if (blocks.empty()) {
-        throw std::runtime_error("No blocks to process");
+        throw GisError("No blocks to process");
     }
 
     double geoTransform[6] = {};
     srcDs->GetGeoTransform(geoTransform);
 
-    char* projWkt = nullptr;
-    srcDs->GetProjectionRef();
-
     auto dstDs = createRaster(outputPath, width, height, bandCount,
                                srcDs->GetRasterBand(1)->GetRasterDataType());
     if (!dstDs) {
-        throw std::runtime_error("Cannot create output raster: " + outputPath);
+        throw GisError("Cannot create output raster: " + outputPath);
     }
 
     dstDs->SetGeoTransform(geoTransform);

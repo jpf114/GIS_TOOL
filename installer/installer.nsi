@@ -5,9 +5,28 @@
 
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "gis-toolkit-${PRODUCT_VERSION}-win64-setup.exe"
+
+; 允许用户选择安装路径
 InstallDir "$PROGRAMFILES64\${PRODUCT_NAME}"
+
+; 检测旧版本安装路径
 InstallDirRegKey HKLM "${PRODUCT_DIR_REGKEY}" "InstallDir"
+
 RequestExecutionLevel admin
+
+; 引入现代 UI
+!include "MUI2.nsh"
+
+; 定义 MUI 页面
+!define MUI_LICENSEPAGE_CHECKBOX
+!define MUI_ABORTWARNING
+
+; 页面顺序
+!insertmacro MUI_PAGE_LICENSE "..\LICENSE"
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "SimpChinese"
 
 Section "MainSection" SEC01
   SetOutPath "$INSTDIR"
@@ -20,9 +39,12 @@ SectionEnd
 
 Section -Post
   WriteRegStr HKLM "${PRODUCT_DIR_REGKEY}" "InstallDir" "$INSTDIR"
+  WriteRegStr HKLM "${PRODUCT_DIR_REGKEY}" "Version" "${PRODUCT_VERSION}"
   WriteUninstaller "$INSTDIR\uninst.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "DisplayName" "${PRODUCT_NAME}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "UninstallString" "$INSTDIR\uninst.exe"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "DisplayVersion" "${PRODUCT_VERSION}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}" "Publisher" "${PRODUCT_PUBLISHER}"
 SectionEnd
 
 Section Uninstall

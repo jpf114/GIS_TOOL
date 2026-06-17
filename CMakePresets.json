@@ -57,12 +57,14 @@
         {
             "name": "debug",
             "configurePreset": "debug",
-            "configuration": "Debug"
+            "configuration": "Debug",
+            "outputOnFailure": true
         },
         {
             "name": "release",
             "configurePreset": "release",
-            "configuration": "Release"
+            "configuration": "Release",
+            "outputOnFailure": true
         }
     ]
 }

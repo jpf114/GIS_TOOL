@@ -15,6 +15,8 @@
 ## 工程文档
 
 - [贡献指南](../CONTRIBUTING.md)
+- [许可证](../LICENSE)
+- [第三方声明](../THIRD_PARTY_NOTICES)
 - [更新日志](../CHANGELOG.md)
 - [安全策略](../SECURITY.md)
 - [发布检查清单](./RELEASE.md)

@@ -5,6 +5,8 @@
 #include <QThread>
 #include <gis/framework/workflow.h>
 #include <map>
+#include <atomic>
+#include <mutex>
 
 class QComboBox;
 class QLabel;
@@ -45,6 +47,7 @@ private:
     int currentPresetIndex_ = -1;
 
     QThread* workflowThread_ = nullptr;
+    std::mutex workflowMutex_;
     gis::framework::WorkflowResult workflowResult_;
-    bool workflowRunning_ = false;
+    std::atomic<bool> workflowRunning_{false};
 };

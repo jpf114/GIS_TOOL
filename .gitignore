@@ -12,6 +12,10 @@ install/
 *.vcxproj*
 .idea/
 CMakeSettings.json
+CMakeUserPresets.json
+*.swp
+*.swo
+*~
 
 # OS
 Thumbs.db
@@ -20,6 +24,7 @@ desktop.ini
 
 # vcpkg
 vcpkg_installed/
+docs/vcpkg-versions.lock.txt
 
 # Runtime databases
 *.db

@@ -3,6 +3,7 @@
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
+#include <gis/core/plugin_utils.h>
 #include <gis/core/spindex_presets.h>
 
 #include <gdal_priv.h>
@@ -12,7 +13,6 @@
 #include <cctype>
 #include <cmath>
 #include <map>
-#include <stack>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -20,14 +20,6 @@
 namespace gis::plugins {
 
 namespace {
-
-gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
-    gis::core::ProcessingMetadata meta;
-    meta.sourceFile = input;
-    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
-    meta.processingAlgorithm = algorithm;
-    return meta;
-}
 
 int getBandIndex(const std::map<std::string, gis::framework::ParamValue>& params,
                  const char* key,
@@ -72,105 +64,6 @@ gis::framework::Result buildIndexResult(const std::string& indexName,
     result.metadata["index_min"] = std::to_string(minValue);
     result.metadata["index_max"] = std::to_string(maxValue);
     return result;
-}
-
-double evalExpression(const std::string& expr,
-                      const std::map<std::string, double>& bandValues) {
-    std::string resolved = expr;
-    for (const auto& [key, value] : bandValues) {
-        const std::string replacement = std::to_string(value);
-        size_t pos = 0;
-        while ((pos = resolved.find(key, pos)) != std::string::npos) {
-            resolved.replace(pos, key.length(), replacement);
-            pos += replacement.length();
-        }
-    }
-
-    try {
-        std::stack<double> values;
-        std::stack<char> ops;
-        auto precedence = [](char op) -> int {
-            if (op == '+' || op == '-') return 1;
-            if (op == '*' || op == '/') return 2;
-            return 0;
-        };
-        auto applyOp = [](double a, double b, char op) -> double {
-            switch (op) {
-                case '+': return a + b;
-                case '-': return a - b;
-                case '*': return a * b;
-                case '/': return std::abs(b) < 1e-15 ? 0.0 : a / b;
-                default: return 0.0;
-            }
-        };
-
-        size_t i = 0;
-        while (i < resolved.size()) {
-            if (std::isspace(static_cast<unsigned char>(resolved[i]))) {
-                ++i;
-                continue;
-            }
-
-            if (std::isdigit(static_cast<unsigned char>(resolved[i])) || resolved[i] == '.') {
-                const size_t start = i;
-                while (i < resolved.size() &&
-                       (std::isdigit(static_cast<unsigned char>(resolved[i])) || resolved[i] == '.')) {
-                    ++i;
-                }
-                values.push(std::stod(resolved.substr(start, i - start)));
-                continue;
-            }
-
-            if (resolved[i] == '(') {
-                ops.push('(');
-                ++i;
-                continue;
-            }
-
-            if (resolved[i] == ')') {
-                while (!ops.empty() && ops.top() != '(') {
-                    const double b = values.top();
-                    values.pop();
-                    const double a = values.top();
-                    values.pop();
-                    values.push(applyOp(a, b, ops.top()));
-                    ops.pop();
-                }
-                if (!ops.empty()) {
-                    ops.pop();
-                }
-                ++i;
-                continue;
-            }
-
-            if (resolved[i] == '+' || resolved[i] == '-' ||
-                resolved[i] == '*' || resolved[i] == '/') {
-                while (!ops.empty() && precedence(ops.top()) >= precedence(resolved[i])) {
-                    const double b = values.top();
-                    values.pop();
-                    const double a = values.top();
-                    values.pop();
-                    values.push(applyOp(a, b, ops.top()));
-                    ops.pop();
-                }
-                ops.push(resolved[i]);
-            }
-            ++i;
-        }
-
-        while (!ops.empty()) {
-            const double b = values.top();
-            values.pop();
-            const double a = values.top();
-            values.pop();
-            values.push(applyOp(a, b, ops.top()));
-            ops.pop();
-        }
-
-        return values.empty() ? 0.0 : values.top();
-    } catch (...) {
-        return 0.0;
-    }
 }
 
 bool expressionContainsAlias(const std::string& expression, const std::string& alias) {
@@ -255,7 +148,7 @@ gis::framework::Result doCustomIndex(const std::string& input,
             const auto bandValues = buildCustomExpressionValues(
                 bandMats, x, y, blueBand, greenBand, redBand, nirBand, swir1Band);
             indexMat.at<float>(y, x) =
-                static_cast<float>(evalExpression(resolvedExpression, bandValues));
+                static_cast<float>(gis::core::evalExpression(resolvedExpression, bandValues));
         }
         if ((y % 100) == 0) {
             progress.throwIfCancelled();
@@ -269,7 +162,7 @@ gis::framework::Result doCustomIndex(const std::string& input,
     gis::core::matToGdalTiff(indexMat, input, output, 1);
 
     {
-        auto meta = buildMetadata(input, ds.get(), "spindex.custom_index");
+        auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.custom_index");
         gis::core::writeProcessingMetadata(output, meta);
     }
 
@@ -389,7 +282,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.ndvi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.ndvi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -421,7 +314,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.ndmi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.ndmi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -447,7 +340,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.gndvi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.gndvi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -473,7 +366,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.ndwi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.ndwi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -499,7 +392,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.mndwi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.mndwi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -525,7 +418,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.ndbi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.ndbi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -561,7 +454,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.bsi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.bsi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -592,7 +485,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.arvi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.arvi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -618,7 +511,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.nbr");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.nbr");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -652,7 +545,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.awei");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.awei");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -678,7 +571,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.ui");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.ui");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -708,7 +601,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.bi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.bi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -736,7 +629,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.savi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.savi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -763,7 +656,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.osavi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.osavi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -799,7 +692,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.evi");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.evi");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 
@@ -826,7 +719,7 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             gis::core::matToGdalTiff(indexMat, input, output, 1);
 
             {
-                auto meta = buildMetadata(input, ds.get(), "spindex.evi2");
+                auto meta = gis::core::buildPluginMetadata(input, ds.get(), "spindex.evi2");
                 gis::core::writeProcessingMetadata(output, meta);
             }
 

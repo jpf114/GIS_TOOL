@@ -21,7 +21,7 @@
    版本范围：由 vcpkg manifest 管理（vcpkg.json 中指定）
    许可证：Apache License 2.0
    许可证链接：https://github.com/opencv/opencv/blob/master/LICENSE
-   说明：本项目通过 vcpkg 安装 OpenCV 4，启用了 calib3d、highgui、jpeg、png、thread 特性。
+   说明：本项目通过 vcpkg 安装 OpenCV 4，启用了 calib3d、jpeg、ml、png、stitching、thread、video 特性。
 
 3. PROJ — Cartographic Projections and Coordinate Transformations Library
    版本范围：由 vcpkg manifest 管理（vcpkg.json 中指定）

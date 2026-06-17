@@ -10,18 +10,20 @@
 
 namespace gis::framework {
 
+/** Parameter type enumeration for plugin parameter specifications. */
 enum class ParamType {
-    String,
-    Int,
-    Double,
-    Bool,
-    FilePath,
-    DirPath,
-    Enum,
-    Extent,
-    CRS,
+    String,   ///< Free-form string
+    Int,      ///< Integer value
+    Double,   ///< Floating-point value
+    Bool,     ///< Boolean value
+    FilePath, ///< File path string
+    DirPath,  ///< Directory path string
+    Enum,     ///< Enumerated value (one of enumValues)
+    Extent,   ///< Geographic extent (xmin, ymin, xmax, ymax)
+    CRS,      ///< Coordinate reference system identifier
 };
 
+/** Variant type holding a parameter value. */
 using ParamValue = std::variant<
     std::string,
     int,
@@ -31,16 +33,17 @@ using ParamValue = std::variant<
     std::array<double, 4>
 >;
 
+/** Specification for a single plugin parameter. */
 struct ParamSpec {
-    std::string key;
-    std::string displayName;
-    std::string description;
-    ParamType type = ParamType::String;
-    bool required = true;
-    ParamValue defaultValue = std::string{};
-    ParamValue minValue = int{0};
-    ParamValue maxValue = int{0};
-    std::vector<std::string> enumValues;
+    std::string key;            ///< Unique parameter key identifier
+    std::string displayName;    ///< User-visible parameter name
+    std::string description;    ///< Parameter description
+    ParamType type = ParamType::String; ///< Parameter type
+    bool required = true;       ///< Whether the parameter is required
+    ParamValue defaultValue = std::string{}; ///< Default value when not provided
+    ParamValue minValue = int{0};   ///< Minimum allowed value (for Int/Double)
+    ParamValue maxValue = int{0};   ///< Maximum allowed value (for Int/Double)
+    std::vector<std::string> enumValues; ///< Allowed values for Enum type
 
     // Builder-style helpers
     ParamSpec& setName(const std::string& n) { displayName = n; return *this; }

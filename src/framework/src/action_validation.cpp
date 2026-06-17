@@ -1,4 +1,5 @@
 #include <gis/framework/action_validation.h>
+#include <gis/core/plugin_utils.h>
 
 #include <algorithm>
 #include <array>
@@ -11,22 +12,6 @@ namespace gis::framework {
 
 namespace {
 
-std::string trim(const std::string& value) {
-    const auto begin = value.find_first_not_of(" \t\r\n");
-    if (begin == std::string::npos) {
-        return {};
-    }
-    const auto end = value.find_last_not_of(" \t\r\n");
-    return value.substr(begin, end - begin + 1);
-}
-
-std::string lowerString(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
 bool isZeroExtent(const std::array<double, 4>& extent) {
     return extent[0] == 0.0 && extent[1] == 0.0 &&
            extent[2] == 0.0 && extent[3] == 0.0;
@@ -37,7 +22,7 @@ std::vector<std::string> splitCommaList(const std::string& rawText) {
     std::istringstream iss(rawText);
     std::string item;
     while (std::getline(iss, item, ',')) {
-        item = trim(item);
+        item = gis::core::trimString(item);
         if (!item.empty()) {
             items.push_back(item);
         }
@@ -67,7 +52,7 @@ bool parseIntegerList(const std::string& rawText,
 }
 
 bool endsWithOneOf(const std::string& path, const std::vector<std::string>& suffixes) {
-    const std::string lowerPath = lowerString(path);
+    const std::string lowerPath = gis::core::toLowerString(path);
     for (const auto& suffix : suffixes) {
         if (lowerPath.size() >= suffix.size() &&
             lowerPath.compare(lowerPath.size() - suffix.size(), suffix.size(), suffix) == 0) {
@@ -242,7 +227,7 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
         if (actionKey == "profile_extract") {
             const std::string pathValue = stringParam("profile_path");
-            if (trim(pathValue).empty()) {
+            if (gis::core::trimString(pathValue).empty()) {
                 return ActionValidationIssue{"profile_path", "参数“剖面路径”不能为空"};
             }
             const std::string outputPath = stringParam("output");
@@ -252,7 +237,7 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
         if (actionKey == "viewshed_multi") {
             const std::string pointsValue = stringParam("observer_points");
-            if (trim(pointsValue).empty()) {
+            if (gis::core::trimString(pointsValue).empty()) {
                 return ActionValidationIssue{"observer_points", "参数“观察点列表”不能为空"};
             }
         }
@@ -387,13 +372,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         const std::string trainingCsv = stringParam("training_csv");
         const std::string outputPath = stringParam("output");
         const std::string bandsText = stringParam("bands");
-        if (trim(inputPath).empty()) {
+        if (gis::core::trimString(inputPath).empty()) {
             return ActionValidationIssue{"input", "参数“输入栅格”不能为空"};
         }
-        if (trim(trainingCsv).empty()) {
+        if (gis::core::trimString(trainingCsv).empty()) {
             return ActionValidationIssue{"training_csv", "参数“训练CSV”不能为空"};
         }
-        if (trim(outputPath).empty()) {
+        if (gis::core::trimString(outputPath).empty()) {
             return ActionValidationIssue{"output", "参数“输出文件”不能为空"};
         }
         if (!endsWithOneOf(trainingCsv, {".csv"})) {
@@ -420,13 +405,13 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         const std::string classifiedRaster = stringParam("classified_raster");
         const std::string referenceRaster = stringParam("reference_raster");
         const std::string outputPath = stringParam("output");
-        if (trim(classifiedRaster).empty()) {
+        if (gis::core::trimString(classifiedRaster).empty()) {
             return ActionValidationIssue{"classified_raster", "参数“分类结果栅格”不能为空"};
         }
-        if (trim(referenceRaster).empty()) {
+        if (gis::core::trimString(referenceRaster).empty()) {
             return ActionValidationIssue{"reference_raster", "参数“参考栅格”不能为空"};
         }
-        if (trim(outputPath).empty()) {
+        if (gis::core::trimString(outputPath).empty()) {
             return ActionValidationIssue{"output", "参数“输出文件”不能为空"};
         }
         if (!endsWithOneOf(outputPath, {".json"})) {

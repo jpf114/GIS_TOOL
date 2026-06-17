@@ -10,6 +10,7 @@ add_library(gis_core
     src/logger_init.cpp
     src/text_escape.cpp
     src/perf_monitor.cpp
+    src/plugin_utils.cpp
 )
 
 target_include_directories(gis_core PUBLIC

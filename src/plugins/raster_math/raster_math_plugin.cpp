@@ -3,6 +3,7 @@
 #include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
+#include <gis/core/plugin_utils.h>
 
 #include <gdal_priv.h>
 #include <opencv2/core.hpp>
@@ -12,110 +13,12 @@
 #include <cctype>
 #include <cmath>
 #include <map>
-#include <stack>
 #include <string>
 #include <vector>
 
 namespace gis::plugins {
 
 namespace {
-
-gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
-    gis::core::ProcessingMetadata meta;
-    meta.sourceFile = input;
-    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
-    meta.processingAlgorithm = algorithm;
-    return meta;
-}
-
-static double evalExpression(const std::string& expr,
-                             const std::map<std::string, double>& bandValues) {
-    std::string e = expr;
-    std::vector<std::string> keys;
-    keys.reserve(bandValues.size());
-    for (const auto& [key, val] : bandValues) {
-        keys.push_back(key);
-    }
-    std::sort(keys.begin(), keys.end(),
-              [](const std::string& a, const std::string& b) { return a.size() > b.size(); });
-    for (const auto& key : keys) {
-        const std::string replacement = std::to_string(bandValues.at(key));
-        size_t pos = 0;
-        while ((pos = e.find(key, pos)) != std::string::npos) {
-            e.replace(pos, key.length(), replacement);
-            pos += replacement.length();
-        }
-    }
-
-    try {
-        std::stack<double> vals;
-        std::stack<char> ops;
-        auto precedence = [](char op) -> int {
-            if (op == '+' || op == '-') return 1;
-            if (op == '*' || op == '/') return 2;
-            return 0;
-        };
-        auto applyOp = [](double a, double b, char op) -> double {
-            switch (op) {
-                case '+': return a + b;
-                case '-': return a - b;
-                case '*': return a * b;
-                case '/': return (std::abs(b) < 1e-15) ? 0.0 : a / b;
-                default: return 0.0;
-            }
-        };
-
-        size_t i = 0;
-        while (i < e.size()) {
-            if (std::isspace(static_cast<unsigned char>(e[i]))) {
-                ++i;
-                continue;
-            }
-            if (std::isdigit(static_cast<unsigned char>(e[i])) || e[i] == '.') {
-                const size_t start = i;
-                while (i < e.size() &&
-                       (std::isdigit(static_cast<unsigned char>(e[i])) || e[i] == '.')) {
-                    ++i;
-                }
-                vals.push(std::stod(e.substr(start, i - start)));
-            } else if (e[i] == '(') {
-                ops.push('(');
-                ++i;
-            } else if (e[i] == ')') {
-                while (!ops.empty() && ops.top() != '(') {
-                    const double b = vals.top(); vals.pop();
-                    const double a = vals.top(); vals.pop();
-                    vals.push(applyOp(a, b, ops.top()));
-                    ops.pop();
-                }
-                if (!ops.empty()) {
-                    ops.pop();
-                }
-                ++i;
-            } else if (e[i] == '+' || e[i] == '-' || e[i] == '*' || e[i] == '/') {
-                while (!ops.empty() && precedence(ops.top()) >= precedence(e[i])) {
-                    const double b = vals.top(); vals.pop();
-                    const double a = vals.top(); vals.pop();
-                    vals.push(applyOp(a, b, ops.top()));
-                    ops.pop();
-                }
-                ops.push(e[i]);
-                ++i;
-            } else {
-                ++i;
-            }
-        }
-        while (!ops.empty()) {
-            const double b = vals.top(); vals.pop();
-            const double a = vals.top(); vals.pop();
-            vals.push(applyOp(a, b, ops.top()));
-            ops.pop();
-        }
-        return vals.empty() ? 0.0 : vals.top();
-    } catch (...) {
-        return 0.0;
-    }
-}
 
 } // namespace
 
@@ -190,7 +93,7 @@ gis::framework::Result RasterMathPlugin::doBandMath(
             for (int b = 0; b < bands; ++b) {
                 bandValues["B" + std::to_string(b + 1)] = bandMats[static_cast<size_t>(b)].at<float>(y, x);
             }
-            result.at<float>(y, x) = static_cast<float>(evalExpression(expression, bandValues));
+            result.at<float>(y, x) = static_cast<float>(gis::core::evalExpression(expression, bandValues));
         }
         if ((y % 100) == 0) {
             progress.throwIfCancelled();
@@ -205,7 +108,7 @@ gis::framework::Result RasterMathPlugin::doBandMath(
 
     {
         auto srcDs = gis::core::openRaster(input, true);
-        auto meta = buildMetadata(input, srcDs.get(), "raster_math.band_math");
+        auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "raster_math.band_math");
         gis::core::writeProcessingMetadata(output, meta);
     }
 
@@ -382,7 +285,7 @@ gis::framework::Result RasterMathPlugin::doReclassify(
 
     {
         auto srcDs = gis::core::openRaster(input, true);
-        auto meta = buildMetadata(input, srcDs.get(), "raster_math.reclassify");
+        auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "raster_math.reclassify");
         gis::core::writeProcessingMetadata(output, meta);
     }
 
@@ -549,7 +452,7 @@ gis::framework::Result RasterMathPlugin::doRasterOverlay(
 
     {
         auto srcDs = gis::core::openRaster(input, true);
-        auto meta = buildMetadata(input, srcDs.get(), "raster_math.overlay");
+        auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "raster_math.overlay");
         gis::core::writeProcessingMetadata(output, meta);
     }
 

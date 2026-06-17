@@ -2,6 +2,7 @@
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
 #include <gis/core/error.h>
+#include <gis/core/plugin_utils.h>
 #include <gdal_priv.h>
 #include <cpl_conv.h>
 #include <opencv2/core.hpp>
@@ -99,15 +100,6 @@ gis::framework::Result ProcessingPlugin::execute(
 
 namespace {
 
-gis::core::ProcessingMetadata buildMetadata(const std::string& input, const std::string& algorithm) {
-    gis::core::ProcessingMetadata meta;
-    meta.sourceFile = input;
-    auto srcDs = gis::core::openRaster(input, true);
-    meta.sourceCrs = gis::core::getSRSWKT(srcDs.get());
-    meta.processingAlgorithm = algorithm;
-    return meta;
-}
-
 } // namespace
 
 static cv::Mat readBandAsMat(const std::string& path, int bandIndex,
@@ -163,7 +155,8 @@ static gis::framework::Result writeMatOutput(
     }
 
     if (!algorithm.empty()) {
-        auto meta = buildMetadata(inputPath, algorithm);
+        auto srcDs = gis::core::openRaster(inputPath, true);
+        auto meta = gis::core::buildPluginMetadata(inputPath, srcDs.get(), algorithm);
         gis::core::writeProcessingMetadata(outputPath, meta);
     }
 
@@ -775,7 +768,7 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
     gis::core::matsToGdalTiff(sharpenedBands, msDS.get(), output);
 
     {
-        auto meta = buildMetadata(input, "processing.pansharpen");
+        auto meta = gis::core::buildPluginMetadata(input, msDS.get(), "processing.pansharpen");
         gis::core::writeProcessingMetadata(output, meta);
     }
 

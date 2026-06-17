@@ -2,6 +2,7 @@
 
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
+#include <gis/core/plugin_utils.h>
 
 #include <cpl_conv.h>
 #include <gdal_alg.h>
@@ -61,23 +62,6 @@ struct ProfilePoint {
     double x = 0.0;
     double y = 0.0;
 };
-
-std::string trim(const std::string& value) {
-    const auto begin = value.find_first_not_of(" \t\r\n");
-    if (begin == std::string::npos) {
-        return {};
-    }
-    const auto end = value.find_last_not_of(" \t\r\n");
-    return value.substr(begin, end - begin + 1);
-}
-
-gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
-    gis::core::ProcessingMetadata meta;
-    meta.sourceFile = input;
-    meta.sourceCrs = gis::core::getSRSWKT(srcDs);
-    meta.processingAlgorithm = algorithm;
-    return meta;
-}
 
 SurfaceDerivatives computeSurfaceDerivatives(const cv::Mat& elevation) {
     SurfaceDerivatives derivs;
@@ -163,7 +147,7 @@ gis::framework::Result runDemProcess(
     }
 
     GDALClose(outHandle);
-    auto meta = buildMetadata(input, srcDs.get(), "terrain." + std::string(processName));
+    auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain." + std::string(processName));
     meta.algorithmParams["band"] = std::to_string(band);
     meta.algorithmParams["z_factor"] = std::to_string(zFactor);
     if (std::string(processName) == "hillshade") {
@@ -308,7 +292,7 @@ gis::framework::Result runLocalTerrainProcess(
 
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(result, srcDs.get(), output, band);
-    auto meta = buildMetadata(input, srcDs.get(), "terrain." + action);
+    auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain." + action);
     meta.algorithmParams["band"] = std::to_string(band);
     meta.algorithmParams["z_factor"] = std::to_string(zFactor);
     meta.algorithmParams["window_size"] = "3";
@@ -629,7 +613,7 @@ gis::framework::Result runHydrologyTerrainProcess(
     progress.onProgress(0.8);
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(result, srcDs.get(), output, band);
-    auto meta = buildMetadata(input, srcDs.get(), "terrain." + action);
+    auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain." + action);
     meta.algorithmParams["band"] = std::to_string(band);
     meta.algorithmParams["z_factor"] = std::to_string(zFactor);
     if (action == "stream_extract") {
@@ -654,7 +638,7 @@ std::vector<ProfilePoint> parseProfilePath(const std::string& text) {
     std::stringstream ss(text);
     std::string token;
     while (std::getline(ss, token, ';')) {
-        token = trim(token);
+        token = gis::core::trimString(token);
         if (token.empty()) {
             continue;
         }
@@ -662,8 +646,8 @@ std::vector<ProfilePoint> parseProfilePath(const std::string& text) {
         if (comma == std::string::npos) {
             throw std::runtime_error("profile_path requires at least two points");
         }
-        const std::string xText = trim(token.substr(0, comma));
-        const std::string yText = trim(token.substr(comma + 1));
+        const std::string xText = gis::core::trimString(token.substr(0, comma));
+        const std::string yText = gis::core::trimString(token.substr(comma + 1));
         points.push_back(ProfilePoint{std::stod(xText), std::stod(yText)});
     }
     if (points.size() < 2) {
@@ -677,7 +661,7 @@ std::vector<ProfilePoint> parseObserverPoints(const std::string& text) {
     std::stringstream ss(text);
     std::string token;
     while (std::getline(ss, token, ';')) {
-        token = trim(token);
+        token = gis::core::trimString(token);
         if (token.empty()) {
             continue;
         }
@@ -685,8 +669,8 @@ std::vector<ProfilePoint> parseObserverPoints(const std::string& text) {
         if (comma == std::string::npos) {
             throw std::runtime_error("observer_points requires at least one point");
         }
-        const std::string xText = trim(token.substr(0, comma));
-        const std::string yText = trim(token.substr(comma + 1));
+        const std::string xText = gis::core::trimString(token.substr(0, comma));
+        const std::string yText = gis::core::trimString(token.substr(comma + 1));
         points.push_back(ProfilePoint{std::stod(xText), std::stod(yText)});
     }
     if (points.empty()) {
@@ -875,7 +859,7 @@ gis::framework::Result runViewshedProcess(
     }
 
     GDALClose(outHandle);
-    auto meta = buildMetadata(input, srcDs.get(), "terrain.viewshed");
+    auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain.viewshed");
     meta.algorithmParams["band"] = std::to_string(band);
     meta.algorithmParams["observer_x"] = std::to_string(observerX);
     meta.algorithmParams["observer_y"] = std::to_string(observerY);
@@ -982,7 +966,7 @@ gis::framework::Result runViewshedMultiProcess(
     }
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(merged, srcDs.get(), output, band);
-    auto meta = buildMetadata(input, srcDs.get(), "terrain.viewshed_multi");
+    auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain.viewshed_multi");
     meta.algorithmParams["band"] = std::to_string(band);
     meta.algorithmParams["observer_count"] = std::to_string(observerPoints.size());
     meta.algorithmParams["observer_height"] = std::to_string(observerHeight);
@@ -1076,7 +1060,7 @@ gis::framework::Result runCutFillProcess(
     }
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(diff, inputDs.get(), output, band);
-    auto meta = buildMetadata(input, inputDs.get(), "terrain.cut_fill");
+    auto meta = gis::core::buildPluginMetadata(input, inputDs.get(), "terrain.cut_fill");
     meta.algorithmParams["band"] = std::to_string(band);
     meta.algorithmParams["fill_volume"] = std::to_string(fillVolume);
     meta.algorithmParams["cut_volume"] = std::to_string(cutVolume);
@@ -1146,7 +1130,7 @@ gis::framework::Result runReservoirVolumeProcess(
     }
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(depth, srcDs.get(), output, band);
-    auto meta = buildMetadata(input, srcDs.get(), "terrain.reservoir_volume");
+    auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain.reservoir_volume");
     meta.algorithmParams["band"] = std::to_string(band);
     meta.algorithmParams["water_level"] = std::to_string(waterLevel);
     meta.algorithmParams["reservoir_area"] = std::to_string(reservoirArea);

@@ -29,6 +29,14 @@ QSqlDatabase TaskDatabase::databaseForGroup(const QString& displayGroup) const {
 }
 
 QString TaskDatabase::dbPathForGroup(const QString& displayGroup) const {
+    // 拒绝包含路径遍历字符的 displayGroup
+    if (displayGroup.contains(QLatin1String("..")) ||
+        displayGroup.contains(QLatin1Char('/')) ||
+        displayGroup.contains(QLatin1Char('\\')) ||
+        displayGroup.contains(QLatin1Char(':'))) {
+        qWarning() << "Invalid displayGroup (path traversal risk):" << displayGroup;
+        return {};
+    }
     return baseDbPath_ + QStringLiteral("/gis_tasks_%1.db").arg(displayGroup);
 }
 
@@ -44,6 +52,11 @@ bool TaskDatabase::initializeGroup(const QString& displayGroup) {
 
     QString connName = QStringLiteral("tasks_%1").arg(displayGroup);
     QString dbPath = dbPathForGroup(displayGroup);
+
+    if (dbPath.isEmpty()) {
+        qWarning() << "Rejected database path for displayGroup:" << displayGroup;
+        return false;
+    }
 
     QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
     db.setDatabaseName(dbPath);

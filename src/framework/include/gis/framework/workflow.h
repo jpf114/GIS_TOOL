@@ -12,26 +12,29 @@ class IGisPlugin;
 struct Result;
 class PluginManager;
 
+/** A single step in a workflow, referencing a plugin and its parameters. */
 struct WorkflowStep {
-    std::string pluginName;
-    std::string actionKey;
-    std::map<std::string, std::string> params;
-    std::map<std::string, std::string> inputMapping;
+    std::string pluginName;                        ///< Name of the plugin to execute
+    std::string actionKey;                         ///< Action key within the plugin
+    std::map<std::string, std::string> params;     ///< Step parameters
+    std::map<std::string, std::string> inputMapping; ///< Mapping from previous step outputs to this step's inputs
 };
 
+/** A named workflow consisting of sequential steps. */
 struct Workflow {
-    std::string name;
-    std::string description;
-    std::vector<WorkflowStep> steps;
+    std::string name;                      ///< Workflow name
+    std::string description;               ///< Workflow description
+    std::vector<WorkflowStep> steps;       ///< Ordered list of steps
 };
 
+/** Result of executing a complete workflow. */
 struct WorkflowResult {
-    bool success = false;
-    std::string message;
-    int completedSteps = 0;
-    int totalSteps = 0;
-    std::vector<std::string> stepMessages;
-    std::string lastOutputPath;
+    bool success = false;                  ///< Whether the entire workflow succeeded
+    std::string message;                   ///< Summary message
+    int completedSteps = 0;                ///< Number of steps completed successfully
+    int totalSteps = 0;                    ///< Total number of steps in the workflow
+    std::vector<std::string> stepMessages; ///< Per-step result messages
+    std::string lastOutputPath;            ///< Output path from the last completed step
 };
 
 class WorkflowRunner {

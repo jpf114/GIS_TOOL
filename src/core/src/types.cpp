@@ -3,7 +3,7 @@
 namespace gis::core {
 
 bool isEpsgCode(const std::string& srs) {
-    return srs.size() > 5 && srs.substr(0, 5) == "EPSG:";
+    return srs.size() >= 6 && srs.compare(0, 5, "EPSG:") == 0;
 }
 
 int parseEpsgCode(const std::string& srs) {

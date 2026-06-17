@@ -5,6 +5,7 @@
 #include <vector>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 
 namespace gis::core {
 
@@ -47,7 +48,9 @@ public:
 
 private:
     PerformanceMonitor() = default;
+    mutable std::mutex mutex_;
     std::vector<PerformanceRecord> records_;
+    static constexpr size_t kMaxRecords = 10000;
 };
 
 } // namespace gis::core

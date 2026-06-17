@@ -146,7 +146,7 @@ void WorkflowPage::onExecuteClicked() {
     logEdit_->clear();
     progressBar_->setValue(0);
     executeButton_->setEnabled(false);
-    workflowRunning_ = true;
+    workflowRunning_.store(true);
 
     logEdit_->append(QStringLiteral("开始执行工作流: %1").arg(QString::fromStdString(wf.name)));
 
@@ -155,7 +155,11 @@ void WorkflowPage::onExecuteClicked() {
 
     workflowThread_ = QThread::create([this, wfCopy, initialParams]() {
         gis::framework::WorkflowRunner runner(pluginManager_);
-        workflowResult_ = runner.execute(wfCopy, initialParams);
+        auto result = runner.execute(wfCopy, initialParams);
+        {
+            std::lock_guard<std::mutex> lock(workflowMutex_);
+            workflowResult_ = std::move(result);
+        }
         QMetaObject::invokeMethod(this, &WorkflowPage::onWorkflowFinished);
     });
 
@@ -164,23 +168,28 @@ void WorkflowPage::onExecuteClicked() {
 }
 
 void WorkflowPage::onWorkflowFinished() {
-    workflowRunning_ = false;
-    const auto& result = workflowResult_;
+    workflowRunning_.store(false);
+    gis::framework::WorkflowResult result;
+    {
+        std::lock_guard<std::mutex> lock(workflowMutex_);
+        result = workflowResult_;
+    }
+    const auto& resRef = result;
 
-    progressBar_->setValue(result.success ? 100 : (result.totalSteps > 0 ? result.completedSteps * 100 / result.totalSteps : 0));
+    progressBar_->setValue(resRef.success ? 100 : (resRef.totalSteps > 0 ? resRef.completedSteps * 100 / resRef.totalSteps : 0));
 
-    for (const auto& msg : result.stepMessages) {
+    for (const auto& msg : resRef.stepMessages) {
         logEdit_->append(QString::fromStdString(msg));
     }
 
-    if (result.success) {
+    if (resRef.success) {
         logEdit_->append(QStringLiteral("✓ 工作流执行成功"));
     } else {
-        logEdit_->append(QStringLiteral("✖ 工作流执行失败: %1").arg(QString::fromStdString(result.message)));
+        logEdit_->append(QStringLiteral("✖ 工作流执行失败: %1").arg(QString::fromStdString(resRef.message)));
     }
 
     executeButton_->setEnabled(true);
-    emit workflowFinished(result.success, QString::fromStdString(result.message));
+    emit workflowFinished(resRef.success, QString::fromStdString(resRef.message));
 }
 
 void WorkflowPage::updateStepDisplay() {

@@ -2,6 +2,10 @@ name: windows-build
 
 on:
   push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
@@ -168,3 +172,12 @@ jobs:
         with:
           name: gis-tool-win64-setup
           path: installer/gis-toolkit-1.0.0-win64-setup.exe
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release create $tag installer/gis-toolkit-1.0.0-win64-setup.exe gis-tool-win64.zip --title "GIS TOOLKIT $tag" --notes "Release $tag"

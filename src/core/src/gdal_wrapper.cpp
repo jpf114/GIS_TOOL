@@ -4,6 +4,8 @@
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
 #include <filesystem>
+#include <mutex>
+#include <chrono>
 
 namespace gis::core {
 
@@ -26,11 +28,8 @@ void ensureParentDirectoryForFile(const std::string& path) {
 } // namespace
 
 void initGDAL() {
-    static bool initialized = false;
-    if (!initialized) {
-        GDALAllRegister();
-        initialized = true;
-    }
+    static std::once_flag flag;
+    std::call_once(flag, []() { GDALAllRegister(); });
 }
 
 void GdalDatasetDeleter::operator()(GDALDataset* ds) const {
@@ -155,11 +154,11 @@ std::vector<HistogramBin> computeHistogram(GDALDataset* ds, int bandIndex, int n
         maxVal = minVal + 1.0;
     }
 
-    GUIntBig* histogram = new GUIntBig[numBins]();
+    std::vector<GUIntBig> histogramVec(numBins, 0);
+    GUIntBig* histogram = histogramVec.data();
     CPLErr err = band->GetHistogram(minVal, maxVal, numBins, histogram,
                                      TRUE, FALSE, nullptr, nullptr);
     if (err != CE_None) {
-        delete[] histogram;
         throw GisError("Failed to compute histogram: " + std::string(CPLGetLastErrorMsg()));
     }
 
@@ -170,7 +169,6 @@ std::vector<HistogramBin> computeHistogram(GDALDataset* ds, int bandIndex, int n
         bins.push_back({minVal + i * binWidth, minVal + (i + 1) * binWidth, histogram[i]});
     }
 
-    delete[] histogram;
     return bins;
 }
 
@@ -245,9 +243,16 @@ bool buildOverviews(GDALDataset* ds, const std::vector<int>& levels,
 namespace {
 
 std::string currentTimestamp() {
-    std::time_t now = std::time(nullptr);
+    auto now = std::chrono::system_clock::now();
+    auto timeT = std::chrono::system_clock::to_time_t(now);
+    std::tm tmBuf;
+#ifdef _WIN32
+    localtime_s(&tmBuf, &timeT);
+#else
+    localtime_r(&timeT, &tmBuf);
+#endif
     char buf[64];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&now));
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tmBuf);
     return std::string(buf);
 }
 

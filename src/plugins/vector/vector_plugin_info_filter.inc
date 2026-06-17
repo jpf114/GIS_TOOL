@@ -1,17 +1,45 @@
-static bool containsDangerousSqlKeywords(const std::string& sql) {
-    std::string upper = sql;
+static bool isSafeWhereClause(const std::string& where) {
+    // 白名单字符校验：仅允许安全字符
+    for (char c : where) {
+        if (std::isalnum(static_cast<unsigned char>(c))) continue;
+        switch (c) {
+            case ' ': case '(': case ')': case ',': case '.':
+            case '=': case '<': case '>': case '!':
+            case '\'': case '_': case '-': case '+': case '*':
+            case '%': case '?':
+                continue;
+            default:
+                return false;
+        }
+    }
+    // 检查危险关键字（在安全字符范围内进一步过滤）
+    std::string upper = where;
     std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
         return static_cast<char>(std::toupper(c));
     });
+    // 必须以单词边界匹配危险关键字
     static const std::vector<std::string> dangerous = {
-        "DROP ", "DELETE ", "INSERT ", "UPDATE ", "ALTER ", "CREATE ", "EXEC ", "EXECUTE "
+        "DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE",
+        "EXEC", "EXECUTE", "SELECT", "UNION", "GRANT", "REVOKE"
     };
     for (const auto& kw : dangerous) {
-        if (upper.find(kw) != std::string::npos) {
-            return true;
+        size_t pos = 0;
+        while ((pos = upper.find(kw, pos)) != std::string::npos) {
+            // 检查是否为单词边界（前后不是字母或数字）
+            bool leftBoundary = (pos == 0 || !std::isalnum(static_cast<unsigned char>(upper[pos - 1])));
+            bool rightBoundary = (pos + kw.size() >= upper.size() || !std::isalnum(static_cast<unsigned char>(upper[pos + kw.size()])));
+            if (leftBoundary && rightBoundary) {
+                return false;
+            }
+            pos++;
         }
     }
-    return false;
+    // 检查分号（语句分隔符）
+    if (where.find(';') != std::string::npos) return false;
+    // 检查注释符号
+    if (where.find("--") != std::string::npos) return false;
+    if (where.find("/*") != std::string::npos) return false;
+    return true;
 }
 
 gis::framework::Result VectorPlugin::doInfo(
@@ -126,8 +154,8 @@ gis::framework::Result VectorPlugin::doFilter(
     }
 
     if (!where.empty()) {
-        if (containsDangerousSqlKeywords(where)) {
-            return gis::framework::Result::fail("WHERE 子句包含不允许的 SQL 关键字");
+        if (!isSafeWhereClause(where)) {
+            return gis::framework::Result::fail("WHERE clause contains disallowed characters or keywords");
         }
         srcLayer->SetAttributeFilter(where.c_str());
     }
