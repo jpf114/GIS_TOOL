@@ -3511,6 +3511,262 @@ TEST_F(PluginTest, VectorConvertExecution) {
     EXPECT_TRUE(result.success) << "Convert failed: " << result.message;
 }
 
+// --- Task A0：矢量几何所有权/释放路径的回归用例 -------------------------------
+//
+// 这些用例覆盖 cloneNormalizedGeometry（IsValid/MakeValid）产出的几何对象在
+// clip / difference / repair / dissolve 中的所有权移交：写者
+// （writeFeatureWithCopiedFieldsOwned 系列）一律接管传入几何，无论写入成功与否
+// 都会在内部销毁它。调用方若在移交后再对同一裸指针 delete，就是二次释放，
+// Debug 构建表现为非法释放异常，Release 构建表现为 0xc0000374（STATUS_HEAP_CORRUPTION）。
+
+static std::string a0MakePointLayer(const std::string& name, double x, double y) {
+    namespace fs = std::filesystem;
+    const std::string path = utf8PathString(getTestDir() / name);
+    auto* drv = GetGDALDriverManager()->GetDriverByName("GPKG");
+    EXPECT_NE(drv, nullptr);
+    auto* ds = drv->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    EXPECT_NE(ds, nullptr);
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("pts", srs.get(), wkbPoint, nullptr);
+    EXPECT_NE(layer, nullptr);
+    if (layer) {
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        auto* point = new OGRPoint(x, y);
+        feat->SetGeometryDirectly(point);
+        EXPECT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(ds);
+    return path;
+}
+
+static std::string a0MakeClipPolygonLayer(const std::string& name) {
+    namespace fs = std::filesystem;
+    const std::string path = utf8PathString(getTestDir() / name);
+    auto* drv = GetGDALDriverManager()->GetDriverByName("GPKG");
+    EXPECT_NE(drv, nullptr);
+    auto* ds = drv->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    EXPECT_NE(ds, nullptr);
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("poly", srs.get(), wkbPolygon, nullptr);
+    EXPECT_NE(layer, nullptr);
+    if (layer) {
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(0, 0);
+        ring.addPoint(200, 0);
+        ring.addPoint(200, 200);
+        ring.addPoint(0, 200);
+        ring.addPoint(0, 0);
+        poly.addRing(&ring);
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetGeometry(&poly);
+        EXPECT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(ds);
+    return path;
+}
+
+// 目标图层拒绝写入时，clip 不得二次释放已移交写者的几何。
+TEST_F(PluginTest, VectorClipRejectedFeatureWriteDoesNotCorruptHeap) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = a0MakePointLayer("a0_clip_reject_input.gpkg", 100.0, 100.0);
+    const std::string clip = a0MakeClipPolygonLayer("a0_clip_reject_overlay.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "a0_clip_reject_output.shp");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = input;
+    params["clip_vector"] = clip;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Clip failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    // 输出图层被声明为 MULTIPOINT；POINT 特性可能被驱动拒绝。这里只断言不变量：
+    // 进程未因二次释放崩溃、结果自洽、写出的几何仍然有效。
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    const GIntBig written = outLayer->GetFeatureCount(FALSE);
+    EXPECT_LE(written, 1);
+    outLayer->ResetReading();
+    OGRFeature* outFeat = nullptr;
+    while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
+        OGRGeometry* outGeom = outFeat->GetGeometryRef();
+        ASSERT_NE(outGeom, nullptr);
+        EXPECT_TRUE(outGeom->IsValid());
+        OGRFeature::DestroyFeature(outFeat);
+    }
+    GDALClose(outDs);
+
+    // 堆若已被破坏，后续 GDAL/GEOS 分配释放通常在此处才暴露，因此再跑一轮。
+    const auto again = p->execute(params, progress_);
+    EXPECT_TRUE(again.success) << "Second clip pass failed: " << again.message;
+}
+
+// 同样的所有权移交路径：difference 在写入被拒绝时不得二次释放。
+TEST_F(PluginTest, VectorDifferenceRejectedFeatureWriteDoesNotCorruptHeap) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = a0MakePointLayer("a0_diff_reject_input.gpkg", 1000.0, 1000.0);
+    const std::string overlay = a0MakeClipPolygonLayer("a0_diff_reject_overlay.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "a0_diff_reject_output.shp");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("difference");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Difference failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    const GIntBig written = outLayer->GetFeatureCount(FALSE);
+    EXPECT_LE(written, 1);
+    outLayer->ResetReading();
+    OGRFeature* outFeat = nullptr;
+    while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
+        OGRGeometry* outGeom = outFeat->GetGeometryRef();
+        ASSERT_NE(outGeom, nullptr);
+        EXPECT_TRUE(outGeom->IsValid());
+        OGRFeature::DestroyFeature(outFeat);
+    }
+    GDALClose(outDs);
+
+    const auto again = p->execute(params, progress_);
+    EXPECT_TRUE(again.success) << "Second difference pass failed: " << again.message;
+}
+
+// 自相交多边形连续走 repair → dissolve → repair 链：规范化产物的所有权必须始终正确，
+// 任何二次释放都会在这条链上以堆损坏的形式暴露。
+TEST_F(PluginTest, VectorRepairDissolveInvalidPolygonChainKeepsGeometryValid) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "a0_chain_input.gpkg");
+    const std::string repaired = utf8PathString(getTestDir() / "a0_chain_repaired.gpkg");
+    const std::string dissolved = utf8PathString(getTestDir() / "a0_chain_dissolved.gpkg");
+    const std::string repairedAgain = utf8PathString(getTestDir() / "a0_chain_repaired2.gpkg");
+
+    {
+        auto* drv = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(drv, nullptr);
+        auto* ds = drv->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("parcels", srs.get(), wkbPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn typeField("type", OFTString);
+        ASSERT_EQ(layer->CreateField(&typeField), OGRERR_NONE);
+
+        // 3 个自相交（蝴蝶结）多边形，分属 2 个溶解组。
+        const double offsets[] = {0.0, 20.0, 120.0};
+        const char* types[] = {"A", "A", "B"};
+        for (int i = 0; i < 3; ++i) {
+            auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            OGRPolygon poly;
+            OGRLinearRing ring;
+            ring.addPoint(0 + offsets[i], 0);
+            ring.addPoint(100 + offsets[i], 100);
+            ring.addPoint(100 + offsets[i], 0);
+            ring.addPoint(0 + offsets[i], 100);
+            ring.addPoint(0 + offsets[i], 0);
+            poly.addRing(&ring);
+            EXPECT_FALSE(poly.IsValid());
+            feat->SetGeometry(&poly);
+            feat->SetField("type", types[i]);
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(ds);
+    }
+
+    const auto run = [&](const char* action, const std::string& in, const std::string& out,
+                         const std::string& field) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string(action);
+        params["input"] = in;
+        params["output"] = out;
+        if (!field.empty()) {
+            params["dissolve_field"] = field;
+        }
+        return p->execute(params, progress_);
+    };
+
+    const auto repair1 = run("repair", input, repaired, "");
+    EXPECT_TRUE(repair1.success) << repair1.message;
+    EXPECT_EQ(repair1.metadata.at("repaired_count"), "3");
+    EXPECT_EQ(repair1.metadata.at("skipped_count"), "0");
+
+    const auto dissolve1 = run("dissolve", input, dissolved, "type");
+    EXPECT_TRUE(dissolve1.success) << dissolve1.message;
+
+    const auto repair2 = run("repair", dissolved, repairedAgain, "");
+    EXPECT_TRUE(repair2.success) << repair2.message;
+
+    auto checkValid = [&](const std::string& path, GIntBig expectedAtLeast) {
+        GDALDataset* ds = static_cast<GDALDataset*>(GDALOpenEx(
+            path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        ASSERT_NE(ds, nullptr) << path;
+        OGRLayer* layer = ds->GetLayer(0);
+        ASSERT_NE(layer, nullptr) << path;
+        EXPECT_GE(layer->GetFeatureCount(FALSE), expectedAtLeast) << path;
+        layer->ResetReading();
+        OGRFeature* feat = nullptr;
+        while ((feat = layer->GetNextFeature()) != nullptr) {
+            OGRGeometry* geom = feat->GetGeometryRef();
+            ASSERT_NE(geom, nullptr) << path;
+            EXPECT_FALSE(geom->IsEmpty()) << path;
+            bool valid = false;
+            {
+                CPLPushErrorHandler(CPLQuietErrorHandler);
+                valid = geom->IsValid();
+                CPLPopErrorHandler();
+            }
+            EXPECT_TRUE(valid) << path << " geometry still invalid";
+            const auto flat = wkbFlatten(geom->getGeometryType());
+            EXPECT_TRUE(flat == wkbPolygon || flat == wkbMultiPolygon)
+                << path << " unexpected type " << OGRGeometryTypeToName(geom->getGeometryType());
+            // get_Area() 声明在 OGRCurvePolygon/OGRPolygon/OGRMultiPolygon 上，OGRGeometry 基类没有，
+            // 因此按上面已校验的扁平类型下推成具体多边形类再取面积（与本文件其它用例一致写法）。
+            double area = 0.0;
+            if (flat == wkbPolygon) {
+                OGRPolygon* poly = geom->toPolygon();
+                ASSERT_NE(poly, nullptr) << path;
+                if (poly) area = poly->get_Area();
+            } else if (flat == wkbMultiPolygon) {
+                OGRMultiPolygon* multi = geom->toMultiPolygon();
+                ASSERT_NE(multi, nullptr) << path;
+                if (multi) area = multi->get_Area();
+            }
+            EXPECT_GT(area, 0.0) << path << " zero-area geometry";
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(ds);
+    };
+
+    checkValid(repaired, 3);
+    checkValid(dissolved, 2);
+    checkValid(repairedAgain, 2);
+}
+
 TEST_F(PluginTest, VectorConvertCreatesMissingParentDirectory) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);

@@ -281,21 +281,20 @@ gis::framework::Result VectorPlugin::doClip(
             overlayGeometry = candidateOverlay.get();
         }
         if (geom && overlayGeometry && geom->Intersects(overlayGeometry)) {
-            OGRGeometry* clipped = overlayGeometry->Contains(geom)
+            // writeFeatureWithCopiedFieldsOwned 一律接管传入几何的所有权（无论写入成功与否，
+            // 几何都会在写者内部被销毁）。这里必须用 unique_ptr 一次性移交：
+            // 若写入失败后再对同一个裸指针 delete，就是二次释放，直接破坏进程堆。
+            std::unique_ptr<OGRGeometry> clipped(overlayGeometry->Contains(geom)
                 ? geom->clone()
-                : geom->Intersection(overlayGeometry);
-            if (clipped && !clipped->IsEmpty()) {
-                if (writeFeatureWithCopiedFieldsOwned(
-                        dstLayer, feat, std::unique_ptr<OGRGeometry>(clipped), &fieldMap)) {
-                    clipped = nullptr;
-                    count++;
-                    if (useTransactions && count % transactionBatchSize == 0) {
-                        dstLayer->CommitTransaction();
-                        dstLayer->StartTransaction();
-                    }
+                : geom->Intersection(overlayGeometry));
+            if (clipped && !clipped->IsEmpty() &&
+                writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(clipped), &fieldMap)) {
+                count++;
+                if (useTransactions && count % transactionBatchSize == 0) {
+                    dstLayer->CommitTransaction();
+                    dstLayer->StartTransaction();
                 }
             }
-            delete clipped;
         }
         OGRFeature::DestroyFeature(feat);
     }

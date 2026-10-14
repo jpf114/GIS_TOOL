@@ -318,24 +318,22 @@ gis::framework::Result VectorPlugin::doDifference(
                 candidateOverlay.reset(buildCandidateOverlayGeometry(overlayEntries, geom));
                 overlayGeometry = candidateOverlay.get();
             }
-            OGRGeometry* diffGeom = nullptr;
+            // writeFeatureWithCopiedFieldsOwned 一律接管传入几何的所有权：用 unique_ptr 一次性移交，
+            // 写入失败后再 delete 同一裸指针会二次释放并破坏进程堆。
+            std::unique_ptr<OGRGeometry> diffGeom;
             if (!overlayGeometry || !geom->Intersects(overlayGeometry)) {
-                diffGeom = geom->clone();
+                diffGeom.reset(geom->clone());
             } else if (!overlayGeometry->Contains(geom)) {
-                diffGeom = geom->Difference(overlayGeometry);
+                diffGeom.reset(geom->Difference(overlayGeometry));
             }
-            if (diffGeom && !diffGeom->IsEmpty()) {
-                if (writeFeatureWithCopiedFieldsOwned(
-                        dstLayer, feat, std::unique_ptr<OGRGeometry>(diffGeom), &fieldMap)) {
-                    diffGeom = nullptr;
-                    count++;
-                    if (useTransactions && count % transactionBatchSize == 0) {
-                        dstLayer->CommitTransaction();
-                        dstLayer->StartTransaction();
-                    }
+            if (diffGeom && !diffGeom->IsEmpty() &&
+                writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(diffGeom), &fieldMap)) {
+                count++;
+                if (useTransactions && count % transactionBatchSize == 0) {
+                    dstLayer->CommitTransaction();
+                    dstLayer->StartTransaction();
                 }
             }
-            delete diffGeom;
         }
         OGRFeature::DestroyFeature(feat);
     }
