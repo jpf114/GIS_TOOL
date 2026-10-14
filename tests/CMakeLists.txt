@@ -9,6 +9,7 @@ add_executable(gis_tests
     test_gui_support.cpp
     test_mainwindow.cpp
     test_support.cpp
+    test_fixtures.cpp
     ../src/gui/custom_index_preset_store.cpp
     ../src/gui/gui_data_support.cpp
     ../src/gui/gdal_config.cpp
