@@ -9,6 +9,7 @@
 #include <gis/core/text_escape.h>
 #include <gis/core/logger_init.h>
 #include <gis/core/logger.h>
+#include <gis/core/expression_engine.h>
 #include <gdal_priv.h>
 #include <opencv2/core.hpp>
 #include <filesystem>
@@ -412,4 +413,117 @@ TEST_F(CoreTest, InitDefaultLoggingIsIdempotent) {
     gis::core::initDefaultLogging();
     gis::core::Logger::instance().info("logger smoke", "CoreTest");
     EXPECT_NO_THROW(gis::core::initDefaultLogging());
+}
+
+// ============================================================================
+// Task 4：表达式引擎（编译一次 + 一元负号 + 变量边界 + 显式失败）
+// 回归的是旧字符串替换求值器的已知缺陷：负操作数被算成 0、未知变量静默返回 0.0、
+// B12 被当成 B1 后跟数字 2、一元负号不支持。
+// ============================================================================
+
+TEST(ExpressionEngine, SupportsUnaryMinusAndNegativeOperands) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("(B2-B1)/(B2+B1)", {"B1", "B2"}, program, error)) << error;
+    bool failed = false;
+    // B1 = -0.5, B2 = 0.5  ->  (0.5 - (-0.5)) / (0.5 + (-0.5)) = 1.0 / 0.0 -> 除零
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {-0.5, 0.5}, failed), 0.0);
+    EXPECT_TRUE(failed);
+    // B1 = -0.5, B2 = 1.5  ->  2.0 / 1.0 = 2.0
+    failed = false;
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {-0.5, 1.5}, failed), 2.0);
+    EXPECT_FALSE(failed);
+}
+
+TEST(ExpressionEngine, NDVIWithNegativeBandIsComputedNotZeroed) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("(NIR-RED)/(NIR+RED)", {"RED", "NIR"}, program, error)) << error;
+    bool failed = true;
+    const double value = gis::core::evaluateExpression(program, {30.0, 70.0}, failed);
+    EXPECT_FALSE(failed);
+    EXPECT_NEAR(value, 40.0 / 100.0, 1e-12);
+}
+
+TEST(ExpressionEngine, RejectsUnknownVariableExplicitly) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    EXPECT_FALSE(gis::core::compileExpression("B9*2", {"B1", "B2", "B3", "B4"}, program, error));
+    EXPECT_NE(error.find("B9"), std::string::npos) << error;
+}
+
+TEST(ExpressionEngine, DoesNotTreatB12AsB1FollowedByTwo) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    EXPECT_FALSE(gis::core::compileExpression("B12+1", {"B1", "B2"}, program, error)) << error;
+}
+
+TEST(ExpressionEngine, HandlesLeadingUnaryMinusAndNestedParens) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("-B1 * (B2 + 3)", {"B1", "B2"}, program, error)) << error;
+    bool failed = false;
+    EXPECT_NEAR(gis::core::evaluateExpression(program, {2.0, 5.0}, failed), -16.0, 1e-12);
+    EXPECT_FALSE(failed);
+}
+
+TEST(ExpressionEngine, KeepsFullDoublePrecisionOfBandValues) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("B1 * 2", {"B1"}, program, error)) << error;
+    bool failed = false;
+    const double value = gis::core::evaluateExpression(program, {123456.789012345}, failed);
+    EXPECT_NEAR(value, 246913.57802469, 1e-9);
+    EXPECT_FALSE(failed);
+}
+
+TEST(ExpressionEngine, RejectsUnbalancedParenthesis) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    EXPECT_FALSE(gis::core::compileExpression("(B1 + B2", {"B1", "B2"}, program, error));
+    EXPECT_FALSE(error.empty());
+}
+
+// R-T4-2：一元 '+' 在数学上是恒等，参考实现把它压成 Negate 会让 +(expr) 反号。
+TEST(ExpressionEngine, UnaryPlusIsIdentity) {
+    std::vector<gis::core::ExpressionNode> plusProgram;
+    std::vector<gis::core::ExpressionNode> plainProgram;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("+B1 * (B2 + 3)", {"B1", "B2"}, plusProgram, error)) << error;
+    ASSERT_TRUE(gis::core::compileExpression("B1 * (B2 + 3)", {"B1", "B2"}, plainProgram, error)) << error;
+
+    bool plusFailed = false;
+    const double plusPositive = gis::core::evaluateExpression(plusProgram, {2.0, 5.0}, plusFailed);
+    bool plainFailed = false;
+    const double plainPositive = gis::core::evaluateExpression(plainProgram, {2.0, 5.0}, plainFailed);
+    EXPECT_FALSE(plusFailed);
+    EXPECT_FALSE(plainFailed);
+    EXPECT_DOUBLE_EQ(plusPositive, 16.0);
+    EXPECT_DOUBLE_EQ(plusPositive, plainPositive);
+
+    plusFailed = false;
+    const double plusNegative = gis::core::evaluateExpression(plusProgram, {-2.0, 5.0}, plusFailed);
+    plainFailed = false;
+    const double plainNegative = gis::core::evaluateExpression(plainProgram, {-2.0, 5.0}, plainFailed);
+    EXPECT_FALSE(plusFailed);
+    EXPECT_DOUBLE_EQ(plusNegative, -16.0);
+    EXPECT_DOUBLE_EQ(plusNegative, plainNegative);
+}
+
+// R-T4-3：连续一元负号必须右结合，--B1 等价于 B1，不得在求值期被判失败。
+TEST(ExpressionEngine, DoubleNegationRoundTrip) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("--B1", {"B1"}, program, error)) << error;
+    bool failed = true;
+    const double roundTrip = gis::core::evaluateExpression(program, {2.0}, failed);
+    EXPECT_FALSE(failed);
+    EXPECT_DOUBLE_EQ(roundTrip, 2.0);
+
+    program.clear();
+    failed = true;
+    ASSERT_TRUE(gis::core::compileExpression("---B1", {"B1"}, program, error)) << error;
+    const double triple = gis::core::evaluateExpression(program, {2.0}, failed);
+    EXPECT_FALSE(failed);
+    EXPECT_DOUBLE_EQ(triple, -2.0);
 }
