@@ -12,10 +12,16 @@ on:
 jobs:
   build-and-test:
     runs-on: windows-latest
-    # Without this a hung ctest run sits on the default 6-hour job timeout and the
-    # failure has no attributable cause. Per-test TIMEOUT bounds the wait much tighter;
-    # this is the outer backstop for the whole pipeline.
-    timeout-minutes: 45
+    # Outer backstop, deliberately not a gate. This job builds gdal/opencv4/proj/qtbase/qtsvg
+    # from source via vcpkg (vcpkg.json), the cache key is only hashFiles('vcpkg.json') so any
+    # new runner or architecture is a cold miss, and it then does two configure+build rounds,
+    # both test runs, real-data regression, NSIS packaging and artifact upload. A cold cache can
+    # legitimately exceed 45 minutes, and a job cancellation would land wherever the clock ran
+    # out (most likely vcpkg or the compiler) with no more attribution than the 6-hour default
+    # it replaces, while silently blocking every push. The attributable bounds are one layer
+    # down: the per-test TIMEOUT in tests/CMakeLists.txt and the step-level timeout-minutes on
+    # the two test steps.
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -102,14 +108,52 @@ jobs:
           cmake --build build/release --config Release
 
       - name: Test Debug
+        # Step-level bound = the attributable layer: a cancelled step still leaves the last
+        # "Test #N:" line in the log, a cancelled job leaves only a timestamp. ~3.5x the
+        # measured local Debug wall time (311-335s). Catching a hanging case is the job of the
+        # per-test TIMEOUT in tests/CMakeLists.txt, so this bound only covers "the whole step
+        # wedged" and is deliberately loose rather than tight.
+        timeout-minutes: 20
         shell: pwsh
         run: |
           ctest --test-dir build/debug -C Debug --output-on-failure
 
       - name: Test Release
+        # Same reasoning as Test Debug; local Release wall time is 162-171s, so 20 minutes is a
+        # wider margin still. Only the two test steps carry a step bound - guessing one for the
+        # other steps without timing data is how a correct run turns into a flaky red.
+        timeout-minutes: 20
         shell: pwsh
         run: |
           ctest --test-dir build/release -C Release --output-on-failure
+
+      - name: Assert debug-only cases absent in Release
+        shell: pwsh
+        run: |
+          # In Release the two debug-only regressions are excluded by
+          # add_test(... CONFIGURATIONS Debug), so they are ABSENT from the test list rather
+          # than recorded as skipped. A log reader cannot tell that apart from a case that was
+          # deleted, renamed or never registered, so the state is pinned here instead of in a
+          # ledger. If either name shows up, the CONFIGURATIONS option has been lost and the
+          # case is fake-passing in Release again.
+          $releaseList = ctest --test-dir build/release -C Release -N
+          if ($LASTEXITCODE -ne 0) {
+            throw "ctest --test-dir build/release -C Release -N failed with exit code $LASTEXITCODE"
+          }
+          foreach ($debugOnlyCase in @(
+            'gui_matching_ecc_register_debug_failure_offscreen',
+            'gui_matching_stitch_debug_failure_offscreen'
+          )) {
+            if (@($releaseList | Where-Object { $_ -match [regex]::Escape($debugOnlyCase) }).Count -gt 0) {
+              throw "debug-only case $debugOnlyCase is present in the Release test list: restore add_test(... CONFIGURATIONS Debug) in tests/CMakeLists.txt instead of letting it pass"
+            }
+          }
+          Write-Host "debug-only cases absent from the Release test list: OK"
+          # Printed, never asserted: the registered total changes legitimately as later tasks
+          # add cases, and hard-coding 479 here would turn a correct state into a spurious red.
+          # The 481/479 baseline itself belongs in README.md / docs/RELEASE.md (Task 21).
+          Write-Host "Release registered test total (informational):"
+          $releaseList | Select-String -Pattern 'Total Tests:' | ForEach-Object { $_.Line }
 
       - name: Install Release
         shell: pwsh

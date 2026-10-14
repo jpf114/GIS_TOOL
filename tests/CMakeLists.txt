@@ -141,11 +141,16 @@ add_custom_command(TARGET gis_tests POST_BUILD
 gis_copy_minimal_runtime(gis_tests DEST_DIR "$<TARGET_FILE_DIR:gis_tests>")
 
 include(GoogleTest)
+# The single definition of the blanket per-test timeout. The gtest-discovered leg below and
+# the configure-time leg at the bottom of this file must carry the same number, so neither
+# one writes a literal - the sync that used to be held together by two "keep 300 in sync"
+# comments is now held by this variable.
+set(GIS_TEST_TIMEOUT 300)
 # DISCOVERY_MODE PRE_TEST means the discovered gtest cases do not exist at configure time,
 # so the blanket timeout at the bottom of this file - which reads the TESTS directory
 # property, i.e. only cases already registered by add_test - cannot reach them. Their
 # timeout has to travel through PROPERTIES, which GoogleTest.cmake forwards to every test
-# produced by this invocation. Keep 300 in sync with that blanket timeout.
+# produced by this invocation.
 # TIMEOUT is the only timeout that exists here: PROCESS_TIMEOUT is not a CMake property
 # (cmake --help-property-list has TIMEOUT, TIMEOUT_AFTER_MATCH, TIMEOUT_SIGNAL_NAME and
 # TIMEOUT_SIGNAL_GRACE_PERIOD), and an accepted-but-ignored property would only mislead
@@ -155,7 +160,7 @@ gtest_discover_tests(gis_tests
     WORKING_DIRECTORY $<TARGET_FILE_DIR:gis_tests>
     DISCOVERY_TIMEOUT 60
     DISCOVERY_MODE PRE_TEST
-    PROPERTIES TIMEOUT 300
+    PROPERTIES TIMEOUT ${GIS_TEST_TIMEOUT}
 )
 
 if(TARGET gis-gui)
@@ -163,10 +168,14 @@ if(TARGET gis-gui)
         NAME gui_smoke_startup
         COMMAND $<TARGET_FILE:gis-gui> -platform ${GIS_TEST_QT_HEADLESS_PLATFORM} --self-test
     )
-    # No PASS_REGULAR_EXPRESSION here on purpose: when that property is set, ctest
-    # ignores the process exit code, so a crashing gis-gui could be recorded as Passed.
-    # The exit code must be the verdict. Content validation of --self-test is a Plan 3
-    # (C1/D1) item and needs the expected string added together with the output it checks.
+    # No PASS_REGULAR_EXPRESSION here on purpose: when that property holds a non-empty
+    # pattern and the pattern matches the output, ctest ignores the process exit code, so a
+    # crashing gis-gui could be recorded as Passed. The empty string this property used to
+    # carry is the exception - it behaves like an unset property and falls back to the exit
+    # code (verified locally) - which makes the old line harmless but not a check of
+    # anything. The exit code must be the verdict. Content validation of --self-test is a
+    # Plan 3 (C1/D1) item and needs the expected string added together with the output it
+    # checks.
     set_tests_properties(gui_smoke_startup PROPERTIES
         TIMEOUT 60
     )
@@ -1412,7 +1421,8 @@ endif()
 # tests add_test() has defined in this directory so far, so reading it at the very bottom
 # covers every configure-time case, including the ones expanded by the foreach loops.
 # The gtest cases found by gtest_discover_tests are not in it - PRE_TEST discovery happens
-# at ctest time - they get TIMEOUT through PROPERTIES instead. Keep 300 in sync with that.
+# at ctest time - they get TIMEOUT through PROPERTIES instead. Both legs read the same
+# GIS_TEST_TIMEOUT set above, so the two cannot drift apart.
 get_property(GIS_TIMED_TEST_NAMES DIRECTORY PROPERTY TESTS)
 # gui_smoke_startup already has the tighter 60s bound set above; the blanket value must not
 # overwrite it, so it is excluded here instead of being re-set afterwards.
@@ -1423,5 +1433,5 @@ list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup)
 # cannot reach the bottom of this file anyway, because gis_tests links Qt6 unconditionally
 # near the top. In other words: nothing is silently skipped here today.
 if(GIS_TIMED_TEST_NAMES)
-    set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY TIMEOUT 300)
+    set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY TIMEOUT ${GIS_TEST_TIMEOUT})
 endif()
