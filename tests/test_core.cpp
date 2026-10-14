@@ -506,6 +506,9 @@ TEST(ExpressionEngine, UnaryPlusIsIdentity) {
     plainFailed = false;
     const double plainNegative = gis::core::evaluateExpression(plainProgram, {-2.0, 5.0}, plainFailed);
     EXPECT_FALSE(plusFailed);
+    // 正向分支有两条对称断言，负值分支此前只有一条：负号一旦被误弹出，
+    // plainProgram 也会跟着判失败，这条补上才有区分力。
+    EXPECT_FALSE(plainFailed);
     EXPECT_DOUBLE_EQ(plusNegative, -16.0);
     EXPECT_DOUBLE_EQ(plusNegative, plainNegative);
 }
@@ -526,4 +529,172 @@ TEST(ExpressionEngine, DoubleNegationRoundTrip) {
     const double triple = gis::core::evaluateExpression(program, {2.0}, failed);
     EXPECT_FALSE(failed);
     EXPECT_DOUBLE_EQ(triple, -2.0);
+}
+
+// ============================================================================
+// Task 4 fix round 1（F1/F2/F3）
+// ============================================================================
+
+namespace {
+// 把编译产物压成可读的逆波兰串，用于钉死**算子顺序**而不只是取值。
+// 只读对外契约里的 Op 枚举与两个字段，不触碰任何内部实现细节。
+// 结构断言不是锦上添花：同优先级链存在"左右结合取值相同"的算子组合
+// （见 MultiplyThenDivideChainIsLeftAssociative），只有顺序能区分。
+std::string describeProgram(const std::vector<gis::core::ExpressionNode>& program) {
+    std::string text;
+    for (const auto& node : program) {
+        if (!text.empty()) text += ' ';
+        switch (node.op) {
+            case gis::core::ExpressionNode::Op::Number:
+                text += "n" + std::to_string(node.number);
+                break;
+            case gis::core::ExpressionNode::Op::Variable:
+                text += "v" + std::to_string(node.variableIndex);
+                break;
+            case gis::core::ExpressionNode::Op::Add: text += "Add"; break;
+            case gis::core::ExpressionNode::Op::Subtract: text += "Sub"; break;
+            case gis::core::ExpressionNode::Op::Multiply: text += "Mul"; break;
+            case gis::core::ExpressionNode::Op::Divide: text += "Div"; break;
+            case gis::core::ExpressionNode::Op::Negate: text += "Neg"; break;
+        }
+    }
+    return text;
+}
+} // namespace
+
+// F3 防回归钉：原套件 9 例里**没有任何一条含两个同优先级二元运算符**，
+// Negate 也只出现在 `*` 旁边或另一个 Negate 旁边，而负号对乘法是分配的，
+// 于是两类"错误但全绿"的构建都检不出来：
+//   V1 同优先级不弹出 → `-` 与 `/` 退化成右结合；
+//   V2 负号豁免放宽 → Negate 拖到加法之后才弹出，`-B1+B2` 变成 -(B1+B2)。
+// 期望值均按正确语义手算，并与审查者实测（build/tmp-r4probe/out2.txt）一致。
+// 注意：2-3-4 的左结合答案是 -5 而不是 -3，8/4/2 是 1 而不是 4。
+TEST(ExpressionEngine, SubtractThenAddChainIsLeftAssociative) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("B1-B2+B3", {"B1", "B2", "B3"}, program, error)) << error;
+    EXPECT_EQ(describeProgram(program), "v0 v1 Sub v2 Add");
+    bool failed = true;
+    // (1 - 2) + 3 = 2；右结合会算成 1 - (2 + 3) = -4。
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {1.0, 2.0, 3.0}, failed), 2.0);
+    EXPECT_FALSE(failed);
+}
+
+TEST(ExpressionEngine, MultiplyThenDivideChainIsLeftAssociative) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("B1*B2/B3", {"B1", "B2", "B3"}, program, error)) << error;
+    bool failed = true;
+    // (8 * 4) / 2 = 16，而 8 * (4 / 2) = 16 —— 这组取值下两种结合方式**同值**，
+    // 所以这条用例的价值全在结构断言上：右结合构建会产出 "v0 v1 v2 Div Mul"。
+    EXPECT_EQ(describeProgram(program), "v0 v1 Mul v2 Div");
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {8.0, 4.0, 2.0}, failed), 16.0);
+    EXPECT_FALSE(failed);
+}
+
+TEST(ExpressionEngine, DivideThenDivideChainIsLeftAssociative) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("B1/B2/B3", {"B1", "B2", "B3"}, program, error)) << error;
+    EXPECT_EQ(describeProgram(program), "v0 v1 Div v2 Div");
+    bool failed = true;
+    // (8 / 4) / 2 = 1；右结合会算成 8 / (4 / 2) = 4。
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {8.0, 4.0, 2.0}, failed), 1.0);
+    EXPECT_FALSE(failed);
+}
+
+TEST(ExpressionEngine, NegateAdjacentToAddAppliesOnlyToFirstOperand) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("-B1+B2", {"B1", "B2"}, program, error)) << error;
+    EXPECT_EQ(describeProgram(program), "v0 Neg v1 Add");
+    bool failed = true;
+    // -2 + 5 = 3；若 Negate 的右结合豁免被放宽成"负号碰上任何运算符都不弹出"，
+    // 就会拖到加法之后才写进 output，得到 -(2 + 5) = -7。
+    // 负号对乘法是分配的，所以现有每条 Negate 用例都区分不了这个错误——只有加法邻接能。
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {2.0, 5.0}, failed), 3.0);
+    EXPECT_FALSE(failed);
+}
+
+// F1：'(' 与 ')' 两个位置此前无条件改写 expectOperand，
+// 六个畸形输入编译成功、只在逐像元求值时失败——正是本批次要消灭的"错误出现得太晚且被 true 掩盖"。
+TEST(ExpressionEngine, RejectsOperandAdjacentToParenthesis) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    // 实测泄漏形态：rpn = "v0 v1 1 Add"（隐式乘法，静默编译成功）。
+    EXPECT_FALSE(gis::core::compileExpression("B1(B2+1)", {"B1", "B2"}, program, error));
+    EXPECT_EQ(error, "表达式语法错误：操作数相邻，缺少运算符");
+    // 实测泄漏形态：rpn = "v0 v1"（两栈值 → 求值期判失败，编译期却返回 true）。
+    program.clear();
+    error.clear();
+    EXPECT_FALSE(gis::core::compileExpression("(B1)(B2)", {"B1", "B2"}, program, error));
+    EXPECT_FALSE(error.empty()) << error;
+    EXPECT_TRUE(program.empty());
+}
+
+TEST(ExpressionEngine, RejectsEmptyOrOperatorTerminatedParenGroup) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    // 四条都曾在编译期返回 true，只在求值时因栈不足判失败。
+    const char* shapes[] = {"()", "B1 * ()", "(B1+)", "-()"};
+    for (const char* shape : shapes) {
+        program.clear();
+        error.clear();
+        EXPECT_FALSE(gis::core::compileExpression(shape, {"B1", "B2", "B3"}, program, error)) << shape;
+        EXPECT_FALSE(error.empty()) << shape;
+        EXPECT_TRUE(program.empty()) << shape;
+    }
+}
+
+// F1 的正面对照：新增的两个守卫不得把合法形态一起拒掉。
+TEST(ExpressionEngine, AcceptsRedundantParenthesesAndUnaryMinusForms) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    bool failed = false;
+
+    ASSERT_TRUE(gis::core::compileExpression("(-B1)", {"B1"}, program, error)) << error;
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {2.0}, failed), -2.0);
+    EXPECT_FALSE(failed);
+
+    program.clear();
+    failed = false;
+    ASSERT_TRUE(gis::core::compileExpression("(B1)*(B2)", {"B1", "B2"}, program, error)) << error;
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {3.0, 4.0}, failed), 12.0);
+    EXPECT_FALSE(failed);
+
+    program.clear();
+    failed = false;
+    ASSERT_TRUE(gis::core::compileExpression("-(-B1)", {"B1"}, program, error)) << error;
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {2.0}, failed), 2.0);
+    EXPECT_FALSE(failed);
+
+    // 审查者实测的正确形态，别改坏：B1*-B2*B3 于 {2,3,4} = -24。
+    program.clear();
+    failed = true;
+    ASSERT_TRUE(gis::core::compileExpression("B1*-B2*B3", {"B1", "B2", "B3"}, program, error)) << error;
+    EXPECT_EQ(describeProgram(program), "v0 v1 Neg Mul v2 Mul");
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {2.0, 3.0, 4.0}, failed), -24.0);
+    EXPECT_FALSE(failed);
+}
+
+// F2：除零必须**立即**返回。原实现在 :221-224 置了 flag 与 0.0 却继续把毒化值压栈，
+// 于是交回"用 0.0 参与后续运算"得到的数，与 expression_engine.h:21 的承诺不符。
+// 现有 (B2-B1)/(B2+B1) 那条恰好把 Divide 放在最后一个算子，改与不改都返回 0.0，抓不到缺陷；
+// 这里用两条"除法不在末尾"的形状。
+TEST(ExpressionEngine, DivideByZeroStopsEvaluationImmediately) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+    ASSERT_TRUE(gis::core::compileExpression("5-B1/B2", {"B1", "B2"}, program, error)) << error;
+    bool failed = false;
+    // 5 - (1/0)：继续求值得 5 - 0.0 = 5.0（一个看似合理的数），必须交回 0.0。
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {1.0, 0.0}, failed), 0.0);
+    EXPECT_TRUE(failed);
+
+    program.clear();
+    error.clear();
+    ASSERT_TRUE(gis::core::compileExpression("(B1+B2)/B3-4", {"B1", "B2", "B3"}, program, error)) << error;
+    failed = false;
+    // 真实形态 (1+2)/0 - 4：继续求值得 -4.0，正是会写进栅格的那类脏值。
+    EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {1.0, 2.0, 0.0}, failed), 0.0);
+    EXPECT_TRUE(failed);
 }

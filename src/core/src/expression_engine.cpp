@@ -22,6 +22,13 @@ int precedence(ExpressionNode::Op op) {
 bool isVariableStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
 bool isVariableChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
 
+// 除零判据：**绝对**阈值，不是相对判据。
+// 前提假定波段量级 ≳1e-14（DN / 反射率口径）——在此量级下，分母比操作数低两三个数量级时
+// 该指数已是噪声，判 NoData 比放行 1e15 级离群值更科学（后者会污染 min/max、拉伸范围与下游分类）。
+// 量级更小的数据（如某些物理量纲的浮点波段）在这个阈值下会把条件良好的 NDVI 0.5 误判为 NoData，
+// 需要改走相对判据另行处理，本轮不动判据形态。实测边界：除数 1e-15 接受、0.99999e-15 拒绝。
+constexpr double kNearZeroDivisorEpsilon = 1e-15;
+
 } // namespace
 
 bool compileExpression(const std::string& expression,
@@ -111,6 +118,11 @@ bool compileExpression(const std::string& expression,
         }
 
         if (c == '(') {
+            // 左括号也是操作数的开始：`B1(B2+1)`、`(B1)(B2)` 这类"操作数相邻"必须在这里就拒绝，
+            // 否则它编译成功、只在逐像元求值时失败（错误出现得太晚，且被 true 返回值掩盖）。
+            // 与数字/变量分支同一条消息、同一个位置语义；守卫放在压哨兵与 ++depth 之前，
+            // 使 depth 与 ops 保持一致（失败即返回，不留半个哨兵）。
+            if (!expectOperand) { error = "表达式语法错误：操作数相邻，缺少运算符"; return false; }
             // 左括号哨兵：借用 Op::Variable 作哨兵值。Op 枚举是任务 5 依赖的对外契约，
             // 不为消除哨兵而新增枚举项。哨兵只活在 ops 里、绝不进入 output：
             // ')' 分支弹到哨兵后即 pop 丢弃，收尾循环遇到哨兵直接判"括号不配对"。
@@ -123,6 +135,9 @@ bool compileExpression(const std::string& expression,
 
         if (c == ')') {
             if (depth <= 0) { error = "括号不配对：多余的右括号"; return false; }
+            // 右括号前必须是操作数或右括号的合法收尾：`()`、`B1 * ()`、`(B1+)`、`-()`
+            // 都在这条守卫之前编译通过、只在求值期因栈不足判失败。
+            if (expectOperand) { error = "括号内缺少操作数"; return false; }
             while (!ops.empty() && ops.top() != ExpressionNode::Op::Variable) {
                 ExpressionNode node;
                 node.op = ops.top();
@@ -219,8 +234,12 @@ double evaluateExpression(const std::vector<ExpressionNode>& program,
                     case ExpressionNode::Op::Subtract: result = a - b; break;
                     case ExpressionNode::Op::Multiply: result = a * b; break;
                     case ExpressionNode::Op::Divide:
-                        if (std::abs(b) < 1e-15) { evaluationFailed = true; result = 0.0; }
-                        else { result = a / b; }
+                        // 除零与其余三条失败路径（下标越界、栈空、栈不足）保持一致：立即 return。
+                        // 此前只置 flag、把 0.0 压栈继续算，于是 `5-B1/B2` 于 {1,0} 交回 5.0、
+                        // `(B1+B2)/B3-4` 于 {1,2,0} 交回 -4.0 —— 一个"看似合理"的数被写进栅格，
+                        // 而 expression_engine.h 承诺的是"除零返回 0.0 且 evaluationFailed = true"。
+                        if (std::abs(b) < kNearZeroDivisorEpsilon) { evaluationFailed = true; return 0.0; }
+                        result = a / b;
                         break;
                     default: break;
                 }
