@@ -10,6 +10,7 @@
 #include <ogrsf_frmts.h>
 #include <cpl_error.h>
 #include <opencv2/core.hpp>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -3519,6 +3520,20 @@ TEST_F(PluginTest, VectorConvertExecution) {
 // 都会在内部销毁它。调用方若在移交后再对同一裸指针 delete，就是二次释放，
 // Debug 构建表现为非法释放异常，Release 构建表现为 0xc0000374（STATUS_HEAP_CORRUPTION）。
 
+// 判断一条 CPL 错误消息是否为"驱动拒绝把 POINT 写进 MULTIPOINT 图层"。
+// 实际消息形如：Attempt to write non-multipoint (POINT) geometry to multipoint shapefile.
+// 两个 RejectedFeatureWrite 用例用它把"写入确实被拒绝"这一前提显式钉住（否则前提被
+// Task 20 消除后，用例只是走正常路径、静默失去回归价值）。
+static bool a0IsMultipointWriteRejection(const std::string& message) {
+    std::string lowered;
+    lowered.reserve(message.size());
+    for (unsigned char c : message) {
+        lowered.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return lowered.find("attempt to write") != std::string::npos &&
+           lowered.find("multipoint") != std::string::npos;
+}
+
 static std::string a0MakePointLayer(const std::string& name, double x, double y) {
     namespace fs = std::filesystem;
     const std::string path = utf8PathString(getTestDir() / name);
@@ -3571,6 +3586,15 @@ static std::string a0MakeClipPolygonLayer(const std::string& name) {
 }
 
 // 目标图层拒绝写入时，clip 不得二次释放已移交写者的几何。
+//
+// 本用例的前提（必须成立才有覆盖价值）：输出图层被 resultLayerGeometryType(wkbPoint)
+// 声明为 MULTIPOINT（vector_plugin_common.inc:389-392），clip 对点图层产出的是 POINT，
+// 而 promoteGeometryToLayerType（vector_plugin_overlay_support.inc:14-29）不提升 Point
+// → Shapefile 驱动拒绝写入 → 写出要素数为 0，正好命中"移交后不再 delete"的释放分支。
+//
+// ⚠ Task 20 修正 resultLayerGeometryType(wkbPoint) 之后本用例前提消失，届时写入会成功
+// （written == 1、不再有驱动写失败消息），下面的两条前提断言会红——那时必须把它们
+// 改成正向断言，而不是删掉断言让用例静默空跑。
 TEST_F(PluginTest, VectorClipRejectedFeatureWriteDoesNotCorruptHeap) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
@@ -3585,24 +3609,51 @@ TEST_F(PluginTest, VectorClipRejectedFeatureWriteDoesNotCorruptHeap) {
     params["clip_vector"] = clip;
     params["output"] = output;
 
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        g_gdalWarnings.clear();
+        g_gdalErrors.clear();
+    }
+    CPLPushErrorHandler(captureGdalWarning);
     const auto result = p->execute(params, progress_);
+    CPLPopErrorHandler();
     EXPECT_TRUE(result.success) << "Clip failed: " << result.message;
     ASSERT_TRUE(fs::exists(output));
 
-    // 输出图层被声明为 MULTIPOINT；POINT 特性可能被驱动拒绝。这里只断言不变量：
-    // 进程未因二次释放崩溃、结果自洽、写出的几何仍然有效。
+    bool rejectedWrite = false;
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        for (const auto& error : g_gdalErrors) {
+            if (a0IsMultipointWriteRejection(error)) {
+                rejectedWrite = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(rejectedWrite)
+        << "前提已消失：没有捕获到驱动拒绝把 POINT 写入 MULTIPOINT 图层的错误，"
+           "本用例不再覆盖失败释放分支，须改成正向断言（见用例头注释）";
+
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
     ASSERT_NE(outDs, nullptr);
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
     const GIntBig written = outLayer->GetFeatureCount(FALSE);
-    EXPECT_LE(written, 1);
+    EXPECT_EQ(written, 0) << "前提已消失：POINT 被 MULTIPOINT 图层拒绝时写出数必须是 0，"
+                             "改成正向断言请同步更新用例头注释";
     outLayer->ResetReading();
     OGRFeature* outFeat = nullptr;
     while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* outGeom = outFeat->GetGeometryRef();
-        ASSERT_NE(outGeom, nullptr);
+        if (outGeom == nullptr) {
+            // 不能用 ASSERT_*：它会直接结束整个用例，跳过 DestroyFeature 与 GDALClose，
+            // .shp 保持打开 → 紧随其后的第二轮 execute 因文件占用再挂一次，
+            // 把"1 个几何为空"放大成两个失败且原因难读。
+            OGRFeature::DestroyFeature(outFeat);
+            ADD_FAILURE() << "Clip 输出要素缺少几何，结果不自洽";
+            break;
+        }
         EXPECT_TRUE(outGeom->IsValid());
         OGRFeature::DestroyFeature(outFeat);
     }
@@ -3614,6 +3665,9 @@ TEST_F(PluginTest, VectorClipRejectedFeatureWriteDoesNotCorruptHeap) {
 }
 
 // 同样的所有权移交路径：difference 在写入被拒绝时不得二次释放。
+// 前提与"前提消失即红"的要求同 VectorClipRejectedFeatureWriteDoesNotCorruptHeap：
+// 输出图层为 MULTIPOINT、difference 对点图层产出 POINT、驱动拒绝写入 → written == 0。
+// ⚠ Task 20 修正 resultLayerGeometryType(wkbPoint) 后须把两条前提断言改成正向断言。
 TEST_F(PluginTest, VectorDifferenceRejectedFeatureWriteDoesNotCorruptHeap) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
@@ -3628,9 +3682,30 @@ TEST_F(PluginTest, VectorDifferenceRejectedFeatureWriteDoesNotCorruptHeap) {
     params["overlay_vector"] = overlay;
     params["output"] = output;
 
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        g_gdalWarnings.clear();
+        g_gdalErrors.clear();
+    }
+    CPLPushErrorHandler(captureGdalWarning);
     const auto result = p->execute(params, progress_);
+    CPLPopErrorHandler();
     EXPECT_TRUE(result.success) << "Difference failed: " << result.message;
     ASSERT_TRUE(fs::exists(output));
+
+    bool rejectedWrite = false;
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        for (const auto& error : g_gdalErrors) {
+            if (a0IsMultipointWriteRejection(error)) {
+                rejectedWrite = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(rejectedWrite)
+        << "前提已消失：没有捕获到驱动拒绝把 POINT 写入 MULTIPOINT 图层的错误，"
+           "本用例不再覆盖失败释放分支，须改成正向断言（见用例头注释）";
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
@@ -3638,12 +3713,19 @@ TEST_F(PluginTest, VectorDifferenceRejectedFeatureWriteDoesNotCorruptHeap) {
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
     const GIntBig written = outLayer->GetFeatureCount(FALSE);
-    EXPECT_LE(written, 1);
+    EXPECT_EQ(written, 0) << "前提已消失：POINT 被 MULTIPOINT 图层拒绝时写出数必须是 0，"
+                             "改成正向断言请同步更新用例头注释";
     outLayer->ResetReading();
     OGRFeature* outFeat = nullptr;
     while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* outGeom = outFeat->GetGeometryRef();
-        ASSERT_NE(outGeom, nullptr);
+        if (outGeom == nullptr) {
+            // 同 clip 用例：这里用 ASSERT_* 会跳过 DestroyFeature/GDALClose，
+            // 输出 .shp 保持打开会让紧接着的第二轮 execute 因文件占用再失败一次。
+            OGRFeature::DestroyFeature(outFeat);
+            ADD_FAILURE() << "Difference 输出要素缺少几何，结果不自洽";
+            break;
+        }
         EXPECT_TRUE(outGeom->IsValid());
         OGRFeature::DestroyFeature(outFeat);
     }
