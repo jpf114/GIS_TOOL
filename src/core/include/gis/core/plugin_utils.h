@@ -35,7 +35,7 @@ ProcessingMetadata buildPluginMetadata(const std::string& input, GDALDataset* sr
  *
  * Security measures:
  *   - Expression length limited to kMaxExpressionLength (1024) characters
- *   - Only digits, operators (+-*/), parentheses, dots, and spaces are allowed after substitution
+ *   - Only digits, operators (+, -, *, /), parentheses, dots, and spaces are allowed after substitution
  *   - Operator nesting depth limited to kMaxExpressionDepth (64)
  *   - Division by near-zero returns 0.0 instead of infinity
  *

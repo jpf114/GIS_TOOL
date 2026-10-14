@@ -1,4 +1,5 @@
 #include <gis/core/block_processor.h>
+#include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/progress.h>
 
