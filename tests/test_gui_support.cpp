@@ -1780,7 +1780,11 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsFiltersVisibleAndRequiredKeys) {
     std::vector<gis::framework::ParamSpec> specs = {
         {"input", "输入", "", gis::framework::ParamType::FilePath, true},
         {"output", "输出", "", gis::framework::ParamType::FilePath, true},
-        {"method", "方法", "", gis::framework::ParamType::Enum, false},
+        // 与 processing_plugin.cpp:31 的真实 spec 同形：method 的默认值 "otsu" 由插件声明。
+        // Task 3 fix round 1（F3 / R-F3-A）删掉了展示层那处**冗余**的 "otsu" 覆写——插件默认值
+        // 本来就一样，覆写没造成分歧所以连白名单都没触发；这里把它补齐成插件自带默认值，
+        // 让断言测的是生产路径（默认值从插件透传），而不是展示层的注入。
+        {"method", "方法", "", gis::framework::ParamType::Enum, false, std::string{"otsu"}},
         {"hidden", "隐藏", "", gis::framework::ParamType::String, true}
     };
 
@@ -1826,14 +1830,17 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesProjectionTransformDefaul
     ASSERT_NE(srcSrs, nullptr);
     ASSERT_NE(dstSrs, nullptr);
 
-    // Task 3 之后 required 由插件 spec 决定，展示层不再改写（requiredKeys 只用来把键排前面）。
+    // R-F2-A：required = 插件声明的必填 ∪ 本面板 requiredKeys 追加的必填（只加严、不放宽）。
+    // 这里 src_srs 两边都不占 → false；dst_srs 由插件 spec 声明必填 → true（面板也列了它，
+    // 加严与插件真值同向，所以不构成分歧）。
     EXPECT_FALSE(srcSrs->required);
     EXPECT_TRUE(dstSrs->required);
 
     // src_srs 的默认值是 Task 3 登记在案的挂账：同一个键在 reproject 里必须留空
     // （空值才表示“从数据里读坐标系”），在 transform 里却要预填 EPSG:4326，而 ParamSpec
     // 是插件级、不分 action 的。覆写区整体清理归 Task 10（R-T3-4），
-    // 白名单见 tests/test_coverage_meta.cpp 的 kKnownPresentationOverrides。
+    // 白名单见 tests/test_coverage_meta.cpp 的 kKnownDivergentOverrides（键是
+    // projection.transform.src_srs.defaultValue，即"键 + 违规种类"）。
     EXPECT_EQ(std::get<std::string>(srcSrs->defaultValue), "EPSG:4326");
 }
 
@@ -1955,8 +1962,11 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
         {"tolerance"});
     ASSERT_EQ(vectorFiltered.size(), 1u);
     EXPECT_DOUBLE_EQ(std::get<double>(vectorFiltered[0].minValue), 0.000001);
-    // required 归插件 spec 所有：requiredKeys 只决定显示顺序，不再把它从 false 改成 true。
-    EXPECT_FALSE(vectorFiltered[0].required);
+    // R-F2-A：requiredKeys 只允许**加严**必填、不允许放宽。面板把 tolerance 列进 requiredKeys，
+    // 所以 vector.simplify 的 tolerance 在 GUI 里必须是必填（插件级 spec 是 false，因为它要服务
+    // 整个 vector 插件的其它 action）。Task 3 那句"删掉 requiredKeys 改写 required 的分支"
+    // 把这类面板级必填信息一起删掉了，本行断言因此回到 true。
+    EXPECT_TRUE(vectorFiltered[0].required);
 
     std::vector<gis::framework::ParamSpec> processingSpecs = {
         {"gamma", "Gamma", "", gis::framework::ParamType::Double, false},

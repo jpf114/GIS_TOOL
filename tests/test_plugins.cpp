@@ -158,6 +158,42 @@ static std::string createMultiBandConstantRaster(const std::string& name,
     return path;
 }
 
+// 每个波段沿 x 方向做线性梯度：value(x, y) = base + step * x（同一列上所有行取值相同）。
+// Task 3 fix round 1（F5）加它的原因：常量栅格让 brightValue == darkValue，percentile_stretch
+// 会走 georef_plugin.cpp:885-890 的 cv::Mat::zeros 退化分支，拉伸换算 :887 从未被执行。
+// 8x8 时 1% 分位落在 sorted[1]（也就是 x=0 那一列）、99% 分位落在 sorted[62]（x=7 那一列），
+// 于是分母 = |step * 7| != 0，换算分支真的被执行，输出只取决于 x：
+//   band = {base, step}: out(x) = clamp((base + step*x - dark) / (bright - dark))。
+static std::string createMultiBandGradientRaster(const std::string& name,
+                                                 int w,
+                                                 int h,
+                                                 const std::vector<std::pair<float, float>>& baseAndStep,
+                                                 double originX = 116.0,
+                                                 double originY = 40.0,
+                                                 double pixelSize = 0.001) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, static_cast<int>(baseAndStep.size()), GDT_Float32);
+    double adfGT[6] = {originX, pixelSize, 0.0, originY, 0.0, -pixelSize};
+    ds->SetGeoTransform(adfGT);
+
+    for (size_t bandIndex = 0; bandIndex < baseAndStep.size(); ++bandIndex) {
+        const float base = baseAndStep[bandIndex].first;
+        const float step = baseAndStep[bandIndex].second;
+        std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h));
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                data[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] =
+                    base + step * static_cast<float>(x);
+            }
+        }
+        auto* band = ds->GetRasterBand(static_cast<int>(bandIndex) + 1);
+        band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+        band->FlushCache();
+    }
+
+    return path;
+}
+
 static std::string createTwoClassTrainingRaster(const std::string& name, int w = 24, int h = 12) {
     std::string path = (getTestDir() / name).string();
     auto ds = gis::core::createRaster(path, w, h, 2, GDT_Float32);
@@ -964,6 +1000,37 @@ TEST_F(PluginTest, GeorefQuacCorrectionExecution) {
     EXPECT_NEAR(readRasterPixel(output, 1, 2, 2), 0.0f, 1e-6f);
     EXPECT_NEAR(readRasterPixel(output, 2, 2, 2), 0.0f, 1e-6f);
     EXPECT_NEAR(readRasterPixel(output, 3, 2, 2), 0.0f, 1e-6f);
+
+    // F5（Task 3 fix round 1）：上面那个夹具每波段都是常量，darkPercentile 与 brightPercentile
+    // 取到同一个值，插件走 georef_plugin.cpp:885-890 的 cv::Mat::zeros 退化分支，所以那三条
+    // EXPECT_NEAR 钉住的是"退化分支写 0"，percentile_stretch 的换算 :887 一次都没被执行过。
+    // 下面换成**分位数互不相同**的波段，把换算公式本身钉住（out = (v - dark) / (bright - dark)）：
+    //   band 1: value(x) = 20 + 10*x  -> dark=20 (x=0 列), bright=90 (x=7 列), out(x) = x / 7
+    //   band 2: value(x) = 100 - 10*x -> dark=30 (x=7 列), bright=100 (x=0 列), out(x) = 1 - x / 7
+    // band 2 沿 x 递减，因此它同时钉住"上下界是按像元取值算出来的、不是按列号取的"。
+    const std::string rampInput = createMultiBandGradientRaster(
+        "georef_quac_ramp_input.tif", 8, 8, {{20.0f, 10.0f}, {100.0f, -10.0f}});
+    const std::string rampOutput = utf8PathString(getTestDir() / "georef_quac_ramp_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> rampParams;
+    rampParams["action"] = std::string("percentile_stretch");
+    rampParams["input"] = rampInput;
+    rampParams["output"] = rampOutput;
+    rampParams["dark_percentile"] = 1.0;
+    rampParams["bright_percentile"] = 99.0;
+
+    const auto rampResult = p->execute(rampParams, progress_);
+    EXPECT_TRUE(rampResult.success) << rampResult.message;
+    ASSERT_TRUE(fs::exists(rampOutput));
+    EXPECT_EQ(rampResult.metadata.at("action"), "percentile_stretch");
+
+    // 下界像元 0、上界像元 1、中间像元线性插值：三条同时成立才可能不是退化分支写出来的。
+    EXPECT_NEAR(readRasterPixel(rampOutput, 1, 0, 0), 0.0f, 1e-6f);
+    EXPECT_NEAR(readRasterPixel(rampOutput, 1, 3, 0), 3.0f / 7.0f, 1e-5f);
+    EXPECT_NEAR(readRasterPixel(rampOutput, 1, 7, 0), 1.0f, 1e-6f);
+    EXPECT_NEAR(readRasterPixel(rampOutput, 2, 0, 0), 1.0f, 1e-6f);
+    EXPECT_NEAR(readRasterPixel(rampOutput, 2, 3, 0), 4.0f / 7.0f, 1e-5f);
+    EXPECT_NEAR(readRasterPixel(rampOutput, 2, 7, 0), 0.0f, 1e-6f);
 }
 
 TEST_F(PluginTest, GeorefRpcOrthorectifyExecution) {

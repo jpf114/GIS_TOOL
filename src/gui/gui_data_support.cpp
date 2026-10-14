@@ -1995,16 +1995,18 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
         }
 
         auto adjustedSpec = spec;
-        // Contract (Task 3): the presentation layer must not rewrite ParamSpec::required or
-        // ParamSpec::defaultValue. The plugin spec is the single source of truth shared with the
-        // CLI, so an override here makes the GUI submit something the CLI never would.
-        // requiredKeys is kept as a display-order hint only (see the ordering pass below); when an
-        // action really needs one more required parameter, declare it in that plugin's paramSpecs.
-        // Enforced by GuiContract.EffectiveSpecsNeverOverrideRequiredOrDefault.
+        // Contract (Task 3, R-F2-A): the presentation layer may only TIGHTEN ParamSpec::required,
+        // never loosen it. `required = spec.required || key is in this panel's requiredKeys` keeps
+        // every plugin-declared required parameter required (the GUI must never submit a form the
+        // CLI would reject), while still allowing per-action requiredness that a plugin-level
+        // ParamSpec cannot express - ParamSpec is shared by all actions of a plugin, so a key that
+        // only this action needs cannot be raised to required=true in the plugin without inventing
+        // a false requirement for its siblings (same structural gap as the src_srs default below).
+        // Default values, on the other hand, must never be rewritten here at all: the plugin spec
+        // is the single source of truth shared with the CLI.
+        adjustedSpec.required = spec.required || requiredKeys.count(spec.key) > 0;
+        // Enforced by GuiContract.EffectiveSpecsAgreeWithPluginSpecs.
 
-        if (pluginName == "processing" && action == "threshold" && spec.key == "method") {
-            adjustedSpec.defaultValue = std::string("otsu");
-        }
         if (pluginName == "matching") {
             if (spec.key == "ratio_test" || spec.key == "quality_level") {
                 adjustedSpec.minValue = 0.000001;
@@ -2093,6 +2095,8 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
     // Display order only - never a value change: parameters the plugin declares as required come
     // first, then the ones this panel advertises as required, then the rest. Each group keeps the
     // plugin's own relative order (the three passes below are what makes the sort stable).
+    // After R-F2-A a panel-advertised key is already required by the time it gets here, so the
+    // middle rank is unreachable; it is left in place because this pass must stay a pure reorder.
     std::vector<gis::framework::ParamSpec> ordered;
     ordered.reserve(filtered.size());
     for (int rank = 0; rank <= 2; ++rank) {

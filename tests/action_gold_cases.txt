@@ -1,36 +1,48 @@
 # Action 测试覆盖登记表（Task 3 建立）
-# 每行：plugin,action,GOLD|PENDING
+# 每行：plugin,action,GOLD|PENDING[,GOLD 证据用例]
+#   第 4 列只对 GOLD 行有意义，写 tests/test_plugins.cpp 里那个执行该 action 的用例名，
+#   格式 Suite.Test（与 ctest 显示的用例名一致）；PENDING 行留 3 列即可。
 #
-# GOLD 判定标准（不得凭名字或印象标）：tests/test_plugins.cpp 中执行该 action 的那个用例里
-#   存在 EXPECT_NEAR / EXPECT_FLOAT_EQ 的数值断言（逐像元、几何量或结果元数据量）。
+# GOLD 判定标准（不得凭名字或印象标）：tests/test_plugins.cpp 中执行该 action 的那个用例的
+#   TEST/TEST_F/TEST_P 块体内，存在数值断言 EXPECT_NEAR / EXPECT_FLOAT_EQ / EXPECT_DOUBLE_EQ
+#   之一（逐像元、几何量或结果元数据量），并且块体内出现该行的 action 字符串。
+#   三者等价，都是"把数值钉住"的断言；本口径在 fix round 1 由控制器裁定把
+#   EXPECT_DOUBLE_EQ 也纳入（R-F1-A），原先低报的 action 不在本轮反向扩标。
 # PENDING 表示该 action 目前只有“成功 + 产物存在”级别的断言，数值正确性未被钉住。
-# 维护规则：新增 action 必须在这里加一行（CoverageMeta.EveryActionIsRegistered 会拦住漏登记）；
-#   给某个 action 补上数值断言后把 PENDING 改成 GOLD，并同步下调
-#   CoverageMeta.PendingCountDoesNotGrow 的上限——该上限只允许下降。
-# 生成方式：ctest -R CoverageMeta.EveryActionIsRegistered 读出运行时 action 全集（126 个），
-#   再按上面的标准逐条核对数值断言（映射表见 build/task3_action_map.json）。
-classification,feature_stats,GOLD
-classification,svm_classify,GOLD
-classification,random_forest_classify,GOLD
-classification,max_likelihood_classify,GOLD
-classification,accuracy_assessment,GOLD
+# 证据在库内：CoverageMeta.GoldEvidenceIsAuditable 直接读第 4 列回到 tests/test_plugins.cpp
+#   核对上面两条（用例存在、块体内有数值断言、块体内出现 action 字符串），
+#   所以软化或删除那条数值断言、或把用例改名，对应 GOLD 行会立刻变红；
+#   登记表的凭据不再依赖 gitignored 的 build/ 产物。
+# 维护规则：新增 action 必须在这里加一行（CoverageMeta.EveryActionIsRegistered 会拦住漏登记，
+#   也会拦住已删除 action 留下的陈旧行）；给某个 action 补上数值断言后把 PENDING 改成 GOLD，
+#   补上第 4 列的用例名，并同步下调 CoverageMeta.PendingCountDoesNotGrow 的上限——
+#   该上限只允许下降。
+# 生成方式：ctest -R CoverageMeta 读出运行时 action 全集（126 个）并逐条核对数值断言；
+#   下面 126 行 = GOLD 52 + PENDING 74（2026-10-15 由审查者逐条核过 52 条 GOLD）。
+# 备注：georef.percentile_stretch 的证据用例名是历史遗留的 QUAC 旧称，动作本身没错
+#   （块体内 params["action"] = "percentile_stretch"）；用例改名归 Task 10。
+classification,feature_stats,GOLD,PluginTest.FeatureStatsRunResolvesProjectedTargetSrsAndFinestGrid
+classification,svm_classify,GOLD,PluginTest.ClassificationSvmExecution
+classification,random_forest_classify,GOLD,PluginTest.ClassificationRandomForestExecution
+classification,max_likelihood_classify,GOLD,PluginTest.ClassificationMaxLikelihoodExecution
+classification,accuracy_assessment,GOLD,PluginTest.ClassificationAccuracyAssessmentExecution
 cutting,clip,PENDING
-cutting,mosaic,GOLD
+cutting,mosaic,GOLD,PluginTest.CuttingMosaicProducesCombinedExtentAndValues
 cutting,split,PENDING
 cutting,merge_bands,PENDING
 cutting,tile,PENDING
-georef,dos_correction,GOLD
-georef,radiometric_calibration,GOLD
-georef,gcp_register,GOLD
-georef,cosine_correction,GOLD
-georef,minnaert_correction,GOLD
-georef,c_correction,GOLD
-georef,percentile_stretch,GOLD
-georef,rpc_orthorectify,GOLD
+georef,dos_correction,GOLD,PluginTest.GeorefDosCorrectionExecution
+georef,radiometric_calibration,GOLD,PluginTest.GeorefRadiometricCalibrationExecution
+georef,gcp_register,GOLD,PluginTest.GeorefGcpRegisterExecution
+georef,cosine_correction,GOLD,PluginTest.GeorefCosineCorrectionExecution
+georef,minnaert_correction,GOLD,PluginTest.GeorefMinnaertCorrectionExecution
+georef,c_correction,GOLD,PluginTest.GeorefCCorrectionExecution
+georef,percentile_stretch,GOLD,PluginTest.GeorefQuacCorrectionExecution
+georef,rpc_orthorectify,GOLD,PluginTest.GeorefRpcOrthorectifyExecution
 matching,detect,PENDING
 matching,match,PENDING
 matching,register,PENDING
-matching,change,GOLD
+matching,change,GOLD,PluginTest.MatchingChangeExecutionReportsChangedPixels
 matching,ecc_register,PENDING
 matching,corner,PENDING
 matching,stitch,PENDING
@@ -57,32 +69,32 @@ projection,assign_srs,PENDING
 raster_inspect,histogram,PENDING
 raster_inspect,info,PENDING
 raster_manage,overviews,PENDING
-raster_manage,nodata,GOLD
+raster_manage,nodata,GOLD,PluginTest.RasterManageNoDataExecution
 raster_manage,cog,PENDING
 raster_manage,zonal_stats,PENDING
 raster_manage,proximity,PENDING
 raster_math,band_math,PENDING
-raster_math,reclassify,GOLD
-raster_math,raster_overlay,GOLD
+raster_math,reclassify,GOLD,PluginTest.RasterMathReclassifyExecution
+raster_math,raster_overlay,GOLD,PluginTest.RasterMathRasterOverlayExecution
 raster_render,colormap,PENDING
 raster_render,histogram_match,PENDING
 spindex,ndvi,PENDING
-spindex,ndmi,GOLD
-spindex,evi,GOLD
-spindex,evi2,GOLD
-spindex,savi,GOLD
-spindex,osavi,GOLD
-spindex,gndvi,GOLD
-spindex,ndwi,GOLD
-spindex,mndwi,GOLD
-spindex,ndbi,GOLD
-spindex,bsi,GOLD
-spindex,arvi,GOLD
-spindex,nbr,GOLD
-spindex,awei,GOLD
-spindex,ui,GOLD
-spindex,bi,GOLD
-spindex,custom_index,GOLD
+spindex,ndmi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,evi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,evi2,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,savi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,osavi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,gndvi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,ndwi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,mndwi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,ndbi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,bsi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,arvi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,nbr,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,awei,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,ui,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,bi,GOLD,PluginTest.SpindexOtherIndicesExecution
+spindex,custom_index,GOLD,PluginTest.SpindexCustomIndexExecution
 terrain,slope,PENDING
 terrain,aspect,PENDING
 terrain,hillshade,PENDING
@@ -92,16 +104,16 @@ terrain,profile_curvature,PENDING
 terrain,plan_curvature,PENDING
 terrain,tri,PENDING
 terrain,roughness,PENDING
-terrain,fill_sinks,GOLD
-terrain,flow_direction,GOLD
-terrain,flow_accumulation,GOLD
-terrain,stream_extract,GOLD
-terrain,watershed,GOLD
+terrain,fill_sinks,GOLD,PluginTest.TerrainFillSinksAndFlowDirectionExecution
+terrain,flow_direction,GOLD,PluginTest.TerrainFillSinksAndFlowDirectionExecution
+terrain,flow_accumulation,GOLD,PluginTest.TerrainFlowAccumulationExecution
+terrain,stream_extract,GOLD,PluginTest.TerrainStreamExtractExecution
+terrain,watershed,GOLD,PluginTest.TerrainWatershedExecution
 terrain,profile_extract,PENDING
-terrain,viewshed,GOLD
-terrain,viewshed_multi,GOLD
-terrain,cut_fill,GOLD
-terrain,reservoir_volume,GOLD
+terrain,viewshed,GOLD,PluginTest.TerrainViewshedExecution
+terrain,viewshed_multi,GOLD,PluginTest.TerrainViewshedMultiExecution
+terrain,cut_fill,GOLD,PluginTest.TerrainCutFillExecution
+terrain,reservoir_volume,GOLD,PluginTest.TerrainReservoirVolumeExecution
 vector,info,PENDING
 vector,filter,PENDING
 vector,buffer,PENDING
@@ -111,27 +123,27 @@ vector,polygonize,PENDING
 vector,convert,PENDING
 vector,union,PENDING
 vector,difference,PENDING
-vector,intersect,GOLD
+vector,intersect,GOLD,PluginTest.VectorIntersectOutputsOverlappedPolygon
 vector,dissolve,PENDING
 vector,simplify,PENDING
 vector,repair,PENDING
-vector,geom_metrics,GOLD
-vector,nearest,GOLD
+vector,geom_metrics,GOLD,PluginTest.VectorGeomMetricsExecution
+vector,nearest,GOLD,PluginTest.VectorNearestExecution
 vector,spatial_join,PENDING
 vector,adjacency,PENDING
 vector,overlap_check,PENDING
 vector,topology_check,PENDING
-vector,convex_hull,GOLD
-vector,centroid,GOLD
-vector,envelope,GOLD
-vector,boundary,GOLD
+vector,convex_hull,GOLD,PluginTest.VectorConvexHullExecution
+vector,centroid,GOLD,PluginTest.VectorCentroidExecution
+vector,envelope,GOLD,PluginTest.VectorEnvelopeExecution
+vector,boundary,GOLD,PluginTest.VectorBoundaryExecution
 vector,multipart_check,PENDING
 vector,singlepart,PENDING
 vector,vertices_extract,PENDING
 vector,endpoints_extract,PENDING
-vector,midpoints_extract,GOLD
+vector,midpoints_extract,GOLD,PluginTest.VectorMidpointsExtractExecution
 vector,interior_point,PENDING
 vector,duplicate_point_check,PENDING
 vector,hole_check,PENDING
 vector,dangling_endpoint_check,PENDING
-vector,sliver_remove,GOLD
+vector,sliver_remove,GOLD,PluginTest.VectorSliverRemoveExecution
