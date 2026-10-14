@@ -141,19 +141,54 @@ add_custom_command(TARGET gis_tests POST_BUILD
 gis_copy_minimal_runtime(gis_tests DEST_DIR "$<TARGET_FILE_DIR:gis_tests>")
 
 include(GoogleTest)
+# DISCOVERY_MODE PRE_TEST means the discovered gtest cases do not exist at configure
+# time, so the blanket timeout applied at the bottom of this file cannot reach them.
+# Their timeout has to travel through PROPERTIES, which GoogleTest.cmake forwards to
+# every test produced by this invocation.
+set(GIS_GTEST_TEST_PROPERTIES TIMEOUT 300)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.27)
+    list(APPEND GIS_GTEST_TEST_PROPERTIES PROCESS_TIMEOUT 360)
+endif()
 gtest_discover_tests(gis_tests
     WORKING_DIRECTORY $<TARGET_FILE_DIR:gis_tests>
     DISCOVERY_TIMEOUT 60
     DISCOVERY_MODE PRE_TEST
+    PROPERTIES ${GIS_GTEST_TEST_PROPERTIES}
 )
+
+# CMake has no directory or global property that lists the tests defined so far
+# ("TEST" is not a CMake property name at all, and get_property(... DIRECTORY PROPERTY
+# TEST) therefore returns an empty list), so a blanket set_property(TEST <everything>)
+# written after the fact would silently apply to nothing. The hard timeout has to be
+# recorded while each test is registered: add_test is wrapped here to capture its name
+# in a global property, and the timeout is applied at the bottom of this file.
+# A call that is not the NAME/COMMAND signature aborts configure instead of quietly
+# registering a test without a timeout, and a captured name that is not a real test is a
+# hard error in set_property(TEST). Tests registered by calling _add_test directly would
+# bypass this, so do not do that here.
+# The gtest cases found by gtest_discover_tests above are not covered by this wrapper -
+# PRE_TEST discovery happens at ctest time - they get TIMEOUT via PROPERTIES instead.
+function(add_test)
+    if(NOT ARGV0 STREQUAL "NAME")
+        message(FATAL_ERROR
+            "add_test in tests/CMakeLists.txt must use the NAME/COMMAND signature, "
+            "otherwise the test would be registered without a hard timeout.")
+    endif()
+    _add_test(${ARGN})
+    set_property(GLOBAL APPEND PROPERTY GIS_CONFIGURE_TIME_TEST_NAMES "${ARGV1}")
+endfunction()
 
 if(TARGET gis-gui)
     add_test(
         NAME gui_smoke_startup
         COMMAND $<TARGET_FILE:gis-gui> -platform ${GIS_TEST_QT_HEADLESS_PLATFORM} --self-test
     )
+    # No PASS_REGULAR_EXPRESSION here on purpose: when that property is set, ctest
+    # ignores the process exit code, so a crashing gis-gui could be recorded as Passed.
+    # The exit code must be the verdict. Content validation of --self-test is a Plan 3
+    # (C1/D1) item and needs the expected string added together with the output it checks.
     set_tests_properties(gui_smoke_startup PROPERTIES
-        PASS_REGULAR_EXPRESSION ""
+        TIMEOUT 60
     )
 
     add_test(
@@ -1232,9 +1267,7 @@ if(TARGET gis-gui)
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_ecc_register_debug_failure/output.tif
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_ecc_register_debug_failure/gui_matching_ecc_register_debug_failure.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_ecc_register_debug_failure_regression.cmake
-    )
-    set_tests_properties(gui_matching_ecc_register_debug_failure_offscreen PROPERTIES
-        LABELS "debug_only"
+        CONFIGURATIONS Debug
     )
 
     add_test(
@@ -1245,9 +1278,18 @@ if(TARGET gis-gui)
             -DOUTPUT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_stitch_debug_failure/output.tif
             -DSCREENSHOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/nested/matching_stitch_debug_failure/gui_matching_stitch_debug_failure.png
             -P ${CMAKE_CURRENT_SOURCE_DIR}/run_gui_matching_stitch_debug_failure_regression.cmake
+        CONFIGURATIONS Debug
     )
-    set_tests_properties(gui_matching_stitch_debug_failure_offscreen PROPERTIES
-        LABELS "debug_only"
+    # One shared properties block for both debug-only cases: a second set_tests_properties
+    # call would overwrite the first. The per-configuration exclusion has to be done with
+    # add_test's CONFIGURATIONS option, not as a test property - CONFIGURATIONS is not a
+    # test property in CMake, so setting it here would be silently ignored and the cases
+    # would keep fake-passing in Release. Not DISABLED either: DISABLED is not per
+    # configuration and would also kill these cases in Debug, where they must really run.
+    set_tests_properties(
+        gui_matching_ecc_register_debug_failure_offscreen
+        gui_matching_stitch_debug_failure_offscreen
+        PROPERTIES LABELS "debug_only"
     )
 
     add_test(
@@ -1383,4 +1425,20 @@ if(GIS_POWERSHELL_EXECUTABLE)
         DEPENDS gis-cli plugin_vector plugin_projection copy_runtime_dlls
         COMMENT "Run real vector regression (full)"
     )
+endif()
+
+# Hard timeout for every test registered at configure time: a hanging test must fail,
+# not hang the pipeline. The names come from the add_test wrapper near the top of this
+# file; an empty list here simply means no configure-time test was registered (for
+# example GIS_BUILD_GUI=OFF), which is not a silent gap. Keep 300 in sync with the
+# PROPERTIES timeout handed to gtest_discover_tests, which covers the gtest cases.
+get_property(GIS_TIMED_TEST_NAMES GLOBAL PROPERTY GIS_CONFIGURE_TIME_TEST_NAMES)
+if(GIS_TIMED_TEST_NAMES)
+    # gui_smoke_startup already has the tighter 60s bound set above; the blanket value
+    # must not overwrite it, so it is excluded here instead of being re-set afterwards.
+    list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup)
+    set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY TIMEOUT 300)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.27)
+        set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY PROCESS_TIMEOUT 360)
+    endif()
 endif()

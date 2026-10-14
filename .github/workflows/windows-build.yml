@@ -12,6 +12,10 @@ on:
 jobs:
   build-and-test:
     runs-on: windows-latest
+    # Without this a hung ctest run sits on the default 6-hour job timeout and the
+    # failure has no attributable cause. Per-test TIMEOUT bounds the wait much tighter;
+    # this is the outer backstop for the whole pipeline.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout

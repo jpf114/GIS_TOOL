@@ -452,22 +452,20 @@ TEST_F(PluginTest, PluginManagerScan) {
 
 TEST_F(PluginTest, PluginManagerFind) {
     auto* p = mgr_.find("projection");
-    if (p) {
-        EXPECT_EQ(p->name(), "projection");
-        EXPECT_FALSE(p->paramSpecs().empty());
-    }
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->name(), "projection");
+    EXPECT_FALSE(p->paramSpecs().empty());
 }
 
 TEST_F(PluginTest, ProjectionPluginParams) {
     auto* p = mgr_.find("projection");
-    if (p) {
-        auto specs = p->paramSpecs();
-        bool hasAction = false;
-        for (auto& s : specs) {
-            if (s.key == "action") hasAction = true;
-        }
-        EXPECT_TRUE(hasAction);
+    ASSERT_NE(p, nullptr);
+    auto specs = p->paramSpecs();
+    bool hasAction = false;
+    for (auto& s : specs) {
+        if (s.key == "action") hasAction = true;
     }
+    EXPECT_TRUE(hasAction);
 }
 
 TEST_F(PluginTest, ProjectionVectorReprojectExecution) {
@@ -545,22 +543,20 @@ TEST_F(PluginTest, ProjectionVectorReprojectExecution) {
 
 TEST_F(PluginTest, VectorPluginParams) {
     auto* p = mgr_.find("vector");
-    if (p) {
-        auto specs = p->paramSpecs();
-        EXPECT_GE(specs.size(), 5u);
-    }
+    ASSERT_NE(p, nullptr);
+    auto specs = p->paramSpecs();
+    EXPECT_GE(specs.size(), 5u);
 }
 
 TEST_F(PluginTest, RasterRenderPluginParams) {
     auto* p = mgr_.find("raster_render");
-    if (p) {
-        auto specs = p->paramSpecs();
-        bool hasAction = false;
-        for (auto& s : specs) {
-            if (s.key == "action") hasAction = true;
-        }
-        EXPECT_TRUE(hasAction);
+    ASSERT_NE(p, nullptr);
+    auto specs = p->paramSpecs();
+    bool hasAction = false;
+    for (auto& s : specs) {
+        if (s.key == "action") hasAction = true;
     }
+    EXPECT_TRUE(hasAction);
 }
 
 TEST_F(PluginTest, FeatureStatsPluginParams) {
@@ -611,14 +607,13 @@ TEST_F(PluginTest, ClassificationSupervisedParamsDoNotRequireFeatureStatsInputs)
 
 TEST_F(PluginTest, ProcessingPluginParams) {
     auto* p = mgr_.find("processing");
-    if (p) {
-        auto specs = p->paramSpecs();
-        bool hasEdgeAction = false;
-        for (auto& s : specs) {
-            if (s.key == "edge_method") hasEdgeAction = true;
-        }
-        EXPECT_TRUE(hasEdgeAction);
+    ASSERT_NE(p, nullptr);
+    auto specs = p->paramSpecs();
+    bool hasEdgeAction = false;
+    for (auto& s : specs) {
+        if (s.key == "edge_method") hasEdgeAction = true;
     }
+    EXPECT_TRUE(hasEdgeAction);
 }
 
 TEST_F(PluginTest, FeatureStatsRunResolvesProjectedTargetSrsAndFinestGrid) {
@@ -1459,7 +1454,9 @@ TEST_F(PluginTest, ProcessingUnknownAction) {
 
 TEST_F(PluginTest, RasterInspectInfoExecution) {
     auto* p = mgr_.find("raster_inspect");
-    if (!p) GTEST_SKIP() << "raster_inspect plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: raster_inspect";
+    }
 
     std::string input = createTestRaster("e2e_util_info_input.tif", 30, 30);
 
@@ -1848,7 +1845,9 @@ TEST_F(PluginTest, ProjectionAssignSrsExecution) {
 
 TEST_F(PluginTest, VectorInfoExecution) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string shpPath = (getTestDir() / "e2e_vector_test.shp").string();
     {
@@ -1881,7 +1880,9 @@ TEST_F(PluginTest, VectorInfoExecution) {
 
 TEST_F(PluginTest, VectorBufferExecutionReportsMetadata) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string shpPath = (getTestDir() / "e2e_buffer_input.shp").string();
     std::string output = (getTestDir() / "e2e_buffer_output.gpkg").string();
@@ -1964,7 +1965,9 @@ TEST_F(PluginTest, VectorBufferExecutionReportsMetadata) {
 
 TEST_F(PluginTest, VectorBufferRejectsGeographicSrs) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string shpPath = (getTestDir() / "e2e_buffer_geo_input.shp").string();
     std::string output = (getTestDir() / "e2e_buffer_geo_output.geojson").string();
@@ -2000,7 +2003,9 @@ TEST_F(PluginTest, VectorBufferRejectsGeographicSrs) {
 
 TEST_F(PluginTest, VectorBufferAvoidsMultiPolygonWarning) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_buffer_multi_input.gpkg").string();
     std::string output = (getTestDir() / "e2e_buffer_multi_output.gpkg").string();
@@ -2140,7 +2145,9 @@ TEST_F(PluginTest, ProcessingKMeansExecution) {
 
 TEST_F(PluginTest, VectorDissolveExecution) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string shpPath = (getTestDir() / "e2e_dissolve_input.shp").string();
     std::string output = (getTestDir() / "e2e_dissolve_output.geojson").string();
@@ -2196,7 +2203,9 @@ TEST_F(PluginTest, VectorDissolveExecution) {
 
 TEST_F(PluginTest, VectorClipRejectsMismatchedSrs) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_clip_input.shp").string();
     std::string clip = (getTestDir() / "e2e_clip_overlay.shp").string();
@@ -2254,7 +2263,9 @@ TEST_F(PluginTest, VectorClipRejectsMismatchedSrs) {
 
 TEST_F(PluginTest, VectorUnionRejectsMismatchedSrs) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_union_input.shp").string();
     std::string overlay = (getTestDir() / "e2e_union_overlay.shp").string();
@@ -2312,7 +2323,9 @@ TEST_F(PluginTest, VectorUnionRejectsMismatchedSrs) {
 
 TEST_F(PluginTest, VectorUnionLinePolygonOutputsSplitLinesOnly) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_union_line_input.shp").string();
     std::string overlay = (getTestDir() / "e2e_union_line_overlay.shp").string();
@@ -2398,7 +2411,9 @@ TEST_F(PluginTest, VectorUnionLinePolygonOutputsSplitLinesOnly) {
 
 TEST_F(PluginTest, VectorUnionRejectsHighlyOverlappedMixedDimensionOverlay) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_union_overlap_input.shp").string();
     std::string overlay = (getTestDir() / "e2e_union_overlap_overlay.shp").string();
@@ -2465,7 +2480,9 @@ TEST_F(PluginTest, VectorUnionRejectsHighlyOverlappedMixedDimensionOverlay) {
 
 TEST_F(PluginTest, VectorDifferenceRejectsMismatchedSrs) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_difference_input.shp").string();
     std::string overlay = (getTestDir() / "e2e_difference_overlay.shp").string();
@@ -2523,7 +2540,9 @@ TEST_F(PluginTest, VectorDifferenceRejectsMismatchedSrs) {
 
 TEST_F(PluginTest, VectorDifferenceKeepsLinearGeometryOutput) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_difference_line_input.shp").string();
     std::string overlay = (getTestDir() / "e2e_difference_line_overlay.shp").string();
@@ -2605,7 +2624,9 @@ TEST_F(PluginTest, VectorDifferenceKeepsLinearGeometryOutput) {
 
 TEST_F(PluginTest, VectorDifferenceWithoutOverlapAvoidsMultiGeometryWarning) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_difference_no_overlap_input.shp").string();
     std::string overlay = (getTestDir() / "e2e_difference_no_overlap_overlay.shp").string();
@@ -2685,7 +2706,9 @@ TEST_F(PluginTest, VectorDifferenceWithoutOverlapAvoidsMultiGeometryWarning) {
 
 TEST_F(PluginTest, VectorIntersectRejectsMismatchedSrs) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_intersect_input.shp").string();
     std::string overlay = (getTestDir() / "e2e_intersect_overlay.shp").string();
@@ -2741,7 +2764,9 @@ TEST_F(PluginTest, VectorIntersectRejectsMismatchedSrs) {
 
 TEST_F(PluginTest, VectorIntersectOutputsOverlappedPolygon) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_intersect_polygon_input.shp").string();
     std::string overlay = (getTestDir() / "e2e_intersect_polygon_overlay.shp").string();
@@ -2823,7 +2848,9 @@ TEST_F(PluginTest, VectorIntersectOutputsOverlappedPolygon) {
 
 TEST_F(PluginTest, VectorSpatialJoinRejectsMismatchedSrs) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_spatial_join_input.shp").string();
     std::string join = (getTestDir() / "e2e_spatial_join_join.shp").string();
@@ -2989,7 +3016,9 @@ TEST_F(PluginTest, VectorSpatialJoinWritesJoinCountAndValue) {
 
 TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_clip_invalid_input.shp").string();
     std::string clip = (getTestDir() / "e2e_clip_invalid_overlay.shp").string();
@@ -3082,7 +3111,9 @@ TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
 
 TEST_F(PluginTest, VectorFilterShapefileAsciiOutputReopens) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_filter_ascii_input.shp").string();
     std::string output = (getTestDir() / "e2e_filter_ascii_output.shp").string();
@@ -3131,7 +3162,9 @@ TEST_F(PluginTest, VectorFilterShapefileAsciiOutputReopens) {
 
 TEST_F(PluginTest, VectorFilterShapefileChineseOutputReopens) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_filter_cn_input.shp").string();
     std::string output = (getTestDir() / "e2e_filter_cn_output.shp").string();
@@ -3180,7 +3213,9 @@ TEST_F(PluginTest, VectorFilterShapefileChineseOutputReopens) {
 
 TEST_F(PluginTest, VectorInfoSupportsChinesePath) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     fs::path asciiPath = getTestDir() / "e2e_chinese_path_ascii.shp";
     fs::path chinesePath = getTestDir() / "中文道路数据.shp";
@@ -3226,7 +3261,9 @@ TEST_F(PluginTest, VectorInfoSupportsChinesePath) {
 
 TEST_F(PluginTest, VectorBufferSupportsChinesePath) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     fs::path asciiPath = getTestDir() / "e2e_buffer_chinese_ascii.shp";
     fs::path chinesePath = getTestDir() / "中文道路缓冲输入.shp";
@@ -3282,7 +3319,9 @@ TEST_F(PluginTest, VectorBufferSupportsChinesePath) {
 
 TEST_F(PluginTest, VectorDissolveRejectsGeographicSrs) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_dissolve_geo_input.shp").string();
     std::string output = (getTestDir() / "e2e_dissolve_geo_output.gpkg").string();
@@ -3324,7 +3363,9 @@ TEST_F(PluginTest, VectorDissolveRejectsGeographicSrs) {
 
 TEST_F(PluginTest, VectorDissolveRepairsInvalidPolygonGeometry) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_dissolve_invalid_input.shp").string();
     std::string output = (getTestDir() / "e2e_dissolve_invalid_output.gpkg").string();
@@ -3390,7 +3431,9 @@ TEST_F(PluginTest, VectorDissolveRepairsInvalidPolygonGeometry) {
 
 TEST_F(PluginTest, VectorClipKeepsOnlyLinearOverlapSegments) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string input = (getTestDir() / "e2e_clip_line_input.shp").string();
     std::string clip = (getTestDir() / "e2e_clip_line_overlay.shp").string();
@@ -3478,7 +3521,9 @@ TEST_F(PluginTest, VectorClipKeepsOnlyLinearOverlapSegments) {
 
 TEST_F(PluginTest, VectorConvertExecution) {
     auto* p = mgr_.find("vector");
-    if (!p) GTEST_SKIP() << "vector plugin not loaded";
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
 
     std::string shpPath = (getTestDir() / "e2e_convert_input.shp").string();
     std::string output = (getTestDir() / "e2e_convert_output.geojson").string();
