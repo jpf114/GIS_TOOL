@@ -46,7 +46,9 @@ std::vector<gis::framework::ParamSpec> RasterManagePlugin::paramSpecs() const {
         },
         gis::framework::ParamSpec{"input", "输入栅格", "Input raster path", gis::framework::ParamType::FilePath, true, std::string{}},
         gis::framework::ParamSpec{"output", "输出结果", "Output path used by cog or derived products", gis::framework::ParamType::FilePath, false, std::string{}},
-        gis::framework::ParamSpec{"band", "波段", "Band index, 0 means all bands when supported", gis::framework::ParamType::Int, false, int{1}, int{0}, int{999}},
+        // band 的默认值必须与下面的描述、与 doSetNoData 的兜底（getParam(..., "band", 0)）一致：
+        // 0 = 全波段。展示层以前把它覆写成 0 而这里写 1，GUI 与 CLI 的"默认"因此不是同一个值。
+        gis::framework::ParamSpec{"band", "波段", "Band index, 0 means all bands when supported", gis::framework::ParamType::Int, false, int{0}, int{0}, int{999}},
         gis::framework::ParamSpec{"levels", "金字塔层级", "Overview levels separated by spaces, for example 2 4 8 16", gis::framework::ParamType::String, false, std::string{"2 4 8 16"}},
         gis::framework::ParamSpec{"resample", "重采样", "Resampling method for overview generation", gis::framework::ParamType::Enum, false, std::string{"nearest"}, int{0}, int{0}, {"nearest", "gaussian", "cubic", "average", "mode"}},
         gis::framework::ParamSpec{"nodata_value", "NoData值", "NoData value to assign", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},

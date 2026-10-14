@@ -1508,6 +1508,97 @@ TEST_F(PluginTest, RasterManageNoDataExecution) {
     const double noDataValue = gis::core::getNoDataValue(ds.get(), 1, &hasNoData);
     EXPECT_TRUE(hasNoData);
     EXPECT_DOUBLE_EQ(noDataValue, -99.0);
+    ds.reset();
+
+    // Task 3 / R-T3-3：band 的默认值在 GUI、CLI 和插件兜底三条链路上必须是同一个 0（全波段）。
+    // 注意 GeoTIFF 只有一个 TIFFTAG_GDAL_NODATA（整幅一个值），GDAL 自己会警告
+    // "Setting nodata to X on band 1, but band 2 has nodata at Y … will be used for all bands"，
+    // 所以"只写第 1 波段"在文件里观察不到隔离，能区分两条分支的是插件回显的分支消息；
+    // 逐波段的数值断言则用来证明 band=0 确实把三个波段都写上了。
+    const std::string band1Input = createMultiBandConstantRaster(
+        "e2e_util_nodata_band1_input.tif", 16, 16, {11.0f, 22.0f, 33.0f});
+
+    std::map<std::string, gis::framework::ParamValue> singleBandParams;
+    singleBandParams["action"] = std::string("nodata");
+    singleBandParams["input"] = band1Input;
+    singleBandParams["band"] = 1;
+    singleBandParams["nodata_value"] = -77.0;
+
+    const auto singleBand = p->execute(singleBandParams, progress_);
+    ASSERT_TRUE(singleBand.success) << singleBand.message;
+    EXPECT_NE(singleBand.message.find("for band 1"), std::string::npos)
+        << "band=1 必须走单波段分支，实际消息: " << singleBand.message;
+    {
+        auto checkDs = gis::core::openRaster(band1Input, true);
+        ASSERT_NE(checkDs, nullptr);
+        EXPECT_EQ(checkDs->GetRasterCount(), 3);
+        bool band1Set = false;
+        EXPECT_NEAR(gis::core::getNoDataValue(checkDs.get(), 1, &band1Set), -77.0, 1e-9);
+        EXPECT_TRUE(band1Set);
+        checkDs.reset();
+    }
+
+    // 全新一幅 3 波段输入：只给 band=0（GUI 全默认提交发出的就是它），三个波段都要拿到 NoData。
+    const std::string allBandsInput = createMultiBandConstantRaster(
+        "e2e_util_nodata_all_bands_input.tif", 16, 16, {11.0f, 22.0f, 33.0f});
+
+    std::map<std::string, gis::framework::ParamValue> allBandParams;
+    allBandParams["action"] = std::string("nodata");
+    allBandParams["input"] = allBandsInput;
+    allBandParams["band"] = 0;
+    allBandParams["nodata_value"] = -88.0;
+
+    const auto allBands = p->execute(allBandParams, progress_);
+    ASSERT_TRUE(allBands.success) << allBands.message;
+    EXPECT_NE(allBands.message.find("for all 3 bands"), std::string::npos)
+        << "band=0 必须走全波段分支，实际消息: " << allBands.message;
+    {
+        auto checkDs = gis::core::openRaster(allBandsInput, true);
+        ASSERT_NE(checkDs, nullptr);
+        for (int b = 1; b <= 3; ++b) {
+            bool set = false;
+            EXPECT_NEAR(gis::core::getNoDataValue(checkDs.get(), b, &set), -88.0, 1e-9)
+                << "第 " << b << " 波段";
+            EXPECT_TRUE(set) << "第 " << b << " 波段必须写上 NoData";
+        }
+        checkDs.reset();
+    }
+
+    // 不传 band 时的兜底也必须与声明的默认值一致（0 = 全波段），否则 GUI 与 CLI 的"默认"不同义。
+    const std::string defaultInput = createMultiBandConstantRaster(
+        "e2e_util_nodata_default_input.tif", 16, 16, {11.0f, 22.0f, 33.0f});
+
+    std::map<std::string, gis::framework::ParamValue> noBandParams;
+    noBandParams["action"] = std::string("nodata");
+    noBandParams["input"] = defaultInput;
+    noBandParams["nodata_value"] = -66.0;
+
+    const auto noBand = p->execute(noBandParams, progress_);
+    ASSERT_TRUE(noBand.success) << noBand.message;
+    EXPECT_NE(noBand.message.find("for all 3 bands"), std::string::npos)
+        << "缺省 band 必须等价于 band=0，实际消息: " << noBand.message;
+    {
+        auto checkDs = gis::core::openRaster(defaultInput, true);
+        ASSERT_NE(checkDs, nullptr);
+        for (int b = 1; b <= 3; ++b) {
+            bool set = false;
+            EXPECT_NEAR(gis::core::getNoDataValue(checkDs.get(), b, &set), -66.0, 1e-9)
+                << "第 " << b << " 波段";
+            EXPECT_TRUE(set) << "第 " << b << " 波段";
+        }
+        checkDs.reset();
+    }
+
+    // 声明出来的默认值要和代码兜底是同一个值（这是 Task 3 契约不变量的插件侧一半）。
+    const auto pluginSpecs = p->paramSpecs();
+    const gis::framework::ParamSpec* bandSpec = nullptr;
+    for (const auto& spec : pluginSpecs) {
+        if (spec.key == "band") bandSpec = &spec;
+    }
+    ASSERT_NE(bandSpec, nullptr);
+    const auto* bandDefault = std::get_if<int>(&bandSpec->defaultValue);
+    ASSERT_NE(bandDefault, nullptr);
+    EXPECT_EQ(*bandDefault, 0) << "raster_manage 的 band 默认值必须是 0（全波段），与描述和兜底一致";
 }
 
 TEST_F(PluginTest, RasterManageCogExecution) {

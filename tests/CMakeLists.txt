@@ -10,6 +10,7 @@ add_executable(gis_tests
     test_mainwindow.cpp
     test_support.cpp
     test_fixtures.cpp
+    test_coverage_meta.cpp
     ../src/gui/custom_index_preset_store.cpp
     ../src/gui/gui_data_support.cpp
     ../src/gui/gdal_config.cpp
@@ -49,6 +50,12 @@ target_link_libraries(gis_tests PRIVATE
     Qt6::Widgets
     GTest::gtest
 )
+
+# The coverage meta-test reads tests/action_gold_cases.txt from the source tree, not from the
+# build tree, so the registry can be versioned and reviewed next to the tests it describes.
+# Without this define the fallback in test_coverage_meta.cpp resolves to "." and the
+# registry lookup silently depends on the current working directory.
+target_compile_definitions(gis_tests PRIVATE GIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 if(MSVC)
     target_compile_options(gis_tests PRIVATE /utf-8)

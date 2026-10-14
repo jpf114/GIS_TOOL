@@ -1995,9 +1995,12 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
         }
 
         auto adjustedSpec = spec;
-        adjustedSpec.required = requiredKeys.empty()
-            ? spec.required
-            : requiredKeys.count(spec.key) > 0;
+        // Contract (Task 3): the presentation layer must not rewrite ParamSpec::required or
+        // ParamSpec::defaultValue. The plugin spec is the single source of truth shared with the
+        // CLI, so an override here makes the GUI submit something the CLI never would.
+        // requiredKeys is kept as a display-order hint only (see the ordering pass below); when an
+        // action really needs one more required parameter, declare it in that plugin's paramSpecs.
+        // Enforced by GuiContract.EffectiveSpecsNeverOverrideRequiredOrDefault.
 
         if (pluginName == "processing" && action == "threshold" && spec.key == "method") {
             adjustedSpec.defaultValue = std::string("otsu");
@@ -2012,10 +2015,6 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 adjustedSpec.minValue = 0.0;
                 adjustedSpec.maxValue = 1.0;
             }
-        }
-        if (pluginName == "raster_manage" && action == "nodata" && spec.key == "band") {
-            adjustedSpec.defaultValue = int{0};
-            adjustedSpec.minValue = 0;
         }
         if (pluginName == "raster_inspect" && spec.key == "bins") {
             adjustedSpec.minValue = 1;
@@ -2091,7 +2090,22 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
         filtered.push_back(std::move(adjustedSpec));
     }
 
-    return filtered;
+    // Display order only - never a value change: parameters the plugin declares as required come
+    // first, then the ones this panel advertises as required, then the rest. Each group keeps the
+    // plugin's own relative order (the three passes below are what makes the sort stable).
+    std::vector<gis::framework::ParamSpec> ordered;
+    ordered.reserve(filtered.size());
+    for (int rank = 0; rank <= 2; ++rank) {
+        for (const auto& item : filtered) {
+            const int itemRank = item.required
+                ? 0
+                : (requiredKeys.count(item.key) > 0 ? 1 : 2);
+            if (itemRank == rank) {
+                ordered.push_back(item);
+            }
+        }
+    }
+    return ordered;
 }
 
 ExecuteButtonState buildExecuteButtonState(bool hasSelection,

@@ -1815,9 +1815,26 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesProjectionTransformDefaul
         {"dst_srs"});
 
     ASSERT_EQ(filtered.size(), 2u);
-    EXPECT_EQ(std::get<std::string>(filtered[0].defaultValue), "EPSG:4326");
-    EXPECT_FALSE(filtered[0].required);
-    EXPECT_TRUE(filtered[1].required);
+    const auto findByKey = [&filtered](const std::string& key) -> const gis::framework::ParamSpec* {
+        for (const auto& spec : filtered) {
+            if (spec.key == key) return &spec;
+        }
+        return nullptr;
+    };
+    const auto* srcSrs = findByKey("src_srs");
+    const auto* dstSrs = findByKey("dst_srs");
+    ASSERT_NE(srcSrs, nullptr);
+    ASSERT_NE(dstSrs, nullptr);
+
+    // Task 3 之后 required 由插件 spec 决定，展示层不再改写（requiredKeys 只用来把键排前面）。
+    EXPECT_FALSE(srcSrs->required);
+    EXPECT_TRUE(dstSrs->required);
+
+    // src_srs 的默认值是 Task 3 登记在案的挂账：同一个键在 reproject 里必须留空
+    // （空值才表示“从数据里读坐标系”），在 transform 里却要预填 EPSG:4326，而 ParamSpec
+    // 是插件级、不分 action 的。覆写区整体清理归 Task 10（R-T3-4），
+    // 白名单见 tests/test_coverage_meta.cpp 的 kKnownPresentationOverrides。
+    EXPECT_EQ(std::get<std::string>(srcSrs->defaultValue), "EPSG:4326");
 }
 
 TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsPreservesPluginRequiredFlagsWithoutOverrides) {
@@ -1867,7 +1884,9 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesMatchingRanges) {
 
 TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBounds) {
     std::vector<gis::framework::ParamSpec> rasterManageSpecs = {
-        {"band", "波段", "", gis::framework::ParamType::Int, false},
+        // 与 raster_manage_plugin.cpp 的真实 spec 同形：band 默认 0（全波段）、范围 0..999。
+        // Task 3 删掉了展示层对 band 默认值的覆写，所以这里的 0 必须由插件 spec 自己带进来。
+        {"band", "波段", "", gis::framework::ParamType::Int, false, int{0}, int{0}, int{999}},
         {"red_band", "红光波段", "", gis::framework::ParamType::Int, false},
         {"nir_band", "近红外波段", "", gis::framework::ParamType::Int, false}
     };
@@ -1936,7 +1955,8 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
         {"tolerance"});
     ASSERT_EQ(vectorFiltered.size(), 1u);
     EXPECT_DOUBLE_EQ(std::get<double>(vectorFiltered[0].minValue), 0.000001);
-    EXPECT_TRUE(vectorFiltered[0].required);
+    // required 归插件 spec 所有：requiredKeys 只决定显示顺序，不再把它从 false 改成 true。
+    EXPECT_FALSE(vectorFiltered[0].required);
 
     std::vector<gis::framework::ParamSpec> processingSpecs = {
         {"gamma", "Gamma", "", gis::framework::ParamType::Double, false},
