@@ -53,5 +53,12 @@ TEST(RasterFixture, NoCrsIsReportedAsEmptyAuthority) {
     const auto dir = gis::tests::defaultTestOutputDir("fixture_output");
     const auto path = gis::tests::writeFloatRaster(
         dir, "fixture_nocrs.tif", 2, 2, std::vector<float>(4, 1.0f));
+
+    // 先正向钉住"文件确实写出来并且读得回来"，再断言"没有 CRS"。
+    // 空串既是 writeFloatRaster 的失败哨兵，也是 readCrsAuthorityCode 的失败哨兵，
+    // 只有下面两行把"文件可读"与"无 CRS"分开断言，本用例才不会 vacuous pass
+    // （readBandCount 的失败哨兵是 -1，与任何合法波段数都不撞车）。
+    ASSERT_FALSE(path.empty());
+    EXPECT_EQ(gis::tests::readBandCount(path), 1);
     EXPECT_TRUE(gis::tests::readCrsAuthorityCode(path).empty());
 }
