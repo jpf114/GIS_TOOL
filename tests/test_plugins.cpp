@@ -6912,13 +6912,22 @@ TEST_F(PluginTest, ProximityOutputKeepsEveryInputBand) {
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 3, 3), 0.0f, 1e-6f);
     EXPECT_NEAR(gis::tests::readPixel(output, 3, 0, 0), 0.0f, 1e-6f);
 
-    // R-T7-7：全背景波段（该波段没有任何目标像元）的期望值由**实测**得出，不是预测。
-    // distanceTransform 的输入此时是全 255、一个零像元都没有，OpenCV 对每个像元都输出
-    // 固定值 65536（与像元位置无关：(0,0)/(3,3)/(1,2) 三处实测同为 65536，见
-    // build/task7_observe_band2_debug.log）。这个值不是"距离"，也不是 INF——它只是
-    // "没有零像元可参照"时的输出形态，本用例按实测值照实钉住，不加特例分支把它修饰成 0。
-    // 容差取 1e-2f：float32 在 2^16 附近的表示间隔本身就有 0.0078，比这更小的容差不稳定，
-    // 而任何其它语义（0、真实距离）与该值的差都在数量级之上。
+    // R-T7-7：全背景波段（该波段没有任何目标像元）的期望值由**实测**得出，不是预测：
+    // distanceTransform 的输入此时是全 255、一个零像元都没有，(0,0)/(3,3)/(1,2) 三处实测同为
+    // 65536（见 build/task7_observe_band2_debug.log）。本用例按实测值照实钉住，不加特例分支把
+    // 它修饰成 0。容差取 1e-2f：float32 在 2^16 附近的表示间隔本身就有 0.0078，比这更小的容差
+    // 不稳定，而任何其它语义（0、真实距离）与该值的差都在数量级之上。
+    //
+    // 65536 不是算出来的距离，而是 OpenCV 的内部哨兵。出处已核验（OpenCV 4.14
+    // modules/imgproc/src/distransform.cpp，行号对应 build/tmp-cv7 下的解包副本）：
+    // :784 `static const int PRECISE_DIST_MAX = 1 << 16`、:872 `const unsigned int inf = UINT_MAX`、
+    // :886/:904 `sqr_tab[i] = i >= PRECISE_DIST_MAX ? inf : i*i`、:887-888 `sqr_tab[m..2m) = inf`。
+    // 列阶段 :760 把 dist 的起点设成 m-1，:764 在无零像元的列上只会递增 ⇒ dist 落进 [m, 2m) 而命中
+    // :888 的 inf，:773 `dptr[0] = (float)sqr_tab[dist]` 于是把 (float)UINT_MAX 写进中间结果，
+    // 行阶段 :859 `d[q] = sqrt(sqr_tab[|q-p|] + f[p])` 开方得 sqrt((float)UINT_MAX) = 65536.0。
+    // 该值与像元位置无关的前提是 |q-p| <= 15（(float)UINT_MAX 的表示间隔是 512，会把小于 256 的
+    // 平方加数吞掉）——本用例是 4×4，落在这个范围内；更宽的图像我没实测。
+    // OpenCV 升版若把这条用例变红，先对照上面这段行号，它是内部哨兵而不是算法输出。
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 0, 0), 65536.0f, 1e-2f);
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 3, 3), 65536.0f, 1e-2f);
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 1, 2), 65536.0f, 1e-2f);
@@ -7002,6 +7011,87 @@ TEST_F(PluginTest, ProximityMaxDistanceTruncationDoesNotClobberPositiveNoData) {
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 5, 0), 3.0f, 1e-6f);   // 超限：截断为 max_distance
     // NoData 像元不得被截断改写成 3：它必须还是 9999。
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 8, 0), 9999.0f, 1e-6f);
+}
+
+// F2（审查发现 I2）：`dist *= std::abs(gt[1])` 这一行此前是零守护的。R-T7-1 让所有 proximity 用例
+// 都设 pixelSize = 1.0，×1.0 是恒等，审查者把这一行整行删掉重建后 Debug 全量仍 526/526 全绿
+// （build/task7_review/full_mutantA_debug.log:1055）。这一条**只**为那一行存在：pixelSize = 0.5 时
+// 删掉它 (3,0) 读回 3.0、留着才读回 1.5，别的用例都在 1.0 上取不到这个差别（现有用例的 1.0 口径
+// 仍属 Plan 2，不为这一条去改）。
+TEST_F(PluginTest, ProximityDistanceIsScaledByPixelSize) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const int w = 4, h = 4;
+    std::vector<float> data(static_cast<size_t>(w) * h, 0.0f);
+    data[0] = 2.0f;   // 目标像元置于一角 (0,0)
+
+    gis::tests::RasterFixtureOptions options;
+    options.pixelSize = 0.5;
+    const std::string input = gis::tests::writeFloatRaster(
+        getTestDir(), "prox_scale_input.tif", w, h, data, options);
+    ASSERT_FALSE(input.empty());
+
+    const std::string output = utf8PathString(getTestDir() / "prox_scale_output.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), 0.0f, 1e-6f);    // 目标自身不受缩放影响
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 3, 0), 1.5f, 1e-6f);    // 3 像元 × 0.5
+}
+
+// F3（审查发现 M1 之①）：整波段全是 NoData 的形态此前没有任何用例覆盖。
+// 该波段每个像元都被 validMask 排除 ⇒ targetMask 全 0 ⇒ distanceTransform 落进"没有零像元可参照"
+// 的分支给出 65536（出处见 ProximityOutputKeepsEveryInputBand 的注释），但最后
+// dist.setTo(nodata, validMask == 0) 把整幅覆盖回来 ⇒ 正确行为是全为该波段的 NoData 值。
+// 这条钉的是"覆盖回来"这一步；把它删掉，输出就是 65536 而不是 -9999。
+TEST_F(PluginTest, ProximityAllNoDataBandWritesItsNoDataInsteadOfTheSentinel) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const int w = 4, h = 4;
+    const size_t n = static_cast<size_t>(w) * h;
+    std::vector<float> allNoData(n, -9999.0f);        // band1：整幅都是 NoData
+    std::vector<float> withTarget(n, 0.0f);
+    withTarget[2 * w + 1] = 3.0f;                    // band2：目标在 (1,2)
+
+    gis::tests::RasterFixtureOptions options;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    options.pixelSize = 1.0;
+    const std::string input = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "prox_allnodata_input.tif", w, h, {allNoData, withTarget}, options);
+    ASSERT_FALSE(input.empty());
+
+    const std::string output = utf8PathString(getTestDir() / "prox_allnodata_output.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_EQ(gis::tests::readBandCount(output), 2);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), -9999.0f, 1e-6f);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 3, 3), -9999.0f, 1e-6f);   // 不是 65536
+
+    // 同一次运行里另一波段照常算自己的距离：整幅 NoData 没污染兄弟波段。
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 1, 2), 0.0f, 1e-6f);
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 1, 0), 2.0f, 1e-6f);
 }
 
 // F1（审查发现 I1）的触发形态。本项目自己的多波段 GeoTIFF **造不出**互异的逐波段 NoData 声明：
