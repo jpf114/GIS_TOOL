@@ -283,10 +283,22 @@ gis::framework::Result RasterMathPlugin::doReclassify(
                 current += intervalStep;
                 ++classIdx;
             }
+            // F1（fix round 1）：规则逐波段独立之后，"本波段一条都没生成"必须有逐波段诊断。
+            // 触发条件是 bandMin == bandMax 且该值正好落在步长整倍数上（整带全 0、或恒为
+            // 10.0 的掩膜波段配 step=5 ⇒ roundedMin=10、`10 < 10` 为假，while 一次都不进）。
+            // 只靠下面那道聚合判据（totalRules==0）看不见它：别的波段产出了规则就放行，
+            // 于是本波段每个像元全部落到 applyReclassRules 的未匹配分支，输出原值或
+            // default_value 却报成功——同一条件在单波段输入上是硬错误，多波段不得降级成静默。
+            if (bandRules.empty()) {
+                return gis::framework::Result::fail(
+                    "Band " + std::to_string(b) + " produced no interval rules");
+            }
             // 只对本波段可见：不再累积进跨波段共享的向量。
             rulesPerBand[static_cast<size_t>(b - 1)] = std::move(bandRules);
         }
 
+        // 聚合判据保留：逐波段守卫已经覆盖"某个波段为空"，这里只剩"一个波段都没有"
+        // （bands==0，正常 GeoTIFF 走不到）这一种兜底，旧文案原样留着不改单波段口径。
         size_t totalRules = 0;
         for (const auto& bandRules : rulesPerBand) totalRules += bandRules.size();
         if (totalRules == 0) {

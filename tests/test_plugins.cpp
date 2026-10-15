@@ -6561,6 +6561,56 @@ TEST_F(PluginTest, ReclassifyKeepsAllBandsAndPerBandIntervalRules) {
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 1, 0), 1.0f, 1e-6f);
 }
 
+// F1（fix round 1，Important）：**零规则波段不得静默原值透传**。
+// 区间规则改成逐波段独立之后，"某个波段一条规则都不生成"只有聚合判据
+// （totalRules == 0）看得见——只要别的波段产出了规则就放行，于是该波段每个像元都落到
+// applyReclassRules 的未匹配分支，输出原值（keep_unmatched=true）或 default_value，
+// 结果 success=true、**没有任何诊断**。同一条件在单波段输入上本来就是硬错误，
+// 多波段不能降级成静默。
+// 数据构造：step=5、band2 恒为 10.0 ⇒ roundedMin = floor(10/5)*5 = 10，
+// while (current < bandMax) 即 `10 < 10` 一次都不进循环 ⇒ band2 的规则集为空。
+// 修复前本用例红在 ASSERT_FALSE(result.success)（band2 原值 10.0 透传出去，仍报成功）。
+TEST_F(PluginTest, ReclassifyFailsWhenOneBandGeneratesNoIntervalRules) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "rm_reclass_zerorule_input.tif", 2, 1,
+        {{0.0f, 9.0f}, {10.0f, 10.0f}});
+    ASSERT_FALSE(input.empty());
+    ASSERT_EQ(gis::tests::readBandCount(input), 2);
+    // 夹具自检：band2 确实恒为 10.0（正好落在 step 的整倍数上），否则下面的红会错归到夹具。
+    ASSERT_NEAR(gis::tests::readPixel(input, 2, 0, 0), 10.0f, 1e-6f);
+    ASSERT_NEAR(gis::tests::readPixel(input, 2, 1, 0), 10.0f, 1e-6f);
+
+    const std::string output = utf8PathString(getTestDir() / "rm_reclass_zerorule_output.tif");
+    // 同 M-T5-a：先清掉历次运行留下的陈旧输出，否则"没有写出"会被旧文件骗成假通过。
+    std::error_code removeEc;
+    fs::remove(output, removeEc);
+    EXPECT_FALSE(fs::exists(output)) << "stale output not removed: " << output;
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("reclassify");
+    params["input"] = input;
+    params["output"] = output;
+    params["reclass_mode"] = std::string("interval");
+    params["interval_step"] = 5.0;
+    // 故意用 keep_unmatched=true（未匹配 ⇒ 原样输出），把"静默透传"这个形态摆到断言面前。
+    params["keep_unmatched"] = true;
+    params["default_value"] = 0.0;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_FALSE(result.success)
+        << "band2 零规则却报成功＝原值透传，正是本轮要消灭的无诊断形态。message=" << result.message;
+    // 消息要点名是哪个波段（口径镜像已有的逐波段错误 "Band N contains only NoData values"）。
+    EXPECT_NE(result.message.find("Band 2"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("no interval rules"), std::string::npos) << result.message;
+    // 必须是真正零规则的那个波段：波段的 0 基/1 基写错就会报成 Band 1（band1 有 2 条规则）。
+    EXPECT_EQ(result.message.find("Band 1"), std::string::npos) << result.message;
+    // 守卫生效在生成规则阶段，输出文件根本不该存在。
+    EXPECT_FALSE(fs::exists(output));
+}
+
 // R-T6-1：叠加操作的参数键是 overlay_method（paramSpecs 声明、doRasterOverlay 以默认 "max"
 // 读取）。计划原文的 params["operation"] 既未声明也未读取，会静默落到 max，
 // 于是 10/20 与 5 的期望值 5/15 变成 10/20 —— 用错键的用例必红在错因上，故按实测键名写。
