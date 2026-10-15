@@ -487,6 +487,12 @@ gis::framework::Result RasterManagePlugin::doProximity(
 
     std::vector<cv::Mat> outputs;
     outputs.reserve(static_cast<size_t>(bandCount));
+    struct BandNoData {
+        bool declared = false;
+        double value = 0.0;
+    };
+    std::vector<BandNoData> declarations;
+    declarations.reserve(static_cast<size_t>(bandCount));
 
     double gt[6] = {};
     srcDS->GetGeoTransform(gt);
@@ -499,6 +505,7 @@ gis::framework::Result RasterManagePlugin::doProximity(
 
         int hasNoDataInt = 0;
         const double nodata = srcDS->GetRasterBand(b)->GetNoDataValue(&hasNoDataInt);
+        declarations.push_back({hasNoDataInt != 0, nodata});
 
         cv::Mat validMask;   // 255 = 有效像元（不是 NoData）
         cv::Mat targetMask;  // 255 = 目标像元（值非 0 且非 NoData）
@@ -533,6 +540,25 @@ gis::framework::Result RasterManagePlugin::doProximity(
         progress.onProgress(0.1 + 0.85 * static_cast<double>(b) / bandCount);
     }
 
+    // 各波段的 NoData 声明只要不完全一致就必然有波段丢声明：Create(..., nullptr) 出的多波段 GeoTIFF
+    // 是单 IFD，matsToGdalTiff 的逐波段 SetNoDataValue 覆写的是同一个 TIFFTAG_GDAL_NODATA。丢掉声明的
+    // 波段里那些 NoData 像元的物理值仍是它自己原来的值，于是下游按文件声明把它当成合法距离读。
+    // 只告警不失败：同传感器/多源产品常有波段间 NoData 差异（与 Task 13 的 R-T13-1 同型），
+    // 硬失败会打断本来可用的正常用法。
+    int divergentBands = 0;
+    for (size_t i = 1; i < declarations.size(); ++i) {
+        const auto& first = declarations.front();
+        const auto& current = declarations[i];
+        if (current.declared != first.declared || (current.declared && current.value != first.value)) {
+            ++divergentBands;
+        }
+    }
+    if (divergentBands > 0) {
+        progress.onMessage("警告: 输入各波段的 NoData 声明存在分歧 (nodata_divergent_band_count=" +
+                           std::to_string(divergentBands) + "/" + std::to_string(bandCount) +
+                           ")：输出栅格只能有一个共享 NoData 声明，其余波段的声明会丢失");
+    }
+
     // 循环外一次写出：若逐波段调用 matToGdalTiff(..., b)，它每次都重新创建整个文件，
     // 前面的波段会被覆盖掉，最终输出只剩 1 个波段。
     gis::core::matsToGdalTiff(outputs, srcDS.get(), output);
@@ -547,6 +573,9 @@ gis::framework::Result RasterManagePlugin::doProximity(
 
     auto result = gis::framework::Result::ok("Proximity map created", output);
     result.metadata["algorithm"] = "euclidean_distance_cv";
+    if (divergentBands > 0) {
+        result.metadata["nodata_divergent_band_count"] = std::to_string(divergentBands);
+    }
     if (maxDistance > 0.0) {
         result.metadata["max_distance"] = std::to_string(maxDistance);
     }

@@ -7004,6 +7004,202 @@ TEST_F(PluginTest, ProximityMaxDistanceTruncationDoesNotClobberPositiveNoData) {
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 8, 0), 9999.0f, 1e-6f);
 }
 
+// F1（审查发现 I1）的触发形态。本项目自己的多波段 GeoTIFF **造不出**互异的逐波段 NoData 声明：
+// createRaster 用 Create(..., nullptr)（gdal_wrapper.cpp:63-64）⇒ 单 IFD、全文件只有一个
+// TIFFTAG_GDAL_NODATA，逐波段 SetNoDataValue 只有最后一个留得住（实测见 task-7-report.md 的 PAM 取证）。
+// 所以互异的逐波段声明只能来自 VRT / 外部多 IFD 输入：这里内联 VRT XML，每个波段引一个自己的
+// 单波段子 GeoTIFF，子数据集各自声明自己的 NoData；hasNoData=false 表示该波段根本不声明。
+struct ProximityVrtBand {
+    float pixelValue = 0.0f;   // 写在 (4,2) 的像元值
+    bool hasNoData = false;
+    double noData = 0.0;
+};
+
+// 目标像元固定在 (0,0)（值 1.0），像元大小 1.0 ⇒ (4,0) 的距离恒为 4，可用来确认计算照常跑完。
+static std::string writeProximityNoDataVrt(const std::string& stem, int width, int height,
+                                           const std::vector<ProximityVrtBand>& bands) {
+    const size_t n = static_cast<size_t>(width) * height;
+    std::string xml = "<VRTDataset rasterXSize=\"" + std::to_string(width) +
+                      "\" rasterYSize=\"" + std::to_string(height) + "\">\n";
+    gis::tests::RasterFixtureOptions options;
+    options.pixelSize = 1.0;
+    for (size_t i = 0; i < bands.size(); ++i) {
+        const auto& band = bands[i];
+        std::vector<float> data(n, 0.0f);
+        data[0] = 1.0f;
+        data[static_cast<size_t>(2) * static_cast<size_t>(width) + 4] = band.pixelValue;
+        options.hasNoData = band.hasNoData;
+        options.noData = band.noData;
+        const std::string subName = stem + "_b" + std::to_string(i + 1) + ".tif";
+        if (gis::tests::writeFloatRaster(getTestDir(), subName, width, height, data, options).empty()) {
+            return {};
+        }
+        std::error_code ec;
+        fs::remove(utf8PathString(getTestDir() / subName) + ".aux.xml", ec);
+
+        xml += "  <VRTRasterBand dataType=\"Float32\" band=\"" + std::to_string(i + 1) + "\">\n";
+        if (band.hasNoData) {
+            xml += "    <NoDataValue>" + std::to_string(band.noData) + "</NoDataValue>\n";
+        }
+        xml += "    <SimpleSource><SourceFilename relativeToVRT=\"1\">" + subName +
+               "</SourceFilename><SourceBand>1</SourceBand>"
+               "<SrcRect xOff=\"0\" yOff=\"0\" xSize=\"" + std::to_string(width) +
+               "\" ySize=\"" + std::to_string(height) + "\"/>"
+               "<DstRect xOff=\"0\" yOff=\"0\" xSize=\"" + std::to_string(width) +
+               "\" ySize=\"" + std::to_string(height) + "\"/></SimpleSource>\n"
+               "  </VRTRasterBand>\n";
+    }
+    xml += "</VRTDataset>\n";
+
+    const std::string vrt = utf8PathString(getTestDir() / (stem + ".vrt"));
+    std::error_code ec;
+    fs::remove(vrt, ec);
+    fs::remove(vrt + ".aux.xml", ec);
+    std::ofstream os(vrt);
+    os << xml;
+    os.close();
+    return vrt;
+}
+
+// F1（形态 a：各波段声明互不相同的值）。输入 band1 声明 -9999、band2 声明 500，两波段的
+// NoData 像元各自写自己的值；输出只能是"一个共享声明"，于是 band1 的声明丢失，
+// 而它的 NoData 像元物理值仍是 -9999 ⇒ 下游按文件声明把 -9999 当成合法距离读。
+// 告警不失败：多源/同传感器产品的波段间差异是常见输入，硬失败会打断正常用法。
+TEST_F(PluginTest, ProximityWarnsWhenBandNoDataDeclarationsDiffer) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const std::string vrt = writeProximityNoDataVrt("prox_nodata_differ", 5, 3, {
+        {-9999.0f, true, -9999.0},
+        {  500.0f, true,   500.0},
+    });
+    ASSERT_FALSE(vrt.empty());
+
+    // 输入侧必须真的互异，否则这条用例测的就不是"分歧"。
+    double inNoData1 = 0.0;
+    double inNoData2 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 1, inNoData1));
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 2, inNoData2));
+    ASSERT_DOUBLE_EQ(inNoData1, -9999.0);
+    ASSERT_DOUBLE_EQ(inNoData2, 500.0);
+
+    const std::string output = utf8PathString(getTestDir() / "prox_nodata_differ_out.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+    // 边车会把别处写过的声明带进来（实测：手放的 .aux.xml 让 band1 从 500 变成 777），
+    // 而本用例断的正是"哪个声明留下来了"。
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = vrt;
+    params["output"] = output;
+
+    RecordingProgress recorder;
+    const auto result = p->execute(params, recorder);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_EQ(result.metadata.count("nodata_divergent_band_count"), 1u);
+    EXPECT_EQ(result.metadata.at("nodata_divergent_band_count"), "1");
+    // 告警要能到用户手里：onMessage 经 qt_progress_reporter.h:13,23 直达 GUI 日志面板，
+    // CLI/GUI 摘要都会遍历 Result::metadata（cli/main.cpp:240-245、gui_data_support.cpp:1924-1931）。
+    EXPECT_NE(recorder.joined().find("nodata_divergent_band_count"), std::string::npos)
+        << recorder.joined();
+
+    EXPECT_EQ(gis::tests::readBandCount(output), 2);
+    double outNoData1 = 0.0;
+    double outNoData2 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, outNoData1));
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 2, outNoData2));
+    EXPECT_DOUBLE_EQ(outNoData1, outNoData2);      // 文件里只剩一个共享声明
+    EXPECT_DOUBLE_EQ(outNoData1, 500.0);           // 实测：后写的 500 胜出，band1 的 -9999 声明丢了
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 4, 2), -9999.0f, 1e-6f);   // 像元还写着 band1 自己的值
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 4, 0), 4.0f, 1e-6f);       // 距离本身照常算出来了
+}
+
+// F1（形态 b：部分波段声明、部分未声明）。band2 根本不声明 NoData，但单 IFD 只有一个共享标签，
+// 重开后 band2 也被贴上 band1 的 -9999 ⇒ 它那些合法值 -9999 会被下游当成 NoData。
+// 只断"部分声明也算分歧"，与上一条分开放，是为了让失败归因能指到分歧判定的具体那一支。
+TEST_F(PluginTest, ProximityWarnsWhenSomeBandsDoNotDeclareNoData) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const std::string vrt = writeProximityNoDataVrt("prox_nodata_partial", 5, 3, {
+        {-9999.0f, true, -9999.0},
+        {-9999.0f, false, 0.0},   // 不声明：-9999 在这个波段里是合法目标值
+    });
+    ASSERT_FALSE(vrt.empty());
+
+    double inNoData1 = 0.0;
+    double inNoData2 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 1, inNoData1));
+    ASSERT_DOUBLE_EQ(inNoData1, -9999.0);
+    EXPECT_FALSE(gis::tests::readNoDataValue(vrt, 2, inNoData2)) << "band2 本条用例的前提是不声明";
+
+    const std::string output = utf8PathString(getTestDir() / "prox_nodata_partial_out.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = vrt;
+    params["output"] = output;
+
+    RecordingProgress recorder;
+    const auto result = p->execute(params, recorder);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_EQ(result.metadata.count("nodata_divergent_band_count"), 1u);
+    EXPECT_EQ(result.metadata.at("nodata_divergent_band_count"), "1");
+    EXPECT_NE(recorder.joined().find("nodata_divergent_band_count"), std::string::npos)
+        << recorder.joined();
+
+    EXPECT_EQ(gis::tests::readBandCount(output), 2);
+    double outNoData2 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 2, outNoData2));
+    EXPECT_DOUBLE_EQ(outNoData2, -9999.0);   // 没声明的波段被贴上了 band1 的声明
+}
+
+// F1 的反方向（告警必须"分歧不存在时必不出"）：与上一条同构的 VRT，只是两个波段声明**同一个**值。
+// 驱动、波段数、像元布局全都相同，唯一变量是声明是否一致，所以这条红了就只能怪"分歧判定写宽了"。
+// 变异取证（无分歧也告警）见 task-7-report.md。
+TEST_F(PluginTest, ProximityStaysSilentWhenNoDataDeclarationIsConsistent) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const std::string vrt = writeProximityNoDataVrt("prox_nodata_same", 5, 3, {
+        {-9999.0f, true, -9999.0},
+        {-9999.0f, true, -9999.0},
+    });
+    ASSERT_FALSE(vrt.empty());
+
+    const std::string output = utf8PathString(getTestDir() / "prox_nodata_same_out.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = vrt;
+    params["output"] = output;
+
+    RecordingProgress recorder;
+    const auto result = p->execute(params, recorder);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_EQ(result.metadata.count("nodata_divergent_band_count"), 0u);
+    EXPECT_EQ(recorder.joined().find("nodata_divergent_band_count"), std::string::npos)
+        << recorder.joined();
+
+    // 声明一致时输出是自洽的：共享声明就是各波段自己的值。
+    EXPECT_EQ(gis::tests::readBandCount(output), 2);
+    double outNoData = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, outNoData));
+    EXPECT_DOUBLE_EQ(outNoData, -9999.0);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 4, 2), -9999.0f, 1e-6f);
+}
+
 // R-T7-9：`doProximity` 只读 input/output/max_distance（取证：band/nodata_value 只在
 // raster_manage_plugin.cpp 的 :207/:208 nodata 动作里读，levels 在 :81，vector/feature_id_field
 // 在 :258/:260），但修前 gui_data_support.cpp 的 raster_manage 配置里没有 proximity 条目
