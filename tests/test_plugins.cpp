@@ -6824,6 +6824,102 @@ TEST_F(PluginTest, RasterManageProximityExecution) {
     EXPECT_EQ(outDs->GetRasterYSize(), 50);
 }
 
+// Task 7：Produces 口径是"每个像元到最近**目标**像元（值非 0 且非 NoData）的距离"，
+// 现实现喂给 distanceTransform 的是"目标=255/背景=0"，而 OpenCV 度量的是非零像元到最近零像元
+// 的距离，于是输出的是"到最近背景的距离"，方向正好相反。
+//
+// 目标像元的值故意取**负数**（R-T7-3）：现实现用 convertTo(CV_8UC1, 255.0) 做饱和转换，
+// 负的波段值会被压成 0，再经 THRESH_BINARY 后负值目标像元当成背景直接抹掉（负 DN、负反射率、
+// 地形凹槽都是常见输入）。所以这一条用例同时锁住"方向搞反"和"负值目标被静默丢弃"两个同源症状：
+// 只修方向、仍保留 convertTo 的错误实现下，本用例照样红。
+//
+// options.pixelSize = 1.0（R-T7-1）：实现保留 `dist *= |gt[1]|` 的单位换算（经纬度口径归 Plan 2），
+// 夹具默认 pixelSize=0.001 会让真值变成 3×0.001，与断言的像元单位距离对不上。
+TEST_F(PluginTest, ProximityDistanceIsMeasuredToTargetNotBackground) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const int w = 11, h = 11;
+    std::vector<float> data(static_cast<size_t>(w * h), 0.0f);
+    data[5 * w + 5] = -3.0f;         // 目标像元（取负：见上面 R-T7-3 的饱和转换说明）
+    data[0] = -9999.0f;              // NoData 像元，位置离目标 √50 个像元
+
+    gis::tests::RasterFixtureOptions options;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    options.pixelSize = 1.0;
+    const std::string input = gis::tests::writeFloatRaster(
+        getTestDir(), "prox_target_input.tif", w, h, data, options);
+    ASSERT_FALSE(input.empty());
+
+    const std::string output = utf8PathString(getTestDir() / "prox_target_output.tif");
+    // PAM 边车按文件名匹配：残留的 .aux.xml 会把别处写过的 NoData 声明带进来，造成假绿/假红。
+    std::error_code ec;
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 5, 5), 0.0f, 1e-6f);   // 目标自身
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 8, 5), 3.0f, 1e-6f);   // 到最近目标的距离
+
+    // NoData 像元不得参与计算：它既不是目标、也不该拿到一个"到目标的距离"。
+    // 这里断的是可观察的形态（N30）：输出声明了 NoData，且该像元的值就是这个 NoData。
+    double noData = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, noData));
+    EXPECT_DOUBLE_EQ(noData, -9999.0);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), static_cast<float>(noData), 1e-6f);
+}
+
+// Task 7（R-T7-6）：`:524` 的 matToGdalTiff(..., b) 在波段循环内，每个波段都重新创建整个文件，
+// 前一个波段被覆盖掉 ⇒ 三波段输入最终只剩 1 个波段（与 Task 6 同型缺陷）。
+// band1 全目标、band2 全背景、band3 全负值目标：波段数与"每个波段各自算自己的"一起被钉住。
+TEST_F(PluginTest, ProximityOutputKeepsEveryInputBand) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.pixelSize = 1.0;
+    const std::string input = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "prox_bands_input.tif", 4, 4, {1.0f, 0.0f, -2.0f}, options);
+    ASSERT_FALSE(input.empty());
+    ASSERT_EQ(gis::tests::readBandCount(input), 3);
+
+    const std::string output = utf8PathString(getTestDir() / "prox_bands_output.tif");
+    std::error_code ec;
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_EQ(gis::tests::readBandCount(output), 3);
+    // 全目标波段：每个像元自身就是目标，距离恒为 0。
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), 0.0f, 1e-6f);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 3, 3), 0.0f, 1e-6f);
+    EXPECT_NEAR(gis::tests::readPixel(output, 3, 0, 0), 0.0f, 1e-6f);
+
+    // R-T7-7：全背景波段（该波段没有任何目标像元）的期望值由**实测**得出，不是预测。
+    // distanceTransform 的输入此时是全 255、一个零像元都没有，OpenCV 对每个像元都输出
+    // 固定值 65536（与像元位置无关：(0,0)/(3,3)/(1,2) 三处实测同为 65536，见
+    // build/task7_observe_band2_debug.log）。这个值不是"距离"，也不是 INF——它只是
+    // "没有零像元可参照"时的输出形态，本用例按实测值照实钉住，不加特例分支把它修饰成 0。
+    // 容差取 1e-2f：float32 在 2^16 附近的表示间隔本身就有 0.0078，比这更小的容差不稳定，
+    // 而任何其它语义（0、真实距离）与该值的差都在数量级之上。
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 0, 0), 65536.0f, 1e-2f);
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 3, 3), 65536.0f, 1e-2f);
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 1, 2), 65536.0f, 1e-2f);
+}
+
 TEST_F(PluginTest, MatchingStitchExecution) {
     auto* p = mgr_.find("matching");
     ASSERT_NE(p, nullptr);

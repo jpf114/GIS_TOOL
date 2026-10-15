@@ -485,34 +485,35 @@ gis::framework::Result RasterManagePlugin::doProximity(
     auto srcDS = gis::core::openRaster(input, true);
     const int bandCount = srcDS->GetRasterCount();
 
+    std::vector<cv::Mat> outputs;
+    outputs.reserve(static_cast<size_t>(bandCount));
+
+    double gt[6] = {};
+    srcDS->GetGeoTransform(gt);
+
     for (int b = 1; b <= bandCount; ++b) {
         progress.throwIfCancelled();
         progress.onMessage("Proximity band " + std::to_string(b) + "/" + std::to_string(bandCount));
 
         cv::Mat bandMat = gis::core::gdalBandToMat(srcDS.get(), b);
 
-        cv::Mat input8u;
         int hasNoDataInt = 0;
-        double nodata = srcDS->GetRasterBand(b)->GetNoDataValue(&hasNoDataInt);
+        const double nodata = srcDS->GetRasterBand(b)->GetNoDataValue(&hasNoDataInt);
 
-        cv::Mat mask = cv::Mat(bandMat.size(), CV_8UC1, cv::Scalar(255));
+        cv::Mat validMask;   // 255 = 有效像元（不是 NoData）
+        cv::Mat targetMask;  // 255 = 目标像元（值非 0 且非 NoData）
+        cv::compare(bandMat, 0.0f, targetMask, cv::CMP_NE);
         if (hasNoDataInt) {
-            for (int y = 0; y < bandMat.rows; ++y) {
-                for (int x = 0; x < bandMat.cols; ++x) {
-                    if (std::abs(bandMat.at<float>(y, x) - static_cast<float>(nodata)) < 1e-6f) {
-                        mask.at<uchar>(y, x) = 0;
-                    }
-                }
-            }
+            cv::compare(bandMat, static_cast<float>(nodata), validMask, cv::CMP_NE);
+            cv::bitwise_and(targetMask, validMask, targetMask);
         }
 
-        bandMat.convertTo(input8u, CV_8UC1, 255.0);
-        cv::threshold(input8u, input8u, 0, 255, cv::THRESH_BINARY);
-
+        // distanceTransform 度量的是"非零像元到最近零像元"的距离，所以必须喂取反后的掩膜，
+        // 目标像元在其中为 0，输出的才是"到最近目标像元的距离"（目标自身为 0）。
+        cv::Mat distanceInput;
+        cv::bitwise_not(targetMask, distanceInput);
         cv::Mat dist;
-        cv::distanceTransform(input8u, dist, cv::DIST_L2, cv::DIST_MASK_PRECISE);
-        double gt[6] = {};
-        srcDS->GetGeoTransform(gt);
+        cv::distanceTransform(distanceInput, dist, cv::DIST_L2, cv::DIST_MASK_PRECISE);
         dist *= static_cast<float>(std::abs(gt[1]));
 
         if (maxDistance > 0.0) {
@@ -521,13 +522,20 @@ gis::framework::Result RasterManagePlugin::doProximity(
             dist = clamped;
         }
 
-        cv::Mat outputMat;
-        dist.convertTo(outputMat, CV_32F);
+        // NoData 赋值排在 THRESH_TRUNC **之后**：截断会把所有大于 maxDistance 的值改写成
+        // maxDistance，先写 NoData 会让正的 NoData 值（9999、3.4e38 这类产品里常见）被悄悄毁掉。
+        if (hasNoDataInt) {
+            dist.setTo(static_cast<float>(nodata), validMask == 0);
+        }
 
-        gis::core::matToGdalTiff(outputMat, srcDS.get(), output, b);
+        outputs.push_back(dist);
 
         progress.onProgress(0.1 + 0.85 * static_cast<double>(b) / bandCount);
     }
+
+    // 循环外一次写出：逐波段 matToGdalTiff(..., b) 每次都重新创建整个文件，
+    // 前面的波段会被覆盖掉，最终输出只剩 1 个波段。
+    gis::core::matsToGdalTiff(outputs, srcDS.get(), output);
 
     {
         auto meta = buildMetadata(input, srcDS.get(), "raster_manage.euclidean_distance");
