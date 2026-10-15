@@ -2,17 +2,24 @@
 
 // 三态栅格测试夹具：CRS / NoData / 数据类型 / 地理变换 一次性写入，读回供数值断言。
 //
-// 数据缓冲约定（重要）：写入实现只支持 Float32 缓冲（data / bandValues 都是
-// std::vector<float>），创建与写入一律按 GDT_Float32 进行。RasterFixtureOptions::dtype
-// 是声明位而非可扩展开关：传入非 GDT_Float32 会被 writeFloatRaster /
-// writeConstantBandsRaster 的入口校验当场 ADD_FAILURE() 并返回空串（不会静默按
-// Float32 写），整型夹具需要后续任务显式实现按 dtype 分支的创建与写入。
+// 数据缓冲约定（重要）：写入实现只支持 Float32 缓冲（data / bandValues / bandData 都是
+// std::vector<float> 或其按波段嵌套形式），创建与写入一律按 GDT_Float32 进行。
+// RasterFixtureOptions::dtype 是声明位而非可扩展开关：判定只看 dtypeSupported(options)
+// 这一条纯谓词（D5：抽出来是为了能直接用断言锁住，不需要 gtest-spi 包语句），
+// writeFloatRaster / writeConstantBandsRaster / writeFloatBandsRaster 三个写入函数
+// 在入口调用它，非 GDT_Float32 一律当场 ADD_FAILURE() 并返回空串（不会静默按 Float32
+// 写），整型夹具需要后续任务显式实现按 dtype 分支的创建与写入。
 //
-// 失败约定（重要）：gis::core::openRaster / gis::core::createRaster 失败时抛
-// gis::core::GisError、并不返回 nullptr（见 src/core/src/gdal_wrapper.cpp 的
-// openRaster/createRaster）。夹具在内部捕获该异常并转成 ADD_FAILURE()，再走各自的
-// 哨兵返回值（写入 → 空串；读取 → NaN / -1 / false），因此失败一定报在调用方那一行，
-// 不会让异常穿过测试体把行号与消息报到别处。
+// 失败约定（重要，D1 更正）：gis::core::openRaster 失败抛 gis::core::GisError、
+// gis::core::createRaster 失败同样抛 gis::core::GisError，两者都不返回 nullptr
+// （见 src/core/src/gdal_wrapper.cpp）。另外 createRaster 先经
+// ensureParentDirectoryForFile 调**会抛**的 fs::create_directories 重载，父目录建不出来时
+// 抛的是 std::filesystem_error（GisError 派生自 std::runtime_error，两者同被 std::exception
+// 接住，见 D4）。夹具在 openFixtureRaster / createFixtureRaster 内部把异常转成
+// ADD_FAILURE()，再走各自的哨兵返回值（写入 → 空串；读取 → NaN / -1 / false）。
+// 准确表述是：ADD_FAILURE() 报在**夹具自身那一行**（raster_fixture.h 的行号），
+// 但落在调用方那条语句所属的用例里，因此用例仍然被记为失败、异常不会穿过测试体把行号与
+// 消息报到别的用例去——"失败一定报在调用方那一行"是不实描述。
 
 #include <algorithm>
 #include <array>
@@ -43,19 +50,23 @@ inline float unreadablePixelValue() {
 inline gis::core::GdalDatasetPtr openFixtureRaster(const std::string& path, const char* who) {
     try {
         return gis::core::openRaster(path, true);
-    } catch (const gis::core::GisError& e) {
+    } catch (const std::exception& e) {   // D4：GisError 之外还要接住 std::filesystem_error
         ADD_FAILURE() << who << ": " << e.what() << " path=" << path;
         return {};
     }
 }
 
 // createRaster 的夹具包装，同上：写入函数用空串作为失败哨兵。
+// catch 的类型必须是 std::exception（D4）：createRaster 内部先调
+// ensureParentDirectoryForFile（src/core/src/gdal_wrapper.cpp:14-26），它用的是
+// **会抛**的 fs::create_directories 重载，父目录建不出来时抛 std::filesystem_error，
+// 只 catch GisError 会让它穿透进测试体。
 inline gis::core::GdalDatasetPtr createFixtureRaster(const std::string& path, int width, int height,
                                                      int bands, GDALDataType dtype,
                                                      const char* who) {
     try {
         return gis::core::createRaster(path, width, height, bands, static_cast<int>(dtype));
-    } catch (const gis::core::GisError& e) {
+    } catch (const std::exception& e) {   // D4
         ADD_FAILURE() << who << ": " << e.what() << " path=" << path;
         return {};
     }
@@ -70,6 +81,13 @@ struct RasterFixtureOptions {
     double originY = 40.0;
     double pixelSize = 0.001;
 };
+
+// D5：把"本夹具只支持 Float32 缓冲"这条判据抽成无副作用的纯谓词。
+// 三个写入函数的守卫都调它，于是这条判据既能被守卫使用、也能在测试里直接断言
+// （不需要 gtest-spi 去捕获 ADD_FAILURE），锁住的是判据本身而不是消息文本。
+inline bool dtypeSupported(const RasterFixtureOptions& options) {
+    return options.dtype == GDT_Float32;
+}
 
 inline int epsgFor(FixtureCrs crs) {
     switch (crs) {
@@ -115,8 +133,8 @@ inline std::string writeFloatRaster(const std::filesystem::path& dir, const std:
                                     int width, int height, const std::vector<float>& data,
                                     const RasterFixtureOptions& options = {}) {
     // dtype 守卫放在最前：缓冲区是 float，按别的类型创建/写入会得到与调用方预期不符的
-    // 栅格，因此宁可当场失败也不静默降级（详见文件头注释）。
-    if (options.dtype != GDT_Float32) {
+    // 栅格，因此宁可当场失败也不静默降级（判据本身是 dtypeSupported，详见文件头注释）。
+    if (!dtypeSupported(options)) {
         ADD_FAILURE() << "fixture: dtype not supported (only GDT_Float32)";
         return {};
     }
@@ -134,7 +152,11 @@ inline std::string writeFloatRaster(const std::filesystem::path& dir, const std:
     const auto path = (dir / fileName).string();
     auto ds = createFixtureRaster(path, width, height, 1, GDT_Float32, "writeFloatRaster");
     if (!ds) {
-        ADD_FAILURE() << "writeFloatRaster: createRaster returned null for " << path;
+        // D2：null 只可能来自 createFixtureRaster 的 catch（createRaster 抛异常后返回空指针），
+        // 文案不能再归因成"createRaster 返回了 null"——那个函数根本不返回 null。
+        ADD_FAILURE() << "writeFloatRaster: createFixtureRaster returned null "
+                      << "(gis::core::createRaster threw, already reported by createFixtureRaster) for "
+                      << path;
         return {};
     }
     applyFixtureHeader(ds.get(), options, width, height);
@@ -155,7 +177,7 @@ inline std::string writeConstantBandsRaster(const std::filesystem::path& dir,
                                             const std::vector<float>& bandValues,
                                             const RasterFixtureOptions& options = {}) {
     // 同 writeFloatRaster：非 Float32 的 dtype 一律当场拒绝，不静默按 Float32 写。
-    if (options.dtype != GDT_Float32) {
+    if (!dtypeSupported(options)) {
         ADD_FAILURE() << "fixture: dtype not supported (only GDT_Float32)";
         return {};
     }
@@ -169,7 +191,10 @@ inline std::string writeConstantBandsRaster(const std::filesystem::path& dir,
                                   static_cast<int>(bandValues.size()), GDT_Float32,
                                   "writeConstantBandsRaster");
     if (!ds) {
-        ADD_FAILURE() << "writeConstantBandsRaster: createRaster returned null for " << path;
+        // D2：归因见 writeFloatRaster 的同位置注释。
+        ADD_FAILURE() << "writeConstantBandsRaster: createFixtureRaster returned null "
+                      << "(gis::core::createRaster threw, already reported by createFixtureRaster) for "
+                      << path;
         return {};
     }
     applyFixtureHeader(ds.get(), options, width, height);
@@ -189,10 +214,69 @@ inline std::string writeConstantBandsRaster(const std::filesystem::path& dir,
     return path;
 }
 
+// R-T6-3：按波段 + 按像元给定数据的写入器。
+// 现有两个写入器表达不出"同一幅图里不同波段各有自己的像元分布"——writeFloatRaster 只建
+// 1 个波段，writeConstantBandsRaster 只能逐波段常量。Task 6 的 interval 重分类用例需要
+// band1={0,9}、band2={7,7} 这种**区间网格错位**的数据来制造跨波段污染，故新增本函数。
+// 语义：建 bandData.size() 个 Float32 波段，第 i 波段写入 bandData[i] 的 width*height 个像元。
+inline std::string writeFloatBandsRaster(const std::filesystem::path& dir, const std::string& fileName,
+                                         int width, int height,
+                                         const std::vector<std::vector<float>>& bandData,
+                                         const RasterFixtureOptions& options = {}) {
+    // 入口校验顺序与既有写入器同形：dtype → 尺寸 → 缓冲长度。
+    if (!dtypeSupported(options)) {
+        ADD_FAILURE() << "fixture: dtype not supported (only GDT_Float32)";
+        return {};
+    }
+    if (width <= 0 || height <= 0) {
+        ADD_FAILURE() << "writeFloatBandsRaster: invalid raster size " << width << "x" << height;
+        return {};
+    }
+    if (bandData.empty()) {
+        ADD_FAILURE() << "writeFloatBandsRaster: bandData is empty";
+        return {};
+    }
+    const size_t expectedPixels = static_cast<size_t>(width) * static_cast<size_t>(height);
+    for (size_t i = 0; i < bandData.size(); ++i) {
+        // 任一波段缓冲不足都会让 RasterIO 越界读，所以逐波段校验、一次报清是哪一段。
+        if (bandData[i].size() < expectedPixels) {
+            ADD_FAILURE() << "writeFloatBandsRaster: band " << i << " data size "
+                          << bandData[i].size() << " < width*height " << expectedPixels;
+            return {};
+        }
+    }
+    const auto path = (dir / fileName).string();
+    auto ds = createFixtureRaster(path, width, height,
+                                  static_cast<int>(bandData.size()), GDT_Float32,
+                                  "writeFloatBandsRaster");
+    if (!ds) {
+        // D2 同形文案：null 来自 createFixtureRaster 的 catch，不是 createRaster 的返回值。
+        ADD_FAILURE() << "writeFloatBandsRaster: createFixtureRaster returned null "
+                      << "(gis::core::createRaster threw, already reported by createFixtureRaster) for "
+                      << path;
+        return {};
+    }
+    applyFixtureHeader(ds.get(), options, width, height);
+    for (size_t i = 0; i < bandData.size(); ++i) {
+        auto* band = ds->GetRasterBand(static_cast<int>(i) + 1);
+        if (!band) {
+            ADD_FAILURE() << "writeFloatBandsRaster: band " << (i + 1) << " is null for " << path;
+            continue;
+        }
+        band->RasterIO(GF_Write, 0, 0, width, height, const_cast<float*>(bandData[i].data()),
+                       width, height, GDT_Float32, 0, 0);
+        band->FlushCache();
+    }
+    return path;
+}
+
 inline float readPixel(const std::string& path, int bandIndex, int x, int y) {
     auto ds = openFixtureRaster(path, "readPixel");
     if (!ds) {
-        ADD_FAILURE() << "readPixel: openRaster returned null for " << path;
+        // D2：openRaster 从不返回 null，null 全部来自 openFixtureRaster 的 catch。
+        ADD_FAILURE() << "readPixel: openFixtureRaster returned null "
+                      << "(gis::core::openRaster threw, already reported by openFixtureRaster) for "
+                      << path;
         return unreadablePixelValue();
     }
     auto* band = ds->GetRasterBand(bandIndex);
@@ -211,7 +295,9 @@ inline float readPixel(const std::string& path, int bandIndex, int x, int y) {
 inline int readBandCount(const std::string& path) {
     auto ds = openFixtureRaster(path, "readBandCount");
     if (!ds) {
-        ADD_FAILURE() << "readBandCount: openRaster returned null for " << path;
+        ADD_FAILURE() << "readBandCount: openFixtureRaster returned null "
+                      << "(gis::core::openRaster threw, already reported by openFixtureRaster) for "
+                      << path;
         return -1;
     }
     return ds->GetRasterCount();
@@ -222,7 +308,9 @@ inline std::string readCrsAuthorityCode(const std::string& path) {
     if (!ds) {
         // 这里必须显式失败：空串同时是"文件里没有 CRS"的合法返回值，不报出来就分不清
         // "没有 CRS"和"根本没打开文件"（详见 test_fixtures.cpp 的 NoCrs 用例）。
-        ADD_FAILURE() << "readCrsAuthorityCode: openRaster returned null for " << path;
+        ADD_FAILURE() << "readCrsAuthorityCode: openFixtureRaster returned null "
+                      << "(gis::core::openRaster threw, already reported by openFixtureRaster) for "
+                      << path;
         return {};
     }
     auto* srs = ds->GetSpatialRef();
@@ -244,7 +332,9 @@ inline std::array<double, 6> readGeoTransform(const std::string& path) {
                              std::numeric_limits<double>::quiet_NaN(),
                              std::numeric_limits<double>::quiet_NaN()};
     if (!ds) {
-        ADD_FAILURE() << "readGeoTransform: openRaster returned null for " << path;
+        ADD_FAILURE() << "readGeoTransform: openFixtureRaster returned null "
+                      << "(gis::core::openRaster threw, already reported by openFixtureRaster) for "
+                      << path;
         return gt;
     }
     ds->GetGeoTransform(gt.data());
@@ -254,7 +344,9 @@ inline std::array<double, 6> readGeoTransform(const std::string& path) {
 inline bool readNoDataValue(const std::string& path, int bandIndex, double& outNoData) {
     auto ds = openFixtureRaster(path, "readNoDataValue");
     if (!ds) {
-        ADD_FAILURE() << "readNoDataValue: openRaster returned null for " << path;
+        ADD_FAILURE() << "readNoDataValue: openFixtureRaster returned null "
+                      << "(gis::core::openRaster threw, already reported by openFixtureRaster) for "
+                      << path;
         return false;
     }
     auto* band = ds->GetRasterBand(bandIndex);

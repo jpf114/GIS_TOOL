@@ -112,6 +112,17 @@ gis::framework::Result RasterMathPlugin::doBandMath(
             bool failed = false;
             const double value = gis::core::evaluateExpression(program, values, failed);
             // 除零像元保持写 0.0（R-T5-2：本任务不引入 NoData 产出形态），但必须计数可见。
+            //
+            // M-T5-c 不变式（今天可证，但没有别的东西守着，故在此记录依据）：
+            // `failed` 目前**只**由除零触发，于是这个计数就是"除零像元数"，与键名
+            // divide_by_zero_pixels 对得上。两条根据：
+            //   1) 一切 arity/语法畸形都在 compileExpression 阶段被拒（本函数上方那一处
+            //      "Expression error in ..." 的 return 位于读取像元与写出之前），编译器认可的
+            //      program 自洽 ⇒ 求值期不会走到栈不足/结尾栈规模不为 1 的分支；
+            //   2) values 与 variableNames 同尺寸（都按同一个 bands 建），变量下标由编译期
+            //      在这同一张表里解析出来 ⇒ 求值期的下标越界分支不可达。
+            // 将来引擎新增失败模式时这两条形体会被打破，这个计数会静默变成"某些像元因为某种
+            // 原因失败了"。届时要么按失败原因分桶计数、要么改键名；键名本身是计划规定的，本轮不动。
             if (failed) ++divideByZero;
             result.at<float>(y, x) = static_cast<float>(value);
         }
@@ -216,7 +227,12 @@ gis::framework::Result RasterMathPlugin::doReclassify(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
-    std::vector<ReclassRule> rules;
+    // 规则形态（Task 6）：interval 模式**必须逐波段独立**。旧实现把每个波段生成的区间
+    // 都 push_back 进同一个 rules 向量，而 applyReclassRules 是首个匹配即返回 ⇒ 后一个波段
+    // 会先命中前一个波段推入的区间（跨波段污染）。manual 模式本来就是所有波段共用一份规则，
+    // 这里统一展开成"每波段一份"，下面按波段取用就没有形态分支。
+    std::vector<ReclassRule> sharedRules;                // manual 模式的解析结果
+    std::vector<std::vector<ReclassRule>> rulesPerBand;  // interval 模式在此逐波段填充
 
     if (reclassMode == "interval") {
         if (intervalStep <= 0.0) {
@@ -229,6 +245,7 @@ gis::framework::Result RasterMathPlugin::doReclassify(
 
         auto ds = gis::core::openRaster(input, true);
         const int bands = ds->GetRasterCount();
+        rulesPerBand.assign(static_cast<size_t>(bands), std::vector<ReclassRule>{});
 
         for (int b = 1; b <= bands; ++b) {
             auto mat = gis::core::gdalBandToMat(ds.get(), b);
@@ -255,26 +272,31 @@ gis::framework::Result RasterMathPlugin::doReclassify(
             double current = roundedMin;
             int classIdx = 1;
 
+            std::vector<ReclassRule> bandRules;
             while (current < bandMax) {
                 ReclassRule rule;
                 rule.oldMin = current;
                 rule.oldMax = current + intervalStep;
                 rule.newVal = static_cast<double>(classIdx);
                 rule.isRange = true;
-                rules.push_back(rule);
+                bandRules.push_back(rule);
                 current += intervalStep;
                 ++classIdx;
             }
+            // 只对本波段可见：不再累积进跨波段共享的向量。
+            rulesPerBand[static_cast<size_t>(b - 1)] = std::move(bandRules);
         }
 
-        if (rules.empty()) {
+        size_t totalRules = 0;
+        for (const auto& bandRules : rulesPerBand) totalRules += bandRules.size();
+        if (totalRules == 0) {
             return gis::framework::Result::fail("Failed to generate interval rules");
         }
     } else {
         if (rulesText.empty()) return gis::framework::Result::fail("reclass_rules is required for manual mode");
 
-        rules = parseReclassRules(rulesText);
-        if (rules.empty()) return gis::framework::Result::fail("No valid reclass rules parsed from:\n" + rulesText);
+        sharedRules = parseReclassRules(rulesText);
+        if (sharedRules.empty()) return gis::framework::Result::fail("No valid reclass rules parsed from:\n" + rulesText);
     }
 
     progress.throwIfCancelled();
@@ -286,25 +308,46 @@ gis::framework::Result RasterMathPlugin::doReclassify(
     const int height = ds->GetRasterYSize();
     const int bands = ds->GetRasterCount();
 
-    progress.onMessage("Reclassifying " + std::to_string(bands) + " band(s) with " +
-                       std::to_string(rules.size()) + " rule(s)...");
+    if (reclassMode != "interval") {
+        // manual 模式：同一份规则展开成每波段一份（与 interval 取用形态一致）。
+        rulesPerBand.assign(static_cast<size_t>(bands), sharedRules);
+    }
+    // interval 分支的波段数来自同一个文件的另一次打开，两次必然相同；不相同说明实现走偏，
+    // 宁可显式失败也不让下面的下标越界。
+    if (rulesPerBand.size() != static_cast<size_t>(bands)) {
+        return gis::framework::Result::fail("Reclass rules are missing for one or more bands");
+    }
 
+    size_t ruleCount = 0;
+    for (const auto& bandRules : rulesPerBand) ruleCount += bandRules.size();
+
+    progress.onMessage("Reclassifying " + std::to_string(bands) + " band(s) with " +
+                       std::to_string(ruleCount) + " rule(s)...");
+
+    // 逐波段累积，循环结束后**一次**写出。旧实现每波段调一次
+    // gis::core::matToGdalTiff(result, input, output, b)，而那个函数每次都
+    // createRaster(dstPath, ..., 1, GDT_Float32) 重建同一个输出文件 ⇒ N 波段输入只留下
+    // 最后一次循环的 1 波段输出（前面波段的成果被覆盖丢弃）。
+    std::vector<cv::Mat> outputs;
+    outputs.reserve(static_cast<size_t>(bands));
     for (int b = 1; b <= bands; ++b) {
         progress.throwIfCancelled();
         progress.onMessage("Processing band " + std::to_string(b) + "/" + std::to_string(bands));
         auto mat = gis::core::gdalBandToMat(ds.get(), b);
         cv::Mat result(height, width, mat.type());
+        const auto& bandRules = rulesPerBand[static_cast<size_t>(b - 1)];
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 const double val = static_cast<double>(mat.at<float>(y, x));
                 result.at<float>(y, x) = static_cast<float>(
-                    applyReclassRules(val, rules, defaultValue, keepUnmatched));
+                    applyReclassRules(val, bandRules, defaultValue, keepUnmatched));
             }
         }
-        gis::core::matToGdalTiff(result, input, output, b);
+        outputs.push_back(std::move(result));
         const double progressFrac = 0.05 + 0.9 * static_cast<double>(b) / bands;
         progress.onProgress(progressFrac);
     }
+    gis::core::matsToGdalTiff(outputs, ds.get(), output);
 
     {
         auto srcDs = gis::core::openRaster(input, true);
@@ -435,6 +478,10 @@ gis::framework::Result RasterMathPlugin::doRasterOverlay(
         condTokens = tokenizeCondExpr(condExpr);
     }
 
+    // 同 doReclassify：逐波段累积后一次 matsToGdalTiff 写出。
+    // 旧的每波段 matToGdalTiff(..., b) 会重建同一个输出文件，N 波段输入只剩最后一次的 1 波段。
+    std::vector<cv::Mat> outputs;
+    outputs.reserve(static_cast<size_t>(bands));
     for (int b = 1; b <= bands; ++b) {
         progress.throwIfCancelled();
         progress.onMessage("Overlay band " + std::to_string(b) + "/" + std::to_string(bands) + " method=" + method);
@@ -468,10 +515,12 @@ gis::framework::Result RasterMathPlugin::doRasterOverlay(
             }
         }
 
-        gis::core::matToGdalTiff(result, input, output, b);
+        outputs.push_back(std::move(result));
         const double progressFrac = 0.05 + 0.9 * static_cast<double>(b) / bands;
         progress.onProgress(progressFrac);
     }
+    // 几何/投影/NoData 一律以 dsA（旧实现传的 input）为基准，与按波段覆盖写时一致。
+    gis::core::matsToGdalTiff(outputs, dsA.get(), output);
 
     {
         auto srcDs = gis::core::openRaster(input, true);

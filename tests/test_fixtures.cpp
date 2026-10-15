@@ -62,3 +62,57 @@ TEST(RasterFixture, NoCrsIsReportedAsEmptyAuthority) {
     EXPECT_EQ(gis::tests::readBandCount(path), 1);
     EXPECT_TRUE(gis::tests::readCrsAuthorityCode(path).empty());
 }
+
+// D5（Task 1 deferred minor）：把"夹具只支持 Float32"这条判据抽成纯谓词 dtypeSupported 后，
+// 它就能被直接断言——不需要 gtest-spi 去捕获写入函数里的 ADD_FAILURE()，
+// 也不会像哨兵分支那样"可达但无法正向测试"。三个写入函数的守卫调的就是这同一个谓词，
+// 所以本用例锁住的是判据本身，而不是某条消息文本。
+TEST(RasterFixture, DtypeSupportedAcceptsOnlyFloat32) {
+    gis::tests::RasterFixtureOptions defaults;
+    EXPECT_EQ(defaults.dtype, GDT_Float32);
+    EXPECT_TRUE(gis::tests::dtypeSupported(defaults));
+
+    // 逐个非 Float32 类型都必须被拒：整型夹具还没有实现，静默按 Float32 写会得到
+    // 与调用方预期不符的栅格（详见 raster_fixture.h 的数据缓冲约定）。
+    const GDALDataType rejected[] = {GDT_Byte, GDT_UInt16, GDT_Int16, GDT_Int32, GDT_Float64};
+    for (const GDALDataType dtype : rejected) {
+        gis::tests::RasterFixtureOptions options;
+        options.dtype = dtype;
+        EXPECT_FALSE(gis::tests::dtypeSupported(options)) << "dtype=" << dtype;
+    }
+
+    // 判据只看 dtype：CRS / NoData 之类的正交开关不得影响它。
+    gis::tests::RasterFixtureOptions orthogonal;
+    orthogonal.crs = gis::tests::FixtureCrs::Epsg3857;
+    orthogonal.hasNoData = true;
+    orthogonal.noData = -1.0;
+    EXPECT_TRUE(gis::tests::dtypeSupported(orthogonal));
+}
+
+// R-T6-3：writeFloatBandsRaster 的独立自检（Task 6 的跨波段污染用例依赖它）。
+// 与插件用例分开，是为了让"输出波段数不对/取值不对"这类红能确定归到插件而不是夹具：
+// 夹具自己的按波段+按像元写入必须先在无插件参与的情况下被证明是对的。
+TEST(RasterFixture, WritesPerBandPixelDataAndReadsBack) {
+    gis::core::initGDAL();
+    const auto dir = gis::tests::defaultTestOutputDir("fixture_output");
+    gis::tests::ensureDirectory(dir);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg4326;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+
+    const auto path = gis::tests::writeFloatBandsRaster(
+        dir, "fixture_per_band.tif", 2, 1, {{0.0f, 9.0f}, {7.0f, 7.0f}}, options);
+    ASSERT_FALSE(path.empty());
+    EXPECT_EQ(gis::tests::readBandCount(path), 2);
+    EXPECT_EQ(gis::tests::readCrsAuthorityCode(path), "EPSG:4326");
+    // 逐波段、逐像元都各归各的值（writeConstantBandsRaster 只能逐波段常量，表达不出 band1）。
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 1, 0, 0), 0.0f);
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 1, 1, 0), 9.0f);
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 2, 0, 0), 7.0f);
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 2, 1, 0), 7.0f);
+    double noData = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(path, 2, noData));
+    EXPECT_DOUBLE_EQ(noData, -9999.0);
+}

@@ -5675,6 +5675,11 @@ TEST_F(PluginTest, BandMathWithUnknownVariableFailsExplicitly) {
     const std::string input = createTestRaster("rm_unknown_input.tif", 2, 2, 2);
     const std::string output = utf8PathString(getTestDir() / "rm_unknown_output.tif");
 
+    // M-T5-a：先删掉任何一次运行留下的陈旧输出，否则下面的"没有写出"会被旧文件骗成假通过。
+    std::error_code removeEc;
+    fs::remove(output, removeEc);
+    EXPECT_FALSE(fs::exists(output)) << "stale output not removed: " << output;
+
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("band_math");
     params["input"] = input;
@@ -5684,6 +5689,9 @@ TEST_F(PluginTest, BandMathWithUnknownVariableFailsExplicitly) {
     const auto result = p->execute(params, progress_);
     EXPECT_FALSE(result.success);
     EXPECT_NE(result.message.find("B9"), std::string::npos) << result.message;
+    // M-T5-a：钉住不变式"表达式非法时根本不写出栅格"（doBandMath 在编译失败处就 return，
+    // 位于写出之前）。此前只有 !result.success 被断言，写出时机变了也没人发现。
+    EXPECT_FALSE(fs::exists(output)) << "invalid expression must not produce an output raster";
 }
 
 // 计数必须"等于失败的像元数"，而不是碰巧等于总像元数：
@@ -5713,6 +5721,36 @@ TEST_F(PluginTest, BandMathDivideByZeroCountEqualsFailingPixelsOnly) {
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 3, 0), 2.0f, 1e-5f);   // 1/(1.5-1)
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 1, 0), -2.0f, 1e-5f);  // 1/(0.5-1)
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), -1.0f, 1e-5f);  // 1/(0-1)
+}
+
+// M-T5-b：除法失败让**整个像元**失效（写 0.0），而不是交回"用 0.0 继续算"的部分结果。
+// 本批次有意设计（不是回归）：旧引擎的 evalExpression 把除零当普通 0 继续算，
+// `5-B1/B2` 于 {2,0} 会交回 5-0=5.0 这种"看似合理"的脏值并写进栅格；Task 4 把除零改成
+// "置 evaluationFailed 并立即 return 0.0"（引擎级证据 test_core.cpp:684 起），
+// 口径是"求值失败的像元不可信，整像元归 0"。此前只有引擎级用例钉着，插件级无人看守，
+// 而这条取值变化是**用户可见**的，故在此固定。键名 divide_by_zero_pixels 由计划规定，不改名。
+TEST_F(PluginTest, BandMathDivisionFailureInvalidatesWholePixel) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    // B1 ≡ 2.0、B2 ≡ 0.0 ⇒ 5-2/0 的除数正好落在 kNearZeroDivisorEpsilon 之下。
+    const std::string input = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "rm_wholepixel_divzero_input.tif", 2, 1, {2.0f, 0.0f});
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(getTestDir() / "rm_wholepixel_divzero_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("band_math");
+    params["input"] = input;
+    params["output"] = output;
+    params["expression"] = std::string("5-B1/B2");
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("divide_by_zero_pixels"), "2");   // 整像元失败 ⇒ 两个像元都计数
+    // 关键鉴别值：除法若只是"把 0.0 压栈继续算"，这里会得到 5.0（旧引擎的交回值）。
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), 0.0f, 1e-6f);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 1, 0), 0.0f, 1e-6f);
 }
 
 // 追加义务 2：把 kNearZeroDivisorEpsilon=1e-15 的边界两侧都通过插件调用钉住。
@@ -5770,16 +5808,24 @@ TEST_F(PluginTest, BandMathRejectsShapesOldEvaluatorSilentlyAccepted) {
     const std::string input = createTestRaster("rm_legacy_shapes_input.tif", 2, 2, 2);
 
     const char* shapes[] = {"B1(B2+1)", "(B1)(B2)", "()", "(B1+)"};
+    const std::string output = utf8PathString(getTestDir() / "rm_legacy_shapes_output.tif");
     for (const char* shape : shapes) {
         std::map<std::string, gis::framework::ParamValue> params;
         params["action"] = std::string("band_math");
         params["input"] = input;
-        params["output"] = utf8PathString(getTestDir() / "rm_legacy_shapes_output.tif");
+        params["output"] = output;
         params["expression"] = std::string(shape);
+
+        // M-T5-a：删除陈旧输出并断"失败即不写盘"（同 BandMathWithUnknownVariableFailsExplicitly）。
+        std::error_code removeEc;
+        fs::remove(output, removeEc);
+        EXPECT_FALSE(fs::exists(output)) << shape;
 
         const auto result = p->execute(params, progress_);
         EXPECT_FALSE(result.success) << shape;
         EXPECT_FALSE(result.message.empty()) << shape;
+        EXPECT_FALSE(fs::exists(output))
+            << "invalid expression must not produce an output raster: " << shape;
     }
 }
 
@@ -6460,6 +6506,85 @@ TEST_F(PluginTest, RasterMathRasterOverlayExecution) {
     EXPECT_TRUE(result.success) << result.message;
     EXPECT_TRUE(fs::exists(output));
     EXPECT_NEAR(readRasterPixel(output, 5, 5), 40.0f, 1e-4f);
+}
+
+// ============================================================================
+// Task 6：多波段输出修复（reclassify / raster_overlay）
+//
+// 共同失效形态：这两个 action 在波段循环里逐波段调 matToGdalTiff(..., bandIndex)，
+// 而该函数每次都 createRaster(..., 1, ...) 重写同一个文件 ⇒ N 波段输入只剩最后一次的
+// 1 波段输出。修法是累积 std::vector<cv::Mat> 后一次 matsToGdalTiff 写出。
+// reclassify 还多一条：interval 规则必须逐波段独立（不跨波段累积到同一个 rules 向量）。
+// ============================================================================
+
+// R-T6-2：用**区间网格错位**的数据制造真正的跨波段冲突（step=5，keep_unmatched=false）。
+// interval 的规则生成本就逐波段算 bandMin/bandMax 并逐波段重置 classIdx，唯一缺陷是所有
+// 规则被 push_back 进同一个 rules 向量，而 applyReclassRules 是首个匹配即返回：
+//   band1 = {0, 9} → 自身规则 [0,5]→1、[5,10]→2
+//   band2 = {7, 7} → 自身规则 [5,10]→1
+// 修复后（逐波段独立）band2 两个像元都是 1.0；
+// 修复前（跨波段累积 + 首匹配）band2 的 7 先命中 band1 推入的 [5,10]→2 ⇒ 读到 2.0，断言红。
+// 波段数断言与 band2 的取值断言各自独立锁定 Produces 的两句话。
+TEST_F(PluginTest, ReclassifyKeepsAllBandsAndPerBandIntervalRules) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "rm_reclass_multi_input.tif", 2, 1, {{0.0f, 9.0f}, {7.0f, 7.0f}});
+    ASSERT_FALSE(input.empty());
+    // 夹具自检：数据进得去（否则下面的红会错归到夹具头上，而不是插件）。
+    ASSERT_EQ(gis::tests::readBandCount(input), 2);
+    ASSERT_NEAR(gis::tests::readPixel(input, 1, 1, 0), 9.0f, 1e-6f);
+    ASSERT_NEAR(gis::tests::readPixel(input, 2, 0, 0), 7.0f, 1e-6f);
+
+    const std::string output = utf8PathString(getTestDir() / "rm_reclass_multi_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("reclassify");
+    params["input"] = input;
+    params["output"] = output;
+    params["reclass_mode"] = std::string("interval");
+    params["interval_step"] = 5.0;
+    params["keep_unmatched"] = false;
+    params["default_value"] = 0.0;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    // Produces 第 1 句：输出波段数 == 输入波段数（旧实现每波段覆盖写 ⇒ 只剩 1 个波段）。
+    EXPECT_EQ(gis::tests::readBandCount(output), 2);
+    // band1 用自身规则：0 → 类 1、9 → 类 2（修复前后同值，钉住"逐波段规则本身算得对"）。
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), 1.0f, 1e-6f);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 1, 0), 2.0f, 1e-6f);
+    // Produces 第 2 句（鉴别力在这两条）：band2 只能用自身的 [5,10]→1；被 band1 的规则污染则读回 2.0。
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 0, 0), 1.0f, 1e-6f);
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 1, 0), 1.0f, 1e-6f);
+}
+
+// R-T6-1：叠加操作的参数键是 overlay_method（paramSpecs 声明、doRasterOverlay 以默认 "max"
+// 读取）。计划原文的 params["operation"] 既未声明也未读取，会静默落到 max，
+// 于是 10/20 与 5 的期望值 5/15 变成 10/20 —— 用错键的用例必红在错因上，故按实测键名写。
+TEST_F(PluginTest, RasterOverlayKeepsAllBands) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    const std::string a = createMultiBandConstantRaster("rm_ov_a.tif", 4, 4, {10.0f, 20.0f});
+    const std::string b = createMultiBandConstantRaster("rm_ov_b.tif", 4, 4, {5.0f, 5.0f});
+    const std::string output = utf8PathString(getTestDir() / "rm_ov_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("raster_overlay");
+    params["input"] = a;
+    params["overlay_input"] = b;
+    params["output"] = output;
+    params["overlay_method"] = std::string("subtract");
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    // bands = min(A 波段数, B 波段数) = 2 ⇒ 输出必须是 2 个波段（旧实现覆盖写 ⇒ 1 个）。
+    EXPECT_EQ(gis::tests::readBandCount(output), 2);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), 5.0f, 1e-6f);    // 10 - 5
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 0, 0), 15.0f, 1e-6f);   // 20 - 5
 }
 
 TEST_F(PluginTest, RasterManageZonalStatsExecution) {
