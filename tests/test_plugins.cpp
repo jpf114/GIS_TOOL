@@ -6611,6 +6611,151 @@ TEST_F(PluginTest, ReclassifyFailsWhenOneBandGeneratesNoIntervalRules) {
     EXPECT_FALSE(fs::exists(output));
 }
 
+// F4（fix round 1）需要断言进度文案里的规则数口径。PluginTest 的 progress_ 是 CliProgress，
+// 消息只打到 stdout、断不了，所以这里加一个最小的记录型 reporter：
+// isCancelled() 恒 false（与 CliProgress 同语义，throwIfCancelled 因此也恒不抛），
+// 只把 onMessage 收进 vector，joined() 供子串断言。
+class RecordingProgress : public gis::core::ProgressReporter {
+public:
+    void onProgress(double) override {}
+    void onMessage(const std::string& msg) override { messages_.push_back(msg); }
+    bool isCancelled() const override { return false; }
+
+    // 全部消息拼成一段：断言只关心"这条文案出现过"，不依赖消息条数与顺序。
+    std::string joined() const {
+        std::string all;
+        for (const auto& msg : messages_) {
+            all += msg;
+            all += '\n';
+        }
+        return all;
+    }
+
+private:
+    std::vector<std::string> messages_;
+};
+
+// F3（fix round 1，Minor 1）：manual 模式的多波段展开 rulesPerBand.assign(bands, sharedRules)
+// 是被本轮改动的代码路径，此前只有单波段用例（RasterMathReclassifyExecution）走过它。
+// 这里用 2 波段 + 同一份共享规则钉住"每个波段都分到这一份、并且各自都被分类"：
+// keep_unmatched=false + default_value=-1，所以"某波段没拿到规则"会输出 -1，
+// 与合法类别值 1/2 不撞车（不会因为和"类别 0"这类边界撞值而漏判）。
+//
+// F7（fix round 1，Minor 6）：写出从 matToGdalTiff 换成 matsToGdalTiff 之后，它提供的头语义
+// （投影照搬 + NoData 声明随波段带过去）没有任何断言覆盖，本用例补上。
+// **不要**在这里试"逐波段不同 NoData"来加强鉴别力——实测（gdalinfo + 生成的 .aux.xml）表明：
+// createRaster 出的多波段 GeoTIFF 是 INTERLEAVE=PIXEL 单 IFD，原生 GDAL_NODATA 标签全图只有一个，
+// 逐波段 SetNoDataValue 只有**最后一个**留得住（各波段读回同一个值）；输入侧之所以能读出
+// -9999/-1234 两个不同值，是 GDAL 把它们写进了 PAM 边车 .aux.xml。也就是说"逐波段不同的
+// NoData"在这个输出形态下表达不出来，拿它当断言会钉住格式行为而不是插件行为（详见报告顾虑）。
+// 因此这里断的是可观察的那部分：输出第 2 波段确实存在、并且带着 NoData 声明
+// （旧覆盖写实现下输出只有 1 个波段，readNoDataValue(output, 2, …) 会当场 ADD_FAILURE）。
+TEST_F(PluginTest, ReclassifyManualModeAppliesSharedRulesToEveryBand) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg4326;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    const std::string input = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "rm_reclass_manual_multi_input.tif", 2, 1,
+        {{1.0f, 200.0f}, {100.0f, 150.0f}}, options);
+    ASSERT_FALSE(input.empty());
+    ASSERT_EQ(gis::tests::readBandCount(input), 2);
+    ASSERT_EQ(gis::tests::readCrsAuthorityCode(input), "EPSG:4326");
+    double inNoData1 = 0.0;
+    double inNoData2 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(input, 1, inNoData1));
+    ASSERT_TRUE(gis::tests::readNoDataValue(input, 2, inNoData2));
+    ASSERT_DOUBLE_EQ(inNoData1, -9999.0);   // 参考数据集自己先对得上，下面的断言才有意义
+    ASSERT_DOUBLE_EQ(inNoData2, -9999.0);
+
+    const std::string output = utf8PathString(getTestDir() / "rm_reclass_manual_multi_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("reclassify");
+    params["input"] = input;
+    params["output"] = output;
+    params["reclass_rules"] = std::string("0,127:1\n128,255:2");
+    params["keep_unmatched"] = false;
+    params["default_value"] = -1.0;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    // F3：两个波段都在（旧覆盖写只剩 1 个），且**两个波段各自**都被同一份共享规则分类。
+    EXPECT_EQ(gis::tests::readBandCount(output), 2);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), 1.0f, 1e-6f);   // band1: 1   → 类 1
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 1, 0), 2.0f, 1e-6f);   // band1: 200 → 类 2
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 0, 0), 1.0f, 1e-6f);   // band2: 100 → 类 1
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 1, 0), 2.0f, 1e-6f);   // band2: 150 → 类 2
+
+    // F7：头语义——投影照搬 + 第 2 波段带着 NoData 声明写出来了。
+    EXPECT_EQ(gis::tests::readCrsAuthorityCode(output), "EPSG:4326");
+    double outNoData1 = 0.0;
+    double outNoData2 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, outNoData1));
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 2, outNoData2));
+    EXPECT_DOUBLE_EQ(outNoData1, -9999.0);
+    EXPECT_DOUBLE_EQ(outNoData2, -9999.0);
+}
+
+// F4（fix round 1，Minor 2）：进度文案里的规则数原来是"逐波段副本求和"，manual 模式下
+// 所有波段共用同一份规则 ⇒ 2 条规则配 2 个波段会被说成 4 条，是假话（原来的数字才准确）。
+// 选**按模式区分文案**（而不是全局按去重后的条数报）：
+//   manual   → "N band(s) with M shared rule(s)"，M = 解析出的共享条数（同一份规则本就该报一次）；
+//   interval → "N band(s) with M rule(s)"，M = 各波段独立生成条数之和（本来就是真数）。
+// 弃用"去重计数"的理由：interval 下两个波段即使生成数值相同的规则集也是各自独立的类别划分，
+// 去重会把它报少——去重只在 manual 下恰好正确，而逐模式口径在两种模式下都诚实。
+TEST_F(PluginTest, ReclassifyProgressMessageCountsRulesPerMode) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    // --- manual：2 波段 × 同一份 2 条共享规则 ⇒ 期望 "2 band(s) with 2 shared rule(s)"。
+    const std::string manualInput = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "rm_reclass_msg_manual_input.tif", 2, 1,
+        {{1.0f, 200.0f}, {100.0f, 150.0f}});
+    ASSERT_FALSE(manualInput.empty());
+    std::map<std::string, gis::framework::ParamValue> manualParams;
+    manualParams["action"] = std::string("reclassify");
+    manualParams["input"] = manualInput;
+    manualParams["output"] = utf8PathString(getTestDir() / "rm_reclass_msg_manual_output.tif");
+    manualParams["reclass_rules"] = std::string("0,127:1\n128,255:2");
+    manualParams["keep_unmatched"] = false;
+    manualParams["default_value"] = 0.0;
+
+    RecordingProgress manualProgress;
+    const auto manualResult = p->execute(manualParams, manualProgress);
+    ASSERT_TRUE(manualResult.success) << manualResult.message;
+    const std::string manualMsg = manualProgress.joined();
+    EXPECT_NE(manualMsg.find("2 band(s) with 2 shared rule(s)"), std::string::npos) << manualMsg;
+    // 求和口径的假话（2 条 × 2 波段 = 4）不得再出现。
+    EXPECT_EQ(manualMsg.find("4 rule(s)"), std::string::npos) << manualMsg;
+
+    // --- interval：band1 {0,9} 生成 2 条、band2 {7,7} 生成 1 条 ⇒ 求和 3 条是真数，口径不变。
+    const std::string intervalInput = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "rm_reclass_msg_interval_input.tif", 2, 1,
+        {{0.0f, 9.0f}, {7.0f, 7.0f}});
+    ASSERT_FALSE(intervalInput.empty());
+    std::map<std::string, gis::framework::ParamValue> intervalParams;
+    intervalParams["action"] = std::string("reclassify");
+    intervalParams["input"] = intervalInput;
+    intervalParams["output"] = utf8PathString(getTestDir() / "rm_reclass_msg_interval_output.tif");
+    intervalParams["reclass_mode"] = std::string("interval");
+    intervalParams["interval_step"] = 5.0;
+    intervalParams["keep_unmatched"] = false;
+    intervalParams["default_value"] = 0.0;
+
+    RecordingProgress intervalProgress;
+    const auto intervalResult = p->execute(intervalParams, intervalProgress);
+    ASSERT_TRUE(intervalResult.success) << intervalResult.message;
+    const std::string intervalMsg = intervalProgress.joined();
+    EXPECT_NE(intervalMsg.find("2 band(s) with 3 rule(s)"), std::string::npos) << intervalMsg;
+    // interval 下不得被套上 manual 的 "shared" 措辞（各波段规则并不同一份）。
+    EXPECT_EQ(intervalMsg.find("shared rule(s)"), std::string::npos) << intervalMsg;
+}
+
 // R-T6-1：叠加操作的参数键是 overlay_method（paramSpecs 声明、doRasterOverlay 以默认 "max"
 // 读取）。计划原文的 params["operation"] 既未声明也未读取，会静默落到 max，
 // 于是 10/20 与 5 的期望值 5/15 变成 10/20 —— 用错键的用例必红在错因上，故按实测键名写。

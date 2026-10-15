@@ -330,11 +330,24 @@ gis::framework::Result RasterMathPlugin::doReclassify(
         return gis::framework::Result::fail("Reclass rules are missing for one or more bands");
     }
 
+    // F4（fix round 1）：规则数口径**按模式区分**，不能一律逐波段求和。
+    // manual 模式下 rulesPerBand 是同一份 sharedRules 的 N 份副本，求和会把
+    // "2 条规则用在 2 个波段"报成 "4 rule(s)" —— 假话；interval 模式下每份都是本波段
+    // 独立生成的类别，求和才是真数。
+    // 弃用"全局按去重后的条数报"：interval 下两个波段即使生成数值相同的规则集，也是各自
+    // 独立的类别划分（不该被合并计数），去重只在 manual 下恰好正确，逐模式口径在两种模式下
+    // 都诚实；manual 的文案额外带上 "shared" 一词，说明这个数与波段数无关。
+    const bool intervalMode = (reclassMode == "interval");
     size_t ruleCount = 0;
-    for (const auto& bandRules : rulesPerBand) ruleCount += bandRules.size();
+    if (intervalMode) {
+        for (const auto& bandRules : rulesPerBand) ruleCount += bandRules.size();
+    } else {
+        ruleCount = sharedRules.size();
+    }
 
     progress.onMessage("Reclassifying " + std::to_string(bands) + " band(s) with " +
-                       std::to_string(ruleCount) + " rule(s)...");
+                       std::to_string(ruleCount) +
+                       (intervalMode ? " rule(s)..." : " shared rule(s)..."));
 
     // 逐波段累积，循环结束后**一次**写出。旧实现每波段调一次
     // gis::core::matToGdalTiff(result, input, output, b)，而那个函数每次都

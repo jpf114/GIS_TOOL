@@ -20,10 +20,16 @@
 // 准确表述是：ADD_FAILURE() 报在**夹具自身那一行**（raster_fixture.h 的行号），
 // 但落在调用方那条语句所属的用例里，因此用例仍然被记为失败、异常不会穿过测试体把行号与
 // 消息报到别的用例去——"失败一定报在调用方那一行"是不实描述。
+//
+// 包含关系（D4 收尾）：两个 catch 的类型是 std::exception，故显式 #include <exception>，
+// 不再依赖 <string>/<gtest> 的传递包含。本头文件**不**引用 gis::core::GisError 这个名字
+// （异常消息只用 e.what()），所以不 include <gis/core/error.h>——上面注释里提到 GisError
+// 只是在说明 core 侧的抛出口径，不需要它的声明参与编译。
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <exception>
 #include <filesystem>
 #include <limits>
 #include <string>
@@ -31,7 +37,6 @@
 #include <gtest/gtest.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
-#include <gis/core/error.h>
 #include <gis/core/gdal_wrapper.h>
 
 namespace gis::tests {
@@ -45,8 +50,10 @@ inline float unreadablePixelValue() {
 }
 
 // openRaster 的夹具包装：gis::core::openRaster 打不开时抛 GisError（不返回 nullptr），
-// 这里把异常就地转成 ADD_FAILURE() 并返回空指针，让调用方继续走自己的哨兵分支；
-// 返回空指针后调用方的判空依然保留，用于覆盖真实返回 nullptr 的情形。
+// 这里把异常就地转成 ADD_FAILURE() 并返回空指针，让调用方继续走自己的哨兵分支。
+// 返回空指针**只可能**是本函数 catch 的产物（见文件头的失败约定 D1）：调用方的判空保留，
+// 是为了把"夹具内部已经报的失败"安全地转成哨兵返回值，不是为了覆盖"core 返回 nullptr"
+// ——那条路径不存在（原注释如此描述属于不实，已更正）。
 inline gis::core::GdalDatasetPtr openFixtureRaster(const std::string& path, const char* who) {
     try {
         return gis::core::openRaster(path, true);

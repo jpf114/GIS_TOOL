@@ -116,3 +116,33 @@ TEST(RasterFixture, WritesPerBandPixelDataAndReadsBack) {
     ASSERT_TRUE(gis::tests::readNoDataValue(path, 2, noData));
     EXPECT_DOUBLE_EQ(noData, -9999.0);
 }
+
+// F2（fix round 1，Minor 3）：钉住 writeFloatBandsRaster 的元素主序是**行主序**。
+// 上面那条自检用的是 2×1 栅格——只有一行时"行主序 / 列主序 / 转置写出"给出的像元序列完全相同；
+// writeFloatRaster 的 3×3 自检也只断了转置对称的 (1,1)。这个夹具是后续所有任务数值断言的
+// 数据入口，主序错了会让一批用例集体取到错像元却全绿，所以这里用**非对称**的 2×2 波段把
+// (x, y) → data[y*width + x] 显式钉死（红证据：把写出临时改成列主序后本用例必须变红）。
+TEST(RasterFixture, WritesBandDataInRowMajorPixelOrder) {
+    gis::core::initGDAL();
+    const auto dir = gis::tests::defaultTestOutputDir("fixture_output");
+    gis::tests::ensureDirectory(dir);
+
+    // 每个像元值都唯一编码了"波段 + 行 + 列"，任何转置、列主序或波段错位都会撞到另一个值。
+    const auto path = gis::tests::writeFloatBandsRaster(
+        dir, "fixture_row_major.tif", 2, 2,
+        {{1.0f, 2.0f, 3.0f, 4.0f},       // 行主序：row0 = (1, 2)，row1 = (3, 4)
+         {11.0f, 12.0f, 13.0f, 14.0f}});
+    ASSERT_FALSE(path.empty());
+    EXPECT_EQ(gis::tests::readBandCount(path), 2);
+
+    // 这两条是主序鉴别力所在：列主序写出会得到 (x=1,y=0)→3、(x=0,y=1)→2，两条同时变红。
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 1, 1, 0), 2.0f);
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 1, 0, 1), 3.0f);
+    // 补齐另外两个角，排除"只写了半个波段/半幅图"的形态。
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 1, 0, 0), 1.0f);
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 1, 1, 1), 4.0f);
+    // 波段维也一起钉住：band2 的 (1,0)、(0,1) 必须是 12、13，不是 band1 的值。
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 2, 1, 0), 12.0f);
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 2, 0, 1), 13.0f);
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(path, 2, 1, 1), 14.0f);
+}
