@@ -30,26 +30,4 @@ inline std::string toLowerString(std::string value) {
 ProcessingMetadata buildPluginMetadata(const std::string& input, GDALDataset* srcDs,
                                         const std::string& algorithm);
 
-/**
- * Evaluate a simple arithmetic expression with band variable substitution.
- *
- * Security measures:
- *   - Expression length limited to kMaxExpressionLength (1024) characters
- *   - Only digits, operators (+, -, *, /), parentheses, dots, and spaces are allowed after substitution
- *   - Operator nesting depth limited to kMaxExpressionDepth (64)
- *   - Division by near-zero returns 0.0 instead of infinity
- *
- * @param expr The expression string (e.g., "B1+B2", "(B4-B1)/(B4+B1)")
- * @param bandValues Map of variable names (e.g., "B1") to their numeric values
- * @return The evaluated result, or 0.0 on error
- */
-double evalExpression(const std::string& expr,
-                      const std::map<std::string, double>& bandValues);
-
-/// Maximum allowed expression length in characters.
-static constexpr size_t kMaxExpressionLength = 1024;
-
-/// Maximum allowed operator nesting depth.
-static constexpr size_t kMaxExpressionDepth = 64;
-
 } // namespace gis::core

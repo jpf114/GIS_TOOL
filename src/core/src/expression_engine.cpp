@@ -22,6 +22,21 @@ int precedence(ExpressionNode::Op op) {
 bool isVariableStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
 bool isVariableChar(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
 
+// 输入卫生界限（Task 5 追加义务 1）：expression 是用户能从 GUI/CLI 直接控制的字符串，
+// 旧的 evalExpression 有 1024 字符上限，删掉它的同一次提交必须把这条边界接住，
+// 否则是一次静默的校验倒退。
+//
+// 这两条都是**输入卫生 + 逐像元成本可预期**，不是内存安全：解析与求值都跑在堆上的
+// std::vector/std::stack 上，不存在递归爆栈（Task 4 实测 20000 层嵌套不崩），
+// 所以旧引擎的"嵌套深度 64"不在这儿复活——它当时防的是递归下降/栈溢出，那个前提已不存在。
+//
+// 产物规模上限定在输入预算的一半：每个节点至少消耗一个输入字符，而括号与空格占字符却不产生
+// 节点，所以 1024 个字符最多编出 1023 个节点（"1+1+...+1" 这种全单字符形态）。产物上限必须
+// 严格低于这个最大值才有独立的可达性，否则它永远被输入长度上限先拦掉、既不可达也不可测；
+// 512 = 输入预算的一半，同时远超任何真实波段运算表达式的规模（可容纳 257 项的累加）。
+constexpr size_t kMaxExpressionInputLength = 1024;
+constexpr size_t kMaxCompiledProgramSize = 512;
+
 // 除零判据：**绝对**阈值，不是相对判据。
 // 前提假定波段量级 ≳1e-14（DN / 反射率口径）——在此量级下，分母比操作数低两三个数量级时
 // 该指数已是噪声，判 NoData 比放行 1e15 级离群值更科学（后者会污染 min/max、拉伸范围与下游分类）。
@@ -39,6 +54,11 @@ bool compileExpression(const std::string& expression,
     error.clear();
     if (expression.empty()) {
         error = "表达式为空";
+        return false;
+    }
+    if (expression.size() > kMaxExpressionInputLength) {
+        error = "表达式过长: " + std::to_string(expression.size()) + " 字符，上限 " +
+                std::to_string(kMaxExpressionInputLength) + " 字符";
         return false;
     }
 
@@ -193,6 +213,13 @@ bool compileExpression(const std::string& expression,
         ops.pop();
     }
     if (depth != 0) { error = "括号不配对"; return false; }
+    // 产物规模在这里收尾统一把关：program 已在本函数开头 clear()，拒掉时保持为空，
+    // 调用方拿到的是"编译失败"，不会拿到半截程序去逐像元求值。
+    if (output.size() > kMaxCompiledProgramSize) {
+        error = "表达式编译产物过大: " + std::to_string(output.size()) + " 个节点，上限 " +
+                std::to_string(kMaxCompiledProgramSize) + " 个节点";
+        return false;
+    }
     program = std::move(output);
     return true;
 }

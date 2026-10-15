@@ -1,6 +1,7 @@
 #include "raster_math_plugin.h"
 
 #include <gis/core/error.h>
+#include <gis/core/expression_engine.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
 #include <gis/core/plugin_utils.h>
@@ -76,6 +77,20 @@ gis::framework::Result RasterMathPlugin::doBandMath(
     const int height = ds->GetRasterYSize();
     const int bands = ds->GetRasterCount();
 
+    // 变量表就是 B1..B{bands}，顺序固定；编译一次，逐像元只求值，
+    // 于是非法表达式在读取像元之前显式失败（旧的逐像元 evalExpression 会静默交回 0.0）。
+    std::vector<std::string> variableNames;
+    variableNames.reserve(static_cast<size_t>(bands));
+    for (int b = 1; b <= bands; ++b) {
+        variableNames.push_back("B" + std::to_string(b));
+    }
+
+    std::vector<gis::core::ExpressionNode> program;
+    std::string compileError;
+    if (!gis::core::compileExpression(expression, variableNames, program, compileError)) {
+        return gis::framework::Result::fail("Expression error in \"" + expression + "\": " + compileError);
+    }
+
     progress.onMessage("Reading " + std::to_string(bands) + " bands...");
     std::vector<cv::Mat> bandMats;
     bandMats.reserve(static_cast<size_t>(bands));
@@ -87,13 +102,18 @@ gis::framework::Result RasterMathPlugin::doBandMath(
 
     progress.onMessage("Evaluating expression: " + expression);
     cv::Mat result(height, width, CV_32F);
+    long long divideByZero = 0;
+    std::vector<double> values(static_cast<size_t>(bands), 0.0);
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            std::map<std::string, double> bandValues;
             for (int b = 0; b < bands; ++b) {
-                bandValues["B" + std::to_string(b + 1)] = bandMats[static_cast<size_t>(b)].at<float>(y, x);
+                values[static_cast<size_t>(b)] = bandMats[static_cast<size_t>(b)].at<float>(y, x);
             }
-            result.at<float>(y, x) = static_cast<float>(gis::core::evalExpression(expression, bandValues));
+            bool failed = false;
+            const double value = gis::core::evaluateExpression(program, values, failed);
+            // 除零像元保持写 0.0（R-T5-2：本任务不引入 NoData 产出形态），但必须计数可见。
+            if (failed) ++divideByZero;
+            result.at<float>(y, x) = static_cast<float>(value);
         }
         if ((y % 100) == 0) {
             progress.throwIfCancelled();
@@ -114,7 +134,10 @@ gis::framework::Result RasterMathPlugin::doBandMath(
 
     progress.throwIfCancelled();
     progress.onProgress(1.0);
-    return gis::framework::Result::ok("Processing completed successfully", output);
+    // 变量名沿用本仓库既有约定（classification_plugin.cpp:1729）：cv::Mat 已占用 result。
+    auto execResult = gis::framework::Result::ok("Processing completed successfully", output);
+    execResult.metadata["divide_by_zero_pixels"] = std::to_string(divideByZero);
+    return execResult;
 }
 
 struct ReclassRule {

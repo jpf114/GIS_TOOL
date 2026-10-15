@@ -17,6 +17,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include "raster_fixture.h"
 #include "test_support.h"
 
 namespace fs = std::filesystem;
@@ -1917,6 +1918,78 @@ TEST_F(PluginTest, SpindexCustomIndexNewPresetExecution) {
     EXPECT_EQ(result.metadata.at("preset"), "ndmi_alias");
     EXPECT_EQ(result.metadata.at("expression"), "(NIR-SWIR1)/(NIR+SWIR1)");
     EXPECT_NEAR(readRasterPixel(output, 5, 5), -20.0f / 160.0f, 1e-4f);
+}
+
+// Task 5：custom_index 接入表达式引擎后，除零必须被计数而不是静默写 0。
+// 4 波段常量 B3(RED)=0.5、B4(NIR)=-0.5 ⇒ 分母 NIR+RED 恒为 0，16 个像元全部触发。
+TEST_F(PluginTest, CustomIndexReportsDivideByZeroInsteadOfSilentZero) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+    const std::string input = createMultiBandConstantRaster(
+        "spi_divzero_input.tif", 4, 4, {10.0f, 20.0f, 0.5f, -0.5f});
+    const std::string output = utf8PathString(getTestDir() / "spi_divzero_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("custom_index");
+    params["input"] = input;
+    params["output"] = output;
+    params["expression"] = std::string("(NIR-RED)/(NIR+RED)");
+    params["red_band"] = 3;
+    params["nir_band"] = 4;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto it = result.metadata.find("divide_by_zero_pixels");
+    ASSERT_NE(it, result.metadata.end());
+    EXPECT_EQ(it->second, "16");                       // 4x4 全部触发除零，必须被计数而非静默
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), 0.0f, 1e-6f);
+}
+
+// 接上新引擎后 custom_index 也必须显式失败。SWIR2 特意留在表外（R-T5-3）：
+// 给 custom_index 补 SWIR2 会扩大可接受表达式集合、改变成败边界，是 spec 未授权的新行为，
+// 所以这条用例同时是把"别名表不含 SWIR2"钉住的回归钉——将来谁补上 SWIR2，它当场变红。
+TEST_F(PluginTest, CustomIndexWithUnknownVariableFailsExplicitly) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+    const std::string input = createMultiBandConstantRaster(
+        "spi_unknown_input.tif", 2, 2, {10.0f, 20.0f, 30.0f, 70.0f, 90.0f});
+    const std::string output = utf8PathString(getTestDir() / "spi_unknown_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("custom_index");
+    params["input"] = input;
+    params["output"] = output;
+    params["expression"] = std::string("SWIR2*2");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("SWIR2"), std::string::npos) << result.message;
+}
+
+// R-T5-4 的钳制保留断言：表达式不含 BLUE/GREEN/SWIR1 时，resolveOptionalAliasBand 用
+// std::min(defaultValue, bandCount) 兜底（blue→1、green→2、swir1→5 在 4 波段上被钳到 4）。
+// 丢掉这套钳制的话 swir1_band=5 会走进 getBandIndex 的越界抛出，本用例当场变红。
+TEST_F(PluginTest, CustomIndexClampsUnusedAliasBands) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+    const std::string input = createMultiBandConstantRaster(
+        "spi_alias_clamp_input.tif", 4, 4, {10.0f, 20.0f, 30.0f, 70.0f});
+    const std::string output = utf8PathString(getTestDir() / "spi_alias_clamp_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("custom_index");
+    params["input"] = input;
+    params["output"] = output;
+    params["expression"] = std::string("(NIR-RED)/(NIR+RED)");
+    params["red_band"] = 3;
+    params["nir_band"] = 4;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("blue_band"), "1");
+    EXPECT_EQ(result.metadata.at("green_band"), "2");
+    EXPECT_EQ(result.metadata.at("swir1_band"), "4");   // 默认 5 被钳到 4 波段
+    EXPECT_NEAR(readRasterPixel(output, 2, 2), 40.0f / 100.0f, 1e-4f);
 }
 
 TEST_F(PluginTest, ProjectionInfoExecution) {
@@ -5540,6 +5613,174 @@ TEST_F(PluginTest, RasterMathBandMathExecution) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Band math failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
+}
+
+// ============================================================================
+// Task 5：band_math 接入表达式引擎（消除旧 evalExpression 的静默 0）
+//
+// 覆盖 spec H1 的两条口径：负操作数算得对且符号正确、未知变量显式失败；
+// 外加本任务的除零计数口径（R-T5-2：保持写 0.0，但必须计数进 metadata，不新增 NoData 语义）。
+// 夹具按 R-T5-1 用 writeConstantBandsRaster（writeFloatRaster 只建 1 个波段，表达不出 B2）。
+// ============================================================================
+
+// R-T5-1：同一幅两波段常量栅格上跑两个互为镜像的表达式，
+// 分别钉住"负操作数参与运算得正值"与"得负值"两个方向——旧求值器两种都静默交回 0.0。
+TEST_F(PluginTest, BandMathNegativeBandsComputeWithCorrectSign) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    // band1(B1) ≡ -0.25、band2(B2) ≡ 0.75，2 列 1 行。
+    const std::string input = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "rm_neg_input.tif", 2, 1, {-0.25f, 0.75f}, options);
+    ASSERT_FALSE(input.empty());
+
+    // (B2-B1)/(B2+B1) = (0.75-(-0.25))/(0.75+(-0.25)) = 1.0/0.5 = 2.0
+    {
+        const std::string output = utf8PathString(getTestDir() / "rm_neg_output.tif");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("band_math");
+        params["input"] = input;
+        params["output"] = output;
+        params["expression"] = std::string("(B2-B1)/(B2+B1)");
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), 2.0f, 1e-5f);
+        EXPECT_NEAR(gis::tests::readPixel(output, 1, 1, 0), 2.0f, 1e-5f);
+    }
+
+    // 镜像式 (B1-B2)/(B1+B2) = -1.0/0.5 = -2.0：符号必须翻过来，
+    // 只有正方向那条断言无法区分"负号被丢掉"和"负号算对"。
+    {
+        const std::string output = utf8PathString(getTestDir() / "rm_neg_mirror_output.tif");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("band_math");
+        params["input"] = input;
+        params["output"] = output;
+        params["expression"] = std::string("(B1-B2)/(B1+B2)");
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), -2.0f, 1e-5f);
+        EXPECT_NEAR(gis::tests::readPixel(output, 1, 1, 0), -2.0f, 1e-5f);
+    }
+}
+
+TEST_F(PluginTest, BandMathWithUnknownVariableFailsExplicitly) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+    const std::string input = createTestRaster("rm_unknown_input.tif", 2, 2, 2);
+    const std::string output = utf8PathString(getTestDir() / "rm_unknown_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("band_math");
+    params["input"] = input;
+    params["output"] = output;
+    params["expression"] = std::string("B9*2");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("B9"), std::string::npos) << result.message;
+}
+
+// 计数必须"等于失败的像元数"，而不是碰巧等于总像元数：
+// 这里 8x4 = 32 个像元里只有 x=2 那一列（B2 沿 x 每步 0.5，故 B2≡1.0）使分母 B2-1 为 0，
+// 所以期望值是 4 而不是 32；同一条用例还顺手钉住负值结果（x=0 得 -1、x=1 得 -2）。
+TEST_F(PluginTest, BandMathDivideByZeroCountEqualsFailingPixelsOnly) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    // band1 = 1.0 + 0.0*x（恒 1）；band2 = 0.0 + 0.5*x（x=0..7 → 0,0.5,1.0,...,3.5，逐列精确可表示）。
+    const std::string input = createMultiBandGradientRaster(
+        "rm_partial_divzero_input.tif", 8, 4, {{1.0f, 0.0f}, {0.0f, 0.5f}});
+    const std::string output = utf8PathString(getTestDir() / "rm_partial_divzero_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("band_math");
+    params["input"] = input;
+    params["output"] = output;
+    params["expression"] = std::string("B1/(B2-1)");
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto it = result.metadata.find("divide_by_zero_pixels");
+    ASSERT_NE(it, result.metadata.end());
+    EXPECT_EQ(it->second, "4");                     // 32 个像元里只有 4 个除零
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 2, 0), 0.0f, 1e-6f);   // 除零像元仍写 0.0（R-T5-2）
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 3, 0), 2.0f, 1e-5f);   // 1/(1.5-1)
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 1, 0), -2.0f, 1e-5f);  // 1/(0.5-1)
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), -1.0f, 1e-5f);  // 1/(0-1)
+}
+
+// 追加义务 2：把 kNearZeroDivisorEpsilon=1e-15 的边界两侧都通过插件调用钉住。
+// 取 1e-15 的 ±1e-6 相对偏移（约 ±9 个 float32 ulp），既"紧贴阈值"又远离浮点量化：
+// Float32 在 1e-15 附近的 ulp≈1.06e-22，而这里与阈值的差是 1e-21，量化误差不可能把两侧翻过来。
+// 前提仍是**绝对**判据 ⇒ 波段量级 ≳1e-14；改成相对判据是输出语义变更，需先写进 spec。
+TEST_F(PluginTest, BandMathDivisorThresholdBoundaryIsPinned) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    // 刚刚高于阈值：分母 1.000001e-15 → 正常求值得 ~1e15，除零计数为 0。
+    const std::string aboveInput = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "rm_eps_above_input.tif", 2, 1, {1.0f, 1.000001e-15f});
+    ASSERT_FALSE(aboveInput.empty());
+    const std::string aboveOutput = utf8PathString(getTestDir() / "rm_eps_above_output.tif");
+    {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("band_math");
+        params["input"] = aboveInput;
+        params["output"] = aboveOutput;
+        params["expression"] = std::string("B1/B2");
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_EQ(result.metadata.at("divide_by_zero_pixels"), "0");
+        // 旧实现在这里连值都算不出来：std::to_string 只有 6 位小数，1e-15 被替换成 "0.000000"。
+        EXPECT_NEAR(gis::tests::readPixel(aboveOutput, 1, 0, 0), 1.0f / 1.000001e-15f, 1e9f);
+        EXPECT_NEAR(gis::tests::readPixel(aboveOutput, 1, 1, 0), 1.0f / 1.000001e-15f, 1e9f);
+    }
+
+    // 刚刚低于阈值：分母 0.999999e-15 → evaluationFailed，写 0.0 且两个像元都被计数。
+    const std::string belowInput = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "rm_eps_below_input.tif", 2, 1, {1.0f, 0.999999e-15f});
+    ASSERT_FALSE(belowInput.empty());
+    const std::string belowOutput = utf8PathString(getTestDir() / "rm_eps_below_output.tif");
+    {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("band_math");
+        params["input"] = belowInput;
+        params["output"] = belowOutput;
+        params["expression"] = std::string("B1/B2");
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_EQ(result.metadata.at("divide_by_zero_pixels"), "2");
+        EXPECT_NEAR(gis::tests::readPixel(belowOutput, 1, 0, 0), 0.0f, 1e-6f);
+    }
+}
+
+// 追加义务 4 的插件侧证据：这四种形态旧求值器静默接受（返回相邻操作数或 0.0），
+// 接上新引擎后都是编译期硬错误 ⇒ 插件必须返回 Result::fail。
+TEST_F(PluginTest, BandMathRejectsShapesOldEvaluatorSilentlyAccepted) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+    const std::string input = createTestRaster("rm_legacy_shapes_input.tif", 2, 2, 2);
+
+    const char* shapes[] = {"B1(B2+1)", "(B1)(B2)", "()", "(B1+)"};
+    for (const char* shape : shapes) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("band_math");
+        params["input"] = input;
+        params["output"] = utf8PathString(getTestDir() / "rm_legacy_shapes_output.tif");
+        params["expression"] = std::string(shape);
+
+        const auto result = p->execute(params, progress_);
+        EXPECT_FALSE(result.success) << shape;
+        EXPECT_FALSE(result.message.empty()) << shape;
+    }
 }
 
 TEST_F(PluginTest, CuttingClipRejectsMissingExtentAndCutline) {

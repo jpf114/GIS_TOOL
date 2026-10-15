@@ -1,6 +1,7 @@
 #include "spindex_plugin.h"
 
 #include <gis/core/error.h>
+#include <gis/core/expression_engine.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
 #include <gis/core/plugin_utils.h>
@@ -10,6 +11,8 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <map>
@@ -85,29 +88,42 @@ int resolveOptionalAliasBand(const std::map<std::string, gis::framework::ParamVa
     return std::min(defaultValue, bandCount);
 }
 
-std::map<std::string, double> buildCustomExpressionValues(
-    const std::vector<cv::Mat>& bandMats,
-    int x,
-    int y,
-    int blueBand,
-    int greenBand,
-    int redBand,
-    int nirBand,
-    int swir1Band) {
-    std::map<std::string, double> values;
-    for (size_t band = 0; band < bandMats.size(); ++band) {
-        values["B" + std::to_string(band + 1)] = bandMats[band].at<float>(y, x);
-    }
+// custom_index 的波段别名表：变量名与逐像元填值都由这同一张表驱动，
+// 编译期与求值期不可能各改一半（加一个别名就自动多一个变量与一个槽位）。
+// 按 R-T5-3 严格保持现状，不补 SWIR2：那会扩大可接受表达式集合、改变成功/失败边界，
+// 属新行为，需另行立项（swir2_band 只在 nbr/awei/ndbi 三个预设动作里用）。
+constexpr std::array<const char*, 5> kCustomIndexAliasNames{{"BLUE", "GREEN", "RED", "NIR", "SWIR1"}};
 
-    auto bindAlias = [&](const char* alias, int bandIndex) {
-        values[alias] = bandMats[static_cast<size_t>(bandIndex - 1)].at<float>(y, x);
-    };
-    bindAlias("BLUE", blueBand);
-    bindAlias("GREEN", greenBand);
-    bindAlias("RED", redBand);
-    bindAlias("NIR", nirBand);
-    bindAlias("SWIR1", swir1Band);
-    return values;
+// 变量表 = B1..B{bandCount} + 上面那 5 个别名；顺序即 evaluateExpression 的 values 顺序。
+std::vector<std::string> buildCustomIndexVariableNames(int bandCount) {
+    std::vector<std::string> names;
+    names.reserve(static_cast<size_t>(bandCount) + kCustomIndexAliasNames.size());
+    for (int b = 1; b <= bandCount; ++b) {
+        names.push_back("B" + std::to_string(b));
+    }
+    for (const char* alias : kCustomIndexAliasNames) {
+        names.push_back(alias);
+    }
+    return names;
+}
+
+// 逐像元填值：前 bandCount 个槽位是波段本身，后 5 个槽位是别名指向的波段。
+// 别名带进来的波段号已由 resolveOptionalAliasBand/getBandIndex 校验并钳制到 1..bandCount，
+// 因此这里的 -1 下标必然落在 bandMats 内（R-T5-4：这套钳制是本次改写最容易丢掉的行为，
+// 实测丢掉 std::min 后 4 波段输入会直接 vector 下标越界中止，不是返回错误）。
+void fillCustomIndexValues(std::vector<double>& values,
+                           const std::vector<cv::Mat>& bandMats,
+                           int x,
+                           int y,
+                           const std::array<int, 5>& aliasBands) {
+    const size_t bandCount = bandMats.size();
+    for (size_t band = 0; band < bandCount; ++band) {
+        values[band] = bandMats[band].at<float>(y, x);
+    }
+    for (size_t slot = 0; slot < aliasBands.size(); ++slot) {
+        values[bandCount + slot] =
+            bandMats[static_cast<size_t>(aliasBands[slot] - 1)].at<float>(y, x);
+    }
 }
 
 gis::framework::Result doCustomIndex(const std::string& input,
@@ -132,6 +148,16 @@ gis::framework::Result doCustomIndex(const std::string& input,
     const int height = ds->GetRasterYSize();
     const int bandCount = ds->GetRasterCount();
 
+    // 编译一次：未知变量（例如自定义表里没有的 SWIR2）、语法错误、超出输入卫生界限，
+    // 都在读取像元之前显式失败，不再像旧求值器那样逐像元静默交回 0.0。
+    const std::vector<std::string> variableNames = buildCustomIndexVariableNames(bandCount);
+    std::vector<gis::core::ExpressionNode> program;
+    std::string compileError;
+    if (!gis::core::compileExpression(resolvedExpression, variableNames, program, compileError)) {
+        return gis::framework::Result::fail(
+            "Expression error in \"" + resolvedExpression + "\": " + compileError);
+    }
+
     progress.onMessage("Reading " + std::to_string(bandCount) + " bands...");
     std::vector<cv::Mat> bandMats;
     bandMats.reserve(bandCount);
@@ -143,12 +169,18 @@ gis::framework::Result doCustomIndex(const std::string& input,
 
     progress.onMessage("Evaluating expression: " + resolvedExpression);
     cv::Mat indexMat(height, width, CV_32F);
+    long long divideByZero = 0;
+    std::vector<double> values(variableNames.size(), 0.0);
+    // 别名指向的波段号在整个循环里是常量，逐像元只是取不同像元的值。
+    const std::array<int, 5> aliasBands{blueBand, greenBand, redBand, nirBand, swir1Band};
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            const auto bandValues = buildCustomExpressionValues(
-                bandMats, x, y, blueBand, greenBand, redBand, nirBand, swir1Band);
-            indexMat.at<float>(y, x) =
-                static_cast<float>(gis::core::evalExpression(resolvedExpression, bandValues));
+            fillCustomIndexValues(values, bandMats, x, y, aliasBands);
+            bool failed = false;
+            const double value = gis::core::evaluateExpression(program, values, failed);
+            // 除零像元仍写 0.0，但要计数进 metadata 把它暴露出来。
+            if (failed) ++divideByZero;
+            indexMat.at<float>(y, x) = static_cast<float>(value);
         }
         if ((y % 100) == 0) {
             progress.throwIfCancelled();
@@ -178,6 +210,8 @@ gis::framework::Result doCustomIndex(const std::string& input,
     result.metadata["red_band"] = std::to_string(redBand);
     result.metadata["nir_band"] = std::to_string(nirBand);
     result.metadata["swir1_band"] = std::to_string(swir1Band);
+    // 除零不再静默：值仍写 0.0，但像元数必须出现在结果里（GUI/CLI 都能直接看到）。
+    result.metadata["divide_by_zero_pixels"] = std::to_string(divideByZero);
     return result;
 }
 

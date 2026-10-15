@@ -698,3 +698,70 @@ TEST(ExpressionEngine, DivideByZeroStopsEvaluationImmediately) {
     EXPECT_DOUBLE_EQ(gis::core::evaluateExpression(program, {1.0, 2.0, 0.0}, failed), 0.0);
     EXPECT_TRUE(failed);
 }
+
+// ============================================================================
+// Task 5 追加义务 1：编译输入的卫生界限（表达式是 GUI/CLI 用户可直接控制的字符串）
+//
+// 旧求值器有 kMaxExpressionLength=1024 / kMaxExpressionDepth=64，Task 5 删掉它的同一次提交
+// 必须补上界限，否则是一次静默的输入校验倒退。
+// 这里刻意**没有**重新引入嵌套深度上限：新引擎的解析与求值都用堆上的 std::vector/std::stack，
+// 不存在递归爆栈（Task 4 实测 20000 层嵌套不崩），所以这两条界限是"输入卫生 + 逐像元成本可预期"，
+// 不是内存安全。产物规模上限定在 512 = 输入预算 1024 的一半，理由是"编译产物不可能比输入更密"：
+// 一个节点至少要消耗一个输入字符，而括号与空格消耗的字符不产生节点，
+// 所以产物规模上必须严格低于 1024 字符输入所能产出的最大节点数（1023），否则这条分支不可达、不可测。
+// ============================================================================
+
+TEST(ExpressionEngine, RejectsInputLengthAboveBound) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+
+    // 用空格补足长度：空格被分词器跳过、不产生节点，所以本用例只咬住"输入长度"这一条界限，
+    // 产物恒为 2 个数字 + 1 个加法 = 3 节点，远低于 512 的产物上限，两条界限不会互相掩盖。
+    const std::string atLimit = std::string(1024 - 5, ' ') + "B1+B2";   // 恰好 1024 字符
+    const std::string overLimit = std::string(1025 - 5, ' ') + "B1+B2"; // 上限 + 1
+    ASSERT_EQ(atLimit.size(), 1024u);
+    ASSERT_EQ(overLimit.size(), 1025u);
+
+    EXPECT_TRUE(gis::core::compileExpression(atLimit, {"B1", "B2"}, program, error)) << error;
+    EXPECT_EQ(program.size(), 3u);
+
+    program.clear();
+    error.clear();
+    EXPECT_FALSE(gis::core::compileExpression(overLimit, {"B1", "B2"}, program, error));
+    EXPECT_TRUE(program.empty());
+    // 错误必须可读且把"实际长度"与"上限"都给出来（旧实现是静默返回 0.0）。
+    EXPECT_FALSE(error.empty());
+    EXPECT_NE(error.find("1025"), std::string::npos) << error;
+    EXPECT_NE(error.find("1024"), std::string::npos) << error;
+}
+
+TEST(ExpressionEngine, RejectsCompiledProgramAboveBound) {
+    std::vector<gis::core::ExpressionNode> program;
+    std::string error;
+
+    // n 个 "1" 由 n-1 个加号相连：2n-1 个字符、2n-1 个节点（每个数字与每个运算符各一个节点）。
+    auto ones = [](int count) {
+        std::string text;
+        for (int i = 0; i < count; ++i) {
+            if (i != 0) text += '+';
+            text += '1';
+        }
+        return text;
+    };
+
+    // 恰好 512 个节点 = 256 个数字 + 255 个加号 + 1 个一元负号（括号不产生节点），
+    // 长度 514 字符 < 1024，因此拒不拒只由产物规模这条界限决定。
+    const std::string atLimit = "-(" + ones(256) + ")";
+    EXPECT_TRUE(gis::core::compileExpression(atLimit, {"B1", "B2"}, program, error)) << error;
+    ASSERT_EQ(program.size(), 512u);
+
+    // 上限 + 1 个节点 = 257 个数字 + 256 个加号，长度 513 字符，同样不触碰输入长度界限。
+    program.clear();
+    error.clear();
+    const std::string overLimit = ones(257);
+    EXPECT_FALSE(gis::core::compileExpression(overLimit, {"B1", "B2"}, program, error));
+    EXPECT_TRUE(program.empty());
+    EXPECT_FALSE(error.empty());
+    EXPECT_NE(error.find("513"), std::string::npos) << error;
+    EXPECT_NE(error.find("512"), std::string::npos) << error;
+}
