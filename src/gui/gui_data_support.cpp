@@ -461,6 +461,12 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "band", "nodata_value"},
                 {"input"}
             }},
+            {"proximity", {
+                QStringLiteral("欧氏距离邻近分析"),
+                QStringLiteral("计算每个像元到最近目标像元（非 0 且非 NoData）的距离。"),
+                {"input", "output", "max_distance"},
+                {"input", "output"}
+            }},
         }},
     };
     return kConfigs;

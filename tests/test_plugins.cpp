@@ -15,10 +15,14 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 #include "raster_fixture.h"
 #include "test_support.h"
+// R-T7-9 的用例要核对展示层的 per-action 白名单；gis_tests 把 gui_data_support.cpp 编进同一个
+// 可执行文件，gui 头文件不在 include 路径中，故沿用 test_coverage_meta.cpp:5 的相对路径写法。
+#include "../src/gui/gui_data_support.h"
 
 namespace fs = std::filesystem;
 
@@ -6918,6 +6922,130 @@ TEST_F(PluginTest, ProximityOutputKeepsEveryInputBand) {
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 0, 0), 65536.0f, 1e-2f);
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 3, 3), 65536.0f, 1e-2f);
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 1, 2), 65536.0f, 1e-2f);
+}
+
+// Task 7（R-T7-6 的鉴别力补强）：三个波段的目标各在自己波段的**不同列**上。
+// 若实现把掩膜算到循环外、或各波段共用 band1 的数据（Task 6 修过的跨波段污染同型问题），
+// band2 在 (0,2) 会读到 0（被当成目标）而不是 4，band1 在 (4,2) 会读到 0 而不是 4。
+TEST_F(PluginTest, ProximityUsesEachBandOwnTargetsNotTheFirstBand) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const int w = 5, h = 5;
+    const size_t n = static_cast<size_t>(w * h);
+    std::vector<float> band1(n, 0.0f);
+    std::vector<float> band2(n, 0.0f);
+    band1[2 * w + 0] = 1.0f;   // band1 目标：x=0, y=2
+    band2[2 * w + 4] = 1.0f;   // band2 目标：x=4, y=2
+
+    gis::tests::RasterFixtureOptions options;
+    options.pixelSize = 1.0;
+    const std::string input = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "prox_perband_input.tif", w, h, {band1, band2}, options);
+    ASSERT_FALSE(input.empty());
+
+    const std::string output = utf8PathString(getTestDir() / "prox_perband_output.tif");
+    std::error_code ec;
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_EQ(gis::tests::readBandCount(output), 2);
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 2), 0.0f, 1e-6f);   // band1 目标自身
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 4, 2), 4.0f, 1e-6f);   // 到 band1 自己的目标
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 4, 2), 0.0f, 1e-6f);   // band2 目标自身
+    EXPECT_NEAR(gis::tests::readPixel(output, 2, 0, 2), 4.0f, 1e-6f);   // 到 band2 自己的目标
+}
+
+// Task 7（R-T7-5）：NoData 赋值必须排在 max_distance 的 THRESH_TRUNC **之后**。
+// NoData 故意取**正值** 9999 —— 先写 NoData 再截断时，9999 > max_distance 会被改写成
+// max_distance，等于悄悄毁掉 NoData 标记（正的 NoData 值在 9999、3.4e38 这类产品里常见）。
+TEST_F(PluginTest, ProximityMaxDistanceTruncationDoesNotClobberPositiveNoData) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const int w = 9, h = 1;
+    std::vector<float> data(static_cast<size_t>(w * h), 0.0f);
+    data[0] = 7.0f;      // 目标像元，位于 x=0
+    data[8] = 9999.0f;   // NoData 像元，位于 x=8（到目标本征距离 8）
+
+    gis::tests::RasterFixtureOptions options;
+    options.hasNoData = true;
+    options.noData = 9999.0;      // 正的 NoData：专门用来暴露"先写 NoData 再截断"的毁标记
+    options.pixelSize = 1.0;
+    const std::string input = gis::tests::writeFloatRaster(
+        getTestDir(), "prox_maxdist_input.tif", w, h, data, options);
+    ASSERT_FALSE(input.empty());
+
+    const std::string output = utf8PathString(getTestDir() / "prox_maxdist_output.tif");
+    std::error_code ec;
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = input;
+    params["output"] = output;
+    params["max_distance"] = 3.0;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), 0.0f, 1e-6f);   // 目标自身
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 2, 0), 2.0f, 1e-6f);   // 未超限：真实距离
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 5, 0), 3.0f, 1e-6f);   // 超限：截断为 max_distance
+    // NoData 像元不得被截断改写成 3：它必须还是 9999。
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 8, 0), 9999.0f, 1e-6f);
+}
+
+// R-T7-9：`doProximity` 只读 input/output/max_distance（实测：band/nodata_value 只在
+// :207/:208 的 nodata 动作里读，levels 在 :81，vector/feature_id_field 在 :258/:260），
+// 但 gui_data_support.cpp 的 raster_manage 配置里没有 proximity 条目 ⇒ mainwindow.cpp:523-527
+// 把空集当"不设白名单"传下去，面板会渲染插件级全部 9 个参数，其中六个对本动作无用。
+// 这正是批次 A 要消灭的"面板上有用了没用的参数"形态。
+TEST_F(PluginTest, ProximityGuiPanelHidesParametersTheActionNeverReads) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const auto* config = gis::gui::findActionUiConfig("raster_manage", "proximity");
+    ASSERT_NE(config, nullptr)
+        << "proximity 没有 ActionUiConfig 条目：展示层没有白名单可用，面板会渲染全部插件参数";
+    EXPECT_EQ(config->visibleKeys,
+              (std::set<std::string>{"input", "output", "max_distance"}));
+    EXPECT_EQ(config->requiredKeys, (std::set<std::string>{"input", "output"}));
+    // R-T10-1：buildEffectiveGuiParamSpecs 无条件 continue 掉 "action"，白名单里写它既不生效
+    // 又与既有约定分叉，所以这里把它当成"不得出现"来锁。
+    EXPECT_EQ(config->visibleKeys.count("action"), 0u);
+
+    const auto effective = gis::gui::buildEffectiveGuiParamSpecs(
+        "raster_manage", "proximity", p->paramSpecs(), config->visibleKeys, config->requiredKeys);
+    std::set<std::string> effectiveKeys;
+    for (const auto& spec : effective) {
+        effectiveKeys.insert(spec.key);
+    }
+    EXPECT_EQ(effectiveKeys, (std::set<std::string>{"input", "output", "max_distance"}));
+    for (const char* deadKey : {"band", "levels", "resample", "nodata_value", "vector",
+                                "feature_id_field"}) {
+        EXPECT_EQ(effectiveKeys.count(deadKey), 0u) << deadKey << " 从未被 doProximity 读取";
+    }
+
+    // requiredKeys 是加严方向：input 在插件级本就必填，output 是 false 但 doProximity 对空
+    // output 直接 fail，所以标成必填不会让 GUI 提交出 CLI 会拒的表单。
+    for (const auto& spec : effective) {
+        if (spec.key == "input" || spec.key == "output") {
+            EXPECT_TRUE(spec.required) << spec.key;
+        } else {
+            EXPECT_FALSE(spec.required) << spec.key;
+        }
+    }
+
+    EXPECT_NE(gis::gui::actionDisplayName("raster_manage", "proximity"), QStringLiteral("proximity"));
+    EXPECT_FALSE(gis::gui::actionDescription("raster_manage", "proximity").isEmpty());
 }
 
 TEST_F(PluginTest, MatchingStitchExecution) {
