@@ -6828,14 +6828,14 @@ TEST_F(PluginTest, RasterManageProximityExecution) {
     EXPECT_EQ(outDs->GetRasterYSize(), 50);
 }
 
-// Task 7：Produces 口径是"每个像元到最近**目标**像元（值非 0 且非 NoData）的距离"，
-// 现实现喂给 distanceTransform 的是"目标=255/背景=0"，而 OpenCV 度量的是非零像元到最近零像元
-// 的距离，于是输出的是"到最近背景的距离"，方向正好相反。
+// Task 7：Produces 口径是"每个像元到最近**目标**像元（值非 0 且非 NoData）的距离"。
+// 修前的实现把"目标=255/背景=0"直接喂给 distanceTransform，而 OpenCV 度量的是非零像元
+// 到最近零像元的距离，于是输出的是"到最近背景的距离"，方向正好相反。
 //
-// 目标像元的值故意取**负数**（R-T7-3）：现实现用 convertTo(CV_8UC1, 255.0) 做饱和转换，
-// 负的波段值会被压成 0，再经 THRESH_BINARY 后负值目标像元当成背景直接抹掉（负 DN、负反射率、
+// 目标像元的值故意取**负数**（R-T7-3）：修前的实现用 convertTo(CV_8UC1, 255.0) 做饱和转换，
+// 负的波段值被压成 0，再经 THRESH_BINARY 后负值目标像元当成背景直接抹掉（负 DN、负反射率、
 // 地形凹槽都是常见输入）。所以这一条用例同时锁住"方向搞反"和"负值目标被静默丢弃"两个同源症状：
-// 只修方向、仍保留 convertTo 的错误实现下，本用例照样红。
+// 只修方向、仍保留 convertTo 的错误实现下，本用例照样红（实测见 task-7-report.md §5.1）。
 //
 // options.pixelSize = 1.0（R-T7-1）：实现保留 `dist *= |gt[1]|` 的单位换算（经纬度口径归 Plan 2），
 // 夹具默认 pixelSize=0.001 会让真值变成 3×0.001，与断言的像元单位距离对不上。
@@ -6880,7 +6880,7 @@ TEST_F(PluginTest, ProximityDistanceIsMeasuredToTargetNotBackground) {
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 0, 0), static_cast<float>(noData), 1e-6f);
 }
 
-// Task 7（R-T7-6）：`:524` 的 matToGdalTiff(..., b) 在波段循环内，每个波段都重新创建整个文件，
+// Task 7（R-T7-6）：修前的 `matToGdalTiff(..., b)` 在波段循环内，每个波段都重新创建整个文件，
 // 前一个波段被覆盖掉 ⇒ 三波段输入最终只剩 1 个波段（与 Task 6 同型缺陷）。
 // band1 全目标、band2 全背景、band3 全负值目标：波段数与"每个波段各自算自己的"一起被钉住。
 TEST_F(PluginTest, ProximityOutputKeepsEveryInputBand) {
@@ -6924,9 +6924,10 @@ TEST_F(PluginTest, ProximityOutputKeepsEveryInputBand) {
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 1, 2), 65536.0f, 1e-2f);
 }
 
-// Task 7（R-T7-6 的鉴别力补强）：三个波段的目标各在自己波段的**不同列**上。
-// 若实现把掩膜算到循环外、或各波段共用 band1 的数据（Task 6 修过的跨波段污染同型问题），
-// band2 在 (0,2) 会读到 0（被当成目标）而不是 4，band1 在 (4,2) 会读到 0 而不是 4。
+// Task 7（R-T7-6 的鉴别力补强）：两个波段的目标各在自己波段的**不同列**上（band1 在 x=0，
+// band2 在 x=4）。若实现把掩膜算到循环外、或各波段共用 band1 的数据（Task 6 修过的跨波段
+// 污染同型问题），band2 会在 (0,2) 读到 0（被当成目标）而不是 4、在 (4,2) 读到 4 而不是 0；
+// 变异实测见 task-7-report.md §5.2。
 TEST_F(PluginTest, ProximityUsesEachBandOwnTargetsNotTheFirstBand) {
     auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);
@@ -7003,11 +7004,11 @@ TEST_F(PluginTest, ProximityMaxDistanceTruncationDoesNotClobberPositiveNoData) {
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 8, 0), 9999.0f, 1e-6f);
 }
 
-// R-T7-9：`doProximity` 只读 input/output/max_distance（实测：band/nodata_value 只在
-// :207/:208 的 nodata 动作里读，levels 在 :81，vector/feature_id_field 在 :258/:260），
-// 但 gui_data_support.cpp 的 raster_manage 配置里没有 proximity 条目 ⇒ mainwindow.cpp:523-527
-// 把空集当"不设白名单"传下去，面板会渲染插件级全部 9 个参数，其中六个对本动作无用。
-// 这正是批次 A 要消灭的"面板上有用了没用的参数"形态。
+// R-T7-9：`doProximity` 只读 input/output/max_distance（取证：band/nodata_value 只在
+// raster_manage_plugin.cpp 的 :207/:208 nodata 动作里读，levels 在 :81，vector/feature_id_field
+// 在 :258/:260），但修前 gui_data_support.cpp 的 raster_manage 配置里没有 proximity 条目
+// ⇒ mainwindow.cpp:523-527 把空集当"不设白名单"传下去，面板会渲染插件级全部 9 个参数，
+// 其中六个对本动作无用。这正是批次 A 要消灭的"面板上有用了没用的参数"形态。
 TEST_F(PluginTest, ProximityGuiPanelHidesParametersTheActionNeverReads) {
     auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);

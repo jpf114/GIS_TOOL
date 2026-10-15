@@ -533,7 +533,7 @@ gis::framework::Result RasterManagePlugin::doProximity(
         progress.onProgress(0.1 + 0.85 * static_cast<double>(b) / bandCount);
     }
 
-    // 循环外一次写出：逐波段 matToGdalTiff(..., b) 每次都重新创建整个文件，
+    // 循环外一次写出：若逐波段调用 matToGdalTiff(..., b)，它每次都重新创建整个文件，
     // 前面的波段会被覆盖掉，最终输出只剩 1 个波段。
     gis::core::matsToGdalTiff(outputs, srcDS.get(), output);
 
