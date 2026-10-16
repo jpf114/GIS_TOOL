@@ -34,12 +34,18 @@
 #include <QMessageBox>
 #include <QStringList>
 
+#include <algorithm>
 #include <array>
 #include <map>
+#include <vector>
 
 namespace {
 
-QString enumDisplayText(const std::string& key, const std::string& value) {
+// 中文标签表本体（外层键 = 参数键，内层键 = 该参数的取值，值 = 中文文案）。
+// WHY 从 enumDisplayText 的函数内 static 提到独立函数：ParamCardWidget::enumLabelKeys 也要读它，
+// 这样"标签表的取值集合 == 插件 paramSpecs 的 enumValues"这条元断言才能做成可执行的锁
+// （R-T13-5；判据与消费者见 tests/test_coverage_meta.cpp）。表内容本身一个字节都没改。
+const std::map<std::string, std::map<std::string, QString>>& enumLabelTable() {
     static const std::map<std::string, std::map<std::string, QString>> kLabels = {
         {"method", {
             {"binary", QStringLiteral("二值化")},
@@ -118,7 +124,7 @@ QString enumDisplayText(const std::string& key, const std::string& value) {
         }},
         {"pan_method", {
             {"brovey", QStringLiteral("Brovey 融合")},
-            {"simple_mean", QStringLiteral("简单均值")},
+            {"mean_blend", QStringLiteral("PAN-MS 均值混合")},
             {"ihs", QStringLiteral("IHS 融合")}
         }},
         {"hough_type", {
@@ -157,7 +163,11 @@ QString enumDisplayText(const std::string& key, const std::string& value) {
             {"evi_alias", QStringLiteral("EVI 示例")}
         }}
     };
+    return kLabels;
+}
 
+QString enumDisplayText(const std::string& key, const std::string& value) {
+    const auto& kLabels = enumLabelTable();
     const auto keyIt = kLabels.find(key);
     if (keyIt == kLabels.end()) {
         return QString::fromUtf8(value);
@@ -268,6 +278,17 @@ void populateCustomIndexPresetCombo(QComboBox* comboBox) {
     }
 }
 
+}
+
+// 定义必须在匿名命名空间之外才能绑定到头文件的声明（WHY 见 param_card_widget.h）。
+std::vector<std::string> ParamCardWidget::enumLabelKeys(const std::string& paramKey) {
+    std::vector<std::string> keys;
+    const auto& table = enumLabelTable();
+    const auto group = table.find(paramKey);
+    if (group == table.end()) return keys;
+    for (const auto& entry : group->second) keys.push_back(entry.first);
+    std::sort(keys.begin(), keys.end());
+    return keys;
 }
 
 ParamCardWidget::ParamCardWidget(CardType type, QWidget* parent)

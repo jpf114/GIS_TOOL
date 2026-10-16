@@ -8,6 +8,7 @@
 #include <QMap>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <gis/framework/param_spec.h>
 #include "gui_data_support.h"
@@ -47,6 +48,14 @@ public:
     QMap<std::string, gis::framework::ParamValue> collectValues() const;
     bool validate() const;
     bool hasParam(const std::string& key) const;
+
+    /**
+     * 返回中文标签表（enumDisplayText 的数据源）里该枚举参数登记的取值键，按字典序排序；无标签组时返回空。
+     * WHY 是静态成员而不是自由函数：定义必须落在 param_card_widget.cpp 的匿名命名空间之外，
+     * 否则只有内部链接、匹配不上这条外部声明（LNK2019）。
+     */
+    static std::vector<std::string> enumLabelKeys(const std::string& paramKey);
+
     void setStringValue(const std::string& key, const std::string& value);
     bool setValueFromString(const std::string& key, const std::string& value);
     void setExtentValue(const std::string& key, const std::array<double, 4>& value);

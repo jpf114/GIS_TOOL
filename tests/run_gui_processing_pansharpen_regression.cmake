@@ -23,7 +23,7 @@ execute_process(
         --set-param "input=${INPUT_PATH}"
         --set-param "output=${OUTPUT_PATH}"
         --set-param "pan_file=${PAN_PATH}"
-        --set-param "pan_method=simple_mean"
+        --set-param "pan_method=mean_blend"
         --auto-execute
         --quit-on-finish
         --screenshot "${SCREENSHOT_PATH}"

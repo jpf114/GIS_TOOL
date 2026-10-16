@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <opencv2/core.hpp>
+#include <algorithm>
 #include <cmath>
 #include <cctype>
 #include <filesystem>
@@ -1751,6 +1752,71 @@ TEST_F(PluginTest, PansharpenSharedNoDataTagFollowsPanBand1) {
     ASSERT_TRUE(tagged.metadata.count("nodata_source") > 0);
     EXPECT_NE(tagged.metadata.at("nodata_source").find("declared=-555"), std::string::npos)
         << tagged.metadata.at("nodata_source");
+}
+
+// Tier 2 / spec A7 的改名部分。`simple_mean` 这个名字是骗人的：它做的是"PAN 与多光谱逐像元求平均"，
+// 既不注入全色细节也不保持各波段的相对关系，把它列在"锐化方法"里会误导用户 ⇒ 改名 `mean_blend`。
+// R-T13-3：旧值**不进枚举**（不得为了让 GUI 用例继续通过而留在枚举里），只能经由一条显式拒绝
+// 路径拿到可操作错误。WHY 单靠下面的 Unknown 分支不够：那句是
+// "Unknown pansharpen method: simple_mean"，里面没有新名，用户看完不知道该改成什么。
+TEST_F(PluginTest, PansharpenMeanBlendReplacesSimpleMean) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    // 先钉"真值"：枚举本身。GUI 标签表与文档都以它为基准
+    // （见 test_coverage_meta.cpp 的 GuiContract.PanMethodLabelTableMatchesPluginEnumValues）。
+    const auto specs = p->paramSpecs();
+    const gis::framework::ParamSpec* methodSpec = nullptr;
+    for (const auto& spec : specs) {
+        if (spec.key == "pan_method") methodSpec = &spec;
+    }
+    ASSERT_NE(methodSpec, nullptr) << "processing 的 paramSpecs 里必须仍有 pan_method";
+    const auto& values = methodSpec->enumValues;
+    EXPECT_EQ(std::find(values.begin(), values.end(), std::string("simple_mean")), values.end())
+        << "旧值不得为了迁就既有用例而留在枚举里";
+    EXPECT_EQ(values.size(), 3u) << "pan_method 的取值集合就是 {brovey, ihs, mean_blend}";
+    for (const char* expected : {"brovey", "ihs", "mean_blend"}) {
+        EXPECT_NE(std::find(values.begin(), values.end(), std::string(expected)), values.end())
+            << "枚举里缺 " << expected;
+    }
+    // 默认值仍是 brovey：改名不许动默认值，否则 GUI/CLI 的缺省提交会悄悄换算法。
+    const auto* methodDefault = std::get_if<std::string>(&methodSpec->defaultValue);
+    ASSERT_NE(methodDefault, nullptr);
+    EXPECT_EQ(*methodDefault, "brovey");
+
+    // mean_blend 的实际语义 = PAN-MS 均值混合（非锐化）。常量夹具让期望值可手算，
+    // 这条数值断言挡的是"分支名跟着改了、算式却被改错"。
+    const std::string ms = createMultiBandConstantRaster("t13_blend_ms.tif", 8, 8, {40.0f, 60.0f});
+    const std::string pan = createConstantRaster("t13_blend_pan.tif", 8, 8, 100.0f);
+    const std::string output = utf8PathString(getTestDir() / "t13_blend_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("pansharpen");
+    params["input"] = ms;
+    params["pan_file"] = pan;
+    params["output"] = output;
+    params["pan_method"] = std::string("mean_blend");
+
+    const auto blended = p->execute(params, progress_);
+    ASSERT_TRUE(blended.success) << blended.message;
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(output, 1, 3, 4), 70.0f);   // (40 + 100) / 2
+    EXPECT_FLOAT_EQ(gis::tests::readPixel(output, 2, 3, 4), 80.0f);   // (60 + 100) / 2
+    EXPECT_EQ(blended.metadata.count("pan_ms_extent_mismatch"), 0u) << blended.message;
+
+    // 旧值必须被显式拒绝，并且错误里同时点名旧值与新值。
+    params["pan_method"] = std::string("simple_mean");
+    const auto legacy = p->execute(params, progress_);
+    EXPECT_FALSE(legacy.success) << "旧枚举必须被显式拒绝并提示改名";
+    EXPECT_NE(legacy.message.find("mean_blend"), std::string::npos) << legacy.message;
+    EXPECT_NE(legacy.message.find("simple_mean"), std::string::npos)
+        << "错误里要点名被拒绝的旧值，否则用户不知道该改哪一个：" << legacy.message;
+
+    // 真正的未知值仍走 Unknown 分支（不许把拒绝写成"兜底接受"，也不许把改名文案糊到所有错误上）。
+    params["pan_method"] = std::string("esri_pansharp");
+    const auto unknown = p->execute(params, progress_);
+    EXPECT_FALSE(unknown.success) << unknown.message;
+    EXPECT_NE(unknown.message.find("Unknown pansharpen method"), std::string::npos) << unknown.message;
+    EXPECT_EQ(unknown.message.find("renamed"), std::string::npos) << unknown.message;
 }
 
 TEST_F(PluginTest, ProcessingMissingInput) {

@@ -3,6 +3,9 @@
 #include <gis/framework/plugin.h>
 #include <gis/framework/plugin_manager.h>
 #include "../src/gui/gui_data_support.h"   // 与 tests/test_framework.cpp:7 的写法一致（gui 头文件不在 include 路径中）
+// R-T13-5 的 pan_method 标签表锁要读 ParamCardWidget::enumLabelKeys（标签表本体在 param_card_widget.cpp，
+// gis_tests 把它与测试编在同一个可执行文件里，见 tests/CMakeLists.txt:19）。
+#include "../src/gui/param_card_widget.h"
 #include "test_support.h"
 #include <filesystem>
 #include <fstream>
@@ -619,4 +622,58 @@ TEST(GuiContract, EffectiveSpecsAgreeWithPluginSpecs) {
         << "面板把 dst_srs 列进 requiredKeys，projection.transform 就必须把它当必填（GUI 校验的根据）";
     EXPECT_FALSE(transformSrc->required)
         << "src_srs 既不被插件声明必填、也没被列进 requiredKeys，展示层无权凭喜好加严";
+}
+
+// R-T13-5：给 `pan_method` 建"界面不得供一个插件不接受的值"这条锁。
+// WHY 必须是元断言而不是"跑一次 GUI 用例"：这张中文标签表在建成这条锁之前是**零测试覆盖**的
+// —— 全仓只有 tests/test_plugins.cpp 以 brovey 跑过一次执行，没有任何用例碰过标签表本身。
+// 于是"改了插件枚举、忘了改 param_card_widget.cpp 的标签表"这种漏改照样全量绿：
+// 下拉的取值永远来自 spec.enumValues（param_card_widget.cpp 的 createEnumWidget 就是按 enumValues
+// 逐项 addItem），标签表只负责给它们配中文文案，缺文案只会退化成显示裸值、不会失败。
+// 只锁 pan_method 这一条：把整张标签表做成通用元断言属 Task 21 / K-14 的统一动作，
+// 现在建会与本任务及后续任务的改名互相打断。
+TEST(GuiContract, PanMethodLabelTableMatchesPluginEnumValues) {
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    // 同 GuiContract.EffectiveSpecsAgreeWithPluginSpecs：插件没加载成功时下面会退化成空检查。
+    ASSERT_GE(mgr.plugins().size(), 13u);
+
+    auto* processing = mgr.find("processing");
+    ASSERT_NE(processing, nullptr);
+    // WHY 先落到具名变量：Plugin::paramSpecs() **按值返回** std::vector<ParamSpec>，
+    // 直接在 range-for 里 &spec 会在语句结束时留下悬垂指针（实测读到空 enumValues）。
+    const auto processingSpecs = processing->paramSpecs();
+    const gis::framework::ParamSpec* methodSpec = nullptr;
+    for (const auto& spec : processingSpecs) {
+        if (spec.key == "pan_method") methodSpec = &spec;
+    }
+    ASSERT_NE(methodSpec, nullptr) << "processing 的 paramSpecs 里必须仍有 pan_method";
+    ASSERT_FALSE(methodSpec->enumValues.empty()) << "pan_method 不是枚举参数了？标签表锁失去对象";
+
+    const std::vector<std::string> labelKeys = ParamCardWidget::enumLabelKeys("pan_method");
+    ASSERT_FALSE(labelKeys.empty())
+        << "src/gui/param_card_widget.cpp 的中文标签表里没有 pan_method 这一组（整组被删？）";
+
+    const std::set<std::string> enumValues(methodSpec->enumValues.begin(), methodSpec->enumValues.end());
+    const std::set<std::string> labels(labelKeys.begin(), labelKeys.end());
+    ASSERT_FALSE(enumValues.empty());
+
+    // 方向 1（Produces 承诺的那半）：标签表不得供一个插件已不接受的取值。
+    // 判别变异 M-G2：把标签表里 mean_blend 那一行改回 simple_mean ⇒ 这里两侧同时红。
+    std::string stale;
+    for (const auto& key : labels) {
+        if (!enumValues.count(key)) stale += "\n  pan_method=" + key;
+    }
+    EXPECT_TRUE(stale.empty())
+        << "GUI 中文标签表提供了 pan_method 不接受的取值（界面上选了必然失败）:" << stale;
+
+    // 方向 2：每个 enumValues 都得有标签。缺了不会被"下拉里选不出来"暴露（取值来自 spec），
+    // 只会静默显示裸值 ⇒ 判别变异 M-G1（删掉标签表里 mean_blend 那一行）靠这条变红。
+    std::string missing;
+    for (const auto& key : enumValues) {
+        if (!labels.count(key)) missing += "\n  pan_method=" + key;
+    }
+    EXPECT_TRUE(missing.empty())
+        << "pan_method 的取值在 GUI 标签表里没有登记的中文文案:" << missing;
 }

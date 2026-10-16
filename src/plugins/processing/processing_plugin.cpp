@@ -55,7 +55,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"template_file", "模板文件", "Template image path", gis::framework::ParamType::FilePath, false, std::string{}},
         gis::framework::ParamSpec{"match_method", "匹配方法", "Template match method", gis::framework::ParamType::Enum, false, std::string{"ccoeff_normed"}, int{0}, int{0}, {"sqdiff", "sqdiff_normed", "ccorr", "ccorr_normed", "ccoeff", "ccoeff_normed"}},
         gis::framework::ParamSpec{"pan_file", "全色文件", "Panchromatic raster path", gis::framework::ParamType::FilePath, false, std::string{}},
-        gis::framework::ParamSpec{"pan_method", "融合方法", "Pansharpen method", gis::framework::ParamType::Enum, false, std::string{"brovey"}, int{0}, int{0}, {"brovey", "simple_mean", "ihs"}},
+        gis::framework::ParamSpec{"pan_method", "融合方法", "Pansharpen method", gis::framework::ParamType::Enum, false, std::string{"brovey"}, int{0}, int{0}, {"brovey", "ihs", "mean_blend"}},
         gis::framework::ParamSpec{"hough_type", "Hough类型", "Hough transform type", gis::framework::ParamType::Enum, false, std::string{"lines"}, int{0}, int{0}, {"lines", "circles"}},
         gis::framework::ParamSpec{"hough_threshold", "Hough阈值", "Hough threshold", gis::framework::ParamType::Double, false, double{50.0}, double{0.0}, double{1e6}},
         gis::framework::ParamSpec{"min_line_length", "最小线长", "Minimum line length", gis::framework::ParamType::Double, false, double{50.0}, double{0.0}, double{1e6}},
@@ -737,6 +737,15 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
     if (output.empty())  return gis::framework::Result::fail("output is required");
     if (panFile.empty()) return gis::framework::Result::fail("pan_file is required (panchromatic image)");
 
+    // R-T13-3：旧值 simple_mean 不为了迁就既有用例而留在枚举里，只能经由这条显式拒绝拿到可操作错误。
+    // WHY 不复用下面的 Unknown 分支：那句是 "Unknown pansharpen method: simple_mean"，不点名新名，
+    // 用户看完不知道该把参数改成什么；而真正的未知值也不该被糊上这句改名说明。
+    if (panMethod == "simple_mean") {
+        return gis::framework::Result::fail(
+            "pan_method=simple_mean has been renamed to mean_blend "
+            "(PAN-MS average blend, not a sharpening)");
+    }
+
     progress.throwIfCancelled();
 
     progress.onProgress(0.05);
@@ -811,7 +820,7 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
             cv::multiply(ratio, panMat, sharp);
             sharpenedBands.push_back(sharp);
         }
-    } else if (panMethod == "simple_mean") {
+    } else if (panMethod == "mean_blend") {
         for (int b = 0; b < msBands; ++b) {
             cv::Mat sharp;
             cv::add(msBandsMat[b], panMat, sharp);

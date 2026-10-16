@@ -1176,7 +1176,7 @@ $cases += New-Case -Name "processing_pansharpen" -CaseArgs @(
     ("--input=" + $data.PansharpenMs),
     ("--output=" + (Join-Path $ResolvedOutputRoot "pansharpen_output.tif")),
     ("--pan_file=" + $data.PansharpenPan),
-    "--pan_method=simple_mean"
+    "--pan_method=mean_blend"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "pansharpen_output.tif")
 )
