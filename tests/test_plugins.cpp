@@ -7732,3 +7732,68 @@ TEST_F(PluginTest, AccuracyAssessmentKeepsZeroClassWhenNoDataUndefined) {
     EXPECT_EQ(result.metadata.at("total_samples"), "4") << content;
     EXPECT_EQ(result.metadata.at("class_count"), "2") << content;
 }
+
+// Task 8（R-T8-2）：pbSuccess 修复的反向守护——把判据改成"永不跳过"照样能过上一条用例，却会毁掉
+// 真正的 NoData 处理。本用例断的是计数与矩阵结构（NoData 像元不进分母、不当成一个类别），
+// PA/UA 的归属由上一条用例负责，这里刻意不再断数值，免得两条用例红在同一维度上分不出原因。
+TEST_F(PluginTest, AccuracyAssessmentExcludesDeclaredNoDataPixel) {
+    auto* p = mgr_.find("classification");
+    ASSERT_NE(p, nullptr);
+
+    // 参考 {-9999, 0, 1, 1} 声明 NoData=-9999；分类 {0, 0, 1, 1} 不声明 NoData
+    // 只有像元 0 该被剔除 → total_samples=3、correct_samples=3、overall=1.0、类别只剩 {0,1}
+    // "永不跳过"的实现会把 -9999 当成合法类别塞进矩阵 → total_samples=4、overall=0.75、class_count=3
+    gis::tests::RasterFixtureOptions refOptions;
+    refOptions.hasNoData = true;
+    refOptions.noData = -9999.0;
+    const std::string reference = gis::tests::writeFloatRaster(
+        getTestDir(), "acc_nodata_ref.tif", 2, 2, {-9999.0f, 0.0f, 1.0f, 1.0f}, refOptions);
+    const std::string classified = gis::tests::writeFloatRaster(
+        getTestDir(), "acc_nodata_cls.tif", 2, 2, {0.0f, 0.0f, 1.0f, 1.0f});
+    ASSERT_FALSE(reference.empty());
+    ASSERT_FALSE(classified.empty());
+
+    // PAM 边车按文件名匹配：残留声明会让"分类栅格未声明 NoData"这条前提失效。
+    std::error_code ec;
+    fs::remove(reference + ".aux.xml", ec);
+    fs::remove(classified + ".aux.xml", ec);
+    double declared = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(reference, 1, declared)) << reference;
+    EXPECT_DOUBLE_EQ(declared, -9999.0);
+    EXPECT_FALSE(gis::tests::readNoDataValue(classified, 1, declared)) << classified;
+
+    const std::string output = utf8PathString(getTestDir() / "acc_nodata_output.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("accuracy_assessment");
+    params["classified_raster"] = classified;
+    params["reference_raster"] = reference;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    std::ifstream ifs(output, std::ios::binary);
+    ASSERT_TRUE(ifs.is_open());
+    // Qt 6 起 QByteArray 不再有迭代器区间构造，只能显式按 (data, size) 建。
+    const std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    const QByteArray text(content.data(), static_cast<qsizetype>(content.size()));
+    const QJsonDocument document = QJsonDocument::fromJson(text);
+    ASSERT_TRUE(document.isObject()) << content;
+    const QJsonObject root = document.object();
+
+    // NoData 值不得成为一个类别：矩阵与 PA/UA 都不该出现 "-9999" 这个键。
+    const QJsonObject matrix = root.value("confusion_matrix").toObject();
+    ASSERT_TRUE(matrix.contains("0")) << content;
+    ASSERT_TRUE(matrix.contains("1")) << content;
+    EXPECT_FALSE(matrix.contains("-9999")) << content;
+    EXPECT_FALSE(root.value("producers_accuracy").toObject().contains("-9999")) << content;
+    EXPECT_FALSE(root.value("users_accuracy").toObject().contains("-9999")) << content;
+
+    // 分母只算存活像元：3 个有效像元、3 个判对（0 类像元因分类栅格未声明 NoData 而保留）。
+    EXPECT_EQ(result.metadata.at("total_samples"), "3") << content;
+    EXPECT_EQ(result.metadata.at("correct_samples"), "3") << content;
+    EXPECT_EQ(result.metadata.at("class_count"), "2") << content;
+    EXPECT_NEAR(root.value("overall_accuracy").toDouble(), 1.0, 1e-6) << content;
+    EXPECT_EQ(root.value("total_samples").toDouble(), 3.0) << content;
+}
