@@ -7024,20 +7024,30 @@ TEST_F(PluginTest, FillSinksRestoresNoDataSentinelWhenZFactorIsNotOne) {
     EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 8, 8), 20.0f, 1e-4f) << "背景 10.0*2";
 }
 
-// F5（NaN 当障壁）：NaN 既不与任何值构成有序比较，也不会被填。
-// WHY 把 NaN 当障壁（与 NoData 同语义）：validCell 加上 std::isfinite 之前，NaN 像元会照常入队，
-// 而 lowestFirst（a > b）对含 NaN 的元素违反严格弱序 ⇒ make_heap/pop_heap 是形式上的 UB；
-// 更实际的是 NaN 一旦被弹出，"value < 出水面"对它的邻居恒假 ⇒ 邻居被标记成已处理却一点没抬，
-// 洼地就从 NaN 那里"漏"出去、静默不填（旧实现的 cv::erode/max 没有这个 UB，也没有这个漏）。
-// 修完之后 NaN 像元既不作种子也不被扩展，输出里保留 NaN 本身——我们不为它编一个高程。
+// F5（NaN 当障壁）：一条只留一个真实出口的坑，把 std::isfinite 的效力逼出来。
+// WHY 这个形态才有鉴别力：坑 (4,4) 的 8 个邻居里 7 个是 NaN，只剩对角 (5,5) 这一个 10.0 的真出口。
+// 加了 std::isfinite ⇒ NaN 与 NoData 同语义（不作种子也不被扩展）⇒ 坑经 (5,5) 抬到 10.0。
+// 没加 ⇒ NaN 像元照常入队，被弹出时 top.first 是 NaN，"value < 出水面"对邻居恒假 ⇒ 邻居只被
+// 标记成已处理却一点没抬 ⇒ 坑从 NaN 那里"漏"出去、静默停在 2.0（实测连续 3 次都是 2.0）。
+// 顺带说清为什么这里必须写注释而不是靠"结果看起来一样"：单个 NaN 摆在坑边上时两种实现都给
+// 10.0（堆里 NaN 的先后不受保证），所以判据要落在"坑只有一个真实出口"这种几何上才稳。
 TEST_F(PluginTest, FillSinksTreatsNaNCellsAsBarrierLikeNoData) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);
     const int w = 9, h = 9;
     std::vector<float> data(static_cast<size_t>(w * h), 10.0f);
     const float nanValue = std::numeric_limits<float>::quiet_NaN();
-    data[3 * w + 4] = nanValue;        // (x=4,y=3)：贴在坑上方的 NaN
-    data[4 * w + 4] = 2.0f;            // 坑
+    std::vector<std::pair<int, int>> nanRing;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dy == 0 || (dx == 1 && dy == 1)) {
+                continue;            // 留出对角 (5,5) 这个真实出口
+            }
+            nanRing.push_back(std::make_pair(4 + dx, 4 + dy));
+            data[(4 + dy) * w + (4 + dx)] = nanValue;
+        }
+    }
+    data[4 * w + 4] = 2.0f;          // 坑：四周只有 (5,5) 一个合法邻居
     const std::string input =
         gis::tests::writeFloatRaster(getTestDir(), "fill_nan_input.tif", w, h, data);
 
@@ -7045,14 +7055,20 @@ TEST_F(PluginTest, FillSinksTreatsNaNCellsAsBarrierLikeNoData) {
     ASSERT_TRUE(run.result.success) << run.result.message;
 
     EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 4), 10.0f, 1e-4f)
-        << "NaN 是障壁 ⇒ 坑只能抬到周边 10.0；停在 2.0 说明坑被当成从 NaN 那里排走了";
-    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 2), 10.0f, 1e-4f) << "NaN 上方的背景";
-    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 3, 4), 10.0f, 1e-4f) << "NaN 旁边的背景";
-    EXPECT_TRUE(std::isnan(gis::tests::readPixel(run.output, 1, 4, 3)))
-        << "障壁像元自己既不被填也不被赋哨兵值：输出保留 NaN，下游按无效像元处理";
+        << "NaN 是障壁 ⇒ 坑只能经唯一的真出口 (5,5) 抬到 10.0；停在 2.0 说明坑被当成从 NaN 那里排走了"
+           "（NaN 被弹出后 value < 出水面 恒假，邻居标记已处理却一点没抬）";
+    for (const auto& pos : nanRing) {
+        EXPECT_TRUE(std::isnan(gis::tests::readPixel(run.output, 1, pos.first, pos.second)))
+            << "障壁像元 (x=" << pos.first << ",y=" << pos.second << ") 既不被填也不被赋哨兵值："
+               "输出保留 NaN，下游按无效像元处理，我们不为它编一个高程";
+    }
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 5, 5), 10.0f, 1e-4f) << "唯一的真出口本身不被改动";
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 0, 0), 10.0f, 1e-4f) << "NaN 环之外的背景";
     const auto after = readWholeBand(run.output, w, h);
     std::vector<uint8_t> valid(after.size(), 1);
-    valid[static_cast<size_t>(3 * w + 4)] = 0;   // NaN 像元按障壁排除，与 NoData 一样不参与可达性
+    for (const auto& pos : nanRing) {
+        valid[static_cast<size_t>(pos.second) * w + pos.first] = 0;   // NaN 与 NoData 一样不参与可达性
+    }
     EXPECT_EQ(countClosedCells(after, w, h, valid), static_cast<size_t>(0))
         << "把 NaN 当障壁之后仍不得留下封闭洼地";
 }
