@@ -1656,6 +1656,191 @@ TEST_F(PluginTest, PansharpenExtentMismatchWarnsWithoutFailing) {
         << withinTolerance.message;
 }
 
+// -------------------------------------------- Task 13 fix round 1 / F-1（Important，审查 I-1）
+// `pansharpenExtentMismatchRatio` 在**拿不到地理变换**时返回 -1（processing_plugin.cpp:715），
+// 调用方据此既不写 metadata 键也不追加提示。这条降级分支此前只被手动跑过两次命令行检查
+// （build/t13_tier1_cli_probe_nogt.log / _mixedgt.log），ctest 里一条都没有 ⇒
+// 谁把它改成"拿不到变换式也报警"、或反过来"静默到底"，全量照样绿。
+//
+// WHY 本用例不调用公共夹具（这是 F-1 的核心，别"顺手统一"掉）：
+// tests/raster_fixture.h 的 applyFixtureHeader 对每一幅夹具栅格**恒** SetGeoTransform
+// （raster_fixture.h:113-115），本文件的 createConstantRaster / createMultiBandConstantRaster
+// 同样恒 SetGeoTransform ⇒ 夹具层面**造不出**"没有地理变换"的输入，这正是审查说的"测试失明"。
+// 批次 A 的裁定是夹具为公共地基（还挂着 D1/D2/D4/D6 待修项），为一个分支加 option 会牵动
+// 后续每个任务的夹具语义，所以这里直接 gis::core::createRaster() + RasterIO 裸写、**不调**
+// SetGeoTransform（Task 14 的夹具外裸写是同形态先例）。
+static std::string createRasterWithoutGeoTransform(const std::string& name, int w, int h, int bands,
+                                                  float value) {
+    const std::string path = utf8PathString(getTestDir() / name);
+    auto ds = gis::core::createRaster(path, w, h, bands, GDT_Float32);
+    if (!ds) return {};   // createRaster 实际不返回 null（失败即抛，见 raster_fixture.h 的 D1/D2 说明），
+                          // 这条判空只是把"万一"转成"夹具返回空串"，让调用方的 ASSERT_FALSE 报得清楚。
+    const std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), value);
+    for (int b = 1; b <= bands; ++b) {
+        auto* band = ds->GetRasterBand(b);
+        if (!band) return {};
+        band->RasterIO(GF_Write, 0, 0, w, h, const_cast<float*>(data.data()), w, h, GDT_Float32, 0, 0);
+        band->FlushCache();
+    }
+    return path;   // 全程没有 SetGeoTransform / SetProjection ⇒ 打开时 GetGeoTransform 应返回 CE_Failure
+}
+
+// 数据集**确实**取不到地理变换时返回 true。
+// WHY 判据是返回值而不是数组内容：GDAL 在失败时同样会把默认单位变换填进数组，
+// 只看 gt[1]==1 分不清"没有变换"和"变换恰好是单位阵"，那样这条前置检查就白写了。
+static bool rasterHasNoGeoTransform(const std::string& path) {
+    auto ds = gis::core::openRaster(path, true);
+    if (!ds) return false;
+    double gt[6];
+    return ds->GetGeoTransform(gt) != CE_None;
+}
+
+TEST_F(PluginTest, PansharpenNoGeoTransformSkipsExtentCheck) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::error_code ec;
+    // MS 10x10 三波段 + PAN 20x20 单波段：行列数不同 ⇒ 一定会走 cv::resize 那条
+    // "只看行列、不看地理参考"的路径（正是 R-T13-1 要防的那条链路），只是两幅都没有变换可比。
+    const std::string ms = createRasterWithoutGeoTransform("t13f1_nogt_ms.tif", 10, 10, 3, 60.0f);
+    ASSERT_FALSE(ms.empty());
+    const std::string pan = createRasterWithoutGeoTransform("t13f1_nogt_pan.tif", 20, 20, 1, 100.0f);
+    ASSERT_FALSE(pan.empty());
+    // PAM 边车按文件名匹配：残留的 .aux.xml 会把别处写过的变换式带进来，把"没有变换"变成"有变换"，
+    // 让本用例假绿（同 PansharpenSharedNoDataTagFollowsPanBand1 与本文件 proximity/nodata 的既有口径）。
+    fs::remove(ms + ".aux.xml", ec);
+    fs::remove(pan + ".aux.xml", ec);
+
+    // 前置条件自证（承重）：两幅输入**确实**取不到地理变换。
+    // 没有这两条，将来任何人给上面的裸写夹具补一句 SetGeoTransform，本用例会**静默**变成
+    // "差异为 0 时不报警"的另一种护栏（那个方向另有 PansharpenOutputUsesPanGeoTransform 在锁），
+    // 而它要钉的 -1 分支又回到零覆盖状态。
+    ASSERT_TRUE(rasterHasNoGeoTransform(ms)) << ms << " 应当没有地理变换，否则这条用例锁错了分支";
+    ASSERT_TRUE(rasterHasNoGeoTransform(pan)) << pan << " 应当没有地理变换，否则这条用例锁错了分支";
+
+    const std::string output = utf8PathString(getTestDir() / "t13f1_nogt_output.tif");
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("pansharpen");
+    params["input"] = ms;
+    params["pan_file"] = pan;
+    params["output"] = output;
+    params["pan_method"] = std::string("brovey");   // 算法与地理无关，挑一个能跑通的分支即可
+
+    const auto result = p->execute(params, progress_);
+
+    // 断言之一：无从比较**不是失败**。拿不到地理参考就拒绝执行，会把今天照常能跑的
+    // 无参考影像（BMP/截图/未地理编码的中间产物）整条链路断掉，那不是 R-T13-1 要的东西。
+    EXPECT_TRUE(result.success) << "拿不到地理变换不得当成失败：" << result.message;
+    // 断言之二：metadata 里**不得出现**这个键。"没得比"不等于"比出了问题"，
+    // 写成 -1 会让下游把"无信息"读成"信息"（下游按 >容差 判读时 -1 恰好又被放过，等于埋雷）。
+    EXPECT_EQ(result.metadata.count("pan_ms_extent_mismatch"), 0u)
+        << "两幅都没有地理变换 ⇒ 范围校验应当整个跳过，实际值="
+        << (result.metadata.count("pan_ms_extent_mismatch")
+                ? result.metadata.at("pan_ms_extent_mismatch")
+                : std::string{"<absent>"});
+    // 断言之三：用户可见的 message 里也**不许**出现提示。只查 metadata 会漏掉"只往 message 里写"
+    // 的实现，而 GUI 结果区看的恰恰是 message（三条缺一，实现就能各蒙对一半）。
+    EXPECT_EQ(result.message.find("extent mismatch"), std::string::npos) << result.message;
+
+    // 产物照常生成（"不报警"不等于"不干活"）。
+    EXPECT_TRUE(fs::exists(output)) << result.message;
+
+    // ------------------------------------------------------------------------------------ 现状锁（N51）
+    // 本用例锁的是**现状**："缺地理参考 ⇒ 得不到范围校验的保护"，pansharpen 照跑、照出图、
+    // 一句提示都不给。同一族的还有顾虑 C-1：一侧有变换、一侧没有时输出会退化成 GDAL 默认参考
+    // （MS 那份地理参考直接丢掉，也无人告知）——那部分本批次**不改**（挂 N51）。
+    // 批次 B 若按 N51 改成"缺地理参考就显式拒绝"，**这条用例要改正向而不是删掉**：
+    // 断 result.success == false、断 message 点名缺变换的那一幅（不是含糊的 "extent mismatch"），
+    // 上面三条断言逐条换成对应的正向断言即可，**不得整段删除**——
+    // 处置模式与 Task 20 的 RejectedFeatureWrite、Task 21 的 N45 现状锁一致。
+}
+
+// -------------------------------------------- Task 13 fix round 1 / F-2（Minor M-1）：容差**数值**本身
+// 审查实测：把 kPanMsExtentToleranceRatio 从 1e-6 改成 1e-4，8 条用例全绿 ⇒ 只有"相对口径"和
+// "低于容差不报警"有牙（Tier 1 的 M3/M4），具体数量级没人管。
+// 既有两个样本离得太远：3.33e-3 必报（PansharpenExtentMismatchWarnsWithoutFailing 场景 A）、
+// 3.33e-7 必不报（同用例场景 B），中间隔了四个数量级，容差被改成 1e-4/1e-5 都照样绿。
+// 本用例补一对**夹住 1e-6** 的样本，推导见下面的算式（照口径实测，不是猜的）：
+//
+//   MS 10x10 @ 30 m、origin (0,300) ⇒ 包络 X[0,300] Y[0,300]，边长 300；
+//   PAN 20x20 @ 15 m ⇒ 20*15 = 300 ⇒ 包络边长同样是 300 ⇒ largerSide = 300；
+//   PAN 只沿 X 平移 dx（Y 与 MS 完全对齐）⇒ 四条对应边的差里只有 minX/maxX 两条非零、
+//   且都等于 dx ⇒ edgeDelta = dx ⇒ **相对差异 = dx / 300**。
+//     · 取 dx = 300 * 5.0e-6 = 0.0015 m（1.5 mm） ⇒ 相对差异 ≈ 5.0e-6，**高于** 1e-6 ⇒ 必须报警；
+//     · 取 dx = 300 * 5.0e-7 = 0.00015 m（0.15 mm） ⇒ 相对差异 ≈ 5.0e-7，**低于** 1e-6 ⇒ 必须不报警。
+//   两段合起来把容差的可能取值压进 [5e-7, 5e-6)：**新添的牙在上界**——容差被搬大（1e-4/1e-5）
+//   只有第一段会红，而这是审查 M-rev-a 实测过"全绿"的那个方向；第二段（下界）与既有的
+//   PansharpenExtentMismatchWarnsWithoutFailing 场景 B（3.33e-7）同向、属于刻意保留的双保险，
+//   实测见报告：容差改成 1e-7 时**两条一起红**，所以缺了下段也不至于失明。
+TEST_F(PluginTest, PansharpenExtentMismatchToleranceAnchorsOneMicroratio) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions msOptions;
+    msOptions.crs = gis::tests::FixtureCrs::Epsg3857;
+    msOptions.originX = 0.0;
+    msOptions.originY = 300.0;
+    msOptions.pixelSize = 30.0;
+    const std::string ms = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "t13f2_ms_30m.tif", 10, 10, {40.0f, 60.0f}, msOptions);
+    ASSERT_FALSE(ms.empty());
+
+    const std::vector<float> panData(20 * 20, 100.0f);
+    auto writePanShiftedInX = [&](const std::string& fileName, double shiftX) {
+        gis::tests::RasterFixtureOptions options;
+        options.crs = gis::tests::FixtureCrs::Epsg3857;
+        options.originX = shiftX;      // 只动 X ⇒ 边差全部来自 X，Y 两侧精确相等、不引入噪声
+        options.originY = 300.0;
+        options.pixelSize = 15.0;
+        return gis::tests::writeFloatRaster(getTestDir(), fileName, 20, 20, panData, options);
+    };
+    auto runPansharpen = [&](const std::string& pan, const std::string& output) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("pansharpen");
+        params["input"] = ms;
+        params["pan_file"] = pan;
+        params["output"] = output;
+        params["pan_method"] = std::string("brovey");
+        return p->execute(params, progress_);
+    };
+
+    // 段一：相对差异 ≈ 5.0e-6（容差的 5 倍）⇒ 键必须出现，且**仍然不失败**。
+    const std::string abovePan = writePanShiftedInX("t13f2_pan_shift_1p5mm.tif", 0.0015);
+    ASSERT_FALSE(abovePan.empty());
+    const std::string aboveOutput = utf8PathString(getTestDir() / "t13f2_above_output.tif");
+    const auto above = runPansharpen(abovePan, aboveOutput);
+    EXPECT_TRUE(above.success) << "超容差只告警、不得失败：" << above.message;
+    ASSERT_TRUE(above.metadata.count("pan_ms_extent_mismatch") > 0)
+        << "1.5 mm / 300 m（相对差异 5e-6）已在 1e-6 容差之外，却没有任何提示：" << above.message;
+    // 值断言把"报警阈值"与"报出来的数"一起钉住：容差被搬大时这段先红（键都没有），
+    // 而"值写成绝对米数 0.0015"之类的实现躲得过"键存在"、躲不过这里（差 300 倍，
+    // 而窗口只有 5e-9）。
+    // 容差取 5e-9（相对 0.1%）而不是 Tier 1 那条用的 1e-12：变换式要过一轮 GeoTIFF 的文本往返，
+    // 0.0015 与 300.0015 本身又是 double 近似（实算 edgeDelta=0.0015000000000213731，
+    // 见报告 §2.1），1e-12 会把真实值误判成错。
+    EXPECT_NEAR(std::stod(above.metadata.at("pan_ms_extent_mismatch")), 5.0e-6, 5.0e-9)
+        << "值必须是相对差异（边差 dx / 较大边长 300）："
+        << above.metadata.at("pan_ms_extent_mismatch");
+    EXPECT_NE(above.message.find("extent mismatch"), std::string::npos) << above.message;
+
+    // 段二：相对差异 ≈ 5.0e-7（容差的一半）⇒ 键与提示都不许出现。
+    // 这一段的下界方向与既有场景 B（3.33e-7）重叠（容差改成 1e-7 时两条一起红，实测见报告），
+    // 保留它是为了让"夹住 1e-6 的一对"落在同一条用例里、读的人不必去拼两条；
+    // 它同时把亚毫米级抖动（同传感器正射后的常见量级）不许报警这件事钉在**紧邻容差内侧**的位置，
+    // 5e-7 比既有场景 B 的 3.33e-7 更贴近 1e-6，容差被往小搬动时这里先露头。
+    const std::string belowPan = writePanShiftedInX("t13f2_pan_shift_0p15mm.tif", 0.00015);
+    ASSERT_FALSE(belowPan.empty());
+    const std::string belowOutput = utf8PathString(getTestDir() / "t13f2_below_output.tif");
+    const auto below = runPansharpen(belowPan, belowOutput);
+    ASSERT_TRUE(below.success) << below.message;
+    EXPECT_EQ(below.metadata.count("pan_ms_extent_mismatch"), 0u)
+        << "0.15 mm / 300 m（相对差异 5e-7）在 1e-6 容差内侧，不该报警，实际值="
+        << (below.metadata.count("pan_ms_extent_mismatch")
+                ? below.metadata.at("pan_ms_extent_mismatch")
+                : std::string{"<absent>"});
+    EXPECT_EQ(below.message.find("extent mismatch"), std::string::npos) << below.message;
+}
+
 // R-T13-2 及其更正：换参考数据集后 NoData 的**可观察**后果要如实记录，而不是留成巧合，
 // 更不能当成新缺陷去修。
 // 核心格式事实（src/core/src/gdal_wrapper.cpp:63 的 drv->Create(..., nullptr) 不带创建选项）：

@@ -51,8 +51,9 @@ public:
 
     /**
      * 返回中文标签表（enumDisplayText 的数据源）里该枚举参数登记的取值键，按字典序排序；无标签组时返回空。
-     * WHY 是静态成员而不是自由函数：定义必须落在 param_card_widget.cpp 的匿名命名空间之外，
-     * 否则只有内部链接、匹配不上这条外部声明（LNK2019）。
+     * WHY 要注明定义位置：真正的约束是**定义不能落在 .cpp 的匿名命名空间里**——匿名命名空间给的是
+     * 内部链接，匹配不上这条外部声明（LNK2019）。自由函数只要在命名空间作用域声明+定义同样能链接上，
+     * 所以这里跟"是不是成员函数"无关。
      */
     static std::vector<std::string> enumLabelKeys(const std::string& paramKey);
 
