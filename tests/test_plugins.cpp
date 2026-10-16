@@ -1882,6 +1882,58 @@ TEST_F(PluginTest, EviHonoursExplicitEviL) {
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 5, 5), 100.0f / 175.5f, 1e-5f);
 }
 
+// Tier 2（R-T9-1）：本任务真正的 RED。
+// WHY：GUI 会把 paramSpecs() 里所有参数的 defaultValue 原样提交（用户一个参数都没改的场景），
+// 所以"遍历 spec 提交默认值"就是 GUI 路径的等价构造；修复前它必然拿到 SAVI 的 0.5。
+TEST_F(PluginTest, GuiStyleDefaultSubmissionForEviYieldsStandardL) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createMultiBandConstantRaster(
+        "spi_evi_gui_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
+    const std::string output = utf8PathString(getTestDir() / "spi_evi_gui_output.tif");
+
+    // 复刻 GUI：遍历 spec，把默认值全部提交（用户一个参数都没改的场景）
+    std::map<std::string, gis::framework::ParamValue> params;
+    for (const auto& spec : p->paramSpecs()) {
+        if (spec.key == "action") { params["action"] = std::string("evi"); continue; }
+        if (spec.key == "input")  { params["input"] = input; continue; }
+        if (spec.key == "output") { params["output"] = output; continue; }
+        params[spec.key] = spec.defaultValue;
+    }
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 5, 5), 100.0f / 176.0f, 1e-5f)
+        << "GUI 全默认提交必须得到 EVI 标准 L=1 的结果";
+}
+
+// Tier 2（R-T9-2）：把"EVI 读的是哪个键"钉死。
+// WHY：若只有上面两条，将来有人把 EVI 分支改回读 l_value（兜底仍写 1.0），前两条照样绿，
+// 而 GUI 全默认提交发来的 l_value=0.5 会再次静默胜出 —— 本缺陷原样复活。
+// 本用例显式提交 l_value=0.5（GUI 那条路径至今仍在发这个键），断言 EVI 必须是 100/176。
+TEST_F(PluginTest, EviRejectsSharedSaviLValueKey) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+    const std::string input = createMultiBandConstantRaster(
+        "spi_evi_reject_lvalue_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
+    const std::string output = utf8PathString(getTestDir() / "spi_evi_reject_lvalue_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("evi");
+    params["input"] = input;
+    params["output"] = output;
+    params["blue_band"] = 1;
+    params["red_band"] = 3;
+    params["nir_band"] = 4;
+    params["l_value"] = 0.5;   // SAVI 的键，EVI 必须无视它
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 5, 5), 100.0f / 176.0f, 1e-5f)
+        << "EVI 不得读取 SAVI 的 l_value 键，否则 GUI 的 0.5 会再次静默胜出";
+}
+
 TEST_F(PluginTest, SpindexCustomIndexExecution) {
     auto* p = mgr_.find("spindex");
     ASSERT_NE(p, nullptr);
