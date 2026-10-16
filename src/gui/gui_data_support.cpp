@@ -735,7 +735,8 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
         // WHY epsilon 只进 fill_sinks：Task 10 那轮它还不存在于 paramSpecs() 里，预写会让
         // R-T10-5 的元断言当场变红；按"谁加参数谁同时补可见性"的归属规则，它由 Task 11 与
         // ParamSpec 同批加入，且只有 doFillSinks 读它（其余 hydrology action 传 0.0）。
-        // curvature_coeff 仍是 Task 12 的事，这里不预写，同理。
+        // curvature_coeff 是 Task 12 的键，按同一条归属规则与 ParamSpec 同批加进 viewshed 那一条，
+        // viewshed_multi 不读它所以没份。
         {"terrain", {
             {"slope", {
                 QString{},
@@ -830,8 +831,11 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             {"viewshed", {
                 QString{},
                 QStringLiteral("单观察点视域分析。"),
+                // curvature_coeff 由 Task 12 与 ParamSpec 同批追加（"谁加参数谁补可见性"）：
+                // doViewshed 把它传给 GDALViewshedGenerate 的第 13 实参 dfCurvCoeff。
+                // viewshed_multi 那条**不加**——runViewshedMultiProcess 不读该键（R-T12-4）。
                 {"input", "output", "band", "observer_x", "observer_y",
-                 "observer_height", "target_height", "max_distance"},
+                 "observer_height", "target_height", "max_distance", "curvature_coeff"},
                 {"input", "output"}
             }},
             {"viewshed_multi", {

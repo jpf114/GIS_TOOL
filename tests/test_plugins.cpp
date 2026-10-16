@@ -7459,6 +7459,109 @@ TEST_F(PluginTest, ViewshedDoesNotWarnOnProjectedCrs) {
         << "投影 CRS 的 message 里混进了非投影提示：" << result.message;
 }
 
+// 全局闸门（Task 10 审查后新增，"谁加参数谁补可见性"的配套）：curvature_coeff 进 paramSpecs()
+// 的同批必须进 terrain.viewshed 自己的 visibleKeys，并且本 action 的面板锁把两侧钉成完全相等。
+// 形状照抄 TerrainFillSinksGuiPanelRendersEpsilonAndHidesKeysTheActionNeverReads：
+// 渲染层问 ParamCardWidget::hasParam（param_card_widget.cpp:937 读 entries_，即真正建出来的控件行），
+// **不用** ParamWidget::hasParam（param_widget.cpp:158-163 只扫 setParamSpecs 存下的 specs_，
+// 等于把有效集合再抄一遍，断不出"这一行到底建没建"）。
+// spec 的默认值/区间是**值断言**：只做 count(key)>0 的存在性断言在这一层不算数，
+// 而 N35（src/cli/main.cpp 对未知键不报错、原样存成 std::string ⇒ getParam<double> 静默回落）
+// 决定"spec 有没有被声明"本身也必须被锁住。
+TEST_F(PluginTest, TerrainViewshedGuiPanelRendersCurvatureCoeffAndHidesKeysTheActionNeverReads) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const auto specs = p->paramSpecs();
+
+    const auto* config = gis::gui::findActionUiConfig("terrain", "viewshed");
+    ASSERT_NE(config, nullptr) << "terrain.viewshed 缺少 actionUiConfig 条目";
+
+    const auto effective = gis::gui::buildEffectiveGuiParamSpecs(
+        "terrain", "viewshed", specs, config->visibleKeys, config->requiredKeys);
+    std::set<std::string> effectiveKeys;
+    for (const auto& spec : effective) {
+        effectiveKeys.insert(spec.key);
+    }
+
+    // 有效集合必须与白名单**完全相等**：少一个是错键名（真参数被隐藏），多一个是空集不过滤。
+    EXPECT_EQ(effectiveKeys, config->visibleKeys) << "terrain.viewshed 的有效键集与白名单不一致";
+    EXPECT_GT(effectiveKeys.count("curvature_coeff"), 0u)
+        << "curvature_coeff 必须被渲染：doViewshed 真的读它（getParam<double>）";
+    // 本 action 不读的键一律不得出现在面板上（放一个填了没用的键就是本批次要消灭的形态）。
+    for (const char* deadKey : {"accum_threshold", "epsilon", "observer_points", "z_factor",
+                                "water_level", "reference"}) {
+        EXPECT_EQ(effectiveKeys.count(deadKey), 0u)
+            << deadKey << " 从未被 doViewshed 读取，不得出现在 terrain.viewshed 面板上";
+    }
+
+    const gis::framework::ParamSpec* curvSpec = nullptr;
+    for (const auto& spec : specs) {
+        if (spec.key == "curvature_coeff") {
+            curvSpec = &spec;
+        }
+    }
+    ASSERT_NE(curvSpec, nullptr) << "paramSpecs() 没有 curvature_coeff，面板渲染的是空气";
+    EXPECT_EQ(curvSpec->type, gis::framework::ParamType::Double)
+        << "类型漂移成 Int/String 后 getParam<double> 会静默回落代码兜底，取值断言照样绿";
+    EXPECT_FALSE(curvSpec->required) << "curvature_coeff 是可选键（有 GDAL 默认值可兜底）";
+
+    const auto* declaredDefault = std::get_if<double>(&curvSpec->defaultValue);
+    ASSERT_NE(declaredDefault, nullptr) << "curvature_coeff 的默认值必须是 double 变体";
+    EXPECT_EQ(*declaredDefault, 0.85714)
+        << "spec 默认值必须与 terrain_plugin.cpp doViewshed 的代码兜底 0.85714 同值，"
+           "否则 GUI 提交 0.85714 而 CLI/直调走另一个数";
+    const auto* declaredMin = std::get_if<double>(&curvSpec->minValue);
+    const auto* declaredMax = std::get_if<double>(&curvSpec->maxValue);
+    ASSERT_NE(declaredMin, nullptr) << "curvature_coeff 的下界必须是 double 变体";
+    ASSERT_NE(declaredMax, nullptr) << "curvature_coeff 的上界必须是 double 变体";
+    EXPECT_EQ(*declaredMin, 0.0) << "0 的语义是「关闭修正」，下界不能高于它";
+    EXPECT_EQ(*declaredMax, 2.0)
+        << "上界放宽到 2.0 之外等于把曲率/折射系数开到无物理意义的取值（大气折射典型值 6/7）";
+
+    // 非必填：requiredKeys 只能要求插件本来就会拒绝的东西，doViewshed 对缺省会兜底 0.85714。
+    EXPECT_EQ(config->requiredKeys.count("curvature_coeff"), 0u);
+    EXPECT_EQ(config->visibleKeys.count("action"), 0u)
+        << "\"action\" 被 buildEffectiveGuiParamSpecs 无条件跳过，写进白名单无效还与既有约定分叉";
+    // 默认值永不被展示层覆写：commonParamText 那张表按参数键跨插件全局生效。
+    EXPECT_EQ(gis::gui::findCommonParamText("curvature_coeff"), nullptr);
+
+    // R-T12-4：只追加到 viewshed 这一条。multi 今天不读该键，加进它的白名单
+    // 就是"面板上有个改了没用的参数"，而 Task 10 的元断言（visibleKeys ⊆ paramSpecs）抓不到这种。
+    const auto* multiConfig = gis::gui::findActionUiConfig("terrain", "viewshed_multi");
+    ASSERT_NE(multiConfig, nullptr) << "terrain.viewshed_multi 缺少 actionUiConfig 条目";
+    EXPECT_EQ(multiConfig->visibleKeys.count("curvature_coeff"), 0u)
+        << "runViewshedMultiProcess 的第 13 实参仍是硬编码 0.0，白名单不能有这个键";
+    const auto multiEffective = gis::gui::buildEffectiveGuiParamSpecs(
+        "terrain", "viewshed_multi", specs, multiConfig->visibleKeys, multiConfig->requiredKeys);
+    std::set<std::string> multiEffectiveKeys;
+    for (const auto& spec : multiEffective) {
+        multiEffectiveKeys.insert(spec.key);
+    }
+    EXPECT_EQ(multiEffectiveKeys, multiConfig->visibleKeys)
+        << "terrain.viewshed_multi 的有效键集与白名单不一致";
+
+    // 渲染层：只问 ParamCardWidget::hasParam（entries_）。
+    ParamWidget panel;
+    panel.setUiContext("terrain", "viewshed");
+    panel.setParamSpecs(effective);
+    const auto cards = panel.findChildren<ParamCardWidget*>();
+    ASSERT_FALSE(cards.empty()) << "terrain.viewshed 没有生成任何参数卡片";
+    std::set<std::string> renderedKeys;
+    for (const auto& spec : specs) {
+        if (spec.key == "action") {
+            continue;
+        }
+        for (const auto* card : cards) {
+            if (card && card->hasParam(spec.key)) {
+                renderedKeys.insert(spec.key);
+            }
+        }
+    }
+    EXPECT_EQ(renderedKeys, effectiveKeys) << "terrain.viewshed 的 widget 树与有效 spec 不一致";
+    EXPECT_GT(renderedKeys.count("curvature_coeff"), 0u)
+        << "curvature_coeff 的控件行没建出来：白名单里有、面板上没有";
+}
+
 TEST_F(PluginTest, TerrainCutFillExecution) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);

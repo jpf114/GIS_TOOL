@@ -1305,6 +1305,13 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"observer_height", "观察高度", "Observer height above terrain", gis::framework::ParamType::Double, false, double{2.0}, double{0.0}, double{10000.0}},
         gis::framework::ParamSpec{"target_height", "目标高度", "Target height above terrain", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{10000.0}},
         gis::framework::ParamSpec{"max_distance", "最大距离", "Maximum analysis distance, 0 means unlimited", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{1e9}},
+        // 只被 viewshed 读取：runViewshedMultiProcess 的第 13 实参仍是硬编码 0.0，所以 R-T12-4
+        // 裁定它**不进** viewshed_multi 的 visibleKeys（否则就是面板上放一个改了没用的参数）。
+        // 默认 0.85714 = GDAL 的地球曲率+大气折射合并系数，与 doViewshed 的代码兜底同值；
+        // 0.0 的语义是关闭修正（改前的行为），区间 [0,2] 覆盖到物理上有意义的取值上限。
+        gis::framework::ParamSpec{"curvature_coeff", "曲率折射系数",
+            "Earth curvature and refraction coefficient (GDAL default 0.85714, 0 disables)",
+            gis::framework::ParamType::Double, false, double{0.85714}, double{0.0}, double{2.0}},
         gis::framework::ParamSpec{"water_level", "水位", "Water level used by reservoir volume analysis", gis::framework::ParamType::Double, false, double{0.0}, double{-10000.0}, double{10000.0}},
     };
 }
