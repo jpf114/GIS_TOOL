@@ -2975,3 +2975,55 @@ TEST(GuiActionConfig, PlanAConfigKeysAreDeclaredByThePluginAndRenderable) {
         }
     }
 }
+
+// F1（Task 10 fix round 1）：上面那条元断言的方向是 requiredKeys ⊆ paramSpecs 且 ⊆ visibleKeys，
+// 它抓"错键名"和"没渲染的必填"，结构上抓不到**合法键被过度加严**——而 R-F2-A 之后加严是有实际
+// 效力的动作：buildEffectiveGuiParamSpecs 里 required = spec.required || key ∈ requiredKeys，
+// ParamCardWidget::validate()（param_card_widget.cpp:883-907，只对 lineEdit/comboBox 判空）
+// 随即禁止空值提交。所以 requiredKeys 只能要求"插件本来就会拒绝"的东西。
+// doMergeBands 恰恰不拒绝空 input：cutting_plugin.cpp:455 是 if (!input.empty()) 才把 input
+// 并入待堆叠文件，:459 独立累加 bands，:464-465 只在 bandFiles.empty() 时才 fail
+// ("At least one input file required (use --input or --bands)") ⇒ bands-only 堆叠波段是插件
+// 明确支持的能力，而 input 的 spec 声明的就是 required=false（cutting_plugin.cpp:31-33）。
+// 把 input 列进 requiredKeys 会让 GUI 用户填不出 bands-only，只能退回 CLI。
+// （审查者实测：删掉这个加严后全量 548/548 仍全绿 ⇒ 今天没有任何用例锁着它，本用例补上。）
+TEST(GuiActionConfig, CuttingMergeBandsDoesNotTightenInputBeyondWhatThePluginRejects) {
+    const auto* config = gis::gui::findActionUiConfig("cutting", "merge_bands");
+    ASSERT_NE(config, nullptr) << "cutting.merge_bands 缺少 actionUiConfig 条目";
+
+    EXPECT_EQ(config->requiredKeys.count("input"), 0u)
+        << "cutting.merge_bands.input 又被列进 requiredKeys：插件只在 input 与 bands 都空时"
+        << "才失败（cutting_plugin.cpp:464-465），加严后 GUI 提交不了 bands-only 堆叠";
+    EXPECT_TRUE(config->requiredKeys.count("output") > 0)
+        << "output 的加严有硬失败依据（cutting_plugin.cpp:452 对空 output fail），不该被删";
+
+    // 行为层：光看表不判据——validate() 用的是过滤后的 required 真值，所以这里用**真实插件
+    // spec** 走一遍生产路径，确认 input/bands 是"可见但非必填"、output 是"可见且必填"。
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    auto* cutting = mgr.find("cutting");
+    ASSERT_NE(cutting, nullptr) << "cutting 插件没加载起来，下面的断言判的是空集";
+
+    const auto effective = gis::gui::buildEffectiveGuiParamSpecs(
+        "cutting", "merge_bands", cutting->paramSpecs(),
+        config->visibleKeys, config->requiredKeys);
+    const auto findSpec = [&effective](const std::string& key) -> const gis::framework::ParamSpec* {
+        for (const auto& spec : effective) {
+            if (spec.key == key) {
+                return &spec;
+            }
+        }
+        return nullptr;
+    };
+    const auto* inputSpec = findSpec("input");
+    const auto* bandsSpec = findSpec("bands");
+    const auto* outputSpec = findSpec("output");
+    ASSERT_NE(inputSpec, nullptr) << "input 没被渲染，面板上根本没有这一行";
+    ASSERT_NE(bandsSpec, nullptr) << "bands 没被渲染，bands-only 这条路在 GUI 里不存在";
+    ASSERT_NE(outputSpec, nullptr) << "output 没被渲染，该 action 在 GUI 下无法提交";
+    EXPECT_FALSE(inputSpec->required)
+        << "input 的有效 required 为真 ⇒ validate() 会挡住 bands-only 提交";
+    EXPECT_FALSE(bandsSpec->required);
+    EXPECT_TRUE(outputSpec->required);
+}

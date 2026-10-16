@@ -470,8 +470,11 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             // R-T10-8：doZonalStats 只读 input/vector/output/feature_id_field
             // （raster_manage_plugin.cpp:258-261），band 也不读 —— 面板原先因缺条目而把
             // 9 个参数全铺出来。vector 进 requiredKeys 的依据是 :264 对空 vector 直接 fail。
+            // WHY displayName 留空：动作名的唯一来源是侧栏表 genericActionDisplayName
+            // （"zonal_stats" 已在其中），本表的 displayName 会被 actionDisplayName 优先取用，
+            // 两处各写一份同名值在改名时必然分叉。
             {"zonal_stats", {
-                QStringLiteral("分区统计"),
+                QString{},
                 QStringLiteral("按矢量分区统计栅格，输出 JSON 或 CSV 报告。"),
                 {"input", "output", "vector", "feature_id_field"},
                 {"input", "output", "vector"}
@@ -697,11 +700,20 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "tile_size", "overlap"},
                 {"input", "output"}
             }},
+            // WHY input 不在 requiredKeys 里：R-F2-A 之后本表是**只加严**的实际动作
+            // （required = spec.required || key 被这里列出，见 buildEffectiveGuiParamSpecs），
+            // 列一个键就等于让 ParamCardWidget::validate() 禁止空值提交，
+            // 所以只能要求插件本来就会拒绝的东西。
+            // doMergeBands 对 input 只在非空时并入待堆叠文件（cutting_plugin.cpp:455），
+            // bands 独立累加（:459），两者都空才 fail（:464-465 "use --input or --bands"）
+            // ⇒ bands-only 是插件明确支持的能力，input 的 spec 也声明 required=false（:31-33），
+            // 把它加严成必填会让 GUI 用户无法只靠 bands 堆叠波段。
+            // output 的加严保留：:452 对空 output 直接 fail("output is required")。
             {"merge_bands", {
                 QString{},
                 QStringLiteral("把多个栅格的波段堆叠为一幅。"),
                 {"input", "output", "bands"},
-                {"input", "output"}
+                {"output"}
             }},
             // WHY 这里没有 resample/num_threads：doTile 读的是未声明的 resampling（见 task-10-report.md
             // 的新发现清单），而 num_threads 声明后无人读取；把它们列进白名单等于在面板上放一个
