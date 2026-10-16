@@ -464,15 +464,25 @@ gis::framework::Result runHydrologyTerrainProcess(
                 inQueue[static_cast<size_t>(idx)] = 1;
 
                 float& value = result.at<float>(ny, nx);
-                // WHY 判据是 <= 而不是 <：低于出水面的要抬到水面，**与出水面等高的像元同样属于
-                // 洼地的一部分**——平底就是靠这条才爬得出来的；ε>0 时也正是这条让洼地拿到微梯度。
-                // 本来高于出水面的真实地形一律原值保留（没有 else 分支），这就是"只抬不降、
-                // 且只抬洼地"：见 FillSinksIsMonotonicAndNeverLowersTerrain 与
-                // FillSinksEpsilonGradientsDepressionAndKeepsHigherTerrain。
-                // R-T11-2：条件不能写成 "value > top.first 才施 ε" —— 刚被抬平的像元此刻恰好
-                // value == top.first，那样洼地一个 ε 都拿不到，反倒是高于出水面的真实地形被抬高，
-                // 语义与"给洼地区域叠加单调微梯度"正好相反。
-                if (value <= top.first) {
+                // WHY 判据是严格小于（value < top.first），不是 value <= top.first：
+                // top.first 是"含 ε 之后"的水面。填洼只该把**低于**水面的像元抬到水面；恰好
+                // 等高的像元没有"被填洼抬过"（抬到水面=原地不动），给它们加 ε 就不是洼地内的
+                // 微坡度而是给背景地形加高。平底背景里每个像元都恰与其父像元等高，于是 ε 逐圈
+                // 累积成锥体，锥体再反过来把洼地自己的出水面顶高。<= 版的实测：101x101 均匀 5.0
+                // 的平地 ε=10 时 9801 个像元被改动、中央 +500 m；9x9 均匀 10.0 的单像元坑中心
+                // 从 10.0 变 50.0。这些像元不是洼地 ⇒ 产品高程错，而参数描述写的是 inside filled
+                // depressions ⇒ 描述也谎。判据收窄成严格小于后两处都复现不了（见 snap 对照表）。
+                // 不能进一步收窄成"只对 ε=0 那趟真抬过的像元施 ε"（另开一张 filled 掩膜）：
+                // 那样恰好落在水面高度上的鞍部/岛状像元保持原值，而它四周的水面已被 ε 抬高 ⇒
+                // 重新出现封闭汇。实测 200x200 随机 DEM：ε=0.5 新增 18085 个封闭像元、ε=10 新增
+                // 26945 个（build/t11fix1/model_variants.log 的 v4 行）。严格小于同时满足两端：
+                // 背景一格不动，且每个像元仍沿非降路径可达出海口（推入堆的就是写回的值）。
+                // 洼地的平底照样爬得出来——平底像元的原始值严格低于它的出水面，走的正是这条分支。
+                // ε=0 时这个分支只做一次 "value = top.first" 赋值、没有任何算术，且 value ==
+                // top.first 时赋值与否同值 ⇒ 默认路径与 <= 版逐像元相同，也仍然零精度损失。
+                // 反面的教训（R-T11-2）：条件也不能写回 "value > top.first 才施 ε"——刚被抬平的
+                // 像元此刻恰好等于出水面，那样洼地一个 ε 都拿不到，反倒是真实地形被抬高。
+                if (value < top.first) {
                     value = (epsilon > 0.0) ? static_cast<float>(top.first + epsilon) : top.first;
                 }
                 // 推进堆的是抬**后**的值 ⇒ 它成为子像元的出水面，抬升目标因此逐层传递：
@@ -1244,7 +1254,13 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"accum_threshold", "汇流阈值", "Threshold used by stream extraction", gis::framework::ParamType::Double, false, double{10.0}, double{0.0}, double{1e9}},
         // 只被 fill_sinks 读取（其它 action 传 0.0 即完全等效于未启用），默认 0.0 保证
         // "GUI 全默认提交"这条路径的行为与新增本键之前逐像元一致。
-        gis::framework::ParamSpec{"epsilon", "微坡度", "Optional monotone micro-gradient added inside filled depressions", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{10.0}},
+        // WHY 描述要写清两件事（fix round 1 F1/F5 的口径）：
+        // (1) 施与集合只有"低于出水面的像元"，即 fill_sinks 真的抬过的那一片水域——曾经写成对
+        //     "与出水面等高"的像元也施 ε，于是整片平地逐圈累积成锥体，描述与产品都不符；
+        // (2) ε 加在 elevation *= z_factor **之后**的缩放高程上 ⇒ 真实单位下的微梯度是
+        //     epsilon / z_factor（z_factor 区间 [0.001,10000] ⇒ 跨 7 个数量级）。本任务不改单位，
+        //     但必须让描述把这件事说出去，不许留成无人知晓的隐式语义。
+        gis::framework::ParamSpec{"epsilon", "微坡度", "Monotone micro-gradient added only on cells the fill actually raised inside depressions; applied after z_factor scaling, so the real-unit gradient is epsilon / z_factor", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{10.0}},
         gis::framework::ParamSpec{"profile_path", "剖面路径", "Profile points formatted as x1,y1;x2,y2;...", gis::framework::ParamType::String, false, std::string{}},
         gis::framework::ParamSpec{"observer_x", "观察点X", "Observer X coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
         gis::framework::ParamSpec{"observer_y", "观察点Y", "Observer Y coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},

@@ -6452,6 +6452,79 @@ std::string makeSlopePitRaster(const std::string& name) {
 constexpr float kSlopePourAtRow2 = 10.0f + 0.2f * 2.0f;   // 10.4：两格平底填平后的水面
 constexpr float kSlopePourAtRow3 = 10.0f + 0.2f * 3.0f;   // 10.6：最里一格的另一条出水路径
 
+// 整片等高的平地（side x side），可选在正中央挖一个单像元坑。
+// WHY 用"全图等高"的夹具来锁 epsilon 的作用域：等高背景里每个像元都恰好与把它入队的水面同高，
+// 填洼对它们是原地不动（没有被抬过），于是"ε 只许落在真被填洼抬过的像元上"这条判据能被逐像元
+// 写成断言。斜坡背景做不到这件事——斜坡上没有任何像元与出水面等高，作用域写错也看不出来。
+std::string makeUniformPitRaster(const std::string& name, int side, float background,
+                                 bool digCentrePit, float pitValue) {
+    std::vector<float> data(static_cast<size_t>(side) * side, background);
+    if (digCentrePit) {
+        data[static_cast<size_t>(side / 2) * side + side / 2] = pitValue;
+    }
+    return gis::tests::writeFloatRaster(getTestDir(), name, side, side, data);
+}
+
+// 从数据集边缘出发、沿"非降"路径反向淹没，数没有被到达的像元 = 输出里仍存在的封闭洼地。
+// WHY 必须是 8 邻域：填洼与下游 D8 流向共用同一套 8 邻域，按 4 邻域会把"只能经角点排水"的
+// 像元误判成封闭汇（对角门那个夹具就是这么暴露的），所以这里不得改成 4 邻域。
+// WHY 需要这条通式：ε 会把水面逐层抬高，"输出不留封闭洼地"这条承诺在 ε>0 时才真正受考验——
+// 只在 ε=0 上验过等于没验（抬升累积有可能反过来把洼地自己的出海口顶高）。
+size_t countClosedCells(const std::vector<float>& data, int width, int height,
+                        const std::vector<uint8_t>& valid) {
+    std::vector<uint8_t> seen(data.size(), 0);
+    std::vector<size_t> order;
+    auto enqueue = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= width || y >= height) {
+            return;
+        }
+        const size_t i = static_cast<size_t>(y) * width + x;
+        if (!valid[i] || seen[i]) {
+            return;
+        }
+        seen[i] = 1;
+        order.push_back(i);
+    };
+    for (int x = 0; x < width; ++x) {
+        enqueue(x, 0);
+        enqueue(x, height - 1);
+    }
+    for (int y = 0; y < height; ++y) {
+        enqueue(0, y);
+        enqueue(width - 1, y);
+    }
+    for (size_t head = 0; head < order.size(); ++head) {
+        const size_t i = order[head];
+        const int y = static_cast<int>(i / static_cast<size_t>(width));
+        const int x = static_cast<int>(i % static_cast<size_t>(width));
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                if (dx == 0 && dy == 0) {
+                    continue;
+                }
+                const int ny = y + dy;
+                const int nx = x + dx;
+                if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+                    continue;
+                }
+                const size_t j = static_cast<size_t>(ny) * width + nx;
+                if (!valid[j] || seen[j] || data[j] < data[i]) {
+                    continue;
+                }
+                seen[j] = 1;
+                order.push_back(j);
+            }
+        }
+    }
+    size_t closed = 0;
+    for (size_t i = 0; i < data.size(); ++i) {
+        if (valid[i] && !seen[i]) {
+            ++closed;
+        }
+    }
+    return closed;
+}
+
 } // namespace
 
 TEST_F(PluginTest, FillSinksLevelsMultiCellFlatBottomPit) {
@@ -6597,6 +6670,79 @@ TEST_F(PluginTest, FillSinksEpsilonGradientsDepressionAndKeepsHigherTerrain) {
         << "ε>0 时洼地外的真实地形必须逐像元不变，实际被改动 " << changed.size() << " 个，第一个 index="
         << (changed.empty() ? 0u : static_cast<unsigned>(changed.front()))
         << "（计划片段的条件 value > top.first 会在这里红）";
+}
+
+// F1（epsilon 的作用域）：ε 只许落在"被填洼抬过"的像元上，纯平地一格都不许动。
+// WHY 这条是判别用例：把实现里的判据从 value < top.first 退回上一版的 value <= top.first，
+// 与出水面等高的背景像元也会被判成洼地、并把抬后值推进堆 ⇒ 平地整幅逐圈累积成锥体，锥体再反过来
+// 把坑自己的出水面顶高。<= 版实测：21x21 纯平地 ε=10 改动 361 个像元；平地+中心单坑 ε=10 时中心
+// 是 105.0 而不是 15.0。参数描述写的是 inside filled depressions ⇒ 这是产品高程错 + 描述不符，
+// 不是风格问题。
+TEST_F(PluginTest, FillSinksEpsilonOnlyTouchesCellsTheFillRaised) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const int side = 21;
+    const double epsilon = 10.0;
+    const float background = 5.0f;
+    const size_t centre = static_cast<size_t>(side / 2) * side + side / 2;
+    auto coord = [side](size_t i) {
+        return "x=" + std::to_string(i % static_cast<size_t>(side)) +
+               " y=" + std::to_string(i / static_cast<size_t>(side));
+    };
+
+    // (1) 纯平地：没有任何像元被填洼抬过 ⇒ ε 再大也必须逐像元保持原值。
+    const std::string flatInput = makeUniformPitRaster("fill_eps_plain_input.tif", side, background,
+                                                       false, 0.0f);
+    const auto flat = runFillSinks(p, progress_, flatInput, "fill_eps_plain_output.tif",
+                                   {{"epsilon", epsilon}});
+    ASSERT_TRUE(flat.result.success) << flat.result.message;
+    const auto flatBefore = readWholeBand(flatInput, side, side);
+    const auto flatAfter = readWholeBand(flat.output, side, side);
+    ASSERT_EQ(flatBefore.size(), flatAfter.size());
+    std::vector<size_t> flatOffenders;
+    for (size_t i = 0; i < flatBefore.size(); ++i) {
+        if (flatAfter[i] != flatBefore[i]) {
+            flatOffenders.push_back(i);
+        }
+    }
+    EXPECT_TRUE(flatOffenders.empty())
+        << "纯平地上没有被填洼抬过的像元，ε>0 却改动了 " << flatOffenders.size()
+        << " 个，第一个 " << (flatOffenders.empty() ? std::string("无") : coord(flatOffenders.front()))
+        << "（判据退回 <= 时整片平地会变成锥体）";
+
+    // (2) 平地 + 中心单坑：只有被填的那一格允许带 ε，其余像元逐像元原值。
+    const std::string pitInput = makeUniformPitRaster("fill_eps_pit_input.tif", side, background,
+                                                      true, 1.0f);
+    const auto run = runFillSinks(p, progress_, pitInput, "fill_eps_pit_output.tif",
+                                  {{"epsilon", epsilon}});
+    ASSERT_TRUE(run.result.success) << run.result.message;
+    const auto before = readWholeBand(pitInput, side, side);
+    const auto after = readWholeBand(run.output, side, side);
+    ASSERT_EQ(before.size(), after.size());
+    EXPECT_NEAR(after[centre], background + static_cast<float>(epsilon), 1e-4f)
+        << "被填洼抬过的像元 = 出水面 + ε；停在 5.0 说明 ε 没进洼地，远高于 15.0 说明背景被卷进来了";
+    std::vector<size_t> offenders;
+    for (size_t i = 0; i < before.size(); ++i) {
+        if (i != centre && after[i] != before[i]) {
+            offenders.push_back(i);
+        }
+    }
+    EXPECT_TRUE(offenders.empty())
+        << "ε 落到了没被填洼抬过的像元上（参数描述说的是洼地内），实际 " << offenders.size()
+        << " 个，第一个 " << (offenders.empty() ? std::string("无") : coord(offenders.front()))
+        << "，其值从 " << (offenders.empty() ? 0.0f : before[offenders.front()]) << " 变成 "
+        << (offenders.empty() ? 0.0f : after[offenders.front()]);
+
+    // (3) 抬完 ε 之后仍然不留封闭洼地（Produces 那句承诺在 ε>0 下重新证一次）。
+    std::vector<uint8_t> valid(after.size(), 1);
+    EXPECT_EQ(countClosedCells(after, side, side, valid), static_cast<size_t>(0))
+        << "ε 逐层抬高水面后不得把洼地自己的出海口顶高";
+    const auto zero = runFillSinks(p, progress_, pitInput, "fill_eps_pit_zero_output.tif",
+                                   {{"epsilon", 0.0}});
+    ASSERT_TRUE(zero.result.success) << zero.result.message;
+    const auto zeroAfter = readWholeBand(zero.output, side, side);
+    EXPECT_NEAR(zeroAfter[centre], background, 1e-4f) << "ε=0 时坑只抬到出水面";
+    EXPECT_EQ(countClosedCells(zeroAfter, side, side, valid), static_cast<size_t>(0));
 }
 
 // 全局闸门（Task 10 审查后新增，"谁加参数谁补可见性"的配套）：epsilon 进 paramSpecs() 的同批
