@@ -6662,6 +6662,104 @@ TEST_F(PluginTest, TerrainFillSinksGuiPanelRendersEpsilonAndHidesKeysTheActionNe
     EXPECT_EQ(renderedKeys.count("accum_threshold"), 0u);
 }
 
+// 9x9 常量背景 + 若干 NoData / 低值像元的 fill_sinks 夹具。cells 里 (x,y)→值，
+// ndCells 里的像元同时写进栅格NoData 哨兵（写入器只会 SetNoDataValue 整带，
+// 所以值本身也要写成 noData）。
+namespace {
+
+std::string makeNoDataPitRaster(const std::string& name, float background,
+                                const std::map<std::pair<int, int>, float>& cells,
+                                const std::vector<std::pair<int, int>>& ndCells) {
+    const int w = 9, h = 9;
+    std::vector<float> data(static_cast<size_t>(w * h), background);
+    for (const auto& [pos, value] : cells) {
+        data[pos.second * w + pos.first] = value;
+    }
+    for (const auto& pos : ndCells) {
+        data[pos.second * w + pos.first] = -9999.0f;
+    }
+    gis::tests::RasterFixtureOptions options;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    return gis::tests::writeFloatRaster(getTestDir(), name, w, h, data, options);
+}
+
+} // namespace
+
+// 计划 Step 1 的第 4 条：NoData 不参与填洼，输出仍带同一个 NoData 值。
+// WHY 仍然留着：它锁的是"NoData 像元不被写成高程、哨兵值不漂移"这一半；
+// 但它锁不住障壁/出海口那个方向（NoData 在角上、不邻接坑，两种处置结果相同），
+// 所以另有 FillSinksDoesNotSeedNoDataEdgeCellsAsPourPoints 与
+// FillSinksTreatsNoDataAsBarrierNotOutlet 两条判别用例（R-T11-3）。
+TEST_F(PluginTest, FillSinksSkipsNoDataCells) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const std::string input = makeNoDataPitRaster("fill_nd_input.tif", 10.0f,
+                                                  {{std::make_pair(4, 4), 2.0f}},
+                                                  {std::make_pair(0, 0)});
+    const auto run = runFillSinks(p, progress_, input, "fill_nd_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+
+    double noData = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(run.output, 1, noData));
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 0, 0), static_cast<float>(noData), 1e-4f);
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 4), 10.0f, 1e-4f);
+}
+
+// R-T11-3 判别用例之一：NoData 像元落在数据集边缘、且紧贴坑。
+// WHY 这个形态才有鉴别力：边缘像元是**原值直接**入队的出海口，-9999 因此会第一个被弹出，
+// 成为一条假出水路径；坑与它相邻，于是坑被"排水"而完全不抬。
+// 反向证明（内部 NoData 像元没有这个效果）：处在坑与边缘之间但**不在边缘上**的 NoData
+// 像元是被弹出时按 parent 水面抬起来的，-9999 拿不到出水面 ⇒ 两种处置都得到 10.0，测不出差异
+// （模拟取证见 task-11-report.md）。
+// 期望：障壁处置 ⇒ 坑只能抬到周边 10.0；出海口处置 ⇒ 坑停在 2.0。
+TEST_F(PluginTest, FillSinksDoesNotSeedNoDataEdgeCellsAsPourPoints) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    // (x=0,y=4) 在左边缘上是 NoData；坑 (x=1,y=4) 与它相邻。
+    const std::string input = makeNoDataPitRaster("fill_nd_edge_input.tif", 10.0f,
+                                                  {{std::make_pair(1, 4), 2.0f}},
+                                                  {std::make_pair(0, 4)});
+    const auto run = runFillSinks(p, progress_, input, "fill_nd_edge_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 1, 4), 10.0f, 1e-4f)
+        << "NoData 当障壁时坑只能抬到周边 10.0；停在 2.0 说明 -9999 被当成了出海口";
+    double noData = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(run.output, 1, noData));
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 0, 4), static_cast<float>(noData), 1e-4f);
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 0, 3), 10.0f, 1e-4f);
+}
+
+// R-T11-3 判别用例之二（水文学上更实质的那个方向）：一条 5.0 的低沟本来能把坑排走，
+// 但被一片 NoData 隔断 —— 障壁语义下这条排水路径不存在，坑只能翻过 10.0 的高地出水 ⇒ 抬到 10.0。
+// 若把 NoData 当成可穿越的出海口，坑会从 -9999 处排进低沟、只抬到 5.0（用例即红）。
+// WHY 还要单独一条：上一条靠"边缘种子原值入队"，这一条靠"邻居扩展是否越过 NoData"，
+// 两个方向可以各自被写错。
+TEST_F(PluginTest, FillSinksTreatsNoDataAsBarrierNotOutlet) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    std::map<std::pair<int, int>, float> cells;
+    cells[std::make_pair(0, 4)] = 5.0f;
+    cells[std::make_pair(1, 4)] = 5.0f;
+    cells[std::make_pair(2, 4)] = 5.0f;   // 低沟：从左边缘通向 NoData
+    cells[std::make_pair(4, 4)] = 2.0f;   // 坑：沟被 NoData 隔断后只能翻越 10.0 的高地
+    // (x=3,y=4) 正好卡在低沟与坑之间。
+    const std::string input = makeNoDataPitRaster("fill_nd_barrier_input.tif", 10.0f, cells,
+                                                  {std::make_pair(3, 4)});
+    const auto run = runFillSinks(p, progress_, input, "fill_nd_barrier_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 4), 10.0f, 1e-4f)
+        << "NoData 是障壁 ⇒ 低沟那条 5.0 的路径不可用，坑必须抬到 10.0；得到 5.0 说明穿过了 NoData";
+    for (int x = 0; x <= 2; ++x) {
+        EXPECT_NEAR(gis::tests::readPixel(run.output, 1, x, 4), 5.0f, 1e-4f) << "x=" << x;
+    }
+    double noData = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(run.output, 1, noData));
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 3, 4), static_cast<float>(noData), 1e-4f);
+}
+
 TEST_F(PluginTest, TerrainFlowAccumulationExecution) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);
