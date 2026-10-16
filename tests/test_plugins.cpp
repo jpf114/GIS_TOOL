@@ -10,9 +10,11 @@
 #include <ogrsf_frmts.h>
 #include <cpl_error.h>
 #include <opencv2/core.hpp>
+#include <cmath>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <set>
@@ -6914,19 +6916,23 @@ TEST_F(PluginTest, ProximityOutputKeepsEveryInputBand) {
 
     // R-T7-7：全背景波段（该波段没有任何目标像元）的期望值由**实测**得出，不是预测：
     // distanceTransform 的输入此时是全 255、一个零像元都没有，(0,0)/(3,3)/(1,2) 三处实测同为
-    // 65536（见 build/task7_observe_band2_debug.log）。本用例按实测值照实钉住，不加特例分支把
-    // 它修饰成 0。容差取 1e-2f：float32 在 2^16 附近的表示间隔本身就有 0.0078，比这更小的容差
-    // 不稳定，而任何其它语义（0、真实距离）与该值的差都在数量级之上。
+    // 65536（三处读数一致这一事实本身就是本用例在钉的东西，取证见 task-7-report.md）。本用例按
+    // 实测值照实钉住，不加特例分支把它修饰成 0。容差取 1e-2f：float32 在 2^16 附近的表示间隔
+    // 本身就有 0.0078，比这更小的容差不稳定，而任何其它语义（0、真实距离）与该值的差都在数量级之上。
     //
-    // 65536 不是算出来的距离，而是 OpenCV 的内部哨兵。出处已核验（OpenCV 4.14
-    // modules/imgproc/src/distransform.cpp，行号对应 build/tmp-cv7 下的解包副本）：
+    // 65536 不是算出来的距离，而是 OpenCV 的内部哨兵。出处：OpenCV 4.14.0 上游
+    // modules/imgproc/src/distransform.cpp（行号按该版本的这个文件）：
     // :784 `static const int PRECISE_DIST_MAX = 1 << 16`、:872 `const unsigned int inf = UINT_MAX`、
-    // :886/:904 `sqr_tab[i] = i >= PRECISE_DIST_MAX ? inf : i*i`、:887-888 `sqr_tab[m..2m) = inf`。
+    // :886/:904 `sqr_tab[i] = i >= PRECISE_DIST_MAX ? inf : i*i`、:887-888 把 sqr_tab[m..2m) 全设成 inf。
     // 列阶段 :760 把 dist 的起点设成 m-1，:764 在无零像元的列上只会递增 ⇒ dist 落进 [m, 2m) 而命中
-    // :888 的 inf，:773 `dptr[0] = (float)sqr_tab[dist]` 于是把 (float)UINT_MAX 写进中间结果，
-    // 行阶段 :859 `d[q] = sqrt(sqr_tab[|q-p|] + f[p])` 开方得 sqrt((float)UINT_MAX) = 65536.0。
-    // 该值与像元位置无关的前提是 |q-p| <= 15（(float)UINT_MAX 的表示间隔是 512，会把小于 256 的
-    // 平方加数吞掉）——本用例是 4×4，落在这个范围内；更宽的图像我没实测。
+    // :888 的 inf，:773 `dptr[0] = (float)sqr_tab[dist]` 于是把 (float)UINT_MAX 写进中间结果；行阶段
+    // :859 `d[q] = std::sqrt(sqr_tab[std::abs(q - p)] + f[p])`。该式要严格等于 65536.0f 需要
+    // |q-p| <= 27：加数是 float32（间隔 512）先舍一次、开方后再舍回 float32（间隔 0.0078125）又一次，
+    // 按这两步次序逐值复算得 0..27 全是 65536.0f，28 起偏到 65536.0078125f。
+    // 本用例是"整幅都没有目标"的形态：f[p] 对每个 p 恒等于同一个常量 (float)UINT_MAX，:815-852 建下
+    // 包络时每个列号都留在包络上，:858 取到的 p 恒等于 q ⇒ |q-p| = 0 ⇒ 该形态的值与像元位置、与图像
+    // 宽度都无关。这句"与宽度无关"只对**整幅无目标**的波段成立：某行只要有一部分像元带目标，
+    // |q-p| 就可能 >= 28，65536 不再严格。
     // OpenCV 升版若把这条用例变红，先对照上面这段行号，它是内部哨兵而不是算法输出。
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 0, 0), 65536.0f, 1e-2f);
     EXPECT_NEAR(gis::tests::readPixel(output, 2, 3, 3), 65536.0f, 1e-2f);
@@ -7202,7 +7208,9 @@ TEST_F(PluginTest, ProximityWarnsWhenBandNoDataDeclarationsDiffer) {
     ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, outNoData1));
     ASSERT_TRUE(gis::tests::readNoDataValue(output, 2, outNoData2));
     EXPECT_DOUBLE_EQ(outNoData1, outNoData2);      // 文件里只剩一个共享声明
-    EXPECT_DOUBLE_EQ(outNoData1, 500.0);           // 实测：后写的 500 胜出，band1 的 -9999 声明丢了
+    // R2-F6：这一句钉的是"band1 自己的声明没保住"，所以拿它和 band1 的**输入**声明比，而不是和某个
+    // 字面量比——"等于 500"那种写法钉的是覆写顺序（后写胜出）这个实现选择，改天换成首个留得住就会红。
+    EXPECT_NE(outNoData1, inNoData1);
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 4, 2), -9999.0f, 1e-6f);   // 像元还写着 band1 自己的值
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 4, 0), 4.0f, 1e-6f);       // 距离本身照常算出来了
 }
@@ -7288,6 +7296,180 @@ TEST_F(PluginTest, ProximityStaysSilentWhenNoDataDeclarationIsConsistent) {
     ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, outNoData));
     EXPECT_DOUBLE_EQ(outNoData, -9999.0);
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 4, 2), -9999.0f, 1e-6f);
+}
+
+// R2-F2（fix round 2，形态 (A,A,B)）：三波段时"与第一个波段不一致"和"与存活声明不一致"不再数值相等，
+// 现有的 2 波段用例区分不了这两种参照。输出里真正活下来的声明是**最后一个有声明的波段**
+// （opencv_wrapper.cpp:96-104 只对源里声明了 NoData 的波段调 SetNoDataValue，而 Create(..., nullptr)
+// 出的多波段 GeoTIFF 是单 IFD、只有一个 TIFFTAG_GDAL_NODATA，后写覆盖前写），所以 band1 与 band2
+// 的两个 -9999 都会丢 ⇒ 计数必须是 2。参照若写成"第一个波段"，这条算出 1（少报）⇒ 对参照选错有牙。
+TEST_F(PluginTest, ProximityCountsEveryBandWhoseNoDataDeclarationIsNotKept) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const std::string vrt = writeProximityNoDataVrt("prox_nodata_aab", 5, 3, {
+        {-9999.0f, true, -9999.0},
+        {-9999.0f, true, -9999.0},
+        {  500.0f, true,   500.0},
+    });
+    ASSERT_FALSE(vrt.empty());
+
+    // 输入侧必须真的是 (A,A,B)，否则这条测的就不是"存活声明之前的那两个波段"。
+    double inNoData1 = 0.0;
+    double inNoData2 = 0.0;
+    double inNoData3 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 1, inNoData1));
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 2, inNoData2));
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 3, inNoData3));
+    ASSERT_DOUBLE_EQ(inNoData1, -9999.0);
+    ASSERT_DOUBLE_EQ(inNoData2, -9999.0);
+    ASSERT_DOUBLE_EQ(inNoData3, 500.0);
+
+    const std::string output = utf8PathString(getTestDir() / "prox_nodata_aab_out.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+    // 边车会把别处写过的声明静默带进来（实测见 task-7-report.md 的 PAM 取证），而本用例断的正是
+    // "哪个声明留下来了"；子文件的 .aux.xml 由 writeProximityNoDataVrt 自己清掉。
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = vrt;
+    params["output"] = output;
+
+    RecordingProgress recorder;
+    const auto result = p->execute(params, recorder);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_EQ(result.metadata.count("nodata_divergent_band_count"), 1u);
+    EXPECT_EQ(result.metadata.at("nodata_divergent_band_count"), "2");
+    EXPECT_NE(recorder.joined().find("nodata_divergent_band_count"), std::string::npos)
+        << recorder.joined();
+
+    // 危害本身：三波段重开后只能报告同一个声明，band1 与 band2 各自的 -9999 都不在了，
+    // 而最后一个有声明的波段（band3）保住了自己的 ⇒ 这正是计数所依据的参照。
+    EXPECT_EQ(gis::tests::readBandCount(output), 3);
+    double outNoData1 = 0.0;
+    double outNoData2 = 0.0;
+    double outNoData3 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, outNoData1));
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 2, outNoData2));
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 3, outNoData3));
+    EXPECT_DOUBLE_EQ(outNoData1, outNoData2);
+    EXPECT_DOUBLE_EQ(outNoData1, outNoData3);
+    EXPECT_DOUBLE_EQ(outNoData3, inNoData3);
+    EXPECT_NE(outNoData1, inNoData1);
+    EXPECT_NE(outNoData2, inNoData2);
+
+    // 只告警不失败：band1 的目标在 (0,0)，(4,0) 的距离照常是 4。
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 4, 0), 4.0f, 1e-6f);
+}
+
+// R2-F2（fix round 2，形态 (A,B,B)）：与上一条方向相反。存活声明是 band3 的 500，band2 声明同一个值
+// ⇒ 只有 band1 的 -9999 会丢，计数必须是 1。参照写成"第一个波段"时这条算出 2（多报），
+// 于是两条用例一起把参照的两个方向都封住（缺任一条，另一种写错的参照都能全绿）。
+TEST_F(PluginTest, ProximityDoesNotCountBandsWhoseNoDataDeclarationSurvives) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const std::string vrt = writeProximityNoDataVrt("prox_nodata_abb", 5, 3, {
+        {-9999.0f, true, -9999.0},
+        {  500.0f, true,   500.0},
+        {  500.0f, true,   500.0},
+    });
+    ASSERT_FALSE(vrt.empty());
+
+    double inNoData1 = 0.0;
+    double inNoData2 = 0.0;
+    double inNoData3 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 1, inNoData1));
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 2, inNoData2));
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 3, inNoData3));
+    ASSERT_DOUBLE_EQ(inNoData1, -9999.0);
+    ASSERT_DOUBLE_EQ(inNoData2, 500.0);
+    ASSERT_DOUBLE_EQ(inNoData3, 500.0);
+
+    const std::string output = utf8PathString(getTestDir() / "prox_nodata_abb_out.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = vrt;
+    params["output"] = output;
+
+    RecordingProgress recorder;
+    const auto result = p->execute(params, recorder);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_EQ(result.metadata.count("nodata_divergent_band_count"), 1u);
+    EXPECT_EQ(result.metadata.at("nodata_divergent_band_count"), "1");
+    EXPECT_NE(recorder.joined().find("nodata_divergent_band_count"), std::string::npos)
+        << recorder.joined();
+
+    // 三波段只剩一个共享声明（危害本身），且它等于 band2/band3 自己的声明 ⇒ 那两个波段没被骗。
+    EXPECT_EQ(gis::tests::readBandCount(output), 3);
+    double outNoData1 = 0.0;
+    double outNoData2 = 0.0;
+    double outNoData3 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, outNoData1));
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 2, outNoData2));
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 3, outNoData3));
+    EXPECT_DOUBLE_EQ(outNoData1, outNoData2);
+    EXPECT_DOUBLE_EQ(outNoData2, outNoData3);
+    EXPECT_DOUBLE_EQ(outNoData2, inNoData2);
+    EXPECT_NE(outNoData1, inNoData1);
+
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 4, 0), 4.0f, 1e-6f);
+}
+
+// R2-F5（fix round 2）：各波段都声明 NaN 型 NoData（外部产品里可能出现）时不得报分歧。
+// `current.value != survivor.value` 对 NaN 恒真（IEEE 的 NaN != NaN），三波段全都声明 nan 会被判成
+// "两个波段分歧"⇒ 假告警。这里用现成的 VRT 辅助把 NaN 写进 <NoDataValue>，没有为此扩夹具。
+// 输入侧三条前置断言先钉住"VRT 确实把 nan 解析成了 NaN"：若哪天解析不出来了，本用例会红在前置，
+// 不会静默退化成一条什么都没测的假绿。像元值不断：NoData 为 NaN 时 OpenCV compare 的语义不在
+// 本用例要钉的范围里。
+TEST_F(PluginTest, ProximityStaysSilentWhenEveryBandDeclaresNaNNoData) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const double nanNoData = std::numeric_limits<double>::quiet_NaN();
+    const std::string vrt = writeProximityNoDataVrt("prox_nodata_allnan", 5, 3, {
+        {0.0f, true, nanNoData},
+        {0.0f, true, nanNoData},
+        {0.0f, true, nanNoData},
+    });
+    ASSERT_FALSE(vrt.empty());
+
+    double inNoData1 = 0.0;
+    double inNoData2 = 0.0;
+    double inNoData3 = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 1, inNoData1))
+        << "前提：VRT 要把 <NoDataValue>nan</NoDataValue> 解析成 NaN，否则这条用例什么都没测";
+    ASSERT_TRUE(std::isnan(inNoData1)) << "band1 实测读到 " << inNoData1;
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 2, inNoData2));
+    ASSERT_TRUE(std::isnan(inNoData2)) << "band2 实测读到 " << inNoData2;
+    ASSERT_TRUE(gis::tests::readNoDataValue(vrt, 3, inNoData3));
+    ASSERT_TRUE(std::isnan(inNoData3)) << "band3 实测读到 " << inNoData3;
+
+    const std::string output = utf8PathString(getTestDir() / "prox_nodata_allnan_out.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = vrt;
+    params["output"] = output;
+
+    RecordingProgress recorder;
+    const auto result = p->execute(params, recorder);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_EQ(result.metadata.count("nodata_divergent_band_count"), 0u);
+    EXPECT_EQ(recorder.joined().find("nodata_divergent_band_count"), std::string::npos)
+        << recorder.joined();
 }
 
 // R-T7-9：`doProximity` 只读 input/output/max_distance（取证：band/nodata_value 只在

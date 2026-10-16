@@ -5,6 +5,7 @@
 #include <gis/core/opencv_wrapper.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cpl_conv.h>
 #include <filesystem>
 #include <gdal_alg.h>
@@ -545,18 +546,40 @@ gis::framework::Result RasterManagePlugin::doProximity(
     // 波段里那些 NoData 像元的物理值仍是它自己原来的值，于是下游按文件声明把它当成合法距离读。
     // 只告警不失败：同传感器/多源产品常有波段间 NoData 差异（与 Task 13 的 R-T13-1 同型），
     // 硬失败会打断本来可用的正常用法。
+    //
+    // R2-F1：参照必须取"最后一个声明了 NoData 的波段"，不是第一个。存活者由我们自己的写出顺序决定：
+    // opencv_wrapper.cpp:96-104 只对"源里声明了 NoData"的波段调 SetNoDataValue，单 IFD 只有一个共享
+    // 标签且后写覆盖前写 ⇒ 最后一个有声明的波段活下来。以它为参照，计数才逐字等于"下游会被误导的
+    // 波段数"；以第一个为参照时 (A,A,B) 少报一个、(A,B,B) 多报一个（双向实测见 task-7-report.md）。
+    // 没有任何波段声明 ⇒ 没有存活者、也不存在丢声明，计数为 0 且不告警。
+    //
+    // R2-F5：声明值要按"同为 NaN 即一致"比较。NaN != NaN 恒真，直接用 != 会把各波段都声明 nan 的
+    // 输入（外部产品里会出现）假报成分歧。
+    int survivorIndex = -1;   // 输出里实际留下来的那个共享声明来自哪个波段
+    for (size_t i = 0; i < declarations.size(); ++i) {
+        if (declarations[i].declared) survivorIndex = static_cast<int>(i);
+    }
+    auto sameDeclaration = [](const BandNoData& a, const BandNoData& b) {
+        if (a.declared != b.declared) return false;
+        if (!a.declared) return true;                       // 都不声明：一致
+        if (std::isnan(a.value) || std::isnan(b.value)) {
+            return std::isnan(a.value) && std::isnan(b.value);
+        }
+        return a.value == b.value;
+    };
     int divergentBands = 0;
-    for (size_t i = 1; i < declarations.size(); ++i) {
-        const auto& first = declarations.front();
-        const auto& current = declarations[i];
-        if (current.declared != first.declared || (current.declared && current.value != first.value)) {
-            ++divergentBands;
+    if (survivorIndex >= 0) {
+        const auto& survivor = declarations[static_cast<size_t>(survivorIndex)];
+        for (size_t i = 0; i < declarations.size(); ++i) {
+            if (static_cast<int>(i) == survivorIndex) continue;
+            if (!sameDeclaration(declarations[i], survivor)) ++divergentBands;
         }
     }
     if (divergentBands > 0) {
-        progress.onMessage("警告: 输入各波段的 NoData 声明存在分歧 (nodata_divergent_band_count=" +
+        progress.onMessage("警告: 输入各波段的 NoData 声明不一致 (nodata_divergent_band_count=" +
                            std::to_string(divergentBands) + "/" + std::to_string(bandCount) +
-                           ")：输出栅格只能有一个共享 NoData 声明，其余波段的声明会丢失");
+                           ")：输出栅格只剩一个共享 NoData 声明，其中 " + std::to_string(divergentBands) +
+                           " 个波段的声明不会保留，那些波段的 NoData 像元会被下游当成合法距离");
     }
 
     // 循环外一次写出：若逐波段调用 matToGdalTiff(..., b)，它每次都重新创建整个文件，
@@ -573,6 +596,8 @@ gis::framework::Result RasterManagePlugin::doProximity(
 
     auto result = gis::framework::Result::ok("Proximity map created", output);
     result.metadata["algorithm"] = "euclidean_distance_cv";
+    // 键名与告警文本共用同一个键，CLI/GUI 的元数据摘要会把 key: value 原样显示给用户。
+    // 这里的 divergent = "与输出里存活的那个共享声明不一致"，所以数值逐字就是"声明不会保留的波段数"。
     if (divergentBands > 0) {
         result.metadata["nodata_divergent_band_count"] = std::to_string(divergentBands);
     }
