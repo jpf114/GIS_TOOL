@@ -234,7 +234,9 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"green_band", "绿光波段", "Green band index", gis::framework::ParamType::Int, false, int{2}, int{1}, int{999}},
         gis::framework::ParamSpec{"swir1_band", "短波红外1", "SWIR1 band index", gis::framework::ParamType::Int, false, int{5}, int{1}, int{999}},
         gis::framework::ParamSpec{"swir2_band", "短波红外2", "SWIR2 band index", gis::framework::ParamType::Int, false, int{6}, int{1}, int{999}},
-        gis::framework::ParamSpec{"l_value", "L参数", "L parameter used by SAVI", gis::framework::ParamType::Double, false, double{0.5}, double{0.0}, double{1.0}},
+        // WHY 名字里点明 SAVI：本插件没有 actionUiConfig 条目 ⇒ 面板不过滤，l_value 与 evi_l 会同时渲染，
+        // 而对 evi 动作来说 l_value 那一行完全不被读取（Task 10 的 spindex.evi 白名单才是根治）。
+        gis::framework::ParamSpec{"l_value", "SAVI L参数", "L parameter used by SAVI", gis::framework::ParamType::Double, false, double{0.5}, double{0.0}, double{1.0}},
         gis::framework::ParamSpec{"g_value", "G参数", "G parameter used by EVI", gis::framework::ParamType::Double, false, double{2.5}, double{0.0}, double{100.0}},
         gis::framework::ParamSpec{"c1", "C1参数", "C1 parameter used by EVI", gis::framework::ParamType::Double, false, double{6.0}, double{0.0}, double{100.0}},
         gis::framework::ParamSpec{"c2", "C2参数", "C2 parameter used by EVI", gis::framework::ParamType::Double, false, double{7.5}, double{0.0}, double{100.0}},

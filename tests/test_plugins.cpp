@@ -1811,7 +1811,7 @@ TEST_F(PluginTest, SpindexOtherIndicesExecution) {
         {"ui", "e2e_spindex_ui_output.tif", {{"nir_band", 4}, {"swir2_band", 6}}, 40.0f / 180.0f},
         {"bi", "e2e_spindex_bi_output.tif", {{"red_band", 3}, {"nir_band", 4}}, 1.0f / 5785.6136f},
         {"savi", "e2e_spindex_savi_output.tif", {{"red_band", 3}, {"nir_band", 4}, {"l_value", 0.5}}, 60.0f / 100.5f},
-        {"evi", "e2e_spindex_evi_output.tif", {{"blue_band", 1}, {"red_band", 3}, {"nir_band", 4}, {"g_value", 2.5}, {"c1", 6.0}, {"c2", 7.5}, {"l_value", 1.0}}, 100.0f / 176.0f},
+        {"evi", "e2e_spindex_evi_output.tif", {{"blue_band", 1}, {"red_band", 3}, {"nir_band", 4}, {"g_value", 2.5}, {"c1", 6.0}, {"c2", 7.5}, {"evi_l", 1.0}}, 100.0f / 176.0f},
         {"osavi", "e2e_spindex_osavi_output.tif", {{"red_band", 3}, {"nir_band", 4}}, 46.4f / 100.16f},
         {"evi2", "e2e_spindex_evi2_output.tif", {{"red_band", 3}, {"nir_band", 4}}, 100.0f / 143.0f},
     };
@@ -1932,6 +1932,86 @@ TEST_F(PluginTest, EviRejectsSharedSaviLValueKey) {
     ASSERT_TRUE(result.success) << result.message;
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 5, 5), 100.0f / 176.0f, 1e-5f)
         << "EVI 不得读取 SAVI 的 l_value 键，否则 GUI 的 0.5 会再次静默胜出";
+}
+
+// Fix round 1（F1 / Important I-1）：SAVI 侧的 L 此前完全没有守护。
+// WHY 单靠 GOLD 表那条 savi 行封不住：它提交 l_value=0.5，而"SAVI 分支改读 evi_l、兜底仍写 0.5"这种
+// 变异下缺键恰好也回落 0.5 ⇒ 期望值 60/100.5 一动不动（审查者实测 542/542 全绿；本轮复跑同一变异，
+// 只有本用例红 ⇒ 用户填的 l_value 被静默吞掉这件事从此有了牙）。
+// 所以两个方向都要断：l_value 必须驱动 SAVI，evi_l 必须不得驱动 SAVI。
+// 期望值按 SAVI 分支的实际公式推导 SAVI = (NIR - Red) * (1 + L) / (NIR + Red + L)，
+// 夹具 {10,20,30,70} + red=3/nir=4 ⇒ NIR=70、Red=30：
+//   L=0.9 ⇒ 40 * 1.9 / (100 + 0.9) = 76/100.9
+//   L=0.5 ⇒ 40 * 1.5 / (100 + 0.5) = 60/100.5
+TEST_F(PluginTest, SaviUsesLValueAndIgnoresEviL) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+    const std::string input = createMultiBandConstantRaster(
+        "spi_savi_l_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
+
+    // 方向一：显式提交 l_value=0.9，SAVI 必须按它算。
+    const std::string drivenOutput = utf8PathString(getTestDir() / "spi_savi_l09_output.tif");
+    std::map<std::string, gis::framework::ParamValue> drivenParams;
+    drivenParams["action"] = std::string("savi");
+    drivenParams["input"] = input;
+    drivenParams["output"] = drivenOutput;
+    drivenParams["red_band"] = 3;
+    drivenParams["nir_band"] = 4;
+    drivenParams["l_value"] = 0.9;   // 必须是 double：getParam 在类型不匹配时静默回落默认值
+
+    const auto driven = p->execute(drivenParams, progress_);
+    ASSERT_TRUE(driven.success) << driven.message;
+    EXPECT_NEAR(gis::tests::readPixel(drivenOutput, 1, 5, 5), 76.0f / 100.9f, 1e-5f)
+        << "SAVI 必须读取 l_value，否则用户填的 0.9 会被静默换成兜底 0.5";
+
+    // 方向二：只提交 evi_l，SAVI 不得越权读它，必须继续用兜底 0.5。
+    const std::string rejectOutput = utf8PathString(getTestDir() / "spi_savi_reject_evil_output.tif");
+    std::map<std::string, gis::framework::ParamValue> rejectParams;
+    rejectParams["action"] = std::string("savi");
+    rejectParams["input"] = input;
+    rejectParams["output"] = rejectOutput;
+    rejectParams["red_band"] = 3;
+    rejectParams["nir_band"] = 4;
+    rejectParams["evi_l"] = 0.1;   // EVI 专属键，SAVI 读到它的话结果就变成 44/100.1
+
+    const auto rejected = p->execute(rejectParams, progress_);
+    ASSERT_TRUE(rejected.success) << rejected.message;
+    EXPECT_NEAR(gis::tests::readPixel(rejectOutput, 1, 5, 5), 60.0f / 100.5f, 1e-5f)
+        << "SAVI 不得读取 EVI 的 evi_l 键，否则两个指数的 L 又耦回去了";
+}
+
+// Fix round 1（F2 / Important I-2）：四条 EVI 用例锁的都是"evi_l 取到什么值"，没有任何一条锁
+// "evi_l 这条 spec 有没有被声明"。WHY 必须单独锁声明：把整条 spec 删掉后 542/542 仍全绿 ——
+// 成因是 N35（批次级，本轮不修）：src/cli/main.cpp:76-82 对未知参数键不报错、原样存成 std::string，
+// 而 param_spec.h:62 的 std::get_if<double> 失配 ⇒ getParam 静默回落代码兜底，
+// 审查者实测删掉 spec 后 CLI `--evi_l=0.5` 返回 L=1 的结果且 exit 0。
+// 形状照抄"声明的默认值必须与代码兜底同值"那条先例（本文件里 raster_manage band 的那一段）。
+TEST_F(PluginTest, SpindexEviLSpecDeclarationMatchesEviFallback) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+
+    const auto specs = p->paramSpecs();
+    const gis::framework::ParamSpec* eviLSpec = nullptr;
+    for (const auto& spec : specs) {
+        if (spec.key == "evi_l") eviLSpec = &spec;
+    }
+    ASSERT_NE(eviLSpec, nullptr)
+        << "EVI 分支的兜底读的就是这个键；spec 被删掉时 GUI 面板不再渲染它、CLI 也不再校验它";
+    EXPECT_EQ(eviLSpec->type, gis::framework::ParamType::Double)
+        << "类型漂移成 Int/String 后 getParam<double> 会静默回落默认值，取值断言照样绿";
+
+    const auto* declaredDefault = std::get_if<double>(&eviLSpec->defaultValue);
+    ASSERT_NE(declaredDefault, nullptr) << "evi_l 的默认值必须是 double 变体";
+    EXPECT_EQ(*declaredDefault, 1.0)
+        << "evi_l 的 spec 默认值必须与 spindex_plugin.cpp EVI 分支的代码兜底 1.0 同值";
+
+    const auto* declaredMin = std::get_if<double>(&eviLSpec->minValue);
+    const auto* declaredMax = std::get_if<double>(&eviLSpec->maxValue);
+    ASSERT_NE(declaredMin, nullptr) << "evi_l 的下界必须是 double 变体";
+    ASSERT_NE(declaredMax, nullptr) << "evi_l 的上界必须是 double 变体";
+    EXPECT_EQ(*declaredMin, 0.0);
+    EXPECT_EQ(*declaredMax, 1.0)
+        << "上界被放宽（修前实测改成 100.0 时全套仍绿）等于把 EVI 的背景因子取值域开了口子";
 }
 
 TEST_F(PluginTest, SpindexCustomIndexExecution) {
