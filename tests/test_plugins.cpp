@@ -9,6 +9,8 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_error.h>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <opencv2/core.hpp>
 #include <cmath>
 #include <cctype>
@@ -7622,4 +7624,111 @@ TEST_F(PluginTest, ClassificationAccuracyAssessmentExecution) {
     ASSERT_TRUE(result.metadata.count("kappa") > 0);
     ASSERT_TRUE(result.metadata.count("class_count") > 0);
     EXPECT_EQ(result.metadata.at("class_count"), "2");
+}
+
+// Task 8：混淆矩阵按 confusionMatrix[参考值][分类值] 构建（classification_plugin.cpp:2151），
+// 于是"参考类总数"是行和、"分类图类总数"是列和；修前 PA 取了列和、UA 取了行和，两者互换。
+// 夹具刻意不含 0 值像元，把 PA/UA 归属和 NoData 判定缺陷解耦——本用例红只可能来自互换。
+TEST_F(PluginTest, AccuracyAssessmentUsesStandardPaUa) {
+    auto* p = mgr_.find("classification");
+    ASSERT_NE(p, nullptr);
+
+    // 参考: 1 1 / 2 2    分类: 1 2 / 2 2
+    // 混淆(行=参考, 列=分类): class1 {1:1, 2:1}; class2 {1:0, 2:2}
+    // 标准定义：PA(1)=1/2=0.5  PA(2)=2/2=1.0 ; UA(1)=1/1=1.0  UA(2)=2/3≈0.666667
+    const std::string reference = gis::tests::writeFloatRaster(
+        getTestDir(), "acc_ref.tif", 2, 2, {1.0f, 1.0f, 2.0f, 2.0f});
+    const std::string classified = gis::tests::writeFloatRaster(
+        getTestDir(), "acc_cls.tif", 2, 2, {1.0f, 2.0f, 2.0f, 2.0f});
+    ASSERT_FALSE(reference.empty());
+    ASSERT_FALSE(classified.empty());
+    const std::string output = utf8PathString(getTestDir() / "acc_output.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("accuracy_assessment");
+    params["classified_raster"] = classified;
+    params["reference_raster"] = reference;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    std::ifstream ifs(output, std::ios::binary);
+    ASSERT_TRUE(ifs.is_open());
+    // Qt 6 起 QByteArray 不再有迭代器区间构造，只能显式按 (data, size) 建。
+    const std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    const QByteArray text(content.data(), static_cast<qsizetype>(content.size()));
+    const QJsonDocument document = QJsonDocument::fromJson(text);
+    ASSERT_TRUE(document.isObject()) << content;
+    const QJsonObject root = document.object();
+    ASSERT_TRUE(root.contains("producers_accuracy")) << content;
+    ASSERT_TRUE(root.contains("users_accuracy"));
+
+    const QJsonObject pa = root.value("producers_accuracy").toObject();
+    const QJsonObject ua = root.value("users_accuracy").toObject();
+    EXPECT_NEAR(pa.value("1").toDouble(), 0.5, 1e-6) << content;
+    EXPECT_NEAR(pa.value("2").toDouble(), 1.0, 1e-6) << content;
+    EXPECT_NEAR(ua.value("1").toDouble(), 1.0, 1e-6) << content;
+    EXPECT_NEAR(ua.value("2").toDouble(), 2.0 / 3.0, 1e-6) << content;
+}
+
+// Task 8（R-T8-1）：GetNoDataValue() 不带 pbSuccess 时，"没定义 NoData"会被读成"NoData 就是 0"，
+// 于是 0 类像元被整类剔除出混淆矩阵——改变的是 totalValid/总体精度/kappa，比 PA/UA 换名字更伤。
+// 判据链：夹具先自证两个栅格都**没有**声明 NoData，再要求类别 0 出现在 PA/UA 与计数里。
+TEST_F(PluginTest, AccuracyAssessmentKeepsZeroClassWhenNoDataUndefined) {
+    auto* p = mgr_.find("classification");
+    ASSERT_NE(p, nullptr);
+
+    // 参考 {0,0,1,1}、分类 {0,1,1,1}，两栅格均未定义 NoData → 0 是合法类别，不是空洞
+    // 混淆(行=参考): cls0=1, cls1=1；cls0 行和=2；cls1 行和=2；cls0 列和=1；cls1 列和=3
+    // 正确：totalValid=4、overall=3/4=0.75，PA(0)=0.5，UA(0)=1.0，类别 0 必须出现在 PA/UA 里
+    // 修前：0 值像元被当 NoData 丢掉 → total_samples=2、overall=1.0、类别 0 整个消失
+    const std::string reference = gis::tests::writeFloatRaster(
+        getTestDir(), "acc_zero_ref.tif", 2, 2, {0.0f, 0.0f, 1.0f, 1.0f});
+    const std::string classified = gis::tests::writeFloatRaster(
+        getTestDir(), "acc_zero_cls.tif", 2, 2, {0.0f, 1.0f, 1.0f, 1.0f});
+    ASSERT_FALSE(reference.empty());
+    ASSERT_FALSE(classified.empty());
+
+    // PAM 边车按文件名匹配：残留的 .aux.xml 会把声明值带进来，让"未定义 NoData"这一前提失效。
+    std::error_code ec;
+    fs::remove(reference + ".aux.xml", ec);
+    fs::remove(classified + ".aux.xml", ec);
+    double declared = 0.0;
+    EXPECT_FALSE(gis::tests::readNoDataValue(reference, 1, declared)) << reference;
+    EXPECT_FALSE(gis::tests::readNoDataValue(classified, 1, declared)) << classified;
+
+    const std::string output = utf8PathString(getTestDir() / "acc_zero_output.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("accuracy_assessment");
+    params["classified_raster"] = classified;
+    params["reference_raster"] = reference;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    std::ifstream ifs(output, std::ios::binary);
+    ASSERT_TRUE(ifs.is_open());
+    // Qt 6 起 QByteArray 不再有迭代器区间构造，只能显式按 (data, size) 建。
+    const std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    const QByteArray text(content.data(), static_cast<qsizetype>(content.size()));
+    const QJsonDocument document = QJsonDocument::fromJson(text);
+    ASSERT_TRUE(document.isObject()) << content;
+    const QJsonObject root = document.object();
+
+    const QJsonObject pa = root.value("producers_accuracy").toObject();
+    const QJsonObject ua = root.value("users_accuracy").toObject();
+    ASSERT_TRUE(pa.contains("0")) << content;
+    ASSERT_TRUE(ua.contains("0")) << content;
+    EXPECT_NEAR(pa.value("0").toDouble(), 0.5, 1e-6) << content;
+    EXPECT_NEAR(ua.value("0").toDouble(), 1.0, 1e-6) << content;
+    // 类别 "1" 的值必须与第一个用例同值，防止"0 被塞回去但只塞了个数"。
+    EXPECT_NEAR(pa.value("1").toDouble(), 1.0, 1e-6) << content;
+    EXPECT_NEAR(ua.value("1").toDouble(), 2.0 / 3.0, 1e-6) << content;
+
+    EXPECT_NEAR(root.value("overall_accuracy").toDouble(), 0.75, 1e-6) << content;
+    EXPECT_EQ(result.metadata.at("total_samples"), "4") << content;
+    EXPECT_EQ(result.metadata.at("class_count"), "2") << content;
 }

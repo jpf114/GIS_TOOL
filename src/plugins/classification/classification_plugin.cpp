@@ -2123,8 +2123,12 @@ gis::framework::Result ClassificationPlugin::doAccuracyAssessment(
     progress.throwIfCancelled();
     progress.onProgress(0.1);
 
-    int classifiedNoData = static_cast<int>(classifiedBand->GetNoDataValue());
-    int referenceNoData = static_cast<int>(referenceBand->GetNoDataValue());
+    // GetNoDataValue 在未定义 NoData 时照样返回 0.0：不看 pbSuccess 就等于把"没声明"读成
+    // "0 就是 NoData"，会把合法的 0 类像元整类剔除出混淆矩阵。
+    int classifiedHasNoData = 0;
+    int referenceHasNoData = 0;
+    const double classifiedNoData = classifiedBand->GetNoDataValue(&classifiedHasNoData);
+    const double referenceNoData = referenceBand->GetNoDataValue(&referenceHasNoData);
 
     std::vector<int> classifiedBuf(static_cast<size_t>(width));
     std::vector<int> referenceBuf(static_cast<size_t>(width));
@@ -2144,7 +2148,8 @@ gis::framework::Result ClassificationPlugin::doAccuracyAssessment(
             int cVal = classifiedBuf[static_cast<size_t>(x)];
             int rVal = referenceBuf[static_cast<size_t>(x)];
 
-            if (cVal == classifiedNoData || rVal == referenceNoData) continue;
+            if ((classifiedHasNoData && cVal == classifiedNoData) ||
+                (referenceHasNoData && rVal == referenceNoData)) continue;
 
             allClasses.insert(rVal);
             allClasses.insert(cVal);
@@ -2179,8 +2184,11 @@ gis::framework::Result ClassificationPlugin::doAccuracyAssessment(
             colSum += confusionMatrix[sortedClasses[j]][cls];
             rowSum += confusionMatrix[cls][sortedClasses[j]];
         }
-        producersAccuracy[cls] = colSum > 0 ? static_cast<double>(confusionMatrix[cls][cls]) / static_cast<double>(colSum) : 0.0;
-        usersAccuracy[cls] = rowSum > 0 ? static_cast<double>(confusionMatrix[cls][cls]) / static_cast<double>(rowSum) : 0.0;
+        // 矩阵按 confusionMatrix[参考值][分类值] 构建，所以 rowSum 就是"该参考类总数"——
+        // producer 准确率问的正是"参考里属于该类的像元被做对的比例"，分母必须是 rowSum；
+        // colSum 是"分类图上该类的总数"，留给 user 准确率。
+        producersAccuracy[cls] = rowSum > 0 ? static_cast<double>(confusionMatrix[cls][cls]) / static_cast<double>(rowSum) : 0.0;
+        usersAccuracy[cls] = colSum > 0 ? static_cast<double>(confusionMatrix[cls][cls]) / static_cast<double>(colSum) : 0.0;
     }
 
     double kappa = 0.0;
