@@ -707,6 +707,131 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output"}
             }},
         }},
+        // terrain：19 个 action 的键逐条取自 terrain_plugin.cpp 的 doXxx 读取点（行号见
+        // task-10-report.md）。z_factor 只进"确实读它"的 14 个 action —— profile_extract/
+        // viewshed/viewshed_multi/cut_fill/reservoir_volume 不读，列进白名单就是放一个填了
+        // 不生效的键。
+        // WHY 这里不预写 epsilon / curvature_coeff：那是 Task 11/Task 12 才新增的 ParamSpec，
+        // 此刻不在 paramSpecs() 里，预写会让 R-T10-5 的元断言当场变红，而且"配置里有一个无人
+        // 读取的键"正是本任务要消灭的形态。归属规则是谁加参数谁同时补可见性。
+        {"terrain", {
+            {"slope", {
+                QString{},
+                QStringLiteral("按 DEM 计算坡度。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"aspect", {
+                QString{},
+                QStringLiteral("按 DEM 计算坡向。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"hillshade", {
+                QString{},
+                QStringLiteral("按光源方位角与高度角计算山体阴影。"),
+                {"input", "output", "band", "z_factor", "azimuth", "altitude"},
+                {"input", "output"}
+            }},
+            {"tpi", {
+                QString{},
+                QStringLiteral("计算地形位置指数（局部均值与像元值之差）。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"curvature", {
+                QString{},
+                QStringLiteral("计算整体曲率。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"profile_curvature", {
+                QString{},
+                QStringLiteral("计算剖面曲率。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"plan_curvature", {
+                QString{},
+                QStringLiteral("计算平面曲率。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"tri", {
+                QString{},
+                QStringLiteral("计算地形崎岖度指数。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"roughness", {
+                QString{},
+                QStringLiteral("计算地形粗糙度。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"fill_sinks", {
+                QString{},
+                QStringLiteral("填洼，为水文分析准备无坑 DEM。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"flow_direction", {
+                QString{},
+                QStringLiteral("计算 D8 水流方向。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"flow_accumulation", {
+                QString{},
+                QStringLiteral("按水流方向累计汇流量。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"stream_extract", {
+                QString{},
+                QStringLiteral("按汇流阈值提取河网。"),
+                {"input", "output", "band", "z_factor", "accum_threshold"},
+                {"input", "output"}
+            }},
+            {"watershed", {
+                QString{},
+                QStringLiteral("基于流向与汇流做流域划分。"),
+                {"input", "output", "band", "z_factor"},
+                {"input", "output"}
+            }},
+            {"profile_extract", {
+                QString{},
+                QStringLiteral("沿折线采样 DEM 剖面并输出 CSV。"),
+                {"input", "output", "band", "profile_path"},
+                {"input", "output", "profile_path"}
+            }},
+            {"viewshed", {
+                QString{},
+                QStringLiteral("单观察点视域分析。"),
+                {"input", "output", "band", "observer_x", "observer_y",
+                 "observer_height", "target_height", "max_distance"},
+                {"input", "output"}
+            }},
+            {"viewshed_multi", {
+                QString{},
+                QStringLiteral("多观察点视域分析。"),
+                {"input", "output", "band", "observer_points",
+                 "observer_height", "target_height", "max_distance"},
+                {"input", "output", "observer_points"}
+            }},
+            {"cut_fill", {
+                QString{},
+                QStringLiteral("对比两期 DEM 计算填挖方体积。"),
+                {"input", "output", "reference", "band"},
+                {"input", "output", "reference"}
+            }},
+            {"reservoir_volume", {
+                QString{},
+                QStringLiteral("按给定水位计算库容面积曲线。"),
+                {"input", "output", "band", "water_level"},
+                {"input", "output"}
+            }},
+        }},
     };
     return kConfigs;
 }

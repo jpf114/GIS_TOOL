@@ -2874,6 +2874,10 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& planAAction
         {"georef", {"dos_correction","radiometric_calibration","gcp_register","cosine_correction",
                     "minnaert_correction","c_correction","percentile_stretch","rpc_orthorectify"}},
         {"cutting", {"clip","mosaic","split","merge_bands","tile"}},
+        {"terrain", {"slope","aspect","hillshade","tpi","curvature","profile_curvature",
+                     "plan_curvature","tri","roughness","fill_sinks","flow_direction",
+                     "flow_accumulation","stream_extract","watershed","profile_extract",
+                     "viewshed","viewshed_multi","cut_fill","reservoir_volume"}},
     };
     return kExpected;
 }
