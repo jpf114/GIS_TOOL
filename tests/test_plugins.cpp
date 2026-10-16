@@ -7562,6 +7562,125 @@ TEST_F(PluginTest, TerrainViewshedGuiPanelRendersCurvatureCoeffAndHidesKeysTheAc
         << "curvature_coeff 的控件行没建出来：白名单里有、面板上没有";
 }
 
+// R-T12-3：两个视域动作的**输出契约**必须一致。改前形态：单点走 GDALViewshedGenerate("GTiff")
+// 直接写 GDT_Byte 掩膜，multi 走 gis::core::matToGdalTiff —— 那个函数把输出栅格硬编码成
+// GDT_Float32（src/core/src/opencv_wrapper.cpp:43），于是同一个语义的产品有两种类型；
+// 同一段 :51-57 还会把源波段声明的 NoData **无条件抄到输出波段**，而 0/255 掩膜里根本没有
+// 无效像元（dfOutOfRangeVal 与 dfNoDataVal 都是 0.0，即"不可见"），抄过去等于给产品打一个
+// 会把某些 0 当 nodata 渲染的声明。这两条都已读码核实，不是转述。
+// WHY 夹具的源 DEM 必须声明 NoData：那是上面第二条的唯一触发条件。
+TEST_F(PluginTest, TerrainViewshedOutputsAreBothByteMask) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    options.originX = 0.0;
+    options.originY = 20000.0;
+    options.pixelSize = 1000.0;
+    const int side = 20;
+    std::vector<float> data(static_cast<size_t>(side) * static_cast<size_t>(side), 30.0f);
+    const std::string input = gis::tests::writeFloatRaster(
+        getTestDir(), "view_byte_input.tif", side, side, data, options);
+    ASSERT_FALSE(input.empty());
+
+    const std::string singleOutput = utf8PathString(getTestDir() / "view_byte_single_output.tif");
+    std::map<std::string, gis::framework::ParamValue> singleParams;
+    singleParams["action"] = std::string("viewshed");
+    singleParams["input"] = input;
+    singleParams["output"] = singleOutput;
+    singleParams["band"] = 1;
+    singleParams["observer_x"] = 5500.0;
+    singleParams["observer_y"] = 14500.0;
+    singleParams["observer_height"] = 10.0;
+    const auto singleRun = p->execute(singleParams, progress_);
+    ASSERT_TRUE(singleRun.success) << singleRun.message;
+
+    const std::string multiOutput = utf8PathString(getTestDir() / "view_byte_multi_output.tif");
+    std::map<std::string, gis::framework::ParamValue> multiParams;
+    multiParams["action"] = std::string("viewshed_multi");
+    multiParams["input"] = input;
+    multiParams["output"] = multiOutput;
+    multiParams["band"] = 1;
+    multiParams["observer_points"] = std::string("5500,14500;15500,4500");
+    multiParams["observer_height"] = 10.0;
+    const auto multiRun = p->execute(multiParams, progress_);
+    ASSERT_TRUE(multiRun.success) << multiRun.message;
+
+    // 逐幅量：波段数、声明类型、有没有被声明 NoData、像元取值集合。
+    struct MaskMeasure {
+        int bands = -1;
+        int dtype = -1;
+        bool noDataDeclared = false;
+        double noData = 0.0;
+        int visible = 0;
+        int other = 0;
+    };
+    auto measure = [&](const std::string& path, MaskMeasure& out) {
+        auto ds = gis::tests::openFixtureRaster(path, "TerrainViewshedOutputsAreBothByteMask");
+        ASSERT_TRUE(ds != nullptr);
+        out.bands = ds->GetRasterCount();
+        auto* band = ds->GetRasterBand(1);
+        ASSERT_TRUE(band != nullptr);
+        out.dtype = static_cast<int>(band->GetRasterDataType());
+        out.noDataDeclared = gis::tests::readNoDataValue(path, 1, out.noData);
+        std::vector<unsigned char> cells(static_cast<size_t>(side) * static_cast<size_t>(side), 0);
+        // 按 Byte 读：改前 multi 的产品是 Float32=255.0，GDAL 会转成 255 ⇒ 这里只用于数取值集合，
+        // "类型本身是不是 Byte"由上面的 dtype 单独把守。
+        ASSERT_EQ(band->RasterIO(GF_Read, 0, 0, side, side, cells.data(), side, side, GDT_Byte, 0, 0),
+                  CE_None);
+        for (const unsigned char value : cells) {
+            out.visible += (value == 255) ? 1 : 0;
+            out.other += (value == 0 || value == 255) ? 0 : 1;
+        }
+    };
+    MaskMeasure single;
+    MaskMeasure multi;
+    measure(singleOutput, single);
+    measure(multiOutput, multi);
+
+    std::cout << "[MEASURE viewshed output] single: bands=" << single.bands
+              << " dtype=" << single.dtype << " noDataDeclared=" << single.noDataDeclared
+              << " noData=" << single.noData << " visible255=" << single.visible
+              << " otherValues=" << single.other << std::endl;
+    std::cout << "[MEASURE viewshed output] multi : bands=" << multi.bands
+              << " dtype=" << multi.dtype << " noDataDeclared=" << multi.noDataDeclared
+              << " noData=" << multi.noData << " visible255=" << multi.visible
+              << " otherValues=" << multi.other << std::endl;
+
+    const int totalCells = side * side;
+    // (1) 两个动作都写单波段 0/255 掩膜，类型必须都是 GDT_Byte（GDT_Float32 是 6、GDT_Byte 是 1）。
+    EXPECT_EQ(single.bands, 1);
+    EXPECT_EQ(multi.bands, 1) << "viewshed_multi 是「多个观察点并成一幅掩膜」，不是逐点分层";
+    EXPECT_EQ(single.dtype, static_cast<int>(GDT_Byte)) << "单点视域输出类型漂移";
+    EXPECT_EQ(multi.dtype, static_cast<int>(GDT_Byte))
+        << "viewshed_multi 必须与单点视域同为 GDT_Byte；改前它经 matToGdalTiff 写成 Float32"
+           "（opencv_wrapper.cpp:43 把输出类型硬编码成 GDT_Float32）";
+
+    // (2) 源 DEM 声明了 -9999，multi 这一侧改前正是把它抄进 0/255 掩膜的那条路径。
+    double sourceNoData = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(input, 1, sourceNoData)) << "夹具没写出 NoData，本条判据不成立";
+    EXPECT_EQ(sourceNoData, -9999.0);
+    EXPECT_FALSE(multi.noDataDeclared)
+        << "0/255 掩膜里没有无效像元，把源 DEM 的 NoData 抄到输出波段（opencv_wrapper.cpp:51-57）"
+           "会让不可见像元被当 nodata 渲染；实测声明值=" << multi.noData;
+    // 单点这一侧今天由 GDAL 自己打声明（实测 noDataDeclared=1、值 0.0，来自第 12 实参 dfNoDataVal=0.0），
+    // 那是另一个缺陷（报告顾虑 C-3），本任务不动它；这里只锁"没把源 DEM 的 -9999 继承过来"。
+    EXPECT_NE(single.noData, sourceNoData)
+        << "单点视域把源 DEM 的 NoData 抄进了掩膜，实测值=" << single.noData;
+
+    // (3) 值集合只有 {0,255}，且第二个观察点真的参与了并集。
+    EXPECT_EQ(single.other, 0) << "掩膜里出现 0/255 之外的取值，说明可见/不可见值被改写过";
+    EXPECT_EQ(multi.other, 0) << "掩膜里出现 0/255 之外的取值，说明可见/不可见值被改写过";
+    EXPECT_GT(single.visible, 0) << "单点视域整幅不可见（退化）";
+    EXPECT_LT(single.visible, totalCells) << "单点视域整幅可见，说明观察点没起作用";
+    EXPECT_GT(multi.visible, single.visible)
+        << "两个观察点的并集必须严格大于单点结果，否则第二个点等于没算："
+        << "multi=" << multi.visible << " single=" << single.visible;
+}
+
 TEST_F(PluginTest, TerrainCutFillExecution) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);

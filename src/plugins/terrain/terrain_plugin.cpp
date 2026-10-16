@@ -1004,6 +1004,35 @@ gis::framework::Result runViewshedProcess(
     return result;
 }
 
+// 把累积出来的 0/255 视域掩膜写成**单波段 GDT_Byte** GeoTIFF。
+// WHY 不走 gis::core::matToGdalTiff / matsToGdalTiff（简报 Step 3 点名的那两个函数）：
+// 两者都把输出栅格的类型**硬编码成 GDT_Float32**（src/core/src/opencv_wrapper.cpp:43 与 :90），
+// matsToGdalTiff 还在写出前把每个 Mat convertTo(CV_32F)（:106-113）⇒ 传 CV_8U 进去得到的仍是
+// 一个声明为 Float32 的掩膜，R-T12-3 要的"两个视域动作输出类型都是 Byte"用那条路修不出来。
+// 改这两个共享函数会连带 classification/georef/matching/processing/raster_manage 等 10+ 处
+// 调用点的产品类型一起变，远超本任务范围，所以在这里本地写出。
+// WHY 不声明 NoData：opencv_wrapper.cpp:51-57 会把源 DEM 波段声明的 NoData **无条件**抄到输出波段，
+// 而这张掩膜只有 0（不可见/超出距离）与 255（可见）两种值、没有无效像元 ⇒ 抄过来就是给产品打一个
+// "把不可见像元当 nodata 渲染"的声明。按简报要求改成"仅当输出真的存在无效像元才 SetNoDataValue"，
+// 本函数的输出不存在无效像元，所以一律不声明。
+void writeViewshedMaskAsByte(const cv::Mat& merged, GDALDataset* srcDs, const std::string& output) {
+    cv::Mat mask;
+    merged.convertTo(mask, CV_8U);   // 饱和转换：掩膜只有 0/255，没有会被压成 0 的负值
+    double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    srcDs->GetGeoTransform(gt);
+    const std::string proj = gis::core::getSRSWKT(srcDs);
+    auto dstDs = gis::core::createRaster(output, mask.cols, mask.rows, 1, GDT_Byte);
+    dstDs->SetGeoTransform(gt);
+    if (!proj.empty()) {
+        dstDs->SetProjection(proj.c_str());
+    }
+    auto* dstBand = dstDs->GetRasterBand(1);
+    dstBand->RasterIO(GF_Write, 0, 0, mask.cols, mask.rows,
+                      const_cast<uint8_t*>(mask.ptr<uint8_t>()), mask.cols, mask.rows,
+                      GDT_Byte, 0, 0);
+    dstBand->FlushCache();
+}
+
 gis::framework::Result runViewshedMultiProcess(
     const std::string& input,
     const std::string& output,
@@ -1088,7 +1117,9 @@ gis::framework::Result runViewshedMultiProcess(
         std::filesystem::create_directories(parent);
     }
     progress.onMessage("Writing terrain output: " + output);
-    gis::core::matToGdalTiff(merged, srcDs.get(), output, band);
+    // R-T12-3：与单点视域（GDALViewshedGenerate 直接写 GDT_Byte）统一成同一种输出类型，
+    // 并且不再把源 DEM 的 NoData 继承进这张 0/255 掩膜。
+    writeViewshedMaskAsByte(merged, srcDs.get(), output);
     auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain.viewshed_multi");
     meta.algorithmParams["band"] = std::to_string(band);
     meta.algorithmParams["observer_count"] = std::to_string(observerPoints.size());
