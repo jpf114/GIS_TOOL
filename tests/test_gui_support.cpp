@@ -2859,3 +2859,38 @@ TEST(GuiSupportTest, TaskStatusTextMapsKnownStates) {
     EXPECT_EQ(gis::gui::taskStatusText(gis::gui::TaskStatusKind::Failed),
               QStringLiteral("失败"));
 }
+
+// Task 10：这 6 个插件原先一条 actionUiConfig 都没有 ⇒ mainwindow.cpp:523-527 传空集，
+// 空集在 buildEffectiveGuiParamSpecs 里等于"不过滤"，面板于是把插件级全部参数铺出来，
+// 包括该 action 根本不读的键（spindex 的 l_value 对 evi 就是这个形态）。
+namespace {
+
+const std::vector<std::pair<std::string, std::vector<std::string>>>& planAActions() {
+    static const std::vector<std::pair<std::string, std::vector<std::string>>> kExpected = {
+        {"spindex", {"ndvi","ndmi","evi","evi2","savi","osavi","gndvi","ndwi","mndwi",
+                     "ndbi","bsi","arvi","nbr","awei","ui","bi","custom_index"}},
+        {"raster_math", {"band_math","reclassify","raster_overlay"}},
+        {"raster_render", {"colormap","histogram_match"}},
+    };
+    return kExpected;
+}
+
+} // namespace
+
+TEST(GuiActionConfig, AllPlanARelevantPluginsHaveActionConfigs) {
+    for (const auto& [plugin, actions] : planAActions()) {
+        for (const auto& action : actions) {
+            const auto* config = gis::gui::findActionUiConfig(plugin, action);
+            ASSERT_NE(config, nullptr) << plugin << "." << action << " 缺少 actionUiConfig";
+            EXPECT_FALSE(config->visibleKeys.empty()) << plugin << "." << action;
+            // R-T10-1："action" 在 buildEffectiveGuiParamSpecs 第一行就被无条件 continue，
+            // 写进白名单既不生效又与文件既有约定分叉，所以这里锁"不得出现"。
+            EXPECT_EQ(config->visibleKeys.count("action"), 0u) << plugin << "." << action;
+            EXPECT_EQ(config->requiredKeys.count("action"), 0u) << plugin << "." << action;
+            // 这 6 个插件的每个 action 都真的读 input 与 output（逐 action 取证见 task-10-report.md），
+            // 所以白名单必须两者都放行，否则该 action 在 GUI 下无法提交。
+            EXPECT_TRUE(config->visibleKeys.count("input") > 0) << plugin << "." << action;
+            EXPECT_TRUE(config->visibleKeys.count("output") > 0) << plugin << "." << action;
+        }
+    }
+}

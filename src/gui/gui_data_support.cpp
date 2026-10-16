@@ -468,6 +468,154 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output"}
             }},
         }},
+        // Task 10：以下 6 个插件原先没有任何条目，空 visibleKeys 在 buildEffectiveGuiParamSpecs
+        // 里等于"不过滤"，面板因此把插件级全部参数（含该 action 不读的键）一起铺出来。
+        // 逐 action 的键都取自各插件 paramSpecs() 与该 action 的实际读取点。
+        // WHY displayName 一律留空：actionDisplayName 优先用本表的 displayName，而侧栏标签表
+        // genericActionDisplayName 已覆盖这些 action；在这里再写一份会让侧栏改名字对本表无效，
+        // 两处各一份必然漂移。留空即把动作名的唯一来源留在侧栏表里。
+        // WHY requiredKeys 只加严不放宽（R-F2-A）：adjustedSpec.required = spec.required || 本表列出，
+        // 所以列一个 paramSpecs 里没有的键既不生效又会让真参数消失，必须由元断言封住。
+        {"spindex", {
+            {"ndvi", {
+                QString{},
+                QStringLiteral("计算 (NIR-Red)/(NIR+Red)。"),
+                {"input", "output", "red_band", "nir_band"},
+                {"input", "output"}
+            }},
+            {"ndmi", {
+                QString{},
+                QStringLiteral("计算 (NIR-SWIR1)/(NIR+SWIR1)。"),
+                {"input", "output", "nir_band", "swir1_band"},
+                {"input", "output"}
+            }},
+            {"evi", {
+                QString{},
+                QStringLiteral("使用 G/C1/C2 与独立 evi_l（默认 1.0）计算增强植被指数。"),
+                {"input", "output", "blue_band", "red_band", "nir_band", "g_value", "c1", "c2", "evi_l"},
+                {"input", "output"}
+            }},
+            {"evi2", {
+                QString{},
+                QStringLiteral("计算 2.5*(NIR-Red)/(NIR+2.4*Red+1)。"),
+                {"input", "output", "red_band", "nir_band"},
+                {"input", "output"}
+            }},
+            {"savi", {
+                QString{},
+                QStringLiteral("使用 l_value 作为土壤调节因子 L。"),
+                {"input", "output", "red_band", "nir_band", "l_value"},
+                {"input", "output"}
+            }},
+            {"osavi", {
+                QString{},
+                QStringLiteral("计算 1.16*(NIR-Red)/(NIR+Red+0.16)。"),
+                {"input", "output", "red_band", "nir_band"},
+                {"input", "output"}
+            }},
+            {"gndvi", {
+                QString{},
+                QStringLiteral("计算 (NIR-Green)/(NIR+Green)。"),
+                {"input", "output", "green_band", "nir_band"},
+                {"input", "output"}
+            }},
+            {"ndwi", {
+                QString{},
+                QStringLiteral("计算 (Green-NIR)/(Green+NIR)。"),
+                {"input", "output", "green_band", "nir_band"},
+                {"input", "output"}
+            }},
+            {"mndwi", {
+                QString{},
+                QStringLiteral("计算 (Green-SWIR1)/(Green+SWIR1)。"),
+                {"input", "output", "green_band", "swir1_band"},
+                {"input", "output"}
+            }},
+            {"ndbi", {
+                QString{},
+                QStringLiteral("计算 (SWIR1-NIR)/(SWIR1+NIR)。"),
+                {"input", "output", "swir1_band", "nir_band"},
+                {"input", "output"}
+            }},
+            {"bsi", {
+                QString{},
+                QStringLiteral("基于 Blue/Red/NIR/SWIR1 的裸土指数。"),
+                {"input", "output", "blue_band", "red_band", "nir_band", "swir1_band"},
+                {"input", "output"}
+            }},
+            {"arvi", {
+                QString{},
+                QStringLiteral("使用 Blue 与 Red 构造 RB 后计算大气阻抗植被指数。"),
+                {"input", "output", "blue_band", "red_band", "nir_band"},
+                {"input", "output"}
+            }},
+            {"nbr", {
+                QString{},
+                QStringLiteral("计算 (NIR-SWIR2)/(NIR+SWIR2)。"),
+                {"input", "output", "nir_band", "swir2_band"},
+                {"input", "output"}
+            }},
+            {"awei", {
+                QString{},
+                QStringLiteral("AWEInsh：4*(Green-SWIR1)-(0.25*NIR+2.75*SWIR2)。"),
+                {"input", "output", "green_band", "nir_band", "swir1_band", "swir2_band"},
+                {"input", "output"}
+            }},
+            {"ui", {
+                QString{},
+                QStringLiteral("计算 (SWIR2-NIR)/(SWIR2+NIR)。"),
+                {"input", "output", "nir_band", "swir2_band"},
+                {"input", "output"}
+            }},
+            {"bi", {
+                QString{},
+                QStringLiteral("1/((0.1-Red)^2+(0.06-NIR)^2)，输入需为反射率。"),
+                {"input", "output", "red_band", "nir_band"},
+                {"input", "output"}
+            }},
+            {"custom_index", {
+                QString{},
+                QStringLiteral("按表达式或预设公式计算波段组合；表达式里的 BLUE/GREEN/RED/NIR/SWIR1 别名会读取对应波段键。"),
+                {"input", "output", "preset", "expression",
+                 "blue_band", "green_band", "red_band", "nir_band", "swir1_band"},
+                {"input", "output"}
+            }},
+        }},
+        {"raster_math", {
+            {"band_math", {
+                QString{},
+                QStringLiteral("使用 B1..Bn 变量的表达式运算。"),
+                {"input", "output", "expression"},
+                {"input", "output", "expression"}
+            }},
+            {"reclassify", {
+                QString{},
+                QStringLiteral("按手工规则或等步长区间重分类。"),
+                {"input", "output", "reclass_mode", "reclass_rules", "interval_step",
+                 "default_value", "keep_unmatched"},
+                {"input", "output"}
+            }},
+            {"raster_overlay", {
+                QString{},
+                QStringLiteral("两幅栅格逐像元运算或条件判断。"),
+                {"input", "output", "overlay_input", "overlay_method", "cond_expression"},
+                {"input", "output", "overlay_input"}
+            }},
+        }},
+        {"raster_render", {
+            {"colormap", {
+                QString{},
+                QStringLiteral("按色带把单波段渲染为 RGB。"),
+                {"input", "output", "band", "cmap"},
+                {"input", "output"}
+            }},
+            {"histogram_match", {
+                QString{},
+                QStringLiteral("把源直方图匹配到参考影像。"),
+                {"input", "output", "band", "reference"},
+                {"input", "output", "reference"}
+            }},
+        }},
     };
     return kConfigs;
 }
