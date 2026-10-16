@@ -6427,6 +6427,31 @@ std::vector<float> readWholeBand(const std::string& path, int width, int height)
     return data;
 }
 
+// 斜坡上的两像元平底坑：背景沿 y 每行升高 0.2（y=0 为 10.0，y=8 为 11.6），
+// 把 (x=4,y=3) 与 (x=4,y=4) 挖成 2.0 —— 前者是离出口近的平底，后者是坑的最里一格。
+// WHY 用斜坡而不用平地当 epsilon 的夹具：ε 的施与判据是"value <= 出水面"，而与出水面
+// **等高**的像元同样算洼地的一部分（平底就是靠这条爬出来的）。平地背景（四周都 10.0）会让
+// 整幅图逐圈拿到 ε，"洼地外像元必须不变"就没法逐像元写成断言。斜坡上每个像元的出水面都
+// 严格低于它自己（最低出水面的父像元是它上面那一行 10.0+0.2(y-1)），于是"除坑以外
+// 一个像元都不许动"是硬事实；而相邻行只差 0.2 < ε=0.5 又正好让"给真实地形加高"那种
+// 写反的条件无处遁形。
+std::string makeSlopePitRaster(const std::string& name) {
+    const int w = 9, h = 9;
+    std::vector<float> data(static_cast<size_t>(w * h), 0.0f);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            data[y * w + x] = 10.0f + 0.2f * static_cast<float>(y);
+        }
+    }
+    data[3 * w + 4] = 2.0f;
+    data[4 * w + 4] = 2.0f;
+    return gis::tests::writeFloatRaster(getTestDir(), name, w, h, data);
+}
+
+// 本夹具里坑的出水面：坑的父像元是 y=2 那一行（10.0 + 0.2*2）。
+constexpr float kSlopePourAtRow2 = 10.0f + 0.2f * 2.0f;   // 10.4：两格平底填平后的水面
+constexpr float kSlopePourAtRow3 = 10.0f + 0.2f * 3.0f;   // 10.6：最里一格的另一条出水路径
+
 } // namespace
 
 TEST_F(PluginTest, FillSinksLevelsMultiCellFlatBottomPit) {
@@ -6502,6 +6527,139 @@ TEST_F(PluginTest, FillSinksFillsToLowestPourPathNotHighest) {
     const auto after = readWholeBand(run.output, 9, 9);
     const float maxValue = *std::max_element(after.begin(), after.end());
     EXPECT_NEAR(maxValue, 10.0f, 1e-4f) << "priority-flood 不得把洼地以外的真实地形抬高";
+}
+
+// R-T11-2 的默认值锁：ε=0.0（GUI 全默认提交发来的就是它）与完全不提交 epsilon 必须逐像元一致。
+// WHY 单独一条：ε 一旦被写成"无条件叠加"或默认值被改成非 0，所有洼地都会被顺手抬高，
+// 而其余用例只断"填到水面"，看不出这 0.x 的漂移。
+TEST_F(PluginTest, FillSinksEpsilonZeroEqualsUnconfiguredRun) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const std::string input = makeSlopePitRaster("fill_eps0_input.tif");
+
+    const auto plain = runFillSinks(p, progress_, input, "fill_eps0_plain_output.tif");
+    ASSERT_TRUE(plain.result.success) << plain.result.message;
+    const auto explicitZero = runFillSinks(p, progress_, input, "fill_eps0_explicit_output.tif",
+                                           {{"epsilon", 0.0}});
+    ASSERT_TRUE(explicitZero.result.success) << explicitZero.result.message;
+
+    const auto before = readWholeBand(input, 9, 9);
+    const auto a = readWholeBand(plain.output, 9, 9);
+    const auto b = readWholeBand(explicitZero.output, 9, 9);
+    ASSERT_EQ(a.size(), b.size());
+    for (size_t i = 0; i < a.size(); ++i) {
+        EXPECT_FLOAT_EQ(a[i], b[i]) << "index " << i << "：epsilon=0.0 与未启用必须完全一致";
+        EXPECT_GE(a[i], before[i] - 1e-4f) << "index " << i << " 填洼不得降低地形";
+    }
+    // 平底两格都填到同一个水面（这才是"洼地内不残存封闭水面"的判据本身）。
+    EXPECT_NEAR(gis::tests::readPixel(plain.output, 1, 4, 3), kSlopePourAtRow2, 1e-4f);
+    EXPECT_NEAR(gis::tests::readPixel(plain.output, 1, 4, 4), kSlopePourAtRow2, 1e-4f);
+}
+
+// R-T11-2 的语义锁：ε>0 只在洼地内形成离出口单调递增的微梯度，洼地外一个像元都不许动。
+// 计划片段写的是 `epsilon > 0.0 && value > top.first`：像元刚被抬到 top.first 时该条件为假
+// ⇒ 洼地一个 ε 都拿不到，反倒是本来就高于出水面的真实地形被抬到 top.first+ε（语义与 Produces
+// 相反）。本用例两个方向都断，后者正是那条条件会打红的位置。
+TEST_F(PluginTest, FillSinksEpsilonGradientsDepressionAndKeepsHigherTerrain) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const std::string input = makeSlopePitRaster("fill_eps_input.tif");
+    const double epsilon = 0.5;
+    const auto run = runFillSinks(p, progress_, input, "fill_eps_output.tif",
+                                  {{"epsilon", epsilon}});
+    ASSERT_TRUE(run.result.success) << run.result.message;
+
+    const float nearCell = gis::tests::readPixel(run.output, 1, 4, 3);   // 离出口近的平底格
+    const float deepCell = gis::tests::readPixel(run.output, 1, 4, 4);   // 最里一格
+    // (a) 洼地内的像元必须拿到 ε，且沿入队（淹没）方向严格递增：父出水面 + ε ⇒ 水仍能往外排。
+    EXPECT_NEAR(nearCell, kSlopePourAtRow2 + static_cast<float>(epsilon), 1e-4f)
+        << "被填平的像元必须抬到 出水面+ε；只抬到出水面说明 ε 的条件写反了";
+    EXPECT_GT(nearCell, kSlopePourAtRow2) << "洼地内必须拿到 ε";
+    EXPECT_GT(deepCell, nearCell) << "洼地内沿入队顺序必须严格递增（离出口越远水面越高）";
+
+    // (b) 洼地外（原本就高于出水面的真实地形）逐像元不变。
+    const auto before = readWholeBand(input, 9, 9);
+    const auto after = readWholeBand(run.output, 9, 9);
+    ASSERT_EQ(before.size(), after.size());
+    std::vector<size_t> changed;
+    for (size_t i = 0; i < before.size(); ++i) {
+        const bool isPit = (i == static_cast<size_t>(3 * 9 + 4)) ||
+                           (i == static_cast<size_t>(4 * 9 + 4));
+        if (isPit) {
+            EXPECT_GT(after[i], before[i]) << "index " << i << " 坑内像元必须被抬升";
+            continue;
+        }
+        if (after[i] != before[i]) {
+            changed.push_back(i);
+        }
+    }
+    EXPECT_TRUE(changed.empty())
+        << "ε>0 时洼地外的真实地形必须逐像元不变，实际被改动 " << changed.size() << " 个，第一个 index="
+        << (changed.empty() ? 0u : static_cast<unsigned>(changed.front()))
+        << "（计划片段的条件 value > top.first 会在这里红）";
+}
+
+// 全局闸门（Task 10 审查后新增，"谁加参数谁补可见性"的配套）：epsilon 进 paramSpecs() 的同批
+// 必须进 terrain.fill_sinks 自己的 visibleKeys，并且本 action 的面板锁把两侧钉成完全相等。
+// WHY 形状照抄 SpindexEviAndSaviGuiPanelsRenderOnlyTheLKeyThatEachActionReads：
+// 只断"表里有这个键"判不出渲染，所以渲染层问 ParamCardWidget::hasParam（param_card_widget.cpp:937
+// 读 entries_，即真正建出来的控件行）；ParamWidget::hasParam（param_widget.cpp:158-163）只扫
+// setParamSpecs 存下来的 specs_，等于把有效集合再抄一遍，断不出"这一行到底建没建"。
+TEST_F(PluginTest, TerrainFillSinksGuiPanelRendersEpsilonAndHidesKeysTheActionNeverReads) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const auto specs = p->paramSpecs();
+    const auto* config = gis::gui::findActionUiConfig("terrain", "fill_sinks");
+    ASSERT_NE(config, nullptr) << "terrain.fill_sinks 缺少 actionUiConfig 条目";
+
+    const auto effective = gis::gui::buildEffectiveGuiParamSpecs(
+        "terrain", "fill_sinks", specs, config->visibleKeys, config->requiredKeys);
+    std::set<std::string> effectiveKeys;
+    for (const auto& spec : effective) {
+        effectiveKeys.insert(spec.key);
+    }
+
+    // 有效集合必须与白名单**完全相等**：少一个键说明白名单写的是插件没声明的键（错键名会同时
+    // 隐藏真参数），多一个键说明 visibleKeys 是空集（空集在 buildEffectiveGuiParamSpecs 里
+    // 等于不过滤，面板会把该 action 不读的键一起铺出来）。
+    EXPECT_EQ(effectiveKeys, config->visibleKeys) << "terrain.fill_sinks 的有效键集与白名单不一致";
+    EXPECT_GT(effectiveKeys.count("epsilon"), 0u) << "epsilon 必须被渲染（插件真的读它）";
+    EXPECT_EQ(effectiveKeys.count("accum_threshold"), 0u)
+        << "accum_threshold 只有 stream_extract 读，不得出现在 fill_sinks 面板上";
+
+    // epsilon 是可选键：requiredKeys 只能要求插件本来就会拒绝的东西，而 doFillSinks 对缺省
+    // epsilon 会兜底 0.0，把它列进 requiredKeys 就是凭空加严、GUI 用户无法留空提交。
+    EXPECT_EQ(config->requiredKeys.count("epsilon"), 0u);
+    EXPECT_EQ(config->visibleKeys.count("action"), 0u)
+        << "\"action\" 被 buildEffectiveGuiParamSpecs 无条件跳过，写进白名单无效还与既有约定分叉";
+    const gis::framework::ParamSpec* epsilonSpec = nullptr;
+    for (const auto& spec : specs) {
+        if (spec.key == "epsilon") {
+            epsilonSpec = &spec;
+        }
+    }
+    ASSERT_NE(epsilonSpec, nullptr) << "paramSpecs() 没有 epsilon，面板渲染的是空气";
+    EXPECT_FALSE(epsilonSpec->required);
+
+    ParamWidget panel;
+    panel.setUiContext("terrain", "fill_sinks");
+    panel.setParamSpecs(effective);
+    const auto cards = panel.findChildren<ParamCardWidget*>();
+    ASSERT_FALSE(cards.empty()) << "terrain.fill_sinks 没有生成任何参数卡片";
+    std::set<std::string> renderedKeys;
+    for (const auto& spec : specs) {
+        if (spec.key == "action") {
+            continue;
+        }
+        for (const auto* card : cards) {
+            if (card && card->hasParam(spec.key)) {
+                renderedKeys.insert(spec.key);
+            }
+        }
+    }
+    EXPECT_EQ(renderedKeys, effectiveKeys) << "terrain.fill_sinks 的 widget 树与有效 spec 不一致";
+    EXPECT_GT(renderedKeys.count("epsilon"), 0u);
+    EXPECT_EQ(renderedKeys.count("accum_threshold"), 0u);
 }
 
 TEST_F(PluginTest, TerrainFlowAccumulationExecution) {

@@ -732,9 +732,10 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
         // task-10-report.md）。z_factor 只进"确实读它"的 14 个 action —— profile_extract/
         // viewshed/viewshed_multi/cut_fill/reservoir_volume 不读，列进白名单就是放一个填了
         // 不生效的键。
-        // WHY 这里不预写 epsilon / curvature_coeff：那是 Task 11/Task 12 才新增的 ParamSpec，
-        // 此刻不在 paramSpecs() 里，预写会让 R-T10-5 的元断言当场变红，而且"配置里有一个无人
-        // 读取的键"正是本任务要消灭的形态。归属规则是谁加参数谁同时补可见性。
+        // WHY epsilon 只进 fill_sinks：Task 10 那轮它还不存在于 paramSpecs() 里，预写会让
+        // R-T10-5 的元断言当场变红；按"谁加参数谁同时补可见性"的归属规则，它由 Task 11 与
+        // ParamSpec 同批加入，且只有 doFillSinks 读它（其余 hydrology action 传 0.0）。
+        // curvature_coeff 仍是 Task 12 的事，这里不预写，同理。
         {"terrain", {
             {"slope", {
                 QString{},
@@ -793,7 +794,7 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             {"fill_sinks", {
                 QString{},
                 QStringLiteral("填洼，为水文分析准备无坑 DEM。"),
-                {"input", "output", "band", "z_factor"},
+                {"input", "output", "band", "z_factor", "epsilon"},
                 {"input", "output"}
             }},
             {"flow_direction", {

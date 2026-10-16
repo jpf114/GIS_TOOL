@@ -317,7 +317,11 @@ gis::framework::Result runHydrologyTerrainProcess(
     int band,
     double zFactor,
     double accumulationThreshold,
-    gis::core::ProgressReporter& progress) {
+    gis::core::ProgressReporter& progress,
+    // WHY 放在 progress 之后并带默认值：只有 fill_sinks 读它，默认 0.0 让
+    // flow_direction / flow_accumulation / stream_extract / watershed 这 4 个调用点
+    // 与 stream_extract 的自递归调用一行都不必改（R-T11-4 的"其它 action 不动"）。
+    double epsilon = 0.0) {
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
@@ -461,14 +465,18 @@ gis::framework::Result runHydrologyTerrainProcess(
 
                 float& value = result.at<float>(ny, nx);
                 // WHY 判据是 <= 而不是 <：低于出水面的要抬到水面，**与出水面等高的像元同样属于
-                // 洼地的一部分**——平底就是靠这条才爬得出来的。
+                // 洼地的一部分**——平底就是靠这条才爬得出来的；ε>0 时也正是这条让洼地拿到微梯度。
                 // 本来高于出水面的真实地形一律原值保留（没有 else 分支），这就是"只抬不降、
-                // 且只抬洼地"：见 FillSinksIsMonotonicAndNeverLowersTerrain。
+                // 且只抬洼地"：见 FillSinksIsMonotonicAndNeverLowersTerrain 与
+                // FillSinksEpsilonGradientsDepressionAndKeepsHigherTerrain。
+                // R-T11-2：条件不能写成 "value > top.first 才施 ε" —— 刚被抬平的像元此刻恰好
+                // value == top.first，那样洼地一个 ε 都拿不到，反倒是高于出水面的真实地形被抬高，
+                // 语义与"给洼地区域叠加单调微梯度"正好相反。
                 if (value <= top.first) {
-                    value = top.first;
+                    value = (epsilon > 0.0) ? static_cast<float>(top.first + epsilon) : top.first;
                 }
-                // 推进堆的是抬**后**的值 ⇒ 它成为子像元的出水面，抬升目标因此逐层传递，
-                // 嵌套洼地不会只填到最外一层。
+                // 推进堆的是抬**后**的值 ⇒ 它成为子像元的出水面，抬升目标因此逐层传递：
+                // 嵌套洼地不会只填到最外一层，ε 也因此在洼地内沿淹没方向单调累积（水仍能往外排）。
                 heap.emplace_back(value, idx);
                 std::push_heap(heap.begin(), heap.end(), lowestFirst);
             }
@@ -1234,6 +1242,9 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"azimuth", "方位角", "Light azimuth for hillshade", gis::framework::ParamType::Double, false, double{315.0}, double{0.0}, double{360.0}},
         gis::framework::ParamSpec{"altitude", "高度角", "Light altitude for hillshade", gis::framework::ParamType::Double, false, double{45.0}, double{0.0}, double{90.0}},
         gis::framework::ParamSpec{"accum_threshold", "汇流阈值", "Threshold used by stream extraction", gis::framework::ParamType::Double, false, double{10.0}, double{0.0}, double{1e9}},
+        // 只被 fill_sinks 读取（其它 action 传 0.0 即完全等效于未启用），默认 0.0 保证
+        // "GUI 全默认提交"这条路径的行为与新增本键之前逐像元一致。
+        gis::framework::ParamSpec{"epsilon", "微坡度", "Optional monotone micro-gradient added inside filled depressions", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{10.0}},
         gis::framework::ParamSpec{"profile_path", "剖面路径", "Profile points formatted as x1,y1;x2,y2;...", gis::framework::ParamType::String, false, std::string{}},
         gis::framework::ParamSpec{"observer_x", "观察点X", "Observer X coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
         gis::framework::ParamSpec{"observer_y", "观察点Y", "Observer Y coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
@@ -1397,6 +1408,10 @@ gis::framework::Result TerrainPlugin::doRoughness(
 gis::framework::Result TerrainPlugin::doFillSinks(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
+    // WHY 下限钳到 0：epsilon 的语义是"抬升"，负值会把被填的洼地压到出水面之下，
+    // 直接违反 fill_sinks 的"只抬不降"不变量（ParamSpec 的 [0,10] 只约束 GUI/CLI 表单，
+    // 程序化调用不经它）。
+    const double epsilon = std::max(0.0, gis::framework::getParam<double>(params, "epsilon", 0.0));
     return runHydrologyTerrainProcess(
         "fill_sinks",
         "FillSinks",
@@ -1405,7 +1420,8 @@ gis::framework::Result TerrainPlugin::doFillSinks(
         gis::framework::getParam<int>(params, "band", 1),
         gis::framework::getParam<double>(params, "z_factor", 1.0),
         0.0,
-        progress);
+        progress,
+        epsilon);
 }
 
 gis::framework::Result TerrainPlugin::doStreamExtract(
