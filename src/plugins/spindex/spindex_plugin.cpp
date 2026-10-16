@@ -238,6 +238,12 @@ std::vector<gis::framework::ParamSpec> SpindexPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"g_value", "G参数", "G parameter used by EVI", gis::framework::ParamType::Double, false, double{2.5}, double{0.0}, double{100.0}},
         gis::framework::ParamSpec{"c1", "C1参数", "C1 parameter used by EVI", gis::framework::ParamType::Double, false, double{6.0}, double{0.0}, double{100.0}},
         gis::framework::ParamSpec{"c2", "C2参数", "C2 parameter used by EVI", gis::framework::ParamType::Double, false, double{7.5}, double{0.0}, double{100.0}},
+        // WHY 独立于 l_value：EVI 的标准 L 是 1，SAVI 的标准 L 是 0.5，同一个键装不下两个默认值。
+        // l_value 的 spec 默认值是 0.5（那是 SAVI 的正确默认），而 GUI 的 collectValues() 会无条件
+        // 提交每个 spec 的 defaultValue，所以 EVI 只要还挂在这个键上就必然被灌成 0.5，
+        // 与库/CLI 不传参时走到的代码兜底 1.0 分叉成两种结果。
+        gis::framework::ParamSpec{"evi_l", "EVI L参数", "L parameter used by EVI (canopy background adjustment)",
+            gis::framework::ParamType::Double, false, double{1.0}, double{0.0}, double{1.0}},
         gis::framework::ParamSpec{"expression", "表达式", "Custom index expression such as (B4-B1)/(B4+B1)", gis::framework::ParamType::String, false, std::string{}},
     };
 }
@@ -706,7 +712,9 @@ gis::framework::Result SpindexPlugin::doExecuteAction(
             const float gValue = static_cast<float>(gis::framework::getParam<double>(params, "g_value", 2.5));
             const float c1 = static_cast<float>(gis::framework::getParam<double>(params, "c1", 6.0));
             const float c2 = static_cast<float>(gis::framework::getParam<double>(params, "c2", 7.5));
-            const float lValue = static_cast<float>(gis::framework::getParam<double>(params, "l_value", 1.0));
+            // WHY 读 evi_l 而不是 l_value：见 paramSpecs 中的说明——l_value 的 spec 默认值是 SAVI 的 0.5，
+            // 而 GUI 会把所有 spec 默认值提交上来，共用键会让 EVI 的 L 被静默灌成 0.5。
+            const float lValue = static_cast<float>(gis::framework::getParam<double>(params, "evi_l", 1.0));
 
             cv::Mat blue = readBandMat(ds, blueBand, "Blue", progress);
             progress.throwIfCancelled();

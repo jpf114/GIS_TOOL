@@ -1833,6 +1833,55 @@ TEST_F(PluginTest, SpindexOtherIndicesExecution) {
     }
 }
 
+// Task 9：EVI 的 L 与 SAVI 的 L 必须是两个参数。
+// WHY 不能共用 l_value：EVI 标准 L=1、SAVI 标准 L=0.5，一个键无法同时是两个默认值。
+// 缺陷机制不是"代码兜底写错"（EVI 分支的兜底本来就是 1.0），而是 paramSpecs 的 l_value 默认值 0.5
+// 与该兜底不一致：GUI 的 collectValues() 会把每个 spec 的 defaultValue 无条件提交，
+// 于是走 GUI 的用户拿到 L=0.5、走库/CLI 不传 L 的调用方拿到 L=1 —— 同一个 evi 动作两条路径两种结果。
+// 夹具 {10,20,30,70} + blue=1/red=3/nir=4 ⇒ 2.5*(70-30)/(70+6*30-7.5*10+L) = 100/(175+L)：
+// L=1 ⇒ 100/176，L=0.5 ⇒ 100/175.5。
+TEST_F(PluginTest, EviUsesEviLDefaultOfOneNotSaviHalf) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+    const std::string input = createMultiBandConstantRaster(
+        "spi_evi_l_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
+    const std::string output = utf8PathString(getTestDir() / "spi_evi_l_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("evi");
+    params["input"] = input;
+    params["output"] = output;
+    params["blue_band"] = 1;
+    params["red_band"] = 3;
+    params["nir_band"] = 4;
+    // 不传任何 L：必须使用 EVI 标准 L=1 -> 100/176，而非 SAVI 的 0.5
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 5, 5), 100.0f / 176.0f, 1e-5f);
+}
+
+TEST_F(PluginTest, EviHonoursExplicitEviL) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+    const std::string input = createMultiBandConstantRaster(
+        "spi_evi_l05_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
+    const std::string output = utf8PathString(getTestDir() / "spi_evi_l05_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("evi");
+    params["input"] = input;
+    params["output"] = output;
+    params["blue_band"] = 1;
+    params["red_band"] = 3;
+    params["nir_band"] = 4;
+    params["evi_l"] = 0.5;   // 必须是 double：getParam 在类型不匹配时静默回落默认值
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_NEAR(gis::tests::readPixel(output, 1, 5, 5), 100.0f / 175.5f, 1e-5f);
+}
+
 TEST_F(PluginTest, SpindexCustomIndexExecution) {
     auto* p = mgr_.find("spindex");
     ASSERT_NE(p, nullptr);
