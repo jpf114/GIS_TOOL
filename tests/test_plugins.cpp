@@ -7200,7 +7200,7 @@ TEST_F(PluginTest, ProximityWarnsWhenBandNoDataDeclarationsDiffer) {
     EXPECT_EQ(result.metadata.count("nodata_divergent_band_count"), 1u);
     EXPECT_EQ(result.metadata.at("nodata_divergent_band_count"), "1");
     // 告警要能到用户手里：onMessage 经 qt_progress_reporter.h:13,23 直达 GUI 日志面板，
-    // CLI/GUI 摘要都会遍历 Result::metadata（cli/main.cpp:240-245、gui_data_support.cpp:1924-1931）。
+    // CLI/GUI 摘要都会遍历 Result::metadata（cli/main.cpp:240-245、gui_data_support.cpp:1930-1938）。
     EXPECT_NE(recorder.joined().find("nodata_divergent_band_count"), std::string::npos)
         << recorder.joined();
 
@@ -7626,7 +7626,7 @@ TEST_F(PluginTest, ClassificationAccuracyAssessmentExecution) {
     EXPECT_EQ(result.metadata.at("class_count"), "2");
 }
 
-// Task 8：混淆矩阵按 confusionMatrix[参考值][分类值] 构建（classification_plugin.cpp:2151），
+// Task 8：混淆矩阵按 confusionMatrix[参考值][分类值] 构建（doAccuracyAssessment 的像元循环），
 // 于是"参考类总数"是行和、"分类图类总数"是列和；修前 PA 取了列和、UA 取了行和，两者互换。
 // 夹具刻意不含 0 值像元，把 PA/UA 归属和 NoData 判定缺陷解耦——本用例红只可能来自互换。
 TEST_F(PluginTest, AccuracyAssessmentUsesStandardPaUa) {
@@ -7642,6 +7642,17 @@ TEST_F(PluginTest, AccuracyAssessmentUsesStandardPaUa) {
         getTestDir(), "acc_cls.tif", 2, 2, {1.0f, 2.0f, 2.0f, 2.0f});
     ASSERT_FALSE(reference.empty());
     ASSERT_FALSE(classified.empty());
+
+    // 前提自证（F4）：本用例的红只可能来自 PA/UA 互换，所以两个栅格都必须**没有**声明 NoData；
+    // 声明状态一旦漂移，"红=互换"这条归因就不成立了。PAM 边车按文件名匹配，残留的 .aux.xml
+    // 会把声明值带进来（N30 口径保留的防御）。
+    std::error_code ec;
+    fs::remove(reference + ".aux.xml", ec);
+    fs::remove(classified + ".aux.xml", ec);
+    double declared = 0.0;
+    ASSERT_FALSE(gis::tests::readNoDataValue(reference, 1, declared)) << reference;
+    ASSERT_FALSE(gis::tests::readNoDataValue(classified, 1, declared)) << classified;
+
     const std::string output = utf8PathString(getTestDir() / "acc_output.json");
 
     std::map<std::string, gis::framework::ParamValue> params;
@@ -7695,8 +7706,10 @@ TEST_F(PluginTest, AccuracyAssessmentKeepsZeroClassWhenNoDataUndefined) {
     fs::remove(reference + ".aux.xml", ec);
     fs::remove(classified + ".aux.xml", ec);
     double declared = 0.0;
-    EXPECT_FALSE(gis::tests::readNoDataValue(reference, 1, declared)) << reference;
-    EXPECT_FALSE(gis::tests::readNoDataValue(classified, 1, declared)) << classified;
+    // 前提自证必须用 ASSERT_*（F3）：readNoDataValue 的失败路径（打不开文件/波段为空）也返回
+    // false，此时 declared 是残值，后续断言会在已经塌掉的地基上继续跑——正是"前提没了用例还绿"。
+    ASSERT_FALSE(gis::tests::readNoDataValue(reference, 1, declared)) << reference;
+    ASSERT_FALSE(gis::tests::readNoDataValue(classified, 1, declared)) << classified;
 
     const std::string output = utf8PathString(getTestDir() / "acc_zero_output.json");
 
@@ -7760,7 +7773,7 @@ TEST_F(PluginTest, AccuracyAssessmentExcludesDeclaredNoDataPixel) {
     double declared = 0.0;
     ASSERT_TRUE(gis::tests::readNoDataValue(reference, 1, declared)) << reference;
     EXPECT_DOUBLE_EQ(declared, -9999.0);
-    EXPECT_FALSE(gis::tests::readNoDataValue(classified, 1, declared)) << classified;
+    ASSERT_FALSE(gis::tests::readNoDataValue(classified, 1, declared)) << classified;
 
     const std::string output = utf8PathString(getTestDir() / "acc_nodata_output.json");
 
@@ -7796,4 +7809,90 @@ TEST_F(PluginTest, AccuracyAssessmentExcludesDeclaredNoDataPixel) {
     EXPECT_EQ(result.metadata.at("class_count"), "2") << content;
     EXPECT_NEAR(root.value("overall_accuracy").toDouble(), 1.0, 1e-6) << content;
     EXPECT_EQ(root.value("total_samples").toDouble(), 3.0) << content;
+}
+
+// Task 8（fix round 1，I-1 + I-2）：上面三条用例合起来仍然漏掉两个方向——
+// 没有任何一条让**分类侧**声明 NoData（于是 classifiedHasNoData 恒 0、跳过条件的分类侧析取项恒 false），
+// 也没有任何一条让某个类别只出现在一侧（于是 rowSum/colSum 恒 > 0，守卫的 false 分支与
+// "守卫配哪个和"从未被检验）。本用例同时踩中这两处，一个夹具封两个缺口。
+TEST_F(PluginTest, AccuracyAssessmentHandlesClassPresentOnlyOnOneSide) {
+    auto* p = mgr_.find("classification");
+    ASSERT_NE(p, nullptr);
+
+    // 参考 {1,1,1, 2,2,2} 不声明 NoData；分类 {1,1,-9999, 2,2,3} 声明 NoData=-9999
+    // 被跳过的只有像元 2 那个 -9999 ⇒ total_samples=5、correct_samples=4、类别 {1,2,3}
+    // 混淆(行=参考)：[1][1]=2；[2][2]=2、[2][3]=1
+    //   rowSum(1)=2 colSum(1)=2 ⇒ PA(1)=1.0        UA(1)=1.0
+    //   rowSum(2)=3 colSum(2)=2 ⇒ PA(2)=2/3        UA(2)=1.0
+    //   rowSum(3)=0 colSum(3)=1 ⇒ PA(3)=守卫 0.0   UA(3)=0/1=0.0
+    // 类别 3 只出现在分类图一侧，所以它的 rowSum 为 0：PA 必须由守卫给 0.0。守卫与分母一旦错配，
+    // PA(3) 就变成 0.0/0.0 ⇒ 写出 -nan(ind) ⇒ 整个 JSON 不可解析，红点落在 isObject()。
+    gis::tests::RasterFixtureOptions clsOptions;
+    clsOptions.hasNoData = true;
+    clsOptions.noData = -9999.0;
+    const std::string reference = gis::tests::writeFloatRaster(
+        getTestDir(), "acc_oneside_ref.tif", 2, 3,
+        {1.0f, 1.0f, 1.0f, 2.0f, 2.0f, 2.0f});
+    const std::string classified = gis::tests::writeFloatRaster(
+        getTestDir(), "acc_oneside_cls.tif", 2, 3,
+        {1.0f, 1.0f, -9999.0f, 2.0f, 2.0f, 3.0f}, clsOptions);
+    ASSERT_FALSE(reference.empty());
+    ASSERT_FALSE(classified.empty());
+
+    // 前提自证：NoData 声明只在分类侧存活——这正是三条既有用例都没覆盖到的那一侧。
+    // 用 ASSERT_*：readNoDataValue 的失败路径同样返回 false，前提塌了不能让用例继续跑。
+    std::error_code ec;
+    fs::remove(reference + ".aux.xml", ec);
+    fs::remove(classified + ".aux.xml", ec);
+    double declared = 0.0;
+    ASSERT_FALSE(gis::tests::readNoDataValue(reference, 1, declared)) << reference;
+    ASSERT_TRUE(gis::tests::readNoDataValue(classified, 1, declared)) << classified;
+    EXPECT_DOUBLE_EQ(declared, -9999.0);
+
+    const std::string output = utf8PathString(getTestDir() / "acc_oneside_output.json");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("accuracy_assessment");
+    params["classified_raster"] = classified;
+    params["reference_raster"] = reference;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    std::ifstream ifs(output, std::ios::binary);
+    ASSERT_TRUE(ifs.is_open());
+    // Qt 6 起 QByteArray 不再有迭代器区间构造，只能显式按 (data, size) 建。
+    const std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    const QByteArray text(content.data(), static_cast<qsizetype>(content.size()));
+    const QJsonDocument document = QJsonDocument::fromJson(text);
+    ASSERT_TRUE(document.isObject()) << content;
+    const QJsonObject root = document.object();
+
+    // I-1：分类侧的 NoData 像元不进分母。删掉分类侧那条析取项，这里就变成 6。
+    EXPECT_EQ(root.value("total_samples").toDouble(), 5.0) << content;
+    EXPECT_EQ(result.metadata.at("total_samples"), "5") << content;
+
+    // 结构维度再钉一次：-9999 不能成为一个类别。
+    const QJsonObject matrix = root.value("confusion_matrix").toObject();
+    EXPECT_FALSE(matrix.contains("-9999")) << content;
+    EXPECT_FALSE(root.value("producers_accuracy").toObject().contains("-9999")) << content;
+    EXPECT_FALSE(root.value("users_accuracy").toObject().contains("-9999")) << content;
+
+    // I-2：分母为 0 的那一侧只能由守卫给 0.0；另一侧 colSum=1 走的是真除法。
+    const QJsonObject pa = root.value("producers_accuracy").toObject();
+    const QJsonObject ua = root.value("users_accuracy").toObject();
+    ASSERT_TRUE(pa.contains("3")) << content;
+    ASSERT_TRUE(ua.contains("3")) << content;
+    EXPECT_NEAR(pa.value("3").toDouble(), 0.0, 1e-6) << content;
+    EXPECT_NEAR(ua.value("3").toDouble(), 0.0, 1e-6) << content;
+
+    // 两侧都出现的类别必须走真除法：这条挡住"把守卫写成无条件返回 0.0"的实现，
+    // 否则 PA(3)/UA(3) 的 0.0 可能来自退化而不是来自分母为 0 的守卫。
+    EXPECT_NEAR(pa.value("2").toDouble(), 2.0 / 3.0, 1e-6) << content;
+    EXPECT_NEAR(ua.value("2").toDouble(), 1.0, 1e-6) << content;
+
+    EXPECT_EQ(result.metadata.at("correct_samples"), "4") << content;
+    EXPECT_EQ(root.value("correct_samples").toDouble(), 4.0) << content;
+    EXPECT_EQ(result.metadata.at("class_count"), "3") << content;
 }
