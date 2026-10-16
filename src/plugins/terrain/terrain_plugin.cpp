@@ -1015,6 +1015,9 @@ gis::framework::Result runViewshedProcess(
 // 而这张掩膜只有 0（不可见/超出距离）与 255（可见）两种值、没有无效像元 ⇒ 抄过来就是给产品打一个
 // "把不可见像元当 nodata 渲染"的声明。按简报要求改成"仅当输出真的存在无效像元才 SetNoDataValue"，
 // 本函数的输出不存在无效像元，所以一律不声明。
+// 挂账 N43（批次 A 复审 F-2 的验收语，不是架构选择）：本函数是绕过 opencv_wrapper 的**临时绕行**，
+// 批次 B 的交付物是"新增按 dtype 参数化的 core 写出 API 并删除本 helper"，
+// **不是**把这个本地写出器扶正成惯例、也不是留给后续任务当先例。
 void writeViewshedMaskAsByte(const cv::Mat& merged, GDALDataset* srcDs, const std::string& output) {
     cv::Mat mask;
     merged.convertTo(mask, CV_8U);   // 饱和转换：掩膜只有 0/255，没有会被压成 0 的负值

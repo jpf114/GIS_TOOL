@@ -16,7 +16,6 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
-#include <iostream>   // Task 12 R-T12-1 的"先量再断"要把两个可见像元数打进日志
 #include <limits>
 #include <map>
 #include <mutex>
@@ -7369,12 +7368,10 @@ TEST_F(PluginTest, ViewshedUsesEarthCurvatureCoefficientByDefault) {
     const int visibleWith = countVisibleViewshedCells(withPath, kViewCurvSide, kViewCurvSide);
     const int visibleNo = countVisibleViewshedCells(noPath, kViewCurvSide, kViewCurvSide);
 
-    // R-T12-1 第 1 步"先量再断"：两个数必须出现在日志里（红日志与绿日志都要有）。
-    std::cout << "[MEASURE viewshed curvature] total=" << totalCells
-              << " coeff=0.0 -> visible=" << visibleNo
-              << " coeff=0.85714 -> visible=" << visibleWith
-              << " coeff omitted(default) -> visible=" << visibleDefault << std::endl;
-
+    // R-T12-1 第 1 步"先量再断"的两个数不再用 std::cout 常驻打印（复审 F-4）：
+    // ctest 通过态不收集 stdout，长期留在测试码里只是低价值噪声；同样的两个数已经流进
+    // 下面 EXPECT_LT / EXPECT_EQ 的失败消息，而取证时的实测值（2819 / 517）保存在
+    // build/task12_tier1_red.log:15 与 build/task12_tier1_green_measure.log:12 两份日志里。
     EXPECT_LT(visibleWith, visibleNo)
         << "启用曲率/折射后远距离可见性应更保守；实测 coeff=0.85714 为 " << visibleWith
         << " 个、coeff=0.0 为 " << visibleNo << " 个（相等即说明 dfCurvCoeff 没进算法）";
@@ -7389,6 +7386,41 @@ TEST_F(PluginTest, ViewshedUsesEarthCurvatureCoefficientByDefault) {
     EXPECT_LT(visibleNo, totalCells)
         << "coeff=0.0 时也应受 max_distance=" << kViewCurvMaxDistance
         << " 约束（否则可见数=总像元数，健全性检查失去意义），实测 " << visibleNo << "/" << totalCells;
+
+    // F-3（fix round 1）：两行 curvature_coeff 回显是简报之外新增的 metadata 面，上一轮零断言，
+    // 批次 A 的纪律是"加了就得有牙"。断的是**值**不是存在性 ⇒ "键塞了但塞错东西"也红。
+    // 三条 run 各自钉一段：
+    //   withRun    = 显式传 0.85714 ⇒ 回显必须等于实际入参；
+    //   defaultRun = 根本不传该键   ⇒ 回显必须是代码兜底值（与 visibleDefault==visibleWith 那条同源，
+    //                但那条断的是算法结果，这条断的是"回显给 GUI/CLI 看的默认值"本身）；
+    //   noRun      = 显式传 0.0     ⇒ 回显必须是 0.000000，杀掉"把回显写成常量 0.857140"的假实现。
+    // 字符串形态是 std::to_string(double) 的结果（固定 6 位小数），照源码字面量写成 "0.85714" 会假红；
+    // 下面的字面量取自实测：build/task12f3_measure.log。
+    ASSERT_TRUE(withRun.metadata.count("curvature_coeff") > 0)
+        << "result.metadata 没回显 curvature_coeff（terrain_plugin.cpp 的 "
+           "result.metadata[\"curvature_coeff\"] = std::to_string(curvatureCoeff) 那行没了）";
+    EXPECT_EQ(withRun.metadata.at("curvature_coeff"), "0.857140")
+        << "显式传 curvature_coeff=0.85714 时回显的实际字符串";
+    ASSERT_TRUE(defaultRun.metadata.count("curvature_coeff") > 0);
+    EXPECT_EQ(defaultRun.metadata.at("curvature_coeff"), "0.857140")
+        << "不传该键时回显的必须是代码兜底 0.85714，否则面板/CLI 读到的默认值不可信";
+    ASSERT_TRUE(noRun.metadata.count("curvature_coeff") > 0);
+    EXPECT_EQ(noRun.metadata.at("curvature_coeff"), "0.000000")
+        << "显式传 0.0（关闭修正）时回显必须跟着变成 0.000000，钉住回显是实际入参不是常量";
+
+    // 另一行回显 meta.algorithmParams["curvature_coeff"] 走的是输出栅格的 GIS_PROCESSING 元数据域，
+    // 与 result.metadata 是两条独立通路 ⇒ 单独钉，删任一行都要红。
+    {
+        auto ds = gis::tests::openFixtureRaster(withPath, "curvature_coeff algorithmParams echo");
+        ASSERT_TRUE(ds != nullptr);
+        const auto persisted = gis::core::readProcessingMetadata(ds.get());
+        const auto it = persisted.algorithmParams.find("curvature_coeff");
+        ASSERT_TRUE(it != persisted.algorithmParams.end())
+            << "输出栅格的 GIS_PROCESSING 域里没有 GIS_PARAM_curvature_coeff"
+               "（meta.algorithmParams[\"curvature_coeff\"] 那行回显没了）";
+        EXPECT_EQ(it->second, "0.857140")
+            << "写进输出栅格元数据的 curvature_coeff 实际字符串";
+    }
 }
 
 // R-T12-2：非投影 CRS ⇒ metadata["crs_warning"] 的**值**必须是 Produces 规定的那串，
@@ -7457,6 +7489,72 @@ TEST_F(PluginTest, ViewshedDoesNotWarnOnProjectedCrs) {
         << (result.metadata.count("crs_warning") ? result.metadata.at("crs_warning") : std::string{});
     EXPECT_EQ(result.message.find("observer analysis expects projected CRS"), std::string::npos)
         << "投影 CRS 的 message 里混进了非投影提示：" << result.message;
+}
+
+// R-T12-2 守卫的**另一半**（批次 A 复审 F-1）：栅格**完全没有 CRS** 时也必须告警。
+// WHY 本条与 ViewshedWarnsOnNonProjectedCrs **不可互相替代**——terrain_plugin.cpp 的判据是
+//   `if (auto* srs = srcDs->GetSpatialRef(); !srs || !srs->IsProjected())`，两个 half 吃的是
+//   两条互斥的输入形态：
+//   * ViewshedWarnsOnNonProjectedCrs：EPSG:4326 ⇒ GetSpatialRef() **非空**、IsProjected() 为假
+//     ⇒ 只命中 `!srs->IsProjected()` 右半（本条对它毫无覆盖，删掉右半它才红、本条仍绿）；
+//   * 本条：夹具默认 crs = FixtureCrs::None ⇒ raster_fixture.h 的 epsgFor(None) 返回 0、
+//     applyFixtureHeader 只在 epsg>0 时才 SetProjection ⇒ 产出的栅格**没有 SRS**，
+//     GetSpatialRef()==nullptr ⇒ 只命中 `!srs` 左半（删掉左半 `!srs ||` 只有本条会红）。
+// ⇒ 两条各钉一个 half，合起来才把整条守卫钉住；缺任何一条，另一半都是"绿色掩盖的缺陷"。
+//   两个方向都做过判别变异（报告 fix round 1 的 F-1 段）：删左半 ⇒ 只有本条红、4326 那条绿；
+//   删右半 ⇒ 只有 4326 那条红、本条绿。所以二者**不可互相替代**。
+// WHY 旧用例 TerrainViewshedExecution 不算覆盖：它用 createConstantRaster（从不 SetProjection，
+// 于是同样走 `!srs` 左半），但它只断 success/action/像元值，对 crs_warning 一条断言都没有 ⇒
+// 分支被执行、却零断言，删掉左半它照样绿（这正是复审 F-1 实测到的现象）。
+// 而"无 CRS 的 DEM"在 GIS 里是极常见的输入（现场切片、老数据、手工导出），比地理坐标系更需要这条提示。
+TEST_F(PluginTest, ViewshedWarnsWhenRasterHasNoCrsAtAll) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    // 几何与 ViewshedDoesNotWarnOnProjectedCrs 逐项对齐（12×12、像元 1000 m、平坦 30 m、
+    // 观察点 (6500,5500)），唯一差别是**不写 CRS**：于是两条用例之间只有
+    // "GetSpatialRef() 是不是 nullptr"这一个变量，红点不会被几何差异污染。
+    gis::tests::RasterFixtureOptions options;   // crs 保持默认 FixtureCrs::None：本条是第一个把"无 SRS"当被测前提的用例
+    options.originX = 0.0;
+    options.originY = 12000.0;
+    options.pixelSize = 1000.0;
+    const std::string input = gis::tests::writeFloatRaster(
+        getTestDir(), "view_no_crs_input.tif", 12, 12, std::vector<float>(144, 30.0f), options);
+    ASSERT_FALSE(input.empty());
+
+    // 前提检查（不是被测行为）：夹具产出的栅格必须**真的**没有 SRS。
+    // 若哪天 raster_fixture 给 None 也写了投影，本条会静默退化成 4326 那条的复制品、
+    // 于是左半分支重新变成零覆盖 ⇒ 这里当场报红，而不是"看起来还在测"。
+    {
+        auto ds = gis::tests::openFixtureRaster(input, "ViewshedWarnsWhenRasterHasNoCrsAtAll");
+        ASSERT_TRUE(ds != nullptr);
+        ASSERT_TRUE(ds->GetSpatialRef() == nullptr)
+            << "夹具产出的栅格带了 SRS，本用例不再钉 `!srs` 半分支（epsgFor(None)=0 / "
+               "applyFixtureHeader 只在 epsg>0 时 SetProjection 这两条前提被改动了）";
+    }
+
+    const std::string output = utf8PathString(getTestDir() / "view_no_crs_output.tif");
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("viewshed");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["observer_x"] = 6500.0;
+    params["observer_y"] = 5500.0;
+    params["observer_height"] = 10.0;
+
+    const auto result = p->execute(params, progress_);
+    // 无 CRS 只是"结果不可信"，不是执行失败：断 success 钉住"告警不升级为失败"这条口径
+    // （与前两条 CRS 用例同形，不许退化成只断存在性）。
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(result.metadata.count("crs_warning") > 0)
+        << "完全没有 CRS 的 DEM 必须报 crs_warning：连线性单位都无法判定时曲率/折射修正必然失效，"
+           "实际 metadata 只有 action/band 等键";
+    // 值断言：塞空串、塞别的文案在这里就会红（与前两条同一份字面量）。
+    EXPECT_EQ(result.metadata.at("crs_warning"), "observer analysis expects projected CRS");
+    // Produces 的第二句承诺：message 里拼接了同一串（GUI 结果区只看得到 message）。
+    EXPECT_NE(result.message.find("observer analysis expects projected CRS"), std::string::npos)
+        << "result.message 没拼接 CRS 提示：" << result.message;
 }
 
 // 全局闸门（Task 10 审查后新增，"谁加参数谁补可见性"的配套）：curvature_coeff 进 paramSpecs()
@@ -7641,15 +7739,10 @@ TEST_F(PluginTest, TerrainViewshedOutputsAreBothByteMask) {
     measure(singleOutput, single);
     measure(multiOutput, multi);
 
-    std::cout << "[MEASURE viewshed output] single: bands=" << single.bands
-              << " dtype=" << single.dtype << " noDataDeclared=" << single.noDataDeclared
-              << " noData=" << single.noData << " visible255=" << single.visible
-              << " otherValues=" << single.other << std::endl;
-    std::cout << "[MEASURE viewshed output] multi : bands=" << multi.bands
-              << " dtype=" << multi.dtype << " noDataDeclared=" << multi.noDataDeclared
-              << " noData=" << multi.noData << " visible255=" << multi.visible
-              << " otherValues=" << multi.other << std::endl;
-
+    // 这两幅的实测数（bands/dtype/noDataDeclared/visible255/otherValues）不再用 std::cout 常驻打印
+    // （复审 F-4）：改前/改后的原始行已留在 build/task12_tier3_red.log:11-12 与
+    // build/task12_tier3_green.log:39-40，而断言失败时 gtest 会自动把比较双方的实际值打出来，
+    // 红态信息量没有损失，通过态本来也不收集 stdout。
     const int totalCells = side * side;
     // (1) 两个动作都写单波段 0/255 掩膜，类型必须都是 GDT_Byte（GDT_Float32 是 6、GDT_Byte 是 1）。
     EXPECT_EQ(single.bands, 1);
