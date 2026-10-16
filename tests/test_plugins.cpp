@@ -1668,7 +1668,10 @@ TEST_F(PluginTest, PansharpenExtentMismatchWarnsWithoutFailing) {
 // 同样恒 SetGeoTransform ⇒ 夹具层面**造不出**"没有地理变换"的输入，这正是审查说的"测试失明"。
 // 批次 A 的裁定是夹具为公共地基（还挂着 D1/D2/D4/D6 待修项），为一个分支加 option 会牵动
 // 后续每个任务的夹具语义，所以这里直接 gis::core::createRaster() + RasterIO 裸写、**不调**
-// SetGeoTransform（Task 14 的夹具外裸写是同形态先例）。
+// SetGeoTransform。先例是本仓测试**今天就存在**的形态，不是某个未开工任务的计划文本：
+// tests/test_core.cpp 的 :119、:134、:144、:178、:196 都是 gis::core::createRaster(...) 夹具外裸写，
+// 其中 :144（GdalBandToMat）与 :178（ComputeBandStats）与本处同为 createRaster + 逐波段 RasterIO
+// 且全程不设变换式；同文件 :162（MatToGdalTiff）也是裸写，只是它随后自设了一份变换式。
 static std::string createRasterWithoutGeoTransform(const std::string& name, int w, int h, int bands,
                                                   float value) {
     const std::string path = utf8PathString(getTestDir() / name);
@@ -1719,6 +1722,15 @@ TEST_F(PluginTest, PansharpenNoGeoTransformSkipsExtentCheck) {
     ASSERT_TRUE(rasterHasNoGeoTransform(pan)) << pan << " 应当没有地理变换，否则这条用例锁错了分支";
 
     const std::string output = utf8PathString(getTestDir() / "t13f1_nogt_output.tif");
+    // 本文件既有口径 M-T5-a（BandMathWithUnknownVariableFailsExplicitly、
+    // ReclassifyFailsWhenOneBandGeneratesNoIntervalRules 两处同形）：**在断言产物存在之前**先清掉
+    // 历次运行留下的陈旧输出。理由——本用例后面的 `EXPECT_TRUE(fs::exists(output))` 只看"有没有文件"，
+    // 若上一次运行（甚至是改动前那份代码）留下过同名产物，那么"这次根本没写出来"也会被旧文件
+    // 骗成假通过；清理必须放在 execute() 之前才有效，放在断言行旁边等于已经太晚。
+    std::error_code removeEc;
+    fs::remove(output, removeEc);
+    EXPECT_FALSE(fs::exists(output)) << "stale output not removed: " << output;
+
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("pansharpen");
     params["input"] = ms;
@@ -1745,10 +1757,103 @@ TEST_F(PluginTest, PansharpenNoGeoTransformSkipsExtentCheck) {
     // 产物照常生成（"不报警"不等于"不干活"）。
     EXPECT_TRUE(fs::exists(output)) << result.message;
 
+    // ---------------------------------------------------- Task 13 fix round 2 / F-2r（Important I-rr-1）
+    // 上面那一段只钉住了守卫 `!pansharpenEnvelope(msDs, ms) || !pansharpenEnvelope(panDs, pan)`
+    // （processing_plugin.cpp 的 pansharpenExtentMismatchRatio 开头）的**一个操作数**：两侧都拿不到变换式。
+    // "只有一侧拿得到"同样是这条 -1 分支的入口，round 1 之后仍然零 ctest 护栏 —— 实测把短路或写成 `&&`
+    // （= 只有两侧都缺才返回 -1）时，未补下面两段的全量 577 条零红（实测见本报告 Fix round 2 节），
+    // 而命令行混合探针会给每一次"PAN 没有地理参考"的正常使用刷一句假的
+    // `pan_ms_extent_mismatch: 1 (relative difference 1 over tolerance 1e-06)`：失败方拿不到四角、
+    // 结构体停在默认的 {0,0,0,0}，与另一幅 300 m 的包络一比 ⇒ 边差 300 / 较大边长 300 = 1。
+    // ⇒ 危害不是"少个提示"而是**凭空报出一个范围不一致**，把用户推向完全错误的方向；
+    //   契约原文（task-21 发布说明素材）："两侧都没有地理变换、或只有一侧有变换时都不报警"。
+    // 下面两段把混合形态的两个方向各钉一次：判据与三件断言沿用上面同一套（谓词 rasterHasNoGeoTransform、
+    // 按 GetGeoTransform 的返回值判），不另造第二个判据、也不新建 TEST_F（用例数不变）。
+
+    // 混合形态 A：MS 有地理变换（走夹具，包络 X[0,300] Y[0,300]）、PAN 没有（裸写）。
+    gis::tests::RasterFixtureOptions mixAMsOptions;
+    mixAMsOptions.crs = gis::tests::FixtureCrs::Epsg3857;
+    mixAMsOptions.originX = 0.0;
+    mixAMsOptions.originY = 300.0;
+    mixAMsOptions.pixelSize = 30.0;
+    const std::string mixAMs = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "t13f2r_mixA_ms_withgt.tif", 10, 10, {40.0f, 60.0f, 80.0f}, mixAMsOptions);
+    ASSERT_FALSE(mixAMs.empty());
+    const std::string mixAPan = createRasterWithoutGeoTransform("t13f2r_mixA_pan_nogt.tif", 20, 20, 1, 100.0f);
+    ASSERT_FALSE(mixAPan.empty());
+    fs::remove(mixAMs + ".aux.xml", ec);   // 同上：PAM 边车会把别处写过的变换式带进来，让"没有"变成"有"
+    fs::remove(mixAPan + ".aux.xml", ec);
+
+    // 前置自证（承重，与上面同一条谓词的正反两面）：**一个有、一个没有**。
+    // 少了这两条，夹具一旦被人补/删一句 SetGeoTransform，本段会静默退化成"两侧都缺"或"两侧都有"，
+    // 而那两个方向分别已有上面的段落和 PansharpenExtentMismatchWarnsWithoutFailing 在锁 ⇒ 混合入口又回到零覆盖。
+    ASSERT_FALSE(rasterHasNoGeoTransform(mixAMs))
+        << mixAMs << " 应当**有**地理变换，否则混合形态 A 退化成了两侧都缺（那是上面那一段的输入）";
+    ASSERT_TRUE(rasterHasNoGeoTransform(mixAPan))
+        << mixAPan << " 应当没有地理变换，否则混合形态 A 退化成了两侧都有（那是范围比对的另一条分支）";
+
+    const std::string mixAOutput = utf8PathString(getTestDir() / "t13f2r_mixA_output.tif");
+    std::map<std::string, gis::framework::ParamValue> mixAParams;
+    mixAParams["action"] = std::string("pansharpen");
+    mixAParams["input"] = mixAMs;
+    mixAParams["pan_file"] = mixAPan;
+    mixAParams["output"] = mixAOutput;
+    mixAParams["pan_method"] = std::string("brovey");   // 算法与地理无关，挑一个能跑通的分支即可
+
+    const auto mixA = p->execute(mixAParams, progress_);
+    EXPECT_TRUE(mixA.success) << "一侧拿不到地理变换不得当成失败：" << mixA.message;
+    EXPECT_EQ(mixA.metadata.count("pan_ms_extent_mismatch"), 0u)
+        << "MS 有 / PAN 没有 ⇒ 没有可比对象，范围校验应当整个跳过，实际值="
+        << (mixA.metadata.count("pan_ms_extent_mismatch")
+                ? mixA.metadata.at("pan_ms_extent_mismatch")
+                : std::string{"<absent>"});
+    EXPECT_EQ(mixA.message.find("extent mismatch"), std::string::npos) << mixA.message;
+
+    // 混合形态 B：镜像方向 —— PAN 有地理变换（夹具 20x20@15，包络同为 X[0,300] Y[0,300]）、MS 没有（裸写）。
+    // WHY 要单独一段而不是只留 A：`||` 的两个操作数各自是独立入口，写成
+    // `if (!pansharpenEnvelope(panDs, pan)) return -1.0;`（只看 PAN 侧）这类"半边"实现能骗过 A 但骗不过 B。
+    const std::string mixBMsWithoutGt = createRasterWithoutGeoTransform("t13f2r_mixB_ms_nogt.tif", 10, 10, 3, 60.0f);
+    ASSERT_FALSE(mixBMsWithoutGt.empty());
+    const std::vector<float> mixBPanData(20 * 20, 100.0f);
+    gis::tests::RasterFixtureOptions mixBPanOptions;
+    mixBPanOptions.crs = gis::tests::FixtureCrs::Epsg3857;
+    mixBPanOptions.originX = 0.0;
+    mixBPanOptions.originY = 300.0;
+    mixBPanOptions.pixelSize = 15.0;
+    const std::string mixBPan = gis::tests::writeFloatRaster(
+        getTestDir(), "t13f2r_mixB_pan_withgt.tif", 20, 20, mixBPanData, mixBPanOptions);
+    ASSERT_FALSE(mixBPan.empty());
+    fs::remove(mixBMsWithoutGt + ".aux.xml", ec);
+    fs::remove(mixBPan + ".aux.xml", ec);
+
+    ASSERT_TRUE(rasterHasNoGeoTransform(mixBMsWithoutGt))
+        << mixBMsWithoutGt << " 应当没有地理变换，否则混合形态 B 退化成了两侧都有";
+    ASSERT_FALSE(rasterHasNoGeoTransform(mixBPan))
+        << mixBPan << " 应当**有**地理变换，否则混合形态 B 退化成了两侧都缺";
+
+    const std::string mixBOutput = utf8PathString(getTestDir() / "t13f2r_mixB_output.tif");
+    std::map<std::string, gis::framework::ParamValue> mixBParams;
+    mixBParams["action"] = std::string("pansharpen");
+    mixBParams["input"] = mixBMsWithoutGt;
+    mixBParams["pan_file"] = mixBPan;
+    mixBParams["output"] = mixBOutput;
+    mixBParams["pan_method"] = std::string("brovey");
+
+    const auto mixB = p->execute(mixBParams, progress_);
+    EXPECT_TRUE(mixB.success) << "一侧拿不到地理变换不得当成失败：" << mixB.message;
+    EXPECT_EQ(mixB.metadata.count("pan_ms_extent_mismatch"), 0u)
+        << "PAN 有 / MS 没有 ⇒ 没有可比对象，范围校验应当整个跳过，实际值="
+        << (mixB.metadata.count("pan_ms_extent_mismatch")
+                ? mixB.metadata.at("pan_ms_extent_mismatch")
+                : std::string{"<absent>"});
+    EXPECT_EQ(mixB.message.find("extent mismatch"), std::string::npos) << mixB.message;
+
     // ------------------------------------------------------------------------------------ 现状锁（N51）
     // 本用例锁的是**现状**："缺地理参考 ⇒ 得不到范围校验的保护"，pansharpen 照跑、照出图、
     // 一句提示都不给。同一族的还有顾虑 C-1：一侧有变换、一侧没有时输出会退化成 GDAL 默认参考
     // （MS 那份地理参考直接丢掉，也无人告知）——那部分本批次**不改**（挂 N51）。
+    // 层次要分清，别把这条分支读成"整支都有人锁了"：round 2 新加的混合形态两段锁的是
+    // "这种输入**不报警**"，而 C-1 那条**信息损失**（MS 的参考被丢掉且无人告知）仍然没有任何护栏。
     // 批次 B 若按 N51 改成"缺地理参考就显式拒绝"，**这条用例要改正向而不是删掉**：
     // 断 result.success == false、断 message 点名缺变换的那一幅（不是含糊的 "extent mismatch"），
     // 上面三条断言逐条换成对应的正向断言即可，**不得整段删除**——
