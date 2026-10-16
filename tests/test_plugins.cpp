@@ -1509,6 +1509,250 @@ TEST_F(PluginTest, ProcessingPansharpenExecution) {
     EXPECT_EQ(ds->GetRasterCount(), 3);
 }
 
+// ------------------------------------------------------------------ Task 13 / spec A7（H7）
+// pansharpen 的输出地理网格必须整体取自 PAN 数据集。
+// WHY 断 gt[1]/gt[5] 而不是只断尺寸：改前 `panWidth != msWidth` 分支就已经把 MS 的 Mat
+// cv::resize 到 PAN 的行列数，所以输出的**像元网格**本来就是 20x20；缺陷只在写出那一步把
+// 参考数据集传成 msDS ⇒ "20x20 个像元、每像元 30 m"，地面覆盖被凭空放大一倍且全程无报错。
+// 只有地理变换能区分改前改后，尺寸与波段数断言是为了挡住"顺手改成按 MS 网格输出"这种回退。
+TEST_F(PluginTest, PansharpenOutputUsesPanGeoTransform) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    // MS 10x10@30m 与 PAN 20x20@15m 的地理包络都是 X[0,300] Y[0,300] ⇒ 不该触发范围不符提示。
+    gis::tests::RasterFixtureOptions msOptions;
+    msOptions.crs = gis::tests::FixtureCrs::Epsg3857;
+    msOptions.originX = 0.0;
+    msOptions.originY = 300.0;
+    msOptions.pixelSize = 30.0;
+    const std::string ms = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "t13_grid_ms_30m.tif", 10, 10, {40.0f, 60.0f, 80.0f, 100.0f}, msOptions);
+    ASSERT_FALSE(ms.empty());
+
+    gis::tests::RasterFixtureOptions panOptions;
+    panOptions.crs = gis::tests::FixtureCrs::Epsg3857;
+    panOptions.originX = 0.0;
+    panOptions.originY = 300.0;
+    panOptions.pixelSize = 15.0;
+    const std::vector<float> panData(20 * 20, 100.0f);
+    const std::string pan = gis::tests::writeFloatRaster(
+        getTestDir(), "t13_grid_pan_15m.tif", 20, 20, panData, panOptions);
+    ASSERT_FALSE(pan.empty());
+
+    const std::string output = utf8PathString(getTestDir() / "t13_grid_output.tif");
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("pansharpen");
+    params["input"] = ms;
+    params["pan_file"] = pan;
+    params["output"] = output;
+    params["pan_method"] = std::string("brovey");
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    EXPECT_EQ(ds->GetRasterXSize(), 20);
+    EXPECT_EQ(ds->GetRasterYSize(), 20);
+    // 波段数来自融合结果的个数（= MS 的波段数 4），不是参考数据集 PAN 的 1 —— 这是刻意口径，
+    // 否则 pansharpen 就退化成单波段输出了。
+    EXPECT_EQ(gis::tests::readBandCount(output), 4);
+
+    const auto gt = gis::tests::readGeoTransform(output);
+    EXPECT_DOUBLE_EQ(gt[1], 15.0);      // 本任务的核心：像元尺寸 = PAN 的 15，而不是 MS 的 30
+    EXPECT_DOUBLE_EQ(gt[5], -15.0);
+    EXPECT_DOUBLE_EQ(gt[0], 0.0);       // 原点同样取自 PAN（两幅原点相同，此条只把契约写全）
+    EXPECT_DOUBLE_EQ(gt[3], 300.0);
+    EXPECT_EQ(gis::tests::readCrsAuthorityCode(output), "EPSG:3857");
+
+    // R-T13-1 的**反侧**：包络一致时不得出现提示，否则"无条件塞警告"的假实现也能全绿。
+    EXPECT_EQ(result.metadata.count("pan_ms_extent_mismatch"), 0u)
+        << "PAN 与 MS 的包络同为 X[0,300] Y[0,300]，不该报范围不符：" << result.message;
+    EXPECT_EQ(result.message.find("extent mismatch"), std::string::npos) << result.message;
+
+    // R-T13-2：参考数据集换成 PAN 这件事要在 metadata 里留下可核对的痕迹（可观察后果见
+    // PansharpenSharedNoDataTagFollowsPanBand1，那条才钉"值到底取自哪一幅"）。
+    ASSERT_TRUE(result.metadata.count("nodata_source") > 0)
+        << "必须记录 NoData 取自哪个参考波段，实际 metadata 键数=" << result.metadata.size();
+    EXPECT_NE(result.metadata.at("nodata_source").find("pan_band1"), std::string::npos)
+        << result.metadata.at("nodata_source");
+}
+
+// R-T13-1：把"cv::resize 只看像元行列、完全不读地理参考"这条隐含假设变成承重假设之后，
+// 两幅范围不一致时产出的是"看着正确、整体错位"的影像 —— 比改前更隐蔽，所以必须**不静默**。
+// WHY 不硬失败：同传感器的 PAN/MS 正射后常有厘米到米级差异，硬失败会打断正常用法
+// ⇒ 用例同时钉住"提示出现"与"success 仍为 true"两侧。
+TEST_F(PluginTest, PansharpenExtentMismatchWarnsWithoutFailing) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    // MS 10x10@30m、origin (0,300) ⇒ 包络 X[0,300] Y[0,300]，较大边长 300 m。
+    gis::tests::RasterFixtureOptions msOptions;
+    msOptions.crs = gis::tests::FixtureCrs::Epsg3857;
+    msOptions.originX = 0.0;
+    msOptions.originY = 300.0;
+    msOptions.pixelSize = 30.0;
+    const std::string ms = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "t13_extent_ms_30m.tif", 10, 10, {40.0f, 60.0f}, msOptions);
+    ASSERT_FALSE(ms.empty());
+
+    const std::vector<float> panData(20 * 20, 100.0f);
+    auto writePanAtTop = [&](const std::string& fileName, double topY) {
+        gis::tests::RasterFixtureOptions options;
+        options.crs = gis::tests::FixtureCrs::Epsg3857;
+        options.originX = 0.0;
+        options.originY = topY;
+        options.pixelSize = 15.0;
+        return gis::tests::writeFloatRaster(getTestDir(), fileName, 20, 20, panData, options);
+    };
+
+    auto runPansharpen = [&](const std::string& pan, const std::string& output) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("pansharpen");
+        params["input"] = ms;
+        params["pan_file"] = pan;
+        params["output"] = output;
+        params["pan_method"] = std::string("brovey");
+        return p->execute(params, progress_);
+    };
+
+    // 场景 A：PAN 整体向南偏 1 m（上边 299、下边 -1），包络边长仍是 300 m
+    // ⇒ 相对差异 = 1 / 300 = 3.333...e-3，远大于 1e-6 容差。
+    const std::string shiftedPan = writePanAtTop("t13_extent_pan_15m_shift_1m.tif", 299.0);
+    ASSERT_FALSE(shiftedPan.empty());
+    const std::string shiftedOutput = utf8PathString(getTestDir() / "t13_extent_shift_1m_output.tif");
+    const auto shifted = runPansharpen(shiftedPan, shiftedOutput);
+
+    EXPECT_TRUE(shifted.success) << "范围不符只告警、不得硬失败：" << shifted.message;
+    ASSERT_TRUE(shifted.metadata.count("pan_ms_extent_mismatch") > 0)
+        << "PAN 相对 MS 偏了 1 m（相对差异 1/300）却没有提示：" << shifted.message;
+    // 值断言：只写"键存在"、或把差异算成绝对米数的假实现，在这里都会红。
+    EXPECT_NEAR(std::stod(shifted.metadata.at("pan_ms_extent_mismatch")), 1.0 / 300.0, 1e-12)
+        << "metadata 值必须是相对差异（包络边差 / 较大边长）："
+        << shifted.metadata.at("pan_ms_extent_mismatch");
+    EXPECT_NE(shifted.message.find("extent mismatch"), std::string::npos)
+        << "result.message 必须拼接同一条提示（GUI 结果区只看得到 message）：" << shifted.message;
+
+    // 提示不得改变产物本身：输出网格仍然是 PAN 的 15 m。
+    const auto shiftedGt = gis::tests::readGeoTransform(shiftedOutput);
+    EXPECT_DOUBLE_EQ(shiftedGt[1], 15.0);
+    EXPECT_DOUBLE_EQ(shiftedGt[5], -15.0);
+
+    // 场景 B：PAN 只偏 0.0001 m（相对差异 3.333e-7 < 1e-6）⇒ 不许报警。
+    // 没有这一条，"只要尺寸不同就报警"（或把容差写死成 0）的实现同样全绿，
+    // 而那种实现会把米级以下一切正常用法都刷成警告，提示本身变成噪声。
+    const std::string tinyPan = writePanAtTop("t13_extent_pan_15m_shift_0p1mm.tif", 299.9999);
+    ASSERT_FALSE(tinyPan.empty());
+    const std::string tinyOutput = utf8PathString(getTestDir() / "t13_extent_shift_0p1mm_output.tif");
+    const auto withinTolerance = runPansharpen(tinyPan, tinyOutput);
+    ASSERT_TRUE(withinTolerance.success) << withinTolerance.message;
+    EXPECT_EQ(withinTolerance.metadata.count("pan_ms_extent_mismatch"), 0u)
+        << "0.1 mm 级偏差不该报警，实际值="
+        << (withinTolerance.metadata.count("pan_ms_extent_mismatch")
+                ? withinTolerance.metadata.at("pan_ms_extent_mismatch")
+                : std::string{"<absent>"});
+    EXPECT_EQ(withinTolerance.message.find("extent mismatch"), std::string::npos)
+        << withinTolerance.message;
+}
+
+// R-T13-2 及其更正：换参考数据集后 NoData 的**可观察**后果要如实记录，而不是留成巧合，
+// 更不能当成新缺陷去修。
+// 核心格式事实（src/core/src/gdal_wrapper.cpp:63 的 drv->Create(..., nullptr) 不带创建选项）：
+// 产出的多波段 GeoTIFF 是单 IFD、整个数据集只有**一个共享的 GDAL_NODATA 标签** ⇒
+// "逐波段 NoData 表达不出来"改前改后都成立，matsToGdalTiff 的逐波段回落（opencv_wrapper.cpp:100）
+// 在输出侧几乎没有可观察差异。真正被本任务改掉的只有一件事：共享标签的**值取自哪一幅**。
+// 另须记住：pansharpen 本就不做 NoData 掩膜（三个方法分支都不判），NoData 传递从来只是副产物。
+TEST_F(PluginTest, PansharpenSharedNoDataTagFollowsPanBand1) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    // PAM 边车按文件名匹配：残留的 .aux.xml 会把别处写过的 NoData 声明带进来，造成假绿/假红
+    // （同 Task 7/9 的既有口径，见本文件 proximity/nodata 那批用例）。
+    std::error_code ec;
+    const auto removeSidecars = [&](const std::string& path) {
+        fs::remove(path + ".aux.xml", ec);
+    };
+
+    // MS 8x8@0.001 与 PAN 16x16@0.0005 的包络同为 X[116,116.008] Y[39.992,40] ⇒ 不触发范围提示。
+    gis::tests::RasterFixtureOptions msOptions;
+    msOptions.originX = 116.0;
+    msOptions.originY = 40.0;
+    msOptions.pixelSize = 0.001;
+    msOptions.hasNoData = true;
+    msOptions.noData = -9999.0;
+    const std::string ms = gis::tests::writeConstantBandsRaster(
+        getTestDir(), "t13_nodata_ms.tif", 8, 8, {40.0f, 60.0f}, msOptions);
+    ASSERT_FALSE(ms.empty());
+    removeSidecars(ms);
+    // 健全性：MS 自己必须真的声明了 NoData，否则"输出不再继承"这条断言就是空检查。
+    double msDeclared = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(ms, 1, msDeclared)) << "夹具没有给 MS 写出 NoData";
+    ASSERT_DOUBLE_EQ(msDeclared, -9999.0);
+
+    const std::vector<float> panData(16 * 16, 100.0f);
+    auto writePan = [&](const std::string& fileName, bool withNoData) {
+        gis::tests::RasterFixtureOptions options;
+        options.originX = 116.0;
+        options.originY = 40.0;
+        options.pixelSize = 0.0005;
+        options.hasNoData = withNoData;
+        options.noData = -555.0;
+        return gis::tests::writeFloatRaster(getTestDir(), fileName, 16, 16, panData, options);
+    };
+
+    auto runPansharpen = [&](const std::string& pan, const std::string& output) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("pansharpen");
+        params["input"] = ms;
+        params["pan_file"] = pan;
+        params["output"] = output;
+        params["pan_method"] = std::string("brovey");
+        return p->execute(params, progress_);
+    };
+
+    // 场景 A：PAN 没有声明 NoData ⇒ 改前输出会继承 MS band1 的 -9999，
+    // 改后**整幅不声明任何 NoData**（行为改变，按 R-T13-2 如实钉住，不做掩膜也不造 0 值）。
+    const std::string panNoTag = writePan("t13_nodata_pan_untagged.tif", false);
+    ASSERT_FALSE(panNoTag.empty());
+    removeSidecars(panNoTag);
+    const std::string outNoTag = utf8PathString(getTestDir() / "t13_nodata_pan_untagged_output.tif");
+    removeSidecars(outNoTag);
+    const auto untagged = runPansharpen(panNoTag, outNoTag);
+    ASSERT_TRUE(untagged.success) << untagged.message;
+    // 可观察后果排在 metadata 之前：这样改前的 RED 日志同时暴露"输出仍继承 MS 的 -9999"这件事，
+    // 而不是只报"少了个键"（metadata 用的是 ASSERT，会把后面的断言整段截掉）。
+    for (int band = 1; band <= 2; ++band) {
+        double outNoData = 0.0;
+        EXPECT_FALSE(gis::tests::readNoDataValue(outNoTag, band, outNoData))
+            << "band " << band << " 不该再继承 MS 的 -9999，实际读到 " << outNoData;
+    }
+    ASSERT_TRUE(untagged.metadata.count("nodata_source") > 0);
+    const std::string untaggedSource = untagged.metadata.at("nodata_source");
+    EXPECT_NE(untaggedSource.find("pan_band1"), std::string::npos) << untaggedSource;
+    EXPECT_NE(untaggedSource.find("declared=none"), std::string::npos) << untaggedSource;
+    EXPECT_NE(untaggedSource.find("shared"), std::string::npos)
+        << "必须写明输出是单一共享 NoData 标签：" << untaggedSource;
+
+    // 场景 B：PAN band1 声明 -555 ⇒ 输出的每个波段都报 -555（共享标签，只有一个值）。
+    // 改前这里会是 MS 的 -9999，所以这条对"参考数据集"的替换有直接鉴别力。
+    const std::string panTagged = writePan("t13_nodata_pan_tagged.tif", true);
+    ASSERT_FALSE(panTagged.empty());
+    removeSidecars(panTagged);
+    const std::string outTagged = utf8PathString(getTestDir() / "t13_nodata_pan_tagged_output.tif");
+    removeSidecars(outTagged);
+    const auto tagged = runPansharpen(panTagged, outTagged);
+    ASSERT_TRUE(tagged.success) << tagged.message;
+    for (int band = 1; band <= 2; ++band) {
+        double outNoData = 0.0;
+        ASSERT_TRUE(gis::tests::readNoDataValue(outTagged, band, outNoData))
+            << "band " << band << " 应共享 PAN band1 声明的 NoData";
+        EXPECT_DOUBLE_EQ(outNoData, -555.0);
+    }
+    ASSERT_TRUE(tagged.metadata.count("nodata_source") > 0);
+    EXPECT_NE(tagged.metadata.at("nodata_source").find("declared=-555"), std::string::npos)
+        << tagged.metadata.at("nodata_source");
+}
+
 TEST_F(PluginTest, ProcessingMissingInput) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

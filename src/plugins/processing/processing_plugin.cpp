@@ -640,6 +640,90 @@ gis::framework::Result ProcessingPlugin::doTemplateMatch(
     return result;
 }
 
+namespace {
+
+// Task 13 的三条 pansharpen 专用常量/辅助，全部放在 pansharpen 区内，不进别的 action 的地盘。
+
+// R-T13-1 的容差：以两幅里**较大地理边长**为分母的相对差异。
+// WHY 不是 0：同传感器 PAN/MS 正射后常有厘米到米级差异，容差写死成 0 会把一切正常用法刷成警告；
+// WHY 不是绝对米数：地理坐标可能是度（EPSG:4326）也可能是米（投影 CRS），绝对阈值在两者间没有意义。
+// 实测锚点见用例 PansharpenExtentMismatchWarnsWithoutFailing：1 m / 300 m（3.33e-3）必报，
+// 0.1 mm / 300 m（3.33e-7）必不报。
+constexpr double kPanMsExtentToleranceRatio = 1e-6;
+
+// 提示文案。值本身是契约的一部分（用例断 result.message 里出现它），
+// 抽成常量是为了 metadata 与 message 两侧共用同一份字面量、不漂移（同 terrain 的
+// kViewshedProjectedCrsHint 写法）。
+constexpr const char* kPanMsExtentMismatchHint =
+    "PAN/MS geographic extent mismatch: output grid now follows PAN";
+
+// 把 double 写成能被 std::stod 原样读回的短串。
+// WHY 不用 std::to_string：它固定 6 位小数，3.33e-7 会被写成 "0.000000"，
+// 于是"容差内侧不报警"这条断言就被洗成了恒等式，用例失去鉴别力。
+std::string formatPansharpenDouble(double value) {
+    char buffer[64];
+    CPLsnprintf(buffer, sizeof(buffer), "%.12g", value);
+    return std::string(buffer);
+}
+
+struct PansharpenEnvelope {
+    double minX = 0.0;
+    double minY = 0.0;
+    double maxX = 0.0;
+    double maxY = 0.0;
+};
+
+// 数据集四角的投影坐标包络。GET 变换拿不到（理论上 GDAL 会回落成单位阵，这里仍按 API 判定）
+// 或行列数为 0 时返回 false，调用方据此**不报警**——没有可比的地理参考时报警只会误导。
+bool pansharpenEnvelope(GDALDataset* ds, PansharpenEnvelope& out) {
+    if (!ds) return false;
+    double gt[6];
+    if (ds->GetGeoTransform(gt) != CE_None) return false;
+    const double cols = ds->GetRasterXSize();
+    const double rows = ds->GetRasterYSize();
+    if (cols <= 0.0 || rows <= 0.0) return false;
+
+    bool first = true;
+    for (int iy = 0; iy < 2; ++iy) {
+        for (int ix = 0; ix < 2; ++ix) {
+            const double px = ix == 0 ? 0.0 : cols;
+            const double py = iy == 0 ? 0.0 : rows;
+            const double x = gt[0] + px * gt[1] + py * gt[2];
+            const double y = gt[3] + px * gt[4] + py * gt[5];
+            if (first) {
+                out = {x, y, x, y};
+                first = false;
+            } else {
+                out.minX = std::min(out.minX, x);
+                out.maxX = std::max(out.maxX, x);
+                out.minY = std::min(out.minY, y);
+                out.maxY = std::max(out.maxY, y);
+            }
+        }
+    }
+    return true;
+}
+
+// PAN 与 MS 地理包络的**相对**差异：四条对应边的最大差 / 两幅里较大的那个边长。
+// WHY 需要它（R-T13-1）：cv::resize 只按行列数重采样、**完全不读地理参考**，所以整条链路一直
+// 隐含"PAN 与 MS 覆盖同一地面范围"。改前这个假设错了会被 MS 的变换掩盖，改后输出的地理变换
+// 直接取 PAN ⇒ 范围不一致时产出一幅"看着正确、整体错位"的影像，比改前更隐蔽，必须显式提示。
+// 返回 <0 表示"无从比较"（拿不到变换式或边长为 0）；否则返回相对差异，由调用方与容差比较。
+double pansharpenExtentMismatchRatio(GDALDataset* msDs, GDALDataset* panDs) {
+    PansharpenEnvelope ms{};
+    PansharpenEnvelope pan{};
+    if (!pansharpenEnvelope(msDs, ms) || !pansharpenEnvelope(panDs, pan)) return -1.0;
+
+    const double edgeDelta = std::max({std::abs(pan.minX - ms.minX), std::abs(pan.maxX - ms.maxX),
+                                        std::abs(pan.minY - ms.minY), std::abs(pan.maxY - ms.maxY)});
+    const double largerSide = std::max({ms.maxX - ms.minX, ms.maxY - ms.minY,
+                                         pan.maxX - pan.minX, pan.maxY - pan.minY});
+    if (largerSide <= 0.0) return -1.0;
+    return edgeDelta / largerSide;
+}
+
+} // namespace
+
 gis::framework::Result ProcessingPlugin::doPansharpen(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
@@ -672,6 +756,11 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
 
     progress.onMessage("MS: " + std::to_string(msWidth) + "x" + std::to_string(msHeight) +
                        " PAN: " + std::to_string(panWidth) + "x" + std::to_string(panHeight));
+
+    // R-T13-1：趁两幅都还开着先把地理包络比掉，结果留到成功分支再报出去（只告警、不硬失败）。
+    // WHY 放在这里：下面那句 `panWidth != msWidth` 的 cv::resize 正是"只看行列、不看地理参考"
+    // 这条隐含假设被执行的地方，范围是否一致必须在重采样前后都成立。
+    const double extentMismatchRatio = pansharpenExtentMismatchRatio(msDS.get(), panDS.get());
 
     progress.throwIfCancelled();
 
@@ -765,7 +854,12 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
 
     progress.onProgress(0.8);
 
-    gis::core::matsToGdalTiff(sharpenedBands, msDS.get(), output);
+    // 输出网格整体取自 PAN 数据集（Task 13 / spec A7、H7）：像元网格本来就是 PAN 的
+    // （上面把 MS cv::resize 到了 PAN 的行列数），改前却把 msDS 当参考数据集传给 matsToGdalTiff
+    // ⇒ 地理变换/投影沿用 MS 的，写出"20x20 个像元、每像元 MS 的 30 m"这类凭空放大一倍的覆盖范围。
+    // 注意只有**空间参考**这一侧换成 PAN：波段数仍取 sharpenedBands 的个数（= MS 的波段数），
+    // 否则 pansharpen 会退化成单波段输出。
+    gis::core::matsToGdalTiff(sharpenedBands, panDS.get(), output);
 
     {
         auto meta = gis::core::buildPluginMetadata(input, msDS.get(), "processing.pansharpen");
@@ -784,6 +878,34 @@ gis::framework::Result ProcessingPlugin::doPansharpen(
     result.metadata["bands"] = std::to_string(msBands);
     result.metadata["pan_width"] = std::to_string(panWidth);
     result.metadata["pan_height"] = std::to_string(panHeight);
+
+    // R-T13-2 + 更正：如实记录输出 NoData 的口径，别留成巧合，也别当成新缺陷去修。
+    // 事实链：① matsToGdalTiff 逐波段读的是**参考数据集**（现在是 PAN）同序号波段的 NoData，
+    // 参考波段数不足时回落 band 1（opencv_wrapper.cpp:100，单波段 PAN 不会越界）；
+    // ② createRaster 不带创建选项（src/core/src/gdal_wrapper.cpp:63 的 drv->Create(..., nullptr)）
+    // ⇒ 多波段输出是单 IFD、整个数据集只有**一个共享的 GDAL_NODATA 标签**，
+    // 所以"逐波段 NoData 表达不出来"改前改后都成立、不是本任务引入的；本任务真正改掉的是
+    // "共享标签的值取自哪一幅"——PAN 没声明时输出就**不声明** NoData（改前会继承 MS band1 的值）。
+    // 另须记住：pansharpen 本就不做 NoData 掩膜（三个方法分支都不判 NoData），
+    // NoData 传递从来只是副产物；若要在锐化前掩膜 MS 的 NoData，得先定 G-A 的口径，不在本任务做。
+    {
+        int panHasNoData = 0;
+        GDALRasterBand* panBand1 = panDS->GetRasterBand(1);
+        const double panNoData = panBand1 ? panBand1->GetNoDataValue(&panHasNoData) : 0.0;
+        result.metadata["nodata_source"] =
+            std::string("pan_band1(shared GDAL_NODATA tag, declared=") +
+            (panHasNoData ? formatPansharpenDouble(panNoData) : std::string("none")) + ")";
+    }
+
+    // R-T13-1：范围不符只提示、不失败（容差口径见上面 kPanMsExtentToleranceRatio 的 WHY）。
+    if (extentMismatchRatio > kPanMsExtentToleranceRatio) {
+        const std::string ratioText = formatPansharpenDouble(extentMismatchRatio);
+        result.metadata["pan_ms_extent_mismatch"] = ratioText;
+        result.message += std::string("; ") + kPanMsExtentMismatchHint +
+                          " (relative difference " + ratioText + " over tolerance " +
+                          formatPansharpenDouble(kPanMsExtentToleranceRatio) + ")";
+        progress.onMessage(kPanMsExtentMismatchHint);
+    }
     return result;
 }
 
