@@ -27,9 +27,10 @@
 // R-T7-9 的用例要核对展示层的 per-action 白名单；gis_tests 把 gui_data_support.cpp 编进同一个
 // 可执行文件，gui 头文件不在 include 路径中，故沿用 test_coverage_meta.cpp:5 的相对路径写法。
 #include "../src/gui/gui_data_support.h"
-// R-T10-9 的"渲染键"这一层要问真实 widget 树：ParamWidget::hasParam 走的正是
-// mainwindow.cpp:558 setParamValue 用的那个判据（entries_ 里没有键就拒收 --set-param）。
+// R-T10-9 的"渲染键"这一层要问真实 widget 树：判据是 ParamCardWidget::hasParam（entries_，
+// 由 addParam 逐条填充）；ParamWidget::hasParam 只扫 specs_，断不出控件行是否真的建出来。
 #include "../src/gui/param_widget.h"
+#include "../src/gui/param_card_widget.h"
 
 namespace fs = std::filesystem;
 
@@ -2021,8 +2022,10 @@ TEST_F(PluginTest, SpindexEviLSpecDeclarationMatchesEviFallback) {
 // 这里断两层，缺一不可：
 //   1) buildEffectiveGuiParamSpecs 过滤后的有效键集合（R-T10-5 的元断言只管
 //      visibleKeys ⊆ paramSpecs，抓不到"键被渲染但本 action 不读"）；
-//   2) 真实 widget 树的渲染键 —— ParamWidget::hasParam 就是 mainwindow.cpp:557-558
-//      setParamValue 的判据，也就是 CLI/GUI --set-param 能否落地的唯一闸门。
+//   2) 真实 widget 树的渲染键 —— 问 ParamCardWidget::hasParam（entries_，即 addParam
+//      真建出来的那一行）。WHY 不是 ParamWidget::hasParam：MainWindow::setParamValue
+//      （mainwindow.cpp:557-558）用的就是它，而它只扫 specs_（param_widget.cpp:158-163），
+//      拿它断"渲染键"等于又抄一遍有效集合。
 // 两个 action 方向相反（evi 用 evi_l、savi 用 l_value），一起断才封得住"共用 L 键"这一族。
 TEST_F(PluginTest, SpindexEviAndSaviGuiPanelsRenderOnlyTheLKeyThatEachActionReads) {
     auto* p = mgr_.find("spindex");
@@ -2054,13 +2057,21 @@ TEST_F(PluginTest, SpindexEviAndSaviGuiPanelsRenderOnlyTheLKeyThatEachActionRead
         panel.setUiContext("spindex", action);
         panel.setParamSpecs(effective);
 
+        // 渲染层必须问 ParamCardWidget::hasParam（param_card_widget.cpp:937 读 entries_，
+        // 也就是真正建出来的控件行）。WHY 不用 ParamWidget::hasParam：它
+        // （param_widget.cpp:158-163）只扫 setParamSpecs 存下来的 specs_，等于把有效集合再抄一遍，
+        // 断不出"这一行到底建没建"。
+        const auto cards = panel.findChildren<ParamCardWidget*>();
+        ASSERT_FALSE(cards.empty()) << action << " 没有生成任何参数卡片";
         std::set<std::string> renderedKeys;
         for (const auto& spec : specs) {
             if (spec.key == "action") {
                 continue;
             }
-            if (panel.hasParam(spec.key)) {
-                renderedKeys.insert(spec.key);
+            for (const auto* card : cards) {
+                if (card && card->hasParam(spec.key)) {
+                    renderedKeys.insert(spec.key);
+                }
             }
         }
         // 渲染集合必须与有效集合完全相等：少一个是功能缺失，多一个是本任务要消灭的形态。
