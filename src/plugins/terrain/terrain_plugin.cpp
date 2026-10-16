@@ -421,10 +421,18 @@ gis::framework::Result runHydrologyTerrainProcess(
         auto linear = [cols](int y, int x) { return y * cols + x; };
         // WHY NoData 当不可穿越的障壁，而不是出海口：NoData 的存储值是哨兵（如 -9999），
         // 它不代表地势低。若把 NoData 像元也塞进"边界出海口"，-9999 就成了整幅 DEM 的假出水路径，
-        // "只抬不降"的判据（value <= 出水面）对任何真实像元都不成立 ⇒ 所有洼地一律不抬。
+        // "只抬不降"的判据（value < 出水面）对任何真实像元都不成立 ⇒ 所有洼地一律不抬。
+        // WHY 还要挡掉 NaN：std::isfinite 之前 NaN 像元照常入队，而 lowestFirst（a > b）对含 NaN
+        // 的元素违反严格弱序 ⇒ make_heap/pop_heap 是形式上的 UB（std::priority_queue 的前置条件
+        // 被破坏，结果不受保证）。更实在的危害是"从 NaN 处漏水"：NaN 被弹出后 top.first 是 NaN，
+        // 所有 "value < 出水面" 对 NaN 恒假 ⇒ 它的邻居被标记成已处理却一点没抬，洼地静默不填，
+        // 下游 flow_direction 于是带着封闭汇跑。旧实现（cv::erode + max）对 NaN 走的是确定性的
+        // max 语义，没有这个 UB，也没有这个漏；把 NaN 折进障壁判据是与本分支 NoData 同一套语义，
+        // 也是最小改动。NaN 像元自己不写值：输出保留 NaN，下游按无效像元处理，我们不为它编高程。
         auto validCell = [&](int y, int x) {
             return y >= 0 && x >= 0 && y < rows && x < cols &&
-                   (!hasNoData || noDataMask.at<uint8_t>(y, x) == 0);
+                   (!hasNoData || noDataMask.at<uint8_t>(y, x) == 0) &&
+                   std::isfinite(result.at<float>(y, x));
         };
 
         // 1) 数据集边缘作为出海口入队（inQueue 判重覆盖 rows==1 或 cols==1 的退化形状）
@@ -475,9 +483,13 @@ gis::framework::Result runHydrologyTerrainProcess(
                 // 不能进一步收窄成"只对 ε=0 那趟真抬过的像元施 ε"（另开一张 filled 掩膜）：
                 // 那样恰好落在水面高度上的鞍部/岛状像元保持原值，而它四周的水面已被 ε 抬高 ⇒
                 // 重新出现封闭汇。实测 200x200 随机 DEM：ε=0.5 新增 18085 个封闭像元、ε=10 新增
-                // 26945 个（build/t11fix1/model_variants.log 的 v4 行）。严格小于同时满足两端：
-                // 背景一格不动，且每个像元仍沿非降路径可达出海口（推入堆的就是写回的值）。
+                // 26945 个。严格小于因此是同时满足"背景不动"与"仍无封闭汇"两端的唯一判据：
+                // 高于水面的背景一格不动，且每个像元仍沿非降路径可达出海口（推入堆的就是写回的值）。
                 // 洼地的平底照样爬得出来——平底像元的原始值严格低于它的出水面，走的正是这条分支。
+                // 残差（参数描述按这个口径写）：原始值恰好等于 ε=0 水面、却被抬高后的水面漫过的像元
+                // （湖面上的岛/鞍部）仍然低于弹出键，于是也拿到 ε——不放它就得不到非降出口。实测 29 幅
+                // 比对 DEM 上 ε∈{0.5,10} 时这类像元 619 个（改前 3007 个），且 619/619 都能经同类像元
+                // 连到一个真被抬过的像元上 ⇒ 都在这片水域里，不在背景上。
                 // ε=0 时这个分支只做一次 "value = top.first" 赋值、没有任何算术，且 value ==
                 // top.first 时赋值与否同值 ⇒ 默认路径与 <= 版逐像元相同，也仍然零精度损失。
                 // 反面的教训（R-T11-2）：条件也不能写回 "value > top.first 才施 ε"——刚被抬平的
@@ -1260,7 +1272,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
         // (2) ε 加在 elevation *= z_factor **之后**的缩放高程上 ⇒ 真实单位下的微梯度是
         //     epsilon / z_factor（z_factor 区间 [0.001,10000] ⇒ 跨 7 个数量级）。本任务不改单位，
         //     但必须让描述把这件事说出去，不许留成无人知晓的隐式语义。
-        gis::framework::ParamSpec{"epsilon", "微坡度", "Monotone micro-gradient added only on cells the fill actually raised inside depressions; applied after z_factor scaling, so the real-unit gradient is epsilon / z_factor", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{10.0}},
+        gis::framework::ParamSpec{"epsilon", "微坡度", "Monotone micro-gradient added inside each filled depression, on the cells at or below its water surface (terrain above it is never touched); values are post-z_factor, so the real-unit gradient is epsilon / z_factor", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{10.0}},
         gis::framework::ParamSpec{"profile_path", "剖面路径", "Profile points formatted as x1,y1;x2,y2;...", gis::framework::ParamType::String, false, std::string{}},
         gis::framework::ParamSpec{"observer_x", "观察点X", "Observer X coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
         gis::framework::ParamSpec{"observer_y", "观察点Y", "Observer Y coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},

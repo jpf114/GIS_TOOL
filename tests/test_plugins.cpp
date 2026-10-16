@@ -6565,17 +6565,45 @@ TEST_F(PluginTest, FillSinksLevelsNestedDepressions) {
 }
 
 // 性质断言：填洼是"抬升"运算，任何像元都不许被压低（水文上填洼只会增加体积）。
+// WHY 三个夹具都要跑（F4）：这条性质得先能表达"降低"才谈得上守卫它。上一版只跑嵌套洼地那幅图，
+// 而它的背景值 4.0 恰好等于平底的水面 4.0 ⇒ 任何"把像元压到出水面"的实现（无条件赋值那一类）
+// 在这幅图上不会低于原值，于是这条用例在它唯一的夹具上无法失败——审查者仿真 d6 证实 #206 不红。
+// 斜坡图（每行 +0.2）里每个非坑像元都严格高于把它入队的水面 ⇒ 压到出水面就是降低，抓得住；
+// 低沟图（背景 10.0 / 沟 5.0 / 坑 2.0）补一个"出水目标来自更低的另一条路径"的形态。
+// 嵌套那幅仍然留着：它是上一轮的锚，只是不再独自承担这条性质。
 TEST_F(PluginTest, FillSinksIsMonotonicAndNeverLowersTerrain) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);
-    const std::string input = makeNestedPitRaster("fill_mono_input.tif");
-    const auto run = runFillSinks(p, progress_, input, "fill_mono_output.tif");
-    ASSERT_TRUE(run.result.success) << run.result.message;
-    const auto before = readWholeBand(input, 9, 9);
-    const auto after = readWholeBand(run.output, 9, 9);
-    ASSERT_EQ(before.size(), after.size());
-    for (size_t i = 0; i < before.size(); ++i) {
-        EXPECT_GE(after[i], before[i] - 1e-4f) << "index " << i << " 填洼不得降低地形";
+    const std::vector<std::pair<std::string, std::string>> fixtures = {
+        {"嵌套洼地（背景恰等于出水面，降低在这幅图上不可表示，留作历史锚）",
+         makeNestedPitRaster("fill_mono_input.tif")},
+        {"斜坡平底坑（每个非坑像元都严格高于出水面，降低在这里可表示）",
+         makeSlopePitRaster("fill_mono_slope_input.tif")},
+        {"低沟坑（出水路径低于背景）",
+         makeTrenchPitRaster("fill_mono_trench_input.tif")},
+    };
+    for (size_t f = 0; f < fixtures.size(); ++f) {
+        const std::string& tag = fixtures[f].first;
+        const std::string input = fixtures[f].second;
+        const auto run = runFillSinks(p, progress_, input,
+                                      "fill_mono_" + std::to_string(f) + "_output.tif");
+        ASSERT_TRUE(run.result.success) << tag << " " << run.result.message;
+        const auto before = readWholeBand(input, 9, 9);
+        const auto after = readWholeBand(run.output, 9, 9);
+        ASSERT_EQ(before.size(), after.size());
+        size_t lowered = 0;
+        size_t firstIndex = 0;
+        for (size_t i = 0; i < before.size(); ++i) {
+            if (after[i] < before[i] - 1e-4f) {
+                if (!lowered) {
+                    firstIndex = i;
+                }
+                ++lowered;
+            }
+        }
+        EXPECT_EQ(lowered, static_cast<size_t>(0))
+            << tag << "：填洼不得降低地形，实际有 " << lowered << " 个像元被压低，第一个 index="
+            << firstIndex << " 从 " << before[firstIndex] << " 变成 " << after[firstIndex];
     }
 }
 
@@ -6650,7 +6678,14 @@ TEST_F(PluginTest, FillSinksEpsilonGradientsDepressionAndKeepsHigherTerrain) {
     EXPECT_GT(nearCell, kSlopePourAtRow2) << "洼地内必须拿到 ε";
     EXPECT_GT(deepCell, nearCell) << "洼地内沿入队顺序必须严格递增（离出口越远水面越高）";
 
-    // (b) 洼地外（原本就高于出水面的真实地形）逐像元不变。
+    // (b2) 最里一格的水面必须是"对角方向那一行"的 10.6 + ε。
+    // WHY 单独一条并且带数值（F3）：这一格只经 8 邻域才够得着 y=2 那行的出水面；邻居扩展若退化成
+    // 4 邻域，它就只能从正上方的 10.8 那一行爬 ⇒ 得到 11.3 而不是 11.1。以前这个错误只被一句
+    // "洼地外的真实地形必须逐像元不变"抓到，文案不指向邻域，会把改错方向的人带走。
+    EXPECT_NEAR(deepCell, kSlopePourAtRow3 + static_cast<float>(epsilon), 1e-4f)
+        << "洼地内的出水目标由 8 邻域决定（10.6 那一行）；得到 10.8+ε 说明邻居扩展只走了 4 邻域";
+
+    // (b1) ε 的作用域：变化只能发生在两个坑像元上，其余像元（没被填洼抬过）逐像元原值。
     const auto before = readWholeBand(input, 9, 9);
     const auto after = readWholeBand(run.output, 9, 9);
     ASSERT_EQ(before.size(), after.size());
@@ -6667,9 +6702,11 @@ TEST_F(PluginTest, FillSinksEpsilonGradientsDepressionAndKeepsHigherTerrain) {
         }
     }
     EXPECT_TRUE(changed.empty())
-        << "ε>0 时洼地外的真实地形必须逐像元不变，实际被改动 " << changed.size() << " 个，第一个 index="
-        << (changed.empty() ? 0u : static_cast<unsigned>(changed.front()))
-        << "（计划片段的条件 value > top.first 会在这里红）";
+        << "ε 落到了没有被填洼抬过的像元上（参数描述说的是洼地内），实际改动 " << changed.size()
+        << " 个，第一个 x=" << (changed.empty() ? 0u : static_cast<unsigned>(changed.front() % 9))
+        << " y=" << (changed.empty() ? 0u : static_cast<unsigned>(changed.front() / 9))
+        << "，其值从 " << (changed.empty() ? 0.0f : before[changed.front()]) << " 变成 "
+        << (changed.empty() ? 0.0f : after[changed.front()]);
 }
 
 // F1（epsilon 的作用域）：ε 只许落在"被填洼抬过"的像元上，纯平地一格都不许动。
@@ -6906,6 +6943,154 @@ TEST_F(PluginTest, FillSinksTreatsNoDataAsBarrierNotOutlet) {
     EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 3, 4), static_cast<float>(noData), 1e-4f);
 }
 
+// F3（8 邻域语义的具名用例，ε=0）：坑的四个正交邻居全是 10.0 的墙，只有一个**对角**方向接着
+// 能排到边缘的 5.0 背景 ⇒ 只有按 8 邻域扩展，坑才会被填到 5.0；按 4 邻域它会被填到 10.0。
+// WHY 必须 8 邻域（与 D8 一致）：填洼的输出直接喂给 flow_direction，而后者是 D8（8 个方向，
+// 含对角）。填洼按 4 邻域填平、流向按 8 邻域找下坡，两套邻域不一致 ⇒ 填洼多抬一堆像元，
+// 还会在"只能经角点排水"的地形上造出本不存在的封闭汇。量化随机 DEM 上 4/8 邻域的封闭像元数
+// 差异是 300+ 量级（审查者 drive.py 的 closed4 列），不是边角情形。
+TEST_F(PluginTest, FillSinksDrainsThroughDiagonalCornerWithEightNeighbours) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const int w = 9, h = 9;
+    std::vector<float> data(static_cast<size_t>(w * h), 5.0f);
+    const std::pair<int, int> wall[] = {{3, 2}, {3, 4}, {2, 3}, {4, 3}, {2, 2}, {4, 2}, {2, 4}};
+    for (const auto& pos : wall) {
+        data[pos.second * w + pos.first] = 10.0f;
+    }
+    const int pitX = 3;
+    const int pitY = 3;
+    data[pitY * w + pitX] = 1.0f;      // 四个正交全是 10.0 的墙，只有对角 (4,4) 是 5.0 背景
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "fill_diag_input.tif", w, h, data);
+
+    const auto run = runFillSinks(p, progress_, input, "fill_diag_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, pitX, pitY), 5.0f, 1e-4f)
+        << "坑只能经角点 (4,4) 排水 ⇒ 5.0；得到 10.0 说明邻居扩展退化成了 4 邻域，"
+           "与 D8 流向的 8 个方向不一致";
+    for (const auto& pos : wall) {
+        EXPECT_NEAR(gis::tests::readPixel(run.output, 1, pos.first, pos.second), 10.0f, 1e-4f)
+            << "墙 (x=" << pos.first << ",y=" << pos.second << ") 本来就高于水面，不得被改动";
+    }
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 4), 5.0f, 1e-4f) << "排水口那个对角像元";
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 8, 8), 5.0f, 1e-4f) << "边缘背景";
+    const auto after = readWholeBand(run.output, w, h);
+    std::vector<uint8_t> valid(after.size(), 1);
+    EXPECT_EQ(countClosedCells(after, w, h, valid), static_cast<size_t>(0))
+        << "经角点填完之后仍不得留下封闭洼地";
+}
+
+// F2（NoData 哨兵恢复的覆盖）：fill_sinks 分支末尾那句 result.setTo(noDataValue, noDataMask)
+// 只在 z_factor≠1 时才第一次真的被考验到。
+// WHY 必须 z≠1：elevation 先乘 z_factor，NoData 掩膜是按 noDataValue * zFactor 比出来的，于是中间态
+// 是 -9999*z；那步 setTo 把它写回**声明的**哨兵。z_factor=1.0 时两者同值 ⇒ 既有三条 NoData 用例的
+// 哨兵断言恒真：把 setTo 整块删掉，上一轮的全量 559 条仍然全绿（审查者实测，本轮 §判别取证复现），
+// 这条守卫实际零覆盖。真实后果不是风格问题：z≠1 时哨兵像元会留在 -19998/-99990/-4999.5，
+// 而输出文件仍声明 NODATA=-9999 ⇒ 这些像元成了伪低地，反过来把下游 D8 全灌进这些假坑。
+TEST_F(PluginTest, FillSinksRestoresNoDataSentinelWhenZFactorIsNotOne) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    // 低沟 5.0 从左边缘通向 NoData (3,4)，坑在 (4,4)；再把左上角 (0,0) 也设成 NoData。
+    const std::string input = makeNoDataPitRaster(
+        "fill_ndz_input.tif", 10.0f,
+        {{std::make_pair(0, 4), 5.0f}, {std::make_pair(1, 4), 5.0f},
+         {std::make_pair(2, 4), 5.0f}, {std::make_pair(4, 4), 2.0f}},
+        {std::make_pair(3, 4), std::make_pair(0, 0)});
+    const double zFactor = 2.0;
+    const auto run = runFillSinks(p, progress_, input, "fill_ndz_output.tif",
+                                  {{"z_factor", zFactor}});
+    ASSERT_TRUE(run.result.success) << run.result.message;
+
+    double declared = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(run.output, 1, declared));
+    EXPECT_NEAR(declared, -9999.0, 1e-4) << "输出文件声明的 NODATA 仍是输入那个哨兵";
+
+    // ①哨兵像元读回的是**声明的** noDataValue，不是 nodata*zFactor 的中间值。
+    const float sentinel = gis::tests::readPixel(run.output, 1, 3, 4);
+    EXPECT_NEAR(sentinel, static_cast<float>(declared), 1e-4f)
+        << "(x=3,y=4) 的哨兵必须被写回声明值 -9999；读到 -19998 说明 setTo(noDataValue, noDataMask) "
+           "被删掉了，而文件仍声明 NODATA=-9999";
+    EXPECT_NE(sentinel, static_cast<float>(declared * zFactor))
+        << "不得留下 noDataValue * zFactor = -19998 这种伪低地像元";
+    const float corner = gis::tests::readPixel(run.output, 1, 0, 0);
+    EXPECT_NEAR(corner, static_cast<float>(declared), 1e-4f)
+        << "边缘上的 NoData 像元同样要走那步恢复（它是种子，不经抬升判据）";
+
+    // ②被声明哨兵覆盖的像元之外，缩放高程照常输出（否则这条用例会因为整幅都错而假过）。
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 4), 20.0f, 1e-4f)
+        << "z_factor=2 ⇒ 坑抬到 10.0*2=20.0，缩放与哨兵恢复互不干扰";
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 0, 4), 10.0f, 1e-4f) << "低沟 5.0*2";
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 8, 8), 20.0f, 1e-4f) << "背景 10.0*2";
+}
+
+// F5（NaN 当障壁）：NaN 既不与任何值构成有序比较，也不会被填。
+// WHY 把 NaN 当障壁（与 NoData 同语义）：validCell 加上 std::isfinite 之前，NaN 像元会照常入队，
+// 而 lowestFirst（a > b）对含 NaN 的元素违反严格弱序 ⇒ make_heap/pop_heap 是形式上的 UB；
+// 更实际的是 NaN 一旦被弹出，"value < 出水面"对它的邻居恒假 ⇒ 邻居被标记成已处理却一点没抬，
+// 洼地就从 NaN 那里"漏"出去、静默不填（旧实现的 cv::erode/max 没有这个 UB，也没有这个漏）。
+// 修完之后 NaN 像元既不作种子也不被扩展，输出里保留 NaN 本身——我们不为它编一个高程。
+TEST_F(PluginTest, FillSinksTreatsNaNCellsAsBarrierLikeNoData) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const int w = 9, h = 9;
+    std::vector<float> data(static_cast<size_t>(w * h), 10.0f);
+    const float nanValue = std::numeric_limits<float>::quiet_NaN();
+    data[3 * w + 4] = nanValue;        // (x=4,y=3)：贴在坑上方的 NaN
+    data[4 * w + 4] = 2.0f;            // 坑
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "fill_nan_input.tif", w, h, data);
+
+    const auto run = runFillSinks(p, progress_, input, "fill_nan_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 4), 10.0f, 1e-4f)
+        << "NaN 是障壁 ⇒ 坑只能抬到周边 10.0；停在 2.0 说明坑被当成从 NaN 那里排走了";
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 2), 10.0f, 1e-4f) << "NaN 上方的背景";
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 3, 4), 10.0f, 1e-4f) << "NaN 旁边的背景";
+    EXPECT_TRUE(std::isnan(gis::tests::readPixel(run.output, 1, 4, 3)))
+        << "障壁像元自己既不被填也不被赋哨兵值：输出保留 NaN，下游按无效像元处理";
+    const auto after = readWholeBand(run.output, w, h);
+    std::vector<uint8_t> valid(after.size(), 1);
+    valid[static_cast<size_t>(3 * w + 4)] = 0;   // NaN 像元按障壁排除，与 NoData 一样不参与可达性
+    EXPECT_EQ(countClosedCells(after, w, h, valid), static_cast<size_t>(0))
+        << "把 NaN 当障壁之后仍不得留下封闭洼地";
+}
+
+// F6（Produces 那句"输出无任何封闭洼地"的既定例外）：被 NoData 完整围死的坑永不入队 ⇒ 不填。
+// WHY 钉成显式用例而不是留在审查日志里：priority-flood 只从数据集边缘的出海口往外淹没，
+// NoData 是不可穿越的障壁（R-T11-3），于是这个坑没有任何合法出水路径——填它等于凭空造一个水面，
+// 而"抬到多少"没有任何依据。所以 Produces 的无封闭洼地承诺在这里字面上不成立，是**有意的语义**，
+// 口径由控制器写进 spec（K-15/K-16）。参考实现同样把它标成 never_drained 并保留原值。
+TEST_F(PluginTest, FillSinksLeavesPitEnclosedByNoDataUnfilled) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    std::map<std::pair<int, int>, float> cells;
+    cells[std::make_pair(4, 4)] = 2.0f;
+    std::vector<std::pair<int, int>> ring;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dy == 0) {
+                continue;
+            }
+            ring.push_back(std::make_pair(4 + dx, 4 + dy));   // 坑的 8 个邻居全是 NoData
+        }
+    }
+    const std::string input = makeNoDataPitRaster("fill_ndclosed_input.tif", 10.0f, cells, ring);
+    const auto run = runFillSinks(p, progress_, input, "fill_ndclosed_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+
+    double declared = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(run.output, 1, declared));
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 4), 2.0f, 1e-4f)
+        << "被 NoData 围死的洼地没有合法出水路径 ⇒ 既不填也不凭空造水面，必须保持 2.0";
+    for (const auto& pos : ring) {
+        EXPECT_NEAR(gis::tests::readPixel(run.output, 1, pos.first, pos.second),
+                    static_cast<float>(declared), 1e-4f)
+            << "围死它的那圈障壁 (x=" << pos.first << ",y=" << pos.second << ") 保持声明哨兵";
+    }
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 0, 0), 10.0f, 1e-4f) << "障壁之外的背景不受影响";
+}
 TEST_F(PluginTest, TerrainFlowAccumulationExecution) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);
