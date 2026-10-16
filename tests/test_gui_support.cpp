@@ -2871,6 +2871,9 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& planAAction
                      "ndbi","bsi","arvi","nbr","awei","ui","bi","custom_index"}},
         {"raster_math", {"band_math","reclassify","raster_overlay"}},
         {"raster_render", {"colormap","histogram_match"}},
+        {"georef", {"dos_correction","radiometric_calibration","gcp_register","cosine_correction",
+                    "minnaert_correction","c_correction","percentile_stretch","rpc_orthorectify"}},
+        {"cutting", {"clip","mosaic","split","merge_bands","tile"}},
     };
     return kExpected;
 }

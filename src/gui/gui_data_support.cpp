@@ -616,6 +616,97 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "reference"}
             }},
         }},
+        {"georef", {
+            {"dos_correction", {
+                QString{},
+                QStringLiteral("暗像元扣除与相对归一化。"),
+                {"input", "output", "band", "dark_object_value"},
+                {"input", "output"}
+            }},
+            {"radiometric_calibration", {
+                QString{},
+                QStringLiteral("按增益/偏移或元数据文件定标。"),
+                {"input", "output", "band", "gain", "offset", "metadata_file"},
+                {"input", "output"}
+            }},
+            {"gcp_register", {
+                QString{},
+                QStringLiteral("使用 GCP CSV 做一阶多项式校正。"),
+                {"input", "output", "gcp_file", "dst_srs", "resample"},
+                {"input", "output", "gcp_file"}
+            }},
+            {"cosine_correction", {
+                QString{},
+                QStringLiteral("按地形入射角余弦比值校正。"),
+                {"input", "output", "band", "slope_raster", "aspect_raster",
+                 "sun_zenith_deg", "sun_azimuth_deg"},
+                {"input", "output", "slope_raster", "aspect_raster"}
+            }},
+            {"minnaert_correction", {
+                QString{},
+                QStringLiteral("带 k 系数的地形校正。"),
+                {"input", "output", "band", "slope_raster", "aspect_raster",
+                 "sun_zenith_deg", "sun_azimuth_deg", "minnaert_k"},
+                {"input", "output", "slope_raster", "aspect_raster"}
+            }},
+            {"c_correction", {
+                QString{},
+                QStringLiteral("带 C 常数的地形校正。"),
+                {"input", "output", "band", "slope_raster", "aspect_raster",
+                 "sun_zenith_deg", "sun_azimuth_deg", "c_value"},
+                {"input", "output", "slope_raster", "aspect_raster"}
+            }},
+            {"percentile_stretch", {
+                QString{},
+                QStringLiteral("逐波段按百分位上下限线性拉伸到 0-1。"),
+                {"input", "output", "dark_percentile", "bright_percentile"},
+                {"input", "output"}
+            }},
+            {"rpc_orthorectify", {
+                QString{},
+                QStringLiteral("使用 RPC 与 DEM 或固定高程正射。"),
+                {"input", "output", "dem_file", "rpc_height", "dst_srs", "resample"},
+                {"input", "output"}
+            }},
+        }},
+        {"cutting", {
+            {"clip", {
+                QString{},
+                QStringLiteral("按范围或矢量裁切线裁切。"),
+                {"input", "output", "extent", "cutline"},
+                {"input", "output"}
+            }},
+            {"mosaic", {
+                QString{},
+                QStringLiteral("多幅影像镶嵌为单幅。"),
+                {"input", "output", "dst_srs", "resample"},
+                {"input", "output"}
+            }},
+            {"split", {
+                QString{},
+                QStringLiteral("按像素尺寸规则分块输出。"),
+                {"input", "output", "tile_size", "overlap"},
+                {"input", "output"}
+            }},
+            {"merge_bands", {
+                QString{},
+                QStringLiteral("把多个栅格的波段堆叠为一幅。"),
+                {"input", "output", "bands"},
+                {"input", "output"}
+            }},
+            // WHY 这里没有 resample/num_threads：doTile 读的是未声明的 resampling（见 task-10-report.md
+            // 的新发现清单），而 num_threads 声明后无人读取；把它们列进白名单等于在面板上放一个
+            // 填了也不生效的键，正是本任务要消灭的形态。
+            {"tile", {
+                QString{},
+                QStringLiteral("生成 XYZ 瓦片。"),
+                {"input", "output", "tile_scheme", "profile", "min_zoom", "max_zoom",
+                 "tile_pixel_size", "overview_resampling", "output_format", "jpeg_quality",
+                 "add_alpha", "nodata_value", "skip_blank", "resume", "tile_extent",
+                 "webviewer", "title", "copyright"},
+                {"input", "output"}
+            }},
+        }},
     };
     return kConfigs;
 }

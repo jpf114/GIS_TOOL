@@ -308,8 +308,6 @@ std::vector<gis::framework::ParamSpec> GeorefPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"bright_percentile", "亮百分位", "Bright percentile used by percentile stretch", gis::framework::ParamType::Double, false, double{99.0}, double{0.0}, double{100.0}},
         gis::framework::ParamSpec{"dem_file", "DEM文件", "DEM file used by RPC orthorectification", gis::framework::ParamType::FilePath, false, std::string{}},
         gis::framework::ParamSpec{"rpc_height", "RPC高程", "Fallback RPC height when DEM is missing", gis::framework::ParamType::Double, false, double{0.0}, double{-1e6}, double{1e6}},
-        gis::framework::ParamSpec{"x_res", "输出分辨率X", "Output x resolution", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{1e9}},
-        gis::framework::ParamSpec{"y_res", "输出分辨率Y", "Output y resolution", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{1e9}},
     };
 }
 
