@@ -22,6 +22,9 @@
 
 #include <gis/framework/result.h>
 #include <gis/framework/result_display.h>
+#include <gis/framework/param_spec.h>
+#include <gis/framework/plugin_manager.h>
+#include <gis/core/gdal_wrapper.h>
 
 #include "../src/gui/custom_index_preset_store.h"
 #include "../src/gui/gui_data_support.h"
@@ -2898,6 +2901,77 @@ TEST(GuiActionConfig, AllPlanARelevantPluginsHaveActionConfigs) {
             // 所以白名单必须两者都放行，否则该 action 在 GUI 下无法提交。
             EXPECT_TRUE(config->visibleKeys.count("input") > 0) << plugin << "." << action;
             EXPECT_TRUE(config->visibleKeys.count("output") > 0) << plugin << "." << action;
+        }
+    }
+}
+
+// R-T10-5：把"配置里列了一个 paramSpecs 没有的键"从人工审查变成永久机器检查。
+// 方向是 visibleKeys/requiredKeys ⊆ paramSpecs 与 requiredKeys ⊆ visibleKeys；
+// 前者抓 R-T10-2/3/4 那类错键名（错键既让真参数被隐藏、自己又什么都不做），
+// 后者抓"真实存在但未被渲染的必填键"—— ParamCardWidget::validate() 对不在 entries_ 里的键
+// 直接 continue，于是必填校验静默失效（与 R-F2-A 修掉的同一族）。
+// 存在性方向（action 声明在枚举里就必须有条目）只锁本任务补齐的 6 个插件 + raster_manage：
+// 别的插件仍有未补条目的 action，那是另一笔账，不能在这里顺手改它们的配置表。
+TEST(GuiActionConfig, PlanAConfigKeysAreDeclaredByThePluginAndRenderable) {
+    static const std::set<std::string> kMustBeConfigured = {
+        "spindex", "georef", "raster_math", "raster_render", "terrain", "cutting", "raster_manage"
+    };
+
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    // 与 test_coverage_meta.cpp 的 F4 同形：插件没加载起来时下面的循环遍历空集，本用例是假绿。
+    ASSERT_GE(mgr.plugins().size(), 13u)
+        << "插件目录没加载到预期数量的插件，本元断言什么都没测";
+
+    for (auto* plugin : mgr.plugins()) {
+        if (!plugin) {
+            continue;
+        }
+        const std::string name = plugin->name();
+        if (name == "test_lifecycle") {
+            continue;
+        }
+        const auto specs = plugin->paramSpecs();
+        std::set<std::string> declaredKeys;
+        const gis::framework::ParamSpec* actionSpec = nullptr;
+        for (const auto& spec : specs) {
+            declaredKeys.insert(spec.key);
+            if (spec.key == "action") {
+                actionSpec = &spec;
+            }
+        }
+        ASSERT_NE(actionSpec, nullptr) << name << " 没有 action 枚举 spec";
+
+        for (const auto& action : actionSpec->enumValues) {
+            const auto* config = gis::gui::findActionUiConfig(name, action);
+            if (config == nullptr) {
+                if (kMustBeConfigured.count(name) > 0) {
+                    ADD_FAILURE() << name << "." << action
+                                  << " 在 action 枚举里但没有 actionUiConfig 条目："
+                                  << "空 visibleKeys 等于不过滤，面板会渲染该 action 不读的键";
+                }
+                continue;
+            }
+
+            EXPECT_EQ(config->visibleKeys.count("action"), 0u)
+                << name << "." << action << ".action 出现在 visibleKeys（它被无条件 continue，写它无效）";
+            EXPECT_EQ(config->requiredKeys.count("action"), 0u)
+                << name << "." << action << ".action 出现在 requiredKeys";
+
+            for (const auto& key : config->visibleKeys) {
+                EXPECT_TRUE(declaredKeys.count(key) > 0)
+                    << name << "." << action << "." << key
+                    << " 在 visibleKeys 里，但该插件 paramSpecs() 没有这个键（错键名会同时隐藏真参数）";
+            }
+            for (const auto& key : config->requiredKeys) {
+                EXPECT_TRUE(declaredKeys.count(key) > 0)
+                    << name << "." << action << "." << key
+                    << " 在 requiredKeys 里，但 paramSpecs() 没有这个键（必填校验不会生效）";
+                EXPECT_TRUE(config->visibleKeys.count(key) > 0)
+                    << name << "." << action << "." << key
+                    << " 是 required 却不在 visibleKeys：键没被渲染，validate() 会跳过它 ⇒ 静默失效";
+            }
         }
     }
 }

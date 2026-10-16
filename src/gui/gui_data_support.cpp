@@ -467,6 +467,15 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "max_distance"},
                 {"input", "output"}
             }},
+            // R-T10-8：doZonalStats 只读 input/vector/output/feature_id_field
+            // （raster_manage_plugin.cpp:258-261），band 也不读 —— 面板原先因缺条目而把
+            // 9 个参数全铺出来。vector 进 requiredKeys 的依据是 :264 对空 vector 直接 fail。
+            {"zonal_stats", {
+                QStringLiteral("分区统计"),
+                QStringLiteral("按矢量分区统计栅格，输出 JSON 或 CSV 报告。"),
+                {"input", "output", "vector", "feature_id_field"},
+                {"input", "output", "vector"}
+            }},
         }},
         // Task 10：以下 6 个插件原先没有任何条目，空 visibleKeys 在 buildEffectiveGuiParamSpecs
         // 里等于"不过滤"，面板因此把插件级全部参数（含该 action 不读的键）一起铺出来。
@@ -2462,19 +2471,17 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
         filtered.push_back(std::move(adjustedSpec));
     }
 
-    // Display order only - never a value change: parameters the plugin declares as required come
-    // first, then the ones this panel advertises as required, then the rest. Each group keeps the
-    // plugin's own relative order (the three passes below are what makes the sort stable).
-    // After R-F2-A a panel-advertised key is already required by the time it gets here, so the
-    // middle rank is unreachable; it is left in place because this pass must stay a pure reorder.
+    // Display order only - never a value change: the parameters that are required at this point
+    // come first, the rest follow; each group keeps the plugin's own relative order (two stable
+    // passes are what make that possible).
+    // There are only two ranks because R-F2-A folded the panel-advertised ones into rank 0:
+    // required = spec.required || requiredKeys.count(key), so a key this table lists as required
+    // is already required by the time it gets here and can never land in a "second" group.
     std::vector<gis::framework::ParamSpec> ordered;
     ordered.reserve(filtered.size());
-    for (int rank = 0; rank <= 2; ++rank) {
+    for (int rank = 0; rank <= 1; ++rank) {
         for (const auto& item : filtered) {
-            const int itemRank = item.required
-                ? 0
-                : (requiredKeys.count(item.key) > 0 ? 1 : 2);
-            if (itemRank == rank) {
+            if ((rank == 0) == item.required) {
                 ordered.push_back(item);
             }
         }

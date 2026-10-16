@@ -27,6 +27,9 @@
 // R-T7-9 的用例要核对展示层的 per-action 白名单；gis_tests 把 gui_data_support.cpp 编进同一个
 // 可执行文件，gui 头文件不在 include 路径中，故沿用 test_coverage_meta.cpp:5 的相对路径写法。
 #include "../src/gui/gui_data_support.h"
+// R-T10-9 的"渲染键"这一层要问真实 widget 树：ParamWidget::hasParam 走的正是
+// mainwindow.cpp:558 setParamValue 用的那个判据（entries_ 里没有键就拒收 --set-param）。
+#include "../src/gui/param_widget.h"
 
 namespace fs = std::filesystem;
 
@@ -2012,6 +2015,64 @@ TEST_F(PluginTest, SpindexEviLSpecDeclarationMatchesEviFallback) {
     EXPECT_EQ(*declaredMin, 0.0);
     EXPECT_EQ(*declaredMax, 1.0)
         << "上界被放宽（修前实测改成 100.0 时全套仍绿）等于把 EVI 的背景因子取值域开了口子";
+}
+
+// R-T10-9：Task 9 只改了 l_value 的 displayName，真正根治在 spindex.evi 的白名单。
+// 这里断两层，缺一不可：
+//   1) buildEffectiveGuiParamSpecs 过滤后的有效键集合（R-T10-5 的元断言只管
+//      visibleKeys ⊆ paramSpecs，抓不到"键被渲染但本 action 不读"）；
+//   2) 真实 widget 树的渲染键 —— ParamWidget::hasParam 就是 mainwindow.cpp:557-558
+//      setParamValue 的判据，也就是 CLI/GUI --set-param 能否落地的唯一闸门。
+// 两个 action 方向相反（evi 用 evi_l、savi 用 l_value），一起断才封得住"共用 L 键"这一族。
+TEST_F(PluginTest, SpindexEviAndSaviGuiPanelsRenderOnlyTheLKeyThatEachActionReads) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+    const auto specs = p->paramSpecs();
+
+    const struct { const char* action; const char* liveKey; const char* deadKey; } kCases[] = {
+        {"evi", "evi_l", "l_value"},
+        {"savi", "l_value", "evi_l"},
+    };
+
+    for (const auto& kase : kCases) {
+        const std::string action = kase.action;
+        const auto* config = gis::gui::findActionUiConfig("spindex", action);
+        ASSERT_NE(config, nullptr) << "spindex." << action << " 缺少 actionUiConfig 条目";
+
+        const auto effective = gis::gui::buildEffectiveGuiParamSpecs(
+            "spindex", action, specs, config->visibleKeys, config->requiredKeys);
+        std::set<std::string> effectiveKeys;
+        for (const auto& spec : effective) {
+            effectiveKeys.insert(spec.key);
+        }
+        EXPECT_GT(effectiveKeys.count(kase.liveKey), 0u)
+            << action << " 必须渲染 " << kase.liveKey;
+        EXPECT_EQ(effectiveKeys.count(kase.deadKey), 0u)
+            << action << " 不得渲染 " << kase.deadKey << "（该 action 从不读它）";
+
+        ParamWidget panel;
+        panel.setUiContext("spindex", action);
+        panel.setParamSpecs(effective);
+
+        std::set<std::string> renderedKeys;
+        for (const auto& spec : specs) {
+            if (spec.key == "action") {
+                continue;
+            }
+            if (panel.hasParam(spec.key)) {
+                renderedKeys.insert(spec.key);
+            }
+        }
+        // 渲染集合必须与有效集合完全相等：少一个是功能缺失，多一个是本任务要消灭的形态。
+        EXPECT_EQ(renderedKeys, effectiveKeys) << action << " 的 widget 树与有效 spec 不一致";
+        EXPECT_GT(renderedKeys.count(kase.liveKey), 0u) << action;
+        EXPECT_EQ(renderedKeys.count(kase.deadKey), 0u) << action;
+    }
+
+    // WHY 这两个键不能进 commonParamTextStorage：那张表按参数键跨插件全局覆写 displayName，
+    // 加进去会静默盖掉插件侧的名字（今天没有任何测试能发现）。这里把它钉成断言。
+    EXPECT_EQ(gis::gui::findCommonParamText("l_value"), nullptr);
+    EXPECT_EQ(gis::gui::findCommonParamText("evi_l"), nullptr);
 }
 
 TEST_F(PluginTest, SpindexCustomIndexExecution) {
@@ -7698,6 +7759,45 @@ TEST_F(PluginTest, ProximityGuiPanelHidesParametersTheActionNeverReads) {
 
     EXPECT_NE(gis::gui::actionDisplayName("raster_manage", "proximity"), QStringLiteral("proximity"));
     EXPECT_FALSE(gis::gui::actionDescription("raster_manage", "proximity").isEmpty());
+}
+
+// R-T10-8：zonal_stats 原先没有 actionUiConfig 条目 ⇒ 面板渲染插件级全部 9 个参数。
+// 读取点取证：doZonalStats 只取 input/vector/output/feature_id_field
+// （raster_manage_plugin.cpp:258-261），:264 对空 vector 直接 fail，所以 vector 进 requiredKeys。
+// WHY 白名单里没有 band：派发时给的键表含 band，但 raster_manage_plugin.cpp 的 getParam 调用
+// 只有上述四处（band 只在 :208 的 nodata 动作里读），列进来就是放一个填了不生效的键。
+TEST_F(PluginTest, ZonalStatsGuiPanelHidesParametersTheActionNeverReads) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    const auto* config = gis::gui::findActionUiConfig("raster_manage", "zonal_stats");
+    ASSERT_NE(config, nullptr)
+        << "zonal_stats 没有 ActionUiConfig 条目：展示层没有白名单可用，面板会渲染全部插件参数";
+    EXPECT_EQ(config->visibleKeys,
+              (std::set<std::string>{"input", "output", "vector", "feature_id_field"}));
+    EXPECT_EQ(config->requiredKeys, (std::set<std::string>{"input", "output", "vector"}));
+    EXPECT_EQ(config->visibleKeys.count("action"), 0u);
+
+    const auto effective = gis::gui::buildEffectiveGuiParamSpecs(
+        "raster_manage", "zonal_stats", p->paramSpecs(), config->visibleKeys, config->requiredKeys);
+    std::set<std::string> effectiveKeys;
+    for (const auto& spec : effective) {
+        effectiveKeys.insert(spec.key);
+    }
+    EXPECT_EQ(effectiveKeys, config->visibleKeys);
+    for (const char* deadKey : {"band", "levels", "resample", "nodata_value", "max_distance"}) {
+        EXPECT_EQ(effectiveKeys.count(deadKey), 0u) << deadKey << " 从未被 doZonalStats 读取";
+    }
+
+    for (const auto& spec : effective) {
+        if (spec.key == "input" || spec.key == "output" || spec.key == "vector") {
+            EXPECT_TRUE(spec.required) << spec.key;
+        } else {
+            EXPECT_FALSE(spec.required) << spec.key;
+        }
+    }
+
+    EXPECT_FALSE(gis::gui::actionDescription("raster_manage", "zonal_stats").isEmpty());
 }
 
 TEST_F(PluginTest, MatchingStitchExecution) {
