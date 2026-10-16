@@ -6351,6 +6351,159 @@ TEST_F(PluginTest, TerrainFillSinksAndFlowDirectionExecution) {
     EXPECT_NEAR(readRasterPixel(flowOutput, 4, 4), 1.0f, 1e-4f);
 }
 
+// ── Task 11：fill_sinks 的 priority-flood 行为锁 ──
+namespace {
+
+struct FillRunOutput {
+    gis::framework::Result result;
+    std::string output;
+};
+
+// 统一的 fill_sinks 调用（与本文件的 TerrainFillSinksAndFlowDirectionExecution 同构）。
+// extra 用来叠加 epsilon 这类可选键，让同一份夹具能被多条用例复用。
+FillRunOutput runFillSinks(gis::framework::IGisPlugin* plugin,
+                           gis::core::ProgressReporter& progress,
+                           const std::string& input,
+                           const std::string& outputName,
+                           const std::map<std::string, gis::framework::ParamValue>& extra = {}) {
+    FillRunOutput run;
+    run.output = utf8PathString(getTestDir() / outputName);
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("fill_sinks");
+    params["input"] = input;
+    params["output"] = run.output;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    for (const auto& [key, value] : extra) {
+        params[key] = value;
+    }
+    run.result = plugin->execute(params, progress);
+    return run;
+}
+
+// 两像元平底坑：四周均匀 10.0，坑由 (4,4) 与 (4,5) 两个 2.0 像元组成。
+// WHY 两个像元而不是一个：单像元坑在"邻域极值 + 不动点"那版里也会被一次填满，
+// 平底（坑内多个像元等高的水平面）才是那版的结构性死角。
+std::string makeFlatPitRaster(const std::string& name) {
+    const int w = 9, h = 9;
+    std::vector<float> data(static_cast<size_t>(w * h), 10.0f);
+    data[4 * w + 4] = 2.0f;
+    data[4 * w + 5] = 2.0f;
+    return gis::tests::writeFloatRaster(getTestDir(), name, w, h, data);
+}
+
+// 嵌套洼地：外圈 4.0，3x3 平底 1.0，最中心再挖一个 0.5。
+// WHY：洼地里有洼地 ⇒ 出水目标必须逐层传递（内坑要抬到外平底的水面，外平底要抬到 4.0），
+// 这正是有限轮次不动点会"泄漏"（填不满或只填一层）的形态。
+std::string makeNestedPitRaster(const std::string& name) {
+    const int w = 9, h = 9;
+    std::vector<float> data(static_cast<size_t>(w * h), 4.0f);
+    for (int y = 3; y <= 5; ++y) {
+        for (int x = 3; x <= 5; ++x) {
+            data[y * w + x] = 1.0f;
+        }
+    }
+    data[4 * w + 4] = 0.5f;
+    return gis::tests::writeFloatRaster(getTestDir(), name, w, h, data);
+}
+
+// 低沟坑：9x9 均匀 10.0，但 y=4 一行从数据集左沿到中心开出高程 5.0 的沟（x=0..3），
+// 中心 (4,4) 是 2.0 的坑 ⇒ 这个坑有两条出水路径：经沟（水面 5.0）和经高地（水面 10.0）。
+std::string makeTrenchPitRaster(const std::string& name) {
+    const int w = 9, h = 9;
+    std::vector<float> data(static_cast<size_t>(w * h), 10.0f);
+    for (int x = 0; x <= 3; ++x) {
+        data[4 * w + x] = 5.0f;
+    }
+    data[4 * w + 4] = 2.0f;
+    return gis::tests::writeFloatRaster(getTestDir(), name, w, h, data);
+}
+
+std::vector<float> readWholeBand(const std::string& path, int width, int height) {
+    auto ds = gis::core::openRaster(path, true);
+    std::vector<float> data(static_cast<size_t>(width * height), 0.0f);
+    ds->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, data.data(),
+                                   width, height, GDT_Float32, 0, 0);
+    return data;
+}
+
+} // namespace
+
+TEST_F(PluginTest, FillSinksLevelsMultiCellFlatBottomPit) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const std::string input = makeFlatPitRaster("fill_flat_input.tif");
+    const auto run = runFillSinks(p, progress_, input, "fill_flat_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 4), 10.0f, 1e-4f);
+    // WHY 是 (5,4) 不是 (4,5)：坑的第二像元写的是 data[4*w+5] ⇒ 行 4 列 5。
+    // 计划片段按 (x=4,y=5) 读，读到的是坑外的 10.0 像元，那条断言在旧实现下也会绿，
+    // 平底就只剩一个像元被断住。
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 5, 4), 10.0f, 1e-4f);
+    // 坑外不得被顺手抬高：平底之外的 10.0 必须逐像元保持 10.0。
+    for (int y = 0; y < 9; ++y) {
+        for (int x = 0; x < 9; ++x) {
+            if ((x == 4 && y == 4) || (x == 5 && y == 4)) {
+                continue;
+            }
+            EXPECT_NEAR(gis::tests::readPixel(run.output, 1, x, y), 10.0f, 1e-4f)
+                << "x=" << x << " y=" << y;
+        }
+    }
+}
+
+TEST_F(PluginTest, FillSinksLevelsNestedDepressions) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const std::string input = makeNestedPitRaster("fill_nested_input.tif");
+    const auto run = runFillSinks(p, progress_, input, "fill_nested_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+    for (int y = 3; y <= 5; ++y) {
+        for (int x = 3; x <= 5; ++x) {
+            EXPECT_NEAR(gis::tests::readPixel(run.output, 1, x, y), 4.0f, 1e-4f)
+                << "x=" << x << " y=" << y;
+        }
+    }
+}
+
+// 性质断言：填洼是"抬升"运算，任何像元都不许被压低（水文上填洼只会增加体积）。
+TEST_F(PluginTest, FillSinksIsMonotonicAndNeverLowersTerrain) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const std::string input = makeNestedPitRaster("fill_mono_input.tif");
+    const auto run = runFillSinks(p, progress_, input, "fill_mono_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+    const auto before = readWholeBand(input, 9, 9);
+    const auto after = readWholeBand(run.output, 9, 9);
+    ASSERT_EQ(before.size(), after.size());
+    for (size_t i = 0; i < before.size(); ++i) {
+        EXPECT_GE(after[i], before[i] - 1e-4f) << "index " << i << " 填洼不得降低地形";
+    }
+}
+
+// R-T11-1 的判别器：洼地到出口存在两条不同高程的路径时，priority-flood 必须给
+// "沿非降路径可达的**最低**出水面"，即中心坑只能抬到沟的 5.0。
+// WHY 必须有这条：其余洼地用例的洼地外圈是**均匀**高程（10.0 / 4.0），无论堆是从低到高
+// 还是从高到低弹出，抬升目标都恰好等于那唯一的外圈值 ⇒ 最大堆版本的过度抬升在这些
+// 用例上照样全绿。只有"多条出水路径"才把弹出方向暴露出来。
+TEST_F(PluginTest, FillSinksFillsToLowestPourPathNotHighest) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+    const std::string input = makeTrenchPitRaster("fill_trench_input.tif");
+    const auto run = runFillSinks(p, progress_, input, "fill_trench_output.tif");
+    ASSERT_TRUE(run.result.success) << run.result.message;
+
+    EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 4, 4), 5.0f, 1e-4f)
+        << "中心坑必须抬到经沟这条**更低**的出水路径（5.0）；得到 10.0 说明堆是从高到低弹出的";
+    for (int x = 0; x <= 4; ++x) {
+        EXPECT_NEAR(gis::tests::readPixel(run.output, 1, x, 4), 5.0f, 1e-4f) << "x=" << x;
+    }
+    // 高地一侧的真实地形（含 10.0 的平坦背景）一个都不许被抬：全幅最大值仍必须是 10.0。
+    const auto after = readWholeBand(run.output, 9, 9);
+    const float maxValue = *std::max_element(after.begin(), after.end());
+    EXPECT_NEAR(maxValue, 10.0f, 1e-4f) << "priority-flood 不得把洼地以外的真实地形抬高";
+}
+
 TEST_F(PluginTest, TerrainFlowAccumulationExecution) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);

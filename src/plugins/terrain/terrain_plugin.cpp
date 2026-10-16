@@ -18,6 +18,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>   // priority-flood 的堆元素 std::pair<float, int>
 #include <vector>
 
 namespace gis::plugins {
@@ -386,32 +387,99 @@ gis::framework::Result runHydrologyTerrainProcess(
 
     cv::Mat result;
     if (action == "fill_sinks") {
+        // Priority-flood（Wang & Liu 2006）。
+        // WHY 换掉"重复若干轮：每像元取邻域极值再 max"的不动点迭代：
+        // (a) 平底洼地填不平——坑内等高像元的邻域极值就是坑自己的值，max 之后纹丝不动，
+        //     只有单像元坑会被一次抬走；
+        // (b) 嵌套洼地要一层一层往外爬，固定轮次上限会把还没爬完的坑静默留下，
+        //     输出仍带封闭洼地，直接污染下游 flow_direction / flow_accumulation / watershed。
+        // priority-flood 按"每个像元沿非降路径可达数据集出口的最低水面"一次求解，
+        // 平底与嵌套都是它的自然结果，且没有迭代上限这种隐式截断。
         result = elevation.clone();
-        cv::Mat kernel = cv::Mat::ones(3, 3, CV_8U);
-        kernel.at<unsigned char>(1, 1) = 0;
+        const int rows = result.rows;
+        const int cols = result.cols;
+        std::vector<uint8_t> inQueue(static_cast<size_t>(rows * cols), 0);
+        // 堆元素为 (出水面高程, 线性索引)。
+        // WHY 带索引做第二关键字：std::pair 的字典序让同高程像元按索引定序，
+        // 于是同一输入的弹出序列唯一 ⇒ 结果可复现，不受堆的内部排列影响。
+        std::vector<std::pair<float, int>> heap;
+        heap.reserve(static_cast<size_t>(std::max(1, rows * cols)));
 
-        for (int iteration = 0; iteration < 256; ++iteration) {
-            cv::Mat neighborMin;
-            cv::erode(result, neighborMin, kernel, cv::Point(-1, -1), 1, cv::BORDER_REPLICATE);
-            if (hasNoData) {
-                neighborMin.setTo(result, noDataMask);
+        // WHY 必须是最小堆：priority-flood 的定义就是"每次弹出当前最低的已入队像元"，
+        // 弹出顺序即算法本身——只有从最低水面往外扩，被弹出像元的 top.first 才是它的最低出水面。
+        // std::make_heap/pop_heap 不带比较子时是**最大堆**（从高到低弹出），那等于用
+        // "到出口的最高路径"填洼 ⇒ 系统性过度抬升。判别器见用例
+        // PluginTest.FillSinksFillsToLowestPourPathNotHighest（洼地与边缘之间有一条更低的沟）。
+        // 注意：下面 make_heap / pop_heap / push_heap 三处必须共用这一个比较子，漏一处就是坏堆。
+        const auto lowestFirst = [](const std::pair<float, int>& a,
+                                    const std::pair<float, int>& b) { return a > b; };
+
+        auto linear = [cols](int y, int x) { return y * cols + x; };
+        // WHY NoData 当不可穿越的障壁，而不是出海口：NoData 的存储值是哨兵（如 -9999），
+        // 它不代表地势低。若把 NoData 像元也塞进"边界出海口"，-9999 就成了整幅 DEM 的假出水路径，
+        // "只抬不降"的判据（value <= 出水面）对任何真实像元都不成立 ⇒ 所有洼地一律不抬。
+        auto validCell = [&](int y, int x) {
+            return y >= 0 && x >= 0 && y < rows && x < cols &&
+                   (!hasNoData || noDataMask.at<uint8_t>(y, x) == 0);
+        };
+
+        // 1) 数据集边缘作为出海口入队（inQueue 判重覆盖 rows==1 或 cols==1 的退化形状）
+        for (int x = 0; x < cols; ++x) {
+            for (int y : {0, rows - 1}) {
+                if (!validCell(y, x) || inQueue[static_cast<size_t>(linear(y, x))]) continue;
+                inQueue[static_cast<size_t>(linear(y, x))] = 1;
+                heap.emplace_back(result.at<float>(y, x), linear(y, x));
             }
-
-            cv::Mat updated = cv::max(result, neighborMin);
-            if (hasNoData) {
-                updated.setTo(static_cast<float>(noDataValue), noDataMask);
+        }
+        for (int y = 0; y < rows; ++y) {
+            for (int x : {0, cols - 1}) {
+                if (!validCell(y, x) || inQueue[static_cast<size_t>(linear(y, x))]) continue;
+                inQueue[static_cast<size_t>(linear(y, x))] = 1;
+                heap.emplace_back(result.at<float>(y, x), linear(y, x));
             }
+        }
+        std::make_heap(heap.begin(), heap.end(), lowestFirst);
 
-            cv::Mat changedMask;
-            cv::compare(updated, result, changedMask, cv::CMP_NE);
-            if (cv::countNonZero(changedMask) == 0) {
-                result = updated;
-                break;
+        // 2) 从最低出水面开始往外淹没，把洼地抬到它自己的出水面高程
+        static const int kDx[8] = {1, 1, 0, -1, -1, -1, 0, 1};
+        static const int kDy[8] = {0, 1, 1, 1, 0, -1, -1, -1};
+        int processed = 0;
+        while (!heap.empty()) {
+            std::pop_heap(heap.begin(), heap.end(), lowestFirst);
+            const auto top = heap.back();
+            heap.pop_back();
+            const int cy = top.second / cols;
+            const int cx = top.second % cols;
+
+            for (int d = 0; d < 8; ++d) {
+                const int ny = cy + kDy[d];
+                const int nx = cx + kDx[d];
+                if (!validCell(ny, nx)) continue;
+                const int idx = linear(ny, nx);
+                if (inQueue[static_cast<size_t>(idx)]) continue;
+                inQueue[static_cast<size_t>(idx)] = 1;
+
+                float& value = result.at<float>(ny, nx);
+                // WHY 判据是 <= 而不是 <：低于出水面的要抬到水面，**与出水面等高的像元同样属于
+                // 洼地的一部分**——平底就是靠这条才爬得出来的。
+                // 本来高于出水面的真实地形一律原值保留（没有 else 分支），这就是"只抬不降、
+                // 且只抬洼地"：见 FillSinksIsMonotonicAndNeverLowersTerrain。
+                if (value <= top.first) {
+                    value = top.first;
+                }
+                // 推进堆的是抬**后**的值 ⇒ 它成为子像元的出水面，抬升目标因此逐层传递，
+                // 嵌套洼地不会只填到最外一层。
+                heap.emplace_back(value, idx);
+                std::push_heap(heap.begin(), heap.end(), lowestFirst);
             }
-
-            result = updated;
-            progress.throwIfCancelled();
-            progress.onProgress(0.3 + 0.4 * static_cast<double>(iteration + 1) / 256.0);
+            if ((++processed % 4096) == 0) {
+                progress.throwIfCancelled();
+                progress.onProgress(0.3 + 0.4 * static_cast<double>(processed) /
+                                           static_cast<double>(std::max(1, rows * cols)));
+            }
+        }
+        if (hasNoData) {
+            result.setTo(static_cast<float>(noDataValue), noDataMask);
         }
     } else if (action == "flow_direction") {
         result = buildFlowDirectionMat();
