@@ -16,6 +16,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iostream>   // Task 12 R-T12-1 的"先量再断"要把两个可见像元数打进日志
 #include <limits>
 #include <map>
 #include <mutex>
@@ -7254,6 +7255,208 @@ TEST_F(PluginTest, TerrainViewshedMultiExecution) {
     EXPECT_EQ(result.metadata.at("observer_count"), "2");
     EXPECT_NEAR(readRasterPixel(output, 5, 5), 255.0f, 1e-4f);
     EXPECT_NEAR(readRasterPixel(output, 25, 25), 255.0f, 1e-4f);
+}
+
+// ============================================================================
+// Task 12：viewshed 的曲率/折射系数参数化 + 非投影 CRS 告警。
+//
+// R-T12-1 的"先量再断"要求本组用例的几何必须落在修正量真正起作用的尺度上：
+// Δz ≈ curvCoeff·d²/(2R)（R=6371 km，curvCoeff=0.85714）⇒ 4 km 处只有约 1 m，
+// 而 30 km 处约 180 m。所以这里用 60×60、像元 1000 m 的 EPSG:3857 **平坦** DEM
+// （简报原稿的 40×40@100 m + 丘被裁定作废：那个尺度上丘根本不遮挡任何像元，
+//  两种系数会得到相同的可见像元数，EXPECT_LT 直接失效）。
+// 平坦 DEM 上没有地形遮挡，可见性完全由"最大距离"与"曲率下沉"决定，
+// 于是 visibleWith < visibleNo 由几何与量级共同保证，而不是靠碰运气。
+// ============================================================================
+namespace {
+
+constexpr int kViewCurvSide = 60;              // 60×60 像元
+constexpr double kViewCurvPixel = 1000.0;      // 1 像元 = 1 km ⇒ 图幅 60 km 见方
+constexpr double kViewCurvMaxDistance = 30000.0;   // 30 km：把"图幅外缘"从两个计数里都切掉
+constexpr double kViewCurvObserverHeight = 10.0;
+constexpr double kViewCurvCoeffGdalDefault = 0.85714;
+constexpr double kViewCurvObserverX = 30500.0;   // 中心像元 (30,29) 的像元中心
+constexpr double kViewCurvObserverY = 30500.0;
+
+// 平坦、带投影 CRS 的 DEM 夹具（EPSG:3857，走 raster_fixture 写入器，dtype 只有 Float32）。
+std::string makeFlatProjectedDem(const char* name, int side, double pixelSize, float elevation) {
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0;
+    options.originY = pixelSize * side;
+    options.pixelSize = pixelSize;
+    std::vector<float> data(static_cast<size_t>(side) * static_cast<size_t>(side), elevation);
+    return gis::tests::writeFloatRaster(getTestDir(), name, side, side, data, options);
+}
+
+// 数"可见"像元（= GDALViewshedGenerate 的 dfVisibleVal 255）。这里按 GDT_Byte 读回，
+// 输出类型本身是不是 Byte 由 Tier 3 的 TerrainViewshedOutputsAreBothByteMask 单独把守，
+// 两条用例各管一层，免得"类型漂移成 Float32"和"曲率没生效"混成同一条红。
+int countVisibleViewshedCells(const std::string& path, int width, int height) {
+    auto ds = gis::tests::openFixtureRaster(path, "countVisibleViewshedCells");
+    if (!ds) {
+        return -1;   // 夹具已经把失败报在 raster_fixture.h 那一行
+    }
+    auto* band = ds->GetRasterBand(1);
+    if (!band) {
+        ADD_FAILURE() << "countVisibleViewshedCells: band 1 is null in " << path;
+        return -1;
+    }
+    std::vector<unsigned char> data(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+    if (band->RasterIO(GF_Read, 0, 0, width, height, data.data(), width, height, GDT_Byte, 0, 0)
+        != CE_None) {
+        ADD_FAILURE() << "countVisibleViewshedCells: RasterIO failed for " << path;
+        return -1;
+    }
+    int visible = 0;
+    for (const unsigned char value : data) {
+        visible += (value == 255) ? 1 : 0;
+    }
+    return visible;
+}
+
+// 跑一次 terrain.viewshed。hasCurvatureCoeff=false 时**完全不传**该键，
+// 用来把"spec/代码兜底的默认值就是 0.85714"与"显式传 0.85714"钉成同一件事。
+gis::framework::Result runCurvViewshed(gis::framework::IGisPlugin* plugin,
+                                       gis::core::ProgressReporter& progress,
+                                       const std::string& input,
+                                       const std::string& output,
+                                       bool hasCurvatureCoeff,
+                                       double curvatureCoeff) {
+    std::map<std::string, gis::framework::ParamValue> params = {
+        {"action", std::string("viewshed")},
+        {"input", input},
+        {"output", output},
+        {"band", 1},
+        {"observer_x", kViewCurvObserverX},
+        {"observer_y", kViewCurvObserverY},
+        {"observer_height", kViewCurvObserverHeight},
+        {"target_height", 0.0},
+        {"max_distance", kViewCurvMaxDistance},
+    };
+    if (hasCurvatureCoeff) {
+        params["curvature_coeff"] = curvatureCoeff;
+    }
+    return plugin->execute(params, progress);
+}
+
+} // namespace
+
+// R-T12-1：曲率/折射修正必须真的进入 GDALViewshedGenerate 的第 13 个实参（dfCurvCoeff）。
+// 改前该实参被硬编码成 0.0（=禁用），三次运行的可见像元数完全相同 ⇒ EXPECT_LT 红。
+TEST_F(PluginTest, ViewshedUsesEarthCurvatureCoefficientByDefault) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = makeFlatProjectedDem(
+        "view_curv_input.tif", kViewCurvSide, kViewCurvPixel, 100.0f);
+    ASSERT_FALSE(input.empty());
+
+    const std::string defaultPath = utf8PathString(getTestDir() / "view_curv_default_output.tif");
+    const std::string withPath = utf8PathString(getTestDir() / "view_curv_on_output.tif");
+    const std::string noPath = utf8PathString(getTestDir() / "view_curv_off_output.tif");
+
+    const auto defaultRun = runCurvViewshed(p, progress_, input, defaultPath, false, 0.0);
+    ASSERT_TRUE(defaultRun.success) << defaultRun.message;
+    const auto withRun = runCurvViewshed(p, progress_, input, withPath, true,
+                                         kViewCurvCoeffGdalDefault);
+    ASSERT_TRUE(withRun.success) << withRun.message;
+    const auto noRun = runCurvViewshed(p, progress_, input, noPath, true, 0.0);
+    ASSERT_TRUE(noRun.success) << noRun.message;
+
+    const int totalCells = kViewCurvSide * kViewCurvSide;
+    const int visibleDefault = countVisibleViewshedCells(defaultPath, kViewCurvSide, kViewCurvSide);
+    const int visibleWith = countVisibleViewshedCells(withPath, kViewCurvSide, kViewCurvSide);
+    const int visibleNo = countVisibleViewshedCells(noPath, kViewCurvSide, kViewCurvSide);
+
+    // R-T12-1 第 1 步"先量再断"：两个数必须出现在日志里（红日志与绿日志都要有）。
+    std::cout << "[MEASURE viewshed curvature] total=" << totalCells
+              << " coeff=0.0 -> visible=" << visibleNo
+              << " coeff=0.85714 -> visible=" << visibleWith
+              << " coeff omitted(default) -> visible=" << visibleDefault << std::endl;
+
+    EXPECT_LT(visibleWith, visibleNo)
+        << "启用曲率/折射后远距离可见性应更保守；实测 coeff=0.85714 为 " << visibleWith
+        << " 个、coeff=0.0 为 " << visibleNo << " 个（相等即说明 dfCurvCoeff 没进算法）";
+    EXPECT_EQ(visibleDefault, visibleWith)
+        << "不传 curvature_coeff 时必须与显式传 0.85714 同解（默认值就是 GDAL 的 0.85714），"
+        << "实测默认 " << visibleDefault << " 个 / 显式 0.85714 " << visibleWith << " 个";
+
+    // R-T12-1 第 3 步：两个数都得是正数且小于总像元数，防"全不可见"伪装成通过。
+    EXPECT_GT(visibleWith, 0) << "曲率修正不应把整幅图判成不可见";
+    EXPECT_LT(visibleWith, totalCells) << "启用曲率后仍有远处可见像元，说明几何没退化";
+    EXPECT_GT(visibleNo, 0);
+    EXPECT_LT(visibleNo, totalCells)
+        << "coeff=0.0 时也应受 max_distance=" << kViewCurvMaxDistance
+        << " 约束（否则可见数=总像元数，健全性检查失去意义），实测 " << visibleNo << "/" << totalCells;
+}
+
+// R-T12-2：非投影 CRS ⇒ metadata["crs_warning"] 的**值**必须是 Produces 规定的那串，
+// 且 result.message 真的追加了同一句提示（Produces 有这条，简报原文没测）。
+TEST_F(PluginTest, ViewshedWarnsOnNonProjectedCrs) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg4326;
+    // 观察点 (116.002, 40.002) 必须落在图幅内：默认 originY=40.0 时像元 0 的北边就是 40.0，
+    // 简报原稿的写法会把观察点甩到栅格外面（改前红在这条执行失败上，与缺陷无关）。
+    options.originX = 116.0;
+    options.originY = 40.005;
+    options.pixelSize = 0.001;
+    const std::string input = gis::tests::writeFloatRaster(
+        getTestDir(), "view_geographic_input.tif", 9, 9, std::vector<float>(81, 5.0f), options);
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(getTestDir() / "view_geographic_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("viewshed");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["observer_x"] = 116.002;
+    params["observer_y"] = 40.002;
+    params["observer_height"] = 10.0;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(result.metadata.count("crs_warning") > 0)
+        << "EPSG:4326 输入必须报 crs_warning，实际 metadata 只有 action/band 等键";
+    // 值断言：只断"键存在"的假实现（塞空串、塞时间戳）在这里就会红。
+    EXPECT_EQ(result.metadata.at("crs_warning"), "observer analysis expects projected CRS");
+    // Produces 的第二句承诺：message 末尾追加同样提示（GUI 结果区只看得到 message）。
+    EXPECT_NE(result.message.find("observer analysis expects projected CRS"), std::string::npos)
+        << "result.message 没拼接 CRS 提示：" << result.message;
+}
+
+// R-T12-2 的正例（关键的一条）：投影 CRS 输入时**不得**出现 crs_warning。
+// 没有这条，"无条件塞警告"的假实现也能全绿 ⇒ 它的鉴别证据是判别变异 M3，
+// 改前状态本身是绿的（缺省就不存在该键），报告里按这条说明。
+TEST_F(PluginTest, ViewshedDoesNotWarnOnProjectedCrs) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = makeFlatProjectedDem(
+        "view_projected_no_warning_input.tif", 12, 1000.0, 30.0f);
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(getTestDir() / "view_projected_no_warning_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("viewshed");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["observer_x"] = 6500.0;
+    params["observer_y"] = 5500.0;
+    params["observer_height"] = 10.0;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.count("crs_warning"), 0u)
+        << "EPSG:3857 是投影坐标系，不该有 CRS 告警，实际值="
+        << (result.metadata.count("crs_warning") ? result.metadata.at("crs_warning") : std::string{});
+    EXPECT_EQ(result.message.find("observer analysis expects projected CRS"), std::string::npos)
+        << "投影 CRS 的 message 里混进了非投影提示：" << result.message;
 }
 
 TEST_F(PluginTest, TerrainCutFillExecution) {

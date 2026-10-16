@@ -886,6 +886,11 @@ gis::framework::Result runProfileExtractProcess(
     return result;
 }
 
+// 非投影 CRS 的告警串。值是**契约的一部分**（spec Produces 定的就是这串英文），
+// R-T12-2 要求用例断的是它本身而不是"crs_warning 键存在"，所以这里抽成常量、
+// 两处（metadata 与 result.message）共用同一份字面量，避免两侧文案漂移。
+constexpr const char* kViewshedProjectedCrsHint = "observer analysis expects projected CRS";
+
 gis::framework::Result runViewshedProcess(
     const std::string& input,
     const std::string& output,
@@ -895,6 +900,7 @@ gis::framework::Result runViewshedProcess(
     double observerHeight,
     double targetHeight,
     double maxDistance,
+    double curvatureCoeff,
     gis::core::ProgressReporter& progress) {
 
     if (input.empty()) return gis::framework::Result::fail("input is required");
@@ -915,6 +921,15 @@ gis::framework::Result runViewshedProcess(
     auto* srcBand = srcDs->GetRasterBand(band);
     if (!srcBand) {
         return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
+    }
+
+    // 曲率/大气折射修正把距离换算成高程差（Δz ≈ coeff·d²/2R），R 用的是米；CRS 是地理坐标系时
+    // 距离是"度"，Δz 会小到恒为 0，修正静默失效，而用户以为开了修正 ⇒ 非投影时必须告警。
+    // WHY 只看 GetSpatialRef() 而不看单位：IsProjected() 就是 GDAL 对"线性单位是否为米"的判据，
+    // 空 SRS（无 CRS）同样落进告警分支。
+    std::string crsWarning;
+    if (auto* srs = srcDs->GetSpatialRef(); !srs || !srs->IsProjected()) {
+        crsWarning = kViewshedProjectedCrsHint;
     }
 
     const auto parent = std::filesystem::path(output).parent_path();
@@ -940,7 +955,9 @@ gis::framework::Result runViewshedProcess(
         0.0,
         0.0,
         0.0,
-        0.0,
+        // 第 13 个实参是 dfCurvCoeff（gdal_alg.h:349-357），改前这里硬编码 0.0 = 关闭
+        // 地球曲率与大气折射修正。
+        curvatureCoeff,
         GVM_Edge,
         maxDistance,
         nullptr,
@@ -964,11 +981,18 @@ gis::framework::Result runViewshedProcess(
     meta.algorithmParams["observer_height"] = std::to_string(observerHeight);
     meta.algorithmParams["target_height"] = std::to_string(targetHeight);
     meta.algorithmParams["max_distance"] = std::to_string(maxDistance);
+    meta.algorithmParams["curvature_coeff"] = std::to_string(curvatureCoeff);
     gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
+    // 成功也要把 CRS 问题说出去：message 是 GUI 结果区唯一可见的文案，metadata 供程序化消费，
+    // 两侧共用 kViewshedProjectedCrsHint 这一份字面量（Produces 的"追加同样提示"）。
     auto result = gis::framework::Result::ok("Viewshed completed", output);
+    if (!crsWarning.empty()) {
+        result.message += "; " + crsWarning;
+        result.metadata["crs_warning"] = crsWarning;
+    }
     result.metadata["action"] = "viewshed";
     result.metadata["band"] = std::to_string(band);
     result.metadata["observer_x"] = std::to_string(observerX);
@@ -976,6 +1000,7 @@ gis::framework::Result runViewshedProcess(
     result.metadata["observer_height"] = std::to_string(observerHeight);
     result.metadata["target_height"] = std::to_string(targetHeight);
     result.metadata["max_distance"] = std::to_string(maxDistance);
+    result.metadata["curvature_coeff"] = std::to_string(curvatureCoeff);
     return result;
 }
 
@@ -1531,6 +1556,9 @@ gis::framework::Result TerrainPlugin::doViewshed(
         gis::framework::getParam<double>(params, "observer_height", 2.0),
         gis::framework::getParam<double>(params, "target_height", 0.0),
         gis::framework::getParam<double>(params, "max_distance", 0.0),
+        // 代码兜底值与 paramSpecs() 里 curvature_coeff 的默认值同值（GDAL 的 0.85714）：
+        // CLI 不带该键、GUI 面板未渲染时走的都是这条兜底，两处不同值会让 GUI 与 CLI 提交不同结果。
+        gis::framework::getParam<double>(params, "curvature_coeff", 0.85714),
         progress);
 }
 
