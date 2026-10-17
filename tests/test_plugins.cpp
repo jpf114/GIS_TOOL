@@ -1304,6 +1304,80 @@ TEST_F(PluginTest, ProcessingEdgeExecution) {
     EXPECT_TRUE(fs::exists(output));
 }
 
+// Task 15 / R-T15-2：下面三条改前的红形态是**进程崩溃**，不是断言失败。
+// processing_plugin.cpp 全文没有任何 try/catch（54df42c 实测 grep 零命中），
+// 而 OpenCV 4.14 的 cv::Scharr 走 getScharrKernels 里的 CV_Assert(dx>=0 && dy>=0 && dx+dy==1)
+// ⇒ 未捕获 cv::Exception 直接终止整个测试可执行文件（同进程连跑会截断整跑）。
+// 修完后它们必须是正常 Result::fail / Result::ok。
+TEST_F(PluginTest, ProcessingScharrRejectsBothDirectionsRequested) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createPatternRaster("e2e_scharr_both_input.tif");
+    const std::string output = utf8PathString(getTestDir() / "e2e_scharr_both_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("edge");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["edge_method"] = std::string("scharr");
+    // 显式写两个方向，不靠 spec 默认值漂移来制造非法组合（sobel_dx/sobel_dy 的 spec 默认本就是 1/1，见 :52-:53）。
+    params["sobel_dx"] = 1;
+    params["sobel_dy"] = 1;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success)
+        << "dx=1 且 dy=1 时 dx+dy==2，OpenCV 断言必抛；插件必须显式 fail 而不是把异常抛给调用方";
+    EXPECT_NE(result.message.find("scharr"), std::string::npos) << result.message;
+}
+
+// R-T15-3：54df42c:483 把入参压成 sobelDx>0?1:0 / sobelDy>0?1:0 ⇒ (0,0) 同样违反 dx+dy==1、同样抛。
+// 少了这条，"只挡双 1、放过 (0,0)"的实现能全绿，而它一进 cv::Scharr 就崩。
+TEST_F(PluginTest, ProcessingScharrRejectsNoDirectionRequested) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createPatternRaster("e2e_scharr_none_input.tif");
+    const std::string output = utf8PathString(getTestDir() / "e2e_scharr_none_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("edge");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["edge_method"] = std::string("scharr");
+    params["sobel_dx"] = 0;
+    params["sobel_dy"] = 0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success)
+        << "dx=0 且 dy=0 时 dx+dy==0，OpenCV 断言必抛；插件必须显式 fail";
+    EXPECT_NE(result.message.find("scharr"), std::string::npos) << result.message;
+}
+
+// 正例：合法的单方向必须仍然成功（守住"守卫没有把能用的组合一起挡掉"）。
+TEST_F(PluginTest, ProcessingScharrAcceptsSingleDirection) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createPatternRaster("e2e_scharr_ok_input.tif");
+    const std::string output = utf8PathString(getTestDir() / "e2e_scharr_ok_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("edge");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["edge_method"] = std::string("scharr");
+    params["sobel_dx"] = 1;
+    params["sobel_dy"] = 0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_TRUE(fs::exists(output));
+}
+
 TEST_F(PluginTest, ProcessingEnhanceExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

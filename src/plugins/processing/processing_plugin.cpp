@@ -468,6 +468,24 @@ gis::framework::Result ProcessingPlugin::doEdge(
 
     cv::Mat result;
 
+    // Task 15 / R-T15-3：cv::Scharr 只接受"恰好一个求导方向"——OpenCV 4.14 的
+    // CV_Assert(dx >= 0 && dy >= 0 && dx+dy == 1) 位于 cv::getScharrKernels（imgproc/src/deriv.cpp:66），
+    // 而本文件没有任何 try/catch ⇒ 非法组合会以未捕获异常形态击穿调用方（改前红日志见报告）。
+    // 下面 :483 把入参压成 sobelDx>0?1:0 / sobelDy>0?1:0，所以"两个都 >0"与"两个都 <=0"
+    // 两侧同样违法，必须一起挡；dx == dy 这一判形恰好同挡两侧。
+    // 只给 scharr 加校验：sobel 分支（`else if (edgeMethod == "sobel")` 里三行 sobelDx/sobelDy 钳制，
+    // 提交 54df42c:474-476）的静默钳制是挂账 N41，本批不处置（R-T15-7）。
+    if (edgeMethod == "scharr") {
+        const bool dx = sobelDx > 0;
+        const bool dy = sobelDy > 0;
+        if (dx == dy) {
+            return gis::framework::Result::fail(
+                "edge_method=scharr supports exactly one derivative direction: "
+                "set sobel_dx=1 and sobel_dy=0, or the opposite (received dx=" +
+                std::to_string(sobelDx) + ", dy=" + std::to_string(sobelDy) + ")");
+        }
+    }
+
     if (edgeMethod == "canny") {
         cv::Canny(gray, result, lowThresh, highThresh);
     } else if (edgeMethod == "sobel") {
