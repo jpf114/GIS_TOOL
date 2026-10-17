@@ -10772,9 +10772,12 @@ TEST_F(PluginTest, TileLevelGeometryUsesWebMercatorGrid) {
         for (int x = 0; x < 32; ++x) data[y * 64 + x] = 200.0f;   // 左半更亮（形态照抄计划，亮度断言留给 Task 18）
     for (int y = 56; y < 64; ++y)          // 南端 8 行（y∈[-64000,-56000]）铺 NoData：
         for (int x = 0; x < 64; ++x) data[y * 64 + x] = -9999.0f;
-    // WHY 加 NoData 带：变异取证实测（build/t17_logs/mutation_M8_row_sign_flip.log），
-    // 只钉"列覆盖 + 文件集合"时把 syTop 反号的**行放错**变异全绿——透明边界不含行信息。
-    // alpha 自此能区分"源行被摆到瓦片哪些行"：这是几何放置断言，不碰亮度/对比度
+    for (int y = 0; y < 56; ++y)           // 东端 8 列（x∈[56000,64000]）铺 NoData：列向同款。
+        for (int x = 56; x < 64; ++x) data[y * 64 + x] = -9999.0f;
+    // WHY 加 NoData 带（行+列）：变异取证实测（build/t17_logs/mutation_M8_row_sign_flip.log），
+    // 只钉"列覆盖 + 文件集合"时把 syTop 反号的**行放错**变异全绿——透明边界不含行信息；
+    // 列向 (sx0 反号) 同族变异也需要覆盖缘的可断量。alpha 自此能区分
+    // "源行/列被摆到瓦片哪些位置"：这是几何放置断言，不碰亮度/对比度
     // （后者是 Task 18 射程，R-T17-9/5 红线不动）。
     const std::string input =
         gis::tests::writeFloatRaster(getTestDir(), "t17_geom_input.tif", 64, 64, data, options);
@@ -10793,14 +10796,15 @@ TEST_F(PluginTest, TileLevelGeometryUsesWebMercatorGrid) {
         "10/512/512.png", "10/512/513.png", "10/513/512.png", "10/513/513.png",
     };
     std::set<std::string> expectedZ11;
-    for (int x = 1024; x <= 1027; ++x)
+    for (int x = 1024; x <= 1026; ++x)
         for (int y = 1024; y <= 1026; ++y)
             expectedZ11.insert("11/" + std::to_string(x) + "/" + std::to_string(y) + ".png");
-    // WHY 12 张而不是控制器 R-T17-9 表格里的 16 张：16 张的算术在原"全有数据"夹具上
-    // 成立（本用例初版实测 20 张全写、集合恰等于）；NoData 带是我为杀死"行放置"变异
-    // 加的（见上）。z=11 行 1027（y∈[-78272,-58704]）与夹具的交集落在南端 NoData 带
-    // y∈[-64000,-56000] 内 ⇒ 全透明 ⇒ 走既有的"全 NoData 瓦片跳过"路径 ⇒ 12 张。
-    // 若实现把源行窗放错（M8 形态），行 1027 会读到有效行并写出 4 张 ⇒ 恰等于立刻红。
+    // WHY 9 张而不是控制器 R-T17-9 表格里的 16 张：16 张的算术在原"全有数据"夹具上
+    // 成立（本用例初版实测 20 张全写、集合恰等于）；NoData 带是我为杀死"行/列放置"
+    // 变异加的（见上）。z=11 的列 1027（x∈[58704,78272]）与夹具的交集落在东端 NoData
+    // 带 x∈[56000,64000] 内、行 1027 同理落南端带内 ⇒ 这些瓦片全透明 ⇒ 走既有的
+    // "全 NoData 瓦片跳过"路径 ⇒ 9 张。若实现把源行/列窗放错（M8/M9 形态），放错的
+    // 瓦片会读到有效区并写出 ⇒ "恰等于"立刻红。
 
     const auto produced = t17CollectTileFiles(output);
     std::string producedList;
@@ -10829,10 +10833,13 @@ TEST_F(PluginTest, TileLevelGeometryUsesWebMercatorGrid) {
         std::vector<uchar> alpha(256 * 256);
         ASSERT_EQ(ds->GetRasterBand(4)->RasterIO(GF_Read, 0, 0, 256, 256,
                                                  alpha.data(), 256, 256, GDT_Byte, 0, 0), CE_None);
-        // 覆盖区（左侧）内每一行都应有不透明像元；未覆盖区（右侧远端）应全透明。
+        // 覆盖区（左侧）内每一行都应有不透明像元；未覆盖区（右侧远端）应全透明；
+        // 东端 NoData 带在瓦片 513 的列 110.3 起 ⇒ 列 130 对每一行都必须透明
+        // （列放置变异 M9 的判别点：反号后 NoData 带会被挤到列 142.6 之后）。
         for (int row = 0; row < 256; ++row) {
             EXPECT_EQ(alpha[static_cast<size_t>(row) * 256 + 250], 0) << "右侧未覆盖仍不透明 row=" << row;
             EXPECT_GT(alpha[static_cast<size_t>(row) * 256 + 100], 0) << "左侧覆盖区被垫成透明 row=" << row;
+            EXPECT_EQ(alpha[static_cast<size_t>(row) * 256 + 130], 0) << "东端 NoData 带列 130 不透明 row=" << row;
         }
     }
 
@@ -10849,6 +10856,7 @@ TEST_F(PluginTest, TileLevelGeometryUsesWebMercatorGrid) {
         EXPECT_GT(alpha[100 * 256 + 10], 0) << "有效源行区被垫成透明";
         EXPECT_EQ(alpha[130 * 256 + 10], 0) << "NoData 带未走透明 ⇒ 行窗放错";
         EXPECT_EQ(alpha[200 * 256 + 10], 0) << "瓦片覆盖缘以下未保持透明";
+        EXPECT_EQ(alpha[100 * 256 + 130], 0) << "东端 NoData 带未走透明 ⇒ 列窗放错";
     }
 }
 
