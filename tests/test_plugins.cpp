@@ -10981,30 +10981,45 @@ TEST_F(PluginTest, TileRejectsOverviewResamplingWithoutResizeEquivalent) {
 
 // R-T17-7 第 3 点：旋转/斜切源栅格不许静默近似，显式失败。
 // （几何反算只支持正北像元网格；见 cutting doTile 的 north-up 守卫。）
+// WHY 四个变体逐个钉守卫的四个臂：单跑 [2]/[4] 同时非零的夹具时，删掉守卫任意一个
+// || 臂都被另一个臂兜住 ⇒ 变异全绿（M5a 实测）；每个臂必须有独立夹具变体才有判别力。
 TEST_F(PluginTest, TileFailsOnRotatedSourceRaster) {
     auto* p = mgr_.find("cutting");
     ASSERT_NE(p, nullptr);
-    gis::tests::RasterFixtureOptions options;
-    options.crs = gis::tests::FixtureCrs::Epsg3857;
-    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
-    std::vector<float> data(16 * 16, 5.0f);
-    const std::string input =
-        gis::tests::writeFloatRaster(getTestDir(), "t17_rot_input.tif", 16, 16, data, options);
 
-    {   // 把夹具改成带旋转/斜切项的正经"非正北"栅格。
-        auto ds = gis::core::openRaster(input, false);
-        ASSERT_NE(ds.get(), nullptr);
-        double gt[6] = {0.0, 1000.0, 100.0, 0.0, 50.0, -1000.0};
-        ASSERT_EQ(ds->SetGeoTransform(gt), CE_None);
-        ds->FlushCache();
+    struct Variant { double gt[6]; };
+    // 基准 gt：origin(0,0)、1000m/px、正北；每个变体只破坏一个臂。
+    const std::vector<Variant> variants = {
+        { {0.0, 1000.0, 100.0, 0.0, 0.0, -1000.0} },    // gt[2] 旋转项非零
+        { {0.0, 1000.0, 0.0, 0.0, 50.0, -1000.0} },     // gt[4] 斜切项非零
+        { {64000.0, -1000.0, 0.0, 0.0, 0.0, -1000.0} }, // gt[1] ≤ 0（x 轴反向）
+        { {0.0, 1000.0, 0.0, -64000.0, 0.0, 1000.0} },  // gt[5] ≥ 0（y 轴正向）
+    };
+
+    for (size_t i = 0; i < variants.size(); ++i) {
+        gis::tests::RasterFixtureOptions options;
+        options.crs = gis::tests::FixtureCrs::Epsg3857;
+        options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+        std::vector<float> data(16 * 16, 5.0f);
+        const std::string input = gis::tests::writeFloatRaster(
+            getTestDir(), "t17_rot_input_" + std::to_string(i) + ".tif", 16, 16, data, options);
+
+        {   // 把夹具改成对应"非正北"变体。
+            auto ds = gis::core::openRaster(input, false);
+            ASSERT_NE(ds.get(), nullptr);
+            ASSERT_EQ(ds->SetGeoTransform(const_cast<double*>(variants[i].gt)), CE_None);
+            ds->FlushCache();
+        }
+
+        auto params = t17BaseTileParams(input,
+            utf8PathString(getTestDir() / ("t17_rot_output_" + std::to_string(i))));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        const auto result = p->execute(params, progress_);
+        ASSERT_FALSE(result.success) << "变体 #" << i << " 不该被静默接受";
+        EXPECT_NE(result.message.find("north-up"), std::string::npos)
+            << "变体 #" << i << ": " << result.message;
     }
-
-    auto params = t17BaseTileParams(input, utf8PathString(getTestDir() / "t17_rot_output"));
-    params["min_zoom"] = 8;
-    params["max_zoom"] = 8;
-    const auto result = p->execute(params, progress_);
-    ASSERT_FALSE(result.success);
-    EXPECT_NE(result.message.find("north-up"), std::string::npos) << result.message;
 }
 
 // R-T17-4：throwIfCancelled 提前返回路径必须清理 warped 临时栅格（前缀扫描兜住
