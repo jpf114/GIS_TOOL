@@ -3,6 +3,7 @@
 #include <gis/core/error.h>
 #include <gis/core/runtime_env.h>
 #include <gis/core/text_escape.h>
+#include <gis/core/tile_grid.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
@@ -75,7 +76,8 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
             {"xyz", "tms"}
         },
         gis::framework::ParamSpec{
-            "profile", "瓦片投影", "mercator, geodetic, or raster",
+            "profile", "瓦片投影",
+            "Only mercator is implemented; geodetic/raster fail explicitly (N48, batch B)",
             gis::framework::ParamType::Enum, false, std::string{"mercator"},
             int{0}, int{0},
             {"mercator", "geodetic", "raster"}
@@ -96,7 +98,9 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
             int{128}, int{1024}
         },
         gis::framework::ParamSpec{
-            "overview_resampling", "金字塔重采样", "Overview resampling method",
+            "overview_resampling", "金字塔重采样",
+            "Resampling used to place source pixels into each tile image "
+            "(nearest/bilinear/cubic/average); cubicspline/lanczos/mode fail explicitly",
             gis::framework::ParamType::Enum, false, std::string{"nearest"},
             int{0}, int{0},
             {"nearest", "bilinear", "cubic", "cubicspline", "lanczos", "average", "mode"}
@@ -551,7 +555,10 @@ static int computeMaxZoom(double pixelSize, int tileSize) {
     return 0;
 }
 
-static void lonLatToTileXYZ(double lon, double lat, int z, int& x, int& y) {
+// R-T17-7 第 4 点：doTile 的瓦片索引范围改为"直接从 EPSG:3857 的度量范围算"，不再
+// 经度分往返；这两个函数**保留**（签名与其他潜在调用路径共用 static 工具面），
+// 加 [[maybe_unused]] 免得编译器按未引用局部函数报警——本批不改构建面。
+[[maybe_unused]] static void lonLatToTileXYZ(double lon, double lat, int z, int& x, int& y) {
     x = static_cast<int>(std::floor((lon + 180.0) / 360.0 * (1 << z)));
     const double latRad = lat * M_PI / 180.0;
     y = static_cast<int>(std::floor((1.0 - std::log(std::tan(latRad) + 1.0 / std::cos(latRad)) / M_PI) / 2.0 * (1 << z)));
@@ -559,11 +566,64 @@ static void lonLatToTileXYZ(double lon, double lat, int z, int& x, int& y) {
     y = std::max(0, std::min(y, (1 << z) - 1));
 }
 
-static void tileXYToLonLat(int x, int y, int z, double& lon, double& lat) {
+[[maybe_unused]] static void tileXYToLonLat(int x, int y, int z, double& lon, double& lat) {
     const double n = M_PI * (1.0 - 2.0 * y / static_cast<double>(1 << z));
     lon = x / static_cast<double>(1 << z) * 360.0 - 180.0;
     lat = 180.0 / M_PI * std::atan(0.5 * (std::exp(n) - std::exp(-n)));
 }
+
+// R-T17-7 第 4 点的输入侧换算：tile_extent 按 spec 是 WGS84 经纬度矩形
+// （"Optional tile extent in WGS84"），索引既然只从度量范围推导，用户给的经纬度
+// 必须先**前向投影**进 EPSG:3857（与 mercatorTileGrid 共用同一条 Web Mercator 定义），
+// 纬度截到 ±85.05112878（口径照旧 :820-821）。
+static void lonLatToMercatorXY(double lon, double lat, double& x, double& y) {
+    constexpr double kHalf = 20037508.342789244;
+    const double clampedLat = std::clamp(lat, -85.05112878, 85.05112878);
+    const double rad = clampedLat * M_PI / 180.0;
+    x = std::clamp(lon, -180.0, 180.0) * kHalf / 180.0;
+    y = std::clamp(6378137.0 * std::log(std::tan(M_PI / 4.0 + rad / 2.0)), -kHalf, kHalf);
+}
+
+// R-T17-11 处置①：overview_resampling 驱动逐瓦片"源窗口 → 瓦片缓冲"的 cv::resize 插值。
+// 只映射 cv::resize 存在严格对应项的四个取值；cubicspline/lanczos/mode 显式拒绝
+// （TileRejectsOverviewResamplingWithoutResizeEquivalent 用例钉"失败必须点名取值"）。
+// WHY 拒绝而不是猜一个近似项：cv::resize 没有这三种的对应实现，替用户挑一个就是在
+// 面板上放一个"改了等于没改"的假选项，正是本批次要消灭的形态。
+// WHY 映射表放插件本地而不是公共 API：这是 tile 动作的产物实现细节，
+// 与 tile_grid.h 描述的世界网格几何不是一类东西，不为它开导出面。
+static bool mapOverviewResampling(const std::string& value, int& interpolation) {
+    if (value == "nearest") { interpolation = cv::INTER_NEAREST; return true; }
+    if (value == "bilinear") { interpolation = cv::INTER_LINEAR; return true; }
+    if (value == "cubic") { interpolation = cv::INTER_CUBIC; return true; }
+    if (value == "average") { interpolation = cv::INTER_AREA; return true; }
+    return false;
+}
+
+// R-T17-4：warped 临时栅格必须在**所有**退出路径上关闭并删除——正常收尾、
+// Result::fail 提前返回、以及 throwIfCancelled 抛异常展开。修正前只有函数末尾
+// :999-1002 的正常路径清理，取消路径把 gis_tile_warped.tif 直接漏在系统临时目录
+// （Task 17 的 pre-fix RED 用例 TileCleansWarpedTempOnCancel 实测到了残留文件）。
+// RAII 把三条路径收敛到一个清理点；文件名带 pid（CPLGetPID）隔离跨进程，
+// 同进程并发工作流的隔离与临时目录归划仍留给 Plan 3 的 C8 统一处理。
+// WHY 定义全部写进类体：批次 A 实测过"匿名命名空间内的成员函数定义 ⇒ 内部链接
+// ⇒ LNK2019"的坑，内联定义从根上避开。
+struct WarpedRasterCloser {
+    std::string path;
+    void operator()(GDALDataset* ds) const {
+        if (ds) {
+            GDALClose(GDALDataset::ToHandle(ds));
+        }
+        if (!path.empty()) {
+            std::filesystem::remove(path);
+        }
+    }
+};
+
+// 某层级的源包络索引范围（闭区间）与该层级瓦片数，由度量范围 floor 推导。
+struct LevelBounds {
+    int xMin = 0, xMax = 0, yMin = 0, yMax = 0;
+    int tiles = 0;
+};
 
 static std::string tileFileExt(const std::string& fmt) {
     if (fmt == "jpeg") return ".jpg";
@@ -720,6 +780,25 @@ gis::framework::Result CuttingPlugin::doTile(
     if (input.empty()) return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
+    // R-T17-1：非 mercator profile 显式失败并在 message 里点名该取值，不再用错误的
+    // 网格产出瓦片。enumValues 不收窄（收窄取值集 = 未经授权改 API，与 R-T5-3 同口径）；
+    // 取值集与实现面的不一致登记挂账 N48（批次 B 要么补齐两种方案的网格计算，
+    // 要么把取值集收到 {"mercator"} 并改 spec），本批不动。
+    if (profile != "mercator") {
+        return gis::framework::Result::fail(
+            "tile profile \"" + profile + "\" is not supported yet; only profile=mercator is implemented");
+    }
+
+    // R-T17-11 处置①：层级 translate 被 R-T17-7 删除后，overview_resampling 若只删不接
+    // 就成了"面板上有、插件不读"的死键；改为让它驱动逐瓦片缩放插值。
+    // 校验放在任何磁盘/临时产物之前：非法取值要当场失败，不许先干活再报错。
+    int tileInterpolation = cv::INTER_LINEAR;
+    if (!mapOverviewResampling(ovResampling, tileInterpolation)) {
+        return gis::framework::Result::fail(
+            "overview_resampling \"" + ovResampling + "\" has no cv::resize equivalent; "
+            "supported: nearest, bilinear, cubic, average");
+    }
+
     progress.throwIfCancelled();
     progress.onProgress(0.02);
     progress.onMessage("Opening input raster...");
@@ -729,25 +808,48 @@ gis::framework::Result CuttingPlugin::doTile(
     srcDS->GetGeoTransform(geoTransform);
     const double pixelSize = std::abs(geoTransform[1]);
 
+    // 瓦片几何只在"可投影 + 正北像元网格"的源上有定义：
+    // (i) 无 CRS：GDALWarp 对无 CRS 输入带 -t_srs **不是失败而是照常产出**（pre-fix
+    //     用例 TileCleansWarpedTempOnWarpFailure 实测 Success），错误位置的瓦片全靠
+    //     这条显式拒绝来挡；
+    // (ii) 旋转/斜切或异常号：瓦片读窗由 wgt 反算轴对齐矩形（R-T17-7 第 3 点），
+    //     静默忽略旋转项等于把瓦片铺在"旋转内容的包络"上，是空间错位不是近似。
+    if (std::string(srcDS->GetProjectionRef()).empty()) {
+        return gis::framework::Result::fail(
+            "tile input has no spatial reference; cannot project to EPSG:3857");
+    }
+    if (geoTransform[2] != 0.0 || geoTransform[4] != 0.0 ||
+        !(geoTransform[1] > 0.0) || !(geoTransform[5] < 0.0)) {
+        return gis::framework::Result::fail(
+            "tile requires a north-up pixel grid (x pixel size > 0, y pixel size < 0, "
+            "rotation/skew terms must be zero)");
+    }
+
     if (maxZoom < 0) {
         maxZoom = computeMaxZoom(pixelSize, tileSize);
         progress.onMessage("Auto max_zoom = " + std::to_string(maxZoom));
     }
     maxZoom = std::min(maxZoom, 22);
 
-    std::string targetSRS;
-    if (profile == "mercator") targetSRS = "EPSG:3857";
-    else if (profile == "geodetic") targetSRS = "EPSG:4326";
-    else targetSRS = "";
+    // profile 已被钉死为 mercator ⇒ 目标 SRS 恒为 EPSG:3857。原 :738-741 的
+    // geodetic(EPSG:4326)/raster(原 SRS) 分支随显式失败一起删除；
+    // 原 else 分支"用原 SRS 不 warp"在 mercator-only 下不可达，一并去掉。
+    const std::string targetSRS = "EPSG:3857";
 
     progress.onProgress(0.05);
-    progress.onMessage("Reprojecting to " + (targetSRS.empty() ? "original SRS" : targetSRS) + "...");
+    progress.onMessage("Reprojecting to " + targetSRS + "...");
 
-    GDALDataset* warpedDS = nullptr;
-    std::string warpedPath;
-
-    if (!targetSRS.empty()) {
-        warpedPath = (std::filesystem::temp_directory_path() / "gis_tile_warped.tif").string();
+    // R-T17-7：整条链路上只有一个 warped 数据集（源包络 warp 进 EPSG:3857），
+    // 每瓦片在它上面按世界矩形反算像元窗口。z<maxZoom 那套"每层级物化全球网格"
+    // （原 :860-884 的 -outsize tileSize*2^z translate）已被 Tier-0 实测否决：
+    // z=6 单层级 5.72s、z=7 21.26s，层级×4 外推 z=10 ≈ 21min 且临时文件按 10MB/s
+    // 增长（N64/F3，报告 build/tmp/t17_probe/）。
+    // warped 由 unique_ptr+WarpedRasterCloser 持有：fail 提前返回与取消展开都会
+    // 关闭并删除临时文件（R-T17-4），文件名带 pid 避免跨进程互踩。
+    const std::string warpedPath = (std::filesystem::temp_directory_path() /
+        ("gis_tile_warped_" + std::to_string(CPLGetPID()) + ".tif")).string();
+    std::unique_ptr<GDALDataset, WarpedRasterCloser> warped;
+    {
         std::vector<std::string> warpArgStorage;
         warpArgStorage.push_back("-t_srs");
         warpArgStorage.push_back(targetSRS);
@@ -773,12 +875,16 @@ gis::framework::Result CuttingPlugin::doTile(
         GDALWarpAppOptionsFree(warpOpts);
 
         if (!hWarped || warpErr) {
+            if (hWarped) {
+                GDALClose(hWarped);
+            }
+            std::filesystem::remove(warpedPath);   // warp 半途失败可能留下残缺输出，defensive 清理
             return gis::framework::Result::fail("Reprojection failed: " + std::string(CPLGetLastErrorMsg()));
         }
-        warpedDS = static_cast<GDALDataset*>(hWarped);
-    } else {
-        warpedDS = srcDS.get();
+        warped = std::unique_ptr<GDALDataset, WarpedRasterCloser>(
+            static_cast<GDALDataset*>(hWarped), WarpedRasterCloser{warpedPath});
     }
+    GDALDataset* warpedDS = warped.get();
 
     progress.throwIfCancelled();
     progress.onProgress(0.1);
@@ -788,8 +894,10 @@ gis::framework::Result CuttingPlugin::doTile(
     const int wWidth = warpedDS->GetRasterXSize();
     const int wHeight = warpedDS->GetRasterYSize();
 
+    const bool hasUserExtent = extentArr[0] != 0 || extentArr[1] != 0 ||
+                               extentArr[2] != 0 || extentArr[3] != 0;
     double minLon, minLat, maxLon, maxLat;
-    if (extentArr[0] != 0 || extentArr[1] != 0 || extentArr[2] != 0 || extentArr[3] != 0) {
+    if (hasUserExtent) {
         minLon = extentArr[0]; minLat = extentArr[1];
         maxLon = extentArr[2]; maxLat = extentArr[3];
     } else {
@@ -802,6 +910,13 @@ gis::framework::Result CuttingPlugin::doTile(
         srcSRS.importFromWkt(warpedDS->GetProjectionRef());
         OGRSpatialReference wgs84;
         wgs84.SetWellKnownGeogCS("WGS84");
+        // F2/R-T17-8：GDAL 3 的地理坐标系默认轴序是 (lat, lon)，OGRCreateCoordinate
+        // Transformation 会照默认轴序把**纬度放回 x 槽**、经度放回 y 槽；下游 minLon/maxLon
+        // 与 metadata.json 的 "bounds"、webviewer 中心点、用户可见进度行全都按 (lon, lat)
+        // 消费 ⇒ src 与 target 都要显式钉成 OAMS_TRADITIONAL_GIS_ORDER。
+        // 判别取证：删掉这两行，TileMetadataBoundsKeepTraditionalLonLatOrder 必红。
+        srcSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
         auto ct = std::unique_ptr<OGRCoordinateTransformation>(
             OGRCreateCoordinateTransformation(&srcSRS, &wgs84));
 
@@ -822,17 +937,62 @@ gis::framework::Result CuttingPlugin::doTile(
     minLon = std::max(minLon, -180.0);
     maxLon = std::min(maxLon, 180.0);
 
+    // R-T17-7 第 4 点：瓦片索引范围**直接从 EPSG:3857 的度量范围算**
+    // （floor((x - worldMinX)/res) 这条），不再"度量→经纬度→索引"往返。
+    // 用户给的 tile_extent 是 WGS84 矩形，走 lonLatToMercatorXY 前向投影进度量面。
+    // 经纬度 bounds 仍要算：metadata.json 的 "bounds"/"center" 与 webviewer 消费的是
+    // 经纬度（这也是 F2 轴序修复只有产物级断言才钉得住的原因）。
+    double extMinX, extMaxX, extMinY, extMaxY;
+    if (hasUserExtent) {
+        lonLatToMercatorXY(minLon, minLat, extMinX, extMinY);
+        lonLatToMercatorXY(maxLon, maxLat, extMaxX, extMaxY);
+    } else {
+        extMinX = wgt[0];
+        extMaxX = wgt[0] + wWidth * wgt[1];
+        extMaxY = wgt[3];
+        extMinY = wgt[3] + wHeight * wgt[5];
+    }
+    {
+        constexpr double kHalf = 20037508.342789244;
+        extMinX = std::clamp(extMinX, -kHalf, kHalf);
+        extMaxX = std::clamp(extMaxX, -kHalf, kHalf);
+        extMinY = std::clamp(extMinY, -kHalf, kHalf);
+        extMaxY = std::clamp(extMaxY, -kHalf, kHalf);
+    }
+
     progress.onMessage("Bounds: " + std::to_string(minLon) + "," + std::to_string(minLat) +
                        " to " + std::to_string(maxLon) + "," + std::to_string(maxLat));
 
     std::filesystem::create_directories(output);
 
+    // 层级包络 → 索引范围（度量推导；tileWindow/tileWorldRect 同源用 globalWidth
+    // 推导瓦片数，合法层级恒等于 2^z）。totalTiles 预估与主循环用同一个 lambda，
+    // 两处不可能漂移。
+    // WHY 除以 tileWidthM（单瓦片米宽 = 世界宽/瓦片数）而不是 resX（米/全球像元）：
+    // floor((x-worldMinX)/resX) 给的是"全球像元下标"，/tileWidthM 才是"瓦片下标"，
+    // 前者被 clamp 到 [0,tiles-1] 会把整个包络压成角落那一张（首跑实测复现过）。
+    auto levelTileBounds = [&](int z, gis::core::TileGrid& grid) {
+        grid = gis::core::mercatorTileGrid(z, tileSize);
+        const int tiles = std::max(1, grid.globalWidth / std::max(1, tileSize));
+        const double tileWidthM = (grid.worldMaxX - grid.worldMinX) / tiles;
+        const double tileHeightM = (grid.worldMaxY - grid.worldMinY) / tiles;
+        const auto clampIdx = [tiles](double v) {
+            return std::clamp(static_cast<int>(std::floor(v)), 0, tiles - 1);
+        };
+        return LevelBounds{
+            clampIdx((extMinX - grid.worldMinX) / tileWidthM),
+            clampIdx((extMaxX - grid.worldMinX) / tileWidthM),
+            clampIdx((grid.worldMaxY - extMaxY) / tileHeightM),
+            clampIdx((grid.worldMaxY - extMinY) / tileHeightM),
+            tiles
+        };
+    };
+
     int totalTiles = 0;
     for (int z = minZoom; z <= maxZoom; ++z) {
-        int xMin, yMin, xMax, yMax;
-        lonLatToTileXYZ(minLon, maxLat, z, xMin, yMin);
-        lonLatToTileXYZ(maxLon, minLat, z, xMax, yMax);
-        totalTiles += (xMax - xMin + 1) * (yMax - yMin + 1);
+        gis::core::TileGrid grid;
+        const LevelBounds b = levelTileBounds(z, grid);
+        totalTiles += (b.xMax - b.xMin + 1) * (b.yMax - b.yMin + 1);
     }
 
     progress.onMessage("Total tiles to generate: " + std::to_string(totalTiles));
@@ -841,58 +1001,33 @@ gis::framework::Result CuttingPlugin::doTile(
     int tilesGenerated = 0;
     const std::string ext = tileFileExt(fmt);
 
+    // hasNd/srcNodata 只在 warped 数据集上读一次：层级数据集被 R-T17-7 删除后
+    // 它们不再随层级变化。原 :886 的 srcBands 是死变量（只有 band 1 被读），删除；
+    // 多波段处理是 Task 18 的地盘（R-T17-5 红线）。
+    int hasNd = 0;
+    double srcNodata = warpedDS->GetRasterBand(1)->GetNoDataValue(&hasNd);
+    if (!hasNd) srcNodata = nodataVal;
+
     for (int z = minZoom; z <= maxZoom; ++z) {
         progress.throwIfCancelled();
 
-        int xMin, yMin, xMax, yMax;
-        lonLatToTileXYZ(minLon, maxLat, z, xMin, yMin);
-        lonLatToTileXYZ(maxLon, minLat, z, xMax, yMax);
+        gis::core::TileGrid grid;
+        const LevelBounds b = levelTileBounds(z, grid);
+        const int xMin = b.xMin, yMin = b.yMin, xMax = b.xMax, yMax = b.yMax;
 
         const int tilesInLevel = (xMax - xMin + 1) * (yMax - yMin + 1);
         progress.onMessage("Zoom " + std::to_string(z) + ": " + std::to_string(tilesInLevel) + " tiles");
 
-        const double levelRes = mercatorResolution(z, tileSize);
-        const int globalSize = tileSize * (1 << z);
-
-        GDALDataset* levelDS = warpedDS;
-        std::string levelPath;
-
-        if (z < maxZoom) {
-            levelPath = (std::filesystem::temp_directory_path() /
-                ("gis_tile_level_" + std::to_string(z) + ".tif")).string();
-
-            std::vector<std::string> translateArgStorage;
-            translateArgStorage.push_back("-outsize");
-            translateArgStorage.push_back(std::to_string(globalSize));
-            translateArgStorage.push_back(std::to_string(globalSize));
-            translateArgStorage.push_back("-r");
-            translateArgStorage.push_back(ovResampling);
-            translateArgStorage.push_back("-co");
-            translateArgStorage.push_back("COMPRESS=LZW");
-
-            std::vector<char*> translateArgv;
-            for (auto& a : translateArgStorage) translateArgv.push_back(a.data());
-            translateArgv.push_back(nullptr);
-
-            GDALTranslateOptions* tOpts = GDALTranslateOptionsNew(translateArgv.data(), nullptr);
-            auto hLevel = GDALTranslate(levelPath.c_str(),
-                GDALDataset::ToHandle(warpedDS), tOpts, nullptr);
-            GDALTranslateOptionsFree(tOpts);
-            if (hLevel) {
-                levelDS = static_cast<GDALDataset*>(hLevel);
-            }
-        }
-
-        const int srcBands = levelDS->GetRasterCount();
-        int hasNd = 0;
-        double srcNodata = levelDS->GetRasterBand(1)->GetNoDataValue(&hasNd);
-        if (!hasNd) srcNodata = nodataVal;
+        // R-T17-7：删除"每层级物化全球网格"的 -outsize translate（原 :860-884）与
+        // 死变量 levelRes/globalSize（:854-855）。F3/N64 实测（build/tmp/t17_probe/）：
+        // 该物化 z=6 就要 5.72s、z=7 21.26s、×4 外推 z=10 ≈ 21min，真实层级不可用。
+        // 层级 translate 是 ovResampling 唯一旧用途（:869），处置见上面 R-T17-11①。
 
         for (int tx = xMin; tx <= xMax; ++tx) {
             for (int ty = yMin; ty <= yMax; ++ty) {
                 int tyWrite = ty;
                 if (scheme == "tms") {
-                    tyWrite = (1 << z) - 1 - ty;
+                    tyWrite = b.tiles - 1 - ty;   // == (1<<z)-1-ty，但取自同一网格推导
                 }
 
                 const std::string tileDir = output + "/" + std::to_string(z) + "/" + std::to_string(tx);
@@ -903,50 +1038,75 @@ gis::framework::Result CuttingPlugin::doTile(
                     continue;
                 }
 
-                double tileMinLon, tileMinLat, tileMaxLon, tileMaxLat;
-                tileXYToLonLat(tx, ty, z, tileMinLon, tileMaxLat);
-                tileXYToLonLat(tx + 1, ty + 1, z, tileMaxLon, tileMinLat);
-
-                double tileGeoTransform[6] = {};
-                std::copy(wgt, wgt + 6, tileGeoTransform);
-                const double dstXMin = tileGeoTransform[0] + (tileMinLon - wgt[0]) / wgt[1] * wgt[1];
-                const double dstYMin = tileGeoTransform[3] + (tileMinLat - wgt[3]) / wgt[5] * wgt[5];
-
-                std::vector<double> srcWin = {
-                    (tileMinLon - wgt[0]) / wgt[1],
-                    (tileMaxLat - wgt[3]) / wgt[5],
-                    (tileMaxLon - tileMinLon) / wgt[1],
-                    (tileMinLat - tileMaxLat) / (-wgt[5])
-                };
-
-                srcWin[0] = std::max(0.0, srcWin[0]);
-                srcWin[1] = std::max(0.0, srcWin[1]);
-                srcWin[2] = std::min(static_cast<double>(levelDS->GetRasterXSize()) - srcWin[0], srcWin[2]);
-                srcWin[3] = std::min(static_cast<double>(levelDS->GetRasterYSize()) - srcWin[1], srcWin[3]);
-
-                if (srcWin[2] <= 0 || srcWin[3] <= 0) {
+                // R-T17-7 第 3 点：瓦片索引 → EPSG:3857 世界矩形（纯函数 tileWorldRect）
+                // → 用 warped 数据集的 wgt 反算像元窗口（col=(x-wgt[0])/wgt[1]、
+                // row=(y-wgt[3])/wgt[5]）→ 裁剪到数据集范围 → **按覆盖比例**把读到的块
+                // 放进 tileSize×tileSize 缓冲区的正确子像素位置，未覆盖边保持透明。
+                // 原 :912-925"度矩形除以米制 wgt"的混算与 :919 srcWin[3] 的符号错误（F1，
+                // 恒为负 ⇒ 每瓦片 continue）在这里一并废除；north-up 守卫已保证
+                // wgt[2]/wgt[4] 为零、wgt[1]>0、wgt[5]<0，反算不含近似。
+                const gis::core::TileRect rect = gis::core::tileWorldRect(grid, tileSize, tx, ty);
+                if (!rect.valid) {
                     ++tilesGenerated;
                     continue;
                 }
 
-                cv::Mat tileData(static_cast<int>(srcWin[3]), static_cast<int>(srcWin[2]), CV_32F);
-                CPLErr err = levelDS->GetRasterBand(1)->RasterIO(
-                    GF_Read, static_cast<int>(srcWin[0]), static_cast<int>(srcWin[1]),
-                    static_cast<int>(srcWin[2]), static_cast<int>(srcWin[3]),
-                    tileData.data, tileData.cols, tileData.rows, GDT_Float32, 0, 0);
+                const double sx0 = (rect.minX - wgt[0]) / wgt[1];
+                const double sx1 = (rect.maxX - wgt[0]) / wgt[1];
+                const double syTop = (rect.maxY - wgt[3]) / wgt[5];   // wgt[5]<0 ⇒ 北缘行号小
+                const double syBot = (rect.minY - wgt[3]) / wgt[5];
+                const int c0 = std::max(0, static_cast<int>(std::floor(std::min(sx0, sx1))));
+                const int c1 = std::min(wWidth, static_cast<int>(std::ceil(std::max(sx0, sx1))));
+                const int r0 = std::max(0, static_cast<int>(std::floor(std::min(syTop, syBot))));
+                const int r1 = std::min(wHeight, static_cast<int>(std::ceil(std::max(syTop, syBot))));
+                if (c1 <= c0 || r1 <= r0) {
+                    // 与源包络零交集：不得产出文件（端到端用例的字面集合钉不允许空瓦片）。
+                    ++tilesGenerated;
+                    continue;
+                }
+
+                // 整数读窗的真实世界边 → 瓦片内目标子矩形（覆盖位置，逐像素按比例）。
+                const double ax0 = wgt[0] + c0 * wgt[1];
+                const double ax1 = wgt[0] + c1 * wgt[1];
+                const double ayTop = wgt[3] + r0 * wgt[5];
+                const double ayBot = wgt[3] + r1 * wgt[5];
+                const double tileResX = (rect.maxX - rect.minX) / tileSize;
+                const double tileResY = (rect.maxY - rect.minY) / tileSize;
+                const int dx0 = std::clamp(static_cast<int>(std::floor((ax0 - rect.minX) / tileResX)), 0, tileSize);
+                const int dx1 = std::clamp(static_cast<int>(std::ceil((ax1 - rect.minX) / tileResX)), 0, tileSize);
+                const int dy0 = std::clamp(static_cast<int>(std::floor((rect.maxY - ayTop) / tileResY)), 0, tileSize);
+                const int dy1 = std::clamp(static_cast<int>(std::ceil((rect.maxY - ayBot) / tileResY)), 0, tileSize);
+                if (dx1 <= dx0 || dy1 <= dy0) {
+                    ++tilesGenerated;
+                    continue;
+                }
+
+                cv::Mat tileData(tileSize, tileSize, CV_32F, cv::Scalar(static_cast<float>(srcNodata)));
+                cv::Mat coverMask(tileSize, tileSize, CV_8UC1, cv::Scalar(0));
+
+                cv::Mat block(r1 - r0, c1 - c0, CV_32F);
+                CPLErr err = warpedDS->GetRasterBand(1)->RasterIO(
+                    GF_Read, c0, r0, c1 - c0, r1 - r0,
+                    block.data, block.cols, block.rows, GDT_Float32, 0, 0);
 
                 if (err != CE_None) {
                     ++tilesGenerated;
                     continue;
                 }
 
-                cv::resize(tileData, tileData, cv::Size(tileSize, tileSize), 0, 0, cv::INTER_LINEAR);
+                // R-T17-11 处置①：插值项来自 overview_resampling 映射出的 tileInterpolation，
+                // 原 :943 的硬编码 cv::INTER_LINEAR 作废（判别用例：nearest 与 average 同输入
+                // 必须产出不同字节；删掉映射硬回 INTER_LINEAR ⇒ 两次输出一致 ⇒ 用例必红）。
+                cv::resize(block, block, cv::Size(dx1 - dx0, dy1 - dy0), 0, 0, tileInterpolation);
+                block.copyTo(tileData(cv::Rect(dx0, dy0, dx1 - dx0, dy1 - dy0)));
+                coverMask(cv::Rect(dx0, dy0, dx1 - dx0, dy1 - dy0)).setTo(255);
 
                 cv::Mat rgba(tileSize, tileSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
                 double bandMin = 1e30, bandMax = -1e30;
                 for (int py = 0; py < tileSize; ++py) {
                     for (int px = 0; px < tileSize; ++px) {
                         const float v = tileData.at<float>(py, px);
+                        if (coverMask.at<uchar>(py, px) == 0) continue;   // 未覆盖垫边不参与拉伸
                         if (hasNd && std::abs(v - srcNodata) < 1e-6) continue;
                         if (v < bandMin) bandMin = v;
                         if (v > bandMax) bandMax = v;
@@ -962,10 +1122,13 @@ gis::framework::Result CuttingPlugin::doTile(
                 for (int py = 0; py < tileSize; ++py) {
                     for (int px = 0; px < tileSize; ++px) {
                         const float v = tileData.at<float>(py, px);
-                        if (hasNd && std::abs(v - srcNodata) < 1e-6) {
+                        if (coverMask.at<uchar>(py, px) == 0 ||
+                            (hasNd && std::abs(v - srcNodata) < 1e-6)) {
                             rgba.at<cv::Vec4b>(py, px) = cv::Vec4b(0, 0, 0, 0);
                         } else {
                             const uchar c = static_cast<uchar>(255.0 * (v - bandMin) / range);
+                            // R-T17-10/N65：addAlpha 的三元两个分支相同 ⇒ add_alpha 目前是空操作，
+                            // 这是 Task 18（多波段与 alpha）的地盘，本任务只登记不修（R-T17-5 红线）。
                             rgba.at<cv::Vec4b>(py, px) = cv::Vec4b(c, c, c, addAlpha ? 255 : 255);
                         }
                     }
@@ -989,17 +1152,12 @@ gis::framework::Result CuttingPlugin::doTile(
                 }
             }
         }
-
-        if (levelDS != warpedDS) {
-            GDALClose(levelDS);
-            std::filesystem::remove(levelPath);
-        }
     }
 
-    if (warpedDS != srcDS.get()) {
-        GDALClose(warpedDS);
-        std::filesystem::remove(warpedPath);
-    }
+    // 临时 warped 栅格由 WarpedRasterCloser 的析退统一关闭并删除：正常收尾、
+    // Result::fail 提前返回、throwIfCancelled 异常展开三条路径同一点清理（R-T17-4）。
+    // 原 :993-996 的层级文件清理随层级 translate 一起删除；原 :999-1002 的
+    // "仅正常路径清理"就是取消路径泄漏 gis_tile_warped.tif 的成因。
 
     progress.onProgress(0.97);
     progress.onMessage("Writing metadata.json...");

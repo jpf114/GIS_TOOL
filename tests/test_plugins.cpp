@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -10650,4 +10651,428 @@ TEST_F(PluginTest, AccuracyAssessmentHandlesClassPresentOnlyOnOneSide) {
     EXPECT_EQ(result.metadata.at("correct_samples"), "4") << content;
     EXPECT_EQ(root.value("correct_samples").toDouble(), 4.0) << content;
     EXPECT_EQ(result.metadata.at("class_count"), "3") << content;
+}
+
+// =====================================================================
+// Task 17：cutting.tile 层级几何与参数面（批次 A 内该 action 的首批用例）。
+//
+// 为什么这里的用例几乎全部钉"文件集合/字节/消息点名"而不是钉进度行：
+// Tier-0 实测（build/tmp/t17_probe/）复现了控制器的三条事实——
+//   F1: 修正前任何 profile 都 Success 但一张瓦片都不写（srcWin[3] 恒为负，
+//       cutting_plugin.cpp:919 符号错误 ⇒ 每瓦片 continue）；
+//   F2: profile=mercator 时 metadata.json 的 bounds 经纬度整体调换
+//       （GDAL3 轴序，:801-813 未设 OAMS_TRADITIONAL_GIS_ORDER）；
+//   F3: z<maxZoom 的 -outsize 全球网格真实物化（实测 z=6 5.72s、z=7 21.26s，
+//       层级×4 外推 z=10 ≈ 21min），按字面计划不可行 ⇒ R-T17-7 改为
+//       "单一 warped 数据集 + tileWorldRect 反算像元窗口"。
+// 断言形态按 R-T17-9：路径集合写死字面量（z=10 为 {512,513}×{512,513} 4 张、
+// z=11 为 {1024..1027}² 16 张，夹具出处见用例内注释），亮度/对比度留给 Task 18。
+// =====================================================================
+
+namespace {
+
+// 临时文件侦察用：tile 的 warped 临时栅格名带 pid（R-T17-4），测试与插件同进程，
+// CPLGetPID() 与插件拼出的名字一致；前缀扫描同时兜住无 pid 的旧命名残留。
+fs::path t17TempDir() {
+    return fs::temp_directory_path();
+}
+
+std::vector<fs::path> t17ScanWarpedLeftovers() {
+    std::vector<fs::path> found;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(t17TempDir(), ec)) {
+        if (ec) break;
+        if (!e.is_regular_file()) continue;
+        const std::string name = e.path().filename().string();
+        if (name.rfind("gis_tile_warped", 0) == 0 &&
+            name.size() > 4 && name.compare(name.size() - 4, 4, ".tif") == 0) {
+            found.push_back(e.path());
+        }
+    }
+    return found;
+}
+
+void t17ExpectNoWarpedLeftovers() {
+    const auto leftovers = t17ScanWarpedLeftovers();
+    std::string detail;
+    for (const auto& p : leftovers) detail += utf8PathString(p) + "; ";
+    EXPECT_TRUE(leftovers.empty()) << "临时 warped 栅格未被清理: " << detail;
+}
+
+// 收集 output 下除 metadata.json 之外的全部产物（相对路径，'/' 分隔）。
+std::set<std::string> t17CollectTileFiles(const fs::path& outputDir) {
+    std::set<std::string> files;
+    if (!fs::exists(outputDir)) return files;
+    for (auto it = fs::recursive_directory_iterator(outputDir);
+         it != fs::recursive_directory_iterator(); ++it) {
+        if (!it->is_regular_file()) continue;
+        const std::string name = it->path().filename().string();
+        if (name == "metadata.json") continue;
+        files.insert(fs::relative(it->path(), outputDir).generic_string());
+    }
+    return files;
+}
+
+std::string t17ReadWholeFile(const fs::path& p) {
+    std::ifstream ifs(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+}
+
+// 可编排取消的进度器：第 cancelAfter 次 onProgress 之后 isCancelled() 置真，
+// 下一次 throwIfCancelled() 抛出。pre/post 实现的早期进度调用次序一致，
+// 取 3 保证 warped 数据集已经建立（清理义务才有针对性）。
+class T17CancellableProgress : public gis::core::ProgressReporter {
+public:
+    explicit T17CancellableProgress(int cancelAfter) : cancelAfter_(cancelAfter) {}
+    void onProgress(double) override {
+        ++calls_;
+        if (cancelAfter_ >= 0 && calls_ >= cancelAfter_) cancelled_ = true;
+    }
+    void onMessage(const std::string&) override {}
+    bool isCancelled() const override { return cancelled_; }
+private:
+    int calls_ = 0;
+    int cancelAfter_ = -1;
+    bool cancelled_ = false;
+};
+
+std::map<std::string, gis::framework::ParamValue> t17BaseTileParams(
+    const std::string& actionInput, const std::string& outputDir) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("tile");
+    params["input"] = actionInput;
+    params["output"] = outputDir;
+    params["profile"] = std::string("mercator");
+    params["skip_blank"] = false;
+    params["add_alpha"] = false;
+    return params;
+}
+
+} // namespace
+
+// F1 + R-T17-7/9 的主几何钉：z=10 与 z=11 的瓦片路径集合必须**恰等于**字面集合。
+// 期望集合的字面出处（R-T17-9 的独立重算，与控制器一致）：
+//   z=10 瓦片米宽 = 40075016.686/1024 = 39135.758 m；夹具 x∈[0,64000], y∈[-64000,0]
+//   ⇒ 列 floor((20037508.342789+0)/39135.758)=512 到 floor((+64000)/39135.758)=513，
+//   行同理 ⇒ 4 张；z=11 米宽减半 ⇒ {1024..1027}² 16 张。
+// 边界 0 m 恰好落在 512/1024 的瓦片线上：浮点若把 floor 打成 511，该列与世界矩形
+// 交集为空、不得写出文件——所以"恰等于"（而非"包含于"）仍然成立，这正是把越界
+// 空瓦片也钉死的原因。
+TEST_F(PluginTest, TileLevelGeometryUsesWebMercatorGrid) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(64 * 64, 0.0f);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 32; ++x) data[y * 64 + x] = 200.0f;   // 左半更亮（形态照抄计划，亮度断言留给 Task 18）
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_geom_input.tif", 64, 64, data, options);
+    const fs::path output = getTestDir() / "t17_geom_output";
+    fs::remove_all(output);
+    const std::string outputStr = utf8PathString(output);
+
+    auto params = t17BaseTileParams(input, outputStr);
+    params["min_zoom"] = 10;
+    params["max_zoom"] = 11;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    const std::set<std::string> expectedZ10 = {
+        "10/512/512.png", "10/512/513.png", "10/513/512.png", "10/513/513.png",
+    };
+    std::set<std::string> expectedZ11;
+    for (int x = 1024; x <= 1027; ++x)
+        for (int y = 1024; y <= 1027; ++y)
+            expectedZ11.insert("11/" + std::to_string(x) + "/" + std::to_string(y) + ".png");
+
+    const auto produced = t17CollectTileFiles(output);
+    std::string producedList;
+    for (const auto& f : produced) producedList += f + " ";
+    std::set<std::string> expectedAll = expectedZ10;
+    expectedAll.insert(expectedZ11.begin(), expectedZ11.end());
+    EXPECT_EQ(produced, expectedAll) << "z=10/11 的瓦片集合不等于字面期望 [" << producedList << "]";
+
+    // 每张瓦片必须是 tileSize×tileSize（256），钉住"窗口裁剪没有把边界瓦片裁歪"。
+    // WHY 读回用 GDAL 而不是 cv::imread：tests/CMakeLists.txt:43-44 的 gis_tests 只链
+    // opencv_core/imgproc，imgcodecs 会 LNK2019（R-T17-9 第 1 点处置①，零新增依赖）。
+    for (const auto& rel : expectedZ10) {
+        auto ds = gis::core::openRaster((output / fs::path(rel)).string(), true);
+        ASSERT_NE(ds.get(), nullptr) << rel;
+        EXPECT_EQ(ds->GetRasterXSize(), 256) << rel;
+        EXPECT_EQ(ds->GetRasterYSize(), 256) << rel;
+    }
+}
+
+// F2/R-T17-8：metadata.json 的 bounds 必须是正确的 lon/lat 顺序（用户可见产物）。
+// 夹具用 EPSG:3857 的矩形 [112°,113°]×[约39.2°,40°]（南边界由像素数决定，
+// 北边界与两条经线是精确字面量）；断言形态按 R-T17-8"只断产物、不断进度行"。
+TEST_F(PluginTest, TileMetadataBoundsKeepTraditionalLonLatOrder) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const double kHalf = 20037508.342789244;   // x = lon*kHalf/180（输入侧公式，独立于插件的 OGR 变换）
+    const double R = 6378137.0;
+    auto mercY = [R](double latDeg) {
+        const double lat = latDeg * M_PI / 180.0;
+        return R * std::log(std::tan(M_PI / 4.0 + lat / 2.0));
+    };
+
+    const double westX = 112.0 * kHalf / 180.0;
+    const double northY = mercY(40.0);
+    const double pixelSize = (kHalf / 180.0) / 64.0;   // 64 像元 = 1° 经度跨度
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = westX; options.originY = northY; options.pixelSize = pixelSize;
+    std::vector<float> data(64 * 64, 10.0f);
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_bounds_input.tif", 64, 64, data, options);
+    const fs::path output = getTestDir() / "t17_bounds_output";
+    fs::remove_all(output);
+
+    auto params = t17BaseTileParams(input, utf8PathString(output));
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    const std::string json = t17ReadWholeFile(output / "metadata.json");
+    ASSERT_FALSE(json.empty());
+    const auto pos = json.find("\"bounds\"");
+    ASSERT_NE(pos, std::string::npos) << json;
+    double b[4] = {};
+    // writeMetadataJson 输出形如 "bounds": [a, b, c, d]：跳过 pos 处的起始引号后从
+    // 'b' 起匹配；冒号与逗号后的空格由格式中的空白符吸收（sscanf 空白匹配任意个空白）。
+    const int parsed = std::sscanf(json.c_str() + pos + 1, "bounds\": [%lf, %lf, %lf, %lf]",
+                                   &b[0], &b[1], &b[2], &b[3]);
+    ASSERT_EQ(parsed, 4) << json;
+
+    // lon 边是精确字面量（EPSG:3857 x 与经度线性），lat 上界同理；南界只断区间。
+    EXPECT_NEAR(b[0], 112.0, 1e-4) << json;
+    EXPECT_NEAR(b[2], 113.0, 1e-4) << json;
+    EXPECT_NEAR(b[3], 40.0, 1e-4) << json;
+    EXPECT_GT(b[1], 38.0);
+    EXPECT_LT(b[1], b[3]);
+    EXPECT_LE(std::abs(b[1]), 85.06) << "lat 越界 ⇒ 轴序又错了: " << json;
+    EXPECT_LE(std::abs(b[3]), 85.06) << json;
+    EXPECT_LT(b[0], b[2]);
+}
+
+// R-T17-1 第 3 点：geodetic/raster 必须显式失败且 message 点名该 profile 值。
+TEST_F(PluginTest, TileRejectsGeodeticProfileAndNamesIt) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(8 * 8, 1.0f);
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_profile_input.tif", 8, 8, data, options);
+
+    auto params = t17BaseTileParams(input, utf8PathString(getTestDir() / "t17_profile_geodetic_output"));
+    params["profile"] = std::string("geodetic");
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+    const auto result = p->execute(params, progress_);
+    ASSERT_FALSE(result.success);
+    EXPECT_NE(result.message.find("geodetic"), std::string::npos) << result.message;
+}
+
+TEST_F(PluginTest, TileRejectsRasterProfileAndNamesIt) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(8 * 8, 1.0f);
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_profile_input.tif", 8, 8, data, options);
+
+    auto params = t17BaseTileParams(input, utf8PathString(getTestDir() / "t17_profile_raster_output"));
+    params["profile"] = std::string("raster");
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+    const auto result = p->execute(params, progress_);
+    ASSERT_FALSE(result.success);
+    EXPECT_NE(result.message.find("raster"), std::string::npos) << result.message;
+}
+
+// R-T17-11 处置①：overview_resampling 必须真的驱动逐瓦片缩放插值。
+// 判据形态："同一输入两种插值产出不同字节且都成功" ⇒ 把映射删掉（硬回 INTER_LINEAR）
+// 两次输出必然一致 ⇒ 必红。取 z=8/8 单瓦片：源 64×64@1000m 落进 256px 瓦片只需
+// ~105px 覆盖 ⇒ 缩放真实发生（nearest 保持 0/255 二值、average 出过渡灰）。
+TEST_F(PluginTest, TileOverviewResamplingDrivesOutputBytes) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(64 * 64, 0.0f);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 32; ++x) data[y * 64 + x] = 200.0f;
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_ovres_input.tif", 64, 64, data, options);
+
+    std::string nearestBytes, averageBytes;
+    for (int pass = 0; pass < 2; ++pass) {
+        const std::string method = pass == 0 ? "nearest" : "average";
+        const fs::path output = getTestDir() /
+            (pass == 0 ? "t17_ovres_nearest_output" : "t17_ovres_average_output");
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["overview_resampling"] = method;
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << method << ": " << result.message;
+        const auto files = t17CollectTileFiles(output);
+        ASSERT_EQ(files.size(), 1u) << method << " 产出集合应为单瓦片";
+        const std::string bytes = t17ReadWholeFile(output / fs::path(*files.begin()));
+        ASSERT_FALSE(bytes.empty());
+        if (pass == 0) nearestBytes = bytes; else averageBytes = bytes;
+    }
+    EXPECT_NE(nearestBytes, averageBytes)
+        << "nearest 与 average 产出字节一致 ⇒ overview_resampling 没有驱动瓦片缩放（R-T17-11①）";
+}
+
+// R-T17-11①：cv::resize 无对应项的取值必须显式失败并点名取值，不许静默降级。
+TEST_F(PluginTest, TileRejectsOverviewResamplingWithoutResizeEquivalent) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(8 * 8, 1.0f);
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_ovbad_input.tif", 8, 8, data, options);
+
+    for (const std::string bad : {"cubicspline", "lanczos", "mode"}) {
+        auto params = t17BaseTileParams(
+            input, utf8PathString(getTestDir() / ("t17_ovbad_" + bad + "_output")));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["overview_resampling"] = bad;
+        const auto result = p->execute(params, progress_);
+        ASSERT_FALSE(result.success) << bad << " 不该被静默接受";
+        EXPECT_NE(result.message.find(bad), std::string::npos) << bad << " 的失败必须点名取值: " << result.message;
+    }
+}
+
+// R-T17-7 第 3 点：旋转/斜切源栅格不许静默近似，显式失败。
+// （几何反算只支持正北像元网格；见 cutting doTile 的 north-up 守卫。）
+TEST_F(PluginTest, TileFailsOnRotatedSourceRaster) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(16 * 16, 5.0f);
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_rot_input.tif", 16, 16, data, options);
+
+    {   // 把夹具改成带旋转/斜切项的正经"非正北"栅格。
+        auto ds = gis::core::openRaster(input, false);
+        ASSERT_NE(ds.get(), nullptr);
+        double gt[6] = {0.0, 1000.0, 100.0, 0.0, 50.0, -1000.0};
+        ASSERT_EQ(ds->SetGeoTransform(gt), CE_None);
+        ds->FlushCache();
+    }
+
+    auto params = t17BaseTileParams(input, utf8PathString(getTestDir() / "t17_rot_output"));
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+    const auto result = p->execute(params, progress_);
+    ASSERT_FALSE(result.success);
+    EXPECT_NE(result.message.find("north-up"), std::string::npos) << result.message;
+}
+
+// R-T17-4：throwIfCancelled 提前返回路径必须清理 warped 临时栅格（前缀扫描兜住
+// 新旧两种命名：修正前泄漏的无 pid 名也会被这里钉住）。
+TEST_F(PluginTest, TileCleansWarpedTempOnCancel) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(64 * 64, 1.0f);
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_cancel_input.tif", 64, 64, data, options);
+    const fs::path output = getTestDir() / "t17_cancel_output";
+    fs::remove_all(output);
+
+    t17ExpectNoWarpedLeftovers();   // 前提自证：进场时系统临时目录没有残留
+
+    auto params = t17BaseTileParams(input, utf8PathString(output));
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+    T17CancellableProgress progress(3);   // 第 3 次进度回调后进入已取消态
+    EXPECT_THROW(p->execute(params, progress), gis::core::CancelledException);
+    t17ExpectNoWarpedLeftovers();
+}
+
+// R-T17-4：Result::fail 提前返回路径（reprojection 失败，输入无 CRS）同样不许泄漏。
+TEST_F(PluginTest, TileCleansWarpedTempOnWarpFailure) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    gis::tests::RasterFixtureOptions options;   // crs=None ⇒ -t_srs EPSG:3857 必然失败
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(8 * 8, 1.0f);
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_nocrs_input.tif", 8, 8, data, options);
+    const fs::path output = getTestDir() / "t17_nocrs_output";
+    fs::remove_all(output);
+
+    auto params = t17BaseTileParams(input, utf8PathString(output));
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success);
+    t17ExpectNoWarpedLeftovers();
+}
+
+// 全局闸门 (ii)：tile 自己的面板锁（形状照抄 TerrainFillSinksGuiPanel…，R-T17-11
+// ①/② 都要求的第 (ii) 件事）。overview_resampling 经处置①成为"真被读"的键，必须
+// 在渲染集合里；tile 不读的键（resample/num_threads/tile_size/overlap/extent/
+// cutline/bands/dst_srs）必须被隐藏。渲染判据用 ParamCardWidget::hasParam(entries_)，
+// 不用 ParamWidget::hasParam（它只扫 specs_，等于把有效集合再抄一遍）。
+TEST_F(PluginTest, TileGuiPanelHidesParametersTheTileActionNeverReads) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    const auto specs = p->paramSpecs();
+    const auto* config = gis::gui::findActionUiConfig("cutting", "tile");
+    ASSERT_NE(config, nullptr) << "cutting.tile 缺少 actionUiConfig 条目";
+
+    const auto effective = gis::gui::buildEffectiveGuiParamSpecs(
+        "cutting", "tile", specs, config->visibleKeys, config->requiredKeys);
+    std::set<std::string> effectiveKeys;
+    for (const auto& spec : effective) effectiveKeys.insert(spec.key);
+
+    EXPECT_EQ(effectiveKeys, config->visibleKeys) << "cutting.tile 的有效键集与白名单不一致";
+    EXPECT_GT(effectiveKeys.count("overview_resampling"), 0u)
+        << "overview_resampling 必须被渲染（R-T17-11① 之后 doTile 真的读它）";
+    for (const char* deadKey : {"resample", "num_threads", "tile_size", "overlap",
+                                "extent", "cutline", "bands", "dst_srs"}) {
+        EXPECT_EQ(effectiveKeys.count(deadKey), 0u) << deadKey << " 不被 doTile 读取，不得出现在 tile 面板";
+    }
+    EXPECT_EQ(config->visibleKeys.count("action"), 0u);
+
+    ParamWidget panel;
+    panel.setUiContext("cutting", "tile");
+    panel.setParamSpecs(effective);
+    const auto cards = panel.findChildren<ParamCardWidget*>();
+    ASSERT_FALSE(cards.empty()) << "cutting.tile 没有生成任何参数卡片";
+    std::set<std::string> renderedKeys;
+    for (const auto& spec : specs) {
+        if (spec.key == "action") continue;
+        for (const auto* card : cards) {
+            if (card && card->hasParam(spec.key)) renderedKeys.insert(spec.key);
+        }
+    }
+    EXPECT_EQ(renderedKeys, effectiveKeys) << "cutting.tile 的 widget 树与有效 spec 不一致";
+    EXPECT_GT(renderedKeys.count("overview_resampling"), 0u);
+    EXPECT_EQ(renderedKeys.count("resample"), 0u);
 }
