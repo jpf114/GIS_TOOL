@@ -12131,3 +12131,155 @@ TEST_F(PluginTest, TileColorOrderConsistentAcrossOutputFormats) {
         EXPECT_GT(r.mean, g.mean) << c.fmt << " 的 R>G 顺序不对";
     }
 }
+
+// T18 fix round 2 F-3（复审 I-3）：Produces 承诺的 "**4→RGBA**" 分支此前**零用例**。
+// 盘上事实（复审 round C 的 M0）：`if (bands == 4) { band4 → alpha }` 改成 `bands == 5` 之后
+// 27 条用例**一条都不红**（`build/t18rev_5_mutaB_tile.log`），因为 `t18WriteBandsRaster` 的
+// 四个调用点（#311/#313/#315/#317）全是 1 或 3 波段 ⇒ 4 波段源**从没被驱动过**。
+// 本用例把这条分支钉住，并同时钉两件事（复审 §I-3 连带的"同一发测试能一起锁的内容"）：
+//   ① 输出的第 4 波段必须来自**源 band4**，不是常量 255、也不是 dstalpha；
+//   ② "部分透明（alpha 中间值）如何归一"的口径：band4 与颜色波段一样吃**整幅拉伸**，
+//      于是源里"最不透明的那档"会被归一到**全透明**（下面 51→0 那条），
+//      这是 bands==4 的可见后果，此前没被任何用例记录过（复审 §7 第 5 点：读码推断、未实测）。
+//
+// 夹具算术（64×64@1000 m、origin (0,0)、EPSG:3857、**不声明 NoData**；z=8 ⇒ 单瓦片、
+//   覆盖子矩形 [0,105)² 沿用 #311/#317 已核过的几何；resampling=nearest ⇒ warp 与
+//   cv::resize 两级都不糊边界，瓦片里只出现源值集合）：
+//   band1 (R)：源列 <32 → 0，否则 200      整幅区间 (0,200)  ⇒ 0→0、200→255
+//   band2 (G)：源行 <32 → 0，否则 200      整幅区间 (0,200)  ⇒ 同上（**行列反向**，用于分辨 R/G 串台）
+//   band3 (B)：(列<32) XOR (行<32) → 200   整幅区间 (0,200)  ⇒ 四象限里唯一与 band1/2 都不同
+//                                                       的图样 ⇒ "B 复制 G" 这类变异当场红
+//   band4 (A)：源行 <16 → 51、16..31 → 102、>=32 → 204
+//             整幅区间 (51,204)，range=153 ⇒ 51→0、102→85（255*51/153=85 整除）、204→255
+//   瓦片像元 (行 r, 列 c) ← 源像元 (floor((r+0.5)*64/105), floor((c+0.5)*64/105))：
+//     (5, 5)→(3, 3) ⇒ (R,G,B,A) = (0, 0, 0,   0)
+//     (5,80)→(3,49) ⇒                    (255, 0, 255, 0)
+//     (40,5)→(24,3) ⇒                    (0, 0, 0,  85)
+//     (80,5)→(49,3) ⇒                    (0, 255, 255, 255)
+//     (80,80)→(49,49)⇒                    (255, 255, 0, 255)
+//   三档 alpha 的行数（26 / 26 / 53 行 × 105 列 = 2730 / 2730 / 5565）只断"每档都成规模存在"
+//   （下限 2000/2000/4000），不断死边界行数 ⇒ 抗 ±1 行的取整漂移；精确值由上面 5 个点位钉。
+//
+// 判别取证（工单 F-3："== 4 ⇒ == 5 必须红"）：见 task-18-report.md 的 F-3 台账——
+//   字面形态改 `bands == 4` 为 `bands == 5` ⇒ alpha 恒 255 ⇒ 红在"三档 alpha 齐全"与
+//   (5,5)/(5,80)/(40,5) 三个点位；提变量形态把 4 提成常量再改成 5 ⇒ 同一批断言红。
+//   另两条**顺带**被钉住的实现错误：band4 当颜色用（R 变成 85 ⇒ 红在 R 的取值集合）、
+//   通道映射整体右移（B 取到 band4 ⇒ 红在 B 的取值集合）。
+// add_alpha 两档都跑：源不含 NoData ⇒ dstalpha 在覆盖区内恒 255，而 alpha 字节仍必须取
+//   band4 的拉伸值 ⇒ 这一档顺带钉住"bands==4 时 band4 的 alpha **压过** dstalpha"的口径。
+TEST_F(PluginTest, TileFourBandSourcePutsBandFourIntoAlpha) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;   // 不声明 NoData
+    std::vector<float> band1(static_cast<size_t>(64) * 64, 0.0f);
+    std::vector<float> band2(static_cast<size_t>(64) * 64, 0.0f);
+    std::vector<float> band3(static_cast<size_t>(64) * 64, 0.0f);
+    std::vector<float> band4(static_cast<size_t>(64) * 64, 0.0f);
+    for (int y = 0; y < 64; ++y) {
+        for (int x = 0; x < 64; ++x) {
+            const size_t i = static_cast<size_t>(y) * 64 + x;
+            const bool left = (x < 32);
+            const bool north = (y < 32);
+            band1[i] = left ? 0.0f : 200.0f;
+            band2[i] = north ? 0.0f : 200.0f;
+            band3[i] = (left != north) ? 200.0f : 0.0f;
+            band4[i] = (y < 16) ? 51.0f : (y < 32 ? 102.0f : 204.0f);
+        }
+    }
+    const std::string input = t18WriteBandsRaster(
+        getTestDir(), "t18_rgba4_input.tif", 64, 64,
+        std::vector<std::vector<float>>{band1, band2, band3, band4}, options);
+    ASSERT_FALSE(input.empty());
+
+    // 瓦片内 (行, 列) → 期望 (R,G,B,A)（算术出处见头注释）
+    struct Spot { int row; int col; int r; int g; int b; int a; };
+    const std::vector<Spot> spots = {
+        { 5,   5,   0,   0,   0,   0},
+        { 5,  80, 255,   0, 255,   0},
+        {40,   5,   0,   0,   0,  85},
+        {80,   5,   0, 255, 255, 255},
+        {80,  80, 255, 255,   0, 255},
+    };
+
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool addAlpha = pass == 0;
+        const fs::path output = getTestDir() /
+            (addAlpha ? "t18_rgba4_on_output" : "t18_rgba4_off_output");
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["resampling"] = std::string("nearest");
+        params["add_alpha"] = addAlpha;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "add_alpha=" << addAlpha << ": " << result.message;
+        const auto files = t17CollectTileFiles(output);
+        ASSERT_EQ(files.size(), 1u)
+            << "add_alpha=" << addAlpha << " z=8 夹具应产出单瓦片，实际 ["
+            << t17JoinFiles(files) << "]";
+        const T18TileBands tile = t18ReadTile(output / fs::path(*files.begin()));
+        ASSERT_TRUE(tile.ok());
+        ASSERT_EQ(tile.bands, 4) << "add_alpha=" << addAlpha << " 的 4→RGBA 容器口径";
+
+        // ① 三个颜色波段各自只取 {0,255}：证明 band4 **没有**被当成颜色用，
+        //    也没有发生"通道整体右移"（那会把 85 带进 R 或 B）。
+        for (int band = 1; band <= 3; ++band) {
+            const T18OpaqueStats st = t18StatsInRect(tile, band, 0, 0, 105, 105);
+            ASSERT_GT(st.count, 0);
+            EXPECT_EQ(st.minValue, 0) << "add_alpha=" << addAlpha << " band" << band
+                                     << " 的暗档不是 0（min=" << st.minValue << "）⇒ 85/255 串进颜色了";
+            EXPECT_EQ(st.maxValue, 255) << "add_alpha=" << addAlpha << " band" << band
+                                        << " 的亮档不是 255（max=" << st.maxValue << "）";
+            int odd = 0;
+            for (int y = 0; y < 105; ++y) {
+                for (int x = 0; x < 105; ++x) {
+                    const uchar v = tile.data[static_cast<size_t>(band) - 1][
+                        static_cast<size_t>(y) * tile.width + x];
+                    if (v != 0 && v != 255) ++odd;
+                }
+            }
+            EXPECT_EQ(odd, 0) << "add_alpha=" << addAlpha << " band" << band
+                              << " 出现了非 {0,255} 的像元数 " << odd;
+        }
+
+        // ② 第 4 波段必须真的来自源 band4：三档 {0,85,255} 都在，且**不是**常量 255。
+        const T18OpaqueStats alpha = t18StatsInRect(tile, 4, 0, 0, 105, 105);
+        ASSERT_GT(alpha.count, 0);
+        EXPECT_EQ(alpha.minValue, 0)
+            << "add_alpha=" << addAlpha << " 的 alpha 下界不是 0 ⇒ 源 band4 的 51 档没被归一到全透明"
+            << "（min=" << alpha.minValue << "）";
+        EXPECT_EQ(alpha.maxValue, 255) << "add_alpha=" << addAlpha << " alpha 上界 " << alpha.maxValue;
+        int nTransp = 0, nMid = 0, nOpaque = 0;
+        for (int y = 0; y < 105; ++y) {
+            for (int x = 0; x < 105; ++x) {
+                const uchar a = tile.data[3][static_cast<size_t>(y) * tile.width + x];
+                if (a == 0) ++nTransp; else if (a == 85) ++nMid; else if (a == 255) ++nOpaque;
+            }
+        }
+        EXPECT_GE(nTransp, 2000)
+            << "add_alpha=" << addAlpha << " 源 band4=51 那一档没被归一成 alpha=0（像元数 "
+            << nTransp << "）⇒ bands==4 分支又变成常量 255";
+        EXPECT_GE(nMid, 2000)
+            << "add_alpha=" << addAlpha << " 源 band4=102 的**部分透明**没落到 85（像元数 "
+            << nMid << "）⇒ 口径②（alpha 吃整幅拉伸）没被实现";
+        EXPECT_GE(nOpaque, 4000) << "add_alpha=" << addAlpha << " alpha=255 档像元数 " << nOpaque;
+
+        // ③ 五个点位的逐像元精确值（R,G,B,A 四个通道一起钉）。
+        for (const auto& s : spots) {
+            const size_t i = static_cast<size_t>(s.row) * tile.width + s.col;
+            EXPECT_EQ(tile.data[0][i], static_cast<uchar>(s.r))
+                << "add_alpha=" << addAlpha << " 像元(" << s.row << "," << s.col << ") 的 R";
+            EXPECT_EQ(tile.data[1][i], static_cast<uchar>(s.g))
+                << "add_alpha=" << addAlpha << " 像元(" << s.row << "," << s.col << ") 的 G";
+            EXPECT_EQ(tile.data[2][i], static_cast<uchar>(s.b))
+                << "add_alpha=" << addAlpha << " 像元(" << s.row << "," << s.col << ") 的 B";
+            EXPECT_EQ(tile.data[3][i], static_cast<uchar>(s.a))
+                << "add_alpha=" << addAlpha << " 像元(" << s.row << "," << s.col << ") 的 A"
+                << "（期望来自源 band4）";
+        }
+    }
+}
