@@ -11027,6 +11027,20 @@ TEST_F(PluginTest, TileOverviewResamplingDrivesOutputBytes) {
                                                      alpha.data(), 256, 256, GDT_Byte, 0, 0), CE_None);
             EXPECT_GT(alpha[50 * 256 + 50], 0) << method << " 覆盖区被垫成透明";
             EXPECT_EQ(alpha[200 * 256 + 200], 0) << method << " 未覆盖边缘仍不透明（coverMask 失效）";
+            // F5（修复轮 1，审查 m-5）：把"子像素放置"从**字节巧合**升级成**放置钉**。
+            // 覆盖缘的字面算术（按 EPSG:3857 定义独立算，不调被测函数）：
+            //   z=8 单瓦片米宽 = 2·20037508.342789244/256 = 156543.0339；夹具 x∈[0,64000]、y∈[-64000,0]
+            //   ⇒ 覆盖比例 64000/156543.0339 = 0.40884 ⇒ dx1 = ceil(0.40884·256) = ceil(104.66) = 105
+            //   ⇒ 不透明列只能是 [0,104]，列 105 起必须透明；y 向 tileResY 同值 ⇒ 行同款。
+            // WHY 要钉具体列/行：审查者实测 ceil→floor 的变异当时只有 #300 红，而红的机理是
+            // nearest 与 average 两次输出**字节恰好撞成一致**才触发 EXPECT_NE
+            // （build/t17rev_R3a_dx1_ceil_to_floor.log），#296 对 1px 放置完全不敏感 ⇒ 偶发红、机理脆弱。
+            // 现在缘列 104/105 直接进断言，floor 把缘缩到 103 就立刻红，与插值组合无关
+            // （这 4 行在 nearest 与 average 两个 pass 里各跑一遍，就是"与插值无关"的自证）。
+            EXPECT_GT(alpha[50 * 256 + 104], 0) << method << " 覆盖缘列 104 应不透明（dx1=ceil(104.66)=105）";
+            EXPECT_EQ(alpha[50 * 256 + 105], 0) << method << " 覆盖缘外一列 105 应透明";
+            EXPECT_GT(alpha[104 * 256 + 50], 0) << method << " 覆盖缘行 104 应不透明（dy1=ceil(104.66)=105）";
+            EXPECT_EQ(alpha[105 * 256 + 50], 0) << method << " 覆盖缘外一行 105 应透明";
         }
         if (pass == 0) nearestBytes = bytes; else averageBytes = bytes;
     }
