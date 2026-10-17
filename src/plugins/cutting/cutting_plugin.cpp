@@ -1002,7 +1002,18 @@ gis::framework::Result CuttingPlugin::doTile(
     progress.onMessage("Total tiles to generate: " + std::to_string(totalTiles));
     progress.onProgress(0.12);
 
+    // N62 同形残留收口（修复轮 F6）：改前 `++tilesGenerated` 挂在**每一个** continue 分支上
+    // （零交集、零面积、读失败、全 NoData、skipBlank、resume 命中），而 metadata["tiles_generated"]
+    // 与成功消息都吃这个数 ⇒ "报 N tiles 但磁盘上没 N 个文件"这条本任务要消灭的形态又活了。
+    // 三个量各管一件事：
+    //   tilesGenerated 交付的瓦片文件数（写出成功，或 resume 命中已存在的同一张 ⇒ 产物确实在 output 里）
+    //   tilesSkipped   没有产物的瓦片数（上面那几个 continue）
+    //   tilesProcessed 已处理数 = 前两者之和，**只**喂进度百分比（口径照旧，不拿它报产物数）
+    // 元数据两键都写（沿用 snake_case 同族命名）；成功消息仍报 tilesGenerated ⇒ 消息里的数字
+    // 必须能在 output 下数出来（用例 TileCountersMatchWrittenTileFiles 钉这条）。
     int tilesGenerated = 0;
+    int tilesSkipped = 0;
+    int tilesProcessed = 0;
     const std::string ext = tileFileExt(fmt);
 
     // hasNd/srcNodata 只在 warped 数据集上读一次：层级数据集被 R-T17-7 删除后
@@ -1038,7 +1049,8 @@ gis::framework::Result CuttingPlugin::doTile(
                 const std::string tilePath = tileDir + "/" + std::to_string(tyWrite) + ext;
 
                 if (resume && std::filesystem::exists(tilePath)) {
-                    ++tilesGenerated;
+                    ++tilesGenerated;   // 已存在=已交付：产物真的在 output 里，仍归 generated
+                    ++tilesProcessed;
                     continue;
                 }
 
@@ -1051,7 +1063,8 @@ gis::framework::Result CuttingPlugin::doTile(
                 // wgt[2]/wgt[4] 为零、wgt[1]>0、wgt[5]<0，反算不含近似。
                 const gis::core::TileRect rect = gis::core::tileWorldRect(grid, tileSize, tx, ty);
                 if (!rect.valid) {
-                    ++tilesGenerated;
+                    ++tilesSkipped;
+                    ++tilesProcessed;
                     continue;
                 }
 
@@ -1065,7 +1078,8 @@ gis::framework::Result CuttingPlugin::doTile(
                 const int r1 = std::min(wHeight, static_cast<int>(std::ceil(std::max(syTop, syBot))));
                 if (c1 <= c0 || r1 <= r0) {
                     // 与源包络零交集：不得产出文件（端到端用例的字面集合钉不允许空瓦片）。
-                    ++tilesGenerated;
+                    ++tilesSkipped;
+                    ++tilesProcessed;
                     continue;
                 }
 
@@ -1081,7 +1095,8 @@ gis::framework::Result CuttingPlugin::doTile(
                 const int dy0 = std::clamp(static_cast<int>(std::floor((rect.maxY - ayTop) / tileResY)), 0, tileSize);
                 const int dy1 = std::clamp(static_cast<int>(std::ceil((rect.maxY - ayBot) / tileResY)), 0, tileSize);
                 if (dx1 <= dx0 || dy1 <= dy0) {
-                    ++tilesGenerated;
+                    ++tilesSkipped;
+                    ++tilesProcessed;
                     continue;
                 }
 
@@ -1094,7 +1109,8 @@ gis::framework::Result CuttingPlugin::doTile(
                     block.data, block.cols, block.rows, GDT_Float32, 0, 0);
 
                 if (err != CE_None) {
-                    ++tilesGenerated;
+                    ++tilesSkipped;
+                    ++tilesProcessed;
                     continue;
                 }
 
@@ -1118,7 +1134,8 @@ gis::framework::Result CuttingPlugin::doTile(
                 }
 
                 if (bandMin > bandMax) {
-                    ++tilesGenerated;
+                    ++tilesSkipped;
+                    ++tilesProcessed;
                     continue;
                 }
 
@@ -1139,19 +1156,24 @@ gis::framework::Result CuttingPlugin::doTile(
                 }
 
                 if (skipBlank && isTileBlank(rgba)) {
-                    ++tilesGenerated;
+                    ++tilesSkipped;
+                    ++tilesProcessed;
                     continue;
                 }
 
                 std::filesystem::create_directories(tileDir);
-                if (!encodeTile(rgba, fmt, jpegQuality, tilePath)) {
+                if (encodeTile(rgba, fmt, jpegQuality, tilePath)) {
+                    ++tilesGenerated;   // 只有真的写出文件才算交付
+                } else {
+                    // 写失败 = 没有产物：归 skipped 而不是 generated，否则 metadata 又在报不存在的文件。
                     progress.onMessage("Warning: failed to write " + tilePath);
+                    ++tilesSkipped;
                 }
-
-                ++tilesGenerated;
-                if ((tilesGenerated % 50) == 0) {
+                ++tilesProcessed;
+                if ((tilesProcessed % 50) == 0) {
                     progress.throwIfCancelled();
-                    const double pct = 0.12 + 0.85 * static_cast<double>(tilesGenerated) / std::max(1, totalTiles);
+                    // 百分比继续用"已处理数"（含跳过），口径与改前一致；F6 没顺手改它。
+                    const double pct = 0.12 + 0.85 * static_cast<double>(tilesProcessed) / std::max(1, totalTiles);
                     progress.onProgress(pct);
                 }
             }
@@ -1179,7 +1201,10 @@ gis::framework::Result CuttingPlugin::doTile(
 
     auto result = gis::framework::Result::ok(
         "Tile generation completed: " + std::to_string(tilesGenerated) + " tiles", output);
+    // 消息文案格式保持原样（gui_data_support.cpp:2264 的翻译表按前缀 "Tile generation completed"
+    // 匹配），但里面的数字现在是**交付文件数**，不再是含跳过的处理数（N62 同形残留收口）。
     result.metadata["tiles_generated"] = std::to_string(tilesGenerated);
+    result.metadata["tiles_skipped"] = std::to_string(tilesSkipped);
     result.metadata["zoom_range"] = std::to_string(minZoom) + "-" + std::to_string(maxZoom);
     result.metadata["scheme"] = scheme;
     result.metadata["profile"] = profile;

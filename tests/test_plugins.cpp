@@ -11358,3 +11358,53 @@ TEST_F(PluginTest, TileSchemeTmsInvertsWrittenRowNumberButKeepsTileSetSize) {
         << "tms 反演后的文件名 y 号不对（实际 [" << t17JoinFiles(producedTms) << "]）";
     EXPECT_EQ(producedTms.size(), producedXyz.size()) << "tms 与 xyz 同输入必须同规模";
 }
+
+// F6（Task 17 修复轮 1，控制器新增的 N62 同形残留）：tiles_generated 必须是**实际交付的文件数**。
+// 改前 `++tilesGenerated` 挂在每一个 continue 分支上（零交集/零面积/读失败/全 NoData/skipBlank/resume），
+// 而 metadata["tiles_generated"] 与成功消息都吃这个数 ⇒ "报 N tiles 但磁盘上没有 N 个文件"
+// 这条本任务刚消灭的形态在新代码里又活了；`grep -rn "tiles_generated" tests/` 改前 = exit 1（零命中）。
+// 夹具沿用 #296（南端+东端 NoData 带）：z=10 候选 4 全写、z=11 候选 16 只写 9（列 1027 与行 1027
+// 整体落 NoData 带 ⇒ 16−4−4+1=9）⇒ **本轮跑里同时存在被跳过的瓦片**（13 写 / 7 跳 / 20 候选）。
+// WHY 必须用含跳过的夹具：全写的夹具下"含跳过"与"只算写出"两口径同值，
+// 任何把计数退回旧口径的变异都测不出来 ⇒ 这条断言就没牙。
+TEST_F(PluginTest, TileCountersMatchWrittenTileFiles) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    options.hasNoData = true;
+    std::vector<float> data(64 * 64, 0.0f);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 32; ++x) data[static_cast<size_t>(y) * 64 + x] = 200.0f;
+    for (int y = 56; y < 64; ++y)
+        for (int x = 0; x < 64; ++x) data[static_cast<size_t>(y) * 64 + x] = -9999.0f;
+    for (int y = 0; y < 56; ++y)
+        for (int x = 56; x < 64; ++x) data[static_cast<size_t>(y) * 64 + x] = -9999.0f;
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_counters_input.tif", 64, 64, data, options);
+
+    const fs::path output = getTestDir() / "t17_counters_output";
+    fs::remove_all(output);
+    auto params = t17BaseTileParams(input, utf8PathString(output));
+    params["min_zoom"] = 10;
+    params["max_zoom"] = 11;
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    // t17CollectTileFiles 已经排除 metadata.json ⇒ 它数到的就是 output 下的瓦片文件数。
+    const auto produced = t17CollectTileFiles(output);
+    ASSERT_EQ(produced.size(), 13u) << "夹具的产出规模变了，实际 [" << t17JoinFiles(produced) << "]";
+
+    // 主断言：metadata 报的数**恰等于**磁盘上数到的文件数（N62 的收口形态就是这个等式）。
+    EXPECT_EQ(result.metadata.at("tiles_generated"), std::to_string(produced.size()))
+        << "tiles_generated 与 output 下的瓦片文件数不一致";
+    EXPECT_EQ(result.metadata.at("tiles_generated"), "13") << "字面期望：13 张写出";
+    EXPECT_EQ(result.metadata.at("tiles_skipped"), "7") << "字面期望：7 张被跳过（16−9=7 张全 NoData）";
+
+    // 成功消息里的数字也要能在磁盘上数出来（用户可见的那一句同样受 N62 口径约束）。
+    EXPECT_NE(result.message.find("13 tiles"), std::string::npos) << result.message;
+    EXPECT_EQ(result.message.find("20 tiles"), std::string::npos)
+        << "成功消息又回到含跳过的旧口径了: " << result.message;
+}
