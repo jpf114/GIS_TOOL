@@ -4,6 +4,9 @@
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/result.h>
 #include <gis/framework/result_display.h>
+// Task 14：WorkflowRunner::execute 的第一批用例（改动前 tests/ 里没有任何 Workflow 用例）。
+#include <gis/framework/workflow.h>
+#include <gis/core/gdal_wrapper.h>
 #include "../src/gui/gui_data_support.h"
 #include <array>
 #include <cstdio>
@@ -11,8 +14,10 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "test_support.h"
+#include "raster_fixture.h"
 
 TEST(FrameworkTest, ResultOk) {
     auto r = gis::framework::Result::ok("success", "/path/to/output");
@@ -317,4 +322,87 @@ TEST(FrameworkTest, BuildResultSummaryTextSurfacesSummaryField) {
     EXPECT_NE(summary.find("摘要: bands=3"), std::string::npos);
     EXPECT_NE(summary.find("feature_count"), std::string::npos);
     EXPECT_EQ(summary.rfind("__summary__"), std::string::npos);
+}
+
+// ============================================================================
+// Task 14：工作流参数按 ParamSpec 类型化
+//
+// 缺陷原文：WorkflowRunner::execute 里那圈 typedParams 循环只是
+// `typedParams[it->first] = it->second;`（全透传 std::string），于是插件侧
+// getParam<int|double|bool> 在任何工作流里都取不到值、一律静默退回代码内联默认值。
+// 本套件是 WorkflowRunner::execute 的第一批用例（改动前 grep -rn "Workflow" tests/ 零命中）。
+// ============================================================================
+
+namespace {
+
+// 每个用例独占的子目录：数值断言不能被上一次运行的残留文件满足。
+std::filesystem::path workflowTypingTestDir(const std::string& caseName) {
+    const auto dir = gis::tests::defaultTestOutputDir("workflow_param_typing_output") / caseName;
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+
+// R-T14-2 的夹具：5 波段、逐波段常量。
+// band1=10 / band2=20 / band3=30 / band4=40 / band5=80。
+// 用例把 blue/red/nir 写成 "2"/"4"/"5"，三个波段号**全都不同于**插件默认
+// （blue=1 / red=3 / nir=4，见 spindex_plugin.cpp:711-713 与 spec 默认 :233-235），
+// 因此本夹具对 Int 类型化有鉴别力：只类型化 Double、不类型化 Int 的半实现
+// 会算出 5*(40-30)/(40+180-75+1)=50/146≈0.342，与期望 200/171≈1.170 相差 0.83。
+std::string writeSpindexFixture(const std::filesystem::path& dir) {
+    return gis::tests::writeConstantBandsRaster(
+        dir, "wf_input.tif", 8, 8, {10.0f, 20.0f, 30.0f, 40.0f, 80.0f});
+}
+
+} // namespace
+
+TEST(WorkflowParamTyping, NumericWorkflowParamsAreApplied) {
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_GE(mgr.plugins().size(), 13u);
+    ASSERT_NE(mgr.find("spindex"), nullptr);
+
+    const auto dir = workflowTypingTestDir("evi_numeric");
+    const std::string input = writeSpindexFixture(dir);
+    ASSERT_FALSE(input.empty()) << "夹具栅格创建失败";
+
+    gis::framework::Workflow wf;
+    wf.name = "EVI 数值参数生效";
+    gis::framework::WorkflowStep step;
+    step.pluginName = "spindex";
+    step.actionKey = "evi";
+    step.params["input"] = "${input}";
+    step.params["output"] = "${output_dir}/evi_g5.tif";
+    step.params["blue_band"] = "2";   // 值 20（默认 1）
+    step.params["red_band"] = "4";    // 值 40（默认 3）
+    step.params["nir_band"] = "5";    // 值 80（默认 4）
+    step.params["g_value"] = "5";     // Double：不类型化就退回 2.5
+    // R-T14-5：未知键必须保持透传（改成显式报错撞挂账 N35，本任务不动）。
+    // 这一行同时把"未知键被拒绝"的假实现钉红：本用例的 result.success 会变 false。
+    step.params["not_a_spec_key"] = "kept-as-string";
+    wf.steps.push_back(step);
+
+    const std::string output = (dir / "out" / "evi_g5.tif").string();
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(wf, {
+        {"input", input},
+        {"output_dir", (dir / "out").string()},
+        {"basename", "wf"},
+    });
+    ASSERT_TRUE(result.success) << result.message;
+
+    // 期望值推导（spindex_plugin.cpp:727-729，EVI = G*(NIR-RED)/(NIR+C1*RED-C2*BLUE+L)，
+    // c1=6.0 / c2=7.5 / evi_l=1.0 均走代码内联默认，夹具没传）：
+    //   类型化生效后：  5*(80-40) / (80 + 6*40 - 7.5*20 + 1) = 200/171 ≈ 1.169591
+    //   类型化前（全退回默认：blue=1→10、red=3→30、nir=4→40、G=2.5）：
+    //                  2.5*(40-30) / (40 + 6*30 - 7.5*10 + 1) = 25/146 ≈ 0.171233
+    //   ⇒ 判别幅度 1.169591 - 0.171233 = 0.998358，是本用例容差 1e-4f 的 ~9984 倍，
+    //     不是擦边断言。R-T14-9：safeDivide 先给分母 +1e-10f，实测 200/(171+1e-10)，
+    //     偏差在 1e-12 量级；夹具是 Float32，200/171 自身的表示误差已在 1e-7 量级，
+    //     所以容差停在 1e-4f，不得收到 1e-7f 以下去追浮尾数。
+    const float value = gis::tests::readPixel(output, 1, 3, 3);
+    EXPECT_NEAR(value, 200.0f / 171.0f, 1e-4f)
+        << "g_value/*_band 未生效，工作流仍在用代码内联默认值（退回值应为 25/146≈0.171233）";
 }

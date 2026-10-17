@@ -60,9 +60,39 @@ WorkflowResult WorkflowRunner::execute(
             resolvedStringParams[paramIt->first] = resolvedValue;
         }
 
+        // Task 14：按插件声明的 ParamSpec 把字符串参数解析成带类型的 ParamValue。
+        // 旧形态是这个循环体只有 `typedParams[it->first] = it->second;` 一句全透传，
+        // 于是插件侧的 getParam<int|double|bool> 永远取不到对应备选、一律静默退回代码内联
+        // 默认值——数值参数在任何工作流里都不生效。解析形态与 CLI 的 convertParam
+        // （src/cli/main.cpp:70-83）一致：找到 spec 就 tryParseParamValue，找不到的未知键
+        // 保持透传字符串（把未知键改成显式报错会撞挂账 N35 的 CLI 同口径问题，本任务不动）。
+        const std::vector<ParamSpec> specs = plugin->paramSpecs();
         std::map<std::string, ParamValue> typedParams;
         for (auto it = resolvedStringParams.begin(); it != resolvedStringParams.end(); ++it) {
-            typedParams[it->first] = it->second;
+            const ParamSpec* matching = nullptr;
+            for (const auto& spec : specs) {
+                if (spec.key == it->first) {
+                    matching = &spec;
+                    break;
+                }
+            }
+            if (!matching) {
+                typedParams[it->first] = it->second;
+                continue;
+            }
+            ParamValue parsed;
+            std::string parseError;
+            if (!tryParseParamValue(*matching, it->second, parsed, parseError)) {
+                // 键名由工作流侧拼进去：tryParseParamValue 的文案取 paramDisplayName(spec)
+                // （displayName 非空时用它，见 param_spec.h:66-68），里面**没有**键名，
+                // 只有"参数“间隔步长”不是有效数字"这种人类可读串——两处都要，缺一不可定位。
+                // 不改共用的 tryParseParamValue：它同时被 CLI 与既有断言依赖。
+                result.message = "Step " + std::to_string(i + 1) + " (" + step.pluginName + "." +
+                                 step.actionKey + ") invalid parameter " + it->first + ": " + parseError;
+                result.stepMessages.push_back(result.message);
+                return result;
+            }
+            typedParams[it->first] = parsed;
         }
         typedParams["action"] = step.actionKey;
 
