@@ -10778,6 +10778,122 @@ std::string t17JoinFiles(const std::set<std::string>& files) {
     return joined;
 }
 
+// ---------------------------------------------------------------------------
+// Task 18 的夹具与读回资产
+// ---------------------------------------------------------------------------
+
+// 写"多波段 + 逐波段像元数据"的夹具栅格。
+// WHY 不复用 gis::tests::writeConstantBandsRaster：它每波段只能写**一个常数**，而本任务的
+//   两条判别用例都要"波段之间分布不同"（R-T18-3：常值三波段夹具下逐瓦片统计与整幅统计
+//   产出逐像元相同，抓不到拉伸口径）与"某一个波段局部 NoData"（R-T18-9：add_alpha 的
+//   true/false 只在多波段的局部空洞上才可区分，单波段下两者恒等 ⇒ 这正是 N65 藏了那么久的原因）。
+// WHY 复用 createFixtureRaster + applyFixtureHeader：CRS / 仿射 / nodata 的口径与
+//   writeFloatRaster、writeConstantBandsRaster 完全一致（R-T18-7 复用既有资产，不另起一套），
+//   nodata 仍然按 options.hasNoData 声明到**全部**波段。
+std::string t18WriteBandsRaster(const fs::path& dir, const std::string& fileName,
+                                int width, int height,
+                                const std::vector<std::vector<float>>& bandData,
+                                const gis::tests::RasterFixtureOptions& options) {
+    if (bandData.empty() || width <= 0 || height <= 0) {
+        ADD_FAILURE() << "t18WriteBandsRaster: invalid request (" << width << "x" << height
+                      << ", bands=" << bandData.size() << ")";
+        return {};
+    }
+    const size_t pixels = static_cast<size_t>(width) * static_cast<size_t>(height);
+    for (size_t b = 0; b < bandData.size(); ++b) {
+        if (bandData[b].size() < pixels) {
+            ADD_FAILURE() << "t18WriteBandsRaster: band " << b + 1 << " has "
+                          << bandData[b].size() << " pixels < " << pixels;
+            return {};
+        }
+    }
+    const auto path = (dir / fileName).string();
+    auto ds = gis::tests::createFixtureRaster(path, width, height,
+                                              static_cast<int>(bandData.size()), GDT_Float32,
+                                              "t18WriteBandsRaster");
+    if (!ds) return {};   // 失败已由 createFixtureRaster 报过（D2/D4 口径）
+    gis::tests::applyFixtureHeader(ds.get(), options, width, height);
+    for (size_t b = 0; b < bandData.size(); ++b) {
+        GDALRasterBand* band = ds->GetRasterBand(static_cast<int>(b) + 1);
+        if (!band) {
+            ADD_FAILURE() << "t18WriteBandsRaster: band " << b + 1 << " is null for " << path;
+            return {};
+        }
+        band->RasterIO(GF_Write, 0, 0, width, height,
+                       const_cast<float*>(bandData[b].data()), width, height, GDT_Float32, 0, 0);
+        band->FlushCache();
+    }
+    return path;
+}
+
+// 读回一张瓦片的全部波段（R-T18-7：一律走 gis::core::openRaster，禁用 cv::imread——
+// gis_tests 只链 opencv_core+imgproc，imgcodecs 会 LNK2019）。
+struct T18TileBands {
+    int bands = 0;
+    int width = 0;
+    int height = 0;
+    std::vector<std::vector<uchar>> data;   // data[i] == 第 i+1 波段，行主序 width 步长
+    bool ok() const { return bands > 0 && width > 0 && height > 0; }
+};
+
+T18TileBands t18ReadTile(const fs::path& path) {
+    T18TileBands out;
+    auto ds = gis::core::openRaster(path.string(), true);
+    if (!ds) {
+        ADD_FAILURE() << "t18ReadTile: 打开瓦片失败 " << utf8PathString(path);
+        return out;
+    }
+    out.bands = ds->GetRasterCount();
+    out.width = ds->GetRasterXSize();
+    out.height = ds->GetRasterYSize();
+    out.data.clear();
+    for (int b = 1; b <= out.bands; ++b) {
+        std::vector<uchar> buf(static_cast<size_t>(out.width) * static_cast<size_t>(out.height));
+        if (ds->GetRasterBand(b)->RasterIO(GF_Read, 0, 0, out.width, out.height, buf.data(),
+                                           out.width, out.height, GDT_Byte, 0, 0) != CE_None) {
+            ADD_FAILURE() << "t18ReadTile: 读波段失败 " << utf8PathString(path) << " band=" << b;
+            return out;
+        }
+        out.data.push_back(std::move(buf));
+    }
+    return out;
+}
+
+// 不透明像元（最后一波段 alpha>0）上的统计量。
+struct T18OpaqueStats {
+    int count = 0;
+    int minValue = 0;
+    int maxValue = 0;
+    double mean = 0.0;
+};
+
+// band 是 1-based 的 openRaster 波段号；alpha 取**最后一个**波段（本任务的容器口径：
+// 输出恒为 CV_8UC4 ⇒ 读回恒为 4 波段，见 TileRendersThreeBandsAsColorNotGray 的头注释）。
+T18OpaqueStats t18StatsOverOpaque(const T18TileBands& t, int band) {
+    T18OpaqueStats s;
+    if (!t.ok() || band < 1 || band > t.bands) return s;
+    const std::vector<uchar>& target = t.data[static_cast<size_t>(band) - 1];
+    const std::vector<uchar>& alpha = t.data[t.data.size() - 1];
+    s.minValue = 255;
+    s.maxValue = 0;
+    double sum = 0.0;
+    for (size_t i = 0; i < alpha.size(); ++i) {
+        if (alpha[i] == 0) continue;
+        const int v = target[i];
+        sum += v;
+        if (v < s.minValue) s.minValue = v;
+        if (v > s.maxValue) s.maxValue = v;
+        ++s.count;
+    }
+    if (s.count == 0) {
+        s.minValue = 0;
+        s.maxValue = 0;
+    } else {
+        s.mean = sum / s.count;
+    }
+    return s;
+}
+
 } // namespace
 
 // F1 + R-T17-7/9 的主几何钉：z=10 与 z=11 的瓦片路径集合必须**恰等于**字面集合。
@@ -11407,4 +11523,407 @@ TEST_F(PluginTest, TileCountersMatchWrittenTileFiles) {
     EXPECT_NE(result.message.find("13 tiles"), std::string::npos) << result.message;
     EXPECT_EQ(result.message.find("20 tiles"), std::string::npos)
         << "成功消息又回到含跳过的旧口径了: " << result.message;
+}
+
+// ===========================================================================
+// Task 18：多波段渲染 + 整幅统一拉伸 + 真 alpha（R-T18-3/4/6/9）
+// ===========================================================================
+
+// T18-S5(1)（R-T18-3 后半、R-T18-4(i)(ii)）：三波段输入必须渲染成彩色，不许退化成灰度。
+//
+// 通道顺序与容器口径（R-T18-4(ii) 要求"哪两个通道该相等"不许靠猜，这里把口径写死）：
+//   输出矩阵恒为 CV_8UC4，OpenCV 的内存序是 (B,G,R,A)，cv::imwrite 写 PNG 时转成
+//   (R,G,B,A)；GDAL 的 PNG 驱动按 (R,G,B,A) 暴露波段 ⇒ **openRaster 的波段号 i 就是
+//   图像的第 i 个颜色通道**（band1=R、band2=G、band3=B、band4=A），用例里不再做第二次翻转。
+//   插件侧的映射规则是 bandForChannel(c) = min(c+1, colorBands)，c=0,1,2 → R,G,B：
+//     1 波段 → R=G=B=band1（灰度）  2 波段 → R=b1,G=b2,B=b2  3 波段 → R=b1,G=b2,B=b3
+//     4 波段 → R=b1,G=b2,B=b3，band4 进 alpha
+//   ⇒ 单波段灰度的口径是"前三带逐像元相等"（不是"只写 1 个波段"）：既有锚 #298 的
+//     ASSERT_EQ(ds->GetRasterCount(), 4) 对单波段输入钉住了 4 波段容器（GOLD），
+//     R-T18-4(i) 要求的"定死口径"就定在这里，TileSingleBandInputRendersGrayTriple 锁它。
+//
+// 夹具为什么长这样（R-T18-3）：三个波段各自"某列之后翻到 200"，翻转列不同 ⇒ 三个波段的
+//   **分布**不同。常值三波段夹具（writeConstantBandsRaster {250,128,20}）做不到这件事：
+//   每波段整幅恒定 ⇒ 拉伸后三通道逐像元相等 ⇒ 灰度退化与彩色产出无法区分，用例没牙。
+//   翻到同一个 200 还顺带把"波段间亮度差"和"拉伸参数不同"解耦：三个波段的 (min,max)
+//   都是 (0,200) ⇒ 归一化后只能是 0 或 255 ⇒ 期望均值可以用算术写死（下面逐条给）。
+//
+// 期望算术（z=8 单瓦片，瓦片米宽 156543.0339、tileRes=611.496；夹具 64×64@1000 m ⇒
+//   覆盖子矩形 dx1=ceil(64000/611.496)=105，即不透明列/行区间 [0,104]，105×105 像元）：
+//   overview_resampling 取默认 nearest ⇒ INTER_NEAREST 把 64 列放大到 105 列：
+//   目标列 d 取源列 floor(d*64/105)，于是"源列 >= k"翻到 255 的目标列起点是 ceil(k*105/64)：
+//     band1 k=32 ⇒ d>=53 ⇒ 52 列亮 ⇒ mean(R)=255*52/105=126.3
+//     band2 k=48 ⇒ d>=79 ⇒ 26 列亮 ⇒ mean(G)=255*26/105= 63.1
+//     band3 k=16 ⇒ d>=27 ⇒ 78 列亮 ⇒ mean(B)=255*78/105=189.4
+//   ⇒ 三者两两相差 63 左右，容差取 15（warp 栅格与源栅格若有半像元错位，只会让边界挪 1~2
+//   列，均值挪 2.4~4.9，远在容差内）。
+TEST_F(PluginTest, TileRendersThreeBandsAsColorNotGray) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    const auto makeBand = [](int splitCol, float high) {
+        std::vector<float> data(static_cast<size_t>(64) * 64, 0.0f);
+        for (int y = 0; y < 64; ++y)
+            for (int x = splitCol; x < 64; ++x) data[static_cast<size_t>(y) * 64 + x] = high;
+        return data;
+    };
+    const std::string input = t18WriteBandsRaster(
+        getTestDir(), "t18_color_input.tif", 64, 64,
+        std::vector<std::vector<float>>{makeBand(32, 200.0f), makeBand(48, 200.0f), makeBand(16, 200.0f)},
+        options);
+    ASSERT_FALSE(input.empty());
+
+    const fs::path output = getTestDir() / "t18_color_output";
+    fs::remove_all(output);
+    auto params = t17BaseTileParams(input, utf8PathString(output));
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+    params["resampling"] = std::string("nearest");   // warp 侧也别糊化边界（口径见上）
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    const auto files = t17CollectTileFiles(output);
+    ASSERT_EQ(files.size(), 1u) << "z=8 夹具应产出单瓦片，实际 [" << t17JoinFiles(files) << "]";
+    const T18TileBands tile = t18ReadTile(output / fs::path(*files.begin()));
+    ASSERT_TRUE(tile.ok());
+    EXPECT_EQ(tile.bands, 4) << "容器口径：输出恒为 RGBA 四波段（#298 同款）";
+
+    const T18OpaqueStats r = t18StatsOverOpaque(tile, 1);
+    const T18OpaqueStats g = t18StatsOverOpaque(tile, 2);
+    const T18OpaqueStats b = t18StatsOverOpaque(tile, 3);
+    ASSERT_GT(r.count, 0);
+    EXPECT_EQ(r.count, g.count);   // 同一批不透明像元上比较三个通道
+    EXPECT_EQ(g.count, b.count);
+
+    // 主判别：三通道必须两两不等（现实现只读 band 1 ⇒ 三通道逐像元相等 ⇒ 这里红）
+    EXPECT_GT(std::abs(r.mean - g.mean), 40.0)
+        << "R/G 通道均值相同 ⇒ 三波段被退化成灰度：r=" << r.mean << " g=" << g.mean;
+    EXPECT_GT(std::abs(g.mean - b.mean), 40.0)
+        << "G/B 通道均值相同 ⇒ 三波段被退化成灰度：g=" << g.mean << " b=" << b.mean;
+    EXPECT_GT(std::abs(r.mean - b.mean), 40.0)
+        << "R/B 通道均值相同 ⇒ 三波段被退化成灰度：r=" << r.mean << " b=" << b.mean;
+
+    // 顺序判别：band1→R、band2→G、band3→B 的字面期望（交换 R/B 的变异只红这一组）
+    EXPECT_NEAR(r.mean, 126.3, 15.0) << "band1→R 的期望均值不对";
+    EXPECT_NEAR(g.mean, 63.1, 15.0) << "band2→G 的期望均值不对";
+    EXPECT_NEAR(b.mean, 189.4, 15.0) << "band3→B 的期望均值不对";
+    EXPECT_GT(b.mean, r.mean) << "通道顺序应为 B(=band3) > R(=band1)";
+    EXPECT_GT(r.mean, g.mean) << "通道顺序应为 R(=band1) > G(=band2)";
+}
+
+// T18-S5(2)（R-T18-3 前半的落地形态、R-T18-6）：拉伸参数必须按**整幅一次**统计，
+// 同一地物在不同瓦片里的亮度必须一致。
+//
+// 为什么这条夹具能区分"整幅统计"与"逐瓦片统计"，而常值夹具不能（R-T18-3/R-T18-6）：
+//   夹具只有 1 个波段，但把**暗像素全部放在西半**（源列 0..15 = 0，其余 = 200）。
+//   z=10 的瓦片米宽 39135.758 ⇒ 列 512 覆盖 x∈[0,39135.758)（源列 0..39，含 0 与 200 两档），
+//   列 513 覆盖 x∈[39135.758,78271.516)（源列 40..63，**整幅只有 200 一档**）。
+//     逐瓦片统计：513 那几张 bandMin=bandMax=200 ⇒ range 走 :1157 的 1.0 兜底
+//                 ⇒ 255*(200-200)/1.0 = 0 ⇒ 同一块 200 的地物在 513 里是**全黑**；
+//     整幅统计：  全幅 (min,max)=(0,200) ⇒ 200 → 255 ⇒ 512 与 513 里同一地物都是 255。
+//   ⇒ 红的是"瓦片 513 的亮度"这一组断言（EXPECT_EQ(east.maxValue, 255) /
+//     EXPECT_EQ(east.minValue, 255) / EXPECT_EQ(west.maxValue, east.maxValue)），
+//     而瓦片 512 的断言在两种实现下都绿 ⇒ 点名红色来自东列，不是西列。
+//   另加 west.minValue==0 一条，防"整幅统计把对比度洗白"（若有人把 range 兜底改成
+//   max=min+1 之类，暗档会被抬起来 ⇒ 这条红）。
+TEST_F(PluginTest, TileStretchIsWholeSceneWideNotPerTile) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(static_cast<size_t>(64) * 64, 200.0f);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 16; ++x) data[static_cast<size_t>(y) * 64 + x] = 0.0f;   // 暗档只住西半
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t18_stretch_input.tif", 64, 64, data, options);
+    ASSERT_FALSE(input.empty());
+
+    const fs::path output = getTestDir() / "t18_stretch_output";
+    fs::remove_all(output);
+    auto params = t17BaseTileParams(input, utf8PathString(output));
+    params["min_zoom"] = 10;
+    params["max_zoom"] = 10;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    const std::set<std::string> expected = {
+        "10/512/512.png", "10/512/513.png", "10/513/512.png", "10/513/513.png",
+    };
+    const auto files = t17CollectTileFiles(output);
+    EXPECT_EQ(files, expected) << "瓦片集合变了，实际 [" << t17JoinFiles(files) << "]";
+
+    const T18TileBands west = t18ReadTile(output / fs::path("10/512/512.png"));
+    const T18TileBands east = t18ReadTile(output / fs::path("10/513/512.png"));
+    ASSERT_TRUE(west.ok());
+    ASSERT_TRUE(east.ok());
+
+    const T18OpaqueStats westR = t18StatsOverOpaque(west, 1);
+    const T18OpaqueStats eastR = t18StatsOverOpaque(east, 1);
+    ASSERT_GT(westR.count, 0);
+    ASSERT_GT(eastR.count, 0);
+
+    // 东列瓦片整幅只有值 200 一档：逐瓦片统计会把它压成 0（见头注释的算术）。
+    EXPECT_EQ(eastR.maxValue, 255) << "全 200 的瓦片被按自己的 min/max 拉伸 ⇒ 亮度 " << eastR.maxValue;
+    EXPECT_EQ(eastR.minValue, 255) << "同一张瓦片内部亮度必须均匀（整幅统计下 200 恒映射到 255）";
+    // 跨瓦片的同一地物（源值 200）亮度一致 —— 这就是 Produces 承诺的那件事。
+    EXPECT_EQ(westR.maxValue, eastR.maxValue)
+        << "值 200 的地物在两张瓦片里亮度不同：west=" << westR.maxValue << " east=" << eastR.maxValue;
+    // 西列瓦片仍要保住自己的暗档（防"整幅统计洗白对比度"）。
+    EXPECT_EQ(westR.minValue, 0) << "暗档被抬起来了：west.min=" << westR.minValue;
+    EXPECT_EQ(westR.maxValue, 255) << "亮档没到满量程：west.max=" << westR.maxValue;
+}
+
+// T18-S5(3)（R-T18-4(i)）：单波段输入 → 灰度口径 = 前三带逐像元相等 + 容器仍是 4 波段。
+// 这是一条**口径锁**（现实现已满足），它的判别对象是"多波段改造时把 1 波段只写进 R 通道、
+// G/B 留 0"这种实现错误：变异 bandForChannel(c)=c+1（不钳位）⇒ 本用例红。
+TEST_F(PluginTest, TileSingleBandInputRendersGrayTriple) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(static_cast<size_t>(64) * 64, 200.0f);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 32; ++x) data[static_cast<size_t>(y) * 64 + x] = 0.0f;
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t18_gray_input.tif", 64, 64, data, options);
+    ASSERT_FALSE(input.empty());
+
+    const fs::path output = getTestDir() / "t18_gray_output";
+    fs::remove_all(output);
+    auto params = t17BaseTileParams(input, utf8PathString(output));
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto files = t17CollectTileFiles(output);
+    ASSERT_EQ(files.size(), 1u) << "实际 [" << t17JoinFiles(files) << "]";
+
+    const T18TileBands tile = t18ReadTile(output / fs::path(*files.begin()));
+    ASSERT_TRUE(tile.ok());
+    EXPECT_EQ(tile.bands, 4) << "单波段输入的容器口径也是 RGBA 四波段（#298 同款锚）";
+    const size_t pixels = static_cast<size_t>(tile.width) * static_cast<size_t>(tile.height);
+    size_t diffRG = 0, diffGB = 0;
+    for (size_t i = 0; i < pixels; ++i) {
+        if (tile.data[0][i] != tile.data[1][i]) ++diffRG;
+        if (tile.data[1][i] != tile.data[2][i]) ++diffGB;
+    }
+    EXPECT_EQ(diffRG, 0u) << "灰度口径要求 R==G 逐像元相等，不等像元数 " << diffRG;
+    EXPECT_EQ(diffGB, 0u) << "灰度口径要求 G==B 逐像元相等，不等像元数 " << diffGB;
+    // 单波段仍然要有真实对比度（整幅 min/max=(0,200) ⇒ 亮档 255、暗档 0）。
+    const T18OpaqueStats gray = t18StatsOverOpaque(tile, 1);
+    ASSERT_GT(gray.count, 0);
+    EXPECT_EQ(gray.maxValue, 255);
+    EXPECT_EQ(gray.minValue, 0);
+}
+
+// T18-S5(4)（R-T18-9 / N65）：add_alpha 必须是真参数，true/false 对同一含 NoData 的输入
+// 要产出**可区分的产物**。
+//
+// 为什么必须用多波段夹具（这条也解释 N65 为什么能藏这么久）：
+//   单波段源下"任一波段有效"与"全部波段有效"是同一个判据 ⇒ true/false 恒等，
+//   所以把 :1166-1168 的退化三元 `addAlpha ? 255 : 255` 改回来、或把两支写成同一个掩膜，
+//   在单波段用例（#296/#298）上**都不会红**。判别取证只能建在"某一个波段局部 NoData、
+//   其余波段有效"的多波段源上。
+// 语义（写进插件注释，同样在这里钉住）：
+//   add_alpha=true  ⇒ 只有**所有**颜色波段都没有有效像元时才透明（洞留在颜色里）；
+//   add_alpha=false ⇒ **任一**颜色波段 NoData 就遮掉（不请求 alpha ⇒ 透明度取最小口径，
+//                    与既有锚 #298 对单波段 NoData 的 alpha=0 一致）。
+//   ⇒ alpha 关掉时透明度**减少**（不是"完全没有 alpha"）：GOLD #298/#296 用 add_alpha=false
+//     钉住了"单波段 NoData ⇒ alpha=0"，所以本参数不可能被实现成"全不透明"，这是盘上事实。
+//
+// 夹具算术：64×64@1000 m，3 个波段都声明 nodata=-9999（applyFixtureHeader 的口径），
+//   band1/band3：源列 >=16 为 200，否则 0；band2：同款，但源列 24..31 铺 -9999（洞带）。
+//   z=8 单瓦片、resampling 与 overview_resampling 都取 nearest ⇒ 不透明区是 [0,104]×[0,104]，
+//   洞带落在目标列 40..51（x∈[24000,32000) ⇒ d=floor 反解 ceil(24*105/64)=40 起）。
+//   统计窗口取 0..99 见方（离覆盖缘留 5 列/行余量）：10000 个像元。
+//     true  ⇒ 窗口内没有任何"三波段全无效"的像元 ⇒ alpha==0 计数**恒为 0**；
+//     false ⇒ 洞带整条（约 12 列 × 100 行 ≈ 1200 像元）alpha==0 ⇒ 计数 > 200。
+TEST_F(PluginTest, TileAddAlphaChangesTransparencyForPartialBandNoData) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    const size_t pixels = static_cast<size_t>(64) * 64;
+    std::vector<float> solid(pixels, 0.0f);
+    std::vector<float> holey(pixels, 0.0f);
+    for (int y = 0; y < 64; ++y) {
+        for (int x = 0; x < 64; ++x) {
+            const size_t i = static_cast<size_t>(y) * 64 + x;
+            const float v = (x >= 16) ? 200.0f : 0.0f;
+            solid[i] = v;
+            holey[i] = (x >= 24 && x < 32) ? -9999.0f : v;   // band2 的洞带
+        }
+    }
+    const std::string input = t18WriteBandsRaster(
+        getTestDir(), "t18_alpha_input.tif", 64, 64,
+        std::vector<std::vector<float>>{solid, holey, solid}, options);
+    ASSERT_FALSE(input.empty());
+
+    int transparentOn = -1, transparentOff = -1, opaqueOn = -1, opaqueOff = -1;
+    std::set<std::string> filesOn, filesOff;
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool addAlpha = pass == 0;
+        const fs::path output = getTestDir() / (addAlpha ? "t18_alpha_on_output" : "t18_alpha_off_output");
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["resampling"] = std::string("nearest");
+        params["add_alpha"] = addAlpha;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        const auto files = t17CollectTileFiles(output);
+        ASSERT_EQ(files.size(), 1u) << "add_alpha=" << addAlpha << " 实际 [" << t17JoinFiles(files) << "]";
+        const T18TileBands tile = t18ReadTile(output / fs::path(*files.begin()));
+        ASSERT_TRUE(tile.ok());
+        EXPECT_EQ(tile.bands, 4) << "add_alpha 不改变容器波段数（口径见头注释）";
+
+        // 只在覆盖区内统计（目标列/行 [0,99]，留 5 像元余量避开覆盖缘）
+        int transparent = 0, opaque = 0;
+        for (int y = 0; y < 100; ++y) {
+            for (int x = 0; x < 100; ++x) {
+                const uchar a = tile.data[3][static_cast<size_t>(y) * tile.width + x];
+                if (a == 0) ++transparent; else ++opaque;
+            }
+        }
+        if (addAlpha) { transparentOn = transparent; opaqueOn = opaque; filesOn = files; }
+        else { transparentOff = transparent; opaqueOff = opaque; filesOff = files; }
+    }
+
+    // 同一张瓦片、同一个洞带：透明度必须可区分（N65 的判别取证）
+    EXPECT_EQ(filesOn, filesOff) << "add_alpha 只该改透明度，不该改交付的瓦片集合";
+    EXPECT_EQ(transparentOn, 0)
+        << "add_alpha=true 时局部单波段空洞不该被遮成透明（还有两个波段有效）：" << transparentOn;
+    EXPECT_GT(transparentOff, 200)
+        << "add_alpha=false 时任一波段 NoData 就该遮掉，洞带约 12 列 × 100 行没被遮： " << transparentOff;
+    EXPECT_LT(transparentOn, transparentOff)
+        << "add_alpha=true/false 产出不可区分 ⇒ N65 退化三元又活了";
+    EXPECT_GT(opaqueOn - opaqueOff, 200) << "不透明像元数也必须随 add_alpha 变化";
+    EXPECT_LT(transparentOff, 10000) << "false 也不该把覆盖区整块遮完";
+    EXPECT_GT(opaqueOff, 200) << "false 时非洞区仍应不透明";
+}
+
+// T18-S5(5)（R-T18-4(iii)、R-T18-6 的"跳过语义必须保留"、F6 计数口径）：
+// 全 NoData 瓦片的跳过守卫 × skip_blank 的组合矩阵。
+//
+// 组合矩阵为什么是这个形状（照 R-T18-4(iii) 的"文件在/不在"落地时的盘上冲突）：
+//   R-T18-4(iii) 要的是 skip_blank=true/false × 整张全 NoData 瓦片"断该层级里文件在/不在"。
+//   但既有锚已经把"全 NoData ⇒ 不写文件"钉成了**与 skip_blank 无关**的事实：
+//     #298 TileLevelGeometryUsesWebMercatorGrid：t17BaseTileParams 的 skip_blank=false，
+//         z=11 期望 9 张（16−7），那 7 张正是全 NoData 瓦片，注释写明"走既有的全 NoData
+//         瓦片跳过路径"；
+//     #310 TileCountersMatchWrittenTileFiles：同一夹具 skip_blank=false 下
+//         tiles_generated=="13" && tiles_skipped=="7"。
+//   ⇒ 若把守卫改挂到 skip_blank 上，#298 与 #310 同时红（GOLD 冻结不许改期望）。
+//   ⇒ 且若 isTileBlank 的阈值按 Step 3 改成"有效像元数为 0 才算空"，它就与这条**无条件**
+//     守卫完全同判据 ⇒ skip_blank 变成死键（N65 同形）。所以本环保留 isTileBlank 的
+//     非零容差（cutting_plugin.cpp 的 kBlankOpaquePixelTolerance），把组合用例拆成两半：
+//       档 A：全 NoData 瓦片在 4 种 (add_alpha × skip_blank) 组合下都**不写文件**，
+//             且计数计入 tiles_skipped —— 钉"守卫保留"（删守卫 ⇒ 这里红）；
+//       档 B：只有几个不透明像元的"近空瓦片"在 skip_blank=false 时**写**、true 时**不写**
+//             —— 钉 skip_blank 仍是活键，同时钉住容差本身（容差改成 0 ⇒ true 档红）。
+TEST_F(PluginTest, TileBlankGuardsAndSkipBlankCombination) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+
+    // ---- 档 A：整幅全 NoData ⇒ 一张都不写，四种参数组合口径一致 ----
+    const std::vector<float> allNoData(8 * 8, -9999.0f);
+    const std::string deadInput =
+        gis::tests::writeFloatRaster(getTestDir(), "t18_blank_input.tif", 8, 8, allNoData, options);
+    ASSERT_FALSE(deadInput.empty());
+    for (int variant = 0; variant < 4; ++variant) {
+        const bool addAlpha = (variant & 1) != 0;
+        const bool skipBlank = (variant & 2) != 0;
+        const fs::path output = getTestDir() /
+            ("t18_blank_" + std::string(addAlpha ? "a" : "n") + (skipBlank ? "s" : "k"));
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(deadInput, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["add_alpha"] = addAlpha;
+        params["skip_blank"] = skipBlank;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        const auto files = t17CollectTileFiles(output);
+        EXPECT_EQ(files, std::set<std::string>{})
+            << "add_alpha=" << addAlpha << " skip_blank=" << skipBlank
+            << " 全 NoData 瓦片不得写出（原 :1151 语义必须保留）";
+        EXPECT_TRUE(fs::exists(output / "metadata.json")) << "零瓦片也要写出 metadata.json";
+        EXPECT_EQ(result.metadata.at("tiles_generated"), "0") << "variant=" << variant;
+        EXPECT_EQ(result.metadata.at("tiles_skipped"), "1")
+            << "新增/保留的跳过臂必须同时 ++tilesSkipped（F6 口径），variant=" << variant;
+    }
+
+    // ---- 档 B：近空瓦片（不透明像元 ≤ 容差）⇒ skip_blank 决定文件在不在 ----
+    // 夹具算术（z=8 单瓦片，tileRes=611.496 m，源像元 1000 m）：
+    //   1×1 源栅格 ⇒ 读窗 1×1，目标子矩形 dx1=ceil(1000/611.496)=2、dy1=2 ⇒ 2×2=4 个不透明像元
+    //               ⇒ 恰在容差 kBlankOpaquePixelTolerance=4 之内 ⇒ skip_blank=true 时判空跳过；
+    //   2×1 源栅格 ⇒ dx1=ceil(2000/611.496)=4、dy1=2 ⇒ 4×2=8 个不透明像元 > 4 ⇒ 不判空，
+    //               两种 skip_blank 都写出（钉住"判空谓词不是恒真"，否则 isTileBlank
+    //               退化成 `return true` 的变异在这里红）。
+    gis::tests::RasterFixtureOptions alive;
+    alive.crs = gis::tests::FixtureCrs::Epsg3857;
+    alive.originX = 0.0; alive.originY = 0.0; alive.pixelSize = 1000.0;   // 不声明 NoData
+    const std::string onePixel =
+        gis::tests::writeFloatRaster(getTestDir(), "t18_near1_input.tif", 1, 1, std::vector<float>{200.0f}, alive);
+    const std::string twoPixel =
+        gis::tests::writeFloatRaster(getTestDir(), "t18_near2_input.tif", 2, 1, std::vector<float>{200.0f, 200.0f}, alive);
+    ASSERT_FALSE(onePixel.empty());
+    ASSERT_FALSE(twoPixel.empty());
+
+    struct Case { std::string input; bool skipBlank; size_t expectedFiles; int expectedGenerated; };
+    const std::vector<Case> cases = {
+        {onePixel, false, 1u, 1},    // 4 个不透明像元，skip_blank=false ⇒ 写出
+        {onePixel, true,  0u, 0},    // 同一产物，skip_blank=true  ⇒ 判空跳过
+        {twoPixel, false, 1u, 1},
+        {twoPixel, true,  1u, 1},    // 8 个不透明像元 > 容差 ⇒ 不判空
+    };
+    for (size_t i = 0; i < cases.size(); ++i) {
+        const Case& c = cases[i];
+        const fs::path output = getTestDir() / ("t18_near_case_" + std::to_string(i));
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(c.input, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["skip_blank"] = c.skipBlank;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "case " << i << ": " << result.message;
+        const auto files = t17CollectTileFiles(output);
+        EXPECT_EQ(files.size(), c.expectedFiles)
+            << "case " << i << "（近空规模 " << (i < 2 ? "1x1" : "2x1")
+            << " skip_blank=" << c.skipBlank << "）期望 " << c.expectedFiles
+            << " 张，实际 [" << t17JoinFiles(files) << "]";
+        EXPECT_EQ(result.metadata.at("tiles_generated"), std::to_string(c.expectedGenerated))
+            << "case " << i;
+        if (!c.skipBlank) {
+            // 写出档还要证明它真的是"少数不透明像元"，否则档 B 的判别力来自巧合。
+            ASSERT_EQ(files.size(), 1u);
+            const T18TileBands tile = t18ReadTile(output / fs::path(*files.begin()));
+            const T18OpaqueStats st = t18StatsOverOpaque(tile, 1);
+            EXPECT_EQ(st.count, i < 2 ? 4 : 8) << "case " << i << " 的不透明像元规模变了";
+        }
+    }
 }
