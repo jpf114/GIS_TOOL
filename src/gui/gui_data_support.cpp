@@ -2447,6 +2447,13 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
             if (spec.key == "gamma") {
                 adjustedSpec.minValue = 0.000001;
             } else if (spec.key == "k") {
+                // Task 15 / 挂账 N59（批次 B 处理）：全仓没有任何插件声明键 "k"
+                // （`grep 'ParamSpec{"k"'` 零命中），⇒ 这条分支对**真实插件不可达**，用户碰不到它。
+                // 但它今天不是死代码：tests/test_gui_support.cpp:1976 用合成 spec
+                // `{"k", "聚类数", …}` 喂进本函数，:1989 断 `minValue == 1`
+                //（删掉本分支后该断言实测读到 0 ⇒ `GuiSupportTest.BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBounds` 红）。
+                // ⇒ 本质是"只有测试在消费的产品代码"（与 Task 13 的 enumLabelKeys 同族）。
+                // 本批**保留**：删它必须同时删既有断言（批次 A 红线），换来的只是少 5 行不可达代码。
                 adjustedSpec.minValue = 1;
             } else if (spec.key == "clip_limit") {
                 adjustedSpec.minValue = 0.0;

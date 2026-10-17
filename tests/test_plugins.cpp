@@ -1442,6 +1442,66 @@ TEST_F(PluginTest, ProcessingGaborFilterExecution) {
     EXPECT_GT(readRasterPixel(output, 26, 26), 0.0f);
 }
 
+// Task 15 / R-T15-4：默认值单源锁的判据一律来自 paramSpecs()，不把 5/1.5/4 抄进测试码
+// （抄进测试的仍是双源，只是换了个地方）。
+// 两条纪律：
+//   1) paramSpecs() **按值返回** vector ⇒ 必须先落到具名局部再取地址，
+//      直接对临时量取 & 会悬空（Tier 2 实测踩过一次，MSVC Debug 堆读出 0xDDDDDDDD）；
+//   2) 实现侧统一用 std::to_string 写 metadata ⇒ double 的形态是 "1.500000"，
+//      期望值必须用同一个 std::to_string 生成，不能手拼 "1.5"。
+static const gis::framework::ParamSpec* findParamSpec(
+    const std::vector<gis::framework::ParamSpec>& specs, const std::string& key) {
+    for (const auto& spec : specs) {
+        if (spec.key == key) return &spec;
+    }
+    return nullptr;
+}
+
+static std::string specDefaultAsMetadataString(const gis::framework::ParamSpec& spec) {
+    if (const auto* asInt = std::get_if<int>(&spec.defaultValue)) return std::to_string(*asInt);
+    if (const auto* asDouble = std::get_if<double>(&spec.defaultValue)) return std::to_string(*asDouble);
+    return {};
+}
+
+// gabor：不传 kernel_size/sigma ⇒ 兜底必须与 paramSpecs() 声明的默认值同值。
+// 改前实现兜底是 9/2.0（提交 54df42c:1159-1160），spec 是 5/1.5（:35-:36）⇒ 本用例红。
+TEST_F(PluginTest, ProcessingGaborFallbackDefaultsMatchParamSpecs) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+    const auto specs = p->paramSpecs();
+
+    const auto* kernelSpec = findParamSpec(specs, "kernel_size");
+    const auto* sigmaSpec = findParamSpec(specs, "sigma");
+    ASSERT_NE(kernelSpec, nullptr) << "doGaborFilter 读的就是这个键，spec 被删掉时面板不再渲染它";
+    ASSERT_NE(sigmaSpec, nullptr) << "doGaborFilter 读的就是这个键，spec 被删掉时面板不再渲染它";
+    EXPECT_EQ(kernelSpec->type, gis::framework::ParamType::Int)
+        << "类型漂移成 Double/String 后 getParam<int> 会静默回落兜底值，取值断言照样绿";
+    EXPECT_EQ(sigmaSpec->type, gis::framework::ParamType::Double)
+        << "类型漂移成 Int/String 后 getParam<double> 会静默回落兜底值，取值断言照样绿";
+
+    const std::string expectedKernel = specDefaultAsMetadataString(*kernelSpec);
+    const std::string expectedSigma = specDefaultAsMetadataString(*sigmaSpec);
+    ASSERT_FALSE(expectedKernel.empty()) << "kernel_size 的 spec 默认值必须是 int 变体";
+    ASSERT_FALSE(expectedSigma.empty()) << "sigma 的 spec 默认值必须是 double 变体";
+
+    const std::string input = createPatternRaster("e2e_gabor_default_lock_input.tif");
+    const std::string output = utf8PathString(getTestDir() / "e2e_gabor_default_lock_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("gabor_filter");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    // 故意不传 kernel_size / sigma：只有走实现兜底这条路径才能暴露"兜底与 spec 分叉"。
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("kernel_size"), expectedKernel)
+        << "gabor 的 kernel_size 兜底与 paramSpecs() 声明的默认值分叉";
+    EXPECT_EQ(result.metadata.at("sigma"), expectedSigma)
+        << "gabor 的 sigma 兜底与 paramSpecs() 声明的默认值分叉";
+}
+
 TEST_F(PluginTest, ProcessingGlcmTextureExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -2759,7 +2819,53 @@ TEST_F(PluginTest, SpindexEviLSpecDeclarationMatchesEviFallback) {
     ASSERT_NE(declaredMax, nullptr) << "evi_l 的上界必须是 double 变体";
     EXPECT_EQ(*declaredMin, 0.0);
     EXPECT_EQ(*declaredMax, 1.0)
-        << "上界被放宽（修前实测改成 100.0 时全套仍绿）等于把 EVI 的背景因子取值域开了口子";
+        << "上界被放宽（修前聚焦 33 条实测全绿，见 task9r1_mutMF_ctest.log；"
+           "round-1 复审在全量 544 条上复跑 MF，唯一红的是本用例）"
+           "等于把 EVI 的背景因子取值域开了口子";
+
+    // T15-B：required 漂移同样没人守（变异 false→true 时全量 544/544 仍绿），后果是可观察的：
+    // src/cli/main.cpp 会把它打成 [required]、并且不再打印 "Default: 1"，
+    // param_card_widget.cpp 会加必填标记 ⇒ "标成必填、隐藏默认值、实际又不必填"。
+    EXPECT_FALSE(eviLSpec->required)
+        << "evi_l 的 spec 是可选、有默认值的键；标成必填会让 CLI 隐藏默认值、面板加必填标记，"
+           "而 EVI 分支不传它照样按兜底 1.0 算（spindex_plugin.cpp 里读 evi_l 的那一行）";
+}
+
+// T15-A：SAVI 侧的同一缺陷形状（Task 9 round-1 复审实测：把 spindex_plugin.cpp 里
+// l_value 的 spec 默认 double{0.5} 改成 double{0.3} ⇒ 全量 544/544 仍然全绿，
+// 而面板与库从此分叉：gui_regression/nested/spindex_savi/status.json 得到按 0.3 算的
+// SAVI computed range [0.518445, …]（= 40*1.3/100.3），库/CLI 不传参时按代码兜底 0.5 得 0.597015）。
+// 判据必须与 spindex_plugin.cpp SAVI 分支的代码兜底同值 —— 这条用例守的是"spec 不许自己漂移"，
+// GuiContract 抓不到它：那个元测试的 origin 就是插件这条 spec 本身，属同义相对判据，
+// 对"插件 spec 自己漂移"结构性免疫（复审者用 M2′/MF2 两个变异实测 GuiContract 恒绿），
+// 所以**不得**拿 GuiContract 绿当这条锁存在的证据。
+TEST_F(PluginTest, SpindexSaviLSpecDeclarationMatchesSaviFallback) {
+    auto* p = mgr_.find("spindex");
+    ASSERT_NE(p, nullptr);
+    const auto specs = p->paramSpecs();
+
+    const auto* lSpec = findParamSpec(specs, "l_value");
+    ASSERT_NE(lSpec, nullptr)
+        << "SAVI 分支的兜底读的就是这个键；spec 被删掉时 GUI 面板不再渲染它、CLI 也不再校验它";
+    EXPECT_EQ(lSpec->type, gis::framework::ParamType::Double)
+        << "类型漂移成 Int/String 后 getParam<double> 会静默回落默认值，取值断言照样绿";
+
+    const auto* declaredDefault = std::get_if<double>(&lSpec->defaultValue);
+    ASSERT_NE(declaredDefault, nullptr) << "l_value 的默认值必须是 double 变体";
+    EXPECT_EQ(*declaredDefault, 0.5)
+        << "l_value 的 spec 默认值必须与 spindex_plugin.cpp SAVI 分支的代码兜底 0.5 同值";
+
+    const auto* declaredMin = std::get_if<double>(&lSpec->minValue);
+    const auto* declaredMax = std::get_if<double>(&lSpec->maxValue);
+    ASSERT_NE(declaredMin, nullptr) << "l_value 的下界必须是 double 变体";
+    ASSERT_NE(declaredMax, nullptr) << "l_value 的上界必须是 double 变体";
+    EXPECT_EQ(*declaredMin, 0.0);
+    EXPECT_EQ(*declaredMax, 1.0)
+        << "取值域被放宽等于给 SAVI 的背景因子开了口子";
+
+    // required 与 evi_l 同族（T15-B 的后果链对 l_value 同样成立）。
+    EXPECT_FALSE(lSpec->required)
+        << "l_value 是可选、有默认值的键；标成必填会让 CLI 隐藏默认值、面板加必填标记";
 }
 
 // R-T10-9：Task 9 只改了 l_value 的 displayName，真正根治在 spindex.evi 的白名单。
@@ -3377,6 +3483,37 @@ TEST_F(PluginTest, ProcessingKMeansExecution) {
     EXPECT_TRUE(result.success) << "KMeans failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
     EXPECT_TRUE(result.metadata.count("compactness") > 0);
+}
+
+// kmeans：不传 kmeans_k ⇒ 兜底必须与 paramSpecs() 的 kmeans_k 默认值同值。
+// 改前实现是 getParam("kmeans_k", getParam("k", 5))（提交 54df42c:1400-1401）：
+// 既回退到已废弃的键 "k"，又把 5 当默认，而 spec（:68）声明的是 4 ⇒ 本用例红。
+TEST_F(PluginTest, ProcessingKMeansFallbackKMatchesParamSpec) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+    const auto specs = p->paramSpecs();
+
+    const auto* kSpec = findParamSpec(specs, "kmeans_k");
+    ASSERT_NE(kSpec, nullptr) << "doKMeans 读的就是这个键，spec 被删掉时面板不再渲染它";
+    EXPECT_EQ(kSpec->type, gis::framework::ParamType::Int)
+        << "类型漂移成 Double/String 后 getParam<int> 会静默回落兜底值，取值断言照样绿";
+    const std::string expectedK = specDefaultAsMetadataString(*kSpec);
+    ASSERT_FALSE(expectedK.empty()) << "kmeans_k 的 spec 默认值必须是 int 变体";
+
+    // 用 3 波段栅格（与 ProcessingKMeansExecution 同一夹具形态），且不传 kmeans_k / k。
+    const std::string input = createTestRaster("e2e_kmeans_k_lock_input.tif", 30, 30, 3);
+    const std::string output = utf8PathString(getTestDir() / "e2e_kmeans_k_lock_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("kmeans");
+    params["input"] = input;
+    params["output"] = output;
+    params["kmeans_attempts"] = 3;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("k"), expectedK)
+        << "不传 kmeans_k 时的兜底与 paramSpecs() 的默认值分叉（改前还会回退到已废弃键 k）";
 }
 
 TEST_F(PluginTest, VectorDissolveExecution) {

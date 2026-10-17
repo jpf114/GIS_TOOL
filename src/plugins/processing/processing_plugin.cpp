@@ -1174,8 +1174,12 @@ gis::framework::Result ProcessingPlugin::doGaborFilter(
     std::string input  = gis::framework::getParam<std::string>(params, "input", "");
     std::string output = gis::framework::getParam<std::string>(params, "output", "");
     int band = gis::framework::getParam<int>(params, "band", 1);
-    int kernelSize = gis::framework::getParam<int>(params, "kernel_size", 9);
-    double sigma = gis::framework::getParam<double>(params, "sigma", 2.0);
+    // Task 15 / R-T15-4：兜底必须与 paramSpecs() 声明的默认值同值（kernel_size 5、sigma 1.5，
+    // 见本文件 paramSpecs() 里这两个键的 ParamSpec）。改前这里是 9 / 2.0，
+    // 与面板/CLI 显示的默认值分叉：用户看到"默认 5"，不传参时库却按 9 算。
+    // 漂移由 ProcessingGaborFallbackDefaultsMatchParamSpecs 从 paramSpecs() 取期望值看守。
+    int kernelSize = gis::framework::getParam<int>(params, "kernel_size", 5);
+    double sigma = gis::framework::getParam<double>(params, "sigma", 1.5);
     double theta = gis::framework::getParam<double>(params, "gabor_theta", 0.0);
     double lambda = gis::framework::getParam<double>(params, "gabor_lambda", 8.0);
     double gamma = gis::framework::getParam<double>(params, "gabor_gamma", 0.5);
@@ -1421,8 +1425,15 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     std::string input  = gis::framework::getParam<std::string>(params, "input", "");
     std::string output = gis::framework::getParam<std::string>(params, "output", "");
     int band = gis::framework::getParam<int>(params, "band", 1);
-    int k = gis::framework::getParam<int>(params, "kmeans_k",
-        gis::framework::getParam<int>(params, "k", 5));
+    // Task 15 / R-T15-4 + R-T15-5（后者已被控制器改判，见 task-15-brief.md 末尾"R-T15-5 更正"）：
+    // 兜底改为与 paramSpecs() 的 kmeans_k 默认值（4）同值，并去掉对已废弃键 "k" 的回退链
+    // getParam("kmeans_k", getParam("k", 5))：全仓没有任何插件声明 ParamSpec{"k", ...}
+    // ⇒ 那条回退链只能被调用方显式塞进来的 "k" 命中，对 GUI/CLI 用户是死路径。
+    // 注意：gui_data_support.cpp 的 `spec.key == "k"` 分支**本批保留、未删** —— 它对真实插件同样不可达，
+    // 但 tests/test_gui_support.cpp:1976/1989 用合成 spec 在消费它，删分支必须同时删既有断言（批次 A 红线），
+    // 已登记为挂账 N59 交批次 B 结构化处置。删掉这里的回退链不影响那条分支（两者没有调用关系）。
+    // 兜底漂移由 ProcessingKMeansFallbackKMatchesParamSpec 从 paramSpecs() 取期望值看守。
+    int k = gis::framework::getParam<int>(params, "kmeans_k", 4);
     int maxIter = gis::framework::getParam<int>(params, "max_iter", 100);
     double epsilon = gis::framework::getParam<double>(params, "epsilon_kmeans", 0.001);
     int attempts = gis::framework::getParam<int>(params, "kmeans_attempts", 3);
