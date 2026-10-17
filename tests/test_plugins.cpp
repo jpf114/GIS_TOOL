@@ -10749,6 +10749,34 @@ std::map<std::string, gis::framework::ParamValue> t17BaseTileParams(
     return params;
 }
 
+// metadata.json 的 "bounds" 解析（修复轮 1 起新用例共用）。
+// WHY 不复用 #297 里的那段 sscanf：它是既有锚（GOLD 冻结），把它的解析段抽走等于改动锚；
+// 这里按同一手法（跳过 pos 处的起始引号后从 'b' 起匹配，格式里的空白符吸收冒号与逗号后的
+// 空格）另写一份，只服务新增用例。
+std::array<double, 4> t17MetadataBounds(const fs::path& outputDir) {
+    const std::string json = t17ReadWholeFile(outputDir / "metadata.json");
+    const auto pos = json.find("\"bounds\"");
+    if (pos == std::string::npos) {
+        ADD_FAILURE() << "metadata.json 里没有 bounds 字段: " << json;
+        return {0.0, 0.0, 0.0, 0.0};
+    }
+    double b[4] = {};
+    const int parsed = std::sscanf(json.c_str() + pos + 1, "bounds\": [%lf, %lf, %lf, %lf]",
+                                   &b[0], &b[1], &b[2], &b[3]);
+    if (parsed != 4) {
+        ADD_FAILURE() << "bounds 解析失败（期望 4 个浮点数）: " << json;
+        return {0.0, 0.0, 0.0, 0.0};
+    }
+    return {b[0], b[1], b[2], b[3]};
+}
+
+// 把产物集合拼成一行，失败时直接可读（新用例的 diagnostics）。
+std::string t17JoinFiles(const std::set<std::string>& files) {
+    std::string joined;
+    for (const auto& f : files) joined += f + " ";
+    return joined;
+}
+
 } // namespace
 
 // F1 + R-T17-7/9 的主几何钉：z=10 与 z=11 的瓦片路径集合必须**恰等于**字面集合。
@@ -11156,4 +11184,100 @@ TEST_F(PluginTest, TileGuiPanelHidesParametersTheTileActionNeverReads) {
     EXPECT_EQ(renderedKeys, effectiveKeys) << "cutting.tile 的 widget 树与有效 spec 不一致";
     EXPECT_GT(renderedKeys.count("overview_resampling"), 0u);
     EXPECT_EQ(renderedKeys.count("resample"), 0u);
+}
+
+// F1（Task 17 修复轮 1，审查发现 I-2）：tile_extent 前向投影路径 + 两道零面积守卫的判别用例。
+// 修复前的盘上事实（本代理现跑）：
+//   grep -rn "tile_extent" tests/ ⇒ exit=1（零命中）⇒ hasUserExtent 那条分支
+//   （cutting_plugin.cpp:896-901 读 extent、:945-947 走 lonLatToMercatorXY 前向投影）
+//   自 Task 17 写下后**没有任何用例执行过**；
+//   审查者实测把守卫①（:1061 `if (c1 <= c0 || r1 <= r0)`）或守卫②（:1078
+//   `if (dx1 <= dx0 || dy1 <= dy0)`）各自改成 `if (false)` ⇒ 14 条聚焦全绿
+//   （build/t17rev_R7_zerocov_guard_dropped.log、build/t17rev_R8_subpix_guard_dropped.log）。
+// 本用例把"用户矩形"作为唯一的瓦片范围来源（不再由数据包络推导），钉三件事：
+//   (a) 与源包络零交集的瓦片一张都不写——期望集合**恰等于**字面集合（不用"少于 N"的弱断言）；
+//   (b) 走 extent 前向投影那条路之后，metadata.json 的 bounds 仍是传统 (lon, lat) 顺序，
+//       期望值写死字面量（不调用任何被测函数，避免同义反复）；
+//   (c) 夹具的候选里同时含"只在 x 向零交集"（列 536/540）与"只在 y 向零交集"（行 296/301）的档，
+//       于是守卫①的两个 `||` 臂各自都被真实执行到；字面/提变量两形态 + 同删对照的取证台账、
+//       以及"单删任一道仍存活（两道在可达域内互相蕴含）"这一如实结论都写在 task-17-report.md 的 F1 小节。
+// 期望集合的字面算术（独立按 EPSG:3857 定义算：x=lon·πR/180、y=R·ln tan(45°+φ/2)、
+// z=10 单瓦片米宽 = 2·20037508.342789244/1024 = 39135.7584820098，未调用 gis::core::*）：
+//   源包络 x∈[1000000,1072000]、y∈[8272000,8400000]
+//   ⇒ 与之相交的列 = {537,538,539}（536=[939258,978394] 差 21.6 km、540=[1095801,1134937] 差 23.8 km）
+//   ⇒ 与之相交的行 = {297,298,299,300}（296 上缘 8414188 > 数据北缘 8400000 ⇒ 零交集；
+//      301=[8218509,8257645] 与数据南缘 8272000 差 14.4 km）
+//   extent lon∈[8.5,9.9]→x∈[946216,1102063] ⇒ 候选列 {536..540}；lat∈[59.3,60.1]→y∈[8245513,8422036]
+//   ⇒ 候选行 {296..301} ⇒ 30 张候选、12 张写、18 张必须被零面积守卫跳过。
+// WHY 夹具放在纬度 60°：赤道上 x=lon·πR/180 与 y≈lat·πR/180 到 1e-4 相对量级相同，
+// "把经纬度调换/把投影实参调换"的变异在度量面上几乎不变；高纬度 merc(60°)=8399738 m 而
+// 60° 经度只有 6679169 m ⇒ 调换后候选整体挪到列 680..682 / 行 483..487 ⇒ 期望集合必红。
+TEST_F(PluginTest, TileUserExtentDrivesMetricProjectionAndSkipsZeroAreaTiles) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 1000000.0; options.originY = 8400000.0; options.pixelSize = 1000.0;
+    std::vector<float> data(static_cast<size_t>(72) * 128, 0.0f);
+    for (int y = 0; y < 128; ++y)
+        for (int x = 0; x < 32; ++x) data[static_cast<size_t>(y) * 72 + x] = 200.0f;
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_extent_input.tif", 72, 128, data, options);
+
+    // 档 A：用户矩形整体落在源包络之外（南半球 lon∈[100,101]、lat∈[-40,-39]，z=8）。
+    // 候选 = 列 {199} × 行 {158,159} 共 2 张，全部与源包络零交集 ⇒ 一张都不许写，
+    // 但整体仍 Success 且 metadata.json 照写（"零交集不产文件、不失败"的既端口径）。
+    {
+        const fs::path output = getTestDir() / "t17_extent_far_output";
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["tile_extent"] = std::array<double, 4>{100.0, -40.0, 101.0, -39.0};
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+
+        const auto produced = t17CollectTileFiles(output);
+        EXPECT_EQ(produced, std::set<std::string>{})
+            << "tile_extent 与源包络零交集时不得写出任何瓦片，实际 [" << t17JoinFiles(produced) << "]";
+        EXPECT_TRUE(fs::exists(output / "metadata.json")) << "零瓦片也要写出 metadata.json";
+
+        const auto bounds = t17MetadataBounds(output);
+        EXPECT_NEAR(bounds[0], 100.0, 1e-6) << "bounds[0] 必须是用户给的 minLon";
+        EXPECT_NEAR(bounds[1], -40.0, 1e-6) << "bounds[1] 必须是用户给的 minLat";
+        EXPECT_NEAR(bounds[2], 101.0, 1e-6) << "bounds[2] 必须是用户给的 maxLon";
+        EXPECT_NEAR(bounds[3], -39.0, 1e-6) << "bounds[3] 必须是用户给的 maxLat";
+    }
+
+    // 档 B：extent 罩住源包络（高纬度，不对称的经纬度区间），候选 30 张、期望恰好 12 张。
+    // "恰等于"同时钉住两头：写出的 12 张一张不能少（前向投影算错/轴序错 ⇒ 整块挪走 ⇒ 红），
+    // 18 张零交集候选一张不能多（守卫错 ⇒ 负宽 cv::Mat 或错位置瓦片 ⇒ 红）。
+    {
+        const fs::path output = getTestDir() / "t17_extent_highlat_output";
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 10;
+        params["max_zoom"] = 10;
+        params["tile_extent"] = std::array<double, 4>{8.5, 59.3, 9.9, 60.1};
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+
+        const std::set<std::string> expected = {
+            "10/537/297.png", "10/537/298.png", "10/537/299.png", "10/537/300.png",
+            "10/538/297.png", "10/538/298.png", "10/538/299.png", "10/538/300.png",
+            "10/539/297.png", "10/539/298.png", "10/539/299.png", "10/539/300.png",
+        };
+        const auto produced = t17CollectTileFiles(output);
+        EXPECT_EQ(produced, expected)
+            << "z=10 高纬度 extent 的瓦片集合不等于字面期望，实际 [" << t17JoinFiles(produced) << "]";
+
+        const auto bounds = t17MetadataBounds(output);
+        EXPECT_NEAR(bounds[0], 8.5, 1e-6) << "extent 分支的 bounds 仍是 lon,lat 传统序（minLon）";
+        EXPECT_NEAR(bounds[1], 59.3, 1e-6) << "extent 分支的 bounds 仍是 lon,lat 传统序（minLat）";
+        EXPECT_NEAR(bounds[2], 9.9, 1e-6) << "extent 分支的 bounds 仍是 lon,lat 传统序（maxLon）";
+        EXPECT_NEAR(bounds[3], 60.1, 1e-6) << "extent 分支的 bounds 仍是 lon,lat 传统序（maxLat）";
+    }
 }
