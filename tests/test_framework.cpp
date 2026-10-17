@@ -406,3 +406,107 @@ TEST(WorkflowParamTyping, NumericWorkflowParamsAreApplied) {
     EXPECT_NEAR(value, 200.0f / 171.0f, 1e-4f)
         << "g_value/*_band 未生效，工作流仍在用代码内联默认值（退回值应为 25/146≈0.171233）";
 }
+
+TEST(WorkflowParamTyping, InvalidNumericParamFailsStep) {
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_NE(mgr.find("raster_math"), nullptr);
+
+    const auto dir = workflowTypingTestDir("invalid_numeric");
+    const std::string missingInput = (dir / "no_such_input.tif").string();
+    const std::string output = (dir / "never_written.tif").string();
+
+    gis::framework::Workflow wf;
+    wf.name = "非法数值参数必须显式失败";
+    gis::framework::WorkflowStep step;
+    step.pluginName = "raster_math";
+    step.actionKey = "reclassify";
+    step.params["input"] = "${input}";
+    step.params["output"] = "${output_dir}/never_written.tif";
+    // reclass_mode 的 spec 是 Enum ⇒ tryParseParamValue 透传字符串（param_spec.h:135-142），
+    // 插件用 getParam<std::string> 读它（raster_math_plugin.cpp:227）——读取类型与 spec 类型匹配。
+    step.params["reclass_mode"] = "interval";
+    step.params["interval_step"] = "abc";   // spec 类型 Double（raster_math_plugin.cpp:41）
+    wf.steps.push_back(step);
+
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(wf, {
+        {"input", missingInput},
+        {"output_dir", dir.string()},
+        {"basename", "wf"},
+    });
+
+    EXPECT_FALSE(result.success);
+    ASSERT_EQ(result.stepMessages.size(), 1u);
+    const std::string& message = result.stepMessages[0];
+    // 形状由 R-T14-3 定死：Step <n> (<plugin>.<action>) invalid parameter <key>: <parseError>
+    // 这里只锁 workflow 侧拥有的那一半（前缀 + 键名），不锁 parseError 的完整文案——
+    // 那段文案属于共用的 tryParseParamValue（CLI 与 test_framework.cpp:118/:130 都在依赖它），
+    // 本任务不得改它，也不该在工作流用例里再抄一份逐字锁。
+    const std::string expectedPrefix =
+        "Step 1 (raster_math.reclassify) invalid parameter interval_step: ";
+    EXPECT_EQ(message.rfind(expectedPrefix, 0), 0u) << message;
+    // 键名与人类可读文案都要在：parseError 取的是 paramDisplayName（"间隔步长"），本身不含键名。
+    EXPECT_NE(message.find("interval_step"), std::string::npos) << message;
+    EXPECT_NE(message.find("间隔步长"), std::string::npos) << message;
+    EXPECT_NE(message.find("invalid parameter"), std::string::npos) << message;
+    EXPECT_NE(message.find("不是有效数字"), std::string::npos) << message;
+    // completedSteps==0 + 输出文件不存在 ⇒ 失败发生在**进插件之前**，不是插件自己报的错。
+    EXPECT_EQ(result.completedSteps, 0) << "失败被算成了已完成步数，说明没在进插件前拦住";
+    EXPECT_FALSE(std::filesystem::exists(output)) << "非法参数那一步仍然产出了文件";
+}
+
+TEST(WorkflowParamTyping, ValidNumericParamReachesPluginAndChangesOutput) {
+    // R-T14-4 的正向用例：只有"非法值被拒"这一半时，"一律拒绝任何带 spec 的键"的假实现
+    // 也能全绿；本用例把解析器的另一个方向（合法值必须放行并真的生效）钉住。
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_NE(mgr.find("raster_math"), nullptr);
+
+    const auto dir = workflowTypingTestDir("valid_numeric");
+    // 单波段 8x8，像元值 = x + y ⇒ bandMin=0、bandMax=14。
+    std::vector<float> gradient;
+    gradient.reserve(64);
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            gradient.push_back(static_cast<float>(x + y));
+        }
+    }
+    const std::string input = gis::tests::writeFloatRaster(dir, "reclass_input.tif", 8, 8, gradient);
+    ASSERT_FALSE(input.empty()) << "重分类夹具栅格创建失败";
+
+    gis::framework::Workflow wf;
+    wf.name = "合法数值参数必须放行并生效";
+    gis::framework::WorkflowStep step;
+    step.pluginName = "raster_math";
+    step.actionKey = "reclassify";
+    step.params["input"] = "${input}";
+    step.params["output"] = "${output_dir}/reclass_step5.tif";
+    step.params["reclass_mode"] = "interval";
+    step.params["interval_step"] = "5";   // 合法数字串：必须被解析成 double 5.0 交进插件
+    wf.steps.push_back(step);
+
+    const std::string output = (dir / "reclass_step5.tif").string();
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(wf, {
+        {"input", input},
+        {"output_dir", dir.string()},
+        {"basename", "wf"},
+    });
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_EQ(result.stepMessages.size(), 1u);
+    EXPECT_NE(result.stepMessages[0].find("completed"), std::string::npos) << result.stepMessages[0];
+    EXPECT_EQ(result.stepMessages[0].find("invalid parameter"), std::string::npos)
+        << "合法数字串被误拒：解析器的放行方向没有实现";
+    EXPECT_TRUE(std::filesystem::exists(output));
+
+    // 期望值推导（raster_math_plugin.cpp:270-281 生成区间、:205-212 首个匹配即返回）：
+    //   bandMin=0、bandMax=14、step=5 ⇒ roundedMin=floor(0/5)*5=0，
+    //   规则 [0,5]→1、[5,10]→2、[10,15]→3；像元 (3,3) 值 6 ⇒ 首个匹配 [5,10] ⇒ 输出 2。
+    //   未类型化时 interval_step 退回代码内联默认 1.0 ⇒ 规则 [0,1]→1、[1,2]→2 … [5,6]→6，
+    //   值 6 首个匹配 [5,6] ⇒ 输出 6 ⇒ 与 2 差 4 个类别，断言有牙。
+    const float value = gis::tests::readPixel(output, 1, 3, 3);
+    EXPECT_FLOAT_EQ(value, 2.0f) << "interval_step 未生效（退回 1.0 时该像元应为 6）";
+}
