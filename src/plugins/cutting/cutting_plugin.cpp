@@ -126,7 +126,7 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
             double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "skip_blank", "跳过空瓦片", "Skip tiles that contain only nodata",
+            "skip_blank", "跳过空瓦片", "Skip tiles with at most 4 opaque pixels",
             gis::framework::ParamType::Bool, false, bool{true}
         },
         gis::framework::ParamSpec{
