@@ -10,6 +10,7 @@
 #include <gis/core/logger_init.h>
 #include <gis/core/logger.h>
 #include <gis/core/expression_engine.h>
+#include <gis/core/tile_grid.h>
 #include <gdal_priv.h>
 #include <opencv2/core.hpp>
 #include <filesystem>
@@ -764,4 +765,69 @@ TEST(ExpressionEngine, RejectsCompiledProgramAboveBound) {
     EXPECT_FALSE(error.empty());
     EXPECT_NE(error.find("513"), std::string::npos) << error;
     EXPECT_NE(error.find("512"), std::string::npos) << error;
+}
+
+// ===== Task 17: XYZ 瓦片网格纯函数（gis::core::tile_grid）=====
+// WHY 纯函数层先钉死（R-T17-7 第 1 点）：tile 插件的端到端用例要消费"瓦片索引 → EPSG:3857
+// 世界矩形"这条几何；若这层几何没有独立断言，端到端就只能拿插件自己的换算去验插件自己的
+// 产物，断言退化成同义反复（R-T17-9 第 2 点对 tileWorldRect 的处置口径）。
+// kWebMercatorHalfWidth 与实现共用同一常量口径：20037508.342789244（EPSG:3857 世界半宽，米）。
+
+TEST(TileGrid, LevelZeroIsSingleTileCoveringWorld) {
+    const auto grid = gis::core::mercatorTileGrid(0, 256);
+    EXPECT_EQ(grid.globalWidth, 256);
+    EXPECT_EQ(grid.globalHeight, 256);
+    EXPECT_NEAR(grid.worldMaxX, 20037508.342789244, 1e-3);
+    EXPECT_NEAR(grid.worldMinY, -20037508.342789244, 1e-3);
+
+    const auto win = gis::core::tileWindow(grid, 256, 0, 0);
+    ASSERT_TRUE(win.valid);
+    EXPECT_EQ(win.xOff, 0);
+    EXPECT_EQ(win.yOff, 0);
+    EXPECT_EQ(win.xSize, 256);
+}
+
+TEST(TileGrid, LevelOneUsesTwoByTwoGrid) {
+    const auto grid = gis::core::mercatorTileGrid(1, 256);
+    EXPECT_EQ(grid.globalWidth, 512);
+    const auto win = gis::core::tileWindow(grid, 256, 1, 1);
+    ASSERT_TRUE(win.valid);
+    EXPECT_EQ(win.xOff, 256);
+    EXPECT_EQ(win.yOff, 256);
+    EXPECT_FALSE(gis::core::tileWindow(grid, 256, 2, 0).valid);
+}
+
+TEST(TileGrid, ResolutionHalvesPerZoom) {
+    const auto z0 = gis::core::mercatorTileGrid(0, 256);
+    const auto z1 = gis::core::mercatorTileGrid(1, 256);
+    const double res0 = (z0.worldMaxX - z0.worldMinX) / z0.globalWidth;
+    const double res1 = (z1.worldMaxX - z1.worldMinX) / z1.globalWidth;
+    EXPECT_NEAR(res1, res0 / 2.0, 1e-9);
+}
+
+// R-T17-7 第 1 点要求的钉边用例：z=1 时世界半宽切成 2×2 瓦片，四边必须逐条钉死。
+// 数值出处：res = 2*20037508.342789244/512 = 78271.51696...，单瓦片 256px 跨 256*res。
+// (0,0) 是西北角瓦片：x∈[-k,0]，y∈[0,k]；(1,1) 是东南角瓦片：x∈[0,k]，y∈[-k,0]。
+// WHY 连瓦片越界也要断：tileWindow 已经钉了非法索引 valid=false，世界矩形同样不得静默
+// 给出一个"看似合法"的窗口，否则越界瓦片会把几何错误带进端到端产物。
+TEST(TileGrid, TileWorldRectPinsCornersAtLevelOne) {
+    const auto grid = gis::core::mercatorTileGrid(1, 256);
+    const double k = 20037508.342789244;
+
+    const auto nw = gis::core::tileWorldRect(grid, 256, 0, 0);
+    ASSERT_TRUE(nw.valid);
+    EXPECT_NEAR(nw.minX, -k, 1e-6);
+    EXPECT_NEAR(nw.maxX, 0.0, 1e-6);
+    EXPECT_NEAR(nw.maxY, k, 1e-6);
+    EXPECT_NEAR(nw.minY, 0.0, 1e-6);
+
+    const auto se = gis::core::tileWorldRect(grid, 256, 1, 1);
+    ASSERT_TRUE(se.valid);
+    EXPECT_NEAR(se.minX, 0.0, 1e-6);
+    EXPECT_NEAR(se.maxX, k, 1e-6);
+    EXPECT_NEAR(se.minY, -k, 1e-6);
+    EXPECT_NEAR(se.maxY, 0.0, 1e-6);
+
+    EXPECT_FALSE(gis::core::tileWorldRect(grid, 256, 2, 0).valid);
+    EXPECT_FALSE(gis::core::tileWorldRect(grid, 256, 0, 2).valid);
 }
