@@ -10674,22 +10674,28 @@ TEST_F(PluginTest, AccuracyAssessmentHandlesClassPresentOnlyOnOneSide) {
 namespace {
 
 // 临时文件侦察用：tile 的 warped 临时栅格名带 pid（R-T17-4），测试与插件同进程，
-// CPLGetPID() 与插件拼出的名字一致；前缀扫描同时兜住无 pid 的旧命名残留。
+// CPLGetPID() 与插件拼出的名字一致。
+// 修复轮 F3：扫描口径从"整个系统临时目录里所有 gis_tile_warped_*.tif"**收窄到本进程自己那一份**。
+// WHY：本用例证明的是"本进程的动作不会把临时栅格拉在临时目录里"，而改前按前缀扫全目录 ⇒
+//   **别的进程**（被 timeout 杀掉的测试、gis-cli 取证、上一轮崩溃的残留）留下的同名文件
+//   也会让 #305/#306 判红，是假红而不是缺陷：本批实测两轮（控制器 build/t18v2_full_release.log
+//   里的 305/306、本轮 build/t18f3_before_debug.log 里手工放的 gis_tile_warped_987654.tif）。
+//   产品侧文件名本来就带 CPLGetPID()（cutting_plugin.cpp:1102），所以按 pid 精确匹配
+//   不损失"漏清理必红"的原意：本进程写出的文件必然叫这个名字。
+//   放弃的那一半能力（顺带发现别的进程的历史残留）不属于本用例的契约，交脚本/人工巡检。
 fs::path t17TempDir() {
     return fs::temp_directory_path();
 }
 
 std::vector<fs::path> t17ScanWarpedLeftovers() {
+    const std::string ownName =
+        "gis_tile_warped_" + std::to_string(CPLGetPID()) + ".tif";
     std::vector<fs::path> found;
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(t17TempDir(), ec)) {
         if (ec) break;
         if (!e.is_regular_file()) continue;
-        const std::string name = e.path().filename().string();
-        if (name.rfind("gis_tile_warped", 0) == 0 &&
-            name.size() > 4 && name.compare(name.size() - 4, 4, ".tif") == 0) {
-            found.push_back(e.path());
-        }
+        if (e.path().filename().string() == ownName) found.push_back(e.path());
     }
     return found;
 }
