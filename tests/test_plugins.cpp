@@ -10986,6 +10986,19 @@ TEST_F(PluginTest, TileOverviewResamplingDrivesOutputBytes) {
         ASSERT_EQ(files.size(), 1u) << method << " 产出集合应为单瓦片";
         const std::string bytes = t17ReadWholeFile(output / fs::path(*files.begin()));
         ASSERT_FALSE(bytes.empty());
+        // 覆盖缘透明也要钉（本夹具**没有**声明 NoData ⇒ hasNd=false，垫边的 -9999 只能
+        // 靠 coverMask 走透明；rgba 循环里删掉该臂 ⇒ 边缘变不透明黑 ⇒ 这里红。
+        // z=8 瓦片米宽 156543，夹具只覆盖左上 (64000/156543)*256 ≈ 104.7 px）：
+        {
+            auto ds = gis::core::openRaster((output / fs::path(*files.begin())).string(), true);
+            ASSERT_NE(ds.get(), nullptr);
+            ASSERT_EQ(ds->GetRasterCount(), 4);
+            std::vector<uchar> alpha(256 * 256);
+            ASSERT_EQ(ds->GetRasterBand(4)->RasterIO(GF_Read, 0, 0, 256, 256,
+                                                     alpha.data(), 256, 256, GDT_Byte, 0, 0), CE_None);
+            EXPECT_GT(alpha[50 * 256 + 50], 0) << method << " 覆盖区被垫成透明";
+            EXPECT_EQ(alpha[200 * 256 + 200], 0) << method << " 未覆盖边缘仍不透明（coverMask 失效）";
+        }
         if (pass == 0) nearestBytes = bytes; else averageBytes = bytes;
     }
     EXPECT_NE(nearestBytes, averageBytes)
