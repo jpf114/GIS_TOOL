@@ -510,3 +510,107 @@ TEST(WorkflowParamTyping, ValidNumericParamReachesPluginAndChangesOutput) {
     const float value = gis::tests::readPixel(output, 1, 3, 3);
     EXPECT_FLOAT_EQ(value, 2.0f) << "interval_step 未生效（退回 1.0 时该像元应为 6）";
 }
+
+TEST(WorkflowParamTyping, OutOfRangeBandParamFailsStepExplicitly) {
+    // R-T14-2 的 Int 类型化在这里第二次显形：类型化之前 blue_band="999" 被静默忽略、
+    // 插件用默认号 1 正常算完并返回成功；类型化之后它真的进到 getBandIndex 的范围判据里。
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_NE(mgr.find("spindex"), nullptr);
+
+    const auto dir = workflowTypingTestDir("band_out_of_range");
+    const std::string input = writeSpindexFixture(dir);
+    ASSERT_FALSE(input.empty()) << "夹具栅格创建失败";
+    const std::string output = (dir / "out" / "evi_bad_band.tif").string();
+
+    gis::framework::Workflow wf;
+    wf.name = "越界波段号必须显式失败";
+    gis::framework::WorkflowStep step;
+    step.pluginName = "spindex";
+    step.actionKey = "evi";
+    step.params["input"] = "${input}";
+    step.params["output"] = "${output_dir}/evi_bad_band.tif";
+    step.params["blue_band"] = "999";   // 夹具只有 5 个波段
+    wf.steps.push_back(step);
+
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(wf, {
+        {"input", input},
+        {"output_dir", (dir / "out").string()},
+        {"basename", "wf"},
+    });
+
+    EXPECT_FALSE(result.success);
+    ASSERT_EQ(result.stepMessages.size(), 1u);
+    const std::string& message = result.stepMessages[0];
+    // 越界在 spindex 内部被自家 catch（spindex_plugin.cpp:774-776
+    // `catch (const std::exception& ex) { return Result::fail(ex.what()); }`）转成插件失败，
+    // 所以到不了 workflow 的异常兜底那一层：文案是 "…) failed: blue_band 999 out of range (1-5)"，
+    // **不含 "threw"**。这一点与 R-T14-6 的预期（"含 threw"）不符，已在报告 §5 上报。
+    EXPECT_NE(message.find("out of range"), std::string::npos) << message;
+    EXPECT_NE(message.find("999"), std::string::npos) << message;
+    EXPECT_NE(message.find("Step 1 (spindex.evi) failed:"), std::string::npos) << message;
+    EXPECT_EQ(message.find("invalid parameter"), std::string::npos)
+        << "999 是合法整数，不该被解析器拒掉；这里失败的是波段号对不上栅格";
+    // 这里**故意不断** result.completedSteps：WorkflowRunner 在成功判据之前就做了
+    // `result.completedSteps = i + 1`（workflow.cpp:72 与 :74 的顺序），所以"插件自己报的失败"
+    // 也会把这一步计入已完成数（实测本用例为 1）。那是 WorkflowRunner 的既有语义、
+    // 与本任务的类型化无关，改它属另一个口径（已在报告里作为新发现上报），
+    // 留在本用例里断言等于把一个可疑行为锁死。
+    EXPECT_FALSE(std::filesystem::exists(output)) << "越界波段仍然产出了文件";
+}
+
+TEST(WorkflowParamTyping, PluginExceptionIsReportedNotPropagated) {
+    // 异常兜底的真实触发路径：raster_math 的 doReclassify 对 openRaster 不自家 catch
+    // （raster_math_plugin.cpp 里三处 try 都在 parseReclassRules 内，:182-198），
+    // 而不存在的输入会让 gis::core::openRaster 抛 GisError（gdal_wrapper.cpp:49-51，
+    // GisError 派生自 std::runtime_error，error.h:7-12）。
+    // 兜底缺失时这条用例会红成"异常穿出测试体"：实测 gtest 报
+    // `unknown file: error: SEH exception with code 0xc0000005 thrown in auxiliary test code`
+    // （见 build/task14_tier2_red_M0_debug.log 的 #69 同形态），而不是干净的用例失败。
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_NE(mgr.find("raster_math"), nullptr);
+
+    const auto dir = workflowTypingTestDir("plugin_throw");
+    gis::framework::Workflow wf;
+    wf.name = "插件抛异常必须由工作流兜住并报出来";
+    gis::framework::WorkflowStep step;
+    step.pluginName = "raster_math";
+    step.actionKey = "reclassify";
+    step.params["input"] = "${input}";
+    step.params["output"] = "${output_dir}/never_written.tif";
+    step.params["reclass_mode"] = "interval";
+    step.params["interval_step"] = "5";   // 合法：解析放行，失败点在插件内部的 openRaster
+    wf.steps.push_back(step);
+
+    const auto output = dir / "never_written.tif";
+    std::error_code ec;
+    std::filesystem::remove(output, ec);
+
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(wf, {
+        {"input", (dir / "definitely_missing.tif").string()},
+        {"output_dir", dir.string()},
+        {"basename", "wf"},
+    });
+
+    EXPECT_FALSE(result.success);
+    ASSERT_EQ(result.stepMessages.size(), 1u);
+    const std::string& message = result.stepMessages[0];
+    const std::string expectedPrefix = "Step 1 (raster_math.reclassify) threw: ";
+    EXPECT_EQ(message.rfind(expectedPrefix, 0), 0u) << message;
+    EXPECT_NE(message.find("Cannot open raster"), std::string::npos) << message;
+    // 兜底的 catch 让 execute 在 `result.completedSteps = i + 1` **之前** return，
+    // 所以抛异常的这一步不被计入已完成（与上一条用例里"插件自己报的失败计入 1"相对照）。
+    EXPECT_EQ(result.completedSteps, 0);
+    EXPECT_FALSE(std::filesystem::exists(output));
+
+    // 兜底之后 runner 必须还能继续接活：同 mgr 上再跑一次空工作流不应受影响。
+    gis::framework::Workflow empty;
+    empty.name = "兜底后工作流仍可用";
+    const auto followUp = runner.execute(empty, {});
+    EXPECT_TRUE(followUp.success) << followUp.message;
+}

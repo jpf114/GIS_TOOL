@@ -4,6 +4,7 @@
 #include <gis/core/progress.h>
 
 #include <algorithm>
+#include <exception>
 
 namespace gis::framework {
 
@@ -97,7 +98,21 @@ WorkflowResult WorkflowRunner::execute(
         typedParams["action"] = step.actionKey;
 
         gis::core::NullProgressReporter nullProgress;
-        Result stepResult = plugin->execute(typedParams, nullProgress);
+        // Task 14：插件抛出来的异常必须由工作流兜住并写成这一步的失败，
+        // 不能让它穿出 execute 把调用方（GUI 线程 / CLI / 测试进程）一起带走。
+        // 真实触发路径之一：gis::core::openRaster 打不开文件时抛 GisError
+        // （src/core/src/gdal_wrapper.cpp:49-51，GisError 派生自 std::runtime_error），
+        // 而 raster_math 的 doReclassify 对它没有自家 catch（不像 spindex
+        // 在 spindex_plugin.cpp:774-776 会把异常转成 Result::fail）。
+        Result stepResult;
+        try {
+            stepResult = plugin->execute(typedParams, nullProgress);
+        } catch (const std::exception& e) {
+            result.message = "Step " + std::to_string(i + 1) + " (" + step.pluginName + "." +
+                             step.actionKey + ") threw: " + e.what();
+            result.stepMessages.push_back(result.message);
+            return result;
+        }
 
         result.completedSteps = static_cast<int>(i + 1);
 
