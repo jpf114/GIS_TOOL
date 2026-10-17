@@ -10894,6 +10894,27 @@ T18OpaqueStats t18StatsOverOpaque(const T18TileBands& t, int band) {
     return s;
 }
 
+// 指定矩形窗口内的波段统计（不看 alpha）——给"没有 alpha 通道的输出格式"（JPEG）用，
+// 也用来把统计限制在**已覆盖子矩形**内（z=8 该夹具的 dx1=105 由既有锚 #296 钉死）。
+T18OpaqueStats t18StatsInRect(const T18TileBands& t, int band, int x0, int y0, int w, int h) {
+    T18OpaqueStats s;
+    if (!t.ok() || band < 1 || band > t.bands) return s;
+    const std::vector<uchar>& target = t.data[static_cast<size_t>(band) - 1];
+    s.minValue = 255;
+    for (int y = y0; y < y0 + h; ++y) {
+        for (int x = x0; x < x0 + w; ++x) {
+            if (x < 0 || y < 0 || x >= t.width || y >= t.height) continue;
+            const int v = target[static_cast<size_t>(y) * t.width + x];
+            s.minValue = std::min(s.minValue, v);
+            s.maxValue = std::max(s.maxValue, v);
+            s.mean += v;
+            ++s.count;
+        }
+    }
+    if (s.count > 0) s.mean /= s.count;
+    return s;
+}
+
 } // namespace
 
 // F1 + R-T17-7/9 的主几何钉：z=10 与 z=11 的瓦片路径集合必须**恰等于**字面集合。
@@ -11925,5 +11946,71 @@ TEST_F(PluginTest, TileBlankGuardsAndSkipBlankCombination) {
             const T18OpaqueStats st = t18StatsOverOpaque(tile, 1);
             EXPECT_EQ(st.count, i < 2 ? 4 : 8) << "case " << i << " 的不透明像元规模变了";
         }
+    }
+}
+
+// T18-S10：三波段彩色在**每种输出格式**上都必须是同一个通道顺序
+// （GDAL 读回的波段号 == 图像通道：1=R、2=G、3=B、4=A）。
+// WHY 这条在本任务的射程内（不是顺手扩大范围）：encodeTile 的 jpeg 分支原来写
+//   cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR)，把 CV_8UC4 的内存序 (B,G,R,A) 当成
+//   (R,G,B,A) 读 ⇒ 产出 (R,G,B) 再被 imwrite 按 BGR 解释 ⇒ 红蓝互换。
+//   改前瓦片只有灰度（R=G=B），这个错**看不出来**；S1 让彩色成为可能之后它就是真错色
+//   （RED：改前跑本用例，jpeg 档红在 band1/band3 的顺序断言）。
+//   png/webp/gtiff 三支改前就是对的（OpenCV 一律按 (B,G,R[,A]) 解释矩阵）⇒ 本用例对它们是
+//   **口径锁**：谁以后再"顺手对齐一下顺序"（例如给 gtiff 加 BGRA2RGBA），当场红。
+//   盘上事实：改前 `grep -n "output_format" tests/` 在 tile 侧零命中，四个格式一条用例都没有。
+// 期望算术沿用 #311：band1/2/3 的翻转列分别是 32/48/16 ⇒ 覆盖子矩形 [0,104]² 内
+//   mean(R)=255*52/105=126.3、mean(G)=255*26/105=63.1、mean(B)=255*78/105=189.4。
+//   JPEG 是有损的，且它**没有 alpha**（3 波段）⇒ 统计一律按覆盖子矩形做（t18StatsInRect），
+//   不借 alpha 筛不透明像元；容差 25。
+TEST_F(PluginTest, TileColorOrderConsistentAcrossOutputFormats) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    const auto makeBand = [](int splitCol) {
+        std::vector<float> data(static_cast<size_t>(64) * 64, 0.0f);
+        for (int y = 0; y < 64; ++y)
+            for (int x = splitCol; x < 64; ++x) data[static_cast<size_t>(y) * 64 + x] = 200.0f;
+        return data;
+    };
+    const std::string input = t18WriteBandsRaster(
+        getTestDir(), "t18_fmt_input.tif", 64, 64,
+        std::vector<std::vector<float>>{makeBand(32), makeBand(48), makeBand(16)}, options);
+    ASSERT_FALSE(input.empty());
+
+    struct FormatCase { const char* fmt; const char* ext; int expectedBands; };
+    const std::vector<FormatCase> cases = {
+        {"png", ".png", 4}, {"jpeg", ".jpg", 3}, {"gtiff", ".tif", 4},
+    };
+    for (const FormatCase& c : cases) {
+        const fs::path output = getTestDir() / (std::string("t18_fmt_") + c.fmt + "_output");
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["resampling"] = std::string("nearest");
+        params["output_format"] = std::string(c.fmt);
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << c.fmt << ": " << result.message;
+        const auto files = t17CollectTileFiles(output);
+        ASSERT_EQ(files.size(), 1u) << c.fmt << " 实际 [" << t17JoinFiles(files) << "]";
+        // 扩展名也得对上（tileFileExt 的口径：jpeg ⇒ .jpg、gtiff ⇒ .tif）
+        EXPECT_EQ(fs::path(*files.begin()).extension().string(), c.ext) << c.fmt;
+
+        const T18TileBands tile = t18ReadTile(output / fs::path(*files.begin()));
+        ASSERT_TRUE(tile.ok()) << c.fmt;
+        ASSERT_EQ(tile.bands, c.expectedBands) << c.fmt << " 的波段数口径";
+        const T18OpaqueStats r = t18StatsInRect(tile, 1, 0, 0, 105, 105);
+        const T18OpaqueStats g = t18StatsInRect(tile, 2, 0, 0, 105, 105);
+        const T18OpaqueStats b = t18StatsInRect(tile, 3, 0, 0, 105, 105);
+        EXPECT_NEAR(r.mean, 126.3, 25.0) << c.fmt << " 的 band1 不是红通道（均值 " << r.mean << "）";
+        EXPECT_NEAR(g.mean, 63.1, 25.0) << c.fmt << " 的 band2 不是绿通道（均值 " << g.mean << "）";
+        EXPECT_NEAR(b.mean, 189.4, 25.0) << c.fmt << " 的 band3 不是蓝通道（均值 " << b.mean << "）";
+        EXPECT_GT(b.mean, r.mean) << c.fmt << " 的 B>R 顺序不对";
+        EXPECT_GT(r.mean, g.mean) << c.fmt << " 的 R>G 顺序不对";
     }
 }

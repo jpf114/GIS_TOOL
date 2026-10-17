@@ -651,29 +651,101 @@ static std::string tileFileExt(const std::string& fmt) {
     return ".png";
 }
 
+// 一个待输出波段的拉伸参数（整幅统计出来的 min/max）。
+// WHY 不用计划 Step 3 片段写的 std::vector<cv::Range>（R-T18-2）：cv::Range 是**窗口索引
+//   区间**（start/end 都是 int），拿它装 double 的 (min,max) 既有 double→int 收窄
+//   （MSVC C4244，本批次红线是零 warning）语义也是错的；计划自己的注释还前后矛盾
+//   （上一行写"以 cv::Scalar2d 形式保存"，下一行代码却是 cv::Range）。
+//   这里用小 struct 而不是 std::pair：字段名 minV/maxV 在 stretchByte 里自解释，
+//   且加 clamp/兜底时不会退化成 first/second 的无名字段。
+struct BandStretch {
+    double minV = 0.0;
+    double maxV = 0.0;
+};
+
+// skip_blank 的判空容差：不透明像元 **<= 此值** 才算空瓦片。
+// WHY 阈值不是 0（这一条有意偏离计划 Step 3 的措辞，偏离理由=盘上事实）：
+//   "0 个有效像元"这种瓦片已经被 renderTileRgba 末尾的"没有任何有效像元 ⇒ 不交付"守卫
+//   **无条件**挡掉（R-T18-6 明令保留该语义；#298 的 z=11 只写 9 张、#310 的
+//   tiles_generated=13/tiles_skipped=7 都把它钉成了与 skip_blank 无关的事实，改期望=GOLD 回归）。
+//   于是把这里的阈值也写成 0，两个谓词就完全同判据 ⇒ isTileBlank 那条调用永不可真 ⇒
+//   skip_blank 退化成"面板上能勾、CLI 能设、结果不变"的死键 —— 正是本任务要消灭的 N65 形态。
+//   留一个 >0 的小容差，skip_blank 管的就正是"只有寥寥几个不透明像元"的近空瓦片
+//   （判别用例 #315 的档 B：1×1 源栅格 ⇒ 4 个不透明像元 ⇒ true 跳过 / false 写出）。
+// WHY 仍是 4 而不是按比例：改前实现就是 4（原 :660 `if (nonzero > 4) return false`），
+//   本任务不动这条口径；要改成"占瓦片像元的百分比"属于口径变更，交控制器随 Task 21 定。
+constexpr int kBlankOpaquePixelTolerance = 4;
+
 static bool isTileBlank(const cv::Mat& rgba) {
     if (rgba.channels() < 4) return false;
     int nonzero = 0;
     for (int y = 0; y < rgba.rows; ++y) {
         const uchar* row = rgba.ptr<uchar>(y);
         for (int x = 0; x < rgba.cols; ++x) {
-            if (row[x * 4 + 3] > 0) { ++nonzero; if (nonzero > 4) return false; }
+            if (row[x * 4 + 3] > 0) {
+                ++nonzero;
+                if (nonzero > kBlankOpaquePixelTolerance) return false;
+            }
         }
     }
-    return nonzero <= 4;
+    return nonzero <= kBlankOpaquePixelTolerance;
+}
+
+// 拉伸：把一个波段的源值映到 0..255。
+// WHY 兜底 range=1.0 照搬改前 :1157（**常数波段映射成 0=黑**），本任务不改这条口径，
+//   否则 #315 档 B 那种"整幅单值"的瓦片亮度会莫名其妙翻面。
+// WHY clamp 是新增而且**必要**：add_alpha=true 时色波段的 NODATA 元数据被 -dstalpha 剥掉
+//   （见 renderTileRgba 的 S9 注释），NoData 原值（-9999 这类）会参与这条换算，
+//   255*(v-min)/range 可能远小于 0；改前 `static_cast<uchar>(double)` 对越界浮点是
+//   **未定义行为**（MSVC 实测截成 0 或 0x80000000 的低字节），clamp 之后才是可预期的黑。
+static uchar stretchByte(double v, const BandStretch& s) {
+    const double range = (s.maxV - s.minV > 1e-9) ? (s.maxV - s.minV) : 1.0;
+    const double scaled = 255.0 * (v - s.minV) / range;
+    return static_cast<uchar>(std::clamp(scaled, 0.0, 255.0));
+}
+
+// R-T18-6：拉伸参数按**整幅 warpedDS**统计一次，所有层级、所有瓦片共用。
+// WHY 不是 Produces 原措辞的"每层级一次"：R-T17-7 删掉"每层级物化全球网格"之后，
+//   层级只剩索引网格、**不再是可统计的数据对象**；要按层级统计就得按该层分辨率把整幅
+//   包络重读一遍，代价与语义都不划算。整幅一次是原设计的**超集**（连层级之间都一致），
+//   实现的正是承诺的那件事：同一地物跨瓦片/跨层级亮度一致。
+//   判别用例 #312 TileStretchIsWholeSceneWideNotPerTile；变异取证"换回逐瓦片统计"
+//   见 task-18-report.md 的 S6 台账。这条偏离已登记进 Task 21 的口径同步清单。
+// WHY 用 ComputeStatistics(bForce=true) 而不是把整幅读进 cv::Mat 再 cv::minMaxIdx：
+//   前者按块流式扫描，warped 临时栅格多大都不额外占内存；后者按幅吃内存。
+//   bForce=true 是**精算**（近似统计走概视图/采样，会漏极值，而"亮度一致"正是本任务
+//   要承诺的性质，宁可慢不可偏）。NoData 像元不参与统计：GDAL 会跳过该波段声明的
+//   NODATA 值 ⇒ 拉伸区间只由有效像元决定（这也是"整幅统计"能替掉"逐瓦片统计"的前提）。
+// 统计失败或退化（空数据集 / 全 NoData）时退回 (0,0)：配合 range=1.0 兜底与瓦片级
+//   "无有效像元 ⇒ 不交付"守卫，这种数据集一张瓦片都不会写出去，不会产生脏值。
+static std::vector<BandStretch> computeSceneBandStretch(GDALDataset* warpedDS, int bandCount) {
+    std::vector<BandStretch> stretches;
+    stretches.reserve(std::max(0, bandCount));
+    for (int b = 1; b <= bandCount; ++b) {
+        stretches.emplace_back();
+        GDALRasterBand* band = warpedDS ? warpedDS->GetRasterBand(b) : nullptr;
+        if (!band) continue;
+        double minV = 0.0, maxV = 0.0, meanV = 0.0, stdDevV = 0.0;
+        if (band->ComputeStatistics(false, &minV, &maxV, &meanV, &stdDevV, nullptr, nullptr) != CE_None)
+            continue;
+        if (!(maxV > minV)) continue;   // NaN / 常数波段的退化臂：保留 (0,0) 兜底
+        stretches.back().minV = minV;
+        stretches.back().maxV = maxV;
+    }
+    return stretches;
 }
 
 // Task 18 S0（复审建议）：doTile 的"每瓦片渲染段"（改前 cutting_plugin.cpp:1118-1171）
-// 原样抽进这一个函数。
+// 原样抽进这一个函数；S1..S4 在同一处换成多波段 + 整幅拉伸 + 真 alpha。
 // WHY 先抽再加：Task 17 之后 doTile 已有 453 行，网格反算、波段读取、拉伸、alpha、
 //   编码、计数六件事挤在三重循环里的一处；本任务要在**同一处**加多波段与真 alpha，
 //   就地堆叠会让"渲染语义"和"网格语义"再也分不开。抽出后 doTile 只留网格与计数。
 // WHY 传引用出参而不是返回值：rgba 是 tileSize×tileSize×4 的缓冲（256 档 256KB），
 //   按值返回在 MSVC 下多一次深拷贝，而这个函数每张瓦片调一次。
-// 返回 false = 这张瓦片**没有可交付内容**（源读失败，或没有任何有效像元可供拉伸，
-//   后者是原 :1151 `bandMin > bandMax` 那条守卫的语义，R-T18-6 要求保留）。
+// 返回 false = 这张瓦片**没有可交付内容**：源读失败，或者没有任何有效像元可上色
+//   （后者是原 :1151 `bandMin > bandMax` 那条守卫的语义，R-T18-6 要求保留）。
 //   两个不可交付分支在调用方合并成同一条跳过臂：改前它们是两条 continue，但动作完全
-//   相同（++tilesSkipped; ++tilesProcessed; continue），合并 F6 计数口径不变。
+//   相同（++tilesSkipped; ++tilesProcessed; continue），合并后 F6 计数口径不变。
 struct TileRenderInput {
     GDALDataset* warpedDS = nullptr;
     int srcX = 0, srcY = 0, srcW = 0, srcH = 0;   // warped 数据集上的整数读窗
@@ -681,66 +753,156 @@ struct TileRenderInput {
     int tileSize = 256;
     int interpolation = cv::INTER_LINEAR;         // overview_resampling 映射出的插值（R-T18-8）
     bool addAlpha = true;
-    double nodata = 0.0;                          // 未声明 NoData 时的垫边值（口径照旧 :1039）
-    bool hasNodata = false;
+    int colorBands = 1;                           // 参与上色的波段数 1..4（不含 -dstalpha 那条）
+    int alphaBandIndex = 0;                       // warped 里 -dstalpha 波段的 1-based 号，0=没有
+    // 三个数组按 1-based 波段号访问，所以**按值**装进结构体（不用指针：省掉空指针那一类
+    // 防御臂，也不用 const&：那会让结构体不能逐瓦片临时构造）。长度 ≤ 4，相对下面
+    // tileSize² 的逐像元循环，每瓦片三次小堆拷贝的成本可以忽略。
+    std::vector<double> bandNodata;               // 1-based：bandNodata[b-1]（未声明时取 nodata_value）
+    std::vector<char> bandHasNodata;              // 1-based：该波段是否声明了 NODATA
+    std::vector<BandStretch> stretches;           // 1-based：整幅统计出的 (min,max)（R-T18-6）
 };
 
 static bool renderTileRgba(const TileRenderInput& in, cv::Mat& rgba) {
-    cv::Mat tileData(in.tileSize, in.tileSize, CV_32F, cv::Scalar(static_cast<float>(in.nodata)));
-    cv::Mat coverMask(in.tileSize, in.tileSize, CV_8UC1, cv::Scalar(0));
+    // 三个数组按下标访问，所以波段数取"调用方给的四路里最小的那个"，越界即缩到 1：
+    // 正常路径下 doTile 让三者长度恒等于 colorBands，这里是**防御臂**（不可达即不产出，
+    // 不拿它当判别目标，见 task-18-report.md 关于不可判别分支的说明）。
+    int bands = std::min(std::max(1, in.colorBands), 4);
+    bands = std::min(bands, static_cast<int>(in.stretches.size()));
+    bands = std::min(bands, static_cast<int>(in.bandNodata.size()));
+    bands = std::min(bands, static_cast<int>(in.bandHasNodata.size()));
+    bands = std::max(1, bands);
+    const cv::Rect target(in.dstX, in.dstY, in.dstW, in.dstH);
 
-    cv::Mat block(in.srcH, in.srcW, CV_32F);
-    const CPLErr err = in.warpedDS->GetRasterBand(1)->RasterIO(
-        GF_Read, in.srcX, in.srcY, in.srcW, in.srcH,
-        block.data, block.cols, block.rows, GDT_Float32, 0, 0);
-    if (err != CE_None) return false;
+    // 逐波段：读 → 缩放（R-T18-8：每波段用**同一个** tileInterpolation）→ 放置到子矩形，
+    // 同时按该波段自己的 NODATA 建有效掩膜。改前只有 band 1 走这条路（R-T17-5 的红线：
+    // 多波段是 Task 18 的地盘），垫边值 srcNodata 的口径在这里按波段展开。
+    std::vector<cv::Mat> values;
+    std::vector<cv::Mat> bandValid;
+    values.reserve(bands);
+    bandValid.reserve(bands);
+    for (int b = 1; b <= bands; ++b) {
+        const double nd = in.bandNodata[static_cast<size_t>(b) - 1];
+        values.emplace_back(in.tileSize, in.tileSize, CV_32F, cv::Scalar(static_cast<float>(nd)));
+        bandValid.emplace_back(in.tileSize, in.tileSize, CV_8UC1, cv::Scalar(0));
 
-    // 插值项来自 overview_resampling 映射出的 tileInterpolation，
-    // 原 :943 的硬编码 cv::INTER_LINEAR 作废（判别用例：nearest 与 average 同输入
-    // 必须产出不同字节；删掉映射硬回 INTER_LINEAR ⇒ 两次输出一致 ⇒ 用例必红）。
-    cv::resize(block, block, cv::Size(in.dstW, in.dstH), 0, 0, in.interpolation);
-    block.copyTo(tileData(cv::Rect(in.dstX, in.dstY, in.dstW, in.dstH)));
-    coverMask(cv::Rect(in.dstX, in.dstY, in.dstW, in.dstH)).setTo(255);
+        GDALRasterBand* band = in.warpedDS ? in.warpedDS->GetRasterBand(b) : nullptr;
+        if (!band) return false;
+        cv::Mat block(in.srcH, in.srcW, CV_32F);
+        if (band->RasterIO(GF_Read, in.srcX, in.srcY, in.srcW, in.srcH,
+                           block.data, in.srcW, in.srcH, GDT_Float32, 0, 0) != CE_None)
+            return false;
+        cv::resize(block, block, cv::Size(in.dstW, in.dstH), 0, 0, in.interpolation);
+        block.copyTo(values[static_cast<size_t>(b) - 1](target));
 
-    rgba = cv::Mat(in.tileSize, in.tileSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
-    double bandMin = 1e30, bandMax = -1e30;
-    for (int py = 0; py < in.tileSize; ++py) {
-        for (int px = 0; px < in.tileSize; ++px) {
-            const float v = tileData.at<float>(py, px);
-            if (coverMask.at<uchar>(py, px) == 0) continue;   // 未覆盖垫边不参与拉伸
-            if (in.hasNodata && std::abs(v - in.nodata) < 1e-6) continue;
-            if (v < bandMin) bandMin = v;
-            if (v > bandMax) bandMax = v;
-        }
-    }
-
-    if (bandMin > bandMax) return false;
-
-    const double range = (bandMax - bandMin > 1e-9) ? (bandMax - bandMin) : 1.0;
-    for (int py = 0; py < in.tileSize; ++py) {
-        for (int px = 0; px < in.tileSize; ++px) {
-            const float v = tileData.at<float>(py, px);
-            if (coverMask.at<uchar>(py, px) == 0 ||
-                (in.hasNodata && std::abs(v - in.nodata) < 1e-6)) {
-                rgba.at<cv::Vec4b>(py, px) = cv::Vec4b(0, 0, 0, 0);
-            } else {
-                const uchar c = static_cast<uchar>(255.0 * (v - bandMin) / range);
-                // R-T17-10/N65：addAlpha 的三元两个分支相同 ⇒ add_alpha 目前是空操作，
-                // 这是 Task 18（多波段与 alpha）的地盘，本任务只登记不修（R-T17-5 红线）。
-                rgba.at<cv::Vec4b>(py, px) = cv::Vec4b(c, c, c, in.addAlpha ? 255 : 255);
+        cv::Mat validRect = bandValid[static_cast<size_t>(b) - 1](target);
+        validRect.setTo(255);   // 覆盖子矩形内默认有效（改前的 coverMask 那一臂）
+        if (in.bandHasNodata[static_cast<size_t>(b) - 1]) {
+            // 判据照搬改前 :1145：|v - nodata| < 1e-6（不是 ==，浮点声明值常有末位差）
+            const float ndf = static_cast<float>(nd);
+            for (int py = 0; py < validRect.rows; ++py) {
+                const float* vrow = values[static_cast<size_t>(b) - 1].ptr<float>(target.y + py);
+                uchar* mrow = validRect.ptr<uchar>(py);
+                for (int px = 0; px < validRect.cols; ++px)
+                    if (std::abs(vrow[target.x + px] - ndf) < 1e-6) mrow[px] = 0;
             }
         }
     }
-    return true;
+
+    // alpha / 有效像元（S3 + S9，N65 在这里落地）：两条来源按 add_alpha 分派。
+    //  add_alpha=true  ⇒ 读 GDALWarp 的 **-dstalpha 波段**。S9 的盘上事实：这条选项把
+    //    "NoData 区"改由末尾 alpha 波段表达，并因此不再给色波段写 NODATA 元数据
+    //    ⇒ 改前只信 GetNoDataValue 的代码在 add_alpha=true 时 NoData 判据整体失效，
+    //    整幅都是 NoData 的瓦片被当成"有数据"，写成一张不透明黑瓦（RED 取证 #315 档 A
+    //    variant=1/3）。dstalpha 的口径是"源像元里**只要有一个**波段有效就不透明"，
+    //    所以某一波段的局部空洞不会被放大成整孔。
+    //  add_alpha=false ⇒ 没有 dstalpha 波段 ⇒ 逐波段 NODATA 判据取 **AND**（任一波段
+    //    NoData 即遮掉）。单波段输入下 AND 与改前判据逐像元相同 ⇒ #296 的覆盖缘列 104/105
+    //    硬边与 #298 的东端 NoData 带透明都一字不动地保住（GOLD）。
+    //  ⇒ add_alpha 的可见差别只出现在"多波段且只有部分波段 NoData"的源上：这也正是
+    //    N65 能藏到今天的机理（单波段下两个分支恒等，而改前所有用例都用单波段源）。
+    cv::Mat alphaValid(in.tileSize, in.tileSize, CV_8UC1, cv::Scalar(0));
+    if (in.addAlpha && in.alphaBandIndex > 0) {
+        GDALRasterBand* aBand = in.warpedDS->GetRasterBand(in.alphaBandIndex);
+        if (!aBand) return false;
+        cv::Mat aBlock(in.srcH, in.srcW, CV_32F);
+        if (aBand->RasterIO(GF_Read, in.srcX, in.srcY, in.srcW, in.srcH,
+                             aBlock.data, in.srcW, in.srcH, GDT_Float32, 0, 0) != CE_None)
+            return false;
+        cv::resize(aBlock, aBlock, cv::Size(in.dstW, in.dstH), 0, 0, in.interpolation);
+        for (int py = 0; py < in.dstH; ++py) {
+            const float* ar = aBlock.ptr<float>(py);
+            uchar* mr = alphaValid.ptr<uchar>(target.y + py);
+            // 取 >0 而不是 >=255：插值后的中间值仍代表"这里源上有数据"，
+            // 只有真无数据才是 0 ⇒ 不把抗锯齿边误判成洞。
+            for (int px = 0; px < in.dstW; ++px) mr[target.x + px] = (ar[px] > 0.0f) ? 255 : 0;
+        }
+    } else {
+        alphaValid = bandValid[0];
+        for (int b = 1; b < bands; ++b)
+            cv::bitwise_and(alphaValid, bandValid[static_cast<size_t>(b) - 1], alphaValid);
+    }
+
+    // 通道放置口径（R-T18-4(ii) 要求写清"哪两个通道该相等"不是猜的）：
+    //   矩阵按 OpenCV 约定是 CV_8UC4 = 内存序 (B,G,R,A)；cv::imwrite 写 PNG/WebP 时转成
+    //   文件序 (R,G,B,A)，而 GDAL 的驱动也按 (R,G,B,A) 暴露波段 ⇒ **openRaster 的波段号 i
+    //   就是图像的第 i 个通道**（1=R、2=G、3=B、4=A），用例侧不再做第二次翻转。
+    //   映射式：bandForChannel(c) = min(c+1, bands)，c=0,1,2 依次是 R,G,B ⇒
+    //     1 波段 → R=G=B=band1（灰度，#313 锁这条口径；容器仍是 4 波段，出处是 GOLD #298
+    //       的 ASSERT_EQ(ds->GetRasterCount(), 4)）
+    //     2 波段 → R=b1, G=B=b2（缺口用最后一个波段补齐，与"1 波段→灰度"是同一条规则；
+    //       没有波段被丢弃。2 波段没有公认语义，本任务不为此发明新口径）
+    //     3 波段 → R=b1, G=b2, B=b3
+    //     4 波段 → R=b1, G=b2, B=b3，band4 进 alpha（Produces 承诺的"4→RGBA"）
+    //   内存下标 = 2 - c（R 在 2、G 在 1、B 在 0），A 恒在 3。
+    rgba = cv::Mat(in.tileSize, in.tileSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+    int validCount = 0;
+    for (int py = 0; py < in.tileSize; ++py) {
+        uchar* out = rgba.ptr<uchar>(py);
+        for (int px = 0; px < in.tileSize; ++px) {
+            if (alphaValid.at<uchar>(py, px) == 0) {
+                out[px * 4 + 0] = 0; out[px * 4 + 1] = 0; out[px * 4 + 2] = 0; out[px * 4 + 3] = 0;
+                continue;
+            }
+            ++validCount;
+            for (int c = 0; c < 3; ++c) {
+                const int b = std::min(c, bands - 1);
+                const cv::Mat& v = values[static_cast<size_t>(b)];
+                const bool bv = bandValid[static_cast<size_t>(b)].at<uchar>(py, px) != 0;
+                out[px * 4 + (2 - c)] = bv ? stretchByte(v.at<float>(py, px),
+                                                         in.stretches[static_cast<size_t>(b)]) : 0;
+            }
+            if (bands == 4) {
+                const cv::Mat& v = values[3];
+                out[px * 4 + 3] = bandValid[3].at<uchar>(py, px)
+                    ? stretchByte(v.at<float>(py, px), in.stretches[3]) : 0;
+            } else {
+                out[px * 4 + 3] = 255;   // 真 alpha：不透明只由上面的有效判据决定
+            }
+        }
+    }
+    // 原 :1151 "取不到任何有效值 ⇒ 跳过"的瓦片级判据（R-T18-6 明令保留）。
+    return validCount > 0;
 }
 
+// 编码落盘（Task 18 S10：把通道顺序在**四种输出格式**上统一成"GDAL 读回的波段号 == 图像通道"）。
+// WHY 这次动它：改前瓦片只有灰度（R=G=B），通道顺序错了**看不出来**；S1 让三波段彩色成为可能之后，
+//   jpeg 分支的 cv::COLOR_RGBA2BGR 就从"潜伏"变成"真的错色"——那个枚举把内存序当成 (R,G,B,A) 读，
+//   而 OpenCV 的 CV_8UC4 内存序是 (B,G,R,A) ⇒ 它产出的三通道是 (R,G,B)，再被 imwrite 按 BGR 解释
+//   ⇒ JPEG 的红蓝互换（判别取证：#316 在改前红在 band1/band3）。
+// WHY gtiff 分支**不**动：编码器一律把矩阵按 (B,G,R[,A]) 解释（PNG/WebP/JPEG/TIFF 同一条口径），
+//   所以直接写 BGRA 落进文件的就是 R,G,B,A ⇒ GeoTIFF 的 band1 仍是红，与 PNG 同口径。
+//   这里曾经加过一次 cv::COLOR_BGRA2RGBA "对齐顺序"，#316 实测反而把 band1 变成了蓝
+//   （均值 189.4 落在 band1、126.3 落在 band3）⇒ 那次改动是错的，已退回并留本注释。
+// 盘上事实：改前 `grep -n "output_format" tests/` 在 tile 侧零命中，四个格式一条用例都没有
+//   ⇒ 这两支从来没被钉过（不是本任务的回归，但本任务让彩色成为可见产物，所以按射程内缺陷修）。
 static bool encodeTile(const cv::Mat& rgba, const std::string& fmt, int quality,
                         const std::string& path) {
     std::vector<int> params;
     if (fmt == "jpeg") {
         params = {cv::IMWRITE_JPEG_QUALITY, quality};
         cv::Mat bgr;
-        cv::cvtColor(rgba, bgr, cv::COLOR_RGBA2BGR);
+        cv::cvtColor(rgba, bgr, cv::COLOR_BGRA2BGR);   // 输入矩阵是 BGRA，不是 RGBA
         return cv::imwrite(path, bgr, params);
     } else if (fmt == "webp") {
         params = {cv::IMWRITE_WEBP_QUALITY, quality};
@@ -1102,12 +1264,37 @@ gis::framework::Result CuttingPlugin::doTile(
     int tilesProcessed = 0;
     const std::string ext = tileFileExt(fmt);
 
-    // hasNd/srcNodata 只在 warped 数据集上读一次：层级数据集被 R-T17-7 删除后
-    // 它们不再随层级变化。原 :886 的 srcBands 是死变量（只有 band 1 被读），删除；
-    // 多波段处理是 Task 18 的地盘（R-T17-5 红线）。
-    int hasNd = 0;
-    double srcNodata = warpedDS->GetRasterBand(1)->GetNoDataValue(&hasNd);
-    if (!hasNd) srcNodata = nodataVal;
+    // 波段面（Task 18 S1/S2）：改到这里只有 band 1 被读（R-T17-5 把多波段划给本任务，
+    // 并把 srcBands 留成死变量）。层级数据集被 R-T17-7 删除后，波段元数据不随层级变化
+    // ⇒ 色波段数、每波段 NODATA、整幅拉伸参数都**只算一次**，放在层级循环之外。
+    //
+    // 色波段数的推导只看 warped 数据集自己（不看 srcDS）：-dstalpha 只在 addAlpha 时加，
+    // 且恒追加在**末尾** ⇒ 色波段是 1..(warpBands-1)、alpha 波段是 warpBands；不加时
+    // 色波段就是 1..warpBands。上限 4 是 R-T18-10 的既定口径（波段数上限不在本任务扩展），
+    // 这里只保证"不越界读、不把 dstalpha 当成第 4 个颜色波段"。
+    const int warpBands = std::max(1, warpedDS->GetRasterCount());
+    const int colorBands = std::max(1, std::min(addAlpha ? warpBands - 1 : warpBands, 4));
+    // alphaBandIndex>0 只在"确有一条 -dstalpha 追加进来的波段"时为真；bandPresent 那一臂
+    // 是防御（GDAL 若不追加就不读它），正常路径下 addAlpha 为真时它恒成立 ⇒ 不可单独判别。
+    const int alphaBandIndex = (addAlpha && warpBands >= colorBands + 1) ? warpBands : 0;
+
+    std::vector<double> bandNodata;
+    std::vector<char> bandHasNodata;
+    bandNodata.reserve(colorBands);
+    bandHasNodata.reserve(colorBands);
+    for (int b = 1; b <= colorBands; ++b) {
+        // nodata_value 的读点保留在这里：该波段**未声明** NODATA 时用参数值垫边（口径照改前
+        // :1256-1257 的 `if (!hasNd) srcNodata = nodataVal`）。有效判据仍然只在"声明过"时
+        // 生效（改前 :1145 的 `hasNd &&` 口径，#296 的注释把这条钉成了既端口径）。
+        int hasNd = 0;
+        GDALRasterBand* band = warpedDS->GetRasterBand(b);
+        const double declared = band ? band->GetNoDataValue(&hasNd) : 0.0;
+        bandHasNodata.push_back(hasNd != 0 ? 1 : 0);
+        bandNodata.push_back(hasNd ? declared : nodataVal);
+    }
+    const std::vector<BandStretch> sceneStretches = computeSceneBandStretch(warpedDS, colorBands);
+    progress.onMessage("Bands: " + std::to_string(colorBands) + " color + " +
+                       std::to_string(alphaBandIndex > 0 ? 1 : 0) + " alpha");
 
     for (int z = minZoom; z <= maxZoom; ++z) {
         progress.throwIfCancelled();
@@ -1200,8 +1387,11 @@ gis::framework::Result CuttingPlugin::doTile(
                 renderIn.tileSize = tileSize;
                 renderIn.interpolation = tileInterpolation;
                 renderIn.addAlpha = addAlpha;
-                renderIn.nodata = srcNodata;
-                renderIn.hasNodata = hasNd != 0;
+                renderIn.colorBands = colorBands;
+                renderIn.alphaBandIndex = alphaBandIndex;
+                renderIn.bandNodata = bandNodata;
+                renderIn.bandHasNodata = bandHasNodata;
+                renderIn.stretches = sceneStretches;
 
                 cv::Mat rgba;
                 if (!renderTileRgba(renderIn, rgba)) {
