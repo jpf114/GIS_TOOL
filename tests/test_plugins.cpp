@@ -20,6 +20,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -1513,6 +1514,75 @@ TEST_F(PluginTest, ProcessingConnectedComponentsExecution) {
     EXPECT_TRUE(fs::exists(output));
     EXPECT_GT(std::stoi(result.metadata.at("component_count")), 1);
     EXPECT_GT(readRasterPixel(output, 26, 26), 0.0f);
+}
+
+// Task 15 / R-T15-1：connectivity 在 spec 里声明了（54df42c:67，默认 8、范围 [4,8]），
+// 但 54df42c:1381 把 8 写死进 cv::connectedComponents —— 它是死参数，传 4 与传 8 产出相同。
+// 夹具几何（4×4，行主序 index = y*width + x，width=4）：
+//   data[0]=(x0,y0)  data[1]=(x1,y0)  data[6]=(x2,y1)  data[7]=(x3,y1)
+//   块 A={(0,0),(1,0)}、块 B={(2,1),(3,1)}，A 的 (1,0) 与 B 的 (2,1) 是 dx=1,dy=1 ⇒ **仅对角相接**
+//   ⇒ 8 连通合成 1 个组件、4 连通仍为 2 个组件。
+// 计划原文的 [0],[1],[5],[6] 换算是 (0,0)(0,1)(1,1)(1,2)，其中 (0,1)~(1,1) 上下相邻 = 4 连通，
+// 4 连通也会得 1 个组件，断 run(4)=="2" 在正确实现下必红 ⇒ 已按裁定改成 [0],[1],[6],[7]。
+// 只锚 component_count（= std::max(0, componentCount-1)，不含背景 0 号标签）：
+// 该 action 先 toUint8 再 THRESH_BINARY|THRESH_OTSU，把 Otsu 的具体取值写进断言
+// 等于把 OpenCV 的实现细节当契约。
+TEST_F(PluginTest, ProcessingConnectedComponentsHonoursConnectivityParameter) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::vector<float> data(16, 0.0f);
+    data[0] = 255.0f;
+    data[1] = 255.0f;
+    data[6] = 255.0f;
+    data[7] = 255.0f;
+    gis::tests::RasterFixtureOptions options;
+    options.dtype = GDT_Float32;
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "cc_diag_input.tif", 4, 4, data, options);
+
+    // conn 为空 = 不传该键，让实现走自己的兜底（下面漂移锁要的就是这条路径）。
+    auto run = [&](std::optional<int> conn, const char* outputName) {
+        const std::string output = utf8PathString(getTestDir() / outputName);
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("connected_components");
+        params["input"] = input;
+        params["output"] = output;
+        params["band"] = 1;
+        if (conn.has_value()) params["connectivity"] = *conn;
+        const auto result = p->execute(params, progress_);
+        EXPECT_TRUE(result.success) << "connectivity=" << (conn.has_value() ? std::to_string(*conn) : std::string("<unset>")) << ": " << result.message;
+        const auto it = result.metadata.find("component_count");
+        EXPECT_NE(it, result.metadata.end());
+        return it == result.metadata.end() ? std::string() : it->second;
+    };
+
+    EXPECT_EQ(run(8, "cc_diag_8_output.tif"), "1")
+        << "8 连通把仅对角相接的两块并成一个组件";
+    EXPECT_EQ(run(4, "cc_diag_4_output.tif"), "2")
+        << "connectivity=4 时对角不再相连；返回 1 说明参数根本没被读";
+
+    // 兜底漂移锁（R-T15-4 的判据来源纪律同样适用于 connectivity）：
+    // 不传该键时的产出必须等于"按 spec 声明的默认值跑"的结果。
+    // 期望值从 paramSpecs() 取，不把 8 抄进测试——抄进测试的仍是双源，只是换了个地方。
+    // 注意 paramSpecs() 是**按值返回**的 vector：必须先落到具名局部再取地址，
+    // 直接 for (const auto& s : p->paramSpecs()) 再留 &s 会悬空（MSVC Debug 堆读出来是 0xDDDDDDDD）。
+    const auto connSpecs = p->paramSpecs();
+    const gis::framework::ParamSpec* connSpec = nullptr;
+    for (const auto& spec : connSpecs) {
+        if (spec.key == "connectivity") connSpec = &spec;
+    }
+    ASSERT_NE(connSpec, nullptr)
+        << "实现读的就是这个键；spec 被删掉时 GUI 面板不再渲染它、CLI 也不再校验它";
+    EXPECT_EQ(connSpec->type, gis::framework::ParamType::Int)
+        << "类型漂移成 Double/String 后 getParam<int> 会静默回落兜底值，上面的取值断言照样绿";
+    const auto* declaredDefault = std::get_if<int>(&connSpec->defaultValue);
+    ASSERT_NE(declaredDefault, nullptr) << "connectivity 的默认值必须是 int 变体";
+    const std::string expectedFromSpec = *declaredDefault == 4 ? "2" : "1";
+    EXPECT_EQ(run(*declaredDefault, "cc_diag_specdefault_explicit_output.tif"), expectedFromSpec)
+        << "显式传 spec 默认值必须与本 action 的 spec 语义一致";
+    EXPECT_EQ(run(std::nullopt, "cc_diag_specdefault_unset_output.tif"), expectedFromSpec)
+        << "不传该键时的兜底与 paramSpecs() 的默认值分叉了（兜底漂移）";
 }
 
 TEST_F(PluginTest, ProcessingContourExecution) {

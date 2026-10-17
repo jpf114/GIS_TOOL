@@ -1396,7 +1396,13 @@ gis::framework::Result ProcessingPlugin::doConnectedComponents(
     cv::threshold(binary, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 
     cv::Mat labels;
-    const int componentCount = cv::connectedComponents(binary, labels, 8, CV_32S);
+    // Task 15：connectivity 一直是死参数——spec 在 paramSpecs() 里声明了它（默认 8、范围 [4,8]），
+    // 而提交 54df42c:1381 把 8 写死成 cv::connectedComponents 的入参 ⇒ 用户传 4 完全不被读。
+    // cv::connectedComponents 的连通性只接受 4 或 8，这里把"4"之外的取值（含越界入参）
+    // 归一到 8，与 spec 的默认值同向；兜底 8 与 spec 默认的一致性由测试侧的漂移锁看守。
+    const int connectivity =
+        gis::framework::getParam<int>(params, "connectivity", 8) == 4 ? 4 : 8;
+    const int componentCount = cv::connectedComponents(binary, labels, connectivity, CV_32S);
     progress.throwIfCancelled();
     progress.onProgress(0.7);
 
