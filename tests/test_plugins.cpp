@@ -3472,6 +3472,218 @@ TEST_F(PluginTest, ProcessingWatershedExecution) {
     EXPECT_TRUE(result.metadata.count("segment_count") > 0);
 }
 
+// ── Task 16 Tier 1：分水岭自动标记路径缺 OpenCV 约定的 `markers += 1` ─────────────
+// 为什么主鉴别断言是**关系式**而不是计数（R-T16-1）：
+//   改前 sureFg 的两个圆盘就是 connectedComponents 的标签 1 和 2，其余像元（含"确定背景"）全是 0，
+//   而 cv::watershed 把 0 一律当"未知区"向外淹没 ⇒ 整幅背景被并进标签 1 的盆地
+//   ⇒ 旧的 maxLabel 计数改前改后都得 "2" ⇒ 计划 Step 1 的 EXPECT_EQ(segment_count,"2") **没有鉴别力**。
+//   实测改前的输出矩阵（build/t16_probe_ext_output.txt 同批的 ws_t16_auto_output.tif，见报告 §2.1）：
+//   标签 1 铺满除圆盘 B 邻域以外的整幅图，标签 2 只剩种子附近——背景根本没独立成区。
+// 背景取点：不能用角点 (0,0)。OpenCV watershed 会把"触及影像边框的盆地"沿最外一圈写成 -1
+//   （实测改前/改后 (0,0) 都是 -1，用它做背景探针会让断言与缺陷无关），
+//   故背景取内部点 (x=16,y=2)：离两个圆心都 > 膨胀半径 8+5，既在确定背景里、又不贴边框。
+// 四条鉴别关系：(i) 背景标签 ≠ 任一圆盘种子标签、且背景 = 1；(ii) 两个种子标签互不相等；
+//   (iii) 种子标签 >= 2（OpenCV 约定背景独占 1、区域从 2 起，偏移反了或没偏移都会红）；
+//   (iv) 盘内、种子以外的未知带必须被自己的盆地涨满（挡住"先归零、再整体 +1"这种顺序颠倒的实现，
+//        它让未知带从一开始就是背景 ⇒ 分水岭不再扩张）。
+//   改后应为 背景=1、两区域=2/3（各 80 像元 = 整个圆盘）、边界=-1。
+TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    // 32x32 里两个分离的实心圆盘：半径 5，圆心分别在 (x=9,y=16) 与 (x=23,y=16)，盘内 255、盘外 0。
+    const int w = 32, h = 32;
+    std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const float dy = static_cast<float>(y) - 16.0f;
+            const bool inA = std::hypot(static_cast<float>(x) - 9.0f, dy) <= 5.0f;
+            const bool inB = std::hypot(static_cast<float>(x) - 23.0f, dy) <= 5.0f;
+            data[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] =
+                (inA || inB) ? 255.0f : 0.0f;
+        }
+    }
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "ws_t16_auto_input.tif", w, h, data);
+    const std::string output = utf8PathString(getTestDir() / "ws_t16_auto_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("watershed");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto countIt = result.metadata.find("segment_count");
+    ASSERT_NE(countIt, result.metadata.end());
+
+    // 标签按整数读：分水岭输出本就是整型标签，拿 float 做相等比较会把类型问题混成数值噪声。
+    const int background = static_cast<int>(readRasterPixel(output, 16, 2));  // 确定背景（内部取点）
+    const int corner = static_cast<int>(readRasterPixel(output, 0, 0));       // 仅作诊断：贴边框一圈恒为 -1
+    const int centerA = static_cast<int>(readRasterPixel(output, 9, 16));     // 圆盘 A 的种子
+    const int centerB = static_cast<int>(readRasterPixel(output, 23, 16));    // 圆盘 B 的种子
+    // 盘内、种子以外的"未知带"取点：距盘心 4 px，在半径约 3.5 的 sureFg 之外、半径 5 的盘之内。
+    const int diskEdgeA = static_cast<int>(readRasterPixel(output, 13, 16));
+    const int diskEdgeB = static_cast<int>(readRasterPixel(output, 19, 16));
+    // 每个关系式断言都带这串实测数字：红日志里必须能直接读到改前/改后的标签与计数。
+    const std::string observed = " 实测[背景(16,2)=" + std::to_string(background) +
+                                 ", 角点(0,0)=" + std::to_string(corner) +
+                                 ", A心(9,16)=" + std::to_string(centerA) +
+                                 ", B心(23,16)=" + std::to_string(centerB) +
+                                 ", A未知带(13,16)=" + std::to_string(diskEdgeA) +
+                                 ", B未知带(19,16)=" + std::to_string(diskEdgeB) +
+                                 ", segment_count=" + countIt->second + "]";
+
+    // (i) 背景必须独占一个标签：缺 `markers += 1` 时背景被并进标签 1 的盆地，与 A 的种子标签相等。
+    EXPECT_NE(background, centerA) << "确定背景与圆盘 A 共用标签 ⇒ 背景被当成未知区淹没" << observed;
+    EXPECT_NE(background, centerB) << "确定背景与圆盘 B 共用标签 ⇒ 同上" << observed;
+    EXPECT_EQ(background, 1) << "OpenCV 约定：确定背景应为标签 1" << observed;
+    // (ii) 两个分离目标不得被并成一个盆地。
+    EXPECT_NE(centerA, centerB) << "两个分离目标被并成同一个盆地" << observed;
+    // (iii) 区域标签必须从 2 起（背景独占 1）；没做 +1 时种子标签是 1，这里必红。
+    EXPECT_GE(centerA, 2) << "区域标签应从 2 起，背景独占 1" << observed;
+    EXPECT_GE(centerB, 2) << "区域标签应从 2 起，背景独占 1" << observed;
+    // (iv) 未知区必须在整体偏移**之后**才归零：那样它才会被自己的盆地涨满（实测正确实现里两个
+    //   种子各占 80 像元 = 整个圆盘）。若把 "+1" 挪到归零循环之后，未知带从一开始就是标签 1，
+    //   分水岭不再扩张 ⇒ 盘内取点留在 1、种子只剩 25 像元的核 ⇒ 这两条会红（变异 A2 实测）。
+    EXPECT_EQ(diskEdgeA, centerA) << "圆盘 A 内的未知带没被自己的盆地涨满 ⇒ +1 与归零的顺序倒了" << observed;
+    EXPECT_EQ(diskEdgeB, centerB) << "圆盘 B 内的未知带没被自己的盆地涨满 ⇒ 同上" << observed;
+
+    // 计划 Step 1 的计数断言：与上面配对保留，但它**不是**鉴别证据（改前也是 "2"，见函数头注释）。
+    EXPECT_EQ(countIt->second, "2")
+        << "两个分离目标应计为 2 个区域（确定背景与边界 -1 都不计入）" << observed;
+
+    // 健全性检查，同样不作鉴别证据（改前的标签集 {1,2,-1} 也有 3 个不同值）：
+    // 标签栅格至少含 背景 + 两个区域（或边界）这么多种取值。
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    auto* band = ds->GetRasterBand(1);
+    ASSERT_NE(band, nullptr);
+    std::vector<float> pixels(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+    ASSERT_EQ(band->RasterIO(GF_Read, 0, 0, w, h, pixels.data(), w, h, GDT_Float32, 0, 0), CE_None);
+    const std::set<float> distinctLabels(pixels.begin(), pixels.end());
+    EXPECT_GE(static_cast<int>(distinctLabels.size()), 3) << "标签栅格退化成单一取值说明分割整体崩了";
+}
+
+// ── Task 16 Tier 2：分割计数必须是"唯一区域标签数"，不是 cv::minMaxLoc 的最大标签 ──
+// 用**外部标记**分支做这条，因为自动分支的种子标签由 connectedComponents 连续生成（1..N，偏移后 2..N+1），
+// 最大标签恰好等于区域数 ⇒ 两种口径在那个几何上相等，测不出缺陷。外部标记的标签由用户给，
+// 这里故意给**不连续**的标签 2 与 5（跳过 3、4）：改前 segment_count 报 5，改后报 2。
+// 同一幅标记里三个种子的标签值也各自锚住（1/2/5 原样透传到输出），
+// 否则"把 segment_count 硬编码成 2"的假实现也能全绿。
+TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    // 32x24 非正方形：顺带让 Tier 3 那条尺寸守卫的"行列写反"变异有东西可挡（见 §4）。
+    const int w = 32, h = 24;
+    std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h));
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            data[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] =
+                static_cast<float>((x + y) % 16);
+        }
+    }
+    const std::string input = gis::tests::writeFloatRaster(getTestDir(), "ws_t16_ext_input.tif", w, h, data);
+
+    // 标记按 OpenCV 约定书写：1 = 确定背景、>= 2 = 区域、0 = 未知。
+    std::vector<float> markers(static_cast<size_t>(w) * static_cast<size_t>(h), 1.0f);
+    auto fillRect = [&](int x0, int y0, int x1, int y1, float value) {
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                markers[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = value;
+            }
+        }
+    };
+    fillRect(4, 4, 8, 8, 2.0f);            // 区域 A：标签 2
+    fillRect(20, 14, 24, 18, 5.0f);        // 区域 B：标签 5（与 2 之间留标签空洞）
+    fillRect(0, 10, w - 1, 12, 0.0f);      // 未知带：0
+    const std::string markerPath =
+        gis::tests::writeFloatRaster(getTestDir(), "ws_t16_ext_marker.tif", w, h, markers);
+
+    const std::string output = utf8PathString(getTestDir() / "ws_t16_ext_output.tif");
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("watershed");
+    params["input"] = input;
+    params["output"] = output;
+    params["marker_input"] = markerPath;
+    params["band"] = 1;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto countIt = result.metadata.find("segment_count");
+    ASSERT_NE(countIt, result.metadata.end());
+
+    const int background = static_cast<int>(readRasterPixel(output, 2, 2));
+    const int seedA = static_cast<int>(readRasterPixel(output, 6, 6));
+    const int seedB = static_cast<int>(readRasterPixel(output, 22, 16));
+    const std::string observed = " 实测[背景(2,2)=" + std::to_string(background) +
+                                 ", A心(6,6)=" + std::to_string(seedA) +
+                                 ", B心(22,16)=" + std::to_string(seedB) +
+                                 ", segment_count=" + countIt->second + "]";
+
+    // 三个种子的标签值原样透传（背景 1 / 区域 2 / 区域 5）：证明 segment_count 是从这幅标记栅格数出来的，
+    // 不是硬编码的 2。取点全部避开最外一圈——OpenCV watershed 会把触及边框的盆地沿边框写成 -1。
+    EXPECT_EQ(background, 1) << "外部标记里的确定背景标签 1 应原样透传" << observed;
+    EXPECT_EQ(seedA, 2) << "外部标记里的区域标签 2 应原样透传" << observed;
+    EXPECT_EQ(seedB, 5) << "外部标记里的区域标签 5 应原样透传" << observed;
+    EXPECT_EQ(countIt->second, "2")
+        << "标记里只有 2 个区域（标签 2 与 5）；最大标签是 5，把 maxLabel 当区域数就少算/多算" << observed;
+}
+
+// ── Task 16 Tier 2 补：标记里一个种子都没有 ⇒ 区域数必须是 0 ──────────────────────
+// 这条不是"再测一遍计数"，而是计数过滤条件的**唯一可观测边界**：cv::watershed 跑完后所有未知像元
+// 都会被某个盆地认领，正常标记里根本不会剩下 0 ⇒ "把 0（未知）当成区域计入"的假实现在上一条用例里
+// 测不出来（变异 B4 实测全绿）。只有全 0 标记能让 watershed 真的留下 0：整幅都是未知、没有任何盆地，
+// 于是"未知"必须一格都不被算成区域 ⇒ segment_count = 0。
+// 注意这条对"改前的 maxLabel 口径"也是绿的（全 0 时最大值同样是 0）⇒ 它是变异杀手，不是红绿证据。
+TEST_F(PluginTest, ProcessingWatershedExternalMarkersWithoutSeedsCountsZeroSegments) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    const int w = 16, h = 12;
+    std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h));
+    for (size_t i = 0; i < data.size(); ++i) {
+        data[i] = static_cast<float>(i % 7);
+    }
+    const std::string input = gis::tests::writeFloatRaster(getTestDir(), "ws_t16_noseed_input.tif", w, h, data);
+
+    std::vector<float> markers(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);  // 全未知、无种子
+    const std::string markerPath =
+        gis::tests::writeFloatRaster(getTestDir(), "ws_t16_noseed_marker.tif", w, h, markers);
+
+    const std::string output = utf8PathString(getTestDir() / "ws_t16_noseed_output.tif");
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("watershed");
+    params["input"] = input;
+    params["output"] = output;
+    params["marker_input"] = markerPath;
+    params["band"] = 1;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto countIt = result.metadata.find("segment_count");
+    ASSERT_NE(countIt, result.metadata.end());
+    EXPECT_EQ(countIt->second, "0") << "没有任何种子的标记不该数出区域来，实测 segment_count=" << countIt->second;
+
+    // 输出里不该冒出任何正标签。实测全 0 标记下 watershed 只留下 0（未知）与最外一圈 -1
+    // （OpenCV 的边框规则：16x12 的边框正好 2*16 + 2*12 - 4 = 52 个像元）；
+    // 这里只断"没有正标签"这个不变量，不把 -1 一圈的个数写进断言（那是 OpenCV 的实现细节）。
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    auto* band = ds->GetRasterBand(1);
+    ASSERT_NE(band, nullptr);
+    std::vector<float> pixels(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+    ASSERT_EQ(band->RasterIO(GF_Read, 0, 0, w, h, pixels.data(), w, h, GDT_Float32, 0, 0), CE_None);
+    int positiveLabelPixels = 0;
+    for (const float value : pixels) {
+        if (value > 0.0f) ++positiveLabelPixels;
+    }
+    EXPECT_EQ(positiveLabelPixels, 0) << "无种子的标记里凭空出现了正标签像元，实测正标签像元数="
+                                      << positiveLabelPixels;
+}
+
 TEST_F(PluginTest, ProcessingKMeansExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

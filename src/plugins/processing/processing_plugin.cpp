@@ -14,6 +14,7 @@
 #include <functional>
 #include <stack>
 #include <fstream>
+#include <set>
 
 namespace gis::plugins {
 
@@ -1071,6 +1072,13 @@ gis::framework::Result ProcessingPlugin::doWatershed(
         cv::subtract(sureBg, sureFg, unknown);
 
         cv::connectedComponents(sureFg, markers);
+        // OpenCV watershed 的标记约定：0 = 未知区、1 = 确定背景、>= 2 = 各区域种子。
+        // connectedComponents 把"确定背景"和"未知区"**都**写成标签 0，二者不可区分
+        // ⇒ 改前下面那个归零循环形同空操作（sureFg==0 处标签本就是 0），缺的正是这一步整体偏移。
+        // 后果（改前实测，32x32 双圆场景）：整幅背景被当成未知区，标签 1 的盆地吞掉全图，
+        // 输出里只剩一个真正的分割区，而 metadata 仍报 segment_count=2。
+        // 顺序必须是"先 +1 再把 unknown 归 0"：反过来会把未知区一起抬成背景。
+        markers = markers + 1;
         for (int y = 0; y < markers.rows; ++y) {
             for (int x = 0; x < markers.cols; ++x) {
                 if (unknown.at<uint8_t>(y, x) == 255) {
@@ -1094,10 +1102,19 @@ gis::framework::Result ProcessingPlugin::doWatershed(
     progress.onProgress(0.8);
 
     cv::Mat resultImg = cv::Mat::zeros(markers.size(), CV_32F);
-    int segmentCount = 0;
-    double minLabel, maxLabel;
-    cv::minMaxLoc(markers, &minLabel, &maxLabel);
-    segmentCount = static_cast<int>(maxLabel);
+    // segment_count = 分水岭跑完之后**实际存在的区域标签个数**，不是最大标签值：
+    // 外部标记分支的种子标签由用户给、允许不连续（例如只有 2 和 5），旧的 cv::minMaxLoc 最大值口径
+    // 会把标签空洞算进区域数（实测同一幅标记改前报 5、改后报 2）。
+    // 统计必须放在 cv::watershed 之后：在那之前数的是"种子数"，区域被并掉时两个口径不同。
+    // label > 1 同时排掉 -1（边界）、0（未知）与 1（OpenCV 约定的确定背景）。
+    std::set<int> uniqueLabels;
+    for (int y = 0; y < markers.rows; ++y) {
+        for (int x = 0; x < markers.cols; ++x) {
+            const int label = markers.at<int32_t>(y, x);
+            if (label > 1) uniqueLabels.insert(label);
+        }
+    }
+    const int segmentCount = static_cast<int>(uniqueLabels.size());
 
     for (int y = 0; y < markers.rows; ++y) {
         for (int x = 0; x < markers.cols; ++x) {
