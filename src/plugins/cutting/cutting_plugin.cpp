@@ -151,10 +151,15 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
             "copyright", "版权信息", "Copyright text used by generated web preview",
             gis::framework::ParamType::String, false, std::string{}
         },
-        // N37（R-T17-12）：原此处的 num_threads 声明后全文件零读取点，已删除。
-        // 与已删的 georef x_res/y_res 同族"填了会被静默忽略"的形态；实测判据见
-        // task-17-report.md（grep 全树仅注释与本插件 spec；不属任何 visibleKeys；
-        // 删除后 #334 与 action_gold_cases 登记不变红）。
+        // N37（R-T17-12）：原此处的 num_threads 声明后全文件零读取点，已在提交 236327d 删除。
+        // 与已删的 georef x_res/y_res 同族"填了会被静默忽略"的形态。三判据（grep 全树只剩注释、
+        // 不属任何 visibleKeys、删除后 #334 与 action_gold_cases 登记不变红）的实测出处：
+        // 提交 236327d 本身 + 本机日志 build/t17_logs/n37_debug_full.log 的尾行
+        // "100% tests passed, 0 tests failed out of 607"（该全量跑在删除提交之后）。
+        // WHY 不再写"实测判据见 task-17-report.md"：那份报告当时并不存在（实施代理交付 8 个提交后
+        // 被账号配额截断，报告从未写出），指向不存在文件的证据指针等于让这条注释无法核验。
+        // 注：build/ 是本机忽略目录（.gitignore:2），日志路径的不可交付性留给批次收尾（Task 21）
+        // 统一清理，本轮只把"指错"改成"指对"，不顺手扩大改动面。
     };
 }
 
