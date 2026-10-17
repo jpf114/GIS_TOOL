@@ -694,10 +694,19 @@ static bool isTileBlank(const cv::Mat& rgba) {
 // 拉伸：把一个波段的源值映到 0..255。
 // WHY 兜底 range=1.0 照搬改前 :1157（**常数波段映射成 0=黑**），本任务不改这条口径，
 //   否则 #315 档 B 那种"整幅单值"的瓦片亮度会莫名其妙翻面。
-// WHY clamp 是新增而且**必要**：add_alpha=true 时色波段的 NODATA 元数据被 -dstalpha 剥掉
-//   （见 renderTileRgba 的 S9 注释），NoData 原值（-9999 这类）会参与这条换算，
-//   255*(v-min)/range 可能远小于 0；改前 `static_cast<uchar>(double)` 对越界浮点是
-//   **未定义行为**（MSVC 实测截成 0 或 0x80000000 的低字节），clamp 之后才是可预期的黑。
+// WHY clamp：改前 `static_cast<uchar>(double)` 对越界浮点是**未定义行为**
+//   （MSVC 实测截成 0 或 0x80000000 的低字节），clamp 之后越界才是可预期的黑。
+//   诚实登记（复审 M9 + 报告 S6）：本批实测"去掉 clamp ⇒ 26/26 全绿"⇒ 它在现有夹具下
+//   **不承重**（min/max 与参与换算的 v 来自同一批像元时 scaled 恒在 [0,255]），
+//   留着它是防"区间来自一批、v 来自另一批"的那种实现错误，不拿它当判别目标。
+//   更正记录（复审 M-16，fix round 2 F-1 同段代码）：此处原文写"add_alpha=true 时
+//   NoData 原值（-9999 这类）会参与这条换算 ⇒ scaled 可能远小于 0"，机理**写错了**——
+//   真实数据上参与统计的是**写入值 0**（源 refas.tif 的 NoData=-32768 并没进 min，
+//   否则输出会被挤到 247..255，实测最大 166），而 F-1 之后这类像元已被 alpha 掩膜
+//   滤出整幅统计（见 computeSceneBandStretch 的 F-1 段）。
+//   仍然成立的那一半：多波段源里"某波段局部 NoData、其余波段有效"的像元，其色波段值
+//   会带着 -dstalpha 剥掉 NODATA 元数据后的**写入值**进这条换算（该像元 alpha>0 ⇒
+//   F-1 的掩膜滤不掉它）⇒ #315 洞带绿道为 0 钉的就是这件事。
 static uchar stretchByte(double v, const BandStretch& s) {
     const double range = (s.maxV - s.minV > 1e-9) ? (s.maxV - s.minV) : 1.0;
     const double scaled = 255.0 * (v - s.minV) / range;
@@ -711,26 +720,109 @@ static uchar stretchByte(double v, const BandStretch& s) {
 //   实现的正是承诺的那件事：同一地物跨瓦片/跨层级亮度一致。
 //   判别用例 #312 TileStretchIsWholeSceneWideNotPerTile；变异取证"换回逐瓦片统计"
 //   见 task-18-report.md 的 S6 台账。这条偏离已登记进 Task 21 的口径同步清单。
-// WHY 用 ComputeStatistics(bForce=true) 而不是把整幅读进 cv::Mat 再 cv::minMaxIdx：
-//   前者按块流式扫描，warped 临时栅格多大都不额外占内存；后者按幅吃内存。
-//   bForce=true 是**精算**（近似统计走概视图/采样，会漏极值，而"亮度一致"正是本任务
-//   要承诺的性质，宁可慢不可偏）。NoData 像元不参与统计：GDAL 会跳过该波段声明的
-//   NODATA 值 ⇒ 拉伸区间只由有效像元决定（这也是"整幅统计"能替掉"逐瓦片统计"的前提）。
+// WHY 用 ComputeStatistics 的**精算**（形参是 GDAL 的 bApproxOK，传 false ⇒ 不许近似；
+//   复审 M-6 指出这里的旧注释把名称与数值都写错过一次）而不是把整幅读进 cv::Mat 再
+//   cv::minMaxIdx：前者按块流式扫描，warped 临时栅格多大都不额外占内存；后者按幅吃内存。
+//   精算的理由：近似统计走概视图/采样会漏极值，而"亮度一致"正是本任务要承诺的性质。
+//   NoData 像元不参与统计：GDAL 会跳过该波段声明的 NODATA 值 ⇒ 拉伸区间只由有效像元决定
+//   （这也是"整幅统计"能替掉"逐瓦片统计"的前提）。
+//
+// F-1（fix round 2 / 复审 I-1）：**add_alpha=true 时必须按 alpha 掩膜过滤统计**。
+//   盘上事实（复审实测，真实数据 data/dem/refas.tif，同一张瓦 8/207/96.tif，gdalinfo -stats）：
+//     add_alpha=true  Band1 Min=0.000 Max=166.000 Mean=7.489 StdDev=30.818
+//     add_alpha=false Band1 Min=0.000 Max=151.000 Mean=6.340 StdDev=26.234
+//     源 refas.tif Band1 Int16 Min=391 Max=2729 NoData=-32768
+//   机理：`-dstalpha` 把"NoData 区"改由末尾 alpha 波段表达，因此**不再给色波段写 NODATA
+//     元数据**（S9 的盘上事实）⇒ 色波段上被遮掉的像元以**写入值 0**（不是源 NoData 原值）
+//     进整幅统计 ⇒ 下界被 0 顶掉：同一个 v=1776 映射成 255*1776/2729=165.9 而不是
+//     255*(1776-391)/2338=151.2，与实测 166/151 **逐字节吻合**。
+//   后果：值域整体偏正的栅格（DEM/温度/深度）低段动态范围被挤掉；值域整体偏负时 0 变成
+//     **上界** ⇒ 反差直接反掉。而 add_alpha 的默认值是 **true** ⇒ 这正是**默认路径**，
+//     Produces 承诺的"同一地物亮度一致"在它上面是假的。
+//   处置取工单裁定的 (a)：**在同一次全幅 pass 内**逐块同读 alpha 波段，只对 `alpha > 0` 的
+//     像元累积 (min,max)；判据与 renderTileRgba 的不透明判据 `ar[px] > 0.0f` **同一条**，
+//     不留两套口径。代价＝多扫一遍 alpha 波段（原来 n 个色波段各扫一遍，现在 n+1 遍），
+//     **不加第二遍循环**（工单明令）。
+//   全幅 alpha 皆为 0 ⇒ 一条有效像元都没见到 ⇒ 留 (0,0)，即"该波段无有效数据"的既有口径；
+//     绝不产出 min>max 的脏区间（常数波段同样留 (0,0)，见下面的 maxAcc > minAcc 判据）。
+//   判别用例 #319 TileColorBandsDoNotDependOnAddAlpha（"同一含 NoData 的单波段源，
+//     add_alpha 两档的颜色波段逐像元相同"）；变异台账见 task-18-report.md 的 F-1 节。
 // 统计失败或退化（空数据集 / 全 NoData）时退回 (0,0)：配合 range=1.0 兜底与瓦片级
 //   "无有效像元 ⇒ 不交付"守卫，这种数据集一张瓦片都不会写出去，不会产生脏值。
-static std::vector<BandStretch> computeSceneBandStretch(GDALDataset* warpedDS, int bandCount) {
+static std::vector<BandStretch> computeSceneBandStretch(GDALDataset* warpedDS, int bandCount,
+                                                        int alphaBandIndex) {
     std::vector<BandStretch> stretches;
     stretches.reserve(std::max(0, bandCount));
+    for (int b = 1; b <= bandCount; ++b) stretches.emplace_back();
+    if (!warpedDS || bandCount < 1) return stretches;
+
+    GDALRasterBand* alphaBand =
+        alphaBandIndex > 0 ? warpedDS->GetRasterBand(alphaBandIndex) : nullptr;
+    if (!alphaBand) {
+        // 没有 alpha 掩膜可依据 ⇒ 走 GDAL 自己的精算（它会跳过该波段**声明的** NODATA），
+        // 语义与 F-1 之前逐字相同 ⇒ add_alpha=false 那一档的产物一个字节都不动
+        // （GOLD #296/#298 就站在这条上）。alphaBandIndex>0 却取不到波段属防御臂。
+        for (int b = 1; b <= bandCount; ++b) {
+            GDALRasterBand* band = warpedDS->GetRasterBand(b);
+            if (!band) continue;
+            double minV = 0.0, maxV = 0.0, meanV = 0.0, stdDevV = 0.0;
+            if (band->ComputeStatistics(false, &minV, &maxV, &meanV, &stdDevV, nullptr, nullptr) != CE_None)
+                continue;
+            if (!(maxV > minV)) continue;   // NaN / 常数波段的退化臂：保留 (0,0) 兜底
+            stretches[static_cast<size_t>(b) - 1].minV = minV;
+            stretches[static_cast<size_t>(b) - 1].maxV = maxV;
+        }
+        return stretches;
+    }
+
+    // 按块扫全幅**一遍**：每块先读 alpha，再逐色波段读同一块，只有 alpha>0 的像元进累积。
+    // WHY 分块：与上面"按块流式扫描、不按幅吃内存"同一条口径（两个 float 缓冲 ≈ 512 KB）。
+    const int nX = warpedDS->GetRasterXSize();
+    const int nY = warpedDS->GetRasterYSize();
+    if (nX < 1 || nY < 1) return stretches;   // 空数据集 ⇒ 全部留 (0,0)
+    constexpr int kStatChunkPixels = 1 << 16;                        // 65536 像元/块
+    const int chunkCols = std::min(nX, 4096);
+    const int chunkRows = std::max(1, kStatChunkPixels / std::max(1, chunkCols));
+    const size_t chunkCapacity = static_cast<size_t>(chunkCols) * static_cast<size_t>(chunkRows);
+    std::vector<float> alphaBuf(chunkCapacity, 0.0f);
+    std::vector<float> valueBuf(chunkCapacity, 0.0f);
+    std::vector<double> minAcc(static_cast<size_t>(bandCount), 0.0);
+    std::vector<double> maxAcc(static_cast<size_t>(bandCount), 0.0);
+    std::vector<char> seen(static_cast<size_t>(bandCount), 0);
+
+    for (int y0 = 0; y0 < nY; y0 += chunkRows) {
+        const int ny = std::min(chunkRows, nY - y0);
+        for (int x0 = 0; x0 < nX; x0 += chunkCols) {
+            const int nx = std::min(chunkCols, nX - x0);
+            const size_t pixels = static_cast<size_t>(nx) * static_cast<size_t>(ny);
+            if (alphaBand->RasterIO(GF_Read, x0, y0, nx, ny, alphaBuf.data(), nx, ny,
+                                    GDT_Float32, 0, 0) != CE_None)
+                return stretches;   // 读失败 ⇒ 退回 (0,0) 口径（与统计失败同一条），不猜区间
+            for (int b = 1; b <= bandCount; ++b) {
+                GDALRasterBand* band = warpedDS->GetRasterBand(b);
+                if (!band) return stretches;
+                if (band->RasterIO(GF_Read, x0, y0, nx, ny, valueBuf.data(), nx, ny,
+                                   GDT_Float32, 0, 0) != CE_None)
+                    return stretches;
+                for (size_t i = 0; i < pixels; ++i) {
+                    if (alphaBuf[i] <= 0.0f) continue;   // 被 -dstalpha 遮掉的像元**不是数据**
+                    const double v = valueBuf[i];
+                    const size_t k = static_cast<size_t>(b) - 1;
+                    if (!seen[k]) { seen[k] = 1; minAcc[k] = v; maxAcc[k] = v; }
+                    else {
+                        if (v < minAcc[k]) minAcc[k] = v;
+                        if (v > maxAcc[k]) maxAcc[k] = v;
+                    }
+                }
+            }
+        }
+    }
     for (int b = 1; b <= bandCount; ++b) {
-        stretches.emplace_back();
-        GDALRasterBand* band = warpedDS ? warpedDS->GetRasterBand(b) : nullptr;
-        if (!band) continue;
-        double minV = 0.0, maxV = 0.0, meanV = 0.0, stdDevV = 0.0;
-        if (band->ComputeStatistics(false, &minV, &maxV, &meanV, &stdDevV, nullptr, nullptr) != CE_None)
-            continue;
-        if (!(maxV > minV)) continue;   // NaN / 常数波段的退化臂：保留 (0,0) 兜底
-        stretches.back().minV = minV;
-        stretches.back().maxV = maxV;
+        const size_t k = static_cast<size_t>(b) - 1;
+        if (!seen[k]) continue;                    // 全幅 alpha 皆 0 ⇒ 该波段无有效数据 ⇒ 留 (0,0)
+        if (!(maxAcc[k] > minAcc[k])) continue;    // 常数波段：与上面精算分支同一条退化臂
+        stretches[k].minV = minAcc[k];
+        stretches[k].maxV = maxAcc[k];
     }
     return stretches;
 }
@@ -1300,7 +1392,11 @@ gis::framework::Result CuttingPlugin::doTile(
         bandHasNodata.push_back(hasNd != 0 ? 1 : 0);
         bandNodata.push_back(hasNd ? declared : nodataVal);
     }
-    const std::vector<BandStretch> sceneStretches = computeSceneBandStretch(warpedDS, colorBands);
+    // F-1：把 alphaBandIndex 一起交给统计段——add_alpha=true 时它 >0（-dstalpha 追加在末尾），
+    //   统计必须按它过滤，否则被遮掉的像元以写入值进区间 ⇒ 亮度随 add_alpha 变（复审 I-1）。
+    //   add_alpha=false 时它是 0 ⇒ 走 GDAL 精算（跳过声明的 NODATA），产物与 F-1 之前逐字节同。
+    const std::vector<BandStretch> sceneStretches =
+        computeSceneBandStretch(warpedDS, colorBands, alphaBandIndex);
     progress.onMessage("Bands: " + std::to_string(colorBands) + " color + " +
                        std::to_string(alphaBandIndex > 0 ? 1 : 0) + " alpha");
 

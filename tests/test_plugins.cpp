@@ -12283,3 +12283,126 @@ TEST_F(PluginTest, TileFourBandSourcePutsBandFourIntoAlpha) {
         }
     }
 }
+
+// T18 fix round 2 F-1（复审 I-1，**默认路径**上的亮度一致性）：同一含 NoData 的**单波段**源，
+// `add_alpha=true` 与 `false` 两档产出的**颜色波段必须逐像元相同**。
+//
+// 工单原话点名现有 #315 不算钉住：它断的是"透明度可区分"，其颜色断言（洞带 G=0/R=255）
+// 在**两种机理下都成立** ⇒ 错实现照样绿。本用例断的是**逐像元相等**，错实现下必红。
+//
+// 缺陷机理（复审真实数据实测，`cutting_plugin.cpp` 的 F-1 段已把算术写进注释）：
+//   add_alpha=true ⇒ warp 带 `-dstalpha` ⇒ 色波段**不再声明 NODATA**（S9 的盘上事实）
+//   ⇒ 被遮掉的像元以**写入值 0** 进整幅统计 ⇒ 拉伸下界被 0 顶掉 ⇒ 同一个源值映射成不同字节。
+//   复审的数字：源 Min=391/Max=2729 ⇒ alpha=false 区间 (391,2729) 给 255*(1776-391)/2338=151.2，
+//   alpha=true 区间 (0,2729) 给 255*1776/2729=165.9 ⇒ 与 gdalinfo 实测 166/151 逐字节吻合。
+//   而 add_alpha 的默认值是 **true** ⇒ 这是默认路径，不是边缘组合。
+//
+// 夹具算术（64×64@1000 m、origin (0,0)、EPSG:3857、**声明** nodata=-9999、resampling=nearest、
+//   z=8 单瓦片、覆盖子矩形 [0,105)²）：
+//     源列 0..31  → 50        源列 32..47 → 200       源列 48..63 → -9999（NoData）
+//   ⇒ 有效像元的值域是 **(50,200)**（两档都必须得到这个区间，否则亮度就随 add_alpha 变）。
+//   INTER_NEAREST 的取整式 `src = floor((t+0.5)*64/105)` ⇒
+//     瓦片列 0..51 → 源列 0..31（值 50）；52..78 → 源列 32..47（值 200）；79..104 → 源列 ≥48（NoData）
+//     （t=51 → 31.6→31 ✓，t=52 → 32.0→32 ✓，t=78 → 47.8→47 ✓，t=79 → 48.2→48 ✓）
+//   ⇒ 覆盖区内 不透明 ≈ 79×105 = 8295 像元、透明 ≈ 26×105 = 2730 像元（两档同一批像元）。
+//   正确实现的字节：50 → 255*(50-50)/150 = **0**、200 → 255*(200-50)/150 = **255**（整除）。
+//   F-1 之前 add_alpha=true 的字节：区间被 0 顶成 (0,200) ⇒ 50 → 255*50/200 = 63.75 → **63**、
+//     200 → 255 ⇒ 与 alpha=false 档**逐像元不等** ⇒ 下面 EXPECT_EQ(diffRGBPixels, 0u) 红，
+//     且 EXPECT_EQ(opaque.minValue, 0) 红在 63。这就是工单要的判别。
+TEST_F(PluginTest, TileColorBandsDoNotDependOnAddAlpha) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    std::vector<float> data(static_cast<size_t>(64) * 64, 50.0f);
+    for (int y = 0; y < 64; ++y) {
+        for (int x = 0; x < 64; ++x) {
+            const size_t i = static_cast<size_t>(y) * 64 + x;
+            data[i] = (x < 32) ? 50.0f : (x < 48 ? 200.0f : -9999.0f);
+        }
+    }
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t18_alpha_color_input.tif", 64, 64, data, options);
+    ASSERT_FALSE(input.empty());
+
+    std::vector<T18TileBands> collected;
+    std::vector<std::set<std::string>> collectedFiles;
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool addAlpha = pass == 0;
+        const fs::path output = getTestDir() /
+            (addAlpha ? "t18_alpha_color_on_output" : "t18_alpha_color_off_output");
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["resampling"] = std::string("nearest");
+        params["add_alpha"] = addAlpha;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "add_alpha=" << addAlpha << ": " << result.message;
+        const auto files = t17CollectTileFiles(output);
+        ASSERT_EQ(files.size(), 1u) << "add_alpha=" << addAlpha << " 实际 ["
+                                    << t17JoinFiles(files) << "]";
+        const T18TileBands tile = t18ReadTile(output / fs::path(*files.begin()));
+        ASSERT_TRUE(tile.ok());
+        ASSERT_EQ(tile.bands, 4) << "add_alpha=" << addAlpha << " 的容器口径（#298 同款锚）";
+        collected.push_back(tile);
+        collectedFiles.push_back(files);
+
+        // 每档自己的绝对正确性（防"两档一起错 ⇒ 相等断言白绿"这种同型错误）：
+        //   不透明像元上的亮度必须取到 0（源值 50）与 255（源值 200）⇒ 区间只能是 (50,200)。
+        const T18OpaqueStats opaqueR = t18StatsOverOpaque(tile, 1);
+        ASSERT_GT(opaqueR.count, 500) << "add_alpha=" << addAlpha << " 不透明像元太少，夹具失效";
+        EXPECT_EQ(opaqueR.minValue, 0)
+            << "add_alpha=" << addAlpha << " 档里源值 50 没被映射成 0（min=" << opaqueR.minValue
+            << "）⇒ 整幅统计的区间下界被别的值顶掉了（F-1 的形态：被 -dstalpha 遮掉的像元"
+            << "以写入值 0 进统计 ⇒ 区间 (0,200) ⇒ 50 会映成 63）";
+        EXPECT_EQ(opaqueR.maxValue, 255)
+            << "add_alpha=" << addAlpha << " 档里源值 200 没被映射成 255（max="
+            << opaqueR.maxValue << "）";
+        // 夹具必须真的有 NoData（否则"逐像元相同"会被"两档都没有洞"这种退化实现满足）。
+        int transparent = 0;
+        for (int y = 0; y < 105; ++y) {
+            for (int x = 0; x < 105; ++x) {
+                if (tile.data[3][static_cast<size_t>(y) * tile.width + x] == 0) ++transparent;
+            }
+        }
+        EXPECT_GT(transparent, 500)
+            << "add_alpha=" << addAlpha << " 覆盖区内的透明像元数 " << transparent
+            << " ⇒ NoData 洞没被遮出来，夹具失效（期望 ≈2730）";
+    }
+
+    // 主判别：**颜色波段逐像元相同**（整张瓦片、三个通道都算，不看 alpha）。
+    const T18TileBands& on = collected[0];
+    const T18TileBands& off = collected[1];
+    EXPECT_EQ(collectedFiles[0], collectedFiles[1]) << "两档交付的瓦片集合都不同，谈不上逐像元相同";
+    ASSERT_EQ(on.width, off.width);
+    ASSERT_EQ(on.height, off.height);
+    ASSERT_EQ(on.bands, off.bands);
+    const size_t pixels = static_cast<size_t>(on.width) * static_cast<size_t>(on.height);
+    for (int band = 1; band <= 3; ++band) {
+        size_t diff = 0;
+        int firstDiffX = -1, firstDiffY = -1, onVal = -1, offVal = -1;
+        for (size_t i = 0; i < pixels; ++i) {
+            const uchar a = on.data[static_cast<size_t>(band) - 1][i];
+            const uchar b = off.data[static_cast<size_t>(band) - 1][i];
+            if (a != b) {
+                if (diff == 0) {
+                    firstDiffX = static_cast<int>(i % static_cast<size_t>(on.width));
+                    firstDiffY = static_cast<int>(i / static_cast<size_t>(on.width));
+                    onVal = a; offVal = b;
+                }
+                ++diff;
+            }
+        }
+        EXPECT_EQ(diff, 0u)
+            << "add_alpha 改了颜色波段 band" << band << "：不等的像元数 " << diff
+            << "，首个 (" << firstDiffY << "," << firstDiffX << ") true=" << onVal
+            << " false=" << offVal
+            << " ⇒ 亮度随 add_alpha 变（复审 I-1），Produces 承诺的\"同一地物亮度一致\"不成立";
+    }
+}
