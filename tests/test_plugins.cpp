@@ -3684,6 +3684,76 @@ TEST_F(PluginTest, ProcessingWatershedExternalMarkersWithoutSeedsCountsZeroSegme
                                       << positiveLabelPixels;
 }
 
+// ── Task 16 Tier 3：外部标记与输入影像尺寸不符时必须返回失败，而不是未捕获异常 ────
+// 改前形态（写清楚，别被读成"返回失败"，也别被读成"子进程崩掉"）：processing_plugin.cpp 零 try/catch，
+// 尺寸不符撞上 OpenCV 内部的 CV_Assert(src.size() == dst.size())（segmentation.cpp:162）⇒ cv::Exception
+// 穿透 execute()。测试进程里 gtest 默认会兜住测试体内的 C++ 异常，所以 ctest 记的是该用例 ***Failed
+// 并打印 `unknown file: error: C++ exception with description "OpenCV(4.14.0) …(-215:Assertion failed)
+// src.size() == dst.size() in function 'cv::watershed'" thrown in the test body`，
+// 子进程并没有 SEH 崩溃（PRE_TEST 模式下每例一个进程，其它用例不受牵连）；
+// 生产路径（GUI/CLI）没有 gtest 那层兜获，同一个异常就是真未处理 ⇒ 这才是本条守卫要挡的东西。
+// 三个几何各挡一类假守卫（输入固定 32x24）：
+//   16x16   = 宽高都不同 ⇒ 任何尺寸守卫都能挡，用来确认"守卫存在且会返回失败"；
+//   24x32   = 输入的**转置**尺寸 ⇒ 只有把 cv::Size 的两个操作数按 (cols, rows) 写对才拦得住，专杀行列写反；
+//   32x16   = 宽相同、高不同 ⇒ 拦住"只比 cols 一侧"的半守卫。
+TEST_F(PluginTest, ProcessingWatershedRejectsMarkerInputWithMismatchedSize) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    const int w = 32, h = 24;
+    std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h));
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            data[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] =
+                static_cast<float>((x * 2 + y) % 16);
+        }
+    }
+    const std::string input = gis::tests::writeFloatRaster(getTestDir(), "ws_t16_bad_input.tif", w, h, data);
+
+    auto makeMarker = [&](const char* fileName, int mw, int mh) {
+        std::vector<float> values(static_cast<size_t>(mw) * static_cast<size_t>(mh), 1.0f);
+        // 让标记里有真种子（标签 2），否则尺寸守卫就算被绕过、watershed 也只是拿到全背景。
+        values[0] = 2.0f;
+        return gis::tests::writeFloatRaster(getTestDir(), fileName, mw, mh, values);
+    };
+
+    auto run = [&](const std::string& markerPath, const std::string& outputName, const char* tag) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("watershed");
+        params["input"] = input;
+        params["output"] = utf8PathString(getTestDir() / outputName);
+        params["marker_input"] = markerPath;
+        params["band"] = 1;
+        const auto res = p->execute(params, progress_);
+        EXPECT_FALSE(res.success) << tag << " 的 marker_input 必须被拒绝，实际 message=" << res.message;
+        return res.message;
+    };
+
+    const std::string msgSmall =
+        run(makeMarker("ws_t16_bad_marker16.tif", 16, 16), "ws_t16_bad16_output.tif", "16x16");
+    EXPECT_NE(msgSmall.find("does not match"), std::string::npos)
+        << "尺寸守卫要回一句带两侧实际尺寸的说明，实测 message=" << msgSmall;
+
+    const std::string msgTransposed =
+        run(makeMarker("ws_t16_bad_marker24x32.tif", 24, 32), "ws_t16_bad24x32_output.tif", "24x32(转置)");
+    EXPECT_NE(msgTransposed.find("does not match"), std::string::npos)
+        << "输入 32x24、标记 24x32 只是行列互换，也必须判为尺寸不符" << msgTransposed;
+    // 文案里两侧的实际尺寸要按 (宽x高) 各就各位。两个数字互为转置、必然同时出现，
+    // 所以只判"包含"分不出两侧顺序 ⇒ 用它们在文案里的**相对位置**来判：marker 侧的数字在
+    // "does not match" 之前、input 侧的在后。守卫判据本身的正确性由上面三条几何承担，这里只钉文案。
+    const size_t phrasePos = msgTransposed.find("does not match");
+    EXPECT_LT(msgTransposed.find("24x32"), phrasePos)
+        << "marker_input 侧的 24x32 应出现在 'does not match' 之前，实测 message=" << msgTransposed;
+    EXPECT_GT(msgTransposed.find("32x24"), phrasePos)
+        << "input 侧的 32x24 应出现在 'does not match' 之后，实测 message=" << msgTransposed;
+
+    // 宽相同、高不同：只比 cols 一侧的"半守卫"会在这里放行。
+    const std::string msgSameWidth =
+        run(makeMarker("ws_t16_bad_marker32x16.tif", 32, 16), "ws_t16_bad32x16_output.tif", "32x16(同宽)");
+    EXPECT_NE(msgSameWidth.find("does not match"), std::string::npos)
+        << "输入 32x24、标记 32x16 只有高度不同，也必须判为尺寸不符" << msgSameWidth;
+}
+
 TEST_F(PluginTest, ProcessingKMeansExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

@@ -1051,6 +1051,17 @@ gis::framework::Result ProcessingPlugin::doWatershed(
             return gis::framework::Result::fail("无法读取标记栅格数据: " + markerInput);
         }
         markerMat.convertTo(markers, CV_32S);
+        // 尺寸守卫：cv::watershed 内部只有 CV_Assert(src.size() == dst.size())，而本文件零 try/catch
+        // ⇒ 不加这道守卫时，标记图与影像尺寸不符会让 OpenCV 异常穿透 execute() 打到调用方（GUI/CLI 进程），
+        // 而不是返回一条失败结果（实测形态见 task-16-report §4.1：gtest 会兜住它、记成该用例失败，
+        // 但生产路径上没有 gtest 那层兜获）。
+        // 判据用本函数实际持有的局部量 markerMat / mat —— doWatershed 里没有 imageWidth/imageHeight 这种变量。
+        // cv::Size 的构造参数顺序是 (宽, 高) = (cols, rows)：写成 (rows, cols) 会放过"行列互换"的标记图。
+        if (markerMat.size() != cv::Size(mat.cols, mat.rows)) {
+            return gis::framework::Result::fail(
+                "marker_input size " + std::to_string(markerMat.cols) + "x" + std::to_string(markerMat.rows) +
+                " does not match input " + std::to_string(mat.cols) + "x" + std::to_string(mat.rows));
+        }
     } else {
         cv::Mat binary;
         cv::threshold(gray, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
