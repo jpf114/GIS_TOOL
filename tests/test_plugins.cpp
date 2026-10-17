@@ -10805,6 +10805,23 @@ TEST_F(PluginTest, TileLevelGeometryUsesWebMercatorGrid) {
         EXPECT_EQ(ds->GetRasterXSize(), 256) << rel;
         EXPECT_EQ(ds->GetRasterYSize(), 256) << rel;
     }
+
+    // R-T17-7 第 3 点"未覆盖的边填 NoData/透明"的产物级断言：
+    // 10/513/512.png 的覆盖止于 x=(64000-39135.758)/((78271.516-39135.758)/256)=162.64
+    // ⇒ 第 163 列起（取 dx1=163）右侧必透明、左侧必不透明。alpha 在 band 4。
+    {
+        auto ds = gis::core::openRaster((output / fs::path("10/513/512.png")).string(), true);
+        ASSERT_NE(ds.get(), nullptr);
+        ASSERT_EQ(ds->GetRasterCount(), 4);
+        std::vector<uchar> alpha(256 * 256);
+        ASSERT_EQ(ds->GetRasterBand(4)->RasterIO(GF_Read, 0, 0, 256, 256,
+                                                 alpha.data(), 256, 256, GDT_Byte, 0, 0), CE_None);
+        // 覆盖区（左侧）内每一行都应有不透明像元；未覆盖区（右侧远端）应全透明。
+        for (int row = 0; row < 256; ++row) {
+            EXPECT_EQ(alpha[static_cast<size_t>(row) * 256 + 250], 0) << "右侧未覆盖仍不透明 row=" << row;
+            EXPECT_GT(alpha[static_cast<size_t>(row) * 256 + 100], 0) << "左侧覆盖区被垫成透明 row=" << row;
+        }
+    }
 }
 
 // F2/R-T17-8：metadata.json 的 bounds 必须是正确的 lon/lat 顺序（用户可见产物）。
