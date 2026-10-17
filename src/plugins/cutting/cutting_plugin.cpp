@@ -764,14 +764,22 @@ struct TileRenderInput {
 };
 
 static bool renderTileRgba(const TileRenderInput& in, cv::Mat& rgba) {
-    // 三个数组按下标访问，所以波段数取"调用方给的四路里最小的那个"，越界即缩到 1：
-    // 正常路径下 doTile 让三者长度恒等于 colorBands，这里是**防御臂**（不可达即不产出，
-    // 不拿它当判别目标，见 task-18-report.md 关于不可判别分支的说明）。
+    // 波段数按**每个数组各自钳位**，钳到的是该数组的**原始长度**（fix round 2 F-2 / 复审 I-2）。
+    // 这段钳位兑现的唯一保证是"三个数组长度不一致或为空时**不越界读**"；
+    // **可达性由调用方保证**（doTile 恒让三者长度 == colorBands ≥ 1，正常路径下这几行是空操作），
+    // 长度不一致时这里只保证不崩、**不保证结果正确** ⇒ 不拿它当判别目标。
+    // WHY 改前那句"越界即缩到 1 / 不可能越界"是**谎话**（复审 §I-2）：三重 std::min 之后紧跟的
+    //   `bands = std::max(1, bands)` 会把 bands **抬回零长数组之上**（size()==0 时 bands 仍是 1），
+    //   于是下面 :872 的 `in.stretches[b-1]` 直接越界读。复审实测（build/t18rev_5_mutaB_tile.log）：
+    //   统计循环写成 `b <= bandCount - 1` ⇒ stretches 变空 ⇒ 9 条单波段用例 Exit code 0xc0000409。
+    // WHY 不是控制器给的 `std::min(bands, std::max<size_t>(1, size()))` 形态（取证见 task-18-report.md
+    //   的 F-2 前后对照）：`max<size_t>(1, 0)==1` ⇒ 空数组仍被钳到 1 ⇒ `[0]` 照旧越界 ⇒ 照旧崩；
+    //   钳到原始长度 + 显式 `bands < 1 ⇒ return false` 才真的防得住（崩溃变成"该瓦片不交付"）。
     int bands = std::min(std::max(1, in.colorBands), 4);
     bands = std::min(bands, static_cast<int>(in.stretches.size()));
     bands = std::min(bands, static_cast<int>(in.bandNodata.size()));
     bands = std::min(bands, static_cast<int>(in.bandHasNodata.size()));
-    bands = std::max(1, bands);
+    if (bands < 1) return false;   // 没有任何长度≥1 的数组 ⇒ 没有可上色波段：不交付，也不越界读
     const cv::Rect target(in.dstX, in.dstY, in.dstW, in.dstH);
 
     // 逐波段：读 → 缩放（R-T18-8：每波段用**同一个** tileInterpolation）→ 放置到子矩形，
