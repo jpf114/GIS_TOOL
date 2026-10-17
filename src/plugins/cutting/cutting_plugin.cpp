@@ -618,7 +618,22 @@ struct WarpedRasterCloser {
             GDALClose(GDALDataset::ToHandle(ds));
         }
         if (!path.empty()) {
-            std::filesystem::remove(path);
+            // F8（修复轮 2）：清理器里的 remove **必须**用非抛出重载 `remove(p, ec)`。
+            // WHY 1（无条件成立）：本 operator() 只经 std::unique_ptr 的析构被调用，
+            //   而 `~unique_ptr()` 在标准里是 noexcept；noexcept 函数内抛出 ⇒ 直接
+            //   std::terminate，异常类型根本来不及被上层 catch。
+            // WHY 2（更常见的那条路）：取消路径上 progress.throwIfCancelled() 正在抛出，
+            //   栈展开中销毁 warped ⇒ deleter 处于"异常已 in flight"的状态，此时再抛
+            //   一个异常就是 std::terminate。两种场景的终态相同，都不可恢复。
+            // 抛出口是真实的：remove(const path&) 用 `filesystem::filesystem_error`
+            //   报告权限/占用（杀毒、资源管理器句柄、临时目录只读、ACL 拒绝）等 OS 错误，
+            //   而这些恰是"取消/失败收尾"时最容易同时发生的。
+            // ec 为何可以忽略：deleter 没有错误通道（返回值无人接收，抛又不能抛），
+            //   且 warped 是纯中间产物——没删掉的代价只是一次临时文件占用，不影响
+            //   任何交付结果；远小于 terminate 的代价。文件名带 pid 保证下一轮运行不会
+            //   与本次泄漏互踩；跨进程/重启后的临时目录回收仍属 Plan 3 的 C8。
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
         }
     }
 };
