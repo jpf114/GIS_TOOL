@@ -2453,7 +2453,9 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 // `{"k", "聚类数", …}` 喂进本函数，:1989 断 `minValue == 1`
                 //（删掉本分支后该断言实测读到 0 ⇒ `GuiSupportTest.BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBounds` 红）。
                 // ⇒ 本质是"只有测试在消费的产品代码"（与 Task 13 的 enumLabelKeys 同族）。
-                // 本批**保留**：删它必须同时删既有断言（批次 A 红线），换来的只是少 5 行不可达代码。
+                // 本批**保留**：删它必须同时删既有断言（批次 A 红线），换来的只是少 **2 行**不可达代码
+                //（`54df42c:2449-2450`：`} else if (spec.key == "k") {` 头与 `adjustedSpec.minValue = 1;` 各 1 行，
+                //  闭合的 `}` 属 else-if 链、删了也不消失 ⇒ 之前写的"5 行"是从交接抄来未换算，此处按实测订正）。
                 adjustedSpec.minValue = 1;
             } else if (spec.key == "clip_limit") {
                 adjustedSpec.minValue = 0.0;

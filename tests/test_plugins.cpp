@@ -1305,10 +1305,16 @@ TEST_F(PluginTest, ProcessingEdgeExecution) {
     EXPECT_TRUE(fs::exists(output));
 }
 
-// Task 15 / R-T15-2：下面三条改前的红形态是**进程崩溃**，不是断言失败。
-// processing_plugin.cpp 全文没有任何 try/catch（54df42c 实测 grep 零命中），
+// Task 15 / R-T15-2：下面三条改前的红形态是**未捕获异常导致的进程级失败**——异常逃出 execute()，
+// 不是 result.success == false 这种正常失败返回。
+// processing_plugin.cpp 全文没有任何 try/catch（54df42c 与 17bfc76 各实测 grep 零命中），
 // 而 OpenCV 4.14 的 cv::Scharr 走 getScharrKernels 里的 CV_Assert(dx>=0 && dy>=0 && dx+dy==1)
-// ⇒ 未捕获 cv::Exception 直接终止整个测试可执行文件（同进程连跑会截断整跑）。
+// ⇒ cv::Exception 未被任何供应商代码接住、抛进测试体，由 gtest 的用例级异常处理记该用例 FAILED
+// （日志原文：`unknown file: error: C++ exception with description "OpenCV(4.14.0) ...deriv.cpp:66 ...`
+//   `... thrown in the test body.`）。
+// 但它**不终止整个测试可执行文件、也不截断整跑**：本工程 gtest_discover_tests 按 PRE_TEST 注册，
+// 每条用例各自一个进程（日志原文 `Note: Google Test filter = <单条用例名>`），所以红日志
+// build/t15_tier1_red_ctest.log 三条用例全部跑到并有汇总行 `33% tests passed, 2 tests failed out of 3`。
 // 修完后它们必须是正常 Result::fail / Result::ok。
 TEST_F(PluginTest, ProcessingScharrRejectsBothDirectionsRequested) {
     auto* p = mgr_.find("processing");
@@ -1334,7 +1340,8 @@ TEST_F(PluginTest, ProcessingScharrRejectsBothDirectionsRequested) {
 }
 
 // R-T15-3：54df42c:483 把入参压成 sobelDx>0?1:0 / sobelDy>0?1:0 ⇒ (0,0) 同样违反 dx+dy==1、同样抛。
-// 少了这条，"只挡双 1、放过 (0,0)"的实现能全绿，而它一进 cv::Scharr 就崩。
+// 少了这条，"只挡双 1、放过 (0,0)"的实现能全绿，而它一进 cv::Scharr 就抛未捕获异常
+// ⇒ 红形态与上面同：gtest 记该用例 FAILED（有汇总行、不截断整跑），不是 result.success == false。
 TEST_F(PluginTest, ProcessingScharrRejectsNoDirectionRequested) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

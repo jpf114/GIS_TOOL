@@ -470,8 +470,11 @@ gis::framework::Result ProcessingPlugin::doEdge(
 
     // Task 15 / R-T15-3：cv::Scharr 只接受"恰好一个求导方向"——OpenCV 4.14 的
     // CV_Assert(dx >= 0 && dy >= 0 && dx+dy == 1) 位于 cv::getScharrKernels（imgproc/src/deriv.cpp:66），
-    // 而本文件没有任何 try/catch ⇒ 非法组合会以未捕获异常形态击穿调用方（改前红日志见报告）。
-    // 下面 :483 把入参压成 sobelDx>0?1:0 / sobelDy>0?1:0，所以"两个都 >0"与"两个都 <=0"
+    // 而本文件没有任何 try/catch ⇒ 非法组合会以未捕获异常形态逃出 execute()、击穿调用方。
+    //（改前红形态见报告 §2.1 与 build/t15_tier1_red_ctest.log：异常被 gtest 的用例级处理接住、记该用例 FAILED；
+    //  本工程 gtest_discover_tests 每例一个进程 ⇒ 不终止整个可执行文件、不截断整跑，红日志仍有汇总行。）
+    // 下面 cv::Scharr 调用处（提交态 17bfc76:501，即 54df42c:483）把入参压成
+    // sobelDx>0?1:0 / sobelDy>0?1:0，所以"两个都 >0"与"两个都 <=0"
     // 两侧同样违法，必须一起挡；dx == dy 这一判形恰好同挡两侧。
     // 只给 scharr 加校验：sobel 分支（`else if (edgeMethod == "sobel")` 里三行 sobelDx/sobelDy 钳制，
     // 提交 54df42c:474-476）的静默钳制是挂账 N41，本批不处置（R-T15-7）。
