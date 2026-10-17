@@ -715,9 +715,10 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "bands"},
                 {"output"}
             }},
-            // WHY 这里没有 resample/num_threads：doTile 读的是未声明的 resampling（见 task-10-report.md
-            // 的新发现清单），而 num_threads 声明后无人读取；把它们列进白名单等于在面板上放一个
-            // 填了也不生效的键，正是本任务要消灭的形态。
+            // WHY 这里没有 resample：doTile 读的是未声明的 resampling（N36，见 task-10-report.md
+            // 的新发现清单；N36 由 Task 17 的 R-T17-12 裁定移出射程、留批次 B），列进白名单
+            // 等于在面板上放一个填了也不生效的键，正是本任务要消灭的形态。
+            // num_threads（N37 "声明后无人读取"）已由 Task 17 按 R-T17-12 从 paramSpecs() 删除。
             {"tile", {
                 QString{},
                 QStringLiteral("生成 XYZ 瓦片。"),

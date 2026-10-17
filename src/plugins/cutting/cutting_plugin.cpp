@@ -151,11 +151,10 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
             "copyright", "版权信息", "Copyright text used by generated web preview",
             gis::framework::ParamType::String, false, std::string{}
         },
-        gis::framework::ParamSpec{
-            "num_threads", "线程数", "Number of worker threads",
-            gis::framework::ParamType::Int, false, int{1},
-            int{1}, int{64}
-        },
+        // N37（R-T17-12）：原此处的 num_threads 声明后全文件零读取点，已删除。
+        // 与已删的 georef x_res/y_res 同族"填了会被静默忽略"的形态；实测判据见
+        // task-17-report.md（grep 全树仅注释与本插件 spec；不属任何 visibleKeys；
+        // 删除后 #334 与 action_gold_cases 登记不变红）。
     };
 }
 
