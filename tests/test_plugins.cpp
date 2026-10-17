@@ -11281,3 +11281,65 @@ TEST_F(PluginTest, TileUserExtentDrivesMetricProjectionAndSkipsZeroAreaTiles) {
         EXPECT_NEAR(bounds[3], 60.1, 1e-6) << "extent 分支的 bounds 仍是 lon,lat 传统序（maxLat）";
     }
 }
+
+// F2（Task 17 修复轮 1，审查发现 I-1）：tile_scheme=tms 的行号反演用例。
+// 修复前的盘上事实：grep -rn "tms" tests/ ⇒ exit=1（零命中），而 cutting_plugin.cpp:1027-1029
+// 这行反演正是 Task 17 刚从 `(1<<z)-1-ty` 改成 `b.tiles-1-ty` 的改动点 ⇒ 改动零判别。
+// 审查者的 R4（分母退回 1<<z）实测 0 红（build/t17rev_R4_tms_denominator_1shiftz.log）。
+// 本用例钉两件事：
+//   (i) 写出的**文件名 y 号**是反演后的值（12 条字面期望：z=10 时 1023-512=511、1023-513=510）；
+//   (ii) 集合与同夹具同层级的 xyz 产出**同规模**，且只有 y 号不同（x/层级/张数一致）。
+// WHY 字面期望写死 511/510 而不是在用例里算 `tiles-1-y`：反演本身就是被测性质，
+// 用被测式子推期望等于把断言让给实现（R-T17-9(2) 同口径）。1023=2^10-1 是 XYZ/TMS 的定义。
+// 等价变异如实登记（不硬造期望去杀它）：`b.tiles` 在**未被钳位的层级**恒等于 1<<z
+// ⇒ "分母退回 1<<z" 在本档必存活；两者只在 mercatorTileGrid 钳位臂生效的层级
+// （z=21/22 × ts=512/1024，见挂账 N68 / 本报告 F7）才分道，而那档网格本身有损，
+// 把产物文件名钉上去等于把一个待修的有损行为固化成锚 ⇒ 本环不钉，交控制器随 N68 处置。
+TEST_F(PluginTest, TileSchemeTmsInvertsWrittenRowNumberButKeepsTileSetSize) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(64 * 64, 0.0f);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 32; ++x) data[static_cast<size_t>(y) * 64 + x] = 200.0f;
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t17_tms_input.tif", 64, 64, data, options);
+
+    // 源包络 x∈[0,64000]、y∈[-64000,0] ⇒ z=10（瓦片米宽 39135.7584820098）落进
+    // 列 {512,513} × 行 {512,513} 共 4 张；xyz 方案写入行号 == 计算行号（既有锚 #296 同源算术）。
+    std::set<std::string> producedXyz;
+    std::set<std::string> producedTms;
+    for (int pass = 0; pass < 2; ++pass) {
+        const std::string schemeName = pass == 0 ? "xyz" : "tms";
+        const fs::path output = getTestDir() /
+            (pass == 0 ? "t17_tms_xyz_output" : "t17_tms_tms_output");
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 10;
+        params["max_zoom"] = 10;
+        params["tile_scheme"] = schemeName;
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << schemeName << ": " << result.message;
+        const auto files = t17CollectTileFiles(output);
+        if (pass == 0) producedXyz = files; else producedTms = files;
+        const std::string json = t17ReadWholeFile(output / "metadata.json");
+        EXPECT_NE(json.find("\"scheme\": \"" + schemeName + "\""), std::string::npos)
+            << schemeName << " 的 metadata.scheme 未如实记录: " << json;
+    }
+
+    const std::set<std::string> expectedXyz = {
+        "10/512/512.png", "10/512/513.png", "10/513/512.png", "10/513/513.png",
+    };
+    // TMS：行号自下（南）而上 ⇒ 同一张瓦片写出的文件名是 (2^10-1)-y。
+    const std::set<std::string> expectedTms = {
+        "10/512/511.png", "10/512/510.png", "10/513/511.png", "10/513/510.png",
+    };
+    EXPECT_EQ(producedXyz, expectedXyz)
+        << "xyz 基准集合变了（实际 [" << t17JoinFiles(producedXyz) << "]）";
+    EXPECT_EQ(producedTms, expectedTms)
+        << "tms 反演后的文件名 y 号不对（实际 [" << t17JoinFiles(producedTms) << "]）";
+    EXPECT_EQ(producedTms.size(), producedXyz.size()) << "tms 与 xyz 同输入必须同规模";
+}
