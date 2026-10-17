@@ -11701,6 +11701,93 @@ TEST_F(PluginTest, TileStretchIsWholeSceneWideNotPerTile) {
     EXPECT_EQ(westR.maxValue, 255) << "亮档没到满量程：west.max=" << westR.maxValue;
 }
 
+// T18-S5(2b)（修复轮 F4，钉的是 S1/S2 交付的核心性质）：拉伸区间必须**逐波段各算各的**，
+// 不许所有波段共用 band1 的 (min,max)。
+// WHY 这条必须单独存在（疑虑 5(a) 在原工单里被登记为"现有夹具下不可判别"）：
+//   #311/#312/#316 用的三波段夹具每个波段都是 {0,200} ⇒ 三条 (min,max) 逐字段相同 ⇒
+//   "全部复用 band1 区间"这个变异在那些夹具下产出**逐像元相同**的瓦片 ⇒ 无从判别。
+//   本用例把三个波段的量程做成互不相同（band1 {0,200}、band2 {0,50}、band3 {100,1000}），
+//   共用区间与逐波段区间的产物立刻分道，红的是下面点名那两条。
+// 期望算术（沿用 #311 已核过的 z=8 单瓦片几何：覆盖子矩形 [0,104]²，resampling=nearest 保证
+//   warp 与 cv::resize 两级都不糊边界 ⇒ 瓦片里只出现源值集合，拉伸后只出现各波段自己的 0/255）：
+//   每波段都是"列 >= 32 翻到高档"，64 列放大到 105 列 ⇒ 亮档 52 列、暗档 53 列 ⇒
+//     band1 逐波段 (0,200)   ⇒ 0→0、200→255            mean = 255*52/105 = 126.3
+//     band2 逐波段 (0,50)    ⇒ 0→0、 50→255            mean = 126.3
+//     band3 逐波段 (100,1000)⇒ 100→0、1000→255         mean = 126.3
+//   ⇒ 三个通道**两两相等**（这正是"每波段都被归一到自己的满量程"的签名），
+//     且每通道 min=0、max=255。
+//   变异"全部复用 band1 的 (0,200)"后的算术：
+//     band2: 0→0、50→255*50/200=63   ⇒ maxValue 63（红在 EXPECT_EQ(g.maxValue,255)）
+//     band3: 100→127、1000→255       ⇒ minValue 127（红在 EXPECT_EQ(b.minValue,0)）
+//     band1 自己不变 ⇒ 控制组，证明红色来自"区间被共用"而不是夹具坏了。
+//   另两条均值断言（126.3±15）在变异下变成 31.2 与 190.4 ⇒ 同样红，作二次证据。
+TEST_F(PluginTest, TileStretchUsesEachBandOwnRange) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    // 三个波段同一翻转列（32）、**不同量程**：低档/高档分别是 (0,200)、(0,50)、(100,1000)。
+    const auto makeBand = [](float low, float high) {
+        std::vector<float> data(static_cast<size_t>(64) * 64, low);
+        for (int y = 0; y < 64; ++y)
+            for (int x = 32; x < 64; ++x) data[static_cast<size_t>(y) * 64 + x] = high;
+        return data;
+    };
+    const std::string input = t18WriteBandsRaster(
+        getTestDir(), "t18_perband_input.tif", 64, 64,
+        std::vector<std::vector<float>>{
+            makeBand(0.0f, 200.0f), makeBand(0.0f, 50.0f), makeBand(100.0f, 1000.0f),
+        },
+        options);
+    ASSERT_FALSE(input.empty());
+
+    const fs::path output = getTestDir() / "t18_perband_output";
+    fs::remove_all(output);
+    auto params = t17BaseTileParams(input, utf8PathString(output));
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+    params["resampling"] = std::string("nearest");
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    const auto files = t17CollectTileFiles(output);
+    ASSERT_EQ(files.size(), 1u) << "z=8 夹具应产出单瓦片，实际 [" << t17JoinFiles(files) << "]";
+    const T18TileBands tile = t18ReadTile(output / fs::path(*files.begin()));
+    ASSERT_TRUE(tile.ok());
+    ASSERT_EQ(tile.bands, 4) << "容器口径：输出恒为 RGBA 四波段";
+
+    const T18OpaqueStats r = t18StatsOverOpaque(tile, 1);
+    const T18OpaqueStats g = t18StatsOverOpaque(tile, 2);
+    const T18OpaqueStats b = t18StatsOverOpaque(tile, 3);
+    ASSERT_GT(r.count, 0);
+    ASSERT_EQ(r.count, g.count) << "三个通道必须落在同一批不透明像元上";
+    ASSERT_EQ(g.count, b.count);
+
+    // 主判别：每波段都被归一到**自己**的满量程 ⇒ 三通道都必须是 0..255。
+    EXPECT_EQ(r.minValue, 0) << "band1 暗档（控制组）：min=" << r.minValue;
+    EXPECT_EQ(r.maxValue, 255) << "band1 亮档（控制组）：max=" << r.maxValue;
+    EXPECT_EQ(g.minValue, 0) << "band2 暗档：min=" << g.minValue;
+    EXPECT_EQ(g.maxValue, 255)
+        << "band2 的 50 没被按自己的 (0,50) 归一（复用 band1 的 (0,200) 时它是 63）：max="
+        << g.maxValue;
+    EXPECT_EQ(b.minValue, 0)
+        << "band3 的 100 没被按自己的 (100,1000) 归一（复用 band1 的 (0,200) 时它是 127）：min="
+        << b.minValue;
+    EXPECT_EQ(b.maxValue, 255) << "band3 亮档：max=" << b.maxValue;
+
+    // 二次证据：三通道均值两两相等且都等于算术值 126.3（变异下变成 31.2 / 190.4）。
+    EXPECT_NEAR(r.mean, 126.3, 15.0) << "band1 均值：r=" << r.mean;
+    EXPECT_NEAR(g.mean, 126.3, 15.0) << "band2 均值：g=" << g.mean;
+    EXPECT_NEAR(b.mean, 126.3, 15.0) << "band3 均值：b=" << b.mean;
+    EXPECT_LT(std::abs(r.mean - g.mean), 10.0)
+        << "逐波段归一后 R/G 均值应当相等：r=" << r.mean << " g=" << g.mean;
+    EXPECT_LT(std::abs(r.mean - b.mean), 10.0)
+        << "逐波段归一后 R/B 均值应当相等：r=" << r.mean << " b=" << b.mean;
+}
+
 // T18-S5(3)（R-T18-4(i)）：单波段输入 → 灰度口径 = 前三带逐像元相等 + 容器仍是 4 波段。
 // 这是一条**口径锁**（现实现已满足），它的判别对象是"多波段改造时把 1 波段只写进 R 通道、
 // G/B 留 0"这种实现错误：变异 bandForChannel(c)=c+1（不钳位）⇒ 本用例红。
