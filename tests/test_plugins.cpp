@@ -11825,14 +11825,15 @@ TEST_F(PluginTest, TileAddAlphaChangesTransparencyForPartialBandNoData) {
                     ++transparent;
                 } else {
                     ++opaque;
-                    // 洞带里的颜色（钉 stretchByte 的 clamp，判别变异 M9）：
+                    // 洞带里的颜色（钉"透明即整像素清零 / 不透明洞留黑色通道"这条产物口径）：
                     // add_alpha=true 时洞带像元**不透明**（dstalpha 的口径是"任一波段有效即
                     // 不透明"，实测 GDAL 正是这个口径 ⇒ transparentOn==0 那条断言也在钉它），
-                    // 而 band2 在洞带里是 NoData 原值 -9999；色波段的 NODATA 元数据被
-                    // -dstalpha 剥掉之后它就是个普通浮点数 ⇒ 255*(v-min)/range 远小于 0，
-                    // 必须被 clamp 收成 0。去掉 clamp 就是 static_cast<uchar>(负浮点)，
-                    // 那是未定义行为（MSVC 实测截成低字节 52 这类垃圾）⇒ R=255 且 G=0 的
-                    // 像元数会从 ~1200 掉到 0 ⇒ 这里红。
+                    // 而 band2 在洞带里是 NoData 原值 -9999。因为 -dstalpha 剥掉了色波段的
+                    // NODATA 元数据，整幅统计把 -9999 也当成数据 ⇒ band2 的 min 就是 -9999
+                    // ⇒ 255*(v-min)/(max-min) 恰好等于 0 ⇒ 绿道为 0、红道仍 255。
+                    // 注：这里**不是** stretchByte 的 clamp 的判别点——变异 M9（去掉 clamp）
+                    // 实测 26/26 全绿，因为 scaled 恒在 [0,255]（min/max 就来自同一批数据），
+                    // 详见 task-18-report.md 的 S6 台账（登记为"不可判别之防御臂"）。
                     if (tile.data[0][i] == 255 && tile.data[1][i] == 0) ++holeGreen;
                 }
             }
@@ -11852,10 +11853,12 @@ TEST_F(PluginTest, TileAddAlphaChangesTransparencyForPartialBandNoData) {
     EXPECT_GT(opaqueOn - opaqueOff, 200) << "不透明像元数也必须随 add_alpha 变化";
     EXPECT_LT(transparentOff, 10000) << "false 也不该把覆盖区整块遮完";
     EXPECT_GT(opaqueOff, 200) << "false 时非洞区仍应不透明";
-    // 洞带在 true 档必须是"绿道=0 的黑洞 + 不透明"，且这个 0 来自 clamp（M9 的判别点）；
-    // false 档整像素为 0（含颜色），所以 R=255&G=0 的像元不存在。
+    // 洞带在 true 档必须是"绿道=0 的黑洞 + 不透明"（0 的来源见上面循环里的注释：
+    // 整幅统计把 -9999 当成了 band2 的 min）；false 档整像素为 0（含颜色），
+    // 所以 R=255 且 G=0 的像元不存在。这两条各钉一个产物口径，M-A1/M-A2 变异的红色
+    // 也来自这一组（见 task-18-report.md 的 S6）。
     EXPECT_GT(holeGreenOn, 200)
-        << "洞带的 band2 没被 clamp 成 0（负浮点直转 uchar 是 UB）：" << holeGreenOn;
+        << "true 档的洞带没把绿道落成 0（红道应仍是 255）：" << holeGreenOn;
     EXPECT_EQ(holeGreenOff, 0)
         << "false 档的透明像元不该留下 R=255 的颜色（透明即整像素清零）：" << holeGreenOff;
 }
