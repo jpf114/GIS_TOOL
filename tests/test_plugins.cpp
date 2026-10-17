@@ -11795,6 +11795,7 @@ TEST_F(PluginTest, TileAddAlphaChangesTransparencyForPartialBandNoData) {
     ASSERT_FALSE(input.empty());
 
     int transparentOn = -1, transparentOff = -1, opaqueOn = -1, opaqueOff = -1;
+    int holeGreenOn = -1, holeGreenOff = -1;
     std::set<std::string> filesOn, filesOff;
     for (int pass = 0; pass < 2; ++pass) {
         const bool addAlpha = pass == 0;
@@ -11815,15 +11816,29 @@ TEST_F(PluginTest, TileAddAlphaChangesTransparencyForPartialBandNoData) {
         EXPECT_EQ(tile.bands, 4) << "add_alpha 不改变容器波段数（口径见头注释）";
 
         // 只在覆盖区内统计（目标列/行 [0,99]，留 5 像元余量避开覆盖缘）
-        int transparent = 0, opaque = 0;
+        int transparent = 0, opaque = 0, holeGreen = 0;
         for (int y = 0; y < 100; ++y) {
             for (int x = 0; x < 100; ++x) {
-                const uchar a = tile.data[3][static_cast<size_t>(y) * tile.width + x];
-                if (a == 0) ++transparent; else ++opaque;
+                const size_t i = static_cast<size_t>(y) * tile.width + x;
+                const uchar a = tile.data[3][i];
+                if (a == 0) {
+                    ++transparent;
+                } else {
+                    ++opaque;
+                    // 洞带里的颜色（钉 stretchByte 的 clamp，判别变异 M9）：
+                    // add_alpha=true 时洞带像元**不透明**（dstalpha 的口径是"任一波段有效即
+                    // 不透明"，实测 GDAL 正是这个口径 ⇒ transparentOn==0 那条断言也在钉它），
+                    // 而 band2 在洞带里是 NoData 原值 -9999；色波段的 NODATA 元数据被
+                    // -dstalpha 剥掉之后它就是个普通浮点数 ⇒ 255*(v-min)/range 远小于 0，
+                    // 必须被 clamp 收成 0。去掉 clamp 就是 static_cast<uchar>(负浮点)，
+                    // 那是未定义行为（MSVC 实测截成低字节 52 这类垃圾）⇒ R=255 且 G=0 的
+                    // 像元数会从 ~1200 掉到 0 ⇒ 这里红。
+                    if (tile.data[0][i] == 255 && tile.data[1][i] == 0) ++holeGreen;
+                }
             }
         }
-        if (addAlpha) { transparentOn = transparent; opaqueOn = opaque; filesOn = files; }
-        else { transparentOff = transparent; opaqueOff = opaque; filesOff = files; }
+        if (addAlpha) { transparentOn = transparent; opaqueOn = opaque; holeGreenOn = holeGreen; filesOn = files; }
+        else { transparentOff = transparent; opaqueOff = opaque; holeGreenOff = holeGreen; filesOff = files; }
     }
 
     // 同一张瓦片、同一个洞带：透明度必须可区分（N65 的判别取证）
@@ -11837,6 +11852,12 @@ TEST_F(PluginTest, TileAddAlphaChangesTransparencyForPartialBandNoData) {
     EXPECT_GT(opaqueOn - opaqueOff, 200) << "不透明像元数也必须随 add_alpha 变化";
     EXPECT_LT(transparentOff, 10000) << "false 也不该把覆盖区整块遮完";
     EXPECT_GT(opaqueOff, 200) << "false 时非洞区仍应不透明";
+    // 洞带在 true 档必须是"绿道=0 的黑洞 + 不透明"，且这个 0 来自 clamp（M9 的判别点）；
+    // false 档整像素为 0（含颜色），所以 R=255&G=0 的像元不存在。
+    EXPECT_GT(holeGreenOn, 200)
+        << "洞带的 band2 没被 clamp 成 0（负浮点直转 uchar 是 UB）：" << holeGreenOn;
+    EXPECT_EQ(holeGreenOff, 0)
+        << "false 档的透明像元不该留下 R=255 的颜色（透明即整像素清零）：" << holeGreenOff;
 }
 
 // T18-S5(5)（R-T18-4(iii)、R-T18-6 的"跳过语义必须保留"、F6 计数口径）：
