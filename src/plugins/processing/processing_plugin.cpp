@@ -1116,7 +1116,13 @@ gis::framework::Result ProcessingPlugin::doWatershed(
     // segment_count = 分水岭跑完之后**实际存在的区域标签个数**，不是最大标签值：
     // 外部标记分支的种子标签由用户给、允许不连续（例如只有 2 和 5），旧的 cv::minMaxLoc 最大值口径
     // 会把标签空洞算进区域数（实测同一幅标记改前报 5、改后报 2）。
-    // 统计必须放在 cv::watershed 之后：在那之前数的是"种子数"，区域被并掉时两个口径不同。
+    // 统计放在 cv::watershed **之后**是为了与产出循环（33b0f07:src/plugins/processing/processing_plugin.cpp:1130-1139）
+    // 同源——数"最终写进输出栅格的那批标签"，**不是**因为它能数出与之前不同的值：watershed 不给非零标签
+    // 重新编号、不合并、不新增正标签，它只往 markers==0 灌标签、只把谷线写成 -1（实测同一幅外部标记
+    // 前后 2:25 / 5:25 一字不差：build/task16rev_ext_marker_pre.txt vs build/task16rev_ext_post.txt，
+    // 被改写成 -1 的只有原标签 1 上的 102 个像元）⇒ 没有正标签被整片削光时，label > 1 的去重集合前后恒等。
+    // ⇒ 把这段计数搬到 cv::watershed **之前**是一个可存活的等价变异（审查者实测 6/6 全绿：
+    //    build/task16rev_MUT-M6_ctest.log），别当测试缺口追打。
     // label > 1 同时排掉 -1（边界）、0（未知）与 1（OpenCV 约定的确定背景）。
     std::set<int> uniqueLabels;
     for (int y = 0; y < markers.rows; ++y) {

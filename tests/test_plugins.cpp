@@ -3482,11 +3482,22 @@ TEST_F(PluginTest, ProcessingWatershedExecution) {
 // 背景取点：不能用角点 (0,0)。OpenCV watershed 会把"触及影像边框的盆地"沿最外一圈写成 -1
 //   （实测改前/改后 (0,0) 都是 -1，用它做背景探针会让断言与缺陷无关），
 //   故背景取内部点 (x=16,y=2)：离两个圆心都 > 膨胀半径 8+5，既在确定背景里、又不贴边框。
-// 四条鉴别关系：(i) 背景标签 ≠ 任一圆盘种子标签、且背景 = 1；(ii) 两个种子标签互不相等；
+// 四组关系式（每条到底鉴不鉴别，见下面"逐条鉴别力"一段）：
+//   (i) 背景标签 ≠ 任一圆盘种子标签；(ii) 两个种子标签互不相等；
 //   (iii) 种子标签 >= 2（OpenCV 约定背景独占 1、区域从 2 起，偏移反了或没偏移都会红）；
 //   (iv) 盘内、种子以外的未知带必须被自己的盆地涨满（挡住"先归零、再整体 +1"这种顺序颠倒的实现，
 //        它让未知带从一开始就是背景 ⇒ 分水岭不再扩张）。
 //   改后应为 背景=1、两区域=2/3（各 80 像元 = 整个圆盘）、边界=-1。
+// 逐条鉴别力（一手证据：改前红日志 build/t16_redfinal_ctest.log:16 与 :19，实测背景(16,2)=1、A心=1、B心=2）：
+//   改前**只有 2 条会红** —— (i) 的 `background != centerA`（1 vs 1）与 (iii) 的 `centerA >= 2`（1 vs 2）。
+//   B 盘在改前就独立带着标签 2，所以 (i) 的 `background != centerB`、(ii)、(iii) 的 `centerB >= 2` 改前都是绿的；
+//   (i) 处紧跟的 `EXPECT_EQ(background, 1)` 改前改后**同值 = 1**（build/task16rev_auto_pre.txt 与
+//   build/task16rev_auto_post.txt 的 (16,2) 都是 1）⇒ **不作鉴别证据**，它是行为锁：钉住"自动分支写出的背景位
+//   是标签 1"这一对外可见口径（改前的 1 来自"0 背景被洪水吞进区域 1"、改后的 1 来自"背景独占标签 1"，
+//   同一个数字来自两条相反的路径），与下面 EXPECT_EQ(segment_count,"2")、EXPECT_GE(distinctLabels,3)
+//   两处"不作鉴别证据"注释同口径 ⇒ 不删也不加强。
+//   其余几条并非无用，只是各挡别的假实现：(ii) 挡"两盘并成一盆"（变异 A1 实测会红，build/t16_mutA1_ctest.log:21），
+//   (iv) 挡"先归零、再整体 +1"的顺序颠倒（变异 A2b 实测会红，build/t16_mutA2b_ctest.log:15 与 :22）。
 TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -3524,6 +3535,10 @@ TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
     const int centerA = static_cast<int>(readRasterPixel(output, 9, 16));     // 圆盘 A 的种子
     const int centerB = static_cast<int>(readRasterPixel(output, 23, 16));    // 圆盘 B 的种子
     // 盘内、种子以外的"未知带"取点：距盘心 4 px，在半径约 3.5 的 sureFg 之外、半径 5 的盘之内。
+    //   硬约束：**距 -1 谷线须 >= 2 像元**。当前实现下 y=16 行实测（build/task16rev_auto_post.txt）
+    //   x=13/14 为 2、x=15 已是 -1；x=18/19 为 3、x=17 是 -1 ⇒ (13,16) 与 (19,16) 各只剩 2 像元余量。
+    //   2 是下限而不是经验值：谷线厚度由 cv::watershed 按梯度决定、随影像几何变化，取点往盘边挪 1 px
+    //   就可能读到 -1 —— 那时红的是取点、不是算法。
     const int diskEdgeA = static_cast<int>(readRasterPixel(output, 13, 16));
     const int diskEdgeB = static_cast<int>(readRasterPixel(output, 19, 16));
     // 每个关系式断言都带这串实测数字：红日志里必须能直接读到改前/改后的标签与计数。
@@ -3536,6 +3551,8 @@ TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
                                  ", segment_count=" + countIt->second + "]";
 
     // (i) 背景必须独占一个标签：缺 `markers += 1` 时背景被并进标签 1 的盆地，与 A 的种子标签相等。
+    //   这一组里改前会红的只有第一条 `background != centerA`（`!= centerB` 改前是 1 vs 2，不红）；
+    //   下面的 `EXPECT_EQ(background, 1)` 改前改后同值 = 1 ⇒ 行为锁、不作鉴别证据（口径见函数头注释）。
     EXPECT_NE(background, centerA) << "确定背景与圆盘 A 共用标签 ⇒ 背景被当成未知区淹没" << observed;
     EXPECT_NE(background, centerB) << "确定背景与圆盘 B 共用标签 ⇒ 同上" << observed;
     EXPECT_EQ(background, 1) << "OpenCV 约定：确定背景应为标签 1" << observed;
@@ -3546,7 +3563,9 @@ TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
     EXPECT_GE(centerB, 2) << "区域标签应从 2 起，背景独占 1" << observed;
     // (iv) 未知区必须在整体偏移**之后**才归零：那样它才会被自己的盆地涨满（实测正确实现里两个
     //   种子各占 80 像元 = 整个圆盘）。若把 "+1" 挪到归零循环之后，未知带从一开始就是标签 1，
-    //   分水岭不再扩张 ⇒ 盘内取点留在 1、种子只剩 25 像元的核 ⇒ 这两条会红（变异 A2 实测）。
+    //   分水岭不再扩张 ⇒ 盘内取点留在 1、种子只剩 25 像元的核 ⇒ 这两条会红（变异 A2 实测，
+    //   build/t16_mutA2b_ctest.log:15 与 :22）。这两个点**距 -1 谷线只有 2 像元**（余量约束及其下限
+    //   理由见上面 diskEdgeA/diskEdgeB 声明处的注释），往盘边挪 1 px 就会读到 -1 而变脆。
     EXPECT_EQ(diskEdgeA, centerA) << "圆盘 A 内的未知带没被自己的盆地涨满 ⇒ +1 与归零的顺序倒了" << observed;
     EXPECT_EQ(diskEdgeB, centerB) << "圆盘 B 内的未知带没被自己的盆地涨满 ⇒ 同上" << observed;
 
