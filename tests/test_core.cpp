@@ -831,3 +831,86 @@ TEST(TileGrid, TileWorldRectPinsCornersAtLevelOne) {
     EXPECT_FALSE(gis::core::tileWorldRect(grid, 256, 2, 0).valid);
     EXPECT_FALSE(gis::core::tileWorldRect(grid, 256, 0, 2).valid);
 }
+
+// F7（Task 17 修复轮 1，审查 m-2）：mercatorTileGrid 的**钳位臂**契约。
+// 只钉现状、不改行为（收窄或报错都是未授权的 API 语义变更）。
+// 数值按 tile_grid.cpp:33-38 的定义独立算（count = ts<<z、cap = (INT_MAX/ts)*ts、取 min），
+// 不调用被测实现推期望：
+//   (z=22, ts=1024) count=4294967296 cap=2147482624 ⇒ globalWidth=2147482624 ⇒ 瓦片数 2097151
+//   (z=21, ts=1024) count=2147483648 cap=2147482624 ⇒ globalWidth=2147482624 ⇒ 瓦片数 2097151
+//   (z=40~45, ts=256) z 先钳到 40 ⇒ count=281474976710656 cap=2147483392 ⇒ 瓦片数 8388607
+//   安全域内不生效（头注释承诺的那两档）：(z=20, ts=1024) 与 (z=22, ts=256) 都恰好 1073741824
+// **这个契约有损，承认它有损**：z=22/ts=1024 的真值是 2^22=4194304 列，钳位后只剩 2097151 列
+// （少一半）；z=21/ts=1024 真值 2097152 列，钳位后少 1 列。而 tile_pixel_size 的声明域是 [128,1024]、
+// doTile 的 z 封顶 22 ⇒ (ts=512,z=22)、(ts=1024,z=21)、(ts=1024,z=22) 都是**面板合法但网格被静默
+// 缩档**的组合。登记挂账 **N68**（本报告 F7 小节），处置（收窄域 / 显式报错 / 换 64 位网格）留后续任务。
+TEST(TileGrid, ClampArmShrinksGridLossilyButStaysSelfConsistent) {
+    const int kClampedWidth1024 = 2147482624;   // (INT_MAX/1024)*1024
+    const int kClampedWidth256 = 2147483392;    // (INT_MAX/256)*256
+
+    const auto z22 = gis::core::mercatorTileGrid(22, 1024);
+    EXPECT_EQ(z22.globalWidth, kClampedWidth1024);
+    EXPECT_EQ(z22.globalHeight, kClampedWidth1024);
+    // 世界四边不受钳位影响（它一直是 EPSG:3857 全幅），只有像元数被缩档。
+    EXPECT_NEAR(z22.worldMaxX, 20037508.342789244, 1e-3);
+    EXPECT_NEAR(z22.worldMinY, -20037508.342789244, 1e-3);
+
+    // 钳位后网格自洽：瓦片数 = globalWidth/ts，最后一张仍合法、越界一张必须 invalid。
+    const int tiles = z22.globalWidth / 1024;
+    EXPECT_EQ(tiles, 2097151);
+    const auto last = gis::core::tileWindow(z22, 1024, tiles - 1, tiles - 1);
+    ASSERT_TRUE(last.valid);
+    EXPECT_EQ(last.xOff, (tiles - 1) * 1024);
+    EXPECT_EQ(last.xSize, 1024);
+    EXPECT_FALSE(gis::core::tileWindow(z22, 1024, tiles, 0).valid);
+    EXPECT_FALSE(gis::core::tileWindow(z22, 1024, 0, tiles).valid);
+    const auto lastRect = gis::core::tileWorldRect(z22, 1024, tiles - 1, tiles - 1);
+    ASSERT_TRUE(lastRect.valid);
+    EXPECT_LT(lastRect.minX, lastRect.maxX);
+    EXPECT_LE(lastRect.maxX, z22.worldMaxX + 1e-6);
+    EXPECT_GE(lastRect.minY, z22.worldMinY - 1e-6);
+
+    // z=21 与 z=22 在 ts=1024 下钳位到**同一个** globalWidth ⇒ 两档层级给出同一张网格，
+    // 分辨率不再逐档减半（真值 2097152 列 vs 钳位后 2097151 列）。这条就是 N68 的可观测形态。
+    const auto z21 = gis::core::mercatorTileGrid(21, 1024);
+    EXPECT_EQ(z21.globalWidth, kClampedWidth1024);
+    EXPECT_EQ(z21.globalWidth, z22.globalWidth);
+    EXPECT_EQ(z21.globalWidth / 1024, 2097151);
+
+    // zoom 上界臂：z>40 一律按 40 走（ts=256 ⇒ 2147483392 / 8388607 张）。
+    const auto z45 = gis::core::mercatorTileGrid(45, 256);
+    const auto z40 = gis::core::mercatorTileGrid(40, 256);
+    EXPECT_EQ(z45.globalWidth, kClampedWidth256);
+    EXPECT_EQ(z45.globalWidth, z40.globalWidth);
+    EXPECT_EQ(z45.globalWidth / 256, 8388607);
+
+    // 反向钉：头注释承诺的安全域内钳位**不生效**（这两档真值与 globalWidth 逐位一致）。
+    EXPECT_EQ(gis::core::mercatorTileGrid(20, 1024).globalWidth, 1073741824);
+    EXPECT_EQ(gis::core::mercatorTileGrid(22, 256).globalWidth, 1073741824);
+    EXPECT_EQ(gis::core::mercatorTileGrid(22, 256).globalWidth / 256, 4194304);   // == 2^22
+}
+
+// F7 第 (ii) 件：zoom<0 按 0、tileSize<1 按 1 的臂（头注释 :35-37 的承诺，此前零测试）。
+// 承诺的形态是"不拒非法输入，但不得产生 0 宽网格或除零"⇒ 这里钉的就是 globalWidth>0 与同源窗口自洽。
+TEST(TileGrid, IllegalZoomAndTileSizeFallBackToOneSizedArms) {
+    const auto negZoom = gis::core::mercatorTileGrid(-3, 256);
+    EXPECT_EQ(negZoom.globalWidth, 256);          // clamp(-3,0,40) = 0 ⇒ 256<<0
+    EXPECT_EQ(negZoom.globalHeight, 256);
+    EXPECT_TRUE(gis::core::tileWindow(negZoom, 256, 0, 0).valid);
+    EXPECT_FALSE(gis::core::tileWindow(negZoom, 256, 1, 0).valid);   // 与 z=0 同形：只有一张
+
+    // tileSize=0 / 负数：ts 取 1 ⇒ z=1 时全球 2×2 像元、2 张瓦片；不得出现 0 宽网格或除零。
+    const auto tsZero = gis::core::mercatorTileGrid(1, 0);
+    const auto tsNegative = gis::core::mercatorTileGrid(1, -7);
+    EXPECT_GT(tsZero.globalWidth, 0);
+    EXPECT_EQ(tsZero.globalWidth, 2);
+    EXPECT_EQ(tsNegative.globalWidth, 2);
+    const auto win = gis::core::tileWindow(tsZero, 0, 1, 1);        // tileWindow 侧同样按 1 处理
+    ASSERT_TRUE(win.valid);
+    EXPECT_EQ(win.xOff, 1);
+    EXPECT_EQ(win.xSize, 1);
+    const auto rect = gis::core::tileWorldRect(tsZero, -5, 1, 0);
+    ASSERT_TRUE(rect.valid);
+    EXPECT_GT(rect.maxX, rect.minX);
+    EXPECT_GT(rect.maxY, rect.minY);
+}
