@@ -663,6 +663,77 @@ static bool isTileBlank(const cv::Mat& rgba) {
     return nonzero <= 4;
 }
 
+// Task 18 S0（复审建议）：doTile 的"每瓦片渲染段"（改前 cutting_plugin.cpp:1118-1171）
+// 原样抽进这一个函数。
+// WHY 先抽再加：Task 17 之后 doTile 已有 453 行，网格反算、波段读取、拉伸、alpha、
+//   编码、计数六件事挤在三重循环里的一处；本任务要在**同一处**加多波段与真 alpha，
+//   就地堆叠会让"渲染语义"和"网格语义"再也分不开。抽出后 doTile 只留网格与计数。
+// WHY 传引用出参而不是返回值：rgba 是 tileSize×tileSize×4 的缓冲（256 档 256KB），
+//   按值返回在 MSVC 下多一次深拷贝，而这个函数每张瓦片调一次。
+// 返回 false = 这张瓦片**没有可交付内容**（源读失败，或没有任何有效像元可供拉伸，
+//   后者是原 :1151 `bandMin > bandMax` 那条守卫的语义，R-T18-6 要求保留）。
+//   两个不可交付分支在调用方合并成同一条跳过臂：改前它们是两条 continue，但动作完全
+//   相同（++tilesSkipped; ++tilesProcessed; continue），合并 F6 计数口径不变。
+struct TileRenderInput {
+    GDALDataset* warpedDS = nullptr;
+    int srcX = 0, srcY = 0, srcW = 0, srcH = 0;   // warped 数据集上的整数读窗
+    int dstX = 0, dstY = 0, dstW = 0, dstH = 0;   // 瓦片内的目标子矩形（子像素放置）
+    int tileSize = 256;
+    int interpolation = cv::INTER_LINEAR;         // overview_resampling 映射出的插值（R-T18-8）
+    bool addAlpha = true;
+    double nodata = 0.0;                          // 未声明 NoData 时的垫边值（口径照旧 :1039）
+    bool hasNodata = false;
+};
+
+static bool renderTileRgba(const TileRenderInput& in, cv::Mat& rgba) {
+    cv::Mat tileData(in.tileSize, in.tileSize, CV_32F, cv::Scalar(static_cast<float>(in.nodata)));
+    cv::Mat coverMask(in.tileSize, in.tileSize, CV_8UC1, cv::Scalar(0));
+
+    cv::Mat block(in.srcH, in.srcW, CV_32F);
+    const CPLErr err = in.warpedDS->GetRasterBand(1)->RasterIO(
+        GF_Read, in.srcX, in.srcY, in.srcW, in.srcH,
+        block.data, block.cols, block.rows, GDT_Float32, 0, 0);
+    if (err != CE_None) return false;
+
+    // 插值项来自 overview_resampling 映射出的 tileInterpolation，
+    // 原 :943 的硬编码 cv::INTER_LINEAR 作废（判别用例：nearest 与 average 同输入
+    // 必须产出不同字节；删掉映射硬回 INTER_LINEAR ⇒ 两次输出一致 ⇒ 用例必红）。
+    cv::resize(block, block, cv::Size(in.dstW, in.dstH), 0, 0, in.interpolation);
+    block.copyTo(tileData(cv::Rect(in.dstX, in.dstY, in.dstW, in.dstH)));
+    coverMask(cv::Rect(in.dstX, in.dstY, in.dstW, in.dstH)).setTo(255);
+
+    rgba = cv::Mat(in.tileSize, in.tileSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+    double bandMin = 1e30, bandMax = -1e30;
+    for (int py = 0; py < in.tileSize; ++py) {
+        for (int px = 0; px < in.tileSize; ++px) {
+            const float v = tileData.at<float>(py, px);
+            if (coverMask.at<uchar>(py, px) == 0) continue;   // 未覆盖垫边不参与拉伸
+            if (in.hasNodata && std::abs(v - in.nodata) < 1e-6) continue;
+            if (v < bandMin) bandMin = v;
+            if (v > bandMax) bandMax = v;
+        }
+    }
+
+    if (bandMin > bandMax) return false;
+
+    const double range = (bandMax - bandMin > 1e-9) ? (bandMax - bandMin) : 1.0;
+    for (int py = 0; py < in.tileSize; ++py) {
+        for (int px = 0; px < in.tileSize; ++px) {
+            const float v = tileData.at<float>(py, px);
+            if (coverMask.at<uchar>(py, px) == 0 ||
+                (in.hasNodata && std::abs(v - in.nodata) < 1e-6)) {
+                rgba.at<cv::Vec4b>(py, px) = cv::Vec4b(0, 0, 0, 0);
+            } else {
+                const uchar c = static_cast<uchar>(255.0 * (v - bandMin) / range);
+                // R-T17-10/N65：addAlpha 的三元两个分支相同 ⇒ add_alpha 目前是空操作，
+                // 这是 Task 18（多波段与 alpha）的地盘，本任务只登记不修（R-T17-5 红线）。
+                rgba.at<cv::Vec4b>(py, px) = cv::Vec4b(c, c, c, in.addAlpha ? 255 : 255);
+            }
+        }
+    }
+    return true;
+}
+
 static bool encodeTile(const cv::Mat& rgba, const std::string& fmt, int quality,
                         const std::string& path) {
     std::vector<int> params;
@@ -1115,59 +1186,28 @@ gis::framework::Result CuttingPlugin::doTile(
                     continue;
                 }
 
-                cv::Mat tileData(tileSize, tileSize, CV_32F, cv::Scalar(static_cast<float>(srcNodata)));
-                cv::Mat coverMask(tileSize, tileSize, CV_8UC1, cv::Scalar(0));
+                // 渲染段（读带 → 插值放置 → 拉伸 → alpha）已抽到 renderTileRgba（Task 18 S0）。
+                TileRenderInput renderIn;
+                renderIn.warpedDS = warpedDS;
+                renderIn.srcX = c0;
+                renderIn.srcY = r0;
+                renderIn.srcW = c1 - c0;
+                renderIn.srcH = r1 - r0;
+                renderIn.dstX = dx0;
+                renderIn.dstY = dy0;
+                renderIn.dstW = dx1 - dx0;
+                renderIn.dstH = dy1 - dy0;
+                renderIn.tileSize = tileSize;
+                renderIn.interpolation = tileInterpolation;
+                renderIn.addAlpha = addAlpha;
+                renderIn.nodata = srcNodata;
+                renderIn.hasNodata = hasNd != 0;
 
-                cv::Mat block(r1 - r0, c1 - c0, CV_32F);
-                CPLErr err = warpedDS->GetRasterBand(1)->RasterIO(
-                    GF_Read, c0, r0, c1 - c0, r1 - r0,
-                    block.data, block.cols, block.rows, GDT_Float32, 0, 0);
-
-                if (err != CE_None) {
+                cv::Mat rgba;
+                if (!renderTileRgba(renderIn, rgba)) {
                     ++tilesSkipped;
                     ++tilesProcessed;
                     continue;
-                }
-
-                // R-T17-11 处置①：插值项来自 overview_resampling 映射出的 tileInterpolation，
-                // 原 :943 的硬编码 cv::INTER_LINEAR 作废（判别用例：nearest 与 average 同输入
-                // 必须产出不同字节；删掉映射硬回 INTER_LINEAR ⇒ 两次输出一致 ⇒ 用例必红）。
-                cv::resize(block, block, cv::Size(dx1 - dx0, dy1 - dy0), 0, 0, tileInterpolation);
-                block.copyTo(tileData(cv::Rect(dx0, dy0, dx1 - dx0, dy1 - dy0)));
-                coverMask(cv::Rect(dx0, dy0, dx1 - dx0, dy1 - dy0)).setTo(255);
-
-                cv::Mat rgba(tileSize, tileSize, CV_8UC4, cv::Scalar(0, 0, 0, 0));
-                double bandMin = 1e30, bandMax = -1e30;
-                for (int py = 0; py < tileSize; ++py) {
-                    for (int px = 0; px < tileSize; ++px) {
-                        const float v = tileData.at<float>(py, px);
-                        if (coverMask.at<uchar>(py, px) == 0) continue;   // 未覆盖垫边不参与拉伸
-                        if (hasNd && std::abs(v - srcNodata) < 1e-6) continue;
-                        if (v < bandMin) bandMin = v;
-                        if (v > bandMax) bandMax = v;
-                    }
-                }
-
-                if (bandMin > bandMax) {
-                    ++tilesSkipped;
-                    ++tilesProcessed;
-                    continue;
-                }
-
-                const double range = (bandMax - bandMin > 1e-9) ? (bandMax - bandMin) : 1.0;
-                for (int py = 0; py < tileSize; ++py) {
-                    for (int px = 0; px < tileSize; ++px) {
-                        const float v = tileData.at<float>(py, px);
-                        if (coverMask.at<uchar>(py, px) == 0 ||
-                            (hasNd && std::abs(v - srcNodata) < 1e-6)) {
-                            rgba.at<cv::Vec4b>(py, px) = cv::Vec4b(0, 0, 0, 0);
-                        } else {
-                            const uchar c = static_cast<uchar>(255.0 * (v - bandMin) / range);
-                            // R-T17-10/N65：addAlpha 的三元两个分支相同 ⇒ add_alpha 目前是空操作，
-                            // 这是 Task 18（多波段与 alpha）的地盘，本任务只登记不修（R-T17-5 红线）。
-                            rgba.at<cv::Vec4b>(py, px) = cv::Vec4b(c, c, c, addAlpha ? 255 : 255);
-                        }
-                    }
                 }
 
                 if (skipBlank && isTileBlank(rgba)) {
