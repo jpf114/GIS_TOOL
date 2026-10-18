@@ -704,11 +704,13 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             // （required = spec.required || key 被这里列出，见 buildEffectiveGuiParamSpecs），
             // 列一个键就等于让 ParamCardWidget::validate() 禁止空值提交，
             // 所以只能要求插件本来就会拒绝的东西。
-            // doMergeBands 对 input 只在非空时并入待堆叠文件（cutting_plugin.cpp:455），
-            // bands 独立累加（:459），两者都空才 fail（:464-465 "use --input or --bands"）
-            // ⇒ bands-only 是插件明确支持的能力，input 的 spec 也声明 required=false（:31-33），
+            // doMergeBands 对 input 只在非空时并入待堆叠文件（该函数里 `if (!input.empty())` 那段），
+            // bands 独立累加（紧随其后的 `if (!bandsStr.empty())` 那段），两者都空才 fail
+            // （`bandFiles.empty()` 那条 "…(use --input or --bands)"）。
+            // ⇒ bands-only 是插件明确支持的能力，input 的 spec 也声明 required=false
+            //   （paramSpecs() 里 "input" 那一条），
             // 把它加严成必填会让 GUI 用户无法只靠 bands 堆叠波段。
-            // output 的加严保留：:452 对空 output 直接 fail("output is required")。
+            // output 的加严保留：doMergeBands 开头就有 `if (output.empty())` → fail("output is required")。
             {"merge_bands", {
                 QString{},
                 QStringLiteral("把多个栅格的波段堆叠为一幅。"),

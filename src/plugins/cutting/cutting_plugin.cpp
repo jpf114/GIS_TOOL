@@ -1414,10 +1414,10 @@ gis::framework::Result CuttingPlugin::doTile(
         const int tilesInLevel = (xMax - xMin + 1) * (yMax - yMin + 1);
         progress.onMessage("Zoom " + std::to_string(z) + ": " + std::to_string(tilesInLevel) + " tiles");
 
-        // R-T17-7：删除"每层级物化全球网格"的 -outsize translate（原 :860-884）与
-        // 死变量 levelRes/globalSize（:854-855）。F3/N64 的 Tier-0 探针实测（数字抄在这里）：
+        // R-T17-7：删除"每层级物化全球网格"的 -outsize translate（10829d9^:860-884）与
+        // 死变量 levelRes/globalSize（10829d9^:854-855）。F3/N64 的 Tier-0 探针实测（数字抄在这里）：
         // 该物化 z=6 就要 5.72s、z=7 21.26s、×4 外推 z=10 ≈ 21min，真实层级不可用。
-        // 层级 translate 是 ovResampling 唯一旧用途（:869），处置见上面 R-T17-11①。
+        // 层级 translate 是 ovResampling 唯一旧用途（10829d9^:869），处置见上面 R-T17-11①。
 
         for (int tx = xMin; tx <= xMax; ++tx) {
             for (int ty = yMin; ty <= yMax; ++ty) {

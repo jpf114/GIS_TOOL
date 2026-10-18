@@ -1330,7 +1330,8 @@ TEST_F(PluginTest, ProcessingScharrRejectsBothDirectionsRequested) {
     params["output"] = output;
     params["band"] = 1;
     params["edge_method"] = std::string("scharr");
-    // 显式写两个方向，不靠 spec 默认值漂移来制造非法组合（sobel_dx/sobel_dy 的 spec 默认本就是 1/1，见 :52-:53）。
+    // 显式写两个方向，不靠 spec 默认值漂移来制造非法组合（sobel_dx/sobel_dy 在 processing_plugin 的
+    // paramSpecs() 里声明的默认本就是 1/1，按键名去找，别抄行号）。
     params["sobel_dx"] = 1;
     params["sobel_dy"] = 1;
 
@@ -1472,7 +1473,8 @@ static std::string specDefaultAsMetadataString(const gis::framework::ParamSpec& 
 }
 
 // gabor：不传 kernel_size/sigma ⇒ 兜底必须与 paramSpecs() 声明的默认值同值。
-// 改前实现兜底是 9/2.0（提交 54df42c:1159-1160），spec 是 5/1.5（:35-:36）⇒ 本用例红。
+// 改前实现兜底是 9/2.0（提交 54df42c:1159-1160），spec 是 5/1.5（同一 paramSpecs() 里
+// kernel_size / sigma 那两条，按键名找，别抄行号）⇒ 本用例红。
 TEST_F(PluginTest, ProcessingGaborFallbackDefaultsMatchParamSpecs) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -3795,7 +3797,7 @@ TEST_F(PluginTest, ProcessingKMeansExecution) {
 
 // kmeans：不传 kmeans_k ⇒ 兜底必须与 paramSpecs() 的 kmeans_k 默认值同值。
 // 改前实现是 getParam("kmeans_k", getParam("k", 5))（提交 54df42c:1400-1401）：
-// 既回退到已废弃的键 "k"，又把 5 当默认，而 spec（:68）声明的是 4 ⇒ 本用例红。
+// 既回退到已废弃的键 "k"，又把 5 当默认，而 paramSpecs() 里 kmeans_k 那一条声明的是 4 ⇒ 本用例红。
 TEST_F(PluginTest, ProcessingKMeansFallbackKMatchesParamSpec) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -6826,7 +6828,8 @@ TEST_F(PluginTest, VectorDuplicatePointCheckExecution) {
 //      *  wkbFlatten(getGeometryType()) == wkbPoint. */
 //     inline OGRPoint *toPoint() { return cpl::down_cast<OGRPoint *>(this); }
 // ⇒ 它既不校验类型、也**永不返回 nullptr**，:50 的 if (point && ...) 因此挡不住任何东西。
-// 图层类型闸（:25）对 wkbPoint 与 wkbMultiPoint 都放行，所以 MultiPoint 图层会一路走到这次降型。
+// 图层类型闸（同文件里 `if (geomType != wkbPoint && geomType != wkbMultiPoint)` 那道放行判据）
+// 对 wkbPoint 与 wkbMultiPoint 都放行，所以 MultiPoint 图层会一路走到这次降型。
 // 下面三条用例把"按类型分派后必须得到什么"钉死；坐标断言用整行相等，
 // 以免修复前那种"把 OGRMultiPoint 当 OGRPoint 读出来的垃圾坐标"被宽松断言放过。
 
@@ -9265,8 +9268,9 @@ TEST_F(PluginTest, TerrainReservoirVolumeExecution) {
 
 // ===================== Task 19：cut_fill / reservoir_volume 的 NoData 与地理参考 =====================
 //
-// 靶点（src/plugins/terrain/terrain_plugin.cpp 的改前形态，按 runXxxProcess 定位，
-// 不是 :1620/:1631 那两个五行转发包装）：
+// 靶点（src/plugins/terrain/terrain_plugin.cpp 的改前形态 = 提交 ad69780^ ⇒ 下面点名 terrain_plugin.cpp
+// 的裸行号一律按这一版读，函数本身按 runXxxProcess 定位，
+// 不是 ad69780^:1620/:1631 那两个五行转发包装）：
 //   :1180-1189  GetGeoTransform 只在**两边都成功**时才做一致性校验，任一边失败既不报错也不校验；
 //               :1199 的 pixelArea 于是取 GDAL 在失败时填进数组的默认单位变换（本仓测试在
 //               :1903-1911 已经确认过"失败也会填默认值"这一形态），库容侧 :1269 更是把返回值
@@ -9281,7 +9285,7 @@ TEST_F(PluginTest, TerrainReservoirVolumeExecution) {
 //
 // 期望值算式（夹具 pixelSize=1.0 ⇒ gt={116,1,0,40,0,-1} ⇒ pixelArea=|1×(-1)-0×0|=1.0，
 // 所以体积在数值上就等于"像元当量 × 深度"）：见各用例内的分区说明与括号里的未修值。
-// metadata 一律走 std::to_string(double)（:1232-1234 / :1302-1304），所以既做 stod 数值比对，
+// metadata 一律走 std::to_string(double)（ad69780^:1232-1234 / ad69780^:1302-1304），所以既做 stod 数值比对，
 // 也用**同一个 std::to_string** 生成期望串钉住格式通道（Task 15 立的口径，不手拼 "30.000000"）。
 
 // 把结果里的一个 metadata 值取出来打进断言消息：本任务的静默缺陷在**改前**是带着数值报成功的，
@@ -11906,9 +11910,9 @@ TEST_F(PluginTest, TileGuiPanelHidesParametersTheTileActionNeverReads) {
 // F1（Task 17 修复轮 1，审查发现 I-2）：tile_extent 前向投影路径 + 两道零面积守卫的判别用例。
 // 修复前的盘上事实（本代理现跑）：
 //   grep -rn "tile_extent" tests/ ⇒ exit=1（零命中）⇒ hasUserExtent 那条分支
-//   （cutting_plugin.cpp:896-901 读 extent、:945-947 走 lonLatToMercatorXY 前向投影）
+//   （cutting_plugin.cpp 改前形态 = 10829d9:897-901 读 extent、10829d9:945-947 走 lonLatToMercatorXY 前向投影）
 //   自 Task 17 写下后**没有任何用例执行过**；
-//   审查者实测把守卫①（:1061 `if (c1 <= c0 || r1 <= r0)`）或守卫②（:1078
+//   审查者实测把守卫①（236327d:1061 `if (c1 <= c0 || r1 <= r0)`）或守卫②（236327d:1078
 //   `if (dx1 <= dx0 || dy1 <= dy0)`）各自改成 `if (false)` ⇒ 14 条聚焦全绿（R7 零覆盖守卫、R8 亚像素守卫
 //   两轮各测一次，均 0 红）。
 // 本用例把"用户矩形"作为唯一的瓦片范围来源（不再由数据包络推导），钉三件事：
