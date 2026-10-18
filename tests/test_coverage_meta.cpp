@@ -9,6 +9,7 @@
 #include "test_support.h"
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -676,4 +677,91 @@ TEST(GuiContract, PanMethodLabelTableMatchesPluginEnumValues) {
     }
     EXPECT_TRUE(missing.empty())
         << "pan_method 的取值在 GUI 标签表里没有登记的中文文案:" << missing;
+}
+
+// ============================================================ Task 21-C 反向参数守卫的导出侧
+//
+// 命题（与 #334 方向相反）：某 action 的 visibleKeys 里**不得**出现该 action 根本不读的键。
+// 白名单在这里（GUI 侧，运行时真值），实读在 src/plugins/**/*.cpp（编译期文本），
+// 两侧不在同一可执行域里，所以本用例只负责把**运行时白名单全量导出成文本产物**，
+// 比对由 tests/check_action_visible_keys_read.cmake（ctest 用例）完成。
+//
+// WHY 枚举源用 Task 3 的动作登记册而不是 planAActions()：登记册由
+// CoverageMeta.EveryActionIsRegistered 双向钉住（漏登记红、陈旧行也红），所以它等于运行时 action 全集；
+// planAActions() 是手抄清单，会随任务漂移，拿它当枚举源 ⇒ 守卫的覆盖面跟着清单一起烂掉。
+//
+// WHY 只依赖 findActionUiConfig 而不加载插件 DLL：本用例要的是展示层的真值，
+// gui_data_support.cpp 与测试编在同一个可执行文件里（tests/CMakeLists.txt:15），
+// 不加载插件 ⇒ 产物不受 `--target` 不刷新插件 DLL 那条坑影响，也更快更确定。
+//
+// WHY 产物落在可执行文件同目录而不是 CMakeBinaryDir 根：gis_tests 的 TARGET_FILE_DIR 已经按
+// 配置（Debug/Release）分叉，两棵树各写各的，互不覆盖；cmake -P 用例用
+// $<TARGET_FILE_DIR:gis_tests> 拿到同一个目录，脚本里不出现任何机器绝对路径。
+TEST(GuiContract, ExportActionVisibleKeys) {
+    const auto registry = readRegistry();
+    ASSERT_FALSE(registry.rows.empty()) << "缺少 " << kRegistryPath;
+    EXPECT_TRUE(registry.malformed.empty())
+        << "登记表存在无法识别的行，导出集合因此不可信:" << describeMalformed(registry);
+
+    // 登记表按 (plugin,action) 去重后排序：产物必须逐字节确定，否则 diff 出来的变化分不清
+    // 是真改动还是遍历顺序改动。
+    std::set<std::string> pairs;
+    for (const auto& row : registry.rows) {
+        pairs.insert(row.key());
+    }
+    ASSERT_EQ(pairs.size(), registry.rows.size())
+        << "登记表里有重复的 plugin.action 行，导出会跟着重复计数";
+
+    std::vector<std::string> lines;
+    lines.push_back("# GIS_TOOL GUI action visibleKeys export");
+    lines.push_back("# 由 gis_tests 的 GuiContract.ExportActionVisibleKeys 生成，勿手改。");
+    lines.push_back("# 每行一条三元组，竖线分隔，按字典序：plugin|action|key");
+    lines.push_back("# 特殊行 plugin|action|@NO_ACTION_UI_CONFIG 表示该 action 在 GUI 侧没有条目，");
+    lines.push_back("# 此时 mainwindow.cpp 会传空集给 buildEffectiveGuiParamSpecs，面板不做过滤、");
+    lines.push_back("# 直接把插件级全部参数铺出来（键集合无法从 ActionUiConfig 导出），扫描器单独报。");
+    lines.push_back("plugin|action|key");
+
+    int configured = 0;
+    int unconfigured = 0;
+    std::size_t keyRows = 0;
+    for (const auto& pair : pairs) {
+        const std::size_t dot = pair.find('.');
+        const std::string plugin = pair.substr(0, dot);
+        const std::string action = pair.substr(dot + 1);
+        const auto* config = gis::gui::findActionUiConfig(plugin, action);
+        if (!config) {
+            ++unconfigured;
+            lines.push_back(plugin + "|" + action + "|@NO_ACTION_UI_CONFIG");
+            continue;
+        }
+        ++configured;
+        for (const auto& key : config->visibleKeys) {
+            lines.push_back(plugin + "|" + action + "|" + key);
+            ++keyRows;
+        }
+    }
+    ASSERT_GT(configured, 0) << "一条 ActionUiConfig 都没取到，导出的产物没有意义";
+
+    const auto outPath = gis::tests::testExecutableDir() / "gui_action_visible_keys.txt";
+    std::ofstream ofs(outPath, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(static_cast<bool>(ofs)) << "无法写入 " << outPath.string();
+    for (const auto& line : lines) {
+        ofs << line << "\n";
+    }
+    ofs.close();
+    ASSERT_TRUE(static_cast<bool>(ofs)) << "写入 " << outPath.string() << " 时出错";
+
+    // 断言的是"产物存在且形状对"，具体比对在 cmake -P 侧。
+    std::ifstream check(outPath, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(check)), std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("plugin|action|key"), std::string::npos);
+    // 产物里不许出现机器绝对路径（守卫用例的确定性要求）。
+    EXPECT_EQ(content.find("D:/"), std::string::npos);
+    EXPECT_EQ(content.find("C:\\\\"), std::string::npos);
+    // 汇总打到标准输出，故意违反注入与首轮真实运行都要靠这几行读数。
+    std::cout << "[21C-EXPORT] actions=" << pairs.size()
+              << " configured=" << configured
+              << " no_ui_config=" << unconfigured
+              << " visible_key_rows=" << keyRows
+              << " path=" << outPath.string() << std::endl;
 }
