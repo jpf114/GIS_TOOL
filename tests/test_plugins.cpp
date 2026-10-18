@@ -6970,6 +6970,104 @@ TEST_F(PluginTest, DuplicatePointCheckMultiPointKeepsZOutOfDedupKey) {
     EXPECT_EQ(result.metadata.at("scanned_count"), "1") << "scanned_count 是要素数：一个要素内的一对重复";
 }
 
+// 行为锁（修复前后都应为绿）：几何缺失（"geometry":null）必须安全跳过，既不能崩，
+// 也不进 skipped_geometry_count —— 该键的口径是"有类型但不是点类的几何"，NULL 几何不属于这一类，
+// 保持修复前 `normalized ? …` 的既有口径不变。这条同时让 if (normalized) 这道守卫可被变异杀掉。
+TEST_F(PluginTest, DuplicatePointCheckToleratesMissingGeometry) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "t20_missing_geom_input.geojson");
+    const std::string output = utf8PathString(getTestDir() / "t20_missing_geom_output.csv");
+    {
+        std::ofstream ofs(input);
+        ASSERT_TRUE(ofs.is_open());
+        ofs << R"({"type":"FeatureCollection","features":[)"
+            << R"({"type":"Feature","properties":{"id":1},"geometry":{"type":"Point","coordinates":[2,2]}},)"
+            << R"({"type":"Feature","properties":{"id":2},"geometry":null},)"
+            << R"({"type":"Feature","properties":{"id":3},"geometry":{"type":"Point","coordinates":[2,2]}})"
+            << "]}";
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("duplicate_point_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("issue_count"), "1");
+    EXPECT_EQ(result.metadata.at("scanned_count"), "3") << "缺几何的要素仍计入扫描数";
+    EXPECT_EQ(result.metadata.at("skipped_geometry_count"), "0")
+        << "NULL 几何不是\"有类型但非点\"，沿用修复前口径不计入";
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(ifs, line);) {
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 2u) << "缺几何要素不得被当成任何一侧";
+    EXPECT_EQ(lines[0], "source_fid,duplicate_fid,x,y");
+    EXPECT_EQ(lines[1], "1,3,2,2");
+}
+
+// 行为锁：EMPTY 点既不判重、也不计入 skipped_geometry_count（修复前 !point->IsEmpty() 的既有语义）。
+// 两个 EMPTY 点若去掉这层过滤就会因键同为 nan 而被互判重复，故这条能杀掉"删除 IsEmpty 过滤"的变异。
+TEST_F(PluginTest, DuplicatePointCheckIgnoresEmptyPoints) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "t20_empty_point_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "t20_empty_point_output.csv");
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("t20_empty", srs.get(), wkbPoint, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        auto addGeometry = [&](OGRGeometry* geom) {
+            auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            feat->SetGeometry(geom);
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        };
+        OGRPoint first(2.0, 2.0);
+        addGeometry(&first);
+        OGRPoint emptyPoint;   // 默认构造即 EMPTY（坐标 NaN），非 NULL 几何
+        ASSERT_TRUE(emptyPoint.IsEmpty());
+        addGeometry(&emptyPoint);
+        addGeometry(&emptyPoint);
+        OGRPoint last(2.0, 2.0);
+        addGeometry(&last);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("duplicate_point_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("issue_count"), "1") << "只有两个 (2,2) 构成重复，两个 EMPTY 点互不判重";
+    EXPECT_EQ(result.metadata.at("scanned_count"), "4");
+    EXPECT_EQ(result.metadata.at("skipped_geometry_count"), "0");
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(ifs, line);) {
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 2u) << "EMPTY 点若被当普通点判重会多出一行 nan 坐标";
+    EXPECT_EQ(lines[0], "source_fid,duplicate_fid,x,y");
+}
+
 TEST_F(PluginTest, VectorHoleCheckExecution) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
