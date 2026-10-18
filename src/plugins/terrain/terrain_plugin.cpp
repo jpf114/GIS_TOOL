@@ -655,7 +655,17 @@ gis::framework::Result runHydrologyTerrainProcess(
         }
 
         std::vector<cv::Point> topoOrder;
-        topoOrder.reserve((direction.rows - 2) * (direction.cols - 2));
+        // WHY 两边各自先夹到 >=0 再转 size_t 相乘（照抄本文件 :410 由 Task 11 修好的形态）：
+        // 原来的 `(direction.rows - 2) * (direction.cols - 2)` 是 **int** 乘积，
+        //   · rows<2 而 cols>2（或反之）时乘积为负 ⇒ 隐式转成巨大 size_t ⇒ reserve 抛
+        //     std::length_error（"vector too long"）。这条**已实测**：1×6 与 6×1 两种几何都在
+        //     用例 #265 里，且 runHydrologyTerrainProcess 到此处之前只有 input/output/band/z_factor
+        //     四项校验、没有任何尺寸闸门 ⇒ 异常直接穿出 execute。
+        //   · 另一边约 46341×46341 以上的超大栅格会先溢出 int 再变负，同一条修正一并挡住
+        //     （那条几何要 10GB 级内存，本仓测不了，只有算式：46341² = 2,147,488,281 > INT_MAX）。
+        // 注意 2×N / N×2 的乘积是 **0**，正负都对不上 ⇒ 它不是这条缺陷的用例，别拿它当判别器。
+        topoOrder.reserve(static_cast<size_t>(std::max(0, direction.rows - 2)) *
+                          static_cast<size_t>(std::max(0, direction.cols - 2)));
         std::queue<cv::Point> queue;
         for (int y = 1; y < direction.rows - 1; ++y) {
             for (int x = 1; x < direction.cols - 1; ++x) {
@@ -1179,12 +1189,21 @@ gis::framework::Result runCutFillProcess(
 
     double inputGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     double referenceGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    if (inputDs->GetGeoTransform(inputGt) == CE_None &&
-        referenceDs->GetGeoTransform(referenceGt) == CE_None) {
-        for (int i = 0; i < 6; ++i) {
-            if (std::abs(inputGt[i] - referenceGt[i]) > 1e-9) {
-                return gis::framework::Result::fail("input and reference geotransform must match");
-            }
+    // WHY 分开取、分开判，而不是原来的 `if (输入取成功 && 参考取成功) { 一致性校验 }`：
+    // 那个写法让"任一边取不到地理参考"整块短路跳过——既不报错也不校验，于是 :1199 的
+    // pixelArea 改用 GDAL 在失败时**同样会写进数组**的默认单位变换（实测 |1×(-1)|=1.0，
+    // 不是恒 0），体积按凭空单位出数还回 success（取证见 task-19-report.md 的 S2）。
+    // 像元面积在缺地理参考时无从得知，只能显式失败；两条守卫分别报输入侧/参考侧，
+    // 顺序固定为先输入后参考，用例 #263 的两种形状据此钉住归属。
+    if (inputDs->GetGeoTransform(inputGt) != CE_None) {
+        return gis::framework::Result::fail("input raster geotransform is missing");
+    }
+    if (referenceDs->GetGeoTransform(referenceGt) != CE_None) {
+        return gis::framework::Result::fail("reference raster geotransform is missing");
+    }
+    for (int i = 0; i < 6; ++i) {
+        if (std::abs(inputGt[i] - referenceGt[i]) > 1e-9) {
+            return gis::framework::Result::fail("input and reference geotransform must match");
         }
     }
 
@@ -1196,13 +1215,46 @@ gis::framework::Result runCutFillProcess(
 
     cv::Mat diff = inputMat - referenceMat;
 
+    // 双侧 NoData 掩膜：哨兵值（-9999 之类）不是高程，进 `inputMat - referenceMat` 会得到
+    // ±10000 量级的假高差直接进体积累加。两侧各是一条**独立**守卫：只查输入侧则参考侧哨兵漏进来，
+    // 只查参考侧则输入侧漏进来，用例 #261 把 NoData 分侧放（A 区仅参考侧、B 区仅输入侧）各杀一条。
+    // WHY 判据用 GetNoDataValue 的 found 出参而不是值本身：没声明 NoData 的栅格返回 0.0，
+    // 拿它当哨兵比较会把"真的等于 0 的高程"误判成无效。
+    // 比较对象先转 float：gdalBandToMat 恒为 CV_32F（src/core/src/opencv_wrapper.cpp:26-29），
+    // 声明值 double -9999.0 转 float 后与栅格里读回的位型一致，逐位比较可靠。
+    int inputHasNoData = 0;
+    const double inputNoData = inputDs->GetRasterBand(band)->GetNoDataValue(&inputHasNoData);
+    int referenceHasNoData = 0;
+    const double referenceNoData = referenceDs->GetRasterBand(band)->GetNoDataValue(&referenceHasNoData);
+
+    cv::Mat valid = cv::Mat::ones(diff.rows, diff.cols, CV_8U);
+    if (inputHasNoData) {
+        cv::compare(inputMat, static_cast<float>(inputNoData), valid, cv::CMP_NE);
+    }
+    if (referenceHasNoData) {
+        cv::Mat referenceValid;
+        cv::compare(referenceMat, static_cast<float>(referenceNoData), referenceValid, cv::CMP_NE);
+        cv::bitwise_and(valid, referenceValid, valid);
+    }
+    // 无效像元的输出值：输入侧声明了 NoData 就沿用它（matToGdalTiff 会把输入侧的声明抄到输出波段，
+    // src/core/src/opencv_wrapper.cpp:49-56，于是这一格在 GIS 软件里真的是"无数据"而不是一个数）；
+    // 输入侧没声明时退回 0 并靠 invalid_pixels 计数把损失显式化。
+    const float invalidOutputValue = inputHasNoData ? static_cast<float>(inputNoData) : 0.0f;
+
     const double pixelArea = std::abs(inputGt[1] * inputGt[5] - inputGt[2] * inputGt[4]);
     double fillVolume = 0.0;
     double cutVolume = 0.0;
+    int invalidPixels = 0;
     for (int y = 0; y < diff.rows; ++y) {
-        const float* row = diff.ptr<float>(y);
+        const uchar* validRow = valid.ptr<uchar>(y);
+        float* diffRow = diff.ptr<float>(y);
         for (int x = 0; x < diff.cols; ++x) {
-            const double value = row[x];
+            if (validRow[x] == 0) {
+                diffRow[x] = invalidOutputValue;
+                ++invalidPixels;
+                continue;
+            }
+            const double value = diffRow[x];
             if (value > 0.0) {
                 fillVolume += value * pixelArea;
             } else if (value < 0.0) {
@@ -1222,6 +1274,9 @@ gis::framework::Result runCutFillProcess(
     meta.algorithmParams["fill_volume"] = std::to_string(fillVolume);
     meta.algorithmParams["cut_volume"] = std::to_string(cutVolume);
     meta.algorithmParams["net_volume"] = std::to_string(fillVolume - cutVolume);
+    // invalid_pixels：被排除的像元数。没有这个计数，"30 像元有效 + 70 像元被排除"与
+    // "100 像元全都算过但恰好都是 0 差值"输出同一个体积，缺陷又会换个形态静默。
+    meta.algorithmParams["invalid_pixels"] = std::to_string(invalidPixels);
     gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
@@ -1232,6 +1287,7 @@ gis::framework::Result runCutFillProcess(
     result.metadata["fill_volume"] = std::to_string(fillVolume);
     result.metadata["cut_volume"] = std::to_string(cutVolume);
     result.metadata["net_volume"] = std::to_string(fillVolume - cutVolume);
+    result.metadata["invalid_pixels"] = std::to_string(invalidPixels);
     return result;
 }
 
@@ -1257,6 +1313,15 @@ gis::framework::Result runReservoirVolumeProcess(
         return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
     }
 
+    // WHY 地理参考在这里就判掉、放在读波段之前：改前这一行是 `srcDs->GetGeoTransform(gt);`，
+    // 返回值**整个丢弃**，缺参考的 DEM 于是按 GDAL 失败时填进数组的默认单位变换算出
+    // pixelArea=1.0 的面积/体积并报 success（实测静默值 300.000000，见 task-19-report.md S2）。
+    // 与 cut_fill 侧同口径：拿不到像元面积就显式失败，且失败路径不留产物。
+    double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    if (srcDs->GetGeoTransform(gt) != CE_None) {
+        return gis::framework::Result::fail("input raster geotransform is missing");
+    }
+
     progress.onMessage("Reading terrain raster band");
     cv::Mat elevation = gis::core::gdalBandToMat(srcDs.get(), band);
     progress.throwIfCancelled();
@@ -1265,15 +1330,32 @@ gis::framework::Result runReservoirVolumeProcess(
     cv::Mat depth = waterLevel - elevation;
     cv::max(depth, 0.0f, depth);
 
-    double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    srcDs->GetGeoTransform(gt);
+    // NoData 掩膜：哨兵高程会被 `waterLevel - elevation` 变成 ±10000 量级的"假水深"，
+    // 而且恒为正 ⇒ 同时污染面积（每个哨兵像元都算成水面）与体积（用例 #262 实测 500750）。
+    // 判据同样取 GetNoDataValue 的 found 出参而不是值本身：未声明 NoData 的栅格返回 0.0，
+    // 拿 0.0 当哨兵会把真实高程 0 的像元误删。
+    int hasNoData = 0;
+    const double noDataValue = srcDs->GetRasterBand(band)->GetNoDataValue(&hasNoData);
+    cv::Mat valid = cv::Mat::ones(depth.rows, depth.cols, CV_8U);
+    if (hasNoData) {
+        cv::compare(elevation, static_cast<float>(noDataValue), valid, cv::CMP_NE);
+    }
+    const float invalidOutputValue = hasNoData ? static_cast<float>(noDataValue) : 0.0f;
+
     const double pixelArea = std::abs(gt[1] * gt[5] - gt[2] * gt[4]);
     double reservoirArea = 0.0;
     double reservoirVolume = 0.0;
+    int invalidPixels = 0;
     for (int y = 0; y < depth.rows; ++y) {
-        const float* row = depth.ptr<float>(y);
+        const uchar* validRow = valid.ptr<uchar>(y);
+        float* depthRow = depth.ptr<float>(y);
         for (int x = 0; x < depth.cols; ++x) {
-            const double value = row[x];
+            if (validRow[x] == 0) {
+                depthRow[x] = invalidOutputValue;
+                ++invalidPixels;
+                continue;
+            }
+            const double value = depthRow[x];
             if (value > 0.0) {
                 reservoirArea += pixelArea;
                 reservoirVolume += value * pixelArea;
@@ -1292,6 +1374,7 @@ gis::framework::Result runReservoirVolumeProcess(
     meta.algorithmParams["water_level"] = std::to_string(waterLevel);
     meta.algorithmParams["reservoir_area"] = std::to_string(reservoirArea);
     meta.algorithmParams["reservoir_volume"] = std::to_string(reservoirVolume);
+    meta.algorithmParams["invalid_pixels"] = std::to_string(invalidPixels);
     gis::core::writeProcessingMetadata(output, meta);
     progress.throwIfCancelled();
     progress.onProgress(1.0);
@@ -1302,6 +1385,7 @@ gis::framework::Result runReservoirVolumeProcess(
     result.metadata["water_level"] = std::to_string(waterLevel);
     result.metadata["reservoir_area"] = std::to_string(reservoirArea);
     result.metadata["reservoir_volume"] = std::to_string(reservoirVolume);
+    result.metadata["invalid_pixels"] = std::to_string(invalidPixels);
     return result;
 }
 

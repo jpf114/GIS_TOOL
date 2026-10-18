@@ -9182,6 +9182,11 @@ TEST_F(PluginTest, CutFillFailsWhenGeoTransformMissing) {
     ASSERT_TRUE(rasterHasNoGeoTransform(noGeoRef));
 
     const std::string outputA = utf8PathString(getTestDir() / "t19_cf_nogt_output_a.tif");
+    // 先清掉同名产物：本用例断言的是"失败路径不得留产物"，而上一轮（改前的静默成功臂）
+    // 或上一次运行留下的同名文件会让这条断言假红——产物存在性只对**本次运行**有意义。
+    // 用 error_code 重载而不是抛异常版本：文件本来就不存在是正常路径，不该为此炸掉用例。
+    std::error_code removeEc;
+    fs::remove(outputA, removeEc);
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("cut_fill");
     params["input"] = noGeoInput;
@@ -9196,6 +9201,7 @@ TEST_F(PluginTest, CutFillFailsWhenGeoTransformMissing) {
     EXPECT_FALSE(fs::exists(outputA)) << "失败路径不得留下产物";
 
     const std::string outputB = utf8PathString(getTestDir() / "t19_cf_nogt_output_b.tif");
+    fs::remove(outputB, removeEc);   // 同上：产物存在性只对本次运行负责
     params["input"] = withGeoInput;
     params["output"] = outputB;
     const auto referenceMissing = p->execute(params, progress_);
@@ -9218,6 +9224,9 @@ TEST_F(PluginTest, ReservoirVolumeFailsWhenGeoTransformMissing) {
     ASSERT_FALSE(input.empty());
     ASSERT_TRUE(rasterHasNoGeoTransform(input));
     const std::string output = utf8PathString(getTestDir() / "t19_rv_nogt_output.tif");
+    // 同上：清掉上一轮（或改前静默成功那一次）留下的同名产物，否则"不得留产物"这条会假红。
+    std::error_code removeEc;
+    fs::remove(output, removeEc);
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("reservoir_volume");
