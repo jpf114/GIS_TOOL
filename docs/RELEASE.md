@@ -227,6 +227,11 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 - **现行基线**：`ctest -N` 注册数 **Debug 634 / Release 632**；`comm -23` 差集恰为
   `gui_matching_ecc_register_debug_failure_offscreen`、`gui_matching_stitch_debug_failure_offscreen`（Release 侧无独有项）。
   ⇒ Release **恒少 2** 是注册数口径，不是"少通过 2 条"；两侧各自 100% 通过。
+- **批次 A 最终基线认证（21-D 收尾现跑，两棵树重编后各跑一次 `-j1` 全量）**：
+  Debug `100% tests passed, 0 tests failed out of 634`（370.40 s）、
+  Release `100% tests passed, 0 tests failed out of 632`（176.74 s）；
+  两棵树的构建日志均 **0 warning / 0 error**；日志 `build/t21D_build_debug.log`、`build/t21D_build_release.log`、
+  `build/t21D_ctest_debug_full.log`、`build/t21D_ctest_release_full.log`。
 - **凡引用 `GOLD` 覆盖数，必须带 N90 限定。** 登记表的判据 `blockHasNumericAssertion`
   （`tests/test_coverage_meta.cpp:284-291`）是**子串匹配**，块体**注释里**出现 `EXPECT_NEAR` 字样也会被算作"有数值断言"
   ⇒ 在判据修好之前，"GOLD 覆盖 N 个 action"这类句子**不代表 N 个 action 真被数值钉住**。
@@ -251,11 +256,15 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 | 配置 | 注册数 | 本地全量墙钟（`-j1`、无并发构建） | 步骤超时 | 余量 |
 |---|---|---|---|---|
-| Debug | 634 | 367.37 s | 1200 s | **1200 ÷ 367.37 = 3.27×** |
-| Release | 632 | 182.94 s | 1200 s | **1200 ÷ 182.94 = 6.56×** |
+| Debug | 634 | **370.40 s**（21-D 收尾现跑，`build/t21D_ctest_debug_full.log`） | 1200 s | **1200 ÷ 370.40 = 3.24×** |
+| Release | 632 | **176.74 s**（同上，`build/t21D_ctest_release_full.log`） | 1200 s | **1200 ÷ 176.74 = 6.79×** |
 
-  最贵的非 GUI 用例：`param_guard_visible_keys_all_read` 单条 **3.79 s**（距 300 s 的 `TIMEOUT` 有 79× 余量）。
+  交叉核对（控制器同基线上一轮现跑）：Debug 367.37 s → 3.27×、Release 182.94 s → 6.56×；两轮相差 <3.5%，
+  ⇒ **取更慢的那一轮算余量也不改变结论**：`timeout-minutes: 20` 对 Debug 仍有 3 倍以上余量。
+  最贵的非 GUI 用例：`param_guard_visible_keys_all_read` 现跑 **3.95 s**（Debug）/ 3.84 s（Release），
+  距 300 s 的 `TIMEOUT` 线有 **300 ÷ 3.95 = 75×** 余量。
   ⚠ 早先流传的 197.96 s / 385.53 s 属 632/630 基线时期，**不要再引用**。
+  ⚠ 余量的真实风险不在均值墙钟，而在**并发构建叠加**：本批实测 `ctest -j 8` 与另一棵树构建同时跑会造出 3 条假 `Timeout`（见下一节）。
 
 ### `ctest -j` 并行：现在开会得到假失败
 
