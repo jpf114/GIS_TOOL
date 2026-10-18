@@ -1344,6 +1344,24 @@ if(TARGET gis-gui)
     )
 endif()
 
+# ---------------------------------------------------------------- Task 21-C 反向参数守卫
+# 命题与 #334 相反：某 action 的 visibleKeys 里不得出现该 action 根本不读的键，
+# 判据是"白名单 − 闭包内实读 非空即红"，不设阈值（阈值＝自我缴械，Task 10 的教训）。
+# 白名单侧由 gis_tests 的 GuiContract.ExportActionVisibleKeys 导出、实读侧由脚本静态扫
+# src/plugins 得出；脚本自己跑一次 gis_tests 生成产物，所以本用例不依赖 ctest 的执行顺序。
+# WHY 放在 if(TARGET gis-gui) 之外：守卫读的是 gis_tests 里编进来的 gui_data_support.cpp
+#   与插件**源码文本**，不需要 gis-gui 可执行文件；放进去会让不带 GUI 的构型静默失去守卫。
+add_test(
+    NAME param_guard_visible_keys_all_read
+    COMMAND ${CMAKE_COMMAND}
+        -DGIS_TESTS_PATH=$<TARGET_FILE:gis_tests>
+        -DWHITELIST_FILE=$<TARGET_FILE_DIR:gis_tests>/gui_action_visible_keys.txt
+        -DPLUGIN_DIR=${CMAKE_SOURCE_DIR}/src/plugins
+        -DREGISTRY_FILE=${CMAKE_CURRENT_SOURCE_DIR}/action_gold_cases.txt
+        -DREPORT_FILE=${CMAKE_CURRENT_BINARY_DIR}/artifacts_21C/action_visible_keys_report.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_action_visible_keys_read.cmake
+)
+
 find_program(GIS_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
 if(GIS_POWERSHELL_EXECUTABLE)
     add_custom_target(real_raster_regression
