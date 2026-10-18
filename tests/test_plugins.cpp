@@ -9014,6 +9014,276 @@ TEST_F(PluginTest, TerrainReservoirVolumeExecution) {
     EXPECT_NEAR(std::stod(result.metadata.at("reservoir_volume")), 300.0, 1e-6);
 }
 
+// ===================== Task 19：cut_fill / reservoir_volume 的 NoData 与地理参考 =====================
+//
+// 靶点（src/plugins/terrain/terrain_plugin.cpp 的改前形态，按 runXxxProcess 定位，
+// 不是 :1620/:1631 那两个五行转发包装）：
+//   :1180-1189  GetGeoTransform 只在**两边都成功**时才做一致性校验，任一边失败既不报错也不校验；
+//               :1199 的 pixelArea 于是取 GDAL 在失败时填进数组的默认单位变换（本仓测试在
+//               :1903-1911 已经确认过"失败也会填默认值"这一形态），库容侧 :1269 更是把返回值
+//               整个丢弃 ⇒ 面积/体积按凭空单位出数，仍然报 success。
+//   :1202-1212 / :1273-1282 体积累加**完全不看 NoData**：GetNoDataValue 全文件只出现在
+//               :287（runLocalTerrainProcess）与 :355（runHydrologyTerrainProcess），这两个函数
+//               一次都没读 ⇒ -9999 哨兵被当成真实高程参与 inputMat-referenceMat 与
+//               waterLevel-elevation 的差值与累加。
+//   :658        topoOrder.reserve((rows-2)*(cols-2)) 是 int 乘积：rows<2 而 cols>2（或反之）
+//               时乘积为负 ⇒ 隐式转成巨大 size_t ⇒ std::vector::reserve 抛 length_error，
+//               异常一路穿出 execute（runHydrologyTerrainProcess 到 :658 之前没有任何尺寸闸门）。
+//
+// 期望值算式（夹具 pixelSize=1.0 ⇒ gt={116,1,0,40,0,-1} ⇒ pixelArea=|1×(-1)-0×0|=1.0，
+// 所以体积在数值上就等于"像元当量 × 深度"）：见各用例内的分区说明与括号里的未修值。
+// metadata 一律走 std::to_string(double)（:1232-1234 / :1302-1304），所以既做 stod 数值比对，
+// 也用**同一个 std::to_string** 生成期望串钉住格式通道（Task 15 立的口径，不手拼 "30.000000"）。
+
+// 把结果里的一个 metadata 值取出来打进断言消息：本任务的静默缺陷在**改前**是带着数值报成功的，
+// 取证时必须能看到那个数才知道静默的具体形态（恒 0？GDAL 默认单位变换？还是别的）。
+// WHY 用 find 而不是 metadata[key]：结果在本类用例里是 const（operator[] 编不过），
+// 而且缺键时不该凭空造出一个空串，把"键不存在"与"键存在但为空"混成同一种红。
+static std::string t19MetadataValue(const gis::framework::Result& result, const char* key) {
+    const auto it = result.metadata.find(key);
+    return it == result.metadata.end() ? std::string("<absent>") : it->second;
+}
+
+TEST_F(PluginTest, CutFillExcludesNoDataOnBothSides) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    options.pixelSize = 1.0;
+    const int w = 10, h = 10;
+    const float kSentinel = -9999.0f;
+
+    // 四个分区（x 为列、y 为行，各区的像元数与差值都写在后面）：
+    //   A 区 x<5            （5×10=50 像元）：只有**参考侧**是 NoData，design=10 / existing=NoData
+    //   B 区 5<=x<7         （2×10=20 像元）：只有**输入侧**是 NoData，design=NoData / existing=8
+    //   C 区 x>=7 且 y<5    （3×5=15 像元）：两侧有效，diff=+2 ⇒ 填方 15×2×1=30
+    //   D 区 x>=7 且 y>=5   （3×5=15 像元）：两侧有效，diff=-2 ⇒ 挖方 15×2×1=30
+    // A、B 分侧是**必需的**：双侧掩膜是两条独立守卫，只把 NoData 放一侧的用例杀不掉另一侧的变异。
+    // 未修时：A 区 diff=10-(-9999)=+10009 ⇒ fill=30+50×10009=500480；
+    //         B 区 diff=-9999-8=-10007 ⇒ cut=30+20×10007=200170。
+    std::vector<float> design(static_cast<size_t>(w) * static_cast<size_t>(h), 10.0f);
+    std::vector<float> existing(static_cast<size_t>(w) * static_cast<size_t>(h), 8.0f);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const size_t i = static_cast<size_t>(y * w + x);
+            if (x < 5) {
+                existing[i] = kSentinel;
+            } else if (x < 7) {
+                design[i] = kSentinel;
+            } else if (y >= 5) {
+                design[i] = 8.0f;
+                existing[i] = 10.0f;
+            }
+        }
+    }
+
+    const std::string designPath =
+        gis::tests::writeFloatRaster(getTestDir(), "t19_cf_design.tif", w, h, design, options);
+    const std::string existingPath =
+        gis::tests::writeFloatRaster(getTestDir(), "t19_cf_existing.tif", w, h, existing, options);
+    ASSERT_FALSE(designPath.empty());
+    ASSERT_FALSE(existingPath.empty());
+    const std::string output = utf8PathString(getTestDir() / "t19_cf_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("cut_fill");
+    params["input"] = designPath;
+    params["reference"] = existingPath;
+    params["output"] = output;
+    params["band"] = 1;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    EXPECT_NEAR(std::stod(result.metadata.at("fill_volume")), 30.0, 1e-6)
+        << "NoData 像元不得计入体积；A 区（参考侧哨兵）漏进来会让 fill 变成 500480";
+    EXPECT_NEAR(std::stod(result.metadata.at("cut_volume")), 30.0, 1e-6)
+        << "NoData 像元不得计入体积；B 区（输入侧哨兵）漏进来会让 cut 变成 200170";
+    EXPECT_NEAR(std::stod(result.metadata.at("net_volume")), 0.0, 1e-6);
+    EXPECT_EQ(result.metadata.at("fill_volume"), std::to_string(30.0))
+        << "metadata 走 std::to_string(double)，期望串必须用同一个调用生成";
+    EXPECT_NEAR(std::stod(result.metadata.at("invalid_pixels")), 70.0, 1e-6)
+        << "无效像元计数 = A 区 50 + B 区 20";
+
+    // 差值栅格：无效像元写 NoData（输入侧有定义时），有效像元保留真实差值。
+    EXPECT_NEAR(readRasterPixel(output, 0, 2), -9999.0f, 1e-4f) << "A 区应写哨兵而不是 10009";
+    EXPECT_NEAR(readRasterPixel(output, 5, 5), -9999.0f, 1e-4f) << "B 区应写哨兵而不是 -10007";
+    EXPECT_NEAR(readRasterPixel(output, 8, 2), 2.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 8, 7), -2.0f, 1e-4f);
+    double outNoData = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, outNoData))
+        << "输出栅格必须声明 NoData，否则上面那格 -9999 只是普通像元值";
+    EXPECT_DOUBLE_EQ(outNoData, -9999.0);
+}
+
+TEST_F(PluginTest, ReservoirVolumeSkipsNoDataCells) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+    options.pixelSize = 1.0;
+    const int w = 10, h = 10;
+
+    // 左半（x<5，5×10=50 像元）NoData，右半高程 10.0、water_level=13 ⇒ depth=3：
+    //   area = 50×1 = 50，volume = 50×3×1 = 150，invalid_pixels = 50。
+    // 未修时左半 depth=13-(-9999)=10012 ⇒ area=100、volume=150+50×10012=500750。
+    std::vector<float> dem(static_cast<size_t>(w) * static_cast<size_t>(h), 10.0f);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < 5; ++x) {
+            dem[static_cast<size_t>(y * w + x)] = -9999.0f;
+        }
+    }
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "t19_rv_input.tif", w, h, dem, options);
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(getTestDir() / "t19_rv_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("reservoir_volume");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["water_level"] = 13.0;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_NEAR(std::stod(result.metadata.at("reservoir_area")), 50.0, 1e-6);
+    EXPECT_NEAR(std::stod(result.metadata.at("reservoir_volume")), 150.0, 1e-6)
+        << "NoData 像元的假水深 10012 漏进来会变成 500750";
+    EXPECT_EQ(result.metadata.at("reservoir_volume"), std::to_string(150.0));
+    EXPECT_NEAR(std::stod(result.metadata.at("invalid_pixels")), 50.0, 1e-6);
+
+    EXPECT_NEAR(readRasterPixel(output, 0, 5), -9999.0f, 1e-4f) << "NoData 区应写哨兵而不是 10012";
+    EXPECT_NEAR(readRasterPixel(output, 5, 5), 3.0f, 1e-4f);
+    double outNoData = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, outNoData));
+    EXPECT_DOUBLE_EQ(outNoData, -9999.0);
+}
+
+TEST_F(PluginTest, CutFillFailsWhenGeoTransformMissing) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    // 形状 (a)：两侧都缺地理参考。改前 GetGeoTransform 的双成功条件整块跳过 ⇒ 一致性校验没做、
+    // pixelArea 取 GDAL 失败时填入的默认单位变换 ⇒ 体积按凭空单位出数还报 success。
+    // 形状 (b)：输入侧有、参考侧缺。改前的 `&&` 短路与 (a) 走的是同一条静默臂，
+    //           但 pixelArea 来自输入的**有效**变换 ⇒ 数值看着"很合理"，更该显式失败。
+    // 两种形状分别钉住两条守卫的**顺序与归属**：先输入后参考，消息各说各的。
+    const std::string noGeoInput = createRasterWithoutGeoTransform("t19_cf_nogt_input.tif", 10, 10, 1, 12.0f);
+    const std::string noGeoRef = createRasterWithoutGeoTransform("t19_cf_nogt_reference.tif", 10, 10, 1, 10.0f);
+    const std::string withGeoInput = createConstantRaster("t19_cf_withgt_input.tif", 10, 10, 12.0f, 116.0, 40.0, 1.0);
+    ASSERT_FALSE(noGeoInput.empty());
+    ASSERT_FALSE(noGeoRef.empty());
+    ASSERT_TRUE(rasterHasNoGeoTransform(noGeoInput));   // 前置条件：夹具造出的确实是"取不到变换"
+    ASSERT_TRUE(rasterHasNoGeoTransform(noGeoRef));
+
+    const std::string outputA = utf8PathString(getTestDir() / "t19_cf_nogt_output_a.tif");
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("cut_fill");
+    params["input"] = noGeoInput;
+    params["reference"] = noGeoRef;
+    params["output"] = outputA;
+    params["band"] = 1;
+    const auto bothMissing = p->execute(params, progress_);
+    EXPECT_FALSE(bothMissing.success)
+        << "缺地理参考必须显式失败（改前会静默成功，fill_volume=" << t19MetadataValue(bothMissing, "fill_volume") << "）";
+    EXPECT_NE(bothMissing.message.find("input raster geotransform is missing"), std::string::npos)
+        << bothMissing.message;
+    EXPECT_FALSE(fs::exists(outputA)) << "失败路径不得留下产物";
+
+    const std::string outputB = utf8PathString(getTestDir() / "t19_cf_nogt_output_b.tif");
+    params["input"] = withGeoInput;
+    params["output"] = outputB;
+    const auto referenceMissing = p->execute(params, progress_);
+    EXPECT_FALSE(referenceMissing.success)
+        << "参考侧缺地理参考同样不得静默（改前 pixelArea 来自输入的有效变换，看着完全正常）";
+    EXPECT_NE(referenceMissing.message.find("reference raster geotransform is missing"), std::string::npos)
+        << referenceMissing.message;
+    EXPECT_EQ(referenceMissing.message.find("input raster geotransform"), std::string::npos)
+        << "守卫归属不能搞反：" << referenceMissing.message;
+    EXPECT_FALSE(fs::exists(outputB));
+}
+
+TEST_F(PluginTest, ReservoirVolumeFailsWhenGeoTransformMissing) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    // 改前 :1269 写成 `srcDs->GetGeoTransform(gt);`——返回值整个丢弃，
+    // 于是缺参考的 DEM 也照样按 GDAL 默认单位变换出一个面积/体积并报 success。
+    const std::string input = createRasterWithoutGeoTransform("t19_rv_nogt_input.tif", 10, 10, 1, 10.0f);
+    ASSERT_FALSE(input.empty());
+    ASSERT_TRUE(rasterHasNoGeoTransform(input));
+    const std::string output = utf8PathString(getTestDir() / "t19_rv_nogt_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("reservoir_volume");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["water_level"] = 13.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success)
+        << "缺地理参考必须显式失败（改前会静默成功，reservoir_volume=" << t19MetadataValue(result, "reservoir_volume") << "）";
+    EXPECT_NE(result.message.find("input raster geotransform is missing"), std::string::npos)
+        << result.message;
+    EXPECT_FALSE(fs::exists(output)) << "失败路径不得留下产物";
+}
+
+TEST_F(PluginTest, WatershedOnSingleRowOrColumnRasterDoesNotThrow) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.pixelSize = 1.0;
+
+    // :658 的 (rows-2)*(cols-2) 只在**一边小于 2 而另一边大于 2**时为负：
+    //   1 行 × 6 列 ⇒ (1-2)*(6-2) = -4；6 行 × 1 列 ⇒ (6-2)*(1-2) = -4。
+    // 2×N / N×2 的乘积是 **0**，挡不住任何东西 ⇒ 按工单口径**不拿它当用例**。
+    // 改前这里负 int 隐式转成巨大 size_t，std::vector::reserve 抛 length_error，
+    // 而 runHydrologyTerrainProcess 到 :658 之前只有 input/output/band/z_factor 四项校验，
+    // 没有任何尺寸闸门 ⇒ 异常穿出 execute（用 ASSERT_NO_THROW 接住，不让它把整个 gis_tests 进程带走）。
+    std::vector<float> oneRow(6);
+    for (int x = 0; x < 6; ++x) oneRow[static_cast<size_t>(x)] = static_cast<float>(x);
+    const std::string oneRowInput =
+        gis::tests::writeFloatRaster(getTestDir(), "t19_ws_1x6.tif", 6, 1, oneRow, options);
+    ASSERT_FALSE(oneRowInput.empty());
+
+    const std::string oneRowOutput = utf8PathString(getTestDir() / "t19_ws_1x6_output.tif");
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("watershed");
+    params["input"] = oneRowInput;
+    params["output"] = oneRowOutput;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+
+    gis::framework::Result rowResult{};
+    ASSERT_NO_THROW(rowResult = p->execute(params, progress_))
+        << "1×N 几何让 topoOrder.reserve 收到负乘积 ⇒ reserve 抛 length_error";
+    EXPECT_TRUE(rowResult.success) << rowResult.message;
+    EXPECT_NEAR(readRasterPixel(oneRowOutput, 3, 0), 0.0f, 1e-4f)
+        << "单行栅格的内圈循环一次都不执行，流域网格只能是全 0";
+
+    std::vector<float> oneColumn(6);
+    for (int y = 0; y < 6; ++y) oneColumn[static_cast<size_t>(y)] = static_cast<float>(y);
+    const std::string oneColumnInput =
+        gis::tests::writeFloatRaster(getTestDir(), "t19_ws_6x1.tif", 1, 6, oneColumn, options);
+    ASSERT_FALSE(oneColumnInput.empty());
+    const std::string oneColumnOutput = utf8PathString(getTestDir() / "t19_ws_6x1_output.tif");
+    params["input"] = oneColumnInput;
+    params["output"] = oneColumnOutput;
+
+    gis::framework::Result columnResult{};
+    ASSERT_NO_THROW(columnResult = p->execute(params, progress_))
+        << "N×1 几何是同一个负乘积的另一半";
+    EXPECT_TRUE(columnResult.success) << columnResult.message;
+    EXPECT_NEAR(readRasterPixel(oneColumnOutput, 0, 3), 0.0f, 1e-4f);
+}
+
 TEST_F(PluginTest, MatchingDetectExecutionWritesJsonAndMetadata) {
     auto* p = mgr_.find("matching");
     ASSERT_NE(p, nullptr);
