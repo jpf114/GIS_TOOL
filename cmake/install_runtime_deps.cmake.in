@@ -35,22 +35,20 @@ set(_gis_runtime_libraries
 set(_gis_can_scan_runtime_deps TRUE)
 
 if(WIN32)
-    find_program(_gis_dumpbin_command dumpbin)
-    find_program(_gis_llvm_objdump_command llvm-objdump)
-    find_program(_gis_objdump_command objdump)
+    # 扫描器的**绝对路径**由根 CMakeLists.txt 在配置期解析后烘在这里（N84 的修法本体）。
+    # WHY 不在这里 find_program：本脚本是 `install(SCRIPT …)` 在 `cmake --install` 当时执行的，
+    #   在这里探测就等于把"包里装哪些 DLL"交给打包者那一刻的 PATH —— 同一份产物，
+    #   换个 shell 装出来的内容不一样，这是不可复现的打包，必须禁止。
+    # 找不到（或配置后 VS 被挪走/升级导致路径失效）⇒ 下面拒绝安装，绝不静默降级。
+    set(_gis_scanner_command "@GIS_RUNTIME_DEP_SCANNER@")
+    set(_gis_scanner_tool "@GIS_RUNTIME_DEP_SCANNER_TOOL@")
 
-    if(_gis_dumpbin_command)
-        set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL dumpbin)
-        set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${_gis_dumpbin_command}")
-    elseif(_gis_llvm_objdump_command)
-        set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL objdump)
-        set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${_gis_llvm_objdump_command}")
-    elseif(_gis_objdump_command)
-        set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL objdump)
-        set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${_gis_objdump_command}")
+    if(_gis_scanner_command AND EXISTS "${_gis_scanner_command}")
+        set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL "${_gis_scanner_tool}")
+        set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${_gis_scanner_command}")
+        message(STATUS "Runtime dep scanner in use: ${_gis_scanner_command} (tool=${_gis_scanner_tool})")
     else()
         set(_gis_can_scan_runtime_deps FALSE)
-        message(WARNING "No dumpbin/objdump tool found, fallback to copying minimal runtime DLLs directly.")
     endif()
 endif()
 
@@ -94,70 +92,45 @@ if(_gis_can_scan_runtime_deps)
     message(STATUS "Resolved runtime deps: ${_gis_filtered_resolved_deps}")
 
     if(NOT _gis_filtered_resolved_deps)
-        set(_gis_can_scan_runtime_deps FALSE)
-        message(WARNING "GET_RUNTIME_DEPENDENCIES found no dependencies, falling back to minimal DLL list.")
+        # 判据保留（原 :96-99），但降级为"回落 minimal 名单"这条路已经不存在 ⇒ 只能红。
+        message(FATAL_ERROR
+            "GET_RUNTIME_DEPENDENCIES 扫描到 0 个运行库依赖，安装中止。\n"
+            "扫描器: '${_gis_scanner_command}'（配置期解析的绝对路径）\n"
+            "被扫描的程序: ${_gis_runtime_executables}\n"
+            "零依赖不可能是正常的 —— 要么扫描器读不了 PE（换 dumpbin），"
+            "要么 DIRECTORIES 指向的 vcpkg 目录被挪走（@GIS_VCPKG_RELEASE_BIN_DIR@ / @GIS_VCPKG_DEBUG_BIN_DIR@）。")
     endif()
 endif()
 
-if(_gis_can_scan_runtime_deps)
-    foreach(_gis_dep IN LISTS _gis_filtered_resolved_deps)
-        file(INSTALL
-            DESTINATION "${_gis_install_bin_dir}"
-            TYPE SHARED_LIBRARY
-            FILES "${_gis_dep}"
-        )
-    endforeach()
-else()
-    set(_gis_minimal_dlls
-        double-conversion.dll
-        gdal.dll
-        geos.dll
-        geos_c.dll
-        geotiff.dll
-        jpeg62.dll
-        json-c.dll
-        libexpat.dll
-        liblzma.dll
-        libpng16.dll
-        md4c.dll
-        md4c-html.dll
-        opencv_calib3d4.dll
-        opencv_core4.dll
-        opencv_features2d4.dll
-        opencv_flann4.dll
-        opencv_imgcodecs4.dll
-        opencv_imgproc4.dll
-        opencv_ml4.dll
-        opencv_stitching4.dll
-        opencv_video4.dll
-        pcre2-16.dll
-        pcre2-32.dll
-        pcre2-8.dll
-        pcre2-posix.dll
-        proj_9.dll
-        Qt6Core.dll
-        Qt6Gui.dll
-        Qt6Sql.dll
-        Qt6Svg.dll
-        Qt6Widgets.dll
-        Qt6Xml.dll
-        sqlite3.dll
-        tiff.dll
-        turbojpeg.dll
-        z.dll
-    )
-
-    foreach(_gis_dll_name IN LISTS _gis_minimal_dlls)
-        set(_gis_dll_path "@GIS_VCPKG_RELEASE_BIN_DIR@/${_gis_dll_name}")
-        if(EXISTS "${_gis_dll_path}")
-            file(INSTALL
-                DESTINATION "${_gis_install_bin_dir}"
-                TYPE SHARED_LIBRARY
-                FILES "${_gis_dll_path}"
-            )
-        endif()
-    endforeach()
+if(NOT _gis_can_scan_runtime_deps)
+    # ── 这里原先是"没有扫描器就照 36 项写死清单拷 release DLL"的兜底，已整段废除（N84）─────
+    # WHY 必须废除，而不是"把名字改成带 d 的"或"按 CMAKE_INSTALL_CONFIG_NAME 选目录"：
+    #   那 36 项是**手抄的一份 release 目录名字**，而实测依赖闭包是 78 项 ⇒ 稳定缺 35 个真实导入依赖，
+    #   其中 Lerc / zstd / archive / libxml2 / libcurl 就在 gdal.dll 自己的导入表里，
+    #   于是 gdal.dll 根本加载不了：包内 bin/*.dll = 36，`gis-cli.exe --list` 实测
+    #   rc=-1073741515（0xC0000135 STATUS_DLL_NOT_FOUND），而 `cmake --install` 自己 rc=0 报成功。
+    #   ⇒ 这条分支在任何配置下都只能产出**起不来**的包：它不是"降级可用"，是"静默坏包"。
+    #   改名单救不了它 —— 换成 gdald.dll 之类的 debug 名仍然缺那 35 个，只是坏得换个姿势。
+    #   而且 installer.nsi 无脑打包 install/ 目录，坏包会一路绿着发到用户手里。
+    # 现在的口径：宁可装不出来（rc≠0，看得见），也不要装出一个"看起来装好了"的坏包。
+    message(FATAL_ERROR
+        "安装中止：本次配置没能确定运行库依赖扫描器，而没有扫描器就无法知道该装哪些 DLL。\n"
+        "（旧版本在这里会拷贝一份写死 36 项的清单，实测缺 35 个真实导入依赖，"
+        "装出来的包 `gis-cli.exe --list` 直接 STATUS_DLL_NOT_FOUND，见本文件上方注释。）\n"
+        "补救（之后重装即可；本脚本由 configure_file 生成，重新 configure 就换掉它，无需重新编译）：\n"
+        "  1) 在\"Developer Command Prompt for VS 2022\"（或任何已导出 VCToolsInstallDir 的 VS 开发者环境）里"
+        "重跑一次 configure，确认配置日志出现 `Runtime dep scanner: <绝对路径>`；或\n"
+        "  2) 确认本机装有 VS 2022 的 C++ 工具链 —— 根 CMakeLists.txt 会用 vswhere.exe 找到 dumpbin，"
+        "与当前 shell 的 PATH 无关。")
 endif()
+
+foreach(_gis_dep IN LISTS _gis_filtered_resolved_deps)
+    file(INSTALL
+        DESTINATION "${_gis_install_bin_dir}"
+        TYPE SHARED_LIBRARY
+        FILES "${_gis_dep}"
+    )
+endforeach()
 
 file(GLOB _gis_installed_plugin_dlls "${_gis_install_plugin_dir}/plugin_*.dll")
 if(_gis_installed_plugin_dlls)

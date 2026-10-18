@@ -89,6 +89,105 @@ file(TO_CMAKE_PATH "${GIS_VCPKG_DEBUG_QT_DIR}" GIS_VCPKG_DEBUG_QT_DIR)
 set(GIS_VCPKG_RUNTIME_BIN_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_BIN_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_BIN_DIR}>")
 set(GIS_VCPKG_QT_PLATFORMS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_PLATFORMS_DIR}>$<$<NOT:$<CONFIG:Debug>>:${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}>")
 
+# ── 运行库扫描器：配置期解析成绝对路径，再由 configure_file 烘进安装脚本 ──────────────
+# WHY（N84）：这段探测原先写在 install_runtime_deps.cmake.in 里，靠 `find_program(dumpbin)`
+#   在 `cmake --install` 当场找 ⇒ "包里装的是哪些 DLL"取决于**打包者那一刻的 PATH**，
+#   而不是取决于仓库配置。本机（Git Bash / 普通 pwsh）PATH 里没有 MSVC 工具链 ⇒ 找不到 ⇒
+#   旧脚本静默回落到写死 release 的 36 项清单 ⇒ 包内缺 35 个真实导入依赖
+#   （Lerc / zstd / archive / libxml2 / libcurl 都在 gdal.dll 自己的导入表里），
+#   `gis-cli.exe --list` 实测 rc=-1073741515（STATUS_DLL_NOT_FOUND），而 `cmake --install` 仍 rc=0。
+#   同一个包换个环境装出来就能跑，这种不可复现的打包必须消灭：解析挪到配置期，
+#   绝对路径烘进脚本，配置日志里一眼可见（红了能直接定位是"没找到扫描器"而不是"包坏了"）。
+set(GIS_RUNTIME_DEP_SCANNER "")
+set(GIS_RUNTIME_DEP_SCANNER_TOOL "")
+
+if(WIN32)
+    # 手段一：VS 开发者命令提示符 / VS 内构建会导出 VCToolsInstallDir，直接拼绝对路径。
+    #   注意它只在"开发者环境"里存在，普通 shell 与 CI 默认没有，所以不是唯一手段。
+    if(NOT "$ENV{VCToolsInstallDir}" STREQUAL "")
+        file(TO_CMAKE_PATH "$ENV{VCToolsInstallDir}" _gis_vc_tools_dir)
+        set(_gis_scanner_candidate "${_gis_vc_tools_dir}/bin/Hostx64/x64/dumpbin.exe")
+        if(EXISTS "${_gis_scanner_candidate}")
+            set(GIS_RUNTIME_DEP_SCANNER "${_gis_scanner_candidate}")
+            set(GIS_RUNTIME_DEP_SCANNER_TOOL "dumpbin")
+        endif()
+    endif()
+
+    # 手段二：vswhere.exe。它的安装路径是 VS Installer 的固定契约，不需要任何 VS 环境，
+    #   因此 Git Bash、普通 pwsh、GitHub windows runner 三种现场都能命中（本机已实测存在）。
+    if(GIS_RUNTIME_DEP_SCANNER STREQUAL "")
+        set(_gis_vswhere "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe")
+        if(EXISTS "${_gis_vswhere}")
+            execute_process(
+                COMMAND "${_gis_vswhere}" -latest -products *
+                        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+                        -property installationPath
+                OUTPUT_VARIABLE _gis_vs_install_path
+                ERROR_QUIET
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                RESULT_VARIABLE _gis_vswhere_rc
+            )
+            if(_gis_vswhere_rc EQUAL 0 AND NOT _gis_vs_install_path STREQUAL "")
+                file(TO_CMAKE_PATH "${_gis_vs_install_path}" _gis_vs_install_path)
+                # 一台机器可并存多个 MSVC 工具集版本，取版本号最大的那份 dumpbin。
+                file(GLOB _gis_dumpbin_found
+                    "${_gis_vs_install_path}/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe")
+                if(_gis_dumpbin_found)
+                    list(SORT _gis_dumpbin_found)
+                    list(GET _gis_dumpbin_found -1 _gis_dumpbin_latest)
+                    set(GIS_RUNTIME_DEP_SCANNER "${_gis_dumpbin_latest}")
+                    set(GIS_RUNTIME_DEP_SCANNER_TOOL "dumpbin")
+                endif()
+            endif()
+        endif()
+    endif()
+
+    # 手段三：vswhere 也不在的极端环境（裁剪过的 runner / 非默认安装），按常见根目录兜一次 glob。
+    #   仍然只写盘上绝对路径，绝不依赖 PATH。
+    if(GIS_RUNTIME_DEP_SCANNER STREQUAL "")
+        file(GLOB _gis_dumpbin_found
+            "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"
+            "C:/Program Files (x86)/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"
+            "D:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"
+            "D:/Program Files (x86)/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe")
+        if(_gis_dumpbin_found)
+            list(SORT _gis_dumpbin_found)
+            list(GET _gis_dumpbin_found -1 _gis_dumpbin_latest)
+            set(GIS_RUNTIME_DEP_SCANNER "${_gis_dumpbin_latest}")
+            set(GIS_RUNTIME_DEP_SCANNER_TOOL "dumpbin")
+        endif()
+    endif()
+
+    # 次选：objdump 一族（llvm-objdump 优先，它是 LLVM 官方构建、对 PE 的解析比 MSYS 版可靠）。
+    #   这里用 find_program 是**配置期**的，结果同样烘成绝对路径 ⇒ 安装期不再看 PATH。
+    if(GIS_RUNTIME_DEP_SCANNER STREQUAL "")
+        find_program(_gis_llvm_objdump_command llvm-objdump)
+        find_program(_gis_objdump_command objdump)
+        if(_gis_llvm_objdump_command)
+            file(TO_CMAKE_PATH "${_gis_llvm_objdump_command}" _gis_objdump_norm)
+            set(GIS_RUNTIME_DEP_SCANNER "${_gis_objdump_norm}")
+            set(GIS_RUNTIME_DEP_SCANNER_TOOL "objdump")
+        elseif(_gis_objdump_command)
+            file(TO_CMAKE_PATH "${_gis_objdump_command}" _gis_objdump_norm)
+            set(GIS_RUNTIME_DEP_SCANNER "${_gis_objdump_norm}")
+            set(GIS_RUNTIME_DEP_SCANNER_TOOL "objdump")
+        endif()
+    endif()
+
+    if(GIS_RUNTIME_DEP_SCANNER)
+        message(STATUS "Runtime dep scanner: ${GIS_RUNTIME_DEP_SCANNER}")
+    else()
+        # 找不到**不能**在配置期 FATAL：本机 Git Bash 这类"configure 得到、扫描器找不到"是常态，
+        #   配置期 FATAL 会让所有人连 configure 都做不了。拒绝发生在安装期
+        #   （install_runtime_deps.cmake 里 message(FATAL_ERROR)），见该文件的 N84 注释。
+        message(WARNING
+            "未能在配置期定位运行库依赖扫描器（dumpbin / llvm-objdump / objdump）。"
+            "配置照常继续，但 `cmake --install` 会拒绝安装而不是打包出一个缺 DLL 的坏包。"
+            "补救：在\"Developer Command Prompt for VS 2022\"（或 VS 开发者环境）里重新 configure 一次，"
+            "让上面的 `Runtime dep scanner:` 行出现绝对路径。")
+    endif()
+endif()
+
 configure_file(
     "${CMAKE_SOURCE_DIR}/cmake/install_runtime_deps.cmake.in"
     "${CMAKE_BINARY_DIR}/install_runtime_deps.cmake"
