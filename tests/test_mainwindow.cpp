@@ -8,6 +8,7 @@
 #include <QMetaObject>
 #include <QProgressBar>
 #include <QSettings>
+#include <QDir>
 #include <QStatusBar>
 #include <QTextEdit>
 #include <QTreeWidget>
@@ -45,20 +46,40 @@ QString uniqueMainWindowGroup(const char* suffix) {
     return QStringLiteral("mainwindow_%1_%2").arg(QString::fromUtf8(suffix)).arg(now);
 }
 
+// 21-FixA part2 I-6：这里**不再做重定向**，只做"重定向确实生效"的断言。
+// 真正的 QSettings 落点已经上移到 tests/test_main.cpp 的每进程单例（不可绕过）。
+// WHY 必须兜底而不是靠约定：旧写法把重定向交给这 13 处手写调用 + 一个 static bool，
+//   而 tests 里从不 setOrganizationName/setApplicationName ⇒ 没有重定向时
+//   src/gui/settings_manager.cpp:10 的 QSettings("GISTool","GISTool") 会直接落在
+//   用户真实 %APPDATA% 下的 GISTool/GISTool.ini；新用例忘记调用一样跑得绿，
+//   没有任何断言会发现"这条用例把配置写进了开发者机器"。现在机制在 main() 钉一次、
+//   结果在这里断言一次（落点算式两边共用 gis::tests::privateSettingsDir()），
+//   任何一侧退化都会被抓到：删掉 main() 那三行 ⇒ 断言 2 红；改落点算式 ⇒ 断言 2 红。
 void configureSettingsForTest() {
-    static bool configured = false;
-    if (configured) {
-        return;
+    static bool firstRunMarked = false;
+    const QString privateDir =
+        QString::fromStdString(gis::tests::privateSettingsDir().string());
+    // 断言 1：默认格式必须仍是 IniFormat —— NativeFormat 写的是注册表，同样是不该碰的用户状态。
+    EXPECT_EQ(QSettings::defaultFormat(), QSettings::IniFormat)
+        << "test_main.cpp 里的每进程重定向单例没跑起来（或被改成 NativeFormat）";
+    // 断言 2：落点必须就在本进程私有目录里 —— 测的是结果，不是"有没有调用过 setter"。
+    QSettings probe(QStringLiteral("GISTool"), QStringLiteral("GISTool"));
+    const QString landed = QDir::toNativeSeparators(probe.fileName());
+    const QString want = QDir::toNativeSeparators(
+        privateDir + QStringLiteral("/GISTool/GISTool.ini"));
+    EXPECT_EQ(landed, want)
+        << "GISTool.ini 的实际落点不是本进程的私有目录（并发共享定名 ini、或写进用户 profile）";
+    // 断言 3：方向盘——绝不允许落在用户真实 %APPDATA% 下的 GISTool 里。
+    const QString appData = qEnvironmentVariable("APPDATA");
+    if (!appData.isEmpty()) {
+        EXPECT_FALSE(landed.startsWith(
+            QDir::toNativeSeparators(appData + QStringLiteral("\\GISTool"))))
+            << "配置写进了用户真实 %APPDATA% 下的 GISTool：" << landed.toStdString();
     }
-    const fs::path settingsDir = mainWindowTestDir() / "settings";
-    gis::tests::ensureDirectory(settingsDir);
-    QSettings::setDefaultFormat(QSettings::IniFormat);
-    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
-                       QString::fromStdString(settingsDir.string()));
-    QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope,
-                       QString::fromStdString(settingsDir.string()));
-    gis::gui::markFirstRunComplete();
-    configured = true;
+    if (!firstRunMarked) {
+        gis::gui::markFirstRunComplete();
+        firstRunMarked = true;
+    }
 }
 
 QString createFinishedTask(const QString& displayGroup,
@@ -549,6 +570,7 @@ TEST(MainWindowTest, RerunTaskCreatesNewTaskRecordAndClearsEditingState) {
 }
 
 TEST(MainWindowTest, TaskRunnerRetryKeepsOriginalTaskId) {
+    configureSettingsForTest();
     const QString displayGroup = uniqueMainWindowGroup("retry_same_id");
     TaskManager::instance().initializeGroup(displayGroup);
     TaskManager::instance().clearHistory(displayGroup);

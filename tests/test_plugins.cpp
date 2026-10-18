@@ -1648,11 +1648,20 @@ TEST_F(PluginTest, ProcessingConnectedComponentsHonoursConnectivityParameter) {
         << "类型漂移成 Double/String 后 getParam<int> 会静默回落兜底值，上面的取值断言照样绿";
     const auto* declaredDefault = std::get_if<int>(&connSpec->defaultValue);
     ASSERT_NE(declaredDefault, nullptr) << "connectivity 的默认值必须是 int 变体";
-    const std::string expectedFromSpec = *declaredDefault == 4 ? "2" : "1";
-    EXPECT_EQ(run(*declaredDefault, "cc_diag_specdefault_explicit_output.tif"), expectedFromSpec)
-        << "显式传 spec 默认值必须与本 action 的 spec 语义一致";
-    EXPECT_EQ(run(std::nullopt, "cc_diag_specdefault_unset_output.tif"), expectedFromSpec)
-        << "不传该键时的兜底与 paramSpecs() 的默认值分叉了（兜底漂移）";
+    // 21-FixA part2 I-5：期望值不许从"被测的那个值"现推（反演自证）。
+    // 原来这两行是 expectedFromSpec = *declaredDefault == 4 ? "2" : "1"，即 期望 = f(被测值)：
+    //   谁把 spec 默认值从 8 改成 4（4-连通 ⇒ 对角不相连，正是上面 run(4,…)=="2" 在防的行为面），
+    //   三元式就自动跟着变成 "2"，下面两条 EXPECT_EQ 全绿 ⇒ 这条"兜底漂移锁"只锁住了
+    //   兜底 == spec 这一层关系，锁不住 spec 自己的取值漂移，而后者才是用户看得见的后果。
+    // 同口径的先例：R-T17-9(2) 与 tms 字面量纪律；同文件 :2830-2831 就是先把 spec 的
+    //   *declaredMin/*declaredMax 钉成字面 0.0/1.0 再谈关系。
+    ASSERT_EQ(*declaredDefault, 8)
+        << "connectivity 的 spec 默认值漂了：下面的期望是按 8 连通（对角相连 ⇒ 1 个组件）"
+           "字面写死的，默认值一改这两条期望必须一起改，不许改回\"从 declaredDefault 现推\"";
+    EXPECT_EQ(run(8, "cc_diag_specdefault_explicit_output.tif"), "1")
+        << "显式传 spec 声明的默认值 8 ⇒ 仅对角相接的两块必须并成一个组件";
+    EXPECT_EQ(run(std::nullopt, "cc_diag_specdefault_unset_output.tif"), "1")
+        << "不传该键时的代码兜底与 paramSpecs() 声明的默认值分叉了（兜底漂移）";
 }
 
 TEST_F(PluginTest, ProcessingContourExecution) {
@@ -1975,7 +1984,7 @@ TEST_F(PluginTest, PansharpenNoGeoTransformSkipsExtentCheck) {
     // 上面那一段只钉住了守卫 `!pansharpenEnvelope(msDs, ms) || !pansharpenEnvelope(panDs, pan)`
     // （processing_plugin.cpp 的 pansharpenExtentMismatchRatio 开头）的**一个操作数**：两侧都拿不到变换式。
     // "只有一侧拿得到"同样是这条 -1 分支的入口，round 1 之后仍然零 ctest 护栏 —— 实测把短路或写成 `&&`
-    // （= 只有两侧都缺才返回 -1）时，未补下面两段的全量 577 条零红（改前变异轮实测），
+    // （= 只有两侧都缺才返回 -1）时，未补下面两段的全量零红（改前变异轮实测；K-21：结论入库、当时的条数不入库，要复算就跑当前全量），
     // 而命令行混合探针会给每一次"PAN 没有地理参考"的正常使用刷一句假的
     // `pan_ms_extent_mismatch: 1 (relative difference 1 over tolerance 1e-06)`：失败方拿不到四角、
     // 结构体停在默认的 {0,0,0,0}，与另一幅 300 m 的包络一比 ⇒ 边差 300 / 较大边长 300 = 1。
@@ -2829,11 +2838,12 @@ TEST_F(PluginTest, SpindexEviLSpecDeclarationMatchesEviFallback) {
     ASSERT_NE(declaredMax, nullptr) << "evi_l 的上界必须是 double 变体";
     EXPECT_EQ(*declaredMin, 0.0);
     EXPECT_EQ(*declaredMax, 1.0)
-        << "上界被放宽（修前聚焦 33 条实测全绿，见 task9r1_mutMF_ctest.log；"
-           "round-1 复审在全量 544 条上复跑 MF，唯一红的是本用例）"
+        << "上界被放宽（修前只跑本用例的聚焦集是全绿；"
+           "round-1 复审在全量上复跑 MF，唯一红的是本用例。K-21：断言消息里不写日志文件名、"
+           "不写会被后续任务改动的全量条数，要复算就跑当前全量）"
            "等于把 EVI 的背景因子取值域开了口子";
 
-    // T15-B：required 漂移同样没人守（变异 false→true 时全量 544/544 仍绿），后果是可观察的：
+    // T15-B：required 漂移同样没人守（变异 false→true 时全量仍绿），后果是可观察的：
     // src/cli/main.cpp 会把它打成 [required]、并且不再打印 "Default: 1"，
     // param_card_widget.cpp 会加必填标记 ⇒ "标成必填、隐藏默认值、实际又不必填"。
     EXPECT_FALSE(eviLSpec->required)
@@ -2842,7 +2852,7 @@ TEST_F(PluginTest, SpindexEviLSpecDeclarationMatchesEviFallback) {
 }
 
 // T15-A：SAVI 侧的同一缺陷形状（Task 9 round-1 复审实测：把 spindex_plugin.cpp 里
-// l_value 的 spec 默认 double{0.5} 改成 double{0.3} ⇒ 全量 544/544 仍然全绿，
+// l_value 的 spec 默认 double{0.5} 改成 double{0.3} ⇒ 全量仍然全绿，
 // 而面板与库从此分叉：gui_regression/nested/spindex_savi/status.json 得到按 0.3 算的
 // SAVI computed range [0.518445, …]（= 40*1.3/100.3），库/CLI 不传参时按代码兜底 0.5 得 0.597015）。
 // 判据必须与 spindex_plugin.cpp SAVI 分支的代码兜底同值 —— 这条用例守的是"spec 不许自己漂移"，
@@ -4537,7 +4547,7 @@ TEST_F(PluginTest, VectorSpatialJoinRejectsMismatchedSrs) {
 
     std::string input = (getTestDir() / "e2e_spatial_join_input.shp").string();
     std::string join = (getTestDir() / "e2e_spatial_join_join.shp").string();
-    std::string output = (getTestDir() / "e2e_spatial_join_output.gpkg").string();
+    std::string output = (getTestDir() / "e2e_spatial_join_rejected_output.gpkg").string();
 
     {
         auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
@@ -4592,7 +4602,17 @@ TEST_F(PluginTest, VectorSpatialJoinRejectsMismatchedSrs) {
 
     const auto result = p->execute(params, progress_);
     EXPECT_FALSE(result.success);
-    EXPECT_NE(result.message.find("CRS"), std::string::npos);
+    // 21-FixA part2 I-3：同 tile 那两例的口径——光断子串 "CRS" 不够。
+    // 这句话由 vector_plugin_common.inc:87 的 failCrsMismatch(action) 生成，而 Clip / Nearest /
+    // Overlay 等动作共用同一个函数（实测 5 条用例都在断 message 含 "CRS"）⇒ 子串判据允许
+    // "别的动作形状的 CRS 报错"顶替本用例的判据。整句字面 + 反向钉住输出文件名把原因锁死：
+    // 若失败其实来自打不开/写不出这份 GPKG（原先它与 VectorSpatialJoinWritesJoinCountAndValue
+    // 共用同名输出，一个期望失败一个期望成功 ⇒ 已各自改名），消息里必然出现该文件名 ⇒ 红。
+    EXPECT_NE(result.message.find("Spatial join requires input layers to use the same CRS."), std::string::npos)
+        << result.message;
+    EXPECT_EQ(result.message.find("e2e_spatial_join_rejected_output.gpkg"), std::string::npos)
+        << "失败消息点名了本用例的输出文件 ⇒ 原因是这份 GPKG 打不开/写不出，不是 CRS 不匹配："
+        << result.message;
 }
 
 TEST_F(PluginTest, VectorSpatialJoinWritesJoinCountAndValue) {
@@ -4601,7 +4621,7 @@ TEST_F(PluginTest, VectorSpatialJoinWritesJoinCountAndValue) {
 
     const std::string input = utf8PathString(getTestDir() / "e2e_spatial_join_input.gpkg");
     const std::string join = utf8PathString(getTestDir() / "e2e_spatial_join_join.gpkg");
-    const std::string output = utf8PathString(getTestDir() / "e2e_spatial_join_output.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_spatial_join_written_output.gpkg");
 
     auto makeRect = [](double minX, double minY, double maxX, double maxY) {
         OGRPolygon poly;
@@ -8427,7 +8447,7 @@ TEST_F(PluginTest, FillSinksDrainsThroughDiagonalCornerWithEightNeighbours) {
 // 只在 z_factor≠1 时才第一次真的被考验到。
 // WHY 必须 z≠1：elevation 先乘 z_factor，NoData 掩膜是按 noDataValue * zFactor 比出来的，于是中间态
 // 是 -9999*z；那步 setTo 把它写回**声明的**哨兵。z_factor=1.0 时两者同值 ⇒ 既有三条 NoData 用例的
-// 哨兵断言恒真：把 setTo 整块删掉，上一轮的全量 559 条仍然全绿（审查者实测，本轮 §判别取证复现），
+// 哨兵断言恒真：把 setTo 整块删掉，上一轮的全量仍然全绿（审查者实测，本轮 §判别取证复现），
 // 这条守卫实际零覆盖。真实后果不是风格问题：z≠1 时哨兵像元会留在 -19998/-99990/-4999.5，
 // 而输出文件仍声明 NODATA=-9999 ⇒ 这些像元成了伪低地，反过来把下游 D8 全灌进这些假坑。
 TEST_F(PluginTest, FillSinksRestoresNoDataSentinelWhenZFactorIsNotOne) {
@@ -11662,15 +11682,27 @@ TEST_F(PluginTest, TileRejectsGeodeticProfileAndNamesIt) {
     options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
     std::vector<float> data(8 * 8, 1.0f);
     const std::string input =
-        gis::tests::writeFloatRaster(getTestDir(), "t17_profile_input.tif", 8, 8, data, options);
+        gis::tests::writeFloatRaster(getTestDir(), "t17_profile_geodetic_input.tif", 8, 8, data, options);
 
     auto params = t17BaseTileParams(input, utf8PathString(getTestDir() / "t17_profile_geodetic_output"));
     params["profile"] = std::string("geodetic");
     params["min_zoom"] = 8;
     params["max_zoom"] = 8;
+    // 21-FixA part2 I-3：判据由"含子串"升级为"含字面整句 + 不含本用例的字面输入文件名"。
+    // 子串 "geodetic" 自己不够：profile 的取值本身就叫 geodetic，任何把这个取值回显进 message 的
+    // 失败（打不开输入、层级非法…）都能让它绿 ⇒ 字面整句才钉住"就是这条 profile 拒绝"。
+    // 反向那条钉"不是打不开输入"：core 的打不开消息形如 Cannot open raster: <路径> (<CPLError>)
+    // （src/core/src/gdal_wrapper.cpp:50），必然带上本用例的输入文件名 ⇒ 原因一换立刻红。
+    // 本例与 TileRejectsRasterProfileAndNamesIt 原先共用同名夹具 t17_profile_input.tif（并发下
+    // 彼此 trunc 对方的夹具），现在各用各的字面文件名，两条用例的夹具互不为对方所动。
+    ASSERT_TRUE(fs::exists(fs::path(input)))
+        << "夹具没落盘：这条用例的失败原因就已经不可能是 profile 被拒";
     const auto result = p->execute(params, progress_);
     ASSERT_FALSE(result.success);
-    EXPECT_NE(result.message.find("geodetic"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("tile profile \"geodetic\" is not supported"), std::string::npos)
+        << result.message;
+    EXPECT_EQ(result.message.find("t17_profile_geodetic_input.tif"), std::string::npos)
+        << "失败消息点名了本用例的输入文件 ⇒ 原因是打不开输入而不是 profile 被拒：" << result.message;
 }
 
 TEST_F(PluginTest, TileRejectsRasterProfileAndNamesIt) {
@@ -11681,15 +11713,27 @@ TEST_F(PluginTest, TileRejectsRasterProfileAndNamesIt) {
     options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
     std::vector<float> data(8 * 8, 1.0f);
     const std::string input =
-        gis::tests::writeFloatRaster(getTestDir(), "t17_profile_input.tif", 8, 8, data, options);
+        gis::tests::writeFloatRaster(getTestDir(), "t17_profile_raster_input.tif", 8, 8, data, options);
 
     auto params = t17BaseTileParams(input, utf8PathString(getTestDir() / "t17_profile_raster_output"));
     params["profile"] = std::string("raster");
     params["min_zoom"] = 8;
     params["max_zoom"] = 8;
+    // 21-FixA part2 I-3：判据由"含子串"升级为"含字面整句 + 不含本用例的字面输入文件名"。
+    // 子串 "raster" 自己不够：profile 的取值本身就叫 raster，任何把这个取值回显进 message 的
+    // 失败（打不开输入、层级非法…）都能让它绿 ⇒ 字面整句才钉住"就是这条 profile 拒绝"。
+    // 反向那条钉"不是打不开输入"：core 的打不开消息形如 Cannot open raster: <路径> (<CPLError>)
+    // （src/core/src/gdal_wrapper.cpp:50），必然带上本用例的输入文件名 ⇒ 原因一换立刻红。
+    // 本例与 TileRejectsGeodeticProfileAndNamesIt 原先共用同名夹具 t17_profile_input.tif（并发下
+    // 彼此 trunc 对方的夹具），现在各用各的字面文件名，两条用例的夹具互不为对方所动。
+    ASSERT_TRUE(fs::exists(fs::path(input)))
+        << "夹具没落盘：这条用例的失败原因就已经不可能是 profile 被拒";
     const auto result = p->execute(params, progress_);
     ASSERT_FALSE(result.success);
-    EXPECT_NE(result.message.find("raster"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("tile profile \"raster\" is not supported"), std::string::npos)
+        << result.message;
+    EXPECT_EQ(result.message.find("t17_profile_raster_input.tif"), std::string::npos)
+        << "失败消息点名了本用例的输入文件 ⇒ 原因是打不开输入而不是 profile 被拒：" << result.message;
 }
 
 // R-T17-11 处置①：overview_resampling 必须真的驱动逐瓦片缩放插值。
