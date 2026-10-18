@@ -1,0 +1,38 @@
+// tests/reader_shape_probe_sample.txt —— 形状探针资产（21-FixA C-2）。
+// 本文件**不参与编译**：它不是 test_*.cpp，不进 gis_tests 目标，也没有任何 CMake 规则读它；
+// 唯一的消费者是 tests/check_action_visible_keys_read.cmake 第 3.5 节的 gis_21c_shape_probe()，
+// 由 param_guard_visible_keys_all_read 用 -DGIS_21C_SHAPE_PROBE 传进来。
+//
+// WHY 需要它：反向守卫的判据是"白名单 − 扫描器认定的实读"，而"扫描器认定"完全取决于两条正则。
+//   这两条正则今天没有任何用例能证明它们收得住/收不进哪些形状（终审第 1 席 C-2 的两面：
+//   点式分支零覆盖 ⇒ 过收未验；UNKNOWN_READER_HITS 的点式那一支永不触发 ⇒ 登记门未验）。
+//   探针就是那条判别用例：每种形状一行，扫出来的键集合/未知形态/块注释命中/实读次数
+//   必须逐字等于脚本里写死的四组期望。改匹配式就会把某一组期望打歪 ⇒ 守卫红。
+//
+// 期望集合是 {a,b,c}，与下面逐行的 SHAPE 标号一一对应：
+//   a = 函数式 getParam<…>(params, "a", …)        ⇒ 必须收（既有函数式分支）
+//   b = params.at("b")                             ⇒ 必须收（GIS_21C_DOT_READERS 的 at）
+//   c = params.find("c") != params.end()           ⇒ 必须收（GIS_21C_DOT_READERS 的 find）
+//   c = params.count("c")                          ⇒ 键集合里不新增，但必须进未知形态清单
+//   d = 真块注释里的 getParam(…, "d", …)           ⇒ 必须不收（块注释口径）
+//   f = params->at("f")（箭头接收者）              ⇒ 今天不收 ⇒ 不许被悄悄算成收（漏收面也要有账）
+//   w = where.find("--")（接收者是 std::string）   ⇒ 必须不收（过收面：非参数表不算读参）
+//   n = // 行注释里的 getParam(…, "n", …)          ⇒ 必须不收（剥 // 口径）
+// 动这个文件的任何一种形状或本文件的行内容，必须同步动脚本第 3.5 节的四组字面期望；
+// 只动样例不动期望 ⇒ 探针红（这正是它的作用：期望是断言，不是文档）。
+void gis21cShapeProbeSample(const std::map<std::string, int>& params, const std::string& where) {
+    // SHAPE n：行注释里的读参，剥 // 后不得算实读
+    // getParam<std::string>(params, "n", "")
+    const int shapeA = getParam<int>(params, "a", 1);
+    const int shapeB = params.at("b");
+    if (params.find("c") != params.end()) { consume(shapeB); }
+    if (params.count("c") > 0) { consume(shapeA); }
+    if (where.find("--") != std::string::npos) { return; }
+    // SHAPE w 的第二行：接收者是 std::string 而非参数表，且被读的字符串是一个**合法键形状**（"w"）。
+    // 只写 "--" 那一行挡不住过收：正则放宽成"任何接收者"时 "--" 也进不了键集（非 [A-Za-z_0-9]），
+    // 探针就会绿着放过那次放宽 ⇒ 这一行专门用来让"过收"在键集合上留下痕迹。
+    if (where.find("w") != std::string::npos) { return; }
+    const int shapeF = params->at("f");
+    /* getParam<std::string>(params, "d") 这一整条在真块注释里 不算实读 */
+    consume(shapeF);
+}

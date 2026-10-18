@@ -31,7 +31,42 @@ set(GIS_21C_READER_FUNCS "getParam;getBandIndex;resolveOptionalAliasBand")
 #   而红字给的解释是"这条白名单是冗余的"，方向完全相反（复审实测：
 #   violations=2 list=terrain.hillshade|altitude;terrain.hillshade|azimuth，rc=8）。
 # 出现这张表之外的第四种点式读法（如 params.count("k")）同样必须红，不许静默放过。
+# 证据指针更正（21-FixA C-2）：上面那句"violations=2 …rc=8"**不是盘上事实**，
+#   它来自复审的一次性注入实验，盘上任何提交态都不可再现
+#   （`git log -S'params.at(' -- src/plugins` 与 `-S'params.find('` 各 0 条命中；
+#   产物见 build/t21C_rev_readshape_paramsat.log）。
+#   ⇒ terrain.hillshade 的 altitude/azimuth 今天走的是**函数式** getParam<double>(params, "azimuth", 315.0)，
+#     不加这张表也不会红。这张表因此是**防御**（为将来有人把 getParam 重写成 params.at 而留），
+#     不是对现状的修补。它的收录能力不靠那句复审数字自证，而靠第 3.5 节的**形状探针自检**：
+#     tests/reader_shape_probe_sample.txt 里逐形状写死一份样例，本脚本每次运行都先扫它一遍，
+#     所得键集合必须逐字等于表面对应的期望集（过收、漏收两个方向都有牙）。
 set(GIS_21C_DOT_READERS "at;find")
+
+# 形状探针资产（不参与编译的 .txt，见 tests/reader_shape_probe_sample.txt 的文件头说明）。
+# 由 tests/CMakeLists.txt 的 param_guard_visible_keys_all_read 用 -DGIS_21C_SHAPE_PROBE 传入；
+# 传了但文件不存在 ⇒ 红（资产不许被删掉后探针静默空转）。
+# -D GIS_21C_PROBE_ONLY=TRUE 时只做探针就退出，便于手工复现探针的红。
+set(GIS_21C_SHAPE_PROBE_RE "/[*]")
+set(GIS_21C_SHAPE_PROBE_CLOSERE "[*]/")
+
+# ---------------------------------------------- 块注释豁免表（21-FixA C-1，见第 8 节三条断言）
+# 本扫描器的注释口径是"只剥 // 到行尾"，所以**剥完还含 /* 或 */ 的行**必须是已知形状。
+# 与 GIS_21C_EXEMPTIONS 同一套自守思路：命中集合与这张表**双向**比对（多一条红、少一条也红），
+# 且条数相等 ⇒ 同一条字面量在同一个文件里被复制第二遍同样会红（不 dedup 计数）。
+# 键 = "<相对插件目录的文件路径>|<剥 // 并折叠空白后的整行>"；不用行号（行号会随无关改动漂移成假账）。
+# 今天全树的**一处**合法命中：vector_plugin_info_filter.inc:41 的 where.find("/*") —— 它是
+#   **字符串字面量**（接收者是 std::string where），不是块注释起始符。另外两处候选都不命中：
+#   :40 的 where.find("--") 不含 /* 或 */；duplicate_point_check.inc:56-57 的 /** … */
+#   整行都在 // 注释里，剥 // 后只剩空白 ⇒ 被 if(NOT clean STREQUAL "") 挡在命中之外。
+#   实测取证：build/t21Fix_item12_green.log 的 block_comment_hits 与 build/t21Fix_blockscan.log。
+# ⚠ 这条表被 ③/② 抓过一次真红（本片的自查）：豁免表初版按"全树 2 处 /*"登记了 :40 与 :41 两条，
+#   而 :40 那行在盘上根本不命中 ⇒ ②（表里每条都必须有命中）当场 FATAL。
+#   在那之前它还躲在一层假相等后面：CMake 的引号参数**不保护** `;`（"a;b" 是两条元素），
+#   而命中行都以 `;` 收尾 ⇒ 1 处命中劈成 2 个元素、1 条豁免也劈成 2 个元素，①②③ 全部"因为两侧
+#   劈得一样"而成立，等于没有断言。修法：命中侧把 `;` 统一折成 <SEMI>，本表照 <SEMI> 写，
+#   两侧都是不含分号的单元素，比对才真的是比对内容。
+set(GIS_21C_BLOCK_COMMENT_ALLOWLIST
+    "vector/vector_plugin_info_filter.inc|if (where.find(\"/*\") != std::string::npos) return false<SEMI>")
 
 # 显式豁免表：形如 "<插件名>|<调用所在的函数名>|<说明>"。
 # WHY 按"插件+所属函数"而不是行号：行号会随无关改动漂移，漂移后的条目既命中不了任何真读点、
@@ -106,6 +141,125 @@ if(NOT EXISTS "${PLUGIN_DIR}")
 endif()
 if(NOT EXISTS "${REGISTRY_FILE}")
   message(FATAL_ERROR "动作登记册不存在：${REGISTRY_FILE}")
+endif()
+
+# 两条读参匹配式**只在这里出现一次**：主扫描（第 4 节）与形状探针（第 3.5 节）用的是同一对变量。
+# WHY 提出来：探针的意义是"证明主扫描的匹配面确实收/不收某些形状"。如果探针抄一份自己的正则，
+#   有人改了主扫描的正则而没改探针 ⇒ 探针继续绿着为一份已经不存在的匹配说话（新的自证）。
+#   共用变量 ⇒ 改主扫描 = 同时改探针的判据对象，探针必然当场把差异暴露成红。
+set(GIS_21C_FUNC_READ_RE "[A-Za-z_][A-Za-z0-9_]*(<[^()]*>)?[ \t]*[(][ \t]*[A-Za-z_]*[Pp]arams[ \t]*,[ \t]*\"[A-Za-z_0-9]+\"")
+set(GIS_21C_DOT_READ_RE "[A-Za-z_]*[Pp]arams[ \t]*[.][ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*[(][ \t]*\"[A-Za-z_0-9]+\"")
+
+# ------------------------------------------------------------------ 3.5 形状探针自检（21-FixA C-2）
+# 判据：对 tests/reader_shape_probe_sample.txt 逐形状扫一遍，
+#   所得键集合 / 未知形态集合 / 块注释命中数 / 实读点总数 **逐字**等于下面四组字面期望。
+# 四条期望各钉一个方向：
+#   键集合 {a,b,c}   ⇒ 函数式收（a）、点式 at 收（b）、点式 find 收（c）＝**漏收方向有牙**；
+#                       其中 b/c 正是"退回 fb8d205 形态就会消失"的两条 ⇒ 删点式分支必红；
+#                       "f"（params->at，箭头接收者）不在集合里 ⇒ 今天不收的形态不许被悄悄算成收；
+#                       "d"（真块注释里的 getParam）不在集合里 ⇒ 第 1 节块注释口径有牙；
+#                       "w"（where.find("--")，接收者不是 params）不在集合里 ⇒ **过收方向有牙**；
+#                       "n"（// 行注释里的 getParam）不在集合里 ⇒ 剥注释口径有牙。
+#   未知集合 {params.count@probe-sample} ⇒ GIS_21C_DOT_READERS 的登记门那支（平时零覆盖）真的会响。
+#   块注释命中数 == 1 ⇒ 块注释哨兵在探针里也真的会响（第 8 节主扫描侧另有三条断言）。
+#   实读点总数 == 4 ⇒ 精确到"每个形状贡献几次"，去重后的键集合抓不到的重复计入它抓得到。
+function(gis_21c_shape_probe sample)
+  if(NOT EXISTS "${sample}")
+    message(FATAL_ERROR
+        "形状探针资产不存在：${sample}（传了 -DGIS_21C_SHAPE_PROBE 却找不到文件 ⇒ 探针会静默空转，禁止放行）")
+  endif()
+  file(STRINGS "${sample}" PLINES ENCODING UTF-8)
+  set(pkeys "")
+  set(punknown "")
+  set(pblock "")
+  set(pblocktotal 0)
+  set(preadtotal 0)
+  foreach(l IN LISTS PLINES)
+    set(clean "${l}")
+    string(REGEX REPLACE "//.*$" "" clean "${clean}")
+    set(_isBlock FALSE)
+    if(clean MATCHES "${GIS_21C_SHAPE_PROBE_RE}" OR clean MATCHES "${GIS_21C_SHAPE_PROBE_CLOSERE}")
+      set(_isBlock TRUE)
+      math(EXPR pblocktotal "${pblocktotal} + 1")
+      string(REGEX REPLACE "[ \t]+" " " _bs "${clean}")
+      string(REGEX REPLACE "^ | $" "" _bs "${_bs}")
+      string(REPLACE ";" "<SEMI>" _bs "${_bs}")
+      list(APPEND pblock "${_bs}")
+    endif()
+    # 与第 4 节同口径：块注释行的文字一律不当代码读（主扫描侧靠第 8 节的红兜住）。
+    if(NOT _isBlock)
+      string(REGEX MATCHALL "${GIS_21C_FUNC_READ_RE}" _fm "${clean}")
+      foreach(_m IN LISTS _fm)
+        if(_m MATCHES "^([A-Za-z_][A-Za-z0-9_]*)[<(]")
+          set(_fn "${CMAKE_MATCH_1}")
+          if(NOT ";${GIS_21C_READER_FUNCS};" MATCHES ";${_fn};")
+            list(APPEND punknown "${_fn}@probe-sample")
+          endif()
+        endif()
+        if(_m MATCHES "\"([A-Za-z_0-9]+)\"$")
+          math(EXPR preadtotal "${preadtotal} + 1")
+          list(APPEND pkeys "${CMAKE_MATCH_1}")
+        endif()
+      endforeach()
+      string(REGEX MATCHALL "${GIS_21C_DOT_READ_RE}" _dm "${clean}")
+      foreach(_m IN LISTS _dm)
+        if(_m MATCHES "[A-Za-z_]*[Pp]arams[ \t]*[.][ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*[(]")
+          set(_dmfn "${CMAKE_MATCH_1}")
+          if(NOT ";${GIS_21C_DOT_READERS};" MATCHES ";${_dmfn};")
+            list(APPEND punknown "params.${_dmfn}@probe-sample")
+          endif()
+        endif()
+        if(_m MATCHES "\"([A-Za-z_0-9]+)\"$")
+          math(EXPR preadtotal "${preadtotal} + 1")
+          list(APPEND pkeys "${CMAKE_MATCH_1}")
+        endif()
+      endforeach()
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES pkeys)
+  list(SORT pkeys)
+  string(REPLACE ";" "," pkeysc "${pkeys}")
+  list(LENGTH punknown _pnU)
+  string(REPLACE ";" "," punknownc "${punknown}")
+
+  if(NOT pkeysc STREQUAL "a,b,c")
+    message(FATAL_ERROR
+        "形状探针红：扫 ${sample} 所得键集合是 [${pkeysc}]，字面期望是 [a,b,c]。\n"
+        "  少键 ⇒ 某个真实读参形态被漏收（假绿方向：白名单里的冗余键就此免检）；\n"
+        "  多键 ⇒ 匹配面过收（把存在性探测/非 params 接收者/注释里的文字当成实读），同样是假绿方向。\n"
+        "  样例文件的每种形状都在自己的行上标了名（a/b/c/d/f/w/n），照上面判据改**匹配式或表**，不许改样例。")
+  endif()
+  if(NOT _pnU EQUAL 1 OR NOT punknownc STREQUAL "params.count@probe-sample")
+    message(FATAL_ERROR
+        "形状探针红：未知读参形态集合是 [${punknownc}]（${_pnU} 条），"
+        "字面期望是 [params.count@probe-sample]（1 条）。\n"
+        "空集 ⇒ GIS_21C_READER_FUNCS / GIS_21C_DOT_READERS 的登记门已经不再响（静默漏收）；\n"
+        "非期望值 ⇒ 匹配面动了，样例与期望必须一起重核。")
+  endif()
+  if(NOT pblocktotal EQUAL 1)
+    message(FATAL_ERROR
+        "形状探针红：样例里的块注释命中 ${pblocktotal} 处，字面期望 1 处（只有形状 d 那一行）。\n"
+        "0 ⇒ 块注释口径失效（第 1 节哨兵抓不到东西）；>1 ⇒ 样例被写进了第二种含 /* 的形状。命中清单：${pblock}")
+  endif()
+  list(GET pblock 0 _pbsig)
+  if(NOT _pbsig STREQUAL "/* getParam<std::string>(params, \"d\") 这一整条在真块注释里 不算实读 */")
+    message(FATAL_ERROR
+        "形状探针红：唯一的块注释命中内容与字面期望不符：[${_pbsig}]。\n"
+        "⇒ 形状 d 被挪走/改写了，探针就不再为\"块注释里的读参不算实读\"这一条说话。")
+  endif()
+  if(NOT preadtotal EQUAL 4)
+    message(FATAL_ERROR
+        "形状探针红：实读点总数 ${preadtotal}，字面期望 4（a 函数式 + b 点式 at + c 点式 find + c 点式 count）。\n"
+        "键集合去重后看不出重复计入，这条按次数钉 ⇒ 同一个形状被匹配两遍（正则退化）也会红。")
+  endif()
+  message(STATUS "[21C] shape_probe keys=${pkeysc} read_sites=${preadtotal} block_hits=${pblocktotal} unknown=${punknownc}")
+endfunction()
+
+if(GIS_21C_SHAPE_PROBE)
+  gis_21c_shape_probe("${GIS_21C_SHAPE_PROBE}")
+endif()
+if(GIS_21C_PROBE_ONLY)
+  return()
 endif()
 
 # ------------------------------------------------------------------ 0. 重新生成白名单产物
@@ -234,6 +388,13 @@ set(PLUGIN_NAMES "")
 set(KEY_READ_TOTAL 0)
 set(DYNAMIC_READ_HITS "")
 set(UNKNOWN_READER_HITS "")
+# 块注释命中**跨文件累积**（21-FixA C-1）。
+# 复位原来写在每文件循环体内（set(BLOCK_COMMENT FALSE)），而判定在所有循环之后（if(BLOCK_COMMENT)）
+# ⇒ 最终值只反映扫描序列里**最后一个文件**，前面 21 个插件目录、54 个文件里的一切块注释
+#   都被后续文件的复位抹掉：今天这条哨兵确实在 vector_plugin_info_filter.inc:41 触发过一次 TRUE，
+#   然后被后面的文件复位成 FALSE 而放过 ⇒ 守卫绿恰恰证明它在空转，而不是证明前提成立。
+# 改成累积清单 + 第 8 节与 GIS_21C_BLOCK_COMMENT_ALLOWLIST 双向比对（三向：成员、销账、条数）。
+set(BLOCK_HITS "")
 
 foreach(pdir IN LISTS PLUGIN_SUBDIRS)
   if(NOT IS_DIRECTORY "${pdir}")
@@ -249,7 +410,6 @@ foreach(pdir IN LISTS PLUGIN_SUBDIRS)
     file(RELATIVE_PATH frel "${PLUGIN_DIR}" "${f}")
     get_filename_component(fplug "${frel}" DIRECTORY)
     set(SEGACC "")
-    set(BLOCK_COMMENT FALSE)
     set(SEG_HAS_LINE FALSE)
     foreach(l IN LISTS FLINES)
       math(EXPR LINE_TOTAL "${LINE_TOTAL} + 1")
@@ -266,10 +426,16 @@ foreach(pdir IN LISTS PLUGIN_SUBDIRS)
       if(NOT clean STREQUAL "")
         set(SEG_HAS_LINE TRUE)
         # 前提哨兵：行注释剥完还剩下 /* 或 */ ⇒ 有人新写了块注释，本口径不再充分。
-        # 必须红，不许静默把块注释里的文字当代码读。
-        if(clean MATCHES "/[*]" OR clean MATCHES "[*]/")
-          set(BLOCK_COMMENT TRUE)
-          set(GIS_21C_BLOCKHIT "${frel}: ${clean}")
+        # 命中一律**跨文件累积**进 BLOCK_HITS，由第 8 节与 GIS_21C_BLOCK_COMMENT_ALLOWLIST 双向比对；
+        # 这里的 set(BLOCK_COMMENT) 已经删掉了——旧写法是"每文件复位 + 末尾读一次"，
+        # 于是最终值只反映最后一个被扫文件，前面所有文件的块注释都被复位抹掉 ⇒ 哨兵空转（C-1）。
+        # 同时第 4 节把命中行的读参匹配面摘掉（见 _readline）⇒ 不许静默把注释里的文字当代码读。
+        if(clean MATCHES "${GIS_21C_SHAPE_PROBE_RE}" OR clean MATCHES "${GIS_21C_SHAPE_PROBE_CLOSERE}")
+          string(REGEX REPLACE "[ \t]+" " " _bsig "${clean}")
+          string(REGEX REPLACE "^ | $" "" _bsig "${_bsig}")
+          # 分号折成 <SEMI>：见 GIS_21C_BLOCK_COMMENT_ALLOWLIST 上方那条 CMake 列表语义说明。
+          string(REPLACE ";" "<SEMI>" _bsig "${_bsig}")
+          list(APPEND BLOCK_HITS "${frel}|${_bsig}")
         endif()
       endif()
       list(APPEND SEGACC "${clean}")
@@ -387,8 +553,17 @@ foreach(sid RANGE 1 ${SEG_COUNT})
     list(REMOVE_DUPLICATES _curacts)
     list(LENGTH _curacts _nca)
 
+    # ---- 块注释口径与第 3 节、第 3.5 节探针**共用同一条判据**：含 /* 或 */ 的行不当代码读。
+    # WHY 不只是"报红"：光靠第 8 节的红，白名单−实读的比对在这一轮里其实已经把这些文字当代码算过了
+    #   （只是没人看报表）。这里先把它摘掉，第 8 节再决定"这种行到底该不该存在"⇒
+    #   判据与报警各管一半，任何一侧退化都会被抓到（探针第 3.5 节钉的就是这条）。
+    set(_readline "${_l}")
+    if(_l MATCHES "${GIS_21C_SHAPE_PROBE_RE}" OR _l MATCHES "${GIS_21C_SHAPE_PROBE_CLOSERE}")
+      set(_readline "")
+    endif()
+
     # ---- 读键（字面量第二实参）
-    string(REGEX MATCHALL "[A-Za-z_][A-Za-z0-9_]*(<[^()]*>)?[ \t]*[(][ \t]*[A-Za-z_]*[Pp]arams[ \t]*,[ \t]*\"[A-Za-z_0-9]+\"" _mm "${_l}")
+    string(REGEX MATCHALL "${GIS_21C_FUNC_READ_RE}" _mm "${_readline}")
     foreach(_m IN LISTS _mm)
       if(_m MATCHES "^([A-Za-z_][A-Za-z0-9_]*)[<(]")
         set(_fn "${CMAKE_MATCH_1}")
@@ -412,7 +587,7 @@ foreach(sid RANGE 1 ${SEG_COUNT})
     # 与上面的函数式形态**同口径**计入实读：同一个键无论是 getParam 还是 params.at 读的，
     # 都是"这个 action 真的读了它"。以前只认函数式 ⇒ 有人把 getParam 重写成 params.at，
     # 守卫会报一条语义完全相反的白（"这条白名单没人读"）而真因（扫描器看不见这种读法）不在红字里。
-    string(REGEX MATCHALL "[A-Za-z_]*[Pp]arams[ \t]*[.][ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*[(][ \t]*\"[A-Za-z_0-9]+\"" _dm "${_l}")
+    string(REGEX MATCHALL "${GIS_21C_DOT_READ_RE}" _dm "${_readline}")
     foreach(_m IN LISTS _dm)
       set(_dmfn "")
       if(_m MATCHES "[A-Za-z_]*[Pp]arams[ \t]*[.][ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*[(]")
@@ -434,7 +609,8 @@ foreach(sid RANGE 1 ${SEG_COUNT})
     endforeach()
 
     # ---- 动态键实读（豁免表核对对象）：getParam<…>(params, 变量, …)
-    if(_l MATCHES "getParam(<[^()]*>)?[(][ \t]*[A-Za-z_]*[Pp]arams[ \t]*,[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*[,)]")
+    # 同样走 ${_readline}：块注释行里的 getParam(…, 变量, …) 不许进豁免表的账（第 3.5 节探针钉这条）。
+    if(_readline MATCHES "getParam(<[^()]*>)?[(][ \t]*[A-Za-z_]*[Pp]arams[ \t]*,[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*[,)]")
       list(APPEND DYNAMIC_READ_HITS "${_plug}|${_defname}")
     endif()
 
@@ -726,6 +902,8 @@ list(LENGTH GIS_21C_EXEMPTIONS NEX)
 list(LENGTH GIS_21C_NO_UI_CONFIG_ALLOWLIST NNOCFGREG)
 list(LENGTH NOCFG_PAIRS NNOCFGPAIRS)
 list(LENGTH INT_DEGENERATE_KEYS NDEGEN)
+list(LENGTH BLOCK_HITS NBLOCK)
+list(LENGTH GIS_21C_BLOCK_COMMENT_ALLOWLIST NBLOCKREG)
 
 file(WRITE "${REPORT_FILE}"
     "# 21-C 反向参数守卫报告\n"
@@ -739,6 +917,7 @@ file(WRITE "${REPORT_FILE}"
     "# literal_read_sites=${KEY_READ_TOTAL} files=${FILE_COUNT} lines=${LINE_TOTAL} segments=${SEG_COUNT}\n"
     "# int_specs total=${INT_DECL_TOTAL} effective=${INT_DECL_EFFECTIVE} degenerate=${INT_DECL_DEGENERATE} undeclared=${INT_DECL_UNDECLARED}\n"
     "# dynamic_key_reads=${Ndyn} exemptions=${NEX}\n"
+    "# block_comment_hits=${NBLOCK} block_comment_allowlist=${NBLOCKREG}\n"
 )
 
 message(STATUS "[21C] actions=${SCANNED_ACTIONS} visible_rows=${WL_CONFIGURED} no_ui_config=${WL_NOCONFIG}")
@@ -748,14 +927,38 @@ message(STATUS "[21C] int_specs total=${INT_DECL_TOTAL} effective=${INT_DECL_EFF
 message(STATUS "[21C] no_seed configured=${NNOSEEDC} unconfigured=${NNOSEEDU}")
 message(STATUS "[21C] violations=${NVIOL} list=${VIOLATIONS}")
 message(STATUS "[21C] dynamic_read_hits=${DYNAMIC_READ_HITS}")
+message(STATUS "[21C] block_comment_hits=${NBLOCK} allowlist=${NBLOCKREG}")
 message(STATUS "[21C] no_seed_configured_list=${NO_SEED_CONFIGURED}")
 
 # ------------------------------------------------------------------ 8. 自检与红判
-if(BLOCK_COMMENT)
+# ---- 块注释前提哨兵（21-FixA C-1：三条断言，与 GIS_21C_BLOCK_COMMENT_ALLOWLIST 双向比对）
+# ① 每一处命中都必须在表里 ⇒ 新增一处真块注释（或任何新的含 /* 形状）＝红；
+# ② 表里每一条都必须仍有命中 ⇒ 已登记的那两处字面量被改写/删除后，表不许继续挂着＝红；
+# ③ 命中条数必须等于表长 ⇒ 同一条字面量被复制第二遍（内容相同、位置不同也一样）＝红，
+#    堵住"①② 各自都过但总数变多"的空子（去重比对做不到这一点）。
+foreach(_b IN LISTS BLOCK_HITS)
+  if(NOT "${_b}" IN_LIST GIS_21C_BLOCK_COMMENT_ALLOWLIST)
+    string(REPLACE ";" "\n  " _btext "${BLOCK_HITS}")
+    message(FATAL_ERROR
+        "插件源码里出现了块注释/剥完 // 仍含 /* 或 */ 的行，且不在 GIS_21C_BLOCK_COMMENT_ALLOWLIST 里：\n"
+        "  ${_b}\n"
+        "命中清单（全部 ${NBLOCK} 处，豁免表 ${NBLOCKREG} 条）：\n  ${_btext}\n"
+        "本扫描器的注释口径是\"只剥 // 到行尾\"，依据是豁免表逐条钉住的这几处字符串字面量。"
+        "前提变了必须先扩口径（做真正的 /* */ 状态机并同步第 3.5 节探针的形状 d）再放宽这条哨兵，"
+        "不许让它静默把注释当代码读或把文件当注释。")
+  endif()
+endforeach()
+foreach(_b IN LISTS GIS_21C_BLOCK_COMMENT_ALLOWLIST)
+  if(NOT "${_b}" IN_LIST BLOCK_HITS)
+    message(FATAL_ERROR
+        "块注释豁免表条目 ${_b} 已经没有对应命中的行（账清了没销账）：该处的 /* 字面量被改写或删除了。"
+        "请删除这条豁免，不许留着当装饰。")
+  endif()
+endforeach()
+if(NOT NBLOCK EQUAL NBLOCKREG)
   message(FATAL_ERROR
-      "插件源码里出现了块注释（${GIS_21C_BLOCKHIT}）。本扫描器的注释口径是\"只剥 // 到行尾\"，"
-      "依据是 src/plugins 全树 0 处真块注释（2 处 /* 分别在字符串字面量和 // 注释里）。"
-      "前提变了就必须先扩口径再放宽这条哨兵，不许让它静默把注释当代码或把文件当注释。")
+      "块注释命中 ${NBLOCK} 处，豁免表登记 ${NBLOCKREG} 条 ⇒ 有条目被命中了两次以上"
+      "（同一条含 /* 的字面量被复制），命中清单：${BLOCK_HITS}")
 endif()
 
 if(UNKNOWN_READER_HITS)
