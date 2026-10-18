@@ -159,14 +159,42 @@ jobs:
         shell: pwsh
         run: |
           cmake --install build/release --config Release
+          # A nonzero exit code from a native program never reddens a pwsh step by itself: it only
+          # lands in $LASTEXITCODE, while the step colour comes from the script terminating. Since
+          # N84 was fixed, "no runtime-dep scanner" aborts right here with FATAL_ERROR, so the code
+          # has to be asserted at this step — otherwise the real cause gets overwritten later by
+          # the crash code of the half-installed package and the log blames the wrong thing.
+          if ($LASTEXITCODE -ne 0) {
+            throw "cmake --install build/release --config Release failed with exit code $LASTEXITCODE against prefix $PWD\install: the install script refused to resolve runtime dependencies, see cmake/install_runtime_deps.cmake.in"
+          }
 
       - name: Verify installed CLI and GUI
         shell: pwsh
         run: |
+          # Every command below asserts $LASTEXITCODE. WHY (N84): a package that cannot start does
+          # not turn the step red on its own. A crashing native exe only sets $LASTEXITCODE, PowerShell
+          # keeps running, and the step exit code comes from the last command — which used to be
+          # `Remove-Item … -ErrorAction SilentlyContinue`, i.e. always successful. Measured: with
+          # $ErrorActionPreference='Stop' a 0xC0000135 crash still gave outer_rc=0. So CI was green
+          # while shipping a build whose `gis-cli.exe --list` returned -1073741515, and installer.nsi
+          # (File /r "..\install") plus the zip upload happily shipped it. The fix must keep "bad
+          # package == red step", so each throw names the command, its exit code and the prefix.
           .\install\bin\gis-cli.exe --list
+          if ($LASTEXITCODE -ne 0) {
+            throw ".\install\bin\gis-cli.exe --list failed with exit code $LASTEXITCODE against prefix $PWD\install: the installed CLI does not start, most likely a runtime DLL is missing from install\bin"
+          }
           .\install\bin\gis-cli.exe vector buffer --input "$PWD\tests\data\gui_vector_projected_input.geojson" --distance 10 --output "$PWD\install-smoke-buffer.geojson"
+          if ($LASTEXITCODE -ne 0) {
+            throw ".\install\bin\gis-cli.exe vector buffer failed with exit code $LASTEXITCODE against prefix $PWD\install: the installed CLI starts but cannot run a real plugin action"
+          }
           .\install\bin\gis-gui.exe -platform offscreen --self-test
+          if ($LASTEXITCODE -ne 0) {
+            throw ".\install\bin\gis-gui.exe -platform offscreen --self-test failed with exit code $LASTEXITCODE against prefix $PWD\install: the installed GUI does not pass its offscreen self test"
+          }
           Remove-Item -LiteralPath "$PWD\install-smoke-buffer.geojson" -ErrorAction SilentlyContinue
+          if ($LASTEXITCODE -ne 0) {
+            throw "Remove-Item install-smoke-buffer.geojson failed with exit code $LASTEXITCODE against prefix $PWD\install"
+          }
 
       - name: Real data regression (quick)
         shell: pwsh
