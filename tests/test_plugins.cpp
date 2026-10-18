@@ -12406,3 +12406,204 @@ TEST_F(PluginTest, TileColorBandsDoNotDependOnAddAlpha) {
             << " ⇒ 亮度随 add_alpha 变（复审 I-1），Produces 承诺的\"同一地物亮度一致\"不成立";
     }
 }
+
+// T18-F3（fix round 3 / 复审 round 2 §I-1-new）：F-1 的 alpha 掩膜过滤**必须逐波段生效**。
+//
+// 这条用例的存在理由（复审的探针，`build/t18rr2_19_f1d_tile.log`）：
+//   把 `cutting_plugin.cpp` 的过滤判据写成"只对 band 1 过滤、band 2..n 不过滤"
+//   （`if (b == 1 && alphaBuf[i] <= 0.0f) continue;`）⇒ 当时 29/29 **全绿**。
+//   原因是现有夹具里没有"能让 band 2..n 的过滤结果可观测"的形状：
+//     #319 是单波段源 ⇒ 只驱动 b==1；#315 是 3 波段但洞只在**一条**波段里 ⇒
+//     洞带像元 alpha>0 ⇒ 过滤不动它们，而它没有全波段同洞的像元 ⇒ 掩膜一条都没滤掉。
+//
+// 判别波段为什么必须是 band 3（本轮实测出的**等价类**，不是偷懒选型）：
+//   -dstalpha 在"某波段自己 NoData、其余波段有效"的像元上会把**写入值 0** 留在该色波段里
+//   （盘上事实见下面"夹具算术"的字节推导；`cutting_plugin.cpp` 的 M-16 注释与 #315 的头注释
+//    把它写成"NoData 原值 -9999 参与"，那个**细节是错的**：参与的是 0 ⇒ 区间下界是 0 而不是
+//    -9999 ⇒ #315 洞带的绿道=0 在两种写法下都成立，所以那条断言分不出来）。
+//   ⇒ 只要某波段有"自己的洞"（alpha>0 的洞），它的像元集合里**本来就含 0**，
+//     于是"过不过滤全掩膜像元（值也是 0）"对它是**等价**的 ⇒ 该波段看不见这条修复。
+//   ⇒ 能看见这条修复的波段必须满足：它的 NoData 像元**全部**落在"三条波段同时 NoData"
+//     （alpha==0）的区域里，且它自己的有效值域不含 0。本用例把 band 3 造成这个形状，
+//     band 1/band 2 保留各自不同位置的单波段洞（⇒ 它们同时把上面这条等价类钉在断言里：
+//     它们的产物字节对 (a) 变异**不敏感**，见下面 hist 的字面期望）。
+//
+// 夹具算术（64×64@1000 m、origin (0,0)、EPSG:3857、`t18WriteBandsRaster` ⇒ NODATA=-9999
+//   按 `applyFixtureHeader` 声明到**全部三条**波段、resampling=nearest、z=8 单瓦片、
+//   覆盖子矩形 [0,105)²；瓦片列↔源列的取整边界与 #319 同一张表：
+//   源列 0..31→瓦片列 0..52（53 列）、32..47→53..78（26 列）、48..63→79..104（26 列））：
+//     三条波段各自的**有效值域互不相同**：band1 (100,400)、band2 (200,500)、band3 (300,600)。
+//     洞的位置也互不相同：
+//       A = 源 x∈[0,8)  且 y<32   ⇒ 只有 band1 在这里 NoData（左上角块）
+//       B = 源 x∈[8,16) 且 y>=32  ⇒ 只有 band2 在这里 NoData（下半条）
+//       C = 源 x∈[48,64) 全行      ⇒ 三条波段同时 NoData（右缘带，band3 的洞只在这里）
+//     ⇒ alpha 口径：true 档掩膜 = C ⇒ 不透明 105²−26×105 = 8295、透明 2730；
+//                  false 档 = 任一波段 NoData 即遮 ⇒ A∪B∪C ⇒ 不透明 6877、透明 4148。
+//     ⇒ 字节推导（`stretchByte` = clamp(255*(v-min)/(max-min)) 截断取整）：
+//        true  band1：像元集合含 A 的写入值 0 ⇒ 区间 (0,400) ⇒ 100→**63**、400→**255**、A→**0**
+//        true  band2：像元集合含 B 的写入值 0 ⇒ 区间 (0,500) ⇒ 200→**102**、500→**255**、B→**0**
+//        true  band3：C 被掩膜滤掉 ⇒ 区间 **(300,600)** ⇒ 300→**0**、600→**255**
+//        false 三条波段同走 GDAL 精算（跳过声明的 NODATA）⇒ 区间各自 (100,400)/(200,500)/
+//               (300,600) ⇒ 有效低档→**0**、高档→**255**，被遮的像元整像素清零 ⇒ 也是 0。
+//     ⇒ 计数（105×105 内，全部与实测逐格核对过）：A=742、B=676、低档块 5565、高档块 2730，
+//       5565−742=4823（band1 的低档数）、5565−676=4889（band2 的低档数）、
+//       false 档不透明低档 5565−742−676=4147。
+//
+// 判别取证（工单 fix-18-round3-findings.md 的 (a)）：
+//   变异 (a) "只对 band 1 过滤" ⇒ band3 的像元集合被塞进 C 的写入值 0 ⇒ 区间变 (0,600)
+//   ⇒ 300→**127** ⇒ 下面三条 band3 断言同时红：hist 期望 {0:5565,255:2730} 变 {127:5565,
+//   255:2730}、minValue 0→127、两档逐像元 diff 0→5565。band1/band2 的字节**不变**（等价类）。
+//   变异 (b) "完全不过滤"（退回 round 2 改前）⇒ band3 同样红，且 #319 交叉验证也红。
+TEST_F(PluginTest, TileAlphaMaskFilterAppliesToEveryBand) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    options.hasNoData = true;
+    options.noData = -9999.0;
+
+    const size_t pixels = static_cast<size_t>(64) * 64;
+    std::vector<float> band1(pixels, 0.0f), band2(pixels, 0.0f), band3(pixels, 0.0f);
+    for (int y = 0; y < 64; ++y) {
+        for (int x = 0; x < 64; ++x) {
+            const size_t i = static_cast<size_t>(y) * 64 + x;
+            const bool allHole = (x >= 48);            // C：三条波段同时 NoData
+            band1[i] = allHole ? -9999.0f : (x < 32 ? 100.0f : 400.0f);
+            band2[i] = allHole ? -9999.0f : (x < 32 ? 200.0f : 500.0f);
+            band3[i] = allHole ? -9999.0f : (x < 32 ? 300.0f : 600.0f);
+            if (!allHole && x < 8 && y < 32) band1[i] = -9999.0f;              // A：只有 band1
+            if (!allHole && x >= 8 && x < 16 && y >= 32) band2[i] = -9999.0f;  // B：只有 band2
+        }
+    }
+    const std::string input = t18WriteBandsRaster(
+        getTestDir(), "t18_f3_bands_input.tif", 64, 64,
+        std::vector<std::vector<float>>{band1, band2, band3}, options);
+    ASSERT_FALSE(input.empty());
+
+    // 不透明像元上的字节直方图（整张瓦片；未覆盖区 alpha==0 ⇒ 天然不计入）。
+    auto opaqueByteHist = [](const T18TileBands& t, int band) {
+        std::map<int, int> hist;
+        const std::vector<uchar>& value = t.data[static_cast<size_t>(band) - 1];
+        const std::vector<uchar>& alpha = t.data[t.data.size() - 1];
+        for (size_t i = 0; i < alpha.size(); ++i) {
+            if (alpha[i] == 0) continue;
+            ++hist[static_cast<int>(value[i])];
+        }
+        return hist;
+    };
+    auto transparentCount = [](const T18TileBands& t) {
+        // 只在**覆盖子矩形** [0,105)² 内数（瓦片是 256×256，覆盖缘之外本来全透明，
+        // 与 #315/#319 的取窗口口径一致）。
+        int n = 0;
+        const std::vector<uchar>& alpha = t.data[t.data.size() - 1];
+        for (int y = 0; y < 105; ++y) {
+            for (int x = 0; x < 105; ++x) {
+                if (alpha[static_cast<size_t>(y) * static_cast<size_t>(t.width) + x] == 0) ++n;
+            }
+        }
+        return n;
+    };
+
+    // 两档的期望直方图（全部按上面"夹具算术"推死，用例里不调被测函数反算）。
+    const std::map<int, int> expOn1{{0, 742}, {63, 4823}, {255, 2730}};
+    const std::map<int, int> expOn2{{0, 676}, {102, 4889}, {255, 2730}};
+    const std::map<int, int> expOn3{{0, 5565}, {255, 2730}};
+    const std::map<int, int> expOffLow{{0, 4147}, {255, 2730}};
+    // 两档各自的透明度（夹具完整性：C 只有 2730 ⇒ A、B 也必须真的洞出来）。
+    const std::map<bool, int> expTransparent{{true, 2730}, {false, 4148}};
+
+    std::vector<T18TileBands> collected;
+    std::vector<std::set<std::string>> collectedFiles;
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool addAlpha = pass == 0;
+        const fs::path output = getTestDir() /
+            (addAlpha ? "t18_f3_on_output" : "t18_f3_off_output");
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        params["resampling"] = std::string("nearest");
+        params["add_alpha"] = addAlpha;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "add_alpha=" << addAlpha << ": " << result.message;
+        const auto files = t17CollectTileFiles(output);
+        ASSERT_EQ(files.size(), 1u) << "add_alpha=" << addAlpha << " 实际 ["
+                                    << t17JoinFiles(files) << "]";
+        const T18TileBands tile = t18ReadTile(output / fs::path(*files.begin()));
+        ASSERT_TRUE(tile.ok());
+        ASSERT_EQ(tile.bands, 4) << "add_alpha=" << addAlpha << " 的容器口径（#298 同款锚）";
+        collected.push_back(tile);
+        collectedFiles.push_back(files);
+
+        EXPECT_EQ(transparentCount(tile), expTransparent.at(addAlpha))
+            << "add_alpha=" << addAlpha << " 档的透明度与夹具算术不符 ⇒ A/B/C 三块洞的形状变了";
+
+        // 判别 1（本用例的主断言）：**band 3** 的归一化区间只由它自己的有效像元决定 ⇒
+        // 全掩膜像元（值 0）不进区间 ⇒ 低档字节是 0 而不是 127。
+        const std::map<int, int> h3 = opaqueByteHist(tile, 3);
+        EXPECT_EQ(h3, addAlpha ? expOn3 : expOffLow)
+            << "add_alpha=" << addAlpha << " 档 band3（洞只在全掩膜区里的那条波段）的字节直方图"
+            << " 与推导不符 ⇒ 掩膜过滤在 band 3 上没生效（band3 区间被写成值 0 顶成 (0,600) "
+            << "时低档会变 127，这正是复审 F1-D 探针的形态）";
+        const T18OpaqueStats s3 = t18StatsOverOpaque(tile, 3);
+        EXPECT_EQ(s3.minValue, 0) << "add_alpha=" << addAlpha << " 档 band3 低档字节 "
+                                  << s3.minValue << "（期望 0）";
+        EXPECT_EQ(s3.maxValue, 255) << "add_alpha=" << addAlpha << " 档 band3 高档字节 "
+                                    << s3.maxValue << "（期望 255）";
+
+        // 判别 2：band 1 / band 2 各自的区间由**自己**的像元集合决定（含它们自己单波段洞的
+        // 写入值 0 ⇒ 低档 63 / 102，两档不同）。这两条把"漏的是 0 而不是 -9999"与"这两条
+        // 波段对 (a) 变异是盲区"同时钉死：若实现改成"整幅共用一条区间"，band1/band2 的
+        // 63/102 会同时变成同一个值 ⇒ 这里红。
+        if (addAlpha) {
+            EXPECT_EQ(opaqueByteHist(tile, 1), expOn1)
+                << "band1 的字节直方图变了：它的洞 A 里的写入值 0 进区间 ⇒ (0,400) ⇒ 低档 63";
+            EXPECT_EQ(opaqueByteHist(tile, 2), expOn2)
+                << "band2 的字节直方图变了：它的洞 B 里的写入值 0 进区间 ⇒ (0,500) ⇒ 低档 102";
+        } else {
+            // false 档三条波段的低档一律 0（没有 0 顶区间）⇒ 与 true 档的 63/102 成对，
+            // 这两条断言就是"亮度仍随 add_alpha 变"的那一半盘上事实（等价类，见头注释）。
+            EXPECT_EQ(opaqueByteHist(tile, 1), expOffLow) << "false 档 band1";
+            EXPECT_EQ(opaqueByteHist(tile, 2), expOffLow) << "false 档 band2";
+        }
+    }
+
+    // 判别 3（#319 的多波段推广）：**band 3 在两档之间逐像元相同**；band 1/band 2 的
+    // diff 也按字面钉住（4823 / 4889），它们是"单波段洞漏 0"的账，不是这条用例的承诺。
+    const T18TileBands& on = collected[0];
+    const T18TileBands& off = collected[1];
+    EXPECT_EQ(collectedFiles[0], collectedFiles[1]) << "两档交付的瓦片集合都不同，谈不上逐像元相同";
+    ASSERT_EQ(on.width, off.width);
+    ASSERT_EQ(on.height, off.height);
+    ASSERT_EQ(on.bands, off.bands);
+    const size_t total = static_cast<size_t>(on.width) * static_cast<size_t>(on.height);
+    const std::map<int, size_t> expDiff{{1, 4823u}, {2, 4889u}, {3, 0u}};
+    for (int band = 1; band <= 3; ++band) {
+        size_t diff = 0;
+        int firstDiffX = -1, firstDiffY = -1, onVal = -1, offVal = -1;
+        for (size_t i = 0; i < total; ++i) {
+            const uchar a = on.data[static_cast<size_t>(band) - 1][i];
+            const uchar b = off.data[static_cast<size_t>(band) - 1][i];
+            if (a != b) {
+                if (diff == 0) {
+                    firstDiffX = static_cast<int>(i % static_cast<size_t>(on.width));
+                    firstDiffY = static_cast<int>(i / static_cast<size_t>(on.width));
+                    onVal = a; offVal = b;
+                }
+                ++diff;
+            }
+        }
+        EXPECT_EQ(diff, expDiff.at(band))
+            << "add_alpha 两档在颜色波段 band" << band << " 上的不等像元数 " << diff
+            << "，首个 (" << firstDiffY << "," << firstDiffX << ") true=" << onVal
+            << " false=" << offVal
+            << (band == 3
+                    ? " ⇒ band3 的洞只落在 alpha==0 区，两档必须逐像元相同（复审 I-1-new）"
+                      "（变异 (a) 就把这条打成 5565）"
+                    : " ⇒ band1/band2 的自有洞把写入值 0 带进自己的区间 ⇒ 已登记的等价类，"
+                      "见 task-18-report.md 的 Fix round 3");
+    }
+}
