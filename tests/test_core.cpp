@@ -678,8 +678,12 @@ TEST(ExpressionEngine, AcceptsRedundantParenthesesAndUnaryMinusForms) {
     EXPECT_FALSE(failed);
 }
 
-// F2：除零必须**立即**返回。原实现在 :221-224 置了 flag 与 0.0 却继续把毒化值压栈，
-// 于是交回"用 0.0 参与后续运算"得到的数，与 expression_engine.h:21 的承诺不符。
+// F2：除零必须**立即**返回。原实现在 src/core/src/expression_engine.cpp 的 19b25a6^:221-224
+// （那条 `case ExpressionNode::Op::Divide:` 分支：置 evaluationFailed 与 result=0.0 后 break，
+// 再由 19b25a6^:227 的 stack.push_back(result) 把毒化值压栈继续算）交回"用 0.0 参与后续运算"得到的数，
+// 与 expression_engine.h 里 `evaluateExpression` 声明上方那句"求值。除零返回 0.0 且
+// evaluationFailed = true"的承诺不符（这句承诺按符号取、不写行号：96671e6 往该头文件插了
+// "输入卫生界限"那段注释，声明与注释块整体下移，行号已经不可靠）。
 // 现有 (B2-B1)/(B2+B1) 那条恰好把 Divide 放在最后一个算子，改与不改都返回 0.0，抓不到缺陷；
 // 这里用两条"除法不在末尾"的形状。
 TEST(ExpressionEngine, DivideByZeroStopsEvaluationImmediately) {

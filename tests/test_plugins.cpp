@@ -10754,9 +10754,11 @@ TEST_F(PluginTest, ProximityStaysSilentWhenEveryBandDeclaresNaNNoData) {
         << recorder.joined();
 }
 
-// R-T7-9：`doProximity` 只读 input/output/max_distance（取证：band/nodata_value 只在
-// raster_manage_plugin.cpp 的 :207/:208 nodata 动作里读，levels 在 :81，vector/feature_id_field
-// 在 :258/:260），但修前 gui_data_support.cpp 的 raster_manage 配置里没有 proximity 条目
+// R-T7-9：`doProximity` 只读 input/output/max_distance（取证按函数名取：band/nodata_value 归
+// raster_manage_plugin.cpp 的 doSetNoData、levels 归 doBuildOverviews、vector/feature_id_field
+// 归 doZonalStats。当年写的是 e7cb1e0:207/:208、e7cb1e0:81、e7cb1e0:258/:260 —— 那组数在当时
+// 逐条对得上，957643a 往文件头加了 #include <cmath> 之后整段 +1，顺着旧行号会读到 input），但修前
+// gui_data_support.cpp 的 raster_manage 配置里没有 proximity 条目
 // ⇒ mainwindow.cpp:523-527 把空集当"不设白名单"传下去，面板会渲染插件级全部 9 个参数，
 // 其中六个对本动作无用。这正是批次 A 要消灭的"面板上有用了没用的参数"形态。
 TEST_F(PluginTest, ProximityGuiPanelHidesParametersTheActionNeverReads) {
@@ -10803,7 +10805,8 @@ TEST_F(PluginTest, ProximityGuiPanelHidesParametersTheActionNeverReads) {
 // 读取点取证：doZonalStats 只取 input/vector/output/feature_id_field
 // （raster_manage_plugin.cpp:258-261），:264 对空 vector 直接 fail，所以 vector 进 requiredKeys。
 // WHY 白名单里没有 band：派发时给的键表含 band，但 raster_manage_plugin.cpp 的 getParam 调用
-// 只有上述四处（band 只在 :208 的 nodata 动作里读），列进来就是放一个填了不生效的键。
+// 只有上述四处（band 只在 raster_manage_plugin.cpp 的 doSetNoData 里读，与上面 R-T7-9 同一取证口径），
+// 列进来就是放一个填了不生效的键。
 TEST_F(PluginTest, ZonalStatsGuiPanelHidesParametersTheActionNeverReads) {
     auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);
@@ -12989,9 +12992,10 @@ TEST_F(PluginTest, TileColorBandsDoNotDependOnAddAlpha) {
 //
 // 判别波段为什么必须是 band 3（本轮实测出的**等价类**，不是偷懒选型）：
 //   -dstalpha 在"某波段自己 NoData、其余波段有效"的像元上会把**写入值 0** 留在该色波段里
-//   （盘上事实见下面"夹具算术"的字节推导；`cutting_plugin.cpp` 的 M-16 注释与 #315 的头注释
-//    把它写成"NoData 原值 -9999 参与"，那个**细节是错的**：参与的是 0 ⇒ 区间下界是 0 而不是
-//    -9999 ⇒ #315 洞带的绿道=0 在两种写法下都成立，所以那条断言分不出来）。
+//   （盘上事实见下面"夹具算术"的字节推导：进这条换算的是 -dstalpha 写进去的 **0**，不是源 NoData
+//    原值 -9999 ⇒ 区间下界是 0。#315 的头注释现在写的也是这个机理（min=0 外加一条反证），
+//    cutting_plugin.cpp 的 M-16 段还留着"原文写成 -9999 参与、机理错了"的更正记录。这一细节不影响
+//    #315 的判别力：洞带绿道=0 在两种写法下都成立，所以那条断言本来就分不出来）。
 //   ⇒ 只要某波段有"自己的洞"（alpha>0 的洞），它的像元集合里**本来就含 0**，
 //     于是"过不过滤全掩膜像元（值也是 0）"对它是**等价**的 ⇒ 该波段看不见这条修复。
 //   ⇒ 能看见这条修复的波段必须满足：它的 NoData 像元**全部**落在"三条波段同时 NoData"
@@ -13154,8 +13158,16 @@ TEST_F(PluginTest, TileAlphaMaskFilterAppliesToEveryBand) {
     // band1/band2 的 4823 / 4889 是**前提锁**（挂账 N81 的可观察面），不是"期望两档不等"的承诺：
     // 它锁的是"当前实现下 `-dstalpha` 只保护 alpha、颜色波段自己那 0.01 阈值洞仍会把写入值 0
     // 带进整幅统计区间"这一前提。彻底修 N81（弃用 `-dstalpha`、alpha 改由逐波段掩膜自己合成）
-    // 之后 band1/band2 必须与 band3 一样**两档逐像元相同** ⇒ 届时把这两个字面量改成 0u
-    // （即三条期望全等），**不得删断言**——删了就等于把 N81 的回归面重新打开。模式同 #312/N45/N55。
+    // 之后 band1/band2 必须与 band3 一样**两档逐像元相同** ⇒ 届时把这两个字面量改成 0u（三条期望全等），
+    // **不得删断言**——删了就等于把 N81 的回归面重新打开。
+    // 同一前提还牵着另外四条字面期望，改 N81 时**必须一起**重推，只改 expDiff 会当场在这几条上撞红：
+    // 洞像元一旦转成透明就从不透明直方图里掉出去 ⇒ 按上面"夹具算术"的计数，expOn1/expOn2/expOn3 全部
+    // 回落到 expOffLow（不透明数 8295 → 6877，扣掉的正是 A=742 与 B=676），expTransparent 的 true 档
+    // 也从 2730 变成与 false 档相同的 4148。
+    // 处置模式同本文件的 现状锁（N51） 那一段（在 tests/ 里 grep 现状锁 就取到它）与两条
+    // RejectedFeatureWrite 用例的头注释（grep RejectedFeatureWrite）：前提被修好就把期望改到新口径，
+    // 不得整段删除。工单原话引的 #312 属逐波段量程那一族、盘上没有前提锁，N45/N55 也没有测试侧锚点，
+    // 所以这里改成只指盘上取得到的两处。
     const std::map<int, size_t> expDiff{{1, 4823u}, {2, 4889u}, {3, 0u}};
     for (int band = 1; band <= 3; ++band) {
         size_t diff = 0;

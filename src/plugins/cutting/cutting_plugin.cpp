@@ -1440,8 +1440,9 @@ gis::framework::Result CuttingPlugin::doTile(
                 // row=(y-wgt[3])/wgt[5]）→ 裁剪到数据集范围 → **按覆盖比例**把读到的块
                 // 放进 tileSize×tileSize 缓冲区的正确子像素位置，未覆盖边保持透明。
                 // 原 :912-925"度矩形除以米制 wgt"的混算与 :919 srcWin[3] 的符号错误（F1，
-                // 恒为负 ⇒ 每瓦片 continue）在这里一并废除；north-up 守卫已保证
-                // wgt[2]/wgt[4] 为零、wgt[1]>0、wgt[5]<0，反算不含近似。
+                // 恒为负 ⇒ 每瓦片 continue）在这里一并废除。反算不含近似的前提是 wgt[2]/wgt[4] 为零、
+                // wgt[1]>0、wgt[5]<0 —— 它来自 GDALWarp 产物的轴对齐 north-up（N70），不是那道查**源**
+                // geoTransform 的 north-up 守卫：wgt 取自 warpedDS->GetGeoTransform，守卫管不到它。
                 const gis::core::TileRect rect = gis::core::tileWorldRect(grid, tileSize, tx, ty);
                 if (!rect.valid) {
                     ++tilesSkipped;
@@ -1476,12 +1477,24 @@ gis::framework::Result CuttingPlugin::doTile(
                 const int dy0 = std::clamp(static_cast<int>(std::floor((rect.maxY - ayTop) / tileResY)), 0, tileSize);
                 const int dy1 = std::clamp(static_cast<int>(std::ceil((rect.maxY - ayBot) / tileResY)), 0, tileSize);
                 // 守卫②＝**防御性不可达分支**（挂账 N69）：守卫①通过则这里恒不触发。
-                // 推导（x 向，y 向同款）：① ⇒ c1>c0 ⇒ ax1 = wgt[0]+c1·wgt[1] > ax0 = wgt[0]+c0·wgt[1]
-                // （north-up 守卫已保证 wgt[1]>0）；整数读窗是整幅统计包络的取整扩张 ⇒ [ax0,ax1] ⊆
-                // [rect.minX, rect.maxX]；tileResX = (rect.maxX-rect.minX)/tileSize > 0；
-                // 记 u = (ax0-rect.minX)/tileResX，则 (ax1-rect.minX)/tileResX = u+ε（ε>0）⇒
-                // dx0 = floor(u) ∈ [0, tileSize-1]、dx1 = ceil(u+ε) ≥ floor(u)+1 > dx0。
-                // clamp 到 [0, tileSize] 两侧都收不住：dx0 ≤ tileSize-1 收不上来、dx1 ≥ 1 收不下来。
+                // 推导（x 向；y 向把 wgt[5]<0 的方向翻转后同构）。记 sx_min=min(sx0,sx1)、
+                // sx_max=max(sx0,sx1)（就是上面 c0/c1 取的那两端）。三条前提：wgt[1]>0 来自 GDALWarp 产物
+                // 的轴对齐 north-up（N70；那道 north-up 守卫查的是源 geoTransform，管不到这里的 wgt）
+                // ⇒ sx_min<sx_max；rect.valid ⇒ rect.maxX>rect.minX，再配 tileSize>0 ⇒ tileResX>0（这条
+                // 不由 doTile 保证：tile_pixel_size 的 [128,1024] 范围校验在 CLI/GUI 派发层做，插件自己不重验）；
+                // ① ⇒ c1>c0 ⇒ ax1=ax0+(c1-c0)·wgt[1]>ax0。记 u=(ax0-rect.minX)/tileResX、
+                // v=(ax1-rect.minX)/tileResX ⇒ 由 tileResX>0 与 ax1>ax0 得 v>u ⇒ 恒有 ceil(v)≥floor(u)+1
+                // （u 为负也成立，与钳位前的取值无关）。
+                // 取整是**向外**的：floor(sx_min)≥0 时 c0=floor(sx_min) ⇒ ax0≤rect.minX（非像素对齐时严格
+                // 小于），ceil(sx_max)≤wWidth 时 c1=ceil(sx_max) ⇒ ax1≥rect.maxX ⇒ 内部瓦片满足 [ax0,ax1] ⊇
+                // [rect.minX,rect.maxX]（**旧写法把这个包含方向写反了**，写成 ⊆ 是借不起来的）；越出源包络的
+                // 边缘瓦片两个包含关系都不成立 ⇒ 所以 dx1>dx0 这一步要靠钳位收口：clamp 到 [0,tileSize] 是
+                // 唯一能吃掉那个 +1 的地方，而它只在两端同向时才收得住 —— dx0 被顶到 tileSize 需要
+                // ax0≥rect.maxX、dx1 被压到 0 需要 ax1≤rect.minX，**这两处都必须借守卫①才拿不到**：
+                // floor(sx_min)<0 时 c0=0 ⇒ ax0=wgt[0]>rect.minX，但 ①⇒c1≥1⇒sx_max>0⇒rect.maxX>wgt[0]=ax0；
+                // ceil(sx_max)>wWidth 时 c1=wWidth，①⇒c0≤wWidth-1⇒sx_min<wWidth⇒rect.minX<wgt[0]+wWidth·wgt[1]=ax1。
+                // 以上"①⇒¬②"的论域是**参数校验过的输入**：tileSize=0 时 tileResX 退化成除零（IEEE 下为 inf）
+                // ⇒ dx0 与 dx1 双双落到 0，这条分支会真触发；tileSize<0 则 std::clamp(lo>hi) 本身是 UB。
                 // ⇒ 正常几何下这条 continue 永不进入，所以它**没有**也**不该有**判别用例（N69 的纪律：
                 //   要求"每个守卫各自可杀"之前先证可达性）。保留它是因为 warp 产物的退化窗口不是可证明的
                 //   不变量——删掉它等于赌 GDALWarp 永不给出退化结果，代价是整幅瓦片走进零面积渲染。
