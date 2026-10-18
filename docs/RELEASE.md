@@ -233,6 +233,11 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   引用时请写成**登记表自报口径**：`tests/action_gold_cases.txt` 126 个数据行自报 **GOLD 52 / PENDING 74**（文件另有 23 行注释，`wc -l` 得 149）。
   计数请用 `grep -c ',PENDING$'`（=74）与"排除注释行后再数 `,GOLD`"（=52）；直接 `grep -c ',GOLD'` 会得 **53**（第 2 行注释含 `,GOLD`）。
   上限断言现值 `EXPECT_LE(pending, 74)`（`tests/test_coverage_meta.cpp:402`），只允许下降。N90 归批次 B。
+- **冻结清单复核结论（21-D，只核不改）**：批次 A 全程 `tests/action_gold_cases.txt` 只有 Task 3 的两个提交动过它
+  （`f1bb676` 建档、`987eaa9` fix round 1 只**加第 4 列证据用例名**）；
+  两版的 GOLD/PENDING 都是 **52 / 74**，`diff` 只显示列数变化 ⇒ **没有任何 action 从 PENDING 变 GOLD**（"不反向扩标"守住了），
+  **不需要动上限断言**。另核：`EXPECT_LE(pending, 96)` 那一版从未进过代码
+  （`git log -S'EXPECT_LE(pending, 96)' -- tests/test_coverage_meta.cpp` 零命中），96 只是计划期的估算。
 
 ### CI 超时余量（本机静态核；远端待首跑验证）
 
@@ -252,13 +257,27 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   最贵的非 GUI 用例：`param_guard_visible_keys_all_read` 单条 **3.79 s**（距 300 s 的 `TIMEOUT` 有 79× 余量）。
   ⚠ 早先流传的 197.96 s / 385.53 s 属 632/630 基线时期，**不要再引用**。
 
-### `ctest -j` 并行：现在开会得到假失败（前置条件清单见 21-D 报告）
+### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
 `gui_spindex_ndmi_offscreen`、`gui_vector_singlepart_offscreen`；这三条**单跑 1.65 s / 1.92 s 通过**，
 超时线是 `GIS_TEST_TIMEOUT = 300` ⇒ **纯属争用**（当时还叠着另一棵树的并发构建），不是回归。
 ⇒ **在共享状态清单做完之前不要开 `-j`**；GUI offscreen 用例对负载最敏感。
 判据：**报 `Timeout` 先单跑那几条**，秒过即判"非回归"。跑全量期间**任何一棵树都不许有并发构建**。
+
+**开 `-j` 前必须改什么**（21-D 逐条定判；口径 = 同一字面文件名出现在多个 TEST 块，再看它们是否落在同一条路径上）：
+
+| # | 共享字面名 | 涉及用例块 | 是否同一路径 | 定判 | 开 `-j` 前要改的 |
+|---|---|---|---|---|---|
+| 1 | `metadata.json`（5 个用例块 + 1 个共用读取 helper） | `TileMetadataBoundsKeepTraditionalLonLatOrder`、`TileUserExtentDrivesMetricProjectionAndSkipsZeroAreaTiles`、`TileSchemeTmsInvertsWrittenRowNumberButKeepsTileSetSize`、`TileStretchIsWholeSceneWideNotPerTile`、`TileBlankGuardsAndSkipBlankCombination` | **否** —— 各写自己的子目录：`t17_bounds_output`、`t17_extent_far_output`、`t17_tms_xyz_output`/`t17_tms_tms_output`、`t18_stretch_output`、`t18_blank_<a\|n><s\|k>` | 不冲突 | 无需改 |
+| 2 | `t17_profile_input.tif`（2 块） | `TileRejectsGeodeticProfileAndNamesIt`、`TileRejectsRasterProfileAndNamesIt` | **是** —— 两块都写 `getTestDir()/t17_profile_input.tif`（内容逐字段相同） | **真冲突** | 各用例改用各自的输入名（或挪进各自子目录）；GDAL 的 `.aux.xml` 边车随同一根因一起消失 |
+| 3 | `e2e_spatial_join_output.gpkg`（2 块） | `VectorSpatialJoinRejectsMismatchedSrs`、`VectorSpatialJoinWritesJoinCountAndValue` | **是** —— 同一个 `getTestDir()/` 平铺路径（两块的输入靠 `.shp` / `.gpkg` 扩展名区分，不冲突） | **真冲突**（既知） | 输出名按用例分开；顺带把这一族平铺命名统一成 `用例名/` 前缀 |
+| 4 | `10/512/512.png` 一类的瓦片路径（3 块） | 同 #1 的前三块 | **否** —— `z/x/y` 只是相对路径，父目录已按 #1 分开 | 不冲突 | 无需改 |
+| 5 | `t17ScanWarpedLeftovers`（扫系统临时目录） | `TileCleansWarpedTempOnCancel`、`TileCleansWarpedTempOnWarpFailure` | 目录相同，但**文件名按 pid 隔离**（`gis_tile_warped_<CPLGetPID()>.tif`；Task 18 F3 已把判据从"扫全目录"收窄到"只扫本进程那一份"） | 不冲突 | 无需改；历史残留（例如 `build/gis_tile_warped_17548.tif`、`…_28940.tif`）归脚本/人工巡检，不属用例间冲突 |
+| 6 | `.aux.xml`（`tests/` 现跑 43 处 = `test_plugins.cpp` 40 + 3 个 GUI cmake 脚本） | 多处 | —— | GDAL 边车，**不算用例间冲突** | 无需单独立项 |
+
+⇒ 净结论：**只有 #2 与 #3 是真冲突**（同一 `getTestDir()/` 平铺路径被两个用例块写），把它们分开 + 保证不并发构建，
+才谈得上开 `-j`；其余命中都是"同名字符串出现在不同路径"的假阳性。
 
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
