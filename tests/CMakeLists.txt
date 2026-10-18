@@ -167,6 +167,13 @@ gtest_discover_tests(gis_tests
     WORKING_DIRECTORY $<TARGET_FILE_DIR:gis_tests>
     DISCOVERY_TIMEOUT 60
     DISCOVERY_MODE PRE_TEST
+    # 21-FixA part2 C-1：这一条改由下面的 add_test 亲自注册，好带上 RESOURCE_LOCK。
+    #   发现侧的 PROPERTIES 是"整套用例共用"的，把 RESOURCE_LOCK 写在这里会连带 499 条一起串行，
+    #   而 PRE_TEST 模式下 configure-time 的 set_tests_properties 又够不着还没诞生的用例
+    #   ⇒ 唯一能只给这一条上锁的办法就是把它从发现集合里摘出来、自己注册。
+    #   用例名与 gtest 全名逐字一致（GuiContract.ExportActionVisibleKeys），
+    #   ctest -R、CI 的名单断言与台账里的引用都不受影响；总数仍是 499 gtest + 135 configure-time。
+    TEST_FILTER "-GuiContract.ExportActionVisibleKeys"
     PROPERTIES TIMEOUT ${GIS_TEST_TIMEOUT}
 )
 
@@ -1359,7 +1366,41 @@ add_test(
         -DPLUGIN_DIR=${CMAKE_SOURCE_DIR}/src/plugins
         -DREGISTRY_FILE=${CMAKE_CURRENT_SOURCE_DIR}/action_gold_cases.txt
         -DREPORT_FILE=${CMAKE_CURRENT_BINARY_DIR}/artifacts_21C/action_visible_keys_report.txt
+        -DGIS_21C_SHAPE_PROBE=${CMAKE_CURRENT_SOURCE_DIR}/reader_shape_probe_sample.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_action_visible_keys_read.cmake
+)
+
+# ------------------------------------------------------------------ 21-FixA part2 C-1：导出产物的并发写
+# GuiContract.ExportActionVisibleKeys 与上面的守卫用例写/读的是**同一个固定路径**
+#   $<TARGET_FILE_DIR:gis_tests>/gui_action_visible_keys.txt
+#   （写侧：test_coverage_meta.cpp:745 std::ofstream(..., trunc)；读侧：脚本第 0 节自己 spawn 的
+#    子进程写完后再 file(STRINGS) 回来，脚本第 116 行）。
+# 全仓此前没有任何 RUN_SERIAL / RESOURCE_LOCK（grep -rcE "RESOURCE_LOCK|RUN_SERIAL" tests/CMakeLists.txt = 0），
+# 而这条导出用例**同时**是 gtest 发现出来的独立用例 ⇒ `ctest -j≥2` 下两者可以在两个进程里
+# 同时打开同一个文件。
+# WHY 这是**假绿方向**（不是"只是避免竞争"、也不是无害的假红）：
+#   守卫的判据是"白名单 − 闭包内实读 非空即红"，白名单侧完全来自这份产物的行数与内容。
+#   若读侧读到的是另一进程刚 trunc、还没写完的半份文件：
+#     visible_rows 变少 ⇒ 参与比对的 (plugin,action) 键集合变小 ⇒ 差集跟着变小甚至为空 ⇒
+#     **本该报出的冗余键报不出来**，而脚本自己校验的两道闸（EXPORT_RC==0、stdout 有 [21C-EXPORT]）
+#     全都不会响——写它的那个进程确实成功了。方向与 21-C 立项命题（"每条守卫各自可杀"）正相反。
+#   另一侧才是假红：后到的进程撞 Windows 共享冲突 ⇒ ASSERT_TRUE(static_cast<bool>(ofs)) 红。
+# WHY 选 RESOURCE_LOCK 而不是 RUN_SERIAL：RUN_SERIAL 的语义是"这条用例执行期间整个 ctest 不许有别人"，
+#   锁粒度是全局 ⇒ 634 条里只要有这两条被调度，其余 632 条全部被迫排队，等于把并行度清零。
+#   RESOURCE_LOCK 只在"声明了同一把锁名"的用例之间互斥，别的用例照旧并行 ⇒ 代价精确等于必要。
+add_test(
+    NAME GuiContract.ExportActionVisibleKeys
+    COMMAND $<TARGET_FILE:gis_tests> --gtest_filter=GuiContract.ExportActionVisibleKeys
+)
+set_tests_properties(GuiContract.ExportActionVisibleKeys PROPERTIES
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:gis_tests>
+    RESOURCE_LOCK gis_action_visible_keys
+    # 与 gtest_discover_tests 给其余 498 条设的那道跳过识别保持一致，否则这条用例一旦被
+    # GTEST_SKIP 就变成"退出码 0 ⇒ Passed"的假绿（发现侧靠这条正则把 skipped 认出来）。
+    SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]"
+)
+set_tests_properties(param_guard_visible_keys_all_read PROPERTIES
+    RESOURCE_LOCK gis_action_visible_keys
 )
 
 find_program(GIS_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
@@ -1453,10 +1494,15 @@ get_property(GIS_TIMED_TEST_NAMES DIRECTORY PROPERTY TESTS)
 # overwrite it, so it is excluded here instead of being re-set afterwards.
 list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup)
 # The guard exists only because set_property(TEST) with no names is a configure error.
-# Every configure-time case in this file is registered inside the if(TARGET gis-gui) block
-# above, so an empty list would mean that block never ran - and a build without gis-gui
-# cannot reach the bottom of this file anyway, because gis_tests links Qt6 unconditionally
-# near the top. In other words: nothing is silently skipped here today.
+# Note the premise this used to state ("every configure-time case in this file is registered
+# inside the if(TARGET gis-gui) block above") is FALSE, and has been since before this round:
+# param_guard_visible_keys_all_read is deliberately registered outside that block (see the WHY
+# comment there), and GuiContract.ExportActionVisibleKeys now is too (it needs a RESOURCE_LOCK,
+# which the discovery-side PROPERTIES cannot express per-test). So an empty GIS_TIMED_TEST_NAMES
+# would NOT prove the gis-gui block was skipped - the non-empty check only guards against this
+# file registering nothing at all. Conclusion unchanged ("nothing is silently skipped here"),
+# argument corrected. Do not move this block into if(TARGET gis-gui): these two cases would
+# lose their outer TIMEOUT.
 if(GIS_TIMED_TEST_NAMES)
     set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY TIMEOUT ${GIS_TEST_TIMEOUT})
 endif()
