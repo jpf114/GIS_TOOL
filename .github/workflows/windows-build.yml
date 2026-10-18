@@ -171,8 +171,10 @@ jobs:
       - name: Verify installed CLI and GUI
         shell: pwsh
         run: |
-          # Every command below asserts $LASTEXITCODE. WHY (N84): a package that cannot start does
-          # not turn the step red on its own. A crashing native exe only sets $LASTEXITCODE, PowerShell
+          # Every command below is asserted: the three native ones by $LASTEXITCODE, the cleanup by
+          # Test-Path (see the 4th block — a cmdlet never writes $LASTEXITCODE). WHY (N84): a package
+          # that cannot start does not turn the step red on its own. A crashing native exe only sets
+          # $LASTEXITCODE, PowerShell
           # keeps running, and the step exit code comes from the last command — which used to be
           # `Remove-Item … -ErrorAction SilentlyContinue`, i.e. always successful. Measured: with
           # $ErrorActionPreference='Stop' a 0xC0000135 crash still gave outer_rc=0. So CI was green
@@ -191,9 +193,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw ".\install\bin\gis-gui.exe -platform offscreen --self-test failed with exit code $LASTEXITCODE against prefix $PWD\install: the installed GUI does not pass its offscreen self test"
           }
+          # 4th: the smoke output must be gone. Asserting $LASTEXITCODE here would be decoration, not a
+          # judgement: Remove-Item is a cmdlet and cmdlets never write $LASTEXITCODE, so the value still
+          # belongs to the last *native* command (measured locally: after `cmd /c exit 7` a failing
+          # Remove-Item -ErrorAction SilentlyContinue leaves $LASTEXITCODE at 7, so the old throw could
+          # never fire). The property that matters is on the filesystem, so test the filesystem: a locked
+          # or read-only leftover makes the removal fail and this throw fire.
           Remove-Item -LiteralPath "$PWD\install-smoke-buffer.geojson" -ErrorAction SilentlyContinue
-          if ($LASTEXITCODE -ne 0) {
-            throw "Remove-Item install-smoke-buffer.geojson failed with exit code $LASTEXITCODE against prefix $PWD\install"
+          if (Test-Path -LiteralPath "$PWD\install-smoke-buffer.geojson") {
+            throw "install-smoke-buffer.geojson still exists after Remove-Item against prefix $PWD\install: cleanup really failed (file locked or read-only), it must not be left in the workspace"
           }
 
       - name: Real data regression (quick)
@@ -230,12 +238,37 @@ jobs:
           if (-not $nsis) {
             throw "makensis not found after NSIS installation"
           }
+          # makensis is a native exe, so its code only ever lands in $LASTEXITCODE and a nonzero build
+          # leaves the step green by itself. Without this assertion the first thing that notices is the
+          # next upload-artifact step complaining that the path has no files: red, but attributed to the
+          # wrong step. Same pattern as "Assert debug-only cases absent in Release" above.
           & $nsis installer\installer.nsi
+          if ($LASTEXITCODE -ne 0) {
+            throw "makensis failed with exit code $LASTEXITCODE building installer\installer.nsi against prefix $PWD\install: the NSIS installer was not produced"
+          }
 
       - name: Package zip artifact
         shell: pwsh
         run: |
-          Compress-Archive -Path install -DestinationPath gis-tool-win64.zip -Force
+          # Compress-Archive is a cmdlet, so the "$LASTEXITCODE -ne 0" pattern used elsewhere cannot be
+          # copied here — that is precisely the vacuous-assertion trap (a cmdlet never writes that
+          # variable, so it would report whatever the last native command left). Its failure surface is
+          # the error record instead, and the runner does not set $ErrorActionPreference='Stop' for pwsh
+          # steps, so -ErrorAction Stop is written out explicitly and the catch turns it into a throw.
+          # The archive is then checked to exist and be non-empty, because "uploaded an empty zip" is
+          # exactly the silent-bad-artifact shape this workflow was patched for.
+          try {
+            Compress-Archive -Path install -DestinationPath gis-tool-win64.zip -Force -ErrorAction Stop
+          } catch {
+            throw "Compress-Archive -Path install -DestinationPath gis-tool-win64.zip failed against prefix $PWD\install : $($_.Exception.Message)"
+          }
+          $zipItem = Get-Item -LiteralPath gis-tool-win64.zip -ErrorAction SilentlyContinue
+          if (-not $zipItem) {
+            throw "gis-tool-win64.zip does not exist after Compress-Archive against prefix $PWD\install: the zip artifact step produced nothing"
+          }
+          if ($zipItem.Length -eq 0) {
+            throw "gis-tool-win64.zip is empty ($($zipItem.Length) bytes) after Compress-Archive against prefix $PWD\install: the zip artifact would ship nothing"
+          }
 
       - name: Upload zip artifact
         uses: actions/upload-artifact@v4
