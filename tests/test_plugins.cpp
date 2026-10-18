@@ -9212,6 +9212,24 @@ TEST_F(PluginTest, CutFillFailsWhenGeoTransformMissing) {
     EXPECT_EQ(referenceMissing.message.find("input raster geotransform"), std::string::npos)
         << "守卫归属不能搞反：" << referenceMissing.message;
     EXPECT_FALSE(fs::exists(outputB));
+
+    // 形状 (c)：两边**都取得到**变换但不一致。这条一致性判据改前就存在，可是被关在
+    // `if (两边都成功)` 里、和本次新加的两条守卫挤在同一个块中；本次把它搬到了无条件执行的位置，
+    // 所以必须重新钉一次——否则"搬家时把判据写漏/写松"没有任何用例会红。
+    // 判别量：输入 pixelSize=1.0、参考 pixelSize=2.0 ⇒ gt[1] 与 gt[5] 各差 1.0，远超 1e-9。
+    const std::string mismatchRef =
+        createConstantRaster("t19_cf_mismatch_reference.tif", 10, 10, 10.0f, 116.0, 40.0, 2.0);
+    ASSERT_FALSE(mismatchRef.empty());
+    const std::string outputC = utf8PathString(getTestDir() / "t19_cf_mismatch_output_c.tif");
+    fs::remove(outputC, removeEc);
+    params["input"] = withGeoInput;
+    params["reference"] = mismatchRef;
+    params["output"] = outputC;
+    const auto mismatched = p->execute(params, progress_);
+    EXPECT_FALSE(mismatched.success) << "两处变换都存在但不一致时必须失败";
+    EXPECT_NE(mismatched.message.find("input and reference geotransform must match"), std::string::npos)
+        << mismatched.message;
+    EXPECT_FALSE(fs::exists(outputC)) << "失败路径不得留下产物";
 }
 
 TEST_F(PluginTest, ReservoirVolumeFailsWhenGeoTransformMissing) {
