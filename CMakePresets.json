@@ -58,13 +58,17 @@
             "name": "debug",
             "configurePreset": "debug",
             "configuration": "Debug",
-            "outputOnFailure": true
+            "output": {
+                "outputOnFailure": true
+            }
         },
         {
             "name": "release",
             "configurePreset": "release",
             "configuration": "Release",
-            "outputOnFailure": true
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ]
 }
