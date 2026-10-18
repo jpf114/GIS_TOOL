@@ -9052,26 +9052,33 @@ TEST_F(PluginTest, CutFillExcludesNoDataOnBothSides) {
     options.hasNoData = true;
     options.noData = -9999.0;
     options.pixelSize = 1.0;
+    // A 区的参考栅格**故意声明另一个哨兵值**：实现里"无效像元写哪一份 NoData"是一个真正的决策
+    // （取输入侧声明值，因为 matToGdalTiff 把输入侧的 NoData 抄到输出波段）。两侧哨兵相同的话，
+    // 把这条决策改成"写参考侧的值"不会有任何 observable ⇒ 本条断言就杀不掉那个变异（见 R18）。
+    gis::tests::RasterFixtureOptions referenceOptions;
+    referenceOptions.hasNoData = true;
+    referenceOptions.noData = -7777.0;
+    referenceOptions.pixelSize = 1.0;
     const int w = 10, h = 10;
-    const float kSentinel = -9999.0f;
 
     // 四个分区（x 为列、y 为行，各区的像元数与差值都写在后面）：
-    //   A 区 x<5            （5×10=50 像元）：只有**参考侧**是 NoData，design=10 / existing=NoData
-    //   B 区 5<=x<7         （2×10=20 像元）：只有**输入侧**是 NoData，design=NoData / existing=8
+    //   A 区 x<5            （5×10=50 像元）：只有**参考侧**是 NoData（-7777），design=10 / existing=NoData
+    //   B 区 5<=x<7         （2×10=20 像元）：只有**输入侧**是 NoData（-9999），design=NoData / existing=8
     //   C 区 x>=7 且 y<5    （3×5=15 像元）：两侧有效，diff=+2 ⇒ 填方 15×2×1=30
     //   D 区 x>=7 且 y>=5   （3×5=15 像元）：两侧有效，diff=-2 ⇒ 挖方 15×2×1=30
     // A、B 分侧是**必需的**：双侧掩膜是两条独立守卫，只把 NoData 放一侧的用例杀不掉另一侧的变异。
-    // 未修时：A 区 diff=10-(-9999)=+10009 ⇒ fill=30+50×10009=500480；
-    //         B 区 diff=-9999-8=-10007 ⇒ cut=30+20×10007=200170。
+    // 未修时（两侧哨兵同为 -9999 的那次 RED 实测）：A 区 diff=10-(-9999)=+10009 ⇒ fill=30+50×10009=500480；
+    //   B 区 diff=-9999-8=-10007 ⇒ cut=30+20×10007=200170。改成 -7777 后 A 区的未修值只是
+    //   按同一公式换成 30+50×7787=389380，"红不红"与"哪条守卫被杀"都不依赖哨兵的具体数值。
     std::vector<float> design(static_cast<size_t>(w) * static_cast<size_t>(h), 10.0f);
     std::vector<float> existing(static_cast<size_t>(w) * static_cast<size_t>(h), 8.0f);
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             const size_t i = static_cast<size_t>(y * w + x);
             if (x < 5) {
-                existing[i] = kSentinel;
+                existing[i] = -7777.0f;      // A 区：参考侧哨兵
             } else if (x < 7) {
-                design[i] = kSentinel;
+                design[i] = -9999.0f;        // B 区：输入侧哨兵
             } else if (y >= 5) {
                 design[i] = 8.0f;
                 existing[i] = 10.0f;
@@ -9082,7 +9089,7 @@ TEST_F(PluginTest, CutFillExcludesNoDataOnBothSides) {
     const std::string designPath =
         gis::tests::writeFloatRaster(getTestDir(), "t19_cf_design.tif", w, h, design, options);
     const std::string existingPath =
-        gis::tests::writeFloatRaster(getTestDir(), "t19_cf_existing.tif", w, h, existing, options);
+        gis::tests::writeFloatRaster(getTestDir(), "t19_cf_existing.tif", w, h, existing, referenceOptions);
     ASSERT_FALSE(designPath.empty());
     ASSERT_FALSE(existingPath.empty());
     const std::string output = utf8PathString(getTestDir() / "t19_cf_output.tif");
@@ -9108,7 +9115,8 @@ TEST_F(PluginTest, CutFillExcludesNoDataOnBothSides) {
         << "无效像元计数 = A 区 50 + B 区 20";
 
     // 差值栅格：无效像元写 NoData（输入侧有定义时），有效像元保留真实差值。
-    EXPECT_NEAR(readRasterPixel(output, 0, 2), -9999.0f, 1e-4f) << "A 区应写哨兵而不是 10009";
+    EXPECT_NEAR(readRasterPixel(output, 0, 2), -9999.0f, 1e-4f)
+        << "A 区（参考侧 -7777 哨兵）要写的是**输入侧声明的** -9999，不是 7787 也不是 -7777";
     EXPECT_NEAR(readRasterPixel(output, 5, 5), -9999.0f, 1e-4f) << "B 区应写哨兵而不是 -10007";
     EXPECT_NEAR(readRasterPixel(output, 8, 2), 2.0f, 1e-4f);
     EXPECT_NEAR(readRasterPixel(output, 8, 7), -2.0f, 1e-4f);
