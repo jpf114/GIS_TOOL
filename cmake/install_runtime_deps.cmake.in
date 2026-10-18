@@ -33,6 +33,12 @@ set(_gis_runtime_libraries
 )
 
 set(_gis_can_scan_runtime_deps TRUE)
+# ⚠ WIN32 之外这段没有设计过，别把它读成"对任何平台都安全"：非 Windows 时下面的 if(WIN32) 整块跳过、
+#   _gis_can_scan_runtime_deps 保持 TRUE ⇒ 直接走扫描，而下面那份程序清单写死的是 `gis-cli.exe` /
+#   `gis-gui.exe` 与 vcpkg 的 Windows 目录 ⇒ 拿不到任何依赖：要么 CMake 自己在 file(GET_RUNTIME_DEPENDENCIES)
+#   处报错，要么命中下面"扫描到 0 个运行库依赖"那条 FATAL。两条都是 rc≠0，不静默。
+#   改前这里同样不工作，只是旧脚本会静默拷一份 release 名单（rc=0、装出 0 个能用 DLL）。
+#   本仓是 Windows-only（VS 生成器、.exe、NSIS）；真要出 Linux 包得重新设计这一段（挂账 S-5）。
 
 if(WIN32)
     # 扫描器的**绝对路径**由根 CMakeLists.txt 在配置期解析后烘在这里（N84 的修法本体）。
@@ -40,6 +46,7 @@ if(WIN32)
     #   在这里探测就等于把"包里装哪些 DLL"交给打包者那一刻的 PATH —— 同一份产物，
     #   换个 shell 装出来的内容不一样，这是不可复现的打包，必须禁止。
     # 找不到（或配置后 VS 被挪走/升级导致路径失效）⇒ 下面拒绝安装，绝不静默降级。
+    #   这两种现场由 `_gis_scanner_problem`（stale / none）区分，各自的文案见文件末尾。
     set(_gis_scanner_command "@GIS_RUNTIME_DEP_SCANNER@")
     set(_gis_scanner_tool "@GIS_RUNTIME_DEP_SCANNER_TOOL@")
 
@@ -49,6 +56,14 @@ if(WIN32)
         message(STATUS "Runtime dep scanner in use: ${_gis_scanner_command} (tool=${_gis_scanner_tool})")
     else()
         set(_gis_can_scan_runtime_deps FALSE)
+        # 两种现场得分开报，否则读日志的人会误判成"这台机器没装 VS"：
+        #   stale = 配置期解析到了，之后那个文件被改名/挪走/随 VS 升级消失（路径过期）
+        #   none  = 配置期压根没解析到（_gis_scanner_command 烘进来的是空串）
+        if(_gis_scanner_command)
+            set(_gis_scanner_problem "stale")
+        else()
+            set(_gis_scanner_problem "none")
+        endif()
     endif()
 endif()
 
@@ -105,23 +120,42 @@ endif()
 if(NOT _gis_can_scan_runtime_deps)
     # ── 这里原先是"没有扫描器就照 36 项写死清单拷 release DLL"的兜底，已整段废除（N84）─────
     # WHY 必须废除，而不是"把名字改成带 d 的"或"按 CMAKE_INSTALL_CONFIG_NAME 选目录"：
-    #   那 36 项是**手抄的一份 release 目录名字**，而实测依赖闭包是 78 项 ⇒ 稳定缺 35 个真实导入依赖，
-    #   其中 Lerc / zstd / archive / libxml2 / libcurl 就在 gdal.dll 自己的导入表里，
-    #   于是 gdal.dll 根本加载不了：包内 bin/*.dll = 36，`gis-cli.exe --list` 实测
-    #   rc=-1073741515（0xC0000135 STATUS_DLL_NOT_FOUND），而 `cmake --install` 自己 rc=0 报成功。
+    #   那 36 项是**手抄的一份 release 目录名字**，不是导入表。它漏了多少，两个口径分开算，
+    #   两个数推不出彼此（21-E 修复轮 1 的更正；旧文本把它写成"78 − 36 ⇒ 缺 35"是假因果）：
+    #     口径 A「缺 35」= 直接导入里没进包的：对旧 36 项逐个 `dumpbin //dependents` 取直接导入得 100 个
+    #       DLL 名，∩ vcpkg x64-windows/bin 的 147 个 ⇒ 58，再减去本来就在清单里的 23 ⇒ **58 − 23 = 35**。
+    #       其中 Lerc / zstd / archive / libxml2 / libcurl 就在 gdal.dll 自己的导入表里 ⇒ gdal.dll 加载不了：
+    #       包内 bin/*.dll = 36，`gis-cli.exe --list` 实测 rc=-1073741515（0xC0000135 STATUS_DLL_NOT_FOUND），
+    #       而 `cmake --install` 自己 rc=0 报成功。
+    #     口径 B「漏 47 / 多塞 5」= 与扫描分支实测闭包（78 项）比：78 ∩ 36 = 31
+    #       ⇒ 78 − 31 = **47 个被真实导入的没进清单**，36 − 31 = **5 个清单里有但没人导入**
+    #       （Qt6Xml / md4c-html / pcre2-32 / pcre2-posix / turbojpeg）。
+    #   ⇒ 78 − 36 = 42 不是任何口径的结果，别引用它。
     #   ⇒ 这条分支在任何配置下都只能产出**起不来**的包：它不是"降级可用"，是"静默坏包"。
-    #   改名单救不了它 —— 换成 gdald.dll 之类的 debug 名仍然缺那 35 个，只是坏得换个姿势。
+    #   改名单救不了它 —— 换成 gdald.dll 之类的 debug 名仍然缺同样那批直接导入，只是坏得换个姿势。
     #   而且 installer.nsi 无脑打包 install/ 目录，坏包会一路绿着发到用户手里。
     # 现在的口径：宁可装不出来（rc≠0，看得见），也不要装出一个"看起来装好了"的坏包。
-    message(FATAL_ERROR
-        "安装中止：本次配置没能确定运行库依赖扫描器，而没有扫描器就无法知道该装哪些 DLL。\n"
-        "（旧版本在这里会拷贝一份写死 36 项的清单，实测缺 35 个真实导入依赖，"
-        "装出来的包 `gis-cli.exe --list` 直接 STATUS_DLL_NOT_FOUND，见本文件上方注释。）\n"
-        "补救（之后重装即可；本脚本由 configure_file 生成，重新 configure 就换掉它，无需重新编译）：\n"
-        "  1) 在\"Developer Command Prompt for VS 2022\"（或任何已导出 VCToolsInstallDir 的 VS 开发者环境）里"
-        "重跑一次 configure，确认配置日志出现 `Runtime dep scanner: <绝对路径>`；或\n"
-        "  2) 确认本机装有 VS 2022 的 C++ 工具链 —— 根 CMakeLists.txt 会用 vswhere.exe 找到 dumpbin，"
-        "与当前 shell 的 PATH 无关。")
+    if(_gis_scanner_problem STREQUAL "stale")
+        message(FATAL_ERROR
+            "安装中止：配置期确定的运行库依赖扫描器现在已经不存在：'${_gis_scanner_command}'。\n"
+            "注意这**不是**\"本机没装 VS\"：configure 当时确实解析到了它，是之后那个文件被改名 / 整个 VS 被挪走 / "
+            "升级到新版本导致旧版本号目录没了 —— 烘进本脚本的绝对路径过期了。\n"
+            "处置：对这个构树重跑一次 configure（本脚本由 configure_file 生成，重配就把新绝对路径换进去，"
+            "无需重新编译），确认配置日志里出现 `Runtime dep scanner: <绝对路径>`，然后重装。\n"
+            "（旧版本在这里会拷贝一份写死 36 项的清单，按直接导入口径实测漏 35 个，"
+            "装出来的包 `gis-cli.exe --list` 直接 STATUS_DLL_NOT_FOUND，见上方注释的算式。）")
+    else()
+        message(FATAL_ERROR
+            "安装中止：本次配置没能确定运行库依赖扫描器，而没有扫描器就无法知道该装哪些 DLL。\n"
+            "（旧版本在这里会拷贝一份写死 36 项的清单：按直接导入口径算漏 35 个（58 − 23），"
+            "按 78 项闭包算漏 47 个、还多塞 5 个没人导入的；装出来的包 `gis-cli.exe --list` 直接"
+            " STATUS_DLL_NOT_FOUND，算式见本文件上方注释。）\n"
+            "补救（之后重装即可；本脚本由 configure_file 生成，重新 configure 就换掉它，无需重新编译）：\n"
+            "  1) 在\"Developer Command Prompt for VS 2022\"（或任何已导出 VCToolsInstallDir 的 VS 开发者环境）里"
+            "重跑一次 configure，确认配置日志出现 `Runtime dep scanner: <绝对路径>`；或\n"
+            "  2) 确认本机装有 VS 2022 的 C++ 工具链 —— 根 CMakeLists.txt 会用 vswhere.exe 找到 dumpbin，"
+            "与当前 shell 的 PATH 无关。")
+    endif()
 endif()
 
 foreach(_gis_dep IN LISTS _gis_filtered_resolved_deps)

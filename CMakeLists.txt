@@ -92,14 +92,30 @@ set(GIS_VCPKG_QT_PLATFORMS_DIR "$<$<CONFIG:Debug>:${GIS_VCPKG_DEBUG_QT_PLATFORMS
 # ── 运行库扫描器：配置期解析成绝对路径，再由 configure_file 烘进安装脚本 ──────────────
 # WHY（N84）：这段探测原先写在 install_runtime_deps.cmake.in 里，靠 `find_program(dumpbin)`
 #   在 `cmake --install` 当场找 ⇒ "包里装的是哪些 DLL"取决于**打包者那一刻的 PATH**，
-#   而不是取决于仓库配置。本机（Git Bash / 普通 pwsh）PATH 里没有 MSVC 工具链 ⇒ 找不到 ⇒
-#   旧脚本静默回落到写死 release 的 36 项清单 ⇒ 包内缺 35 个真实导入依赖
-#   （Lerc / zstd / archive / libxml2 / libcurl 都在 gdal.dll 自己的导入表里），
-#   `gis-cli.exe --list` 实测 rc=-1073741515（STATUS_DLL_NOT_FOUND），而 `cmake --install` 仍 rc=0。
+#   而不是取决于仓库配置。本机（Git Bash 与普通 powershell.exe 5.1；pwsh 7 本机未装）PATH 里没有 MSVC
+#   工具链 ⇒ 找不到 ⇒
+#   旧脚本静默回落到写死 release 的 36 项清单 ⇒ `cmake --install` 自己仍 rc=0，
+#   而 `gis-cli.exe --list` 实测 rc=-1073741515（STATUS_DLL_NOT_FOUND）。
+#   那份旧清单到底漏了多少 —— 两个口径各自的集合与算式都写出来，它们互相推不出来：
+#     口径 A「缺 35」：对旧 36 项逐个 `dumpbin //dependents` 取**直接**导入得 100 个 DLL 名，
+#       ∩ vcpkg x64-windows/bin 的 147 个 ⇒ 58；58 − 其中已在清单内的 23 ⇒ **漏 35 个**
+#       （Lerc / zstd / archive / libxml2 / libcurl 就在 gdal.dll 自己的导入表里，gdal.dll 因此加载不了）。
+#     口径 B「漏 47 / 多塞 5」：与扫描分支实测闭包比 —— 闭包 78 ∩ 清单 36 = 31，
+#       故 78 − 31 = **47 个被真实导入的 DLL 清单里没有**，36 − 31 = **5 个清单里有但没人导入**
+#       （Qt6Xml / md4c-html / pcre2-32 / pcre2-posix / turbojpeg）。
+#   注意 78 − 36 = 42 不是任何口径的结果（两个集合的差集不等于"缺"），别拿它当"缺几个"引用。
 #   同一个包换个环境装出来就能跑，这种不可复现的打包必须消灭：解析挪到配置期，
 #   绝对路径烘进脚本，配置日志里一眼可见（红了能直接定位是"没找到扫描器"而不是"包坏了"）。
 set(GIS_RUNTIME_DEP_SCANNER "")
 set(GIS_RUNTIME_DEP_SCANNER_TOOL "")
+# 这两个是**普通变量**（不是 cache 变量），上面的无条件 `set(... "")` 意味着
+#   `-DGIS_RUNTIME_DEP_SCANNER=<路径>` 会被静默忽略、且不报错 —— 这是故意的：
+#   缓存一个绝对路径会在 VS 升级/换盘后变成陈旧值，让"重新 configure 一次就好了"失效。
+#   扫描器只由下面的配置期解析决定；确实要手工指定，只能改构树里的生成物
+#   `${CMAKE_BINARY_DIR}/install_runtime_deps.cmake`（改完它就在树里，重配会覆盖）。
+# 下面的 `file(GLOB)` 不需要 CONFIGURE_DEPENDS：它跑在**配置期**，每次 `cmake --preset` 都重算
+#   （CI 还额外带 `--fresh`）；新装一个工具集却不重配的话，这份生成脚本本身也是旧的，
+#   所以"看不见新工具集"并不引入额外失效面。真出现路径过期 ⇒ 安装期红（见 install_runtime_deps.cmake.in）。
 
 if(WIN32)
     # 手段一：VS 开发者命令提示符 / VS 内构建会导出 VCToolsInstallDir，直接拼绝对路径。
@@ -113,8 +129,13 @@ if(WIN32)
         endif()
     endif()
 
-    # 手段二：vswhere.exe。它的安装路径是 VS Installer 的固定契约，不需要任何 VS 环境，
-    #   因此 Git Bash、普通 pwsh、GitHub windows runner 三种现场都能命中（本机已实测存在）。
+    # 手段二：vswhere.exe。它的安装路径是 VS Installer 的固定契约，不需要任何 VS 开发者环境。
+    #   本机实测（Git Bash、PATH 里没有 MSVC 工具链）：`$ENV{VCToolsInstallDir}` 为空 ⇒ 手段一不命中；
+    #   vswhere 在场（469456 字节）且 `-latest -products * -requires …VC.Tools.x86.x64 -property installationPath`
+    #   rc=0 返回一个 VS 安装根 ⇒ **现在烘进生成脚本的那个绝对路径就是这一支给的**。
+    #   本机另测 powershell.exe 5.1 同形（`$env:VCToolsInstallDir` 空、vswhere 在场）。
+    #   GitHub windows runner 侧**本机不可核**：CI 用的是 `shell: pwsh`（PS 7），本机没装 pwsh 7，
+    #   且 gh 未登录 ⇒ runner 上 vswhere 的在场性与返回内容一律记"待远端验证"，不写成已证。
     if(GIS_RUNTIME_DEP_SCANNER STREQUAL "")
         set(_gis_vswhere "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe")
         if(EXISTS "${_gis_vswhere}")
@@ -142,21 +163,11 @@ if(WIN32)
         endif()
     endif()
 
-    # 手段三：vswhere 也不在的极端环境（裁剪过的 runner / 非默认安装），按常见根目录兜一次 glob。
-    #   仍然只写盘上绝对路径，绝不依赖 PATH。
-    if(GIS_RUNTIME_DEP_SCANNER STREQUAL "")
-        file(GLOB _gis_dumpbin_found
-            "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"
-            "C:/Program Files (x86)/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"
-            "D:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"
-            "D:/Program Files (x86)/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe")
-        if(_gis_dumpbin_found)
-            list(SORT _gis_dumpbin_found)
-            list(GET _gis_dumpbin_found -1 _gis_dumpbin_latest)
-            set(GIS_RUNTIME_DEP_SCANNER "${_gis_dumpbin_latest}")
-            set(GIS_RUNTIME_DEP_SCANNER_TOOL "dumpbin")
-        endif()
-    endif()
+    # （这里原先是"手段三"：对 C:/D: 盘的常见 VS2022 根目录直接 glob，21-E 修复轮 1 删除。
+    #   删的理由：① 它把某台打包机的盘符烤进人人共享的构建脚本；② 它是上面手段二那段
+    #   glob + list(SORT) + 取最大 的重复实现；③ 本机实测它是死代码（手段二先命中）。
+    #   vswhere 真不在的机器：在 VS 开发者环境里 configure 一次让手段一命中；再不行就吃安装期
+    #   FATAL（见 install_runtime_deps.cmake.in）—— 响的失败，不是静默坏包。不再补第三种取径。）
 
     # 次选：objdump 一族（llvm-objdump 优先，它是 LLVM 官方构建、对 PE 的解析比 MSYS 版可靠）。
     #   这里用 find_program 是**配置期**的，结果同样烘成绝对路径 ⇒ 安装期不再看 PATH。
