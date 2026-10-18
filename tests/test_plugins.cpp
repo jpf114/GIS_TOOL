@@ -6818,6 +6818,158 @@ TEST_F(PluginTest, VectorDuplicatePointCheckExecution) {
     EXPECT_EQ(fields[3], "0");
 }
 
+// --- Task 20：duplicate_point_check 的 MultiPoint / 非点几何处置 ---
+//
+// 修复前 vector_plugin_duplicate_point_check.inc:49 对每个要素无条件写
+//     normalized ? normalized->toPoint() : nullptr
+// 而 OGRGeometry::toPoint() 的原文是（ogr_geometry.h:649-655）
+//     /** Down-cast to OGRPoint*.  Implies prior checking that
+//      *  wkbFlatten(getGeometryType()) == wkbPoint. */
+//     inline OGRPoint *toPoint() { return cpl::down_cast<OGRPoint *>(this); }
+// ⇒ 它既不校验类型、也**永不返回 nullptr**，:50 的 if (point && ...) 因此挡不住任何东西。
+// 图层类型闸（:25）对 wkbPoint 与 wkbMultiPoint 都放行，所以 MultiPoint 图层会一路走到这次降型。
+// 下面三条用例把"按类型分派后必须得到什么"钉死；坐标断言用整行相等，
+// 以免修复前那种"把 OGRMultiPoint 当 OGRPoint 读出来的垃圾坐标"被宽松断言放过。
+
+TEST_F(PluginTest, DuplicatePointCheckHandlesMultiPointLayer) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "t20_multipoint_dupes_input.geojson");
+    const std::string output = utf8PathString(getTestDir() / "t20_multipoint_dupes_output.csv");
+    {
+        std::ofstream ofs(input);
+        ASSERT_TRUE(ofs.is_open());
+        ofs << R"({"type":"FeatureCollection","features":[)"
+            << R"({"type":"Feature","properties":{"id":1},"geometry":{"type":"MultiPoint","coordinates":[[0,0],[1,1],[0,0]]}},)"
+            << R"({"type":"Feature","properties":{"id":2},"geometry":{"type":"MultiPoint","coordinates":[[5,5]]}},)"
+            << R"({"type":"Feature","properties":{"id":3},"geometry":{"type":"MultiPoint","coordinates":[[1,1],[9,9]]}})"
+            << "]}";
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("duplicate_point_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(ifs, line);) {
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 3u) << "表头 + 两条重复记录，实际内容：" << [&] {
+        std::string all;
+        for (const auto& l : lines) { all += "[" + l + "]"; }
+        return all;
+    }();
+    EXPECT_EQ(lines[0], "source_fid,duplicate_fid,x,y");
+    // GeoJSON 驱动的 FID 从 1 起（修复前的实测行 "1,3,1,1" 里出现了 fid 3，而图层只有三个要素）。
+    // 同一 MultiPoint 内部重复（R-T20-2 要求覆盖的那一档）：source 与 duplicate 同为 fid 1。
+    EXPECT_EQ(lines[1], "1,1,0,0");
+    // 跨要素重复：(1,1) 先到先得记在 fid 1，fid 3 的 (1,1) 被判为重复。
+    EXPECT_EQ(lines[2], "1,3,1,1");
+
+    EXPECT_EQ(result.metadata.at("issue_count"), "2") << "每对重复计一次，两档各一次";
+    EXPECT_EQ(result.metadata.at("scanned_count"), "3") << "scanned_count 仍是要素数，不是点数";
+    EXPECT_EQ(result.metadata.count("skipped_geometry_count"), 1u)
+        << "非点几何要有显式跳过计数键（纯 MultiPoint 图层应为 0）";
+    if (result.metadata.count("skipped_geometry_count")) {
+        EXPECT_EQ(result.metadata.at("skipped_geometry_count"), "0");
+    }
+}
+
+TEST_F(PluginTest, DuplicatePointCheckSkipsNonPointFeatureGeometry) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    // 图层声明为混合类型时 effectiveLayerGeometryType 取首个非空要素的类型（common.inc:425-446），
+    // 这里首要素是 Point ⇒ 类型闸放行，后续 LineString 要素必须走"显式跳过并计数"分支。
+    const std::string input = utf8PathString(getTestDir() / "t20_mixed_geom_dupes_input.geojson");
+    const std::string output = utf8PathString(getTestDir() / "t20_mixed_geom_dupes_output.csv");
+    {
+        std::ofstream ofs(input);
+        ASSERT_TRUE(ofs.is_open());
+        ofs << R"({"type":"FeatureCollection","features":[)"
+            << R"({"type":"Feature","properties":{"id":1},"geometry":{"type":"Point","coordinates":[1,1]}},)"
+            << R"({"type":"Feature","properties":{"id":2},"geometry":{"type":"LineString","coordinates":[[1,1],[2,2],[3,3]]}},)"
+            << R"({"type":"Feature","properties":{"id":3},"geometry":{"type":"Point","coordinates":[1,1]}})"
+            << "]}";
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("duplicate_point_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(ifs, line);) {
+        lines.push_back(line);
+    }
+    // LineString 的三个顶点（含 (1,1)）都不得参与重复点判定，否则这里会多出一行。
+    ASSERT_EQ(lines.size(), 2u) << "只应有 Point 要素之间的一对重复，实际内容：" << [&] {
+        std::string all;
+        for (const auto& l : lines) { all += "[" + l + "]"; }
+        return all;
+    }();
+    EXPECT_EQ(lines[0], "source_fid,duplicate_fid,x,y");
+    // 三个要素的 fid 依次为 1/2/3（GeoJSON 驱动 FID 从 1 起）：
+    // 重复对只能落在两个 Point 要素（fid 1 与 fid 3）之间，LineString 要素（fid 2）不得成为任一侧。
+    EXPECT_EQ(lines[1], "1,3,1,1");
+
+    EXPECT_EQ(result.metadata.at("issue_count"), "1");
+    EXPECT_EQ(result.metadata.at("scanned_count"), "3") << "跳过的要素仍计入扫描数，否则进度/审计口径会变小";
+    EXPECT_EQ(result.metadata.count("skipped_geometry_count"), 1u)
+        << "非点几何不得静默 else 跳过，必须计数上报";
+    if (result.metadata.count("skipped_geometry_count")) {
+        EXPECT_EQ(result.metadata.at("skipped_geometry_count"), "1");
+    }
+}
+
+TEST_F(PluginTest, DuplicatePointCheckMultiPointKeepsZOutOfDedupKey) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    // 既有去重键 pointKey（common.inc:626-631）是 setprecision(10) 的 "x,y" ⇒ 纯 2D、Z 被忽略。
+    // 这是既有语义，本用例只负责把它钉住，防止后来人"顺手把 Z 也纳入键"而悄悄改掉判定口径。
+    const std::string input = utf8PathString(getTestDir() / "t20_multipoint_z_input.geojson");
+    const std::string output = utf8PathString(getTestDir() / "t20_multipoint_z_output.csv");
+    {
+        std::ofstream ofs(input);
+        ASSERT_TRUE(ofs.is_open());
+        ofs << R"({"type":"FeatureCollection","features":[)"
+            << R"({"type":"Feature","properties":{"id":1},"geometry":{"type":"MultiPoint","coordinates":[[0,0,3],[0,0,7]]}})"
+            << "]}";
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("duplicate_point_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    std::ifstream ifs(fs::u8path(output));
+    ASSERT_TRUE(ifs.is_open());
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(ifs, line);) {
+        lines.push_back(line);
+    }
+    ASSERT_EQ(lines.size(), 2u) << "同 xy 不同 z 仍判为重复（键不含 z）";
+    EXPECT_EQ(lines[1], "1,1,0,0") << "单个 MultiPoint 要素（fid 1）内部两点同 xy 不同 z";
+    EXPECT_EQ(result.metadata.at("issue_count"), "1");
+    EXPECT_EQ(result.metadata.at("scanned_count"), "1") << "scanned_count 是要素数：一个要素内的一对重复";
+}
+
 TEST_F(PluginTest, VectorHoleCheckExecution) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
