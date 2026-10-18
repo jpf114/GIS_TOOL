@@ -154,12 +154,12 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
         // N37（R-T17-12）：原此处的 num_threads 声明后全文件零读取点，已在提交 236327d 删除。
         // 与已删的 georef x_res/y_res 同族"填了会被静默忽略"的形态。三判据（grep 全树只剩注释、
         // 不属任何 visibleKeys、删除后 #334 与 action_gold_cases 登记不变红）的实测出处：
-        // 提交 236327d 本身 + 本机日志 build/t17_logs/n37_debug_full.log 的尾行
-        // "100% tests passed, 0 tests failed out of 607"（该全量跑在删除提交之后）。
-        // WHY 不再写"实测判据见 task-17-report.md"：那份报告当时并不存在（实施代理交付 8 个提交后
-        // 被账号配额截断，报告从未写出），指向不存在文件的证据指针等于让这条注释无法核验。
-        // 注：build/ 是本机忽略目录（.gitignore:2），日志路径的不可交付性留给批次收尾（Task 21）
-        // 统一清理，本轮只把"指错"改成"指对"，不顺手扩大改动面。
+        // 提交 236327d 本身 + 删除提交之后那次 Debug 全量的尾行 "100% tests passed, 0 tests failed
+        // out of 607"（当时基线 607；批次 A 收尾时两棵树基线为 Debug 632 / Release 630）。
+        // WHY 这里不留日志路径、也不指任何任务报告文件：build/ 与 .superpowers/sdd/ 都在忽略规则里
+        // （.gitignore:2 的 build/、.superpowers/sdd/.gitignore:1 的 *），而那份报告当时根本没写出来
+        // （实施代理交付 8 个提交后被账号配额截断）——读者永远拿不到的证据指针等于没有证据，
+        // 所以判据与实测数字一律写进注释本身。
     };
 }
 
@@ -718,8 +718,9 @@ static uchar stretchByte(double v, const BandStretch& s) {
 //   层级只剩索引网格、**不再是可统计的数据对象**；要按层级统计就得按该层分辨率把整幅
 //   包络重读一遍，代价与语义都不划算。整幅一次是原设计的**超集**（连层级之间都一致），
 //   实现的正是承诺的那件事：同一地物跨瓦片/跨层级亮度一致。
-//   判别用例 #312 TileStretchIsWholeSceneWideNotPerTile；变异取证"换回逐瓦片统计"
-//   见 task-18-report.md 的 S6 台账。这条偏离已登记进 Task 21 的口径同步清单。
+//   判别用例 #312 TileStretchIsWholeSceneWideNotPerTile；变异取证（S6 台账 R3a：把整幅 stretch 换成
+//   "helper 内先算 tileStretches 再取代 in.stretches"的提变量形态）实测 **killed**，红点正是 #312 的
+//   东列三条断言（同轮另一条 R3b 另杀 #298/#310/#315，不是这条变异的功劳）。这条偏离已登记进 Task 21 的口径同步清单。
 // WHY 用 ComputeStatistics 的**精算**（形参是 GDAL 的 bApproxOK，传 false ⇒ 不许近似；
 //   复审 M-6 指出这里的旧注释把名称与数值都写错过一次）而不是把整幅读进 cv::Mat 再
 //   cv::minMaxIdx：前者按块流式扫描，warped 临时栅格多大都不额外占内存；后者按幅吃内存。
@@ -746,7 +747,9 @@ static uchar stretchByte(double v, const BandStretch& s) {
 //   全幅 alpha 皆为 0 ⇒ 一条有效像元都没见到 ⇒ 留 (0,0)，即"该波段无有效数据"的既有口径；
 //     绝不产出 min>max 的脏区间（常数波段同样留 (0,0)，见下面的 maxAcc > minAcc 判据）。
 //   判别用例 #319 TileColorBandsDoNotDependOnAddAlpha（"同一含 NoData 的单波段源，
-//     add_alpha 两档的颜色波段逐像元相同"）；变异台账见 task-18-report.md 的 F-1 节。
+//     add_alpha 两档的颜色波段逐像元相同"）；把这条掩膜过滤退回"不过滤"的变异（字面 `<= 0.0f`⇒`<= -1.0f`
+//     与同判据提变量两种形态）实测**都只红 #319 一条**：不透明像元 min 由 0 变 63（=255·50/200，
+//     下界被 0 顶掉的算术预言值）、两档不等像元数由 0 变 5565（53 列 × 105 行）。
 // 统计失败或退化（空数据集 / 全 NoData）时退回 (0,0)：配合 range=1.0 兜底与瓦片级
 //   "无有效像元 ⇒ 不交付"守卫，这种数据集一张瓦片都不会写出去，不会产生脏值。
 static std::vector<BandStretch> computeSceneBandStretch(GDALDataset* warpedDS, int bandCount,
@@ -862,10 +865,9 @@ static bool renderTileRgba(const TileRenderInput& in, cv::Mat& rgba) {
     // 长度不一致时这里只保证不崩、**不保证结果正确** ⇒ 不拿它当判别目标。
     // WHY 改前那句"越界即缩到 1 / 不可能越界"是**谎话**（复审 §I-2）：三重 std::min 之后紧跟的
     //   `bands = std::max(1, bands)` 会把 bands **抬回零长数组之上**（size()==0 时 bands 仍是 1），
-    //   于是下面 :872 的 `in.stretches[b-1]` 直接越界读。复审实测（build/t18rev_5_mutaB_tile.log）：
+    //   于是下面按 `in.stretches[b-1]` 取区间的那行直接越界读。复审实测：
     //   统计循环写成 `b <= bandCount - 1` ⇒ stretches 变空 ⇒ 9 条单波段用例 Exit code 0xc0000409。
-    // WHY 不是控制器给的 `std::min(bands, std::max<size_t>(1, size()))` 形态（取证见 task-18-report.md
-    //   的 F-2 前后对照）：`max<size_t>(1, 0)==1` ⇒ 空数组仍被钳到 1 ⇒ `[0]` 照旧越界 ⇒ 照旧崩；
+    // WHY 不是控制器给的 `std::min(bands, std::max<size_t>(1, size()))` 形态（同一条 F-2 的盘上对照）：`max<size_t>(1, 0)==1` ⇒ 空数组仍被钳到 1 ⇒ `[0]` 照旧越界 ⇒ 照旧崩；
     //   钳到原始长度 + 显式 `bands < 1 ⇒ return false` 才真的防得住（崩溃变成"该瓦片不交付"）。
     int bands = std::min(std::max(1, in.colorBands), 4);
     bands = std::min(bands, static_cast<int>(in.stretches.size()));
@@ -1195,7 +1197,7 @@ gis::framework::Result CuttingPlugin::doTile(
     // 每瓦片在它上面按世界矩形反算像元窗口。z<maxZoom 那套"每层级物化全球网格"
     // （原 :860-884 的 -outsize tileSize*2^z translate）已被 Tier-0 实测否决：
     // z=6 单层级 5.72s、z=7 21.26s，层级×4 外推 z=10 ≈ 21min 且临时文件按 10MB/s
-    // 增长（N64/F3，报告 build/tmp/t17_probe/）。
+    // 增长（N64/F3 的 Tier-0 探针实测；探针产物落在 build/ 下不入库，故这里只留数字本身）。
     // warped 由 unique_ptr+WarpedRasterCloser 持有：fail 提前返回与取消展开都会
     // 关闭并删除临时文件（R-T17-4），文件名带 pid 避免跨进程互踩。
     const std::string warpedPath = (std::filesystem::temp_directory_path() /
@@ -1411,7 +1413,7 @@ gis::framework::Result CuttingPlugin::doTile(
         progress.onMessage("Zoom " + std::to_string(z) + ": " + std::to_string(tilesInLevel) + " tiles");
 
         // R-T17-7：删除"每层级物化全球网格"的 -outsize translate（原 :860-884）与
-        // 死变量 levelRes/globalSize（:854-855）。F3/N64 实测（build/tmp/t17_probe/）：
+        // 死变量 levelRes/globalSize（:854-855）。F3/N64 的 Tier-0 探针实测（数字抄在这里）：
         // 该物化 z=6 就要 5.72s、z=7 21.26s、×4 外推 z=10 ≈ 21min，真实层级不可用。
         // 层级 translate 是 ovResampling 唯一旧用途（:869），处置见上面 R-T17-11①。
 

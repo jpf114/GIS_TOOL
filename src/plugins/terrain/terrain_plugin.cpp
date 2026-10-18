@@ -1017,7 +1017,7 @@ gis::framework::Result runViewshedProcess(
 // 把累积出来的 0/255 视域掩膜写成**单波段 GDT_Byte** GeoTIFF。
 // WHY 不走 gis::core::matToGdalTiff / matsToGdalTiff（简报 Step 3 点名的那两个函数）：
 // 两者都把输出栅格的类型**硬编码成 GDT_Float32**（src/core/src/opencv_wrapper.cpp:43 与 :90），
-// matsToGdalTiff 还在写出前把每个 Mat convertTo(CV_32F)（:106-113）⇒ 传 CV_8U 进去得到的仍是
+// matsToGdalTiff 还在写出前把每个 Mat convertTo(CV_32F)（同文件 :106-111）⇒ 传 CV_8U 进去得到的仍是
 // 一个声明为 Float32 的掩膜，R-T12-3 要的"两个视域动作输出类型都是 Byte"用那条路修不出来。
 // 改这两个共享函数会连带 classification/georef/matching/processing/raster_manage 等 10+ 处
 // 调用点的产品类型一起变，远超本任务范围，所以在这里本地写出。
@@ -1190,9 +1190,11 @@ gis::framework::Result runCutFillProcess(
     double inputGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     double referenceGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     // WHY 分开取、分开判，而不是原来的 `if (输入取成功 && 参考取成功) { 一致性校验 }`：
-    // 那个写法让"任一边取不到地理参考"整块短路跳过——既不报错也不校验，于是 :1199 的
-    // pixelArea 改用 GDAL 在失败时**同样会写进数组**的默认单位变换（实测 |1×(-1)|=1.0，
-    // 不是恒 0），体积按凭空单位出数还回 success（取证见 task-19-report.md 的 S2）。
+    // 那个写法让"任一边取不到地理参考"整块短路跳过——既不报错也不校验，于是下面
+    // `const double pixelArea = std::abs(inputGt[1]*inputGt[5] - inputGt[2]*inputGt[4])` 那行
+    // 改用 GDAL 在失败时**同样会写进数组**的默认单位变换（实测 |1×(-1)|=1.0，
+    // 不是恒 0），体积按凭空单位出数还回 success：改前 #263 形状 a 实测 `success=true`、
+    // `fill_volume=200.000000`、产物 `t19_cf_nogt_output_a.tif` 照样存在（夹具 pixelSize=1.0 ⇒ gt={116,1,0,40,0,-1}）。
     // 像元面积在缺地理参考时无从得知，只能显式失败；两条守卫分别报输入侧/参考侧，
     // 顺序固定为先输入后参考，用例 #263 的两种形状据此钉住归属。
     if (inputDs->GetGeoTransform(inputGt) != CE_None) {
@@ -1220,8 +1222,8 @@ gis::framework::Result runCutFillProcess(
     // 只查参考侧则输入侧漏进来，用例 #261 把 NoData 分侧放（A 区仅参考侧、B 区仅输入侧）各杀一条。
     // WHY 判据用 GetNoDataValue 的 found 出参而不是值本身：没声明 NoData 的栅格返回 0.0，
     // 拿它当哨兵比较会把"真的等于 0 的高程"误判成无效。
-    // 比较对象先转 float：gdalBandToMat 恒为 CV_32F（src/core/src/opencv_wrapper.cpp:26-29），
-    // 声明值 double -9999.0 转 float 后与栅格里读回的位型一致，逐位比较可靠。
+    // 比较对象先转 float：gdalBandToMat 恒为 CV_32F（src/core/src/opencv_wrapper.cpp:25-27 声明的就是
+    // `cv::Mat mat(height, width, CV_32F)` 并按 GDT_Float32 读回），声明值 double -9999.0 转 float 后与读回的位型一致，逐位比较可靠。
     int inputHasNoData = 0;
     const double inputNoData = inputDs->GetRasterBand(band)->GetNoDataValue(&inputHasNoData);
     int referenceHasNoData = 0;
@@ -1237,7 +1239,7 @@ gis::framework::Result runCutFillProcess(
         cv::bitwise_and(valid, referenceValid, valid);
     }
     // 无效像元的输出值：输入侧声明了 NoData 就沿用它（matToGdalTiff 会把输入侧的声明抄到输出波段，
-    // src/core/src/opencv_wrapper.cpp:49-56，于是这一格在 GIS 软件里真的是"无数据"而不是一个数）；
+    // src/core/src/opencv_wrapper.cpp:51-57，于是这一格在 GIS 软件里真的是"无数据"而不是一个数）；
     // 输入侧没声明时退回 0 并靠 invalid_pixels 计数把损失显式化。
     const float invalidOutputValue = inputHasNoData ? static_cast<float>(inputNoData) : 0.0f;
 
@@ -1315,7 +1317,7 @@ gis::framework::Result runReservoirVolumeProcess(
 
     // WHY 地理参考在这里就判掉、放在读波段之前：改前这一行是 `srcDs->GetGeoTransform(gt);`，
     // 返回值**整个丢弃**，缺参考的 DEM 于是按 GDAL 失败时填进数组的默认单位变换算出
-    // pixelArea=1.0 的面积/体积并报 success（实测静默值 300.000000，见 task-19-report.md S2）。
+    // pixelArea=1.0 的面积/体积并报 success（改前 #264 实测静默值 `reservoir_volume=300.000000` 且产物存在）。
     // 与 cut_fill 侧同口径：拿不到像元面积就显式失败，且失败路径不留产物。
     double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     if (srcDs->GetGeoTransform(gt) != CE_None) {

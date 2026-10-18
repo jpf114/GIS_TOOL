@@ -568,7 +568,7 @@ TEST(WorkflowParamTyping, PluginExceptionIsReportedNotPropagated) {
     // GisError 派生自 std::runtime_error，error.h:7-12）。
     // 兜底缺失时这条用例会红成"异常穿出测试体"：实测 gtest 报
     // `unknown file: error: SEH exception with code 0xc0000005 thrown in auxiliary test code`
-    // （见 build/task14_tier2_red_M0_debug.log 的 #69 同形态），而不是干净的用例失败。
+    // （改前变异轮的 ctest 红态实测里 #69 就是这一形态），而不是干净的用例失败。
     gis::core::initGDAL();
     gis::framework::PluginManager mgr;
     mgr.loadFromDirectory(gis::tests::testPluginDir().string());

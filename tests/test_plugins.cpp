@@ -1314,8 +1314,8 @@ TEST_F(PluginTest, ProcessingEdgeExecution) {
 // （日志原文：`unknown file: error: C++ exception with description "OpenCV(4.14.0) ...deriv.cpp:66 ...`
 //   `... thrown in the test body.`）。
 // 但它**不终止整个测试可执行文件、也不截断整跑**：本工程 gtest_discover_tests 按 PRE_TEST 注册，
-// 每条用例各自一个进程（日志原文 `Note: Google Test filter = <单条用例名>`），所以红日志
-// build/t15_tier1_red_ctest.log 三条用例全部跑到并有汇总行 `33% tests passed, 2 tests failed out of 3`。
+// 每条用例各自一个进程（注册后的日志每条都以 `Note: Google Test filter = <单条用例名>` 开头），所以改前那次
+// 聚焦跑三条用例全部跑到、汇总行为 `33% tests passed, 2 tests failed out of 3`（红的两条是双向/无向那两条）。
 // 修完后它们必须是正常 Result::fail / Result::ok。
 TEST_F(PluginTest, ProcessingScharrRejectsBothDirectionsRequested) {
     auto* p = mgr_.find("processing");
@@ -1870,8 +1870,8 @@ TEST_F(PluginTest, PansharpenExtentMismatchWarnsWithoutFailing) {
 
 // -------------------------------------------- Task 13 fix round 1 / F-1（Important，审查 I-1）
 // `pansharpenExtentMismatchRatio` 在**拿不到地理变换**时返回 -1（processing_plugin.cpp:715），
-// 调用方据此既不写 metadata 键也不追加提示。这条降级分支此前只被手动跑过两次命令行检查
-// （build/t13_tier1_cli_probe_nogt.log / _mixedgt.log），ctest 里一条都没有 ⇒
+// 调用方据此既不写 metadata 键也不追加提示。这条降级分支此前只在命令行手动探过两次
+// （一幅完全拿不到地理变换、一幅参考侧有变换输入侧没有，两次都不报警），ctest 里一条都没有 ⇒
 // 谁把它改成"拿不到变换式也报警"、或反过来"静默到底"，全量照样绿。
 //
 // WHY 本用例不调用公共夹具（这是 F-1 的核心，别"顺手统一"掉）：
@@ -1973,12 +1973,12 @@ TEST_F(PluginTest, PansharpenNoGeoTransformSkipsExtentCheck) {
     // 上面那一段只钉住了守卫 `!pansharpenEnvelope(msDs, ms) || !pansharpenEnvelope(panDs, pan)`
     // （processing_plugin.cpp 的 pansharpenExtentMismatchRatio 开头）的**一个操作数**：两侧都拿不到变换式。
     // "只有一侧拿得到"同样是这条 -1 分支的入口，round 1 之后仍然零 ctest 护栏 —— 实测把短路或写成 `&&`
-    // （= 只有两侧都缺才返回 -1）时，未补下面两段的全量 577 条零红（实测见本报告 Fix round 2 节），
+    // （= 只有两侧都缺才返回 -1）时，未补下面两段的全量 577 条零红（改前变异轮实测），
     // 而命令行混合探针会给每一次"PAN 没有地理参考"的正常使用刷一句假的
     // `pan_ms_extent_mismatch: 1 (relative difference 1 over tolerance 1e-06)`：失败方拿不到四角、
     // 结构体停在默认的 {0,0,0,0}，与另一幅 300 m 的包络一比 ⇒ 边差 300 / 较大边长 300 = 1。
     // ⇒ 危害不是"少个提示"而是**凭空报出一个范围不一致**，把用户推向完全错误的方向；
-    //   契约原文（task-21 发布说明素材）："两侧都没有地理变换、或只有一侧有变换时都不报警"。
+    //   契约原文（发布说明已采用的口径）："两侧都没有地理变换、或只有一侧有变换时都不报警"。
     // 下面两段把混合形态的两个方向各钉一次：判据与三件断言沿用上面同一套（谓词 rasterHasNoGeoTransform、
     // 按 GetGeoTransform 的返回值判），不另造第二个判据、也不新建 TEST_F（用例数不变）。
 
@@ -3478,7 +3478,7 @@ TEST_F(PluginTest, ProcessingWatershedExecution) {
 //   改前 sureFg 的两个圆盘就是 connectedComponents 的标签 1 和 2，其余像元（含"确定背景"）全是 0，
 //   而 cv::watershed 把 0 一律当"未知区"向外淹没 ⇒ 整幅背景被并进标签 1 的盆地
 //   ⇒ 旧的 maxLabel 计数改前改后都得 "2" ⇒ 计划 Step 1 的 EXPECT_EQ(segment_count,"2") **没有鉴别力**。
-//   实测改前的输出矩阵（build/t16_probe_ext_output.txt 同批的 ws_t16_auto_output.tif，见报告 §2.1）：
+//   实测改前的输出矩阵（同批自动分支那份产物，32x32 双圆夹具）：
 //   标签 1 铺满除圆盘 B 邻域以外的整幅图，标签 2 只剩种子附近——背景根本没独立成区。
 // 背景取点：不能用角点 (0,0)。OpenCV watershed 会把"触及影像边框的盆地"沿最外一圈写成 -1
 //   （实测改前/改后 (0,0) 都是 -1，用它做背景探针会让断言与缺陷无关），
@@ -3489,16 +3489,15 @@ TEST_F(PluginTest, ProcessingWatershedExecution) {
 //   (iv) 盘内、种子以外的未知带必须被自己的盆地涨满（挡住"先归零、再整体 +1"这种顺序颠倒的实现，
 //        它让未知带从一开始就是背景 ⇒ 分水岭不再扩张）。
 //   改后应为 背景=1、两区域=2/3（各 80 像元 = 整个圆盘）、边界=-1。
-// 逐条鉴别力（一手证据：改前红日志 build/t16_redfinal_ctest.log:16 与 :19，实测背景(16,2)=1、A心=1、B心=2）：
+// 逐条鉴别力（一手证据：改前那次红日志里 (i)/(iii) 两条的失败行，实测背景(16,2)=1、A心=1、B心=2）：
 //   改前**只有 2 条会红** —— (i) 的 `background != centerA`（1 vs 1）与 (iii) 的 `centerA >= 2`（1 vs 2）。
 //   B 盘在改前就独立带着标签 2，所以 (i) 的 `background != centerB`、(ii)、(iii) 的 `centerB >= 2` 改前都是绿的；
-//   (i) 处紧跟的 `EXPECT_EQ(background, 1)` 改前改后**同值 = 1**（build/task16rev_auto_pre.txt 与
-//   build/task16rev_auto_post.txt 的 (16,2) 都是 1）⇒ **不作鉴别证据**，它是行为锁：钉住"自动分支写出的背景位
+//   (i) 处紧跟的 `EXPECT_EQ(background, 1)` 改前改后**同值 = 1**（改前/改后两份落盘矩阵在 (16,2) 都是 1）⇒ **不作鉴别证据**，它是行为锁：钉住"自动分支写出的背景位
 //   是标签 1"这一对外可见口径（改前的 1 来自"0 背景被洪水吞进区域 1"、改后的 1 来自"背景独占标签 1"，
 //   同一个数字来自两条相反的路径），与下面 EXPECT_EQ(segment_count,"2")、EXPECT_GE(distinctLabels,3)
 //   两处"不作鉴别证据"注释同口径 ⇒ 不删也不加强。
-//   其余几条并非无用，只是各挡别的假实现：(ii) 挡"两盘并成一盆"（变异 A1 实测会红，build/t16_mutA1_ctest.log:21），
-//   (iv) 挡"先归零、再整体 +1"的顺序颠倒（变异 A2b 实测会红，build/t16_mutA2b_ctest.log:15 与 :22）。
+//   其余几条并非无用，只是各挡别的假实现：(ii) 挡"两盘并成一盆"（变异 A1 实测会红：两盘合成同一个标签），
+//   (iv) 挡"先归零、再整体 +1"的顺序颠倒（变异 A2b 实测会红：未知带从一开始就是标签 1、种子只剩 25 像元的核）。
 TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -3536,7 +3535,7 @@ TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
     const int centerA = static_cast<int>(readRasterPixel(output, 9, 16));     // 圆盘 A 的种子
     const int centerB = static_cast<int>(readRasterPixel(output, 23, 16));    // 圆盘 B 的种子
     // 盘内、种子以外的"未知带"取点：距盘心 4 px，在半径约 3.5 的 sureFg 之外、半径 5 的盘之内。
-    //   硬约束：**距 -1 谷线须 >= 2 像元**。当前实现下 y=16 行实测（build/task16rev_auto_post.txt）
+    //   硬约束：**距 -1 谷线须 >= 2 像元**。当前实现下 y=16 行实测
     //   x=13/14 为 2、x=15 已是 -1；x=18/19 为 3、x=17 是 -1 ⇒ (13,16) 与 (19,16) 各只剩 2 像元余量。
     //   2 是下限而不是经验值：谷线厚度由 cv::watershed 按梯度决定、随影像几何变化，取点往盘边挪 1 px
     //   就可能读到 -1 —— 那时红的是取点、不是算法。
@@ -3565,7 +3564,7 @@ TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
     // (iv) 未知区必须在整体偏移**之后**才归零：那样它才会被自己的盆地涨满（实测正确实现里两个
     //   种子各占 80 像元 = 整个圆盘）。若把 "+1" 挪到归零循环之后，未知带从一开始就是标签 1，
     //   分水岭不再扩张 ⇒ 盘内取点留在 1、种子只剩 25 像元的核 ⇒ 这两条会红（变异 A2 实测，
-    //   build/t16_mutA2b_ctest.log:15 与 :22）。这两个点**距 -1 谷线只有 2 像元**（余量约束及其下限
+    //   变异 A2b 实测红在这两条）。这两个点**距 -1 谷线只有 2 像元**（余量约束及其下限
     //   理由见上面 diskEdgeA/diskEdgeB 声明处的注释），往盘边挪 1 px 就会读到 -1 而变脆。
     EXPECT_EQ(diskEdgeA, centerA) << "圆盘 A 内的未知带没被自己的盆地涨满 ⇒ +1 与归零的顺序倒了" << observed;
     EXPECT_EQ(diskEdgeB, centerB) << "圆盘 B 内的未知带没被自己的盆地涨满 ⇒ 同上" << observed;
@@ -8334,7 +8333,7 @@ TEST_F(PluginTest, FillSinksSkipsNoDataCells) {
 // 成为一条假出水路径；坑与它相邻，于是坑被"排水"而完全不抬。
 // 反向证明（内部 NoData 像元没有这个效果）：处在坑与边缘之间但**不在边缘上**的 NoData
 // 像元是被弹出时按 parent 水面抬起来的，-9999 拿不到出水面 ⇒ 两种处置都得到 10.0，测不出差异
-// （模拟取证见 task-11-report.md）。
+// （这条反例当时用临时探针夹具模拟过、未留成用例；结论如上，别把它当既有用例引用）。
 // 期望：障壁处置 ⇒ 坑只能抬到周边 10.0；出海口处置 ⇒ 坑停在 2.0。
 TEST_F(PluginTest, FillSinksDoesNotSeedNoDataEdgeCellsAsPourPoints) {
     auto* p = mgr_.find("terrain");
@@ -8810,8 +8809,8 @@ TEST_F(PluginTest, ViewshedUsesEarthCurvatureCoefficientByDefault) {
 
     // R-T12-1 第 1 步"先量再断"的两个数不再用 std::cout 常驻打印（复审 F-4）：
     // ctest 通过态不收集 stdout，长期留在测试码里只是低价值噪声；同样的两个数已经流进
-    // 下面 EXPECT_LT / EXPECT_EQ 的失败消息，而取证时的实测值（2819 / 517）保存在
-    // build/task12_tier1_red.log:15 与 build/task12_tier1_green_measure.log:12 两份日志里。
+    // 下面 EXPECT_LT / EXPECT_EQ 的失败消息，而取证时的实测值（启用曲率 2819 个 / coeff=0.0 517 个）
+    // 已经抄在这里，红态时还会由失败消息把双方的实际值再打一遍。
     EXPECT_LT(visibleWith, visibleNo)
         << "启用曲率/折射后远距离可见性应更保守；实测 coeff=0.85714 为 " << visibleWith
         << " 个、coeff=0.0 为 " << visibleNo << " 个（相等即说明 dfCurvCoeff 没进算法）";
@@ -8835,7 +8834,7 @@ TEST_F(PluginTest, ViewshedUsesEarthCurvatureCoefficientByDefault) {
     //                但那条断的是算法结果，这条断的是"回显给 GUI/CLI 看的默认值"本身）；
     //   noRun      = 显式传 0.0     ⇒ 回显必须是 0.000000，杀掉"把回显写成常量 0.857140"的假实现。
     // 字符串形态是 std::to_string(double) 的结果（固定 6 位小数），照源码字面量写成 "0.85714" 会假红；
-    // 下面的字面量取自实测：build/task12f3_measure.log。
+    // 下面的字面量取自改前实测打出的 std::to_string 结果（一次性取证日志不入库，故数字抄在这里）。
     ASSERT_TRUE(withRun.metadata.count("curvature_coeff") > 0)
         << "result.metadata 没回显 curvature_coeff（terrain_plugin.cpp 的 "
            "result.metadata[\"curvature_coeff\"] = std::to_string(curvatureCoeff) 那行没了）";
@@ -9180,8 +9179,8 @@ TEST_F(PluginTest, TerrainViewshedOutputsAreBothByteMask) {
     measure(multiOutput, multi);
 
     // 这两幅的实测数（bands/dtype/noDataDeclared/visible255/otherValues）不再用 std::cout 常驻打印
-    // （复审 F-4）：改前/改后的原始行已留在 build/task12_tier3_red.log:11-12 与
-    // build/task12_tier3_green.log:39-40，而断言失败时 gtest 会自动把比较双方的实际值打出来，
+    // （复审 F-4）：改前/改后的原始实测行只存在于当时的一次性取证日志里（build/ 不入库，不再指路），
+    // 而断言失败时 gtest 会自动把比较双方的实际值打出来，
     // 红态信息量没有损失，通过态本来也不收集 stdout。
     const int totalCells = side * side;
     // (1) 两个动作都写单波段 0/255 掩膜，类型必须都是 GDT_Byte（GDT_Float32 是 6、GDT_Byte 是 1）。
@@ -10111,7 +10110,8 @@ TEST_F(PluginTest, RasterManageProximityExecution) {
 // 目标像元的值故意取**负数**（R-T7-3）：修前的实现用 convertTo(CV_8UC1, 255.0) 做饱和转换，
 // 负的波段值被压成 0，再经 THRESH_BINARY 后负值目标像元当成背景直接抹掉（负 DN、负反射率、
 // 地形凹槽都是常见输入）。所以这一条用例同时锁住"方向搞反"和"负值目标被静默丢弃"两个同源症状：
-// 只修方向、仍保留 convertTo 的错误实现下，本用例照样红（实测见 task-7-report.md §5.1）。
+// 只修方向、仍保留 convertTo 的错误实现下，本用例照样红（变异实测：#221 的两处读数都变 65536，
+// 期望分别是 0 与 3——-3.0 被饱和成 0 ⇒ 整幅无目标像元 ⇒ 落进下面 R-T7-7 那段"全背景"分支）。
 //
 // options.pixelSize = 1.0（R-T7-1）：实现保留 `dist *= |gt[1]|` 的单位换算（经纬度口径归 Plan 2），
 // 夹具默认 pixelSize=0.001 会让真值变成 3×0.001，与断言的像元单位距离对不上。
@@ -10190,7 +10190,7 @@ TEST_F(PluginTest, ProximityOutputKeepsEveryInputBand) {
 
     // R-T7-7：全背景波段（该波段没有任何目标像元）的期望值由**实测**得出，不是预测：
     // distanceTransform 的输入此时是全 255、一个零像元都没有，(0,0)/(3,3)/(1,2) 三处实测同为
-    // 65536（三处读数一致这一事实本身就是本用例在钉的东西，取证见 task-7-report.md）。本用例按
+    // 65536（三处读数一致这一事实本身就是本用例在钉的东西，65536 是按盘上实测取的值）。本用例按
     // 实测值照实钉住，不加特例分支把它修饰成 0。容差取 1e-2f：float32 在 2^16 附近的表示间隔
     // 本身就有 0.0078，比这更小的容差不稳定，而任何其它语义（0、真实距离）与该值的差都在数量级之上。
     //
@@ -10216,7 +10216,8 @@ TEST_F(PluginTest, ProximityOutputKeepsEveryInputBand) {
 // Task 7（R-T7-6 的鉴别力补强）：两个波段的目标各在自己波段的**不同列**上（band1 在 x=0，
 // band2 在 x=4）。若实现把掩膜算到循环外、或各波段共用 band1 的数据（Task 6 修过的跨波段
 // 污染同型问题），band2 会在 (0,2) 读到 0（被当成目标）而不是 4、在 (4,2) 读到 4 而不是 0；
-// 变异实测见 task-7-report.md §5.2。
+// 变异实测（把 gdalBandToMat(srcDS.get(), b) 写成固定取第 1 波段）：该轮 6 条里 2 条红，本用例红在
+// band2 的两处读数互换（(4,2) 实测 4 期望 0、(0,2) 实测 0 期望 4），附带多波段那条 band2 实测 0 期望 65536。
 TEST_F(PluginTest, ProximityUsesEachBandOwnTargetsNotTheFirstBand) {
     auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);
@@ -10295,7 +10296,7 @@ TEST_F(PluginTest, ProximityMaxDistanceTruncationDoesNotClobberPositiveNoData) {
 
 // F2（审查发现 I2）：`dist *= std::abs(gt[1])` 这一行此前是零守护的。R-T7-1 让所有 proximity 用例
 // 都设 pixelSize = 1.0，×1.0 是恒等，审查者把这一行整行删掉重建后 Debug 全量仍 526/526 全绿
-// （build/task7_review/full_mutantA_debug.log:1055）。这一条**只**为那一行存在：pixelSize = 0.5 时
+// （变异轮 A 的实测结论，日志不入库故只留数）。这一条**只**为那一行存在：pixelSize = 0.5 时
 // 删掉它 (3,0) 读回 3.0、留着才读回 1.5，别的用例都在 1.0 上取不到这个差别（现有用例的 1.0 口径
 // 仍属 Plan 2，不为这一条去改）。
 TEST_F(PluginTest, ProximityDistanceIsScaledByPixelSize) {
@@ -10376,7 +10377,8 @@ TEST_F(PluginTest, ProximityAllNoDataBandWritesItsNoDataInsteadOfTheSentinel) {
 
 // F1（审查发现 I1）的触发形态。本项目自己的多波段 GeoTIFF **造不出**互异的逐波段 NoData 声明：
 // createRaster 用 Create(..., nullptr)（gdal_wrapper.cpp:63-64）⇒ 单 IFD、全文件只有一个
-// TIFFTAG_GDAL_NODATA，逐波段 SetNoDataValue 只有最后一个留得住（实测见 task-7-report.md 的 PAM 取证）。
+// TIFFTAG_GDAL_NODATA，逐波段 SetNoDataValue 只有最后一个留得住（PAM 取证的另一半结论：**我们的写出路径
+// 不产生 .aux.xml**，所以"边车把别处声明带进来"只能是显式写过边车的那些用例）。
 // 所以互异的逐波段声明只能来自 VRT / 外部多 IFD 输入：这里内联 VRT XML，每个波段引一个自己的
 // 单波段子 GeoTIFF，子数据集各自声明自己的 NoData；hasNoData=false 表示该波段根本不声明。
 struct ProximityVrtBand {
@@ -10535,7 +10537,8 @@ TEST_F(PluginTest, ProximityWarnsWhenSomeBandsDoNotDeclareNoData) {
 
 // F1 的反方向（告警必须"分歧不存在时必不出"）：与上一条同构的 VRT，只是两个波段声明**同一个**值。
 // 驱动、波段数、像元布局全都相同，唯一变量是声明是否一致，所以这条红了就只能怪"分歧判定写宽了"。
-// 变异取证（无分歧也告警）见 task-7-report.md。
+// 变异取证（M1：把分歧判定改成"多波段就告警"）：该轮 9 条里**只有本用例红**
+// （`89% tests passed, 1 tests failed out of 9`），红在 metadata 告警键数实测 1（期望 0）与告警文本命中。
 TEST_F(PluginTest, ProximityStaysSilentWhenNoDataDeclarationIsConsistent) {
     auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);
@@ -10602,7 +10605,8 @@ TEST_F(PluginTest, ProximityCountsEveryBandWhoseNoDataDeclarationIsNotKept) {
     const std::string output = utf8PathString(getTestDir() / "prox_nodata_aab_out.tif");
     std::error_code ec;
     fs::remove(output, ec);
-    // 边车会把别处写过的声明静默带进来（实测见 task-7-report.md 的 PAM 取证），而本用例断的正是
+    // 边车会把别处写过的声明静默带进来（PAM 取证实测：本项目自己的写出路径不产生 .aux.xml，
+    // 边车只能来自显式写过它的那些用例），而本用例断的正是
     // "哪个声明留下来了"；子文件的 .aux.xml 由 writeProximityNoDataVrt 自己清掉。
     fs::remove(output + ".aux.xml", ec);
 
@@ -11212,7 +11216,7 @@ TEST_F(PluginTest, AccuracyAssessmentHandlesClassPresentOnlyOnOneSide) {
 // Task 17：cutting.tile 层级几何与参数面（批次 A 内该 action 的首批用例）。
 //
 // 为什么这里的用例几乎全部钉"文件集合/字节/消息点名"而不是钉进度行：
-// Tier-0 实测（build/tmp/t17_probe/）复现了控制器的三条事实——
+// Tier-0 一次性探针实测（探针产物落 build/ 不入库，数字与符号事实抄在下面）复现了控制器的三条事实——
 //   F1: 修正前任何 profile 都 Success 但一张瓦片都不写（srcWin[3] 恒为负，
 //       cutting_plugin.cpp:919 符号错误 ⇒ 每瓦片 continue）；
 //   F2: profile=mercator 时 metadata.json 的 bounds 经纬度整体调换
@@ -11233,8 +11237,8 @@ namespace {
 // 修复轮 F3：扫描口径从"整个系统临时目录里所有 gis_tile_warped_*.tif"**收窄到本进程自己那一份**。
 // WHY：本用例证明的是"本进程的动作不会把临时栅格拉在临时目录里"，而改前按前缀扫全目录 ⇒
 //   **别的进程**（被 timeout 杀掉的测试、gis-cli 取证、上一轮崩溃的残留）留下的同名文件
-//   也会让 #305/#306 判红，是假红而不是缺陷：本批实测两轮（控制器 build/t18v2_full_release.log
-//   里的 305/306、本轮 build/t18f3_before_debug.log 里手工放的 gis_tile_warped_987654.tif）。
+//   也会让 #305/#306 判红，是假红而不是缺陷：本批真红过两轮（一轮是 Release 全量的 305/306，
+//   一轮是 Debug 里手工放一个 `gis_tile_warped_987654.tif` 冒充他进程残留）。
 //   产品侧文件名本来就带 CPLGetPID()（cutting_plugin.cpp:1102），所以按 pid 精确匹配
 //   不损失"漏清理必红"的原意：本进程写出的文件必然叫这个名字。
 //   放弃的那一半能力（顺带发现别的进程的历史残留）不属于本用例的契约，交脚本/人工巡检。
@@ -11501,7 +11505,7 @@ TEST_F(PluginTest, TileLevelGeometryUsesWebMercatorGrid) {
         for (int x = 0; x < 64; ++x) data[y * 64 + x] = -9999.0f;
     for (int y = 0; y < 56; ++y)           // 东端 8 列（x∈[56000,64000]）铺 NoData：列向同款。
         for (int x = 56; x < 64; ++x) data[y * 64 + x] = -9999.0f;
-    // WHY 加 NoData 带（行+列）：变异取证实测（build/t17_logs/mutation_M8_row_sign_flip.log），
+    // WHY 加 NoData 带（行+列）：变异取证实测（M8：把 syTop 反号 ⇒ 行放错的那一轮），
     // 只钉"列覆盖 + 文件集合"时把 syTop 反号的**行放错**变异全绿——透明边界不含行信息；
     // 列向 (sx0 反号) 同族变异也需要覆盖缘的可断量。alpha 自此能区分
     // "源行/列被摆到瓦片哪些位置"：这是几何放置断言，不碰亮度/对比度
@@ -11731,8 +11735,8 @@ TEST_F(PluginTest, TileOverviewResamplingDrivesOutputBytes) {
             //   ⇒ 覆盖比例 64000/156543.0339 = 0.40884 ⇒ dx1 = ceil(0.40884·256) = ceil(104.66) = 105
             //   ⇒ 不透明列只能是 [0,104]，列 105 起必须透明；y 向 tileResY 同值 ⇒ 行同款。
             // WHY 要钉具体列/行：审查者实测 ceil→floor 的变异当时只有 #300 红，而红的机理是
-            // nearest 与 average 两次输出**字节恰好撞成一致**才触发 EXPECT_NE
-            // （build/t17rev_R3a_dx1_ceil_to_floor.log），#296 对 1px 放置完全不敏感 ⇒ 偶发红、机理脆弱。
+            // nearest 与 average 两次输出**字节恰好撞成一致**才触发 EXPECT_NE（R3a 那一轮：ceil→floor，
+            // 14 条聚焦里只有 #300 一条红），#296 对 1px 放置完全不敏感 ⇒ 偶发红、机理脆弱。
             // 现在缘列 104/105 直接进断言，floor 把缘缩到 103 就立刻红，与插值组合无关
             // （这 4 行在 nearest 与 average 两个 pass 里各跑一遍，就是"与插值无关"的自证）。
             EXPECT_GT(alpha[50 * 256 + 104], 0) << method << " 覆盖缘列 104 应不透明（dx1=ceil(104.66)=105）";
@@ -11905,15 +11909,16 @@ TEST_F(PluginTest, TileGuiPanelHidesParametersTheTileActionNeverReads) {
 //   （cutting_plugin.cpp:896-901 读 extent、:945-947 走 lonLatToMercatorXY 前向投影）
 //   自 Task 17 写下后**没有任何用例执行过**；
 //   审查者实测把守卫①（:1061 `if (c1 <= c0 || r1 <= r0)`）或守卫②（:1078
-//   `if (dx1 <= dx0 || dy1 <= dy0)`）各自改成 `if (false)` ⇒ 14 条聚焦全绿
-//   （build/t17rev_R7_zerocov_guard_dropped.log、build/t17rev_R8_subpix_guard_dropped.log）。
+//   `if (dx1 <= dx0 || dy1 <= dy0)`）各自改成 `if (false)` ⇒ 14 条聚焦全绿（R7 零覆盖守卫、R8 亚像素守卫
+//   两轮各测一次，均 0 红）。
 // 本用例把"用户矩形"作为唯一的瓦片范围来源（不再由数据包络推导），钉三件事：
 //   (a) 与源包络零交集的瓦片一张都不写——期望集合**恰等于**字面集合（不用"少于 N"的弱断言）；
 //   (b) 走 extent 前向投影那条路之后，metadata.json 的 bounds 仍是传统 (lon, lat) 顺序，
 //       期望值写死字面量（不调用任何被测函数，避免同义反复）；
 //   (c) 夹具的候选里同时含"只在 x 向零交集"（列 536/540）与"只在 y 向零交集"（行 296/301）的档，
-//       于是守卫①的两个 `||` 臂各自都被真实执行到；字面/提变量两形态 + 同删对照的取证台账、
-//       以及"单删任一道仍存活（两道在可达域内互相蕴含）"这一如实结论都写在 task-17-report.md 的 F1 小节。
+//       于是守卫①的两个 `||` 臂各自都被真实执行到；取证结论（字面/提变量两形态 + 同删对照）如实登记为：
+//       **同时**删掉两道守卫才红，单删任一道 14 条聚焦仍全绿（两道在可达域内互相蕴含）⇒ 属防御臂冗余，
+//       不追打成测试缺口。
 // 期望集合的字面算术（独立按 EPSG:3857 定义算：x=lon·πR/180、y=R·ln tan(45°+φ/2)、
 // z=10 单瓦片米宽 = 2·20037508.342789244/1024 = 39135.7584820098，未调用 gis::core::*）：
 //   源包络 x∈[1000000,1072000]、y∈[8272000,8400000]
@@ -11998,7 +12003,7 @@ TEST_F(PluginTest, TileUserExtentDrivesMetricProjectionAndSkipsZeroAreaTiles) {
 // F2（Task 17 修复轮 1，审查发现 I-1）：tile_scheme=tms 的行号反演用例。
 // 修复前的盘上事实：grep -rn "tms" tests/ ⇒ exit=1（零命中），而 cutting_plugin.cpp:1027-1029
 // 这行反演正是 Task 17 刚从 `(1<<z)-1-ty` 改成 `b.tiles-1-ty` 的改动点 ⇒ 改动零判别。
-// 审查者的 R4（分母退回 1<<z）实测 0 红（build/t17rev_R4_tms_denominator_1shiftz.log）。
+// 审查者的 R4（分母退回 1<<z）实测 0 红（那一轮 14 条聚焦全绿）。
 // 本用例钉两件事：
 //   (i) 写出的**文件名 y 号**是反演后的值（12 条字面期望：z=10 时 1023-512=511、1023-513=510）；
 //   (ii) 集合与同夹具同层级的 xyz 产出**同规模**，且只有 y 号不同（x/层级/张数一致）。
@@ -12006,7 +12011,7 @@ TEST_F(PluginTest, TileUserExtentDrivesMetricProjectionAndSkipsZeroAreaTiles) {
 // 用被测式子推期望等于把断言让给实现（R-T17-9(2) 同口径）。1023=2^10-1 是 XYZ/TMS 的定义。
 // 等价变异如实登记（不硬造期望去杀它）：`b.tiles` 在**未被钳位的层级**恒等于 1<<z
 // ⇒ "分母退回 1<<z" 在本档必存活；两者只在 mercatorTileGrid 钳位臂生效的层级
-// （z=21/22 × ts=512/1024，见挂账 N68 / 本报告 F7）才分道，而那档网格本身有损，
+// （z=21/22 × ts=512/1024，见挂账 N68）才分道，而那档网格本身有损，
 // 把产物文件名钉上去等于把一个待修的有损行为固化成锚 ⇒ 本环不钉，交控制器随 N68 处置。
 TEST_F(PluginTest, TileSchemeTmsInvertsWrittenRowNumberButKeepsTileSetSize) {
     auto* p = mgr_.find("cutting");
@@ -12476,12 +12481,16 @@ TEST_F(PluginTest, TileAddAlphaChangesTransparencyForPartialBandNoData) {
                     // 洞带里的颜色（钉"透明即整像素清零 / 不透明洞留黑色通道"这条产物口径）：
                     // add_alpha=true 时洞带像元**不透明**（dstalpha 的口径是"任一波段有效即
                     // 不透明"，实测 GDAL 正是这个口径 ⇒ transparentOn==0 那条断言也在钉它），
-                    // 而 band2 在洞带里是 NoData 原值 -9999。因为 -dstalpha 剥掉了色波段的
-                    // NODATA 元数据，整幅统计把 -9999 也当成数据 ⇒ band2 的 min 就是 -9999
-                    // ⇒ 255*(v-min)/(max-min) 恰好等于 0 ⇒ 绿道为 0、红道仍 255。
-                    // 注：这里**不是** stretchByte 的 clamp 的判别点——变异 M9（去掉 clamp）
+                    // 而 band2 在洞带里的色值是 **-dstalpha 写进去的 0**（不是源 NoData 原值 -9999）。
+                    // 机理：`-dstalpha` 剥掉色波段的 NODATA 元数据 ⇒ 整幅统计把 0 当成数据，band2 的
+                    // min 就是 **0**（夹具里 band2 源列 <16 本来就是 0，洞带写回的也是 0）
+                    // ⇒ 洞带像元 `255*(0-0)/(200-0)=0` ⇒ 绿道为 0、红道仍 255（band1 在洞带列有效值 200）。
+                    // 反证 min 不是 -9999：若下界真是 -9999，0 会被映射到 255·9999/10199 ≈ 250，
+                    // 下面 `holeGreenOn` 那条"红=255 且绿=0"的断言当场就红（这条是**算术推论**；
+                    // 同一族比值在 #320 的夹具上有实测：低档字节 63 = 255·100/400，只可能出自 min=0）。
+                    // 注：这里**不是** stretchByte 的 clamp 的判别点——变异 R9（去掉 clamp，字面形态）
                     // 实测 26/26 全绿，因为 scaled 恒在 [0,255]（min/max 就来自同一批数据），
-                    // 详见 task-18-report.md 的 S6 台账（登记为"不可判别之防御臂"）。
+                    // 因此登记为"不可判别之防御臂"，不拿它当测试缺口追打。
                     if (tile.data[0][i] == 255 && tile.data[1][i] == 0) ++holeGreen;
                 }
             }
@@ -12502,9 +12511,9 @@ TEST_F(PluginTest, TileAddAlphaChangesTransparencyForPartialBandNoData) {
     EXPECT_LT(transparentOff, 10000) << "false 也不该把覆盖区整块遮完";
     EXPECT_GT(opaqueOff, 200) << "false 时非洞区仍应不透明";
     // 洞带在 true 档必须是"绿道=0 的黑洞 + 不透明"（0 的来源见上面循环里的注释：
-    // 整幅统计把 -9999 当成了 band2 的 min）；false 档整像素为 0（含颜色），
-    // 所以 R=255 且 G=0 的像元不存在。这两条各钉一个产物口径，M-A1/M-A2 变异的红色
-    // 也来自这一组（见 task-18-report.md 的 S6）。
+    // 洞带在色波段里是 -dstalpha 写回的 0，而 band2 的整幅 min 也是 0）；false 档整像素为 0（含颜色），
+    // 所以 R=255 且 G=0 的像元不存在。这两条各钉一个产物口径，"把 true/false 两支写成同一个掩膜"
+    // 那类退化形态（S6 台账 R1b）实测红的就是这一组。
     EXPECT_GT(holeGreenOn, 200)
         << "true 档的洞带没把绿道落成 0（红道应仍是 255）：" << holeGreenOn;
     EXPECT_EQ(holeGreenOff, 0)
@@ -12689,7 +12698,9 @@ TEST_F(PluginTest, TileColorOrderConsistentAcrossOutputFormats) {
 
 // T18 fix round 2 F-3（复审 I-3）：Produces 承诺的 "**4→RGBA**" 分支此前**零用例**。
 // 盘上事实（复审 round C 的 M0）：`if (bands == 4) { band4 → alpha }` 改成 `bands == 5` 之后
-// 27 条用例**一条都不红**（`build/t18rev_5_mutaB_tile.log`），因为 `t18WriteBandsRaster` 的
+// **没有一条用例为它变红**（同一轮把 M0 与 M4"统计循环写成 b <= bandCount - 1"一起做了，那轮 27 条里
+// 红的 12 条全部归因于 M4：#311/#315/#317 三条 Failed + 9 条单波段夹具 0xc0000409，与 alpha 分支无关
+// ⇒ 红集与 M0 可分 ⇒ M0 存活），因为 `t18WriteBandsRaster` 的
 // 四个调用点（#311/#313/#315/#317）全是 1 或 3 波段 ⇒ 4 波段源**从没被驱动过**。
 // 本用例把这条分支钉住，并同时钉两件事（复审 §I-3 连带的"同一发测试能一起锁的内容"）：
 //   ① 输出的第 4 波段必须来自**源 band4**，不是常量 255、也不是 dstalpha；
@@ -12715,7 +12726,7 @@ TEST_F(PluginTest, TileColorOrderConsistentAcrossOutputFormats) {
 //   三档 alpha 的行数（26 / 26 / 53 行 × 105 列 = 2730 / 2730 / 5565）只断"每档都成规模存在"
 //   （下限 2000/2000/4000），不断死边界行数 ⇒ 抗 ±1 行的取整漂移；精确值由上面 5 个点位钉。
 //
-// 判别取证（工单 F-3："== 4 ⇒ == 5 必须红"）：见 task-18-report.md 的 F-3 台账——
+// 判别取证（工单 F-3："== 4 ⇒ == 5 必须红"）实测结论：
 //   字面形态改 `bands == 4` 为 `bands == 5` ⇒ alpha 恒 255 ⇒ 红在"三档 alpha 齐全"与
 //   (5,5)/(5,80)/(40,5) 三个点位；提变量形态把 4 提成常量再改成 5 ⇒ 同一批断言红。
 //   另两条**顺带**被钉住的实现错误：band4 当颜色用（R 变成 85 ⇒ 红在 R 的取值集合）、
@@ -12964,7 +12975,7 @@ TEST_F(PluginTest, TileColorBandsDoNotDependOnAddAlpha) {
 
 // T18-F3（fix round 3 / 复审 round 2 §I-1-new）：F-1 的 alpha 掩膜过滤**必须逐波段生效**。
 //
-// 这条用例的存在理由（复审的探针，`build/t18rr2_19_f1d_tile.log`）：
+// 这条用例的存在理由（复审用探针用例实测的）：
 //   把 `cutting_plugin.cpp` 的过滤判据写成"只对 band 1 过滤、band 2..n 不过滤"
 //   （`if (b == 1 && alphaBuf[i] <= 0.0f) continue;`）⇒ 当时 29/29 **全绿**。
 //   原因是现有夹具里没有"能让 band 2..n 的过滤结果可观测"的形状：
@@ -13159,6 +13170,6 @@ TEST_F(PluginTest, TileAlphaMaskFilterAppliesToEveryBand) {
                     ? " ⇒ band3 的洞只落在 alpha==0 区，两档必须逐像元相同（复审 I-1-new）"
                       "（变异 (a) 就把这条打成 5565）"
                     : " ⇒ band1/band2 的自有洞把写入值 0 带进自己的区间 ⇒ 已登记的等价类，"
-                      "见 task-18-report.md 的 Fix round 3");
+                      "推导见本用例头注释里'判别波段为什么必须是 band 3'那一段");
     }
 }

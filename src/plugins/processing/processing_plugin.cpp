@@ -472,8 +472,9 @@ gis::framework::Result ProcessingPlugin::doEdge(
     // Task 15 / R-T15-3：cv::Scharr 只接受"恰好一个求导方向"——OpenCV 4.14 的
     // CV_Assert(dx >= 0 && dy >= 0 && dx+dy == 1) 位于 cv::getScharrKernels（imgproc/src/deriv.cpp:66），
     // 而本文件没有任何 try/catch ⇒ 非法组合会以未捕获异常形态逃出 execute()、击穿调用方。
-    //（改前红形态见报告 §2.1 与 build/t15_tier1_red_ctest.log：异常被 gtest 的用例级处理接住、记该用例 FAILED；
-    //  本工程 gtest_discover_tests 每例一个进程 ⇒ 不终止整个可执行文件、不截断整跑，红日志仍有汇总行。）
+    //（改前红形态实测：`-R Scharr` 命中 3 条里 2 条红、汇总行 `33% tests passed, 2 tests failed out of 3`，
+    //  异常被 gtest 的用例级处理接住、记该用例 FAILED；本工程 gtest_discover_tests 每例一个进程 ⇒
+    //  不终止整个可执行文件、不截断整跑，红日志仍有汇总行。生产路径上没有 gtest 那层兜获。）
     // 下面 cv::Scharr 调用处（提交态 17bfc76:501，即 54df42c:483）把入参压成
     // sobelDx>0?1:0 / sobelDy>0?1:0，所以"两个都 >0"与"两个都 <=0"
     // 两侧同样违法，必须一起挡；dx == dy 这一判形恰好同挡两侧。
@@ -1053,7 +1054,8 @@ gis::framework::Result ProcessingPlugin::doWatershed(
         markerMat.convertTo(markers, CV_32S);
         // 尺寸守卫：cv::watershed 内部只有 CV_Assert(src.size() == dst.size())，而本文件零 try/catch
         // ⇒ 不加这道守卫时，标记图与影像尺寸不符会让 OpenCV 异常穿透 execute() 打到调用方（GUI/CLI 进程），
-        // 而不是返回一条失败结果（实测形态见 task-16-report §4.1：gtest 会兜住它、记成该用例失败，
+        // 而不是返回一条失败结果（改前实测形态：`ctest -R Watershed` 命中 6 条里 3 条红、汇总行
+        // `50% tests passed, 3 tests failed out of 6`，gtest 会兜住它、记成该用例失败，
         // 但生产路径上没有 gtest 那层兜获）。
         // 判据用本函数实际持有的局部量 markerMat / mat —— doWatershed 里没有 imageWidth/imageHeight 这种变量。
         // cv::Size 的构造参数顺序是 (宽, 高) = (cols, rows)：写成 (rows, cols) 会放过"行列互换"的标记图。
@@ -1119,11 +1121,11 @@ gis::framework::Result ProcessingPlugin::doWatershed(
     // 统计放在 cv::watershed **之后**是为了与产出循环（33b0f07:src/plugins/processing/processing_plugin.cpp:1130-1139）
     // 同源——数"最终写进输出栅格的那批标签"，**不是**因为它能数出与之前不同的值：watershed 不给非零标签
     // 重新编号、不合并、不新增正标签，它只往 markers==0 灌标签、只把谷线写成 -1。实测同一幅外部标记
-    // 前后 2:25 / 5:25 一字不差（build/task16rev_ext_marker_pre.txt vs build/task16rev_ext_post.txt，
+    // 前后 2:25 / 5:25 一字不差（改前/改后各落一份 marker 文本对过 diff，diff 结果抄在这里：
     // 其中原为**非零**而被改写成 -1 的只有标签 1 上的 102 个像元，另 6 个原为 0 的像元也落在谷线上 ⇒ -1 共 108）
     // ⇒ 没有正标签被整片削光时，label > 1 的去重集合前后恒等。
-    // ⇒ 把这段计数搬到 cv::watershed **之前**是一个可存活的等价变异（审查者实测 6/6 全绿：
-    //    build/task16rev_MUT-M6_ctest.log），别当测试缺口追打。
+    // ⇒ 把这段计数搬到 cv::watershed **之前**是一个可存活的等价变异（审查者实测该变异轮 6/6 全绿，
+    //    变异体已还原、盘上无残留标记），别当测试缺口追打。
     // label > 1 同时排掉 -1（边界）、0（未知）与 1（OpenCV 约定的确定背景）。
     std::set<int> uniqueLabels;
     for (int y = 0; y < markers.rows; ++y) {
@@ -1463,7 +1465,8 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     std::string input  = gis::framework::getParam<std::string>(params, "input", "");
     std::string output = gis::framework::getParam<std::string>(params, "output", "");
     int band = gis::framework::getParam<int>(params, "band", 1);
-    // Task 15 / R-T15-4 + R-T15-5（后者已被控制器改判，见 task-15-brief.md 末尾"R-T15-5 更正"）：
+    // Task 15 / R-T15-4 + R-T15-5（后者已被控制器改判：本函数只删回退链，GUI 侧 "k" 分支保留并转挂账，
+    // 改判的完整理由就写在下面三段里）：
     // 兜底改为与 paramSpecs() 的 kmeans_k 默认值（4）同值，并去掉对已废弃键 "k" 的回退链
     // getParam("kmeans_k", getParam("k", 5))：全仓没有任何插件声明 ParamSpec{"k", ...}
     // ⇒ 那条回退链只能被调用方显式塞进来的 "k" 命中，对 GUI/CLI 用户是死路径。

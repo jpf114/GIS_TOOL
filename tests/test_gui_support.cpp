@@ -2897,8 +2897,8 @@ TEST(GuiActionConfig, AllPlanARelevantPluginsHaveActionConfigs) {
             // 写进白名单既不生效又与文件既有约定分叉，所以这里锁"不得出现"。
             EXPECT_EQ(config->visibleKeys.count("action"), 0u) << plugin << "." << action;
             EXPECT_EQ(config->requiredKeys.count("action"), 0u) << plugin << "." << action;
-            // 这 6 个插件的每个 action 都真的读 input 与 output（逐 action 取证见 task-10-report.md），
-            // 所以白名单必须两者都放行，否则该 action 在 GUI 下无法提交。
+            // 这 6 个插件的每个 action 都在插件侧无条件读 input 与 output（逐 action 核过取参代码，
+            // 清单里没有"只读不写"的纯查询动作），所以白名单必须两者都放行，否则该 action 在 GUI 下无法提交。
             EXPECT_TRUE(config->visibleKeys.count("input") > 0) << plugin << "." << action;
             EXPECT_TRUE(config->visibleKeys.count("output") > 0) << plugin << "." << action;
         }

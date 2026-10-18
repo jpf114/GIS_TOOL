@@ -715,9 +715,9 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "bands"},
                 {"output"}
             }},
-            // WHY 这里没有 resample：doTile 读的是未声明的 resampling（N36，见 task-10-report.md
-            // 的新发现清单；N36 由 Task 17 的 R-T17-12 裁定移出射程、留批次 B），列进白名单
-            // 等于在面板上放一个填了也不生效的键，正是本任务要消灭的形态。
+            // WHY 这里没有 resample：doTile 读的是未声明的 resampling（N36：Task 10 盘点参数面时新发现
+            // 的一条——键在 doTile 里被读取却不在 paramSpecs() 声明；N36 已由 Task 17 的 R-T17-12 裁定
+            // 移出射程、留批次 B），列进白名单等于放一个填了也不生效的键，正是本任务要消灭的形态。
             // num_threads（N37 "声明后无人读取"）已由 Task 17 按 R-T17-12 从 paramSpecs() 删除。
             {"tile", {
                 QString{},
@@ -729,8 +729,8 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output"}
             }},
         }},
-        // terrain：19 个 action 的键逐条取自 terrain_plugin.cpp 的 doXxx 读取点（行号见
-        // task-10-report.md）。z_factor 只进"确实读它"的 14 个 action —— profile_extract/
+        // terrain：19 个 action 的键逐条取自 terrain_plugin.cpp 各 doXxx 里的 getParam 读取点
+        // （按符号定位，不抄行号——抄了跨版本必漂）。z_factor 只进"确实读它"的 14 个 action —— profile_extract/
         // viewshed/viewshed_multi/cut_fill/reservoir_volume 不读，列进白名单就是放一个填了
         // 不生效的键。
         // WHY epsilon 只进 fill_sinks：Task 10 那轮它还不存在于 paramSpecs() 里，预写会让

@@ -568,7 +568,7 @@ std::string describeProgram(const std::vector<gis::core::ExpressionNode>& progra
 // 于是两类"错误但全绿"的构建都检不出来：
 //   V1 同优先级不弹出 → `-` 与 `/` 退化成右结合；
 //   V2 负号豁免放宽 → Negate 拖到加法之后才弹出，`-B1+B2` 变成 -(B1+B2)。
-// 期望值均按正确语义手算，并与审查者实测（build/tmp-r4probe/out2.txt）一致。
+// 期望值均按正确语义手算，并与审查者的一次性求值探针实测一致（探针产物落 build/ 不入库）。
 // 注意：2-3-4 的左结合答案是 -5 而不是 -3，8/4/2 是 1 而不是 4。
 TEST(ExpressionEngine, SubtractThenAddChainIsLeftAssociative) {
     std::vector<gis::core::ExpressionNode> program;
@@ -843,7 +843,7 @@ TEST(TileGrid, TileWorldRectPinsCornersAtLevelOne) {
 // **这个契约有损，承认它有损**：z=22/ts=1024 的真值是 2^22=4194304 列，钳位后只剩 2097151 列
 // （少一半）；z=21/ts=1024 真值 2097152 列，钳位后少 1 列。而 tile_pixel_size 的声明域是 [128,1024]、
 // doTile 的 z 封顶 22 ⇒ (ts=512,z=22)、(ts=1024,z=21)、(ts=1024,z=22) 都是**面板合法但网格被静默
-// 缩档**的组合。登记挂账 **N68**（本报告 F7 小节），处置（收窄域 / 显式报错 / 换 64 位网格）留后续任务。
+// 缩档**的组合。登记挂账 **N68**（取证就是上面两行的钳位实测数字），处置（收窄域 / 显式报错 / 换 64 位网格）留后续任务。
 TEST(TileGrid, ClampArmShrinksGridLossilyButStaysSelfConsistent) {
     const int kClampedWidth1024 = 2147482624;   // (INT_MAX/1024)*1024
     const int kClampedWidth256 = 2147483392;    // (INT_MAX/256)*256
