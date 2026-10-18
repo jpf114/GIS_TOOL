@@ -11732,7 +11732,7 @@ TEST_F(PluginTest, TileOverviewResamplingDrivesOutputBytes) {
             // F5（修复轮 1，审查 m-5）：把"子像素放置"从**字节巧合**升级成**放置钉**。
             // 覆盖缘的字面算术（按 EPSG:3857 定义独立算，不调被测函数）：
             //   z=8 单瓦片米宽 = 2·20037508.342789244/256 = 156543.0339；夹具 x∈[0,64000]、y∈[-64000,0]
-            //   ⇒ 覆盖比例 64000/156543.0339 = 0.40884 ⇒ dx1 = ceil(0.40884·256) = ceil(104.66) = 105
+            //   ⇒ 覆盖比例 64000/156543.0339 = 0.4088332671… ⇒ dx1 = ceil(0.4088332671·256) = ceil(104.6613) = 105
             //   ⇒ 不透明列只能是 [0,104]，列 105 起必须透明；y 向 tileResY 同值 ⇒ 行同款。
             // WHY 要钉具体列/行：审查者实测 ceil→floor 的变异当时只有 #300 红，而红的机理是
             // nearest 与 average 两次输出**字节恰好撞成一致**才触发 EXPECT_NE（R3a 那一轮：ceil→floor，
@@ -12005,7 +12005,8 @@ TEST_F(PluginTest, TileUserExtentDrivesMetricProjectionAndSkipsZeroAreaTiles) {
 // 这行反演正是 Task 17 刚从 `(1<<z)-1-ty` 改成 `b.tiles-1-ty` 的改动点 ⇒ 改动零判别。
 // 审查者的 R4（分母退回 1<<z）实测 0 红（那一轮 14 条聚焦全绿）。
 // 本用例钉两件事：
-//   (i) 写出的**文件名 y 号**是反演后的值（12 条字面期望：z=10 时 1023-512=511、1023-513=510）；
+//   (i) 写出的**文件名 y 号**是反演后的值（字面路径共 8 条：expectedXyz 4 条 + expectedTms 4 条；
+//       z=10 时 1023-512=511、1023-513=510）；
 //   (ii) 集合与同夹具同层级的 xyz 产出**同规模**，且只有 y 号不同（x/层级/张数一致）。
 // WHY 字面期望写死 511/510 而不是在用例里算 `tiles-1-y`：反演本身就是被测性质，
 // 用被测式子推期望等于把断言让给实现（R-T17-9(2) 同口径）。1023=2^10-1 是 XYZ/TMS 的定义。
@@ -13146,6 +13147,11 @@ TEST_F(PluginTest, TileAlphaMaskFilterAppliesToEveryBand) {
     ASSERT_EQ(on.height, off.height);
     ASSERT_EQ(on.bands, off.bands);
     const size_t total = static_cast<size_t>(on.width) * static_cast<size_t>(on.height);
+    // band1/band2 的 4823 / 4889 是**前提锁**（挂账 N81 的可观察面），不是"期望两档不等"的承诺：
+    // 它锁的是"当前实现下 `-dstalpha` 只保护 alpha、颜色波段自己那 0.01 阈值洞仍会把写入值 0
+    // 带进整幅统计区间"这一前提。彻底修 N81（弃用 `-dstalpha`、alpha 改由逐波段掩膜自己合成）
+    // 之后 band1/band2 必须与 band3 一样**两档逐像元相同** ⇒ 届时把这两个字面量改成 0u
+    // （即三条期望全等），**不得删断言**——删了就等于把 N81 的回归面重新打开。模式同 #312/N45/N55。
     const std::map<int, size_t> expDiff{{1, 4823u}, {2, 4889u}, {3, 0u}};
     for (int band = 1; band <= 3; ++band) {
         size_t diff = 0;

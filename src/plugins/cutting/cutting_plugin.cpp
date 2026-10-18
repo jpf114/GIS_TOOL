@@ -1353,7 +1353,9 @@ gis::framework::Result CuttingPlugin::doTile(
     progress.onProgress(0.12);
 
     // N62 同形残留收口（修复轮 F6）：改前 `++tilesGenerated` 挂在**每一个** continue 分支上
-    // （零交集、零面积、读失败、全 NoData、skipBlank、resume 命中），而 metadata["tiles_generated"]
+    // （7 条：resume 命中、`!rect.valid`、与源包络零交集 `c1<=c0||r1<=r0`、子矩形零面积
+    //   `dx1<=dx0||dy1<=dy0`、RasterIO 读失败、`bandMin>bandMax` 即全 NoData、skipBlank 判空），
+    // 逐条可在 90d7ee6^ 的同文件里数出来，而 metadata["tiles_generated"]
     // 与成功消息都吃这个数 ⇒ "报 N tiles 但磁盘上没 N 个文件"这条本任务要消灭的形态又活了。
     // 三个量各管一件事：
     //   tilesGenerated 交付的瓦片文件数（写出成功，或 resume 命中已存在的同一张 ⇒ 产物确实在 output 里）
@@ -1473,6 +1475,16 @@ gis::framework::Result CuttingPlugin::doTile(
                 const int dx1 = std::clamp(static_cast<int>(std::ceil((ax1 - rect.minX) / tileResX)), 0, tileSize);
                 const int dy0 = std::clamp(static_cast<int>(std::floor((rect.maxY - ayTop) / tileResY)), 0, tileSize);
                 const int dy1 = std::clamp(static_cast<int>(std::ceil((rect.maxY - ayBot) / tileResY)), 0, tileSize);
+                // 守卫②＝**防御性不可达分支**（挂账 N69）：守卫①通过则这里恒不触发。
+                // 推导（x 向，y 向同款）：① ⇒ c1>c0 ⇒ ax1 = wgt[0]+c1·wgt[1] > ax0 = wgt[0]+c0·wgt[1]
+                // （north-up 守卫已保证 wgt[1]>0）；整数读窗是整幅统计包络的取整扩张 ⇒ [ax0,ax1] ⊆
+                // [rect.minX, rect.maxX]；tileResX = (rect.maxX-rect.minX)/tileSize > 0；
+                // 记 u = (ax0-rect.minX)/tileResX，则 (ax1-rect.minX)/tileResX = u+ε（ε>0）⇒
+                // dx0 = floor(u) ∈ [0, tileSize-1]、dx1 = ceil(u+ε) ≥ floor(u)+1 > dx0。
+                // clamp 到 [0, tileSize] 两侧都收不住：dx0 ≤ tileSize-1 收不上来、dx1 ≥ 1 收不下来。
+                // ⇒ 正常几何下这条 continue 永不进入，所以它**没有**也**不该有**判别用例（N69 的纪律：
+                //   要求"每个守卫各自可杀"之前先证可达性）。保留它是因为 warp 产物的退化窗口不是可证明的
+                //   不变量——删掉它等于赌 GDALWarp 永不给出退化结果，代价是整幅瓦片走进零面积渲染。
                 if (dx1 <= dx0 || dy1 <= dy0) {
                     ++tilesSkipped;
                     ++tilesProcessed;
