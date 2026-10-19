@@ -91,6 +91,16 @@ if(DEFINED BUILD_DIR AND NOT BUILD_DIR STREQUAL "")
             "先跑 cmake --preset <debug|release>。")
     endif()
     file(REMOVE_RECURSE "${_gis_prefix}")
+    # 清理结果必须判（Task B6 / Step 4c②）：`file(REMOVE_RECURSE)` 对被占用/只读/无权限的文件是
+    #   **部分失败也不报错**的，而本用例的判据是"包里缺东西才红"。上一轮红过之后如果没真删干净，
+    #   残留文件会替本轮"顶罪"（本轮该缺的那个 dll 上一次装着呢 ⇒ 存在性断言全过、闭包全过 ⇒ 绿），
+    #   这是"红过之后下一轮误导性变绿"的唯一通道，所以这里拒绝带着残留继续判，而不是往下走。
+    if(EXISTS "${_gis_prefix}")
+        message(FATAL_ERROR
+            "闭包检查：清理本用例专属前缀失败，'${_gis_prefix}' 仍然存在（多半是里面的文件正被别的进程占用）。"
+            "⇒ 判红而不是接着判：残留的上一轮产物会让这一轮的'包内该有的东西都在'变成假绿，"
+            "上一轮的真失败也会被顶罪成这一轮的通过。请先关掉占用该目录的进程（编辑器/杀毒/正在跑的 gis-cli）再重跑。")
+    endif()
     message(STATUS "[install-closure] 本用例自行执行 cmake --install --config ${CONFIG} --prefix ${_gis_prefix}")
     execute_process(
         COMMAND "${CMAKE_COMMAND}" --install "${_gis_build_dir}" --config "${CONFIG}" --prefix "${_gis_prefix}"
@@ -335,11 +345,12 @@ foreach(_gis_pe IN LISTS _gis_pe_files)
         #   （本机 Git Bash 里手工跑必须写 //dependents，那是 shell 的转换规则，两者不冲突。）
         set(_gis_scan_args "/dependents" "/NOLOGO")
     else()
-        # objdump 族（根 CMakeLists.txt 在没有 VS 工具链的机器上会选它）。
-        # 诚实登记：本机没有 objdump 也没有 llvm-objdump（/usr/bin、/mingw64/bin、VS 工具目录都找过），
-        #   所以这一支**在本机没法实测**，取的是 `-p` 私有头里 `DLL Name:` 这条对外部实现的公开格式约定。
-        #   正因为没实测过，下面的 _gis_anchor_edges 断言必须留着：猜错格式的后果是"0 条导入 ⇒ 0 条违例"
-        #   的假绿，而那正是 N86 的失败形状，不能靠"反正本机走 dumpbin"过去。
+        # objdump 族（根 CMakeLists.txt 选不到 VS 的 dumpbin 时会退到它，见那段扫描器解析次序）。
+        # 诚实登记：这一支**没有实测覆盖** —— 本仓的两棵构树与 CI 都解析到 dumpbin，objdump 只在
+        #   "那台机器没有 VS 工具链"的配置期分支上才会被选中，而那种现场不在本仓的可跑范围内。
+        #   这里取的是 `-p` 私有头里 `DLL Name:` 这条对外部实现的公开格式约定，属于**照文档写的假设**。
+        #   正因为没有实测覆盖，下面的 _gis_anchor_edges 断言必须留着：猜错格式的后果是
+        #   "0 条导入 ⇒ 0 条违例"的假绿，而那正是 N86 的失败形状，不能靠"当前取径走的是 dumpbin"过去。
         set(_gis_scan_args "-p")
     endif()
     execute_process(
@@ -368,11 +379,20 @@ foreach(_gis_pe IN LISTS _gis_pe_files)
     foreach(_gis_line IN LISTS _gis_lines)
         string(STRIP "${_gis_line}" _gis_tok)
         if(_gis_tool STREQUAL "dumpbin")
-            # 依赖块 = 表头行之后的**一行一个名字**，到第一个"非空且不是裸 dll 名"的行为止。
+            # 依赖块 = 表头行之后的**一行一个名字**，到第一个"非空且不是裸模块名"的行为止。
             # WHY 不能拿空行当结束标记：dumpbin 在表头与名字之间就夹了一个空行，
             #   用它收尾会一条也取不到 ⇒ 0 条违例的假绿（本脚本对这种现场另有"不许归零"断言兜着）。
-            # WHY "裸 dll 名"要带空格检查：`Dump of file …\archive.dll` 这类行也以 .dll 结尾，
-            #   但它含空格，用 `^[^ ]+\.(dll|DLL)$` 就能把它挡在块外。
+            # WHY 块尾判定必须认"带扩展名的模块名"而不是只认 .dll：PE 的导入表里模块名的扩展名
+            #   是任意的（WINSPOOL.DRV、*.OCX 这类 OS 模块是真的存在这一族的），只认 .dll 会把它们
+            #   当成块尾 ⇒ **该行之后的全部导入被静默丢掉**，而"丢掉之后 0 条违例"是报绿的
+            #   （Task B6 Step 4c①；判据形状见 _gis_tok 的 MATCHES）。
+            # ⚠ 这一族的写法**不能**直接抄成 `^[^ ]+\.[A-Za-z][A-Za-z0-9]{1,4}$`：CMake 的正则引擎
+            #   不认 `{m,n}` 区间量词（实测：带 `{1,4}` 的那一条整体匹配不中任何东西）
+            #   ⇒ 每条依赖都成了块尾 ⇒ 0 条边（这种现场被下面的"不许归零"断言接住、判红，不是假绿）。
+            #   这里用等价写法：首字母 + 1 个必选 + 3 个可选 = 扩展名 2..5 个字符，与 `{1,4}` 同集合
+            #   （逐 token 对过 19 个形状，见任务报告的对照表）。
+            # WHY "裸模块名"要带空格检查：`Dump of file …\archive.dll` 这类行也以 .dll 结尾，
+            #   但它含空格，`^[^ ]+` 那一段就能把它挡在块外。
             if(NOT _gis_in_list)
                 if(_gis_tok MATCHES "Image has the following dependencies")
                     set(_gis_in_list TRUE)
@@ -382,7 +402,7 @@ foreach(_gis_pe IN LISTS _gis_pe_files)
             if(_gis_tok STREQUAL "")
                 continue()
             endif()
-            if(NOT _gis_tok MATCHES "^[^ ]+\\.(dll|DLL)$")
+            if(NOT _gis_tok MATCHES "^[^ ]+\\.[A-Za-z][A-Za-z0-9][A-Za-z0-9]?[A-Za-z0-9]?[A-Za-z0-9]?$")
                 set(_gis_in_list FALSE)
                 continue()
             endif()
@@ -391,12 +411,14 @@ foreach(_gis_pe IN LISTS _gis_pe_files)
                 continue()
             endif()
             string(REGEX REPLACE "^DLL Name:[ \t]*" "" _gis_tok "${_gis_tok}")
-            # objdump 族没有"块结束"这个概念，所以取到的每条名字要自己再过一遍与 dumpbin 同一道格式闸：
-            #   过不了就说明解析假设和真实输出不符（这一支本机没法实测，见上面 _gis_scan_args 的登记），
+            # objdump 族没有"块结束"这个概念，所以取到的每条名字要自己再过一遍与 dumpbin 同一道格式闸
+            #   （同一道闸 = 同一个模块名形状，不另写一份只认 .dll 的，否则 dumpbin 那侧收进来的
+            #    `WINSPOOL.DRV` 会在这里被判成"格式不符"而假红）：
+            #   过不了就说明解析假设和真实输出不符（这一支没有实测覆盖，见上面 _gis_scan_args 的登记），
             #   那种现场必须判红，而不是把这条丢掉 —— 丢掉就是"0 条违例"的假绿。
-            if(NOT _gis_tok MATCHES "^[^ ]+\\.(dll|DLL)$")
+            if(NOT _gis_tok MATCHES "^[^ ]+\\.[A-Za-z][A-Za-z0-9][A-Za-z0-9]?[A-Za-z0-9]?[A-Za-z0-9]?$")
                 message(FATAL_ERROR
-                    "闭包检查：'${_gis_tool}' 在 '${_gis_pe}' 里给出的导入名不像 dll 名（'${_gis_tok}'）"
+                    "闭包检查：'${_gis_tool}' 在 '${_gis_pe}' 里给出的导入名不像 PE 模块名（'${_gis_tok}'）"
                     "⇒ 输出格式与本脚本的解析规则不符，判红而不是丢弃。")
             endif()
         endif()
@@ -425,7 +447,7 @@ foreach(_gis_pe IN LISTS _gis_pe_files)
     endforeach()
 endforeach()
 
-# 解析器自带的"不许归零"断言：扫了一百多个 PE 却一条导入都没取到，只能是解析坏了或扫描器换了格式，
+# 解析器自带的"不许归零"断言：对包内每一个 PE 都取了导入却一条都没解析到，只能是解析坏了或扫描器换了格式，
 # 这种情况**必须红**，否则整条闭包判据会退化成人畜无害的"0 条违例"。
 if(_gis_edges LESS 1)
     message(FATAL_ERROR
@@ -435,7 +457,7 @@ endif()
 # 只判总边数还不够：格式变了但**只解析出一部分**时同样是假绿，所以要钉一个已知必有大导入表的根。
 # WHY 锚点选 gis-cli.exe：它是包内一定存在的根（上面的存在性断言已保证），且必然直接导入 GDAL/OpenCV，
 #   取到 0 条只能是"扫描器输出与解析规则不符"，不可能是"这个包真的干净"。
-#   这一条同时也是 objdump 那一支的兜底：那一支的格式假设本机没法实测。
+#   这一条同时也是 objdump 那一支的兜底：那一支的格式假设没有实测覆盖（见上面 _gis_scan_args 的登记）。
 if(_gis_anchor_edges LESS 1)
     message(FATAL_ERROR
         "闭包检查：'${_gis_prefix}/bin/gis-cli.exe' 解析到 0 条直接导入，但它必然导入 GDAL/OpenCV 一族 ⇒"
