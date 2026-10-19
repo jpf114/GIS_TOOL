@@ -10875,11 +10875,23 @@ TEST_F(PluginTest, MatchingStitchExecution) {
     params["output"] = output;
 
     const auto result = p->execute(params, progress_);
-    if (!result.success) {
-        EXPECT_NE(result.message.find("lightweight"), std::string::npos)
-            << "Unexpected failure: " << result.message;
-        return;
-    }
+#ifdef _DEBUG
+    // Debug 半边（N99）：matching 插件在 Debug 带 GIS_MATCHING_LIGHTWEIGHT_DEBUG
+    // （src/plugins/matching/CMakeLists.txt 是 PRIVATE $<$<CONFIG:Debug>:…> 且插件为 SHARED，
+    //  宏只作用于插件自己的 TU，测试 TU 看不见）⇒ doStitch 必返 fail。
+    // 这里钉的是"Debug 必须失败 + 失败消息必须是轻量闸门且点名 stitch"，不是"任何失败都放过"。
+    ASSERT_FALSE(result.success)
+        << "Debug 轻量闸门漂移：stitch 在 Debug 里竟然成功了，本用例的 Debug 半边判据已失效";
+    EXPECT_NE(result.message.find("Debug lightweight mode"), std::string::npos)
+        << "失败原因不是轻量闸门，而是别的错误：" << result.message;
+    EXPECT_NE(result.message.find("stitch"), std::string::npos)
+        << "轻量闸门消息没点名 stitch（报成别的动作也算失败）：" << result.message;
+    return;
+#else
+    // Release 半边：真实路径必须成功，之后一条真实契约都不许被软分支吞掉。
+    ASSERT_TRUE(result.success)
+        << "Release 里 stitch 必须成功；旧软分支会把任何失败静默降级成 return（N99）：" << result.message;
+#endif
     EXPECT_TRUE(fs::exists(output));
     ASSERT_TRUE(result.metadata.count("input_count") > 0);
     EXPECT_EQ(result.metadata.at("input_count"), "2");
@@ -10907,11 +10919,21 @@ TEST_F(PluginTest, MatchingEccRegisterExecution) {
     params["ecc_epsilon"] = 1e-5;
 
     const auto result = p->execute(params, progress_);
-    if (!result.success) {
-        EXPECT_NE(result.message.find("lightweight"), std::string::npos)
-            << "Unexpected failure: " << result.message;
-        return;
-    }
+#ifdef _DEBUG
+    // Debug 半边（N99）：同 stitch，Debug 里 doEccRegister 必返 fail。
+    // 键别断言用 ecc_register：若闸门把动作名报错（换成 stitch 的消息）这里必须能抓到。
+    ASSERT_FALSE(result.success)
+        << "Debug 轻量闸门漂移：ecc_register 在 Debug 里竟然成功了，本用例的 Debug 半边判据已失效";
+    EXPECT_NE(result.message.find("Debug lightweight mode"), std::string::npos)
+        << "失败原因不是轻量闸门，而是别的错误：" << result.message;
+    EXPECT_NE(result.message.find("ecc_register"), std::string::npos)
+        << "轻量闸门消息没点名 ecc_register（报成别的动作也算失败）：" << result.message;
+    return;
+#else
+    // Release 半边：真实配准路径必须成功。
+    ASSERT_TRUE(result.success)
+        << "Release 里 ecc_register 必须成功；旧软分支会把任何失败静默降级成 return（N99）：" << result.message;
+#endif
     EXPECT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("motion_type"), "affine");
     ASSERT_TRUE(result.metadata.count("warp_matrix") > 0);
