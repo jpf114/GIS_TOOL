@@ -3,8 +3,16 @@
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_defaults.cmake")
-# N101：本 driver 属于"不 include helpers"的那 4 个之一，而注入载体做在 helpers 的 include 期顶层
-# ⇒ 必须在第一次 execute_process 之前 include 它（helpers 会自己再 include defaults）。
+# N101 + N102：注入载体（set(ENV{GIS_TOOL_SETTINGS_INI} / GIS_CUSTOM_INDEX_PRESET_FILE)）做在
+# gui_regression_helpers.cmake 的 **include 期顶层**，而 execute_process 没有 ENVIRONMENT 参数
+# ⇒ 本文件必须在**第一次 execute_process 之前** include 它，否则被 spawn 的 gis-gui 拿不到私有落点。
+# 这条"include 早于第一次 spawn"的纪律是本 driver 自己必须守的。上面那行 defaults 是显式冗余
+# （helpers 第一行就 include 它），留着是因为本文件自己就要用 defaults 的产出：第一次
+# execute_process 的 `-platform ${GUI_PLATFORM}` 与末尾的 gis_gui_platform_skips_screenshot()，
+# 直接把依赖写在用它的文件里，而不是转手交给 include 链。
+# 现跑命令（行首锚定 ⇒ 注释行不会被数进去；数字归报告，不进注释）：
+#   还没 include 载体的 driver：grep -rLE "^[^#]*gui_regression_helpers" tests/run_*.cmake
+#   已经 include 的 driver 数：  grep -rlE "^[^#]*gui_regression_helpers" tests/run_*.cmake | wc -l
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
 
 get_filename_component(OUTPUT_DIR "${OUTPUT_PATH}" DIRECTORY)

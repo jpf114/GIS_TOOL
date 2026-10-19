@@ -5,13 +5,13 @@
 //   **真人机器上的** %LOCALAPPDATA%，而 migrateLegacySettings() 会 setValue(marker)+sync()
 //   ⇒ 测试往用户目录写盘。要断"生产路径形状"只能走纯函数 resolvedSettingsPath(QString())。
 //
-// Qt 6 事实（构树实测 + B3a 的三版最小编译探针，决定了下面 helper 与工厂的形状）：
-//   qsettings.h:184 有 Q_DISABLE_COPY(QSettings) ⇒ QSettings **既不可拷贝也不可移动**，
-//   所以"返回一个已打开的 QSettings 对象"只有两条路：
-//     * 按值返回 **prvalue**（C++17 保证的返回值初始化直接构造进调用方的对象）—— appSettings() 用的就是它；
-//       写成"具名局部量再 return"立刻编不过（探针实测 C2280）。
-//     * 把对象放到堆上，返回 std::unique_ptr<QSettings> —— 旧落点工厂（R-B7 的注入面）用的就是它，
-//       因为工厂要在调用点之后才被选中，prvalue 那条路要求每个工厂都写成一条 return 表达式。
+// Qt 6 事实（构树实测 + B3a 的三版 / B3c 的四版最小编译探针，决定了下面 helper 与源的形状）：
+//   qsettings.h:184 有 Q_DISABLE_COPY(QSettings) ⇒ QSettings **既不可拷贝也不可移动**，于是
+//     * 具名局部量再包一层 unique_ptr ⇒ C2280；std::optional<QSettings> ⇒ C2440（没有可用转换）；
+//     * 按值返回 **prvalue** 编得过（appSettings() 用的就是它），但要求每个 arm 写成一条 return
+//       表达式，且表达不了"这条源没接上"；
+//     * 只有把所有权放堆上（std::unique_ptr<QSettings>），"读法自由"与"没接上"才都能表达
+//       —— 所以下面的注入源是 (kind, 参数) 的数据，open() 由它推导并返回 unique_ptr。
 //   给已存在的 QSettings 引用"原地赋值/swap"这条路**不通**：赋值是 deleted，Qt 6.11 的 QSettings 也没有 swap。
 #include <gtest/gtest.h>
 
@@ -31,6 +31,9 @@
 
 namespace {
 
+using Source = gis::gui::LegacySettingsSource;
+using Kind = gis::gui::LegacySettingsSource::Kind;
+
 // 在 dir 里落一个 ini 文件并返回它的**路径**（不能返回 QSettings 对象，理由见文件头）。
 QString writeIni(const QTemporaryDir& dir, const QString& name,
                  std::initializer_list<std::pair<const char*, const char*>> kv) {
@@ -42,13 +45,18 @@ QString writeIni(const QTemporaryDir& dir, const QString& name,
     return path;
 }
 
-// 一条"由私有 ini 后备"的旧落点源（R-B7 的注入面）。路径按值捕获，工厂每次新开对象，
-// 与生产接线里"每条源自己决定用什么参数构造 QSettings"是同一个形状。
-gis::gui::LegacySettingsSource iniSource(const QString& path) {
-    gis::gui::LegacySettingsSource source;
-    source.label = QStringLiteral("ini:%1").arg(QFileInfo(path).fileName());
-    source.open = [path] { return std::make_unique<QSettings>(path, QSettings::IniFormat); };
-    return source;
+// 一条"由私有 ini 后备"的旧落点源（R-B7 的注入面）：只给 Kind + 路径，label 与构造由生产实现
+// 的同一份推导给出 ⇒ 测试侧不写任何身份字符串，写不出"label 说 A、构造做 B"的源（B3c/Q1）。
+Source iniSource(const QString& path) {
+    return Source{Kind::IniPath, path, QString()};
+}
+
+// 一条"表里有、但没接上任何落点"的源：错接线臂的形状。
+// 为什么不再用"把 std::function 置空 / 让它返回空指针"表达：那要求源自己带一个可被替换的工厂，
+// 而那份工厂正是 Q1 要拿掉的第二个存储（工厂与 label 各说各话）。Kind::Unwired 让"没接上"
+// 回到同一份存储里，open() 仍然给回空指针 ⇒ 迁移要跳过的行为一点没变。
+Source unwiredSource() {
+    return Source{Kind::Unwired, QString(), QString()};
 }
 
 } // namespace
@@ -107,7 +115,8 @@ TEST(AppSettingsMigration, CopiesNestedGroupsAndStringLists) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // R-B7：迁移**内容**的真判据 —— 旧落点由参数注入，所以这几条不需要开发者机器上有注册表键，
-// 也不会去读它（migrateLegacySettingsFrom 不碰 GIS_TOOL_SETTINGS_INI 门控，门控在生产入口那一层）。
+// 也不会去读它（migrateLegacySettingsFrom 不含 R-B2 门控；门控本体在 migrateLegacySettingsGated，
+// 它的两臂在下面 GateActiveSkipsSourceThatReallyHasData / GateInactiveImportsThatSameSource 两条里跑）。
 TEST(AppSettingsMigration, ImportsFromInjectedSourcesAndStampsMarker) {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -169,46 +178,154 @@ TEST(AppSettingsMigration, ReadsEverySourceInTheList) {
     EXPECT_TRUE(target.value(QLatin1String("app/first_run_complete")).toBool()) << "第二条源没读到";
 }
 
-// 一条源没接上（工厂为空，或工厂返回空指针）时不得把整次启动崩掉，也不得顶掉其余好源。
+// 一条源没接上（Kind::Unwired ⇒ open() 给回空指针）时不得把整次启动崩掉，也不得顶掉其余好源。
 TEST(AppSettingsMigration, SkipsMiswiredSourcesWithoutAborting) {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString legacyPath =
         writeIni(dir, QStringLiteral("old.ini"), {{"defaults/outputSrs", "EPSG:3857"}});
-    gis::gui::LegacySettingsSource nullFactory = iniSource(legacyPath);
-    nullFactory.open = nullptr;
-    gis::gui::LegacySettingsSource nullObject = iniSource(legacyPath);
-    nullObject.open = [] { return std::unique_ptr<QSettings>(); };
     QSettings target(dir.filePath(QStringLiteral("target.ini")), QSettings::IniFormat);
 
     EXPECT_EQ(gis::gui::migrateLegacySettingsFrom(
-                  target, {nullFactory, nullObject, iniSource(legacyPath)}),
+                  target, {unwiredSource(), unwiredSource(), iniSource(legacyPath)}),
               1)
         << "断掉的两条既不能崩，也不能顶掉第三条好源";
     EXPECT_EQ(target.value(QLatin1String("defaults/outputSrs")).toString(), "EPSG:3857");
+    // 好源打开成功过 ⇒ 标记必须照打（"有源没接上"不等于"一无所知"，见 AllBrokenSources…那条）。
+    EXPECT_TRUE(target.contains(QLatin1String(gis::gui::kMigrationMarkerKey)));
+}
+
+// B3c/Q3：全断源（一条都没打开成功）时**不得**打一次性标记。
+// WHY 这条判据值得单独存在：标记的语义是"旧落点已被消费、别再导入"，而一无所知的启动照打标记
+// = 把一次性迁移机会永久烧掉，且烧得毫无痕迹（下次直接早退，用户那份旧设置再也进不来）。
+// 第二个作用域是"烧掉之后再也救不回来"的正面表达：如果第一次把标记打了，这里必然读到 0。
+TEST(AppSettingsMigration, AllBrokenSourcesLeaveTheMarkerUnstamped) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString targetPath = dir.filePath(QStringLiteral("target.ini"));
+    const QString legacyPath =
+        writeIni(dir, QStringLiteral("old.ini"), {{"defaults/outputSrs", "EPSG:4326"}});
+    {
+        QSettings target(targetPath, QSettings::IniFormat);
+        EXPECT_EQ(gis::gui::migrateLegacySettingsFrom(target, {unwiredSource(), unwiredSource()}), 0)
+            << "一条都没打开成功 ⇒ 不该有任何复制";
+        EXPECT_FALSE(target.contains(QLatin1String(gis::gui::kMigrationMarkerKey)))
+            << "全断源的启动照打标记 ⇒ 迁移机会被永久烧掉（B3c/Q3 要消灭的就是这个）";
+    }
+    {   // 同一条目标、同一条源：这次接上了 ⇒ 必须真的搬进来（标记没被上一次烧掉）。
+        QSettings target(targetPath, QSettings::IniFormat);
+        EXPECT_EQ(gis::gui::migrateLegacySettingsFrom(target, {iniSource(legacyPath)}), 1)
+            << "上一次全断源不得烧掉这次迁移：旧键必须还能进来";
+        EXPECT_EQ(target.value(QLatin1String("defaults/outputSrs")).toString(), "EPSG:4326");
+        EXPECT_TRUE(target.contains(QLatin1String(gis::gui::kMigrationMarkerKey)))
+            << "读到过源之后才打标记（与 From 的意图一致）";
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B3c/Q2：门控参数化之后才有的两臂 —— "门控挡得住一条**确有数据**的源"。
+// 原来门控读的是环境变量，而任何测试进程里 GIS_TOOL_SETTINGS_INI 都为真（tests/test_main.cpp）
+// 且不得 qunsetenv（R-B2b）⇒ 门控的**效果**在过去没有任何用例能观察。
+// 注意这两臂喂的是同一条带数据的源：只有"true 挡不住 / false 也不导"这种实现才同时红两条。
+TEST(AppSettingsMigration, GateActiveSkipsSourceThatReallyHasData) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString legacyPath = writeIni(dir, QStringLiteral("old.ini"),
+                                        {{"app/first_run_complete", "true"},
+                                         {"defaults/outputSrs", "EPSG:4326"}});
+    QSettings target(dir.filePath(QStringLiteral("target.ini")), QSettings::IniFormat);
+
+    EXPECT_EQ(gis::gui::migrateLegacySettingsGated(target, {iniSource(legacyPath)}, true), 0)
+        << "overrideActive=true ⇒ 一条源都不许打开（既挡读用户数据，也挡构造 NativeFormat 的建键副作用）";
+    EXPECT_FALSE(target.contains(QLatin1String("defaults/outputSrs")))
+        << "门控没挡住确有数据的源 ⇒ 注入态会把开发者机器上的东西搬进测试 ini";
+    EXPECT_FALSE(target.contains(QLatin1String(gis::gui::kMigrationMarkerKey)))
+        << "被门控挡住的启动不得打一次性标记（标记归 From 那层，见头文件意图）";
+}
+
+TEST(AppSettingsMigration, GateInactiveImportsThatSameSource) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString legacyPath = writeIni(dir, QStringLiteral("old.ini"),
+                                        {{"app/first_run_complete", "true"},
+                                         {"defaults/outputSrs", "EPSG:4326"}});
+    QSettings target(dir.filePath(QStringLiteral("target.ini")), QSettings::IniFormat);
+
+    // 与上一条唯一的差别就是 overrideActive=false ⇒ 两条合起来才把"门控不是恒返回 0"钉住。
+    EXPECT_EQ(gis::gui::migrateLegacySettingsGated(target, {iniSource(legacyPath)}, false), 2)
+        << "overrideActive=false ⇒ 必须原样落到 From";
+    EXPECT_EQ(target.value(QLatin1String("defaults/outputSrs")).toString(), "EPSG:4326");
+    EXPECT_TRUE(target.contains(QLatin1String(gis::gui::kMigrationMarkerKey)));
 }
 
 // 生产接线本体：migrateLegacySettings() 只从这里取源，所以摘掉一条 ⇒ 这条红，
 // 而不是"迁移少搬了一个落点却没有任何用例知道"（R-B7 判别性验收要的就是这一条）。
 // ⚠ 这里**不调用 open()**：两个生产源在 Windows 上都是 NativeFormat，光构造就会在 HKCU 下建键
-//   （落点实测见 src/gui/app_settings.cpp 顶部）⇒ 判据只能取"身份 + 工厂是否接上"这种不构造的形态。
+//   （落点实测见 src/gui/app_settings.cpp 顶部）⇒ 判据只能取"身份数据"这种不构造的形态；
+//   读 label() 是安全的（它只投影 (kind, 参数) 这份存储，不构造任何东西）。
 // ⚠ 这条钉的是**表**，不是 migrateLegacySettings() 那一行的调用点：R-B2 门控在任何测试进程里都先
-//   return 0，所以"调用点只交一条源"这种写法没有任何用例能观察到（B3a 报告 INJ-2 实测为绿，已登记）。
+//   return 0，所以"调用点只交一条源"这种写法没有任何用例能观察到（B3a 报告 INJ-2、B3c 报告 §4 已登记）。
 //   想观察就得让用例真去构造 NativeFormat 源 ⇒ 读用户注册表当测试输入 + 在 HKCU 建键，两条都撞红线。
 TEST(AppSettingsLegacySources, ProductionWiringIsTheTwoLegacyLandingPoints) {
-    const QList<gis::gui::LegacySettingsSource>& sources = gis::gui::productionLegacySources();
+    const QList<Source>& sources = gis::gui::productionLegacySources();
     QStringList labels;
-    int wired = 0;
-    for (const gis::gui::LegacySettingsSource& source : sources) {
-        labels << source.label;
-        if (source.open)
-            ++wired;
-    }
-    EXPECT_EQ(labels, (QStringList{QStringLiteral("QSettings(GISTool, GISTool)"),
+    for (const Source& source : sources)
+        labels << source.label();
+    EXPECT_EQ(labels, (QStringList{QStringLiteral("QSettings(organization=GISTool, application=GISTool)"),
                                    QStringLiteral("QSettings()")}))
-        << "生产旧落点的身份与条数就是迁移的输入面；label 由构造参数展开，断它=断接线"
+        << "生产旧落点的身份与条数就是迁移的输入面；label 由 (kind, 参数) 推导，断它=断接线"
         << " 实际=" << labels.join(QStringLiteral(" | ")).toStdString();
-    EXPECT_EQ(wired, labels.size()) << "有身份却没有工厂的条目等于该源根本没接上";
+    // label 之外再直接断一次存储本身：label 的推导规则由 LabelPinsTheConstructionKind… 钉，
+    // 这里钉的是"生产表里就是这两条"，两者缺一就能被"改推导"或"改表"绕过。
+    ASSERT_EQ(sources.size(), 2);
+    EXPECT_EQ(sources[0].kind, Kind::NamedOrgApp) << "源一：" << sources[0].label().toStdString();
+    EXPECT_EQ(sources[0].first, QStringLiteral("GISTool"));
+    EXPECT_EQ(sources[0].second, QStringLiteral("GISTool"));
+    EXPECT_EQ(sources[1].kind, Kind::ProcessDefault) << "源二：" << sources[1].label().toStdString();
+}
+
+// B3c/Q1：label 必须锁住**构造形态**，不能只锁参数。
+// 四份源共用同一批参数 ("GISTool","GISTool")，只有 Kind 不同 ⇒ 四条 label 必须两两不同；
+// 任何"label 由参数展开、形态另存在别处"的写法（HEAD 的形状）在这里立刻红。
+// 为什么测试里可以构造这些源：LegacySettingsSource 是 (kind, 参数) 的数据，
+// 构造它**不会**构造 QSettings ⇒ 读 label()/比 kind 都不碰注册表。
+TEST(AppSettingsLegacySources, LabelPinsTheConstructionKindNotJustTheArguments) {
+    const Source named{Kind::NamedOrgApp, QStringLiteral("GISTool"), QStringLiteral("GISTool")};
+    const Source ini{Kind::IniPath, QStringLiteral("GISTool"), QStringLiteral("GISTool")};
+    const Source processDefault{Kind::ProcessDefault, QStringLiteral("GISTool"),
+                                QStringLiteral("GISTool")};
+    const Source unwired{Kind::Unwired, QStringLiteral("GISTool"), QStringLiteral("GISTool")};
+    EXPECT_EQ(named.label(), QStringLiteral("QSettings(organization=GISTool, application=GISTool)"));
+    EXPECT_EQ(ini.label(), QStringLiteral("QSettings(path=GISTool, QSettings::IniFormat)"));
+    EXPECT_EQ(processDefault.label(), QStringLiteral("QSettings()"));
+    EXPECT_EQ(unwired.label(), QStringLiteral("QSettings(<unwired>)"));
+    EXPECT_NE(named.label(), ini.label()) << "同一批参数、不同构造形态 ⇒ 身份必须不同，否则改形态没人看得见";
+    EXPECT_NE(named.label(), processDefault.label());
+    EXPECT_NE(named.label(), unwired.label());
+    // 默认构造取 Unwired = 失败关闭：漏填 Kind 的源不打开任何落点，而不是猜一个。
+    EXPECT_EQ(Source{}.kind, Kind::Unwired);
+}
+
+// open() 的推导里唯一能被**安全构造**的形态（私有 ini）必须真的落到 label 说的那个文件上：
+// 这条把"Kind 说 IniFormat、构造却做了别的"这一类错误按在可测的那一侧。
+// ⚠ 覆盖面是有意不对称的：NamedOrgApp / ProcessDefault 两条 arm 的实际构造行为**不可测**
+//   （一构造就在 HKCU 建键），它们由 open() 里的 Q_ASSERT_X 兜误调（B3c/Q4），差别登记在任务报告里。
+TEST(AppSettingsLegacySources, IniPathSourceOpensTheFileItsLabelNames) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString legacyPath =
+        writeIni(dir, QStringLiteral("old.ini"), {{"defaults/outputSrs", "EPSG:4326"}});
+    const Source source = iniSource(legacyPath);
+    const std::unique_ptr<QSettings> opened = source.open();
+    ASSERT_TRUE(opened != nullptr);
+    EXPECT_EQ(QDir::toNativeSeparators(opened->fileName()), QDir::toNativeSeparators(legacyPath))
+        << "open() 的落点必须逐字等于 label 里那个路径（同一份存储的两个读者不能各说各话）";
+    EXPECT_EQ(opened->format(), QSettings::IniFormat) << "Kind::IniPath 必须走显式 IniFormat";
+    EXPECT_TRUE(opened->allKeys().contains(QLatin1String("defaults/outputSrs")));
+    EXPECT_TRUE(source.label().contains(QFileInfo(legacyPath).fileName()))
+        << " 实际 label=" << source.label().toStdString();
+    // 没接上的那条必须给回空指针（迁移靠它跳过断源，见 SkipsMiswiredSourcesWithoutAborting）。
+    EXPECT_TRUE(unwiredSource().open() == nullptr);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,7 +346,7 @@ TEST(AppSettingsPath, ProductionShapeWithoutTouchingDisk) {
     //     顺手补一句 setValue，这个落点就是真人机器上的 %LOCALAPPDATA% ⇒ 污染用户目录，
     //     还是跨用例共享的定名文件。
     //   * **NativeFormat**：光构造就会在 HKCU 下把这一层键建出来，哪怕全程只读（取证见
-    //     src/gui/app_settings.cpp:26-30 与任务报告 §2 的注册表 lastWriteTime）。
+    //     src/gui/app_settings.cpp 顶部"旧落点一"那段实测与任务报告的注册表 lastWriteTime）。
     // 至于"生产落点是不是注册表"：本用例判不了（format() 返回的就是刚传给构造的参数，与被测实现
     // 无关，任何实现下都不可能红 —— 那条恒真断言已在 B1 修复轮删掉），
     // 所以也不要把它抄回来；这条判据由 B2 在 tests/test_mainwindow.cpp 的落点守卫块断

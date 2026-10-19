@@ -170,11 +170,16 @@ gtest_discover_tests(gis_tests
     DISCOVERY_TIMEOUT 60
     DISCOVERY_MODE PRE_TEST
     # 21-FixA part2 C-1：这一条改由下面的 add_test 亲自注册，好带上 RESOURCE_LOCK。
-    #   发现侧的 PROPERTIES 是"整套用例共用"的，把 RESOURCE_LOCK 写在这里会连带 499 条一起串行，
+    #   发现侧的 PROPERTIES 是"整套用例共用"的，把 RESOURCE_LOCK 写在这里会连带发现侧全部用例一起串行
+    #   （条数见下面那两条现跑命令，别在这一行记账），
     #   而 PRE_TEST 模式下 configure-time 的 set_tests_properties 又够不着还没诞生的用例
     #   ⇒ 唯一能只给这一条上锁的办法就是把它从发现集合里摘出来、自己注册。
     #   用例名与 gtest 全名逐字一致（GuiContract.ExportActionVisibleKeys），
-    #   ctest -R、CI 的名单断言与台账里的引用都不受影响；总数仍是 499 gtest + 135 configure-time。
+    #   ctest -R、CI 的名单断言与台账里的引用都不受影响。两侧条数不在这里记账 —— 写死的数会随用例
+    #   增减失真（本行原来那两个数就是这么过期的），现跑命令：
+    #     总数：      ctest --test-dir build/debug -C Debug -N | tail -n 1
+    #     configure-time 侧（gui_）：ctest --test-dir build/debug -C Debug -N -R "^gui_" | tail -n 1
+    #     gtest 发现侧 = 总数 − gui_ 侧（减出来的，不是数出来的；要逐条核对就用上面两条的名单做差集）
     TEST_FILTER "-GuiContract.ExportActionVisibleKeys"
     PROPERTIES TIMEOUT ${GIS_TEST_TIMEOUT}
 )

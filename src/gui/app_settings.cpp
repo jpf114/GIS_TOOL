@@ -6,12 +6,15 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QtGlobal>  // Q_ASSERT_X：open() 里那两个生产形态 arm 的禁令执行点（B3c/Q4）
 
 // ─────────────────────────────────────────────────────────────────────────────
 // R-B2b 红线（写给下一个往这里加测试的人，他不会读到计划文档）：
 //   **测试代码一律不得 qunsetenv("GIS_TOOL_SETTINGS_INI")**。
 //   tests/test_main.cpp 在每个测试进程启动时都设了它；一旦清掉再调 appSettings()，路径就解析到
-//   **真人机器上的** %LOCALAPPDATA%，而 migrateLegacySettings() 无条件 setValue(marker)+sync()
+//   **真人机器上的** %LOCALAPPDATA%，而 migrateLegacySettings() 只要读到任一条旧源就会
+//   setValue(marker)+sync()（B3c/Q3 之后标记以"打开成功过一条"为条件，与本条结论无关：
+//   真实旧落点在真人机器上必然打得开）
 //   ⇒ 测试往用户目录写盘，还是跨用例共享的定名文件。
 //   所以"断生产路径的形状"只能走纯函数 resolvedSettingsPath(QString())：不读环境变量、
 //   不建 QSettings、不落盘。要换注入路径只允许 qputenv 改指到**另一个私有临时文件**。
@@ -26,8 +29,10 @@
 //     ⚠ 而且：**NativeFormat 的 QSettings 光是被构造出来就会在 HKCU 下把这一层键建出来**，
 //       哪怕整个进程只读不写——一次性探针只做了构造 + fileName() + allKeys()（没有任何
 //       setValue/sync），就把台账记录里"已删除且未重建"的这个键重建成了空键（取证见任务报告）。
-//       ⇒ R-B2 那道 `if (settingsOverrideActive()) return 0;` 必须挡在**构造两个旧对象之前**：
-//         它挡住的不只是"读到用户数据"，还有"在用户注册表里建键"这个副作用本身。
+//       ⇒ R-B2 那道门控（migrateLegacySettingsGated 的 `if (overrideActive) return 0;`）必须挡在
+//         **构造两个旧对象之前**：它挡住的不只是"读到用户数据"，还有"在用户注册表里建键"这个
+//         副作用本身。open() 里那两个生产形态 arm 的第一行还有一道 Q_ASSERT_X 兜底（B3c/Q4）：
+//         门控被摘掉时 Debug 测试进程当场 abort，而不是悄悄把键建出来。
 //   旧落点二 默认构造 QSettings()：
 //     * 生产 GUI 进程（src/gui/main.cpp:36-37 设了 org/app = "GIS"/"GIS Tool"，且没人改
 //       defaultFormat）⇒ NativeFormat，\HKEY_CURRENT_USER\Software\GIS\GIS Tool；
@@ -77,33 +82,58 @@ int copyMissingKeys(const QSettings& from, QSettings& to) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// R-B7：生产接线本体。label 与工厂由**同一次调用的同一批参数**展开，
-// 所以"用例断 label"断的就是"生产会拿什么参数去构造旧落点"，两者不会各说各话；
-// 从这张表里摘掉一条 = 少一个源 = 用例红（见 tests/test_app_settings.cpp 的 AppSettingsLegacySources）。
+// R-B7：生产接线本体。**唯一存储是 (kind, first, second)**，label() 与 open() 都是它的读者，
+// 这里既没有手写的身份字符串、也没有工厂闭包（B3c/Q1）。
+// WHY 闭包要拿掉：闭包里的构造形态与 label 里的格式串是两份互不知情的表达，
+// 改前者不动后者 ⇒ 接线用例照绿（HEAD 上实测复现，见 B3c 报告 INJ-Q1-0）。
 // 这里不出现任何注册表路径字面量（R-B3）：落点由 QSettings 对象自己按 org/app 解析。
 // ─────────────────────────────────────────────────────────────────────────────
 
-namespace {
-
-// 旧落点一：SettingsManager 历史用的两参构造 ⇒ Windows 上是 NativeFormat。
-LegacySettingsSource legacySourceFromNames(const QString& organization, const QString& application) {
-    return LegacySettingsSource{
-        QStringLiteral("QSettings(%1, %2)").arg(organization, application),
-        [organization, application] { return std::make_unique<QSettings>(organization, application); }};
+// 同一份存储 (kind, first, second) 的两个读者，arm 顺序必须一一对应（label 多一个 arm / open
+// 少一个 arm ⇒ 该 Kind 落到"未知形态 = 没接上"那一侧，宁可跳过也不猜落点）。
+QString LegacySettingsSource::label() const {
+    switch (kind) {
+    case Kind::NamedOrgApp:
+        return QStringLiteral("QSettings(organization=%1, application=%2)").arg(first, second);
+    case Kind::ProcessDefault:
+        return QStringLiteral("QSettings()");
+    case Kind::IniPath:
+        return QStringLiteral("QSettings(path=%1, QSettings::IniFormat)").arg(first);
+    case Kind::Unwired:
+        return QStringLiteral("QSettings(<unwired>)");
+    }
+    return QStringLiteral("QSettings(<unknown kind>)");
 }
 
-// 旧落点二：welcome_dialog 历史用的默认构造 ⇒ 跟随进程的 org/app。
-LegacySettingsSource legacyDefaultSource() {
-    return LegacySettingsSource{QStringLiteral("QSettings()"),
-                                [] { return std::make_unique<QSettings>(); }};
+std::unique_ptr<QSettings> LegacySettingsSource::open() const {
+    switch (kind) {
+    case Kind::NamedOrgApp: {
+        // 旧落点一：SettingsManager 历史用的两参构造 ⇒ Windows 上是 NativeFormat。
+        // B3c/Q4：禁令的执行点写在**风险处的第一行**，不是声明处的注释里。
+        // 测试进程一定带着 GIS_TOOL_SETTINGS_INI（tests/test_main.cpp）⇒ 误调这里当场 abort，
+        // 而且断言在构造之前 ⇒ HKCU 键不会被建出来；生产不设该变量 ⇒ 恒真，Release 里整条被编掉。
+        Q_ASSERT_X(!settingsOverrideActive(), "productionLegacySources", "测试不得打开真实落点");
+        return std::make_unique<QSettings>(first, second);
+    }
+    case Kind::ProcessDefault: {
+        // 旧落点二：welcome_dialog 历史用的默认构造 ⇒ 跟随进程的 org/app。
+        Q_ASSERT_X(!settingsOverrideActive(), "productionLegacySources", "测试不得打开真实落点");
+        return std::make_unique<QSettings>();
+    }
+    case Kind::IniPath:
+        // 用例注入面：显式路径 + 显式 IniFormat，落点就是那个私有文件，与 org/app 无关。
+        return std::make_unique<QSettings>(first, QSettings::IniFormat);
+    case Kind::Unwired:
+        return std::unique_ptr<QSettings>();
+    }
+    return std::unique_ptr<QSettings>();
 }
-
-} // namespace
 
 const QList<LegacySettingsSource>& productionLegacySources() {
     static const QList<LegacySettingsSource> sources{
-        legacySourceFromNames(QStringLiteral("GISTool"), QStringLiteral("GISTool")),
-        legacyDefaultSource(),
+        LegacySettingsSource{LegacySettingsSource::Kind::NamedOrgApp, QStringLiteral("GISTool"),
+                             QStringLiteral("GISTool")},
+        LegacySettingsSource{LegacySettingsSource::Kind::ProcessDefault, QString(), QString()},
     };
     return sources;
 }
@@ -114,20 +144,47 @@ int migrateLegacySettingsFrom(QSettings& target, const QList<LegacySettingsSourc
     if (target.contains(QLatin1String(kMigrationMarkerKey)))
         return 0;
     int copied = 0;
+    int opened = 0;
     for (const LegacySettingsSource& source : sources) {
-        // 一条源没接上（工厂为空 / 工厂返回空指针）就跳过它：一次启动不该因为一条断源而崩，
+        // 一条源没接上（Kind::Unwired ⇒ open() 给回空指针）就跳过它：一次启动不该因为一条断源而崩，
         // 也不该因此不再读后面的源。
-        const std::unique_ptr<QSettings> legacy = source.open ? source.open() : nullptr;
+        const std::unique_ptr<QSettings> legacy = source.open();
         if (!legacy)
             continue;
+        ++opened;
         copied += copyMissingKeys(*legacy, target);
     }
+    // B3c/Q3：一条都没打开成功 ⇒ 这次启动对旧落点一无所知，**不打**标记（照打等于永久烧掉
+    // 一次性迁移机会）。读到源但源里没键（健康的新机器）仍然算"打开成功"⇒ 标记照打，
+    // 所以这里不会退化成每次启动重跑迁移。
+    if (opened == 0)
+        return copied;
     target.setValue(QLatin1String(kMigrationMarkerKey), true);
     target.sync();
     return copied;
 }
 
+int migrateLegacySettingsGated(QSettings& target, const QList<LegacySettingsSource>& sources,
+                               bool overrideActive) {
+    // R-B2 门控本体（B3c/Q2）：overrideActive ⇒ 一条源都不许打开。
+    // 门控**必须留在拿到工厂之前**：NativeFormat 的 QSettings 光构造就会在 HKCU 下建键
+    // ⇒ 挡住的既是"读到用户数据"也是"建键"这个副作用本身。
+    if (overrideActive)
+        return 0;
+    return migrateLegacySettingsFrom(target, sources);
+}
+
 bool settingsOverrideActive() {
+    // B3c 待并小项的裁定：这里**故意不做 trimmed()**，而 custom_index_preset_store.cpp 的
+    // resolvePresetFilePath() 与 src/gui/main.cpp 的预设守卫都做 trimmed() ⇒ 同一个"设了但只填
+    // 空格"的输入在两处结论不同。这是有意的不对称，别"顺手改一致"：
+    //   * 本函数的读者是 R-B2 门控（migrateLegacySettings），它守的是"要不要构造 NativeFormat 源"
+    //     ⇒ 判据必须**宽松**：变量只要非空就当作"有人在注入"，宁可少迁移一次也不去建 HKCU 键。
+    //     改成 trim 后非空才算 active ⇒ 一串空格会**打开门控** ⇒ 测试进程转去构造真实落点。
+    //   * store 侧的读者是"这个路径能不能用"⇒ 判据必须**严格**：纯空格不是合法路径，要回退。
+    // 两处要的其实是同一个函数体的两种相反失败方向，所以只能不对称。
+    // 注：纯空格的 GIS_TOOL_SETTINGS_INI 会让 appSettingsPath() 返回那串空格（resolvedSettingsPath
+    // 的非空分支）——那是既有行为，本任务没改它，改动它会顺带动到生产落点判定，登记归后续任务。
     return !qgetenv("GIS_TOOL_SETTINGS_INI").isEmpty();
 }
 
@@ -146,12 +203,13 @@ QString appSettingsPath() {
 
 int migrateLegacySettings(QSettings& target) {
     // R-B2：注入态（测试/CI）一律不读真实注册表 —— 否则测试结果依赖开发者机器状态，
-    // 而且导入会把用户数据写进测试 ini。这条 return 0 是本仓不碰 HKCU 的唯一保证。
-    // 门控**必须留在生产入口这一层、且在拿到工厂之前**：NativeFormat 的 QSettings 光构造就会在
-    // HKCU 下建键 ⇒ 挡住的既是"读到用户数据"也是"建键"这个副作用本身。
-    if (settingsOverrideActive())
-        return 0;
-    return migrateLegacySettingsFrom(target, productionLegacySources());
+    // 而且导入会把用户数据写进测试 ini。门控本体在 migrateLegacySettingsGated（B3c/Q2 参数化）。
+    // ⚠ 这一行只许"整张表 + 真门控"原样交出去：判据钉在 productionLegacySources() 那张表和
+    //   Gated 的两臂上，**钉不到这里**（测试进程里 overrideActive 恒真 ⇒ 本函数无论如何都只返回 0，
+    //   观察不到交出的是几条源；想观察就得 qunsetenv 或构造 NativeFormat 源，两条都是红线）。
+    //   所以"少一个源"必须表现为"表里少一条"，不能表现为这里少交一条 —— B3c 报告把这条硬边界
+    //   与"能红它的唯一代价是污染注册表"的推导写全，别在本行加恒真断言冒充已经闭掉。
+    return migrateLegacySettingsGated(target, productionLegacySources(), settingsOverrideActive());
 }
 
 QSettings appSettings() {
