@@ -4,7 +4,6 @@
 #include <ogrsf_frmts.h>
 
 #include <QCoreApplication>
-#include <QFileInfo>
 #include <QLabel>
 #include <QMetaObject>
 #include <QProgressBar>
@@ -67,7 +66,6 @@ QString uniqueMainWindowGroup(const char* suffix) {
 //   进程圈回私有文件，批次 B2 再把落点与迁移规则收进 gis::gui::appSettings()（生产落点
 //   = AppConfigLocation/settings.ini），只读出口 storagePath() 不变，落点仍由"断言 4"直接测真实对象。
 void configureSettingsForTest() {
-    static bool firstRunMarked = false;
     const QString privateDir =
         QString::fromStdString(gis::tests::privateSettingsDir().string());
     // 断言 1：默认格式必须仍是 IniFormat —— NativeFormat 写的是注册表，同样是不该碰的用户状态。
@@ -92,21 +90,26 @@ void configureSettingsForTest() {
     // 断言 4（N100）：SettingsManager 这个**真实对象**的落点必须在本进程私有目录里，不能是注册表。
     //   前两版这里只能断到"探针构造的 ini 在私有目录"，因为 SettingsManager 用两参
     //   QSettings("GISTool","GISTool") ⇒ NativeFormat，测试侧改不动（当时记为挂账）。
-    //   现在 src 侧提供 GIS_TOOL_SETTINGS_INI 覆盖（生产不设 ⇒ 行为不变）与 storagePath() 只读出口，
-    //   于是可以直测真实对象的落点：删掉 test_main.cpp 里那两行 qputenv，这里立刻红。
+    //   批次 B2 之后落点判定整个搬进 src/gui/app_settings.cpp：GIS_TOOL_SETTINGS_INI 由那里的
+    //   resolvedSettingsPath()/appSettingsPath() 读，test_main.cpp 只负责注入变量的**值**，
+    //   SettingsManager 自己不再有任何覆盖分支。
+    //   ⚠ 别把这里写成"生产不设该变量 ⇒ 行为不变"：生产不设时行为**已经变了** —— 落点是
+    //   AppConfigLocation 下的 settings.ini，不再是 HKCU\Software\GISTool（那正是批次 B 的目的）。
+    //   删掉 test_main.cpp 里注入那两行，这里立刻红：落点会退回本进程的 AppConfigLocation
+    //   （用户配置目录下的定名文件），同样是"测试写用户状态"这一族害。
     const QString managerLanded = QDir::toNativeSeparators(
         SettingsManager::instance().storagePath());
     const QString managerWant = QDir::toNativeSeparators(
         privateDir + QStringLiteral("/SettingsManager.ini"));
     EXPECT_EQ(managerLanded, managerWant)
         << "SettingsManager 没落在本进程私有文件上（GIS_TOOL_SETTINGS_INI 未生效）"
-           "⇒ 每次跑 MainWindowTest 都会写真实用户注册表 HKCU\\Software\\GISTool";
+           "⇒ 落点退回用户配置目录（批次 B2 之前这里是写注册表 HKCU\\Software\\GISTool）";
     // ── 断言 5（B2）：生产落点的两条口径 ─────────────────────────────────────────
-    // 5a 生产形状只能由**纯函数**断（R-B2b）：本进程里 appSettingsPath() 返回的是 harness 注入的
-    //    文件名，拿它断 "settings.ini" 会恒假 ⇒ 那是条注定无效的守卫，所以走 resolvedSettingsPath(QString())。
-    const QString shape = gis::gui::resolvedSettingsPath(QString());
-    EXPECT_TRUE(shape.endsWith(QStringLiteral("settings.ini")))
-        << "批次 B：生产落点必须是 AppConfigLocation 下的 settings.ini，实际=" << shape.toStdString();
+    // 5a（已删，判据不在这里）："生产落点是 AppConfigLocation 下的 settings.ini"这一条由
+    //    tests/test_app_settings.cpp 的 AppSettingsPath.ProductionShapeWithoutTouchingDisk 断，
+    //    那边是 QFileInfo(resolvedSettingsPath(QString())).fileName() == "settings.ini"，
+    //    比这里原来的 endsWith("settings.ini") 强（endsWith 会放过 any_settings.ini 这种名字）。
+    //    同一个事实留两份判据、其中一份更弱 ⇒ 只会让"改的是哪一份"变成读代码才发现的问题，所以合并。
     // 5b 交接自 B1 复审义务 1：**"生产落点是不是 IniFormat"这条判据归 B2**，正确落点就在这里 ——
     //    format() 是 appSettings() 自己选的构造参数，不是测试传进去的，所以把它换成
     //    NativeFormat/两参形态时这条会红（test_app_settings.cpp 里那条同形状的断言已被删，因为
@@ -115,7 +118,12 @@ void configureSettingsForTest() {
         const QSettings probe = gis::gui::appSettings();   // 注入态 ⇒ 只写私有 ini，安全
         EXPECT_EQ(probe.format(), QSettings::IniFormat)
             << "welcome_dialog 走的默认构造在 Windows 生产进程上是 NativeFormat ⇒ 会写 HKCU\\Software\\GIS\\GIS Tool";
-        EXPECT_NE(QFileInfo(probe.fileName()).suffix(), QStringLiteral("Registry"))
+        // 注册表对象的 fileName() 是 **HKEY_CURRENT_USER\Software\…** 这一串（落点实测见
+        // src/gui/app_settings.cpp 顶部），所以鉴别"落点还是不是注册表"要盯 fileName() 的开头。
+        // ⚠ 别改回"看后缀是不是 Registry"那一类写法：QFileInfo 把 '\\' 当分隔符，于是它取的是
+        //   键名末段（…\GISTool ⇒ 空串）的后缀，任何注册表路径都不可能等于字面量 "Registry"
+        //   ⇒ 那条断言在任何实现下都不会红，是恒真判据（B3a 用同一条注册表形态字符串对照验过）。
+        EXPECT_FALSE(probe.fileName().startsWith(QLatin1String("HKEY")))
             << "探针落点看起来仍是注册表：fileName=" << probe.fileName().toStdString();
     }
     // 5c welcome_dialog 的落点守卫（本任务真正的红→绿判据）。
@@ -131,10 +139,6 @@ void configureSettingsForTest() {
     EXPECT_TRUE(gis::gui::appSettings().value(QLatin1String("app/first_run_complete"), false).toBool())
         << "welcome_dialog 与 appSettings() 不是同一个落点 ⇒ 首启标记写到别的文件里去了"
            "（生产进程即 HKCU\\Software\\GIS\\GIS Tool，N101 的第二条腿）";
-    if (!firstRunMarked) {
-        gis::gui::markFirstRunComplete();
-        firstRunMarked = true;
-    }
 }
 
 QString createFinishedTask(const QString& displayGroup,

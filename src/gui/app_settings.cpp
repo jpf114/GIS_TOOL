@@ -76,6 +76,57 @@ int copyMissingKeys(const QSettings& from, QSettings& to) {
     return copied;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// R-B7：生产接线本体。label 与工厂由**同一次调用的同一批参数**展开，
+// 所以"用例断 label"断的就是"生产会拿什么参数去构造旧落点"，两者不会各说各话；
+// 从这张表里摘掉一条 = 少一个源 = 用例红（见 tests/test_app_settings.cpp 的 AppSettingsLegacySources）。
+// 这里不出现任何注册表路径字面量（R-B3）：落点由 QSettings 对象自己按 org/app 解析。
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// 旧落点一：SettingsManager 历史用的两参构造 ⇒ Windows 上是 NativeFormat。
+LegacySettingsSource legacySourceFromNames(const QString& organization, const QString& application) {
+    return LegacySettingsSource{
+        QStringLiteral("QSettings(%1, %2)").arg(organization, application),
+        [organization, application] { return std::make_unique<QSettings>(organization, application); }};
+}
+
+// 旧落点二：welcome_dialog 历史用的默认构造 ⇒ 跟随进程的 org/app。
+LegacySettingsSource legacyDefaultSource() {
+    return LegacySettingsSource{QStringLiteral("QSettings()"),
+                                [] { return std::make_unique<QSettings>(); }};
+}
+
+} // namespace
+
+const QList<LegacySettingsSource>& productionLegacySources() {
+    static const QList<LegacySettingsSource> sources{
+        legacySourceFromNames(QStringLiteral("GISTool"), QStringLiteral("GISTool")),
+        legacyDefaultSource(),
+    };
+    return sources;
+}
+
+int migrateLegacySettingsFrom(QSettings& target, const QList<LegacySettingsSource>& sources) {
+    // R-B4：一次性靠标记，不靠运气 —— 标记检查放在 From 这一层，所以生产入口和用例走同一条幂等路径。
+    // 标记写在 ini 里而不是注册表里（R-B5：卸载器不删 HKCU，标记留在 ini 才安全）。
+    if (target.contains(QLatin1String(kMigrationMarkerKey)))
+        return 0;
+    int copied = 0;
+    for (const LegacySettingsSource& source : sources) {
+        // 一条源没接上（工厂为空 / 工厂返回空指针）就跳过它：一次启动不该因为一条断源而崩，
+        // 也不该因此不再读后面的源。
+        const std::unique_ptr<QSettings> legacy = source.open ? source.open() : nullptr;
+        if (!legacy)
+            continue;
+        copied += copyMissingKeys(*legacy, target);
+    }
+    target.setValue(QLatin1String(kMigrationMarkerKey), true);
+    target.sync();
+    return copied;
+}
+
 bool settingsOverrideActive() {
     return !qgetenv("GIS_TOOL_SETTINGS_INI").isEmpty();
 }
@@ -96,26 +147,11 @@ QString appSettingsPath() {
 int migrateLegacySettings(QSettings& target) {
     // R-B2：注入态（测试/CI）一律不读真实注册表 —— 否则测试结果依赖开发者机器状态，
     // 而且导入会把用户数据写进测试 ini。这条 return 0 是本仓不碰 HKCU 的唯一保证。
+    // 门控**必须留在生产入口这一层、且在拿到工厂之前**：NativeFormat 的 QSettings 光构造就会在
+    // HKCU 下建键 ⇒ 挡住的既是"读到用户数据"也是"建键"这个副作用本身。
     if (settingsOverrideActive())
         return 0;
-    // R-B4：只做一次；标记写在 ini 里，不写在注册表里（R-B5：卸载器不删 HKCU，标记留在 ini 才安全）。
-    if (target.contains(QLatin1String(kMigrationMarkerKey)))
-        return 0;
-    int copied = 0;
-    // 旧落点一：SettingsManager 原先的两参构造 ⇒ Windows 上是 NativeFormat（注册表）。
-    {
-        const QSettings legacy(QStringLiteral("GISTool"), QStringLiteral("GISTool"));
-        copied += copyMissingKeys(legacy, target);
-    }
-    // 旧落点二：welcome_dialog 原先的默认构造 ⇒ 吃 org/app（生产是 "GIS"/"GIS Tool"）。
-    // R-B3：两个源都用 QSettings 对象本身表达，不在 C++ 里硬编码注册表路径字符串。
-    {
-        const QSettings legacy;
-        copied += copyMissingKeys(legacy, target);
-    }
-    target.setValue(QLatin1String(kMigrationMarkerKey), true);
-    target.sync();
-    return copied;
+    return migrateLegacySettingsFrom(target, productionLegacySources());
 }
 
 QSettings appSettings() {
