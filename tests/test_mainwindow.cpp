@@ -49,12 +49,18 @@ QString uniqueMainWindowGroup(const char* suffix) {
 // 21-FixA part2 I-6：这里**不再做重定向**，只做"重定向确实生效"的断言。
 // 真正的 QSettings 落点已经上移到 tests/test_main.cpp 的每进程单例（不可绕过）。
 // WHY 必须兜底而不是靠约定：旧写法把重定向交给这 13 处手写调用 + 一个 static bool，
-//   而 tests 里从不 setOrganizationName/setApplicationName ⇒ 没有重定向时
-//   src/gui/settings_manager.cpp:10 的 QSettings("GISTool","GISTool") 会直接落在
-//   用户真实 %APPDATA% 下的 GISTool/GISTool.ini；新用例忘记调用一样跑得绿，
-//   没有任何断言会发现"这条用例把配置写进了开发者机器"。现在机制在 main() 钉一次、
-//   结果在这里断言一次（落点算式两边共用 gis::tests::privateSettingsDir()），
-//   任何一侧退化都会被抓到：删掉 main() 那三行 ⇒ 断言 2 红；改落点算式 ⇒ 断言 2 红。
+//   新用例忘记调用一样跑得绿，没有任何断言会发现"这条用例把配置写进了开发者机器"。
+//   现在机制在 main() 钉一次、结果在这里断言一次（落点算式两边共用
+//   gis::tests::privateSettingsDir()），任何一侧退化都会被抓到：
+//   删掉 main() 那三行 ⇒ 断言 2/3/4 红；改落点算式 ⇒ 断言 2 红。
+//
+// ⚠ 断言必须用**显式带 Format/Scope 的构造形态**，不能用两参形态，这是本轮踩过的坑：
+//   QSettings probe("GISTool","GISTool") 两参构造走的是 **NativeFormat**，
+//   既不吃 setDefaultFormat(IniFormat) 也不吃 setPath(IniFormat, …) ⇒ fileName() 返回
+//   HKEY_CURRENT_USER\Software\GISTool\…，与 ini 重定向无关 ⇒ 断言恒红（14 条 MainWindowTest 实测全红）。
+//   这条同时登记成一个 src 侧事实：src/gui/settings_manager.cpp:10 用的正是两参构造
+//   ⇒ SettingsManager 写的其实是注册表而不是 %APPDATA%\GISTool\GISTool.ini；
+//   测试侧改不了它（红线不许动 src），已挂账。
 void configureSettingsForTest() {
     static bool firstRunMarked = false;
     const QString privateDir =
@@ -62,13 +68,15 @@ void configureSettingsForTest() {
     // 断言 1：默认格式必须仍是 IniFormat —— NativeFormat 写的是注册表，同样是不该碰的用户状态。
     EXPECT_EQ(QSettings::defaultFormat(), QSettings::IniFormat)
         << "test_main.cpp 里的每进程重定向单例没跑起来（或被改成 NativeFormat）";
-    // 断言 2：落点必须就在本进程私有目录里 —— 测的是结果，不是"有没有调用过 setter"。
-    QSettings probe(QStringLiteral("GISTool"), QStringLiteral("GISTool"));
+    // 断言 2：真构造一次，验 GISTool/GISTool.ini 确实落在私有目录里（测结果，不是测"调过 setter"）。
+    //   用**显式带 Format/Scope 的四参构造**，理由见上面那段坑登记。
+    QSettings probe(QSettings::IniFormat, QSettings::UserScope,
+                    QStringLiteral("GISTool"), QStringLiteral("GISTool"));
     const QString landed = QDir::toNativeSeparators(probe.fileName());
     const QString want = QDir::toNativeSeparators(
         privateDir + QStringLiteral("/GISTool/GISTool.ini"));
     EXPECT_EQ(landed, want)
-        << "GISTool.ini 的实际落点不是本进程的私有目录（并发共享定名 ini、或写进用户 profile）";
+        << "GISTool.ini 的实际落点不是本进程的私有目录（重定向没跑，或并发共享同一份定名 ini）";
     // 断言 3：方向盘——绝不允许落在用户真实 %APPDATA% 下的 GISTool 里。
     const QString appData = qEnvironmentVariable("APPDATA");
     if (!appData.isEmpty()) {

@@ -1395,7 +1395,9 @@ add_test(
 set_tests_properties(GuiContract.ExportActionVisibleKeys PROPERTIES
     WORKING_DIRECTORY $<TARGET_FILE_DIR:gis_tests>
     RESOURCE_LOCK gis_action_visible_keys
-    # 与 gtest_discover_tests 给其余 498 条设的那道跳过识别保持一致，否则这条用例一旦被
+    # 与 gtest_discover_tests 给其余全部 gtest 用例设的那道跳过识别保持一致（条数会随用例增减，
+    # 故不在此抄写分母 —— K-21 纪律：结论入库、当时的条数不入库，要复算就跑 ctest -N），
+    # 否则这条用例一旦被
     # GTEST_SKIP 就变成"退出码 0 ⇒ Passed"的假绿（发现侧靠这条正则把 skipped 认出来）。
     SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]"
 )
