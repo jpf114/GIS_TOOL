@@ -281,13 +281,243 @@ std::vector<GTestBlock> collectGTestBlocks(const std::string& text) {
     return blocks;
 }
 
-bool blockHasNumericAssertion(const GTestBlock& block) {
+// ---------------------------------------------------------------- 判据的原文加工（N90）
+//
+// 去掉 // 行注释与 /* */ 块注释，但**原样保留字符串/字符/原始字符串字面量的内容**。
+// 换行留着：失败消息报的是"第几行的什么"，行号感一丢就没法对着原文核。
+//
+// WHY 保留字符串内容（本任务指定的判别方向）：F-b 的归属形状 `params["action"] = std::string("x")`
+// 的键与值整个活在字符串里，把字符串内容一起删掉等于把归属判据的依据删掉；另一方面字面量里的
+// `//`（JSON 夹具、URL、路径）不能被当成注释起点，所以这个函数必须自己走状态机，
+// 不能拿 `find("//")` 一把梭。
+std::string stripCppComments(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    const std::size_t n = text.size();
+    std::size_t i = 0;
+    while (i < n) {
+        const char c = text[i];
+        const char next = (i + 1 < n) ? text[i + 1] : '\0';
+        if (c == '/' && next == '/') {
+            while (i < n && text[i] != '\n') ++i;
+            continue;
+        }
+        if (c == '/' && next == '*') {
+            i += 2;
+            while (i < n) {
+                if (text[i] == '*' && (i + 1 < n) && text[i + 1] == '/') {
+                    i += 2;
+                    break;
+                }
+                if (text[i] == '\n') out.push_back('\n');
+                ++i;
+            }
+            continue;
+        }
+        if (c == 'R' && next == '"') {
+            // 原始字符串 R"delim( ... )delim"：整段按原文抄走，里面的引号与括号都不参与配对。
+            const std::size_t open = text.find('(', i + 2);
+            const std::size_t close = open == std::string::npos ? std::string::npos : text.find(')', open);
+            if (open != std::string::npos && close != std::string::npos) {
+                const std::string delim = text.substr(i + 2, open - (i + 2));
+                const std::string terminator = ")" + delim + "\"";
+                const std::size_t end = text.find(terminator, close);
+                if (end != std::string::npos) {
+                    out.append(text, i, end + terminator.size() - i);
+                    i = end + terminator.size();
+                    continue;
+                }
+            }
+        }
+        if (c == '"' || c == '\'') {
+            const char quote = c;
+            out.push_back(c);
+            ++i;
+            while (i < n) {
+                if (text[i] == '\\' && i + 1 < n) {
+                    out.push_back(text[i]);
+                    out.push_back(text[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                out.push_back(text[i]);
+                if (text[i] == quote) {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+        out.push_back(c);
+        ++i;
+    }
+    return out;
+}
+
+// 代码（剥掉注释后的原文）里是否还有"把数值钉住"的断言。N90 之后的判据：注释里写的不算。
+bool codeHasNumericAssertion(const std::string& code) {
     for (const auto& assertion : kNumericAssertions) {
-        if (block.body.find(assertion) != std::string::npos) {
+        if (code.find(assertion) != std::string::npos) {
             return true;
         }
     }
     return false;
+}
+
+bool blockHasNumericAssertion(const GTestBlock& block) {
+    return codeHasNumericAssertion(stripCppComments(block.body));
+}
+
+// ---------------------------------------------------------------- 判据：归属（F-b）
+//
+// 归属要的是"这个块确实执行了这一行的 plugin.action"，不是"这个块里出现过那个字符串"。
+// 区分靠动作槽：参数表交给插件的那个键就叫 "action"，所以 action 的字面量必须出现在
+// `["action"] = …` 的右值里（或经 case 表的成员流进去）。而 `params["threshold"] = 1.0` 里的
+// "threshold" 只是一个**参数键**，跟 action 无关 —— 批次 A 复审的洗白配方吃的就是旧判据。
+
+const std::string kActionSlot = "[\"action\"]";
+
+bool isSpaceAt(const std::string& text, std::size_t pos) {
+    return pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' || text[pos] == '\n' || text[pos] == '\r');
+}
+
+std::size_t skipSpaces(const std::string& text, std::size_t pos) {
+    while (isSpaceAt(text, pos)) ++pos;
+    return pos;
+}
+
+// text 在 pos 处以 needle 开头则返回其后的位置，否则 npos。
+std::size_t matchAt(const std::string& text, std::size_t pos, const std::string& needle) {
+    if (pos + needle.size() > text.size()) return std::string::npos;
+    if (text.compare(pos, needle.size(), needle) != 0) return std::string::npos;
+    return pos + needle.size();
+}
+
+bool isIdentChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// 逐处试：对每一处 `["action"]` 调用 read 读右值，读通了就返回其后的**位置**，读不通就找下一处，
+// 全部读不通返回 npos。
+// WHY 返回位置而不是 bool：npos 转成 bool 是**真**，`return anyActionSlot(...)` 直接进 bool 函数
+// 会造出一条恒真的判据，所以调用方一律写 `!= std::string::npos`。
+template <typename Reader>
+std::size_t anyActionSlot(const std::string& code, Reader read) {
+    std::size_t at = 0;
+    while ((at = code.find(kActionSlot, at)) != std::string::npos) {
+        const std::size_t done = read(code, at + kActionSlot.size());
+        if (done != std::string::npos) return done;
+        ++at;
+    }
+    return std::string::npos;
+}
+
+// `["action"]` 之后是不是 `= std::string("<action>")` 或 `= "<action>"`。
+// WHY 两种都收：ParamValue 是 variant，tests/test_plugins.cpp 的动作槽一律用 std::string() 包一层
+// （现读：`grep -c 'params\["action"\] = std::string(' tests/test_plugins.cpp` 与
+// `grep -c 'params\["action"\]' tests/test_plugins.cpp` 的差就是那唯一一处表驱动的成员赋值，
+// 它走下面 actionSlotHoldsLoopMember 那条形态），登记表头部说明里另有裸字面量的写法。
+// 两种都把 action 字面量放进了动作槽，归属强度一样，所以不必强迫裸字面量改写。
+bool actionSlotHoldsLiteral(const std::string& code, const std::string& action) {
+    const std::string quoted = '"' + action + '"';
+    return anyActionSlot(code, [&quoted](const std::string& text, std::size_t pos) {
+        std::size_t p = matchAt(text, skipSpaces(text, pos), "=");
+        if (p == std::string::npos) return std::string::npos;
+        p = skipSpaces(text, p);
+        const std::size_t wrapper = matchAt(text, p, "std::string");
+        if (wrapper != std::string::npos) {
+            p = matchAt(text, skipSpaces(text, wrapper), "(");
+            if (p == std::string::npos) return std::string::npos;
+            p = skipSpaces(text, p);
+        }
+        p = matchAt(text, p, quoted);
+        if (p == std::string::npos) return std::string::npos;
+        return skipSpaces(text, p);
+    }) != std::string::npos;
+}
+
+// `["action"] = <标识符>.action`：动作槽接的是循环变量的成员（表驱动用例）。
+bool actionSlotHoldsLoopMember(const std::string& code) {
+    return anyActionSlot(code, [](const std::string& text, std::size_t pos) {
+        std::size_t p = matchAt(text, skipSpaces(text, pos), "=");
+        if (p == std::string::npos) return std::string::npos;
+        p = skipSpaces(text, p);
+        std::size_t ident = p;
+        while (ident < text.size() && isIdentChar(text[ident])) ++ident;
+        if (ident == p) return std::string::npos;  // 等号后面连标识符都没有
+        p = matchAt(text, ident, ".action");
+        if (p == std::string::npos) return std::string::npos;
+        if (p < text.size() && isIdentChar(text[p])) return std::string::npos;  // .actionX 不算
+        return p;
+    }) != std::string::npos;
+}
+
+// `{"<action>"`：action 的字面量作为某个初始化列表的**首元素**出现（case 表里的那一行）。
+bool caseTableEntryForAction(const std::string& code, const std::string& action) {
+    const std::string quoted = '"' + action + '"';
+    std::size_t at = 0;
+    while ((at = code.find(quoted, at)) != std::string::npos) {
+        std::size_t back = at;
+        while (back > 0 && isSpaceAt(code, back - 1)) --back;
+        if (back > 0 && code[back - 1] == '{') return true;
+        at += quoted.size();
+    }
+    return false;
+}
+
+// 一个块体是否属于这一行的 plugin.action（输入必须是 stripCppComments 的结果）。
+bool blockAttributesAction(const std::string& code, const std::string& plugin, const std::string& action) {
+    if (code.find('"' + plugin + '"') == std::string::npos) return false;
+    if (actionSlotHoldsLiteral(code, action)) return true;
+    // 表驱动形态要两条同时成立：动作槽由 case 表的成员喂，且该 action 的字面量确实在那张表里。
+    // WHY 两条都要：只查成员访问，任意带 `.action` 的块都能蒙过去；只查 `{"x"`，
+    // 同一份字面量出现在文案表里也能蒙过去。两条合起来保住的是"删掉表项 ⇒ 对应 GOLD 行立刻红"
+    // —— 今天靠这条形态成立的是 spindex 那张 15 行的 case 表。
+    return actionSlotHoldsLoopMember(code) && caseTableEntryForAction(code, action);
+}
+
+// F-c：requiredKeys 里不在 visibleKeys 中的键（面板不呈现的键，必填校验永远静默失效）。
+std::vector<std::string> requiredKeysOutsideVisibleKeys(const std::string& prefix,
+                                                        const std::set<std::string>& visibleKeys,
+                                                        const std::set<std::string>& requiredKeys) {
+    std::vector<std::string> violations;
+    for (const auto& key : requiredKeys) {
+        if (visibleKeys.find(key) == visibleKeys.end()) violations.push_back(prefix + "." + key);
+    }
+    return violations;
+}
+
+// 一条 GOLD 行的库内证据审计：空串表示证据成立，非空是可直接拼进 EXPECT 消息的失败原因。
+std::string goldEvidenceProblem(const RegistryRow& row, const std::vector<GTestBlock>& blocks) {
+    if (row.evidence.empty()) {
+        return "\n  " + row.key() + " 缺第 4 列证据用例名（第 " + std::to_string(row.lineNumber) + " 行）";
+    }
+    const GTestBlock* block = nullptr;
+    for (const auto& candidate : blocks) {
+        if (candidate.id() == row.evidence) {
+            block = &candidate;
+            break;
+        }
+    }
+    if (!block) {
+        return "\n  " + row.key() + "." + row.evidence +
+            " 在 tests/test_plugins.cpp 里找不到这个 TEST/TEST_F/TEST_P 用例名";
+    }
+    // 两条判据都读**剥掉注释后的块体**（N90 修的就是"判据读原文"这件事），
+    // 所以注释里的形状既撑不起归属、也撑不起数值断言。
+    const std::string code = stripCppComments(block->body);
+    std::string problem;
+    if (!blockAttributesAction(code, row.plugin, row.action)) {
+        problem += "\n  " + row.key() + "." + row.evidence +
+            " 块体不属于这一行：要同时出现 \"" + row.plugin + "\" 和把 \"" + row.action +
+            "\" 送进 [\"action\"] 动作槽的形状（引用别的插件/别的 action 的用例记不了 GOLD）";
+    }
+    if (!codeHasNumericAssertion(code)) {
+        problem += "\n  " + row.key() + "." + row.evidence +
+            " 块体的代码里没有 EXPECT_NEAR/EXPECT_FLOAT_EQ/EXPECT_DOUBLE_EQ 数值断言（写在注释里不算），GOLD 站不住";
+    }
+    return problem;
 }
 
 // 一条展示层与插件真值之间的分歧。id 形如 plugin.action.key.required / .defaultValue，
@@ -404,9 +634,14 @@ TEST(CoverageMeta, PendingCountDoesNotGrow) {
 
 TEST(CoverageMeta, GoldEvidenceIsAuditable) {
     // F1 / R-F1-A：GOLD 行的凭据必须落在版本库里，并且能被机器复核。
-    // 登记表第 4 列写用例名，这里回到 tests/test_plugins.cpp 的**那个块体内**核对
-    // （a）用例存在（b）块体内有数值断言（c）块体内出现该行的 action 字符串。
-    // 任何人软化或删掉那条数值断言、或给用例改名，对应 GOLD 行立刻变红。
+    // 登记表第 4 列写用例名，这里回到 tests/test_plugins.cpp 的**那个块体内**核对三件事，
+    // 判据本身是 goldEvidenceProblem（N90/F-b 加严后）：
+    //   （a）用例存在；
+    //   （b）块体**属于这一行**：剥掉注释后的原文里同时出现 "<plugin>" 和把 "<action>" 送进
+    //        ["action"] 动作槽的形状（字面量直接进槽，或经 case 表的成员进槽）；
+    //   （c）剥掉注释后的原文里有 EXPECT_NEAR/EXPECT_FLOAT_EQ/EXPECT_DOUBLE_EQ。
+    // 任何人软化或删掉那条数值断言、把动作槽那行注释掉、给用例改名、或引用一个不执行该 action
+    // 的块，对应 GOLD 行立刻变红。判据自己的判别力由 CoverageMetaJudge 那组用例钉住。
     const auto registry = readRegistry();
     ASSERT_FALSE(registry.rows.empty()) << "缺少 " << kRegistryPath;
     EXPECT_TRUE(registry.malformed.empty())
@@ -426,32 +661,9 @@ TEST(CoverageMeta, GoldEvidenceIsAuditable) {
         ++goldRows;
         // 缺第 4 列的 GOLD 行在上面 readRegistry 的 malformed 里已经红过一次，
         // 这里再点一次名，是为了让"哪一行没有证据"这条消息出现在 GOLD 审计用例里。
-        if (row.evidence.empty()) {
-            failures += "\n  " + row.key() + " 缺第 4 列证据用例名（第 " +
-                std::to_string(row.lineNumber) + " 行）";
-            continue;
-        }
-        const GTestBlock* block = nullptr;
-        for (const auto& candidate : blocks) {
-            if (candidate.id() == row.evidence) {
-                block = &candidate;
-                break;
-            }
-        }
-        if (!block) {
-            failures += "\n  " + row.key() + "." + row.evidence +
-                " 在 tests/test_plugins.cpp 里找不到这个 TEST/TEST_F/TEST_P 用例名";
-            continue;
-        }
-        // action 字符串要出现**在同一个块体内**（按字符串字面量找，避免 ui/info 这类短名
-        // 因为出现在别的单词里而蒙过去）。
-        if (block->body.find('"' + row.action + '"') == std::string::npos) {
-            failures += "\n  " + row.key() + "." + row.evidence +
-                " 块体内没有出现该行的 action 字符串 \"" + row.action + "\"";
-        }
-        if (!blockHasNumericAssertion(*block)) {
-            failures += "\n  " + row.key() + "." + row.evidence +
-                " 块体内没有 EXPECT_NEAR/EXPECT_FLOAT_EQ/EXPECT_DOUBLE_EQ 数值断言，GOLD 站不住";
+        const std::string problem = goldEvidenceProblem(row, blocks);
+        if (!problem.empty()) {
+            failures += problem;
         }
     }
 
@@ -470,6 +682,8 @@ TEST(GuiContract, EffectiveSpecsAgreeWithPluginSpecs) {
     std::vector<Divergence> violations;
     std::set<std::string> whitelistHits;
     std::vector<std::string> deadRequiredKeys;
+    std::vector<std::string> requiredOutsideVisible;
+    int requiredBearingConfigs = 0;
 
     for (auto* plugin : mgr.plugins()) {
         if (!plugin) continue;
@@ -488,10 +702,19 @@ TEST(GuiContract, EffectiveSpecsAgreeWithPluginSpecs) {
             const std::set<std::string> required;
             const std::set<std::string>& panelRequired =
                 config ? config->requiredKeys : required;
+            const std::set<std::string>& panelVisible =
+                config ? config->visibleKeys : visible;
             const auto effective = gis::gui::buildEffectiveGuiParamSpecs(
-                name, action, specs,
-                config ? config->visibleKeys : visible,
-                panelRequired);
+                name, action, specs, panelVisible, panelRequired);
+
+            // F-c（本任务新加的元断言）：requiredKeys 必须是 visibleKeys 的子集。
+            // WHY 需要单独一条：required 的加严发生在**过滤之后**，所以列一个不在 visibleKeys 里的键
+            // 既不会报错也不会生效 —— 面板上连那个输入框都没有，星号与提交前校验无从附着。
+            // 上面那条 deadRequiredKeys 查的是"键在插件 paramSpecs 里存在"，覆盖不到这件事。
+            if (config && !config->requiredKeys.empty()) ++requiredBearingConfigs;
+            for (const auto& key : requiredKeysOutsideVisibleKeys(name + "." + action, panelVisible, panelRequired)) {
+                requiredOutsideVisible.push_back(key);
+            }
 
             // F4：GUI 面板把插件的参数字典筛成空集的话，星号与必填校验都无从谈起。
             ASSERT_FALSE(effective.empty())
@@ -557,6 +780,20 @@ TEST(GuiContract, EffectiveSpecsAgreeWithPluginSpecs) {
     }
     EXPECT_TRUE(deadRequiredKeys.empty())
         << "以下 GUI 面板的 requiredKeys 键在插件 paramSpecs 里不存在（死条目，必填校验不会生效）:" << dead;
+
+    // F-c：requiredKeys ⊆ visibleKeys。今天全表无实例（现读命令：把本用例的 requiredOutsideVisible
+    // 打印出来数，或跑 CoverageMetaJudge.RequiredKeyOutsideVisibleKeysIsReported 那条合成用例，
+    // 它证明这条臂真的会咬人，不是恒真断言），所以这是一条"未来同类静默"防线，成本三行。
+    std::string outsideVisible;
+    for (const auto& key : requiredOutsideVisible) {
+        outsideVisible += "\n  " + key;
+    }
+    EXPECT_TRUE(requiredOutsideVisible.empty())
+        << "以下 GUI 面板的 requiredKeys 键没有出现在同一个 action 的 visibleKeys 里："
+        << "必填校验加在一个面板上不呈现的键上，永远静默失效:" << outsideVisible;
+    // 非空检查：整张表一个 requiredKeys 都没有的话，上面那条 EXPECT 就是空检查。
+    ASSERT_GT(requiredBearingConfigs, 0)
+        << "GUI 面板表里没有任何非空 requiredKeys，F-c 的臂失去对象（表被清空？）";
 
     // 分歧被删掉却还留在白名单里 = 挂账已清但账没销，同样要变红。
     std::string stale;
@@ -765,3 +1002,170 @@ TEST(GuiContract, ExportActionVisibleKeys) {
               << " visible_key_rows=" << keyRows
               << " path=" << outPath.string() << std::endl;
 }
+
+// ============================================================ 判据自身的单测（N90 / F-a / F-b / F-c）
+//
+// WHY 判据要有自己的用例，而不是只跑登记表：CoverageMeta.GoldEvidenceIsAuditable 只对**今天这张表**
+// 成立，判据本身被改软（把剥注释那一步删掉、或把归属要求退回"action 字符串在块里出现过"）时它
+// 照样全绿 —— 判据的判别力只能由合成块钉住。
+
+namespace {
+
+GTestBlock syntheticBlock(const std::string& body) {
+    GTestBlock block;
+    block.suite = "Synthetic";
+    block.name = "Block";
+    block.body = body;
+    return block;
+}
+
+RegistryRow syntheticRow(const std::string& plugin, const std::string& action, const std::string& evidence) {
+    RegistryRow row;
+    row.lineNumber = 0;
+    row.plugin = plugin;
+    row.action = action;
+    row.status = "GOLD";
+    row.evidence = evidence;
+    return row;
+}
+
+}  // namespace
+
+// N90 的核心可杀性：块里唯一的 EXPECT_NEAR 写在注释里 ⇒ 判 false。
+// 判据今天直接读块体原文，所以这条用例复现的就是"删掉真断言、只留那句注释，GOLD 行照样绿"。
+TEST(CoverageMetaJudge, LineCommentOnlyNumericAssertionIsNotCounted) {
+    const GTestBlock block = syntheticBlock(
+        "\n    const auto result = p->execute(params, progress_);\n"
+        "    EXPECT_TRUE(result.success);\n"
+        "    // EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n");
+    EXPECT_FALSE(blockHasNumericAssertion(block))
+        << "注释里的 EXPECT_NEAR 不是断言：那条数值钉住的凭据并不存在";
+}
+
+// 同上，只是换成 /* */ 形态（本项目大量用块注释写"为什么这样断言"）。
+TEST(CoverageMetaJudge, BlockCommentOnlyNumericAssertionIsNotCounted) {
+    const GTestBlock block = syntheticBlock(
+        "\n    /* 这一版本来想钉像素值：\n"
+        "       EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n"
+        "       EXPECT_DOUBLE_EQ 也一样，写在注释里都不算 */\n"
+        "    EXPECT_TRUE(fs::exists(output));\n");
+    EXPECT_FALSE(blockHasNumericAssertion(block));
+}
+
+// 控制组：注释 + 真断言共存时必须仍然判 true（加严不许把有证据的块一起打掉）。
+TEST(CoverageMetaJudge, RealAssertionAlongsideCommentIsStillCounted) {
+    const GTestBlock block = syntheticBlock(
+        "\n    // EXPECT_NEAR 的历史写法已废弃\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n");
+    EXPECT_TRUE(blockHasNumericAssertion(block));
+}
+
+// 判别方向（本任务指定的那条）：剥注释只剥注释，字符串字面量的内容原样保留 ——
+// 归属形状与 metadata 键名都活在字符串里，顺手删掉会让 F-b 失去依据；
+// 同时字面量里的 // 与引号不得被当成注释起点/字符串终点。
+TEST(CoverageMetaJudge, StripCppCommentsKeepsStringLiteralContents) {
+    const std::string code = stripCppComments(
+        "    EXPECT_EQ(params.at(\"note\"), \"EXPECT_NEAR 钉住的是像素值\");\n"
+        "    const std::string url = \"http://example.com/a.tif\";  // 真注释\n"
+        "    /* 块注释里的 \" 不参与字符串配对 */\n"
+        "    params[\"action\"] = std::string(\"threshold\");\n");
+    EXPECT_NE(code.find("EXPECT_NEAR 钉住的是像素值"), std::string::npos)
+        << "字符串字面量内容必须原样保留";
+    EXPECT_NE(code.find("http://example.com/a.tif"), std::string::npos)
+        << "字面量里的 // 不得被当成注释起点";
+    EXPECT_EQ(code.find("真注释"), std::string::npos);
+    EXPECT_EQ(code.find("不参与字符串配对"), std::string::npos);
+    EXPECT_NE(code.find("params[\"action\"] = std::string(\"threshold\")"), std::string::npos);
+}
+
+// F-b：同名的**参数键**不是归属。块体属于 matching/change，
+// 里面的 "threshold" 是 params["threshold"] 这个参数键，不能拿去给 processing.threshold 记证据。
+TEST(CoverageMetaJudge, ParamKeyNamedLikeTheActionIsNotAttribution) {
+    const std::string code = stripCppComments(
+        "    auto* p = mgr_.find(\"matching\");\n"
+        "    params[\"action\"] = std::string(\"change\");\n"
+        "    params[\"threshold\"] = 1.0;\n"
+        "    EXPECT_NEAR(std::stod(result.metadata.at(\"change_ratio\")), 0.03, 1e-6);\n");
+    EXPECT_FALSE(blockAttributesAction(code, "processing", "threshold"))
+        << "引用别的插件/别的 action 的用例记不了 GOLD";
+    EXPECT_TRUE(blockAttributesAction(code, "matching", "change")) << "正对照：真正的执行块要仍然成立";
+    EXPECT_FALSE(blockAttributesAction(code, "matching", "register")) << "plugin 对得上但 action 对不上也不行";
+}
+
+// F-a 与 F-b 的交点：动作槽形状只写在注释里 ⇒ 剥完注释后归属不成立。
+TEST(CoverageMetaJudge, CommentedOutActionSlotShapeIsNotAttribution) {
+    const std::string code = stripCppComments(
+        "    auto* p = mgr_.find(\"processing\");\n"
+        "    // params[\"action\"] = std::string(\"threshold\");\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 1, 1), 0.0f, 1e-6f);\n");
+    EXPECT_FALSE(blockAttributesAction(code, "processing", "threshold"));
+    EXPECT_FALSE(actionSlotHoldsLiteral(code, "threshold"))
+        << "注释里的形状被剥掉之后不该还剩下来";
+}
+
+// 表驱动形态（今天 spindex 那一族 15 行就靠它）：动作槽接的是 case 表的成员，
+// 于是该 action 的字面量必须作为表项首元素出现在同一个块里。两条各删一次都要能红。
+TEST(CoverageMetaJudge, TableDrivenLoopBindingIsAttributed) {
+    const std::string withEntry = stripCppComments(
+        "    auto* p = mgr_.find(\"spindex\");\n"
+        "    const std::vector<CaseSpec> cases = {\n"
+        "        {\"ndbi\", \"e2e_spindex_ndbi_output.tif\", {{\"swir1_band\", 5}}, 0.125f},\n"
+        "    };\n"
+        "    for (const auto& testCase : cases) {\n"
+        "        params[\"action\"] = testCase.action;\n"
+        "        EXPECT_NEAR(readRasterPixel(output, 5, 5), testCase.expectedValue, 1e-4f);\n"
+        "    }\n");
+    EXPECT_TRUE(blockAttributesAction(withEntry, "spindex", "ndbi"));
+
+    const std::string withoutEntry = stripCppComments(
+        "    auto* p = mgr_.find(\"spindex\");\n"
+        "    const std::vector<CaseSpec> cases = {\n"
+        "        {\"ndwi\", \"e2e_spindex_ndwi_output.tif\", {{\"green_band\", 2}}, 0.5f},\n"
+        "    };\n"
+        "    for (const auto& testCase : cases) {\n"
+        "        params[\"action\"] = testCase.action;\n"
+        "        EXPECT_NEAR(readRasterPixel(output, 5, 5), testCase.expectedValue, 1e-4f);\n"
+        "    }\n");
+    EXPECT_FALSE(blockAttributesAction(withoutEntry, "spindex", "ndbi"))
+        << "表项被删掉就是覆盖被偷走，这一行必须变红";
+
+    // 只有字面量、动作槽里没有流向它的赋值（比如那张表只是文案表）⇒ 不算归属。
+    const std::string noSlotBinding = stripCppComments(
+        "    auto* p = mgr_.find(\"spindex\");\n"
+        "    const std::vector<Label> labels = {{\"ndbi\", \"归一化差值植被指数\"}};\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.125f, 1e-4f);\n");
+    EXPECT_FALSE(blockAttributesAction(noSlotBinding, "spindex", "ndbi"));
+}
+
+// 批次 A 复审给的确切洗白配方，拿**真源码**复跑一次：
+// 引用 PluginTest.MatchingChangeExecutionReportsChangedPixels 给 processing.threshold 记 GOLD
+// （那里面的 "threshold" 是 params["threshold"] 这个参数键）。
+TEST(CoverageMetaJudge, BatchAReviewExploitIsRejectedOnRealSource) {
+    const std::string source = readFileOrEmpty(kPluginTestPath);
+    ASSERT_FALSE(source.empty()) << "缺少 " << kPluginTestPath;
+    const auto blocks = collectGTestBlocks(source);
+    ASSERT_FALSE(blocks.empty());
+
+    const RegistryRow exploit = syntheticRow(
+        "processing", "threshold", "PluginTest.MatchingChangeExecutionReportsChangedPixels");
+    EXPECT_FALSE(goldEvidenceProblem(exploit, blocks).empty())
+        << "洗白配方必须被拦住：这个块执行的是 matching/change，不是 processing/threshold";
+
+    // 正对照：同一个块对它真正执行的那个 action 仍然算证据（加严不许把好证据打掉）。
+    const RegistryRow honest = syntheticRow(
+        "matching", "change", "PluginTest.MatchingChangeExecutionReportsChangedPixels");
+    EXPECT_TRUE(goldEvidenceProblem(honest, blocks).empty());
+}
+
+// F-c：requiredKeys 列了 visibleKeys 里没有的键 ⇒ 点名（今天全表无实例，所以这里用合成集证明臂会咬人）。
+TEST(CoverageMetaJudge, RequiredKeyOutsideVisibleKeysIsReported) {
+    const std::set<std::string> visible{"input", "output"};
+    const std::set<std::string> required{"input", "output", "band"};
+    const auto violations = requiredKeysOutsideVisibleKeys("raster_manage.nodata", visible, required);
+    ASSERT_EQ(violations.size(), 1u) << "列进 requiredKeys 却没列进 visibleKeys 的键必须被点名";
+    EXPECT_NE(violations[0].find("band"), std::string::npos) << violations[0];
+    EXPECT_NE(violations[0].find("raster_manage.nodata"), std::string::npos) << violations[0];
+    EXPECT_TRUE(requiredKeysOutsideVisibleKeys("raster_manage.nodata", visible,
+                                              std::set<std::string>{"input"}).empty());
+}
+
