@@ -257,7 +257,7 @@ constexpr int kPendingCeiling = 74;
 //               块扫描器自己认字面量，也就不存在"第二套词法"。
 //
 // 两份视图都**保留换行**：行号感一丢，GTestBlock 的边界与失败消息里的行号就集体漂
-// （CoverageMetaJudge.CommentLexingPreservesLineCount 钉这条，真文件上也钉）。
+// （CoverageMetaJudge.CommentLexingPreservesLineCountAndViewAlignment 钉这条，真文件上也钉）。
 struct CppViews {
     std::string code;
     std::string blanked;
@@ -1730,6 +1730,72 @@ TEST(CoverageMetaJudge, CommentLexingPreservesLineCountAndViewAlignment) {
     EXPECT_EQ(views.origin.size(), views.code.size());
     EXPECT_LT(views.code.size(), text.size()) << "真文件里有注释，剥完必须变短（否则本用例是空检查）";
     EXPECT_LT(views.blanked.size(), text.size());
+
+    // ---- I-2 逐位对位（修复轮 1）BEGIN：名字里的 "ViewAlignment" 由这一段兑现 ----
+    // 上面那四条只钉住"等长 + 行数相等 + 确实变短了"，**推不出对位**：把 origin 填成顺序递增、
+    // 或整段 +1 平移，那四条照样绿（复审 I-2）。判据取**全量逐位**、不采样——"采样规则是否可复算"
+    // 这条约束在这里直接让位于更强的口径：对 [0, code.size()) 的**每一个**下标 i 同时核三件事，
+    //   ① code[i] == text[origin[i]]                        留下来的每个字符都确实取自原文那个下标
+    //   ② blanked[i] == text[origin[i]] 或 blanked[i]==' '   抹除只许原地变空格，不许挪位
+    //   ③ code[i]=='\n' ⇒ blanked[i]=='\n' 且原文 origin[i] 也是 '\n'   两份视图与原文的换行同位
+    // ①②③ 合起来就是"origin 是视图下标到原文下标的真映射"，B11 要靠它把失败消息里的行号钉回原文。
+    // 违例只记**第一处**下标、最后一次报错（68 万下标逐条 EXPECT 会把日志刷爆），所以取字符前先把
+    // i==npos 与 origin 越界都挡住——越界时只登记下标不取字符，免得变异体把测试进程打崩。
+    std::size_t scanned = 0;    // 真正核到的下标数
+    std::size_t drifted = 0;    // origin[i] != i 的下标数：证明这份输入上映射不是恒等
+    std::size_t newlines = 0;   // ③ 实际核到的换行数
+    std::size_t wiped = 0;      // blanked[i] != text[origin[i]] 的下标数 = 被抹掉的位置
+    std::size_t idxOob = std::string::npos;    // origin[i] 越出原文长度
+    std::size_t idxCode = std::string::npos;   // 违反 ①
+    std::size_t idxBlank = std::string::npos;  // 违反 ②
+    std::size_t idxNl = std::string::npos;     // 违反 ③
+    for (std::size_t i = 0; i < views.code.size(); ++i) {
+        const std::size_t o = views.origin[i];
+        if (o >= text.size()) {
+            if (idxOob == std::string::npos) idxOob = i;
+            continue;
+        }
+        ++scanned;
+        if (o != i) ++drifted;
+        const char t = text[o];
+        const char c = views.code[i];
+        const char b = views.blanked[i];
+        if (b != t) ++wiped;
+        if (c == '\n') {
+            ++newlines;
+            if ((b != '\n' || t != '\n') && idxNl == std::string::npos) idxNl = i;
+        }
+        if (c != t && idxCode == std::string::npos) idxCode = i;
+        if (b != t && b != ' ' && idxBlank == std::string::npos) idxBlank = i;
+    }
+    // 只在违例时才取字符拼现场；i==npos（通过）时返回占位串，不会越界读。
+    auto where = [&](std::size_t i) {
+        if (i == std::string::npos) return std::string("(无违例)");
+        const std::size_t o = views.origin[i];
+        return std::string("i=") + std::to_string(i) + " origin=" + std::to_string(o) +
+               " code='" + views.code[i] + "' blanked='" + views.blanked[i] + "'" +
+               (o < text.size() ? std::string(" text='") + text[o] + "'"
+                                : std::string(" text=<越界>"));
+    };
+    std::cout << "[I2-VIEW-ALIGNMENT] scanned=" << scanned << " drifted=" << drifted
+              << " newlines=" << newlines << " wiped=" << wiped
+              << " codeSize=" << views.code.size() << " textSize=" << text.size() << "\n";
+    // 四条空检查闸：任何一条没跑到，上面三条判据就都是恒真的装饰。
+    ASSERT_GT(scanned, 0u) << "逐位核一条都没跑到 ⇒ 本用例是空检查";
+    ASSERT_GT(drifted, 0u) << "origin 在这份输入上处处等于下标 ⇒ ① 退化成恒等检查，平移类变异拦不住";
+    ASSERT_GT(newlines, 0u) << "没核到任何换行 ⇒ ③ 是空检查";
+    ASSERT_GT(wiped, 0u) << "没有任何位置被抹成空格 ⇒ ② 是空检查";
+    EXPECT_EQ(idxOob, std::string::npos)
+        << "有下标的 origin 越出了原文长度 ⇒ 视图坐标已与原文脱钩：" << where(idxOob);
+    EXPECT_EQ(idxCode, std::string::npos)
+        << "① code 视图与原文对不上 ⇒ 视图里算出的下标不能直接用到原文上，"
+        << "块边界与失败消息里的行号都会错：" << where(idxCode);
+    EXPECT_EQ(idxBlank, std::string::npos)
+        << "② blanked 里出现了既非原文那个字符、又非空格的字符 ⇒ 抹除挪了位：" << where(idxBlank);
+    EXPECT_EQ(idxNl, std::string::npos)
+        << "③ 换行在 code / blanked / 原文三者之间不同位 ⇒ 行号会漂：" << where(idxNl);
+    // ---- I-2 逐位对位（修复轮 1）END ----
+
     // blanked 必须真的把字面量内容抹掉了：字面量里的 EXPECT_NEAR 在 blanked 里不该还剩下来。
     const CppViews probe = lexCppViews(
         "    qDebug() << \"EXPECT_NEAR 只是文案\";  // 注释里的 EXPECT_NEAR\n"
