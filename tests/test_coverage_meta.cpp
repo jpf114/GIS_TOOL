@@ -242,73 +242,55 @@ ComputedCounts computeRegistryCounts(const std::vector<std::string>& lines) {
 // 于是"表 / 上限 / 头部"三者要么一起改，要么当场红。
 constexpr int kPendingCeiling = 74;
 
+// ---------------------------------------------------------------- 词法（R-B11a 收口后全仓只有这一份）
+//
+// 一趟扫描产出**两份坐标逐字节对齐**的视图，对齐是靠"只删注释字符、字面量一律原地改写而不是删掉"
+// 保证的：code[i] 与 blanked[i] 来自原文同一个下标（见 origin），两份视图等长，
+// 所以在其中一份里算出来的下标可以直接用到另一份上。
+//
+//   code     —— 剥掉 // 与 /* */ 注释，字符串/字符/原始字符串字面量的内容**原样保留**。
+//               归属判据（F-b）只能读这份：`params["action"]` 的键与值整个活在字面量里。
+//   blanked  —— 同上，再把每种字面量的**内容**抹成空格（引号留着、换行留着）。
+//               括号配对只能读这份：字面量里的 `{` `}`（JSON 夹具、raw string）不再需要
+//               块扫描器自己认字面量，也就不存在"第二套词法"。
+//
+// 两份视图都**保留换行**：行号感一丢，GTestBlock 的边界与失败消息里的行号就集体漂
+// （CoverageMetaJudge.CommentLexingPreservesLineCount 钉这条，真文件上也钉）。
+struct CppViews {
+    std::string code;
+    std::string blanked;
+    std::vector<std::size_t> origin;  // origin[i] = 这个字符在原文里的下标（code 与 blanked 共用）
+};
+
+// 定义在本节之后（stripCppComments 那段注释解释了它为什么必须自己走状态机）。
+CppViews lexCppViews(const std::string& text);
+
 // ---------------------------------------------------------------- 源码用例块
 
 struct GTestBlock {
     std::string suite;
     std::string name;
-    std::string body;  // 外层大括号内的原文（已跳过字符串/字符字面量与注释）
+    std::string body;  // 外层大括号内的**原文**（判据自己负责剥注释，见 blockHasNumericAssertion）
     std::string id() const { return suite + "." + name; }
 };
 
 // 从 from 起找到第一个 '{'，做括号配对并返回闭括号后的位置；找不到返回 npos。
-// 跳过 // 与 \/* *\/ 注释、字符串与字符字面量里的括号，否则 JSON 夹具里的 { 会把块撑到文件末尾。
-std::size_t scanBracedBlock(const std::string& text, std::size_t from, std::size_t& bodyBegin) {
-    const std::size_t open = text.find('{', from);
+// ⚠ 输入必须是 lexCppViews 的 blanked 视图（或同等"注释与字面量内容都已消失"的文本）：
+//   这个函数**只数大括号**，没有注释状态、没有字面量状态，因此它不可能和剥离器对
+//   "注释到哪里结束"给出两种说法 —— 这正是 R-B11a 要收的口：旧实现自带一套只认 '\n'、
+//   不认"行尾反斜杠 + 换行"拼接的行注释词法，于是被续行注释吞掉的那个 `{` 会多算一次 depth，
+//   块边界向右漂到邻居甚至 namespace 的收尾 `}`，把邻居的 EXPECT_NEAR 吞进本块 ⇒ **假绿**
+//   （复现夹具见 CoverageMetaJudge.SplicedLineCommentCannotDriftBlockBraceBoundary）。
+//   传原文进来的话它会把 JSON 夹具里的 `{` 当代码括号，所以调用点只有一处、且传的是 blanked。
+std::size_t scanBracedBlock(const std::string& structural, std::size_t from, std::size_t& bodyBegin) {
+    const std::size_t open = structural.find('{', from);
     if (open == std::string::npos) {
         return std::string::npos;
     }
     bodyBegin = open + 1;
     std::size_t depth = 0;
-    bool inString = false;
-    bool inChar = false;
-    bool inLineComment = false;
-    bool inBlockComment = false;
-    bool escaped = false;
-    for (std::size_t p = open; p < text.size(); ++p) {
-        const char c = text[p];
-        const char next = (p + 1 < text.size()) ? text[p + 1] : '\0';
-        if (inLineComment) {
-            if (c == '\n') inLineComment = false;
-            continue;
-        }
-        if (inBlockComment) {
-            if (c == '*' && next == '/') {
-                inBlockComment = false;
-                ++p;
-            }
-            continue;
-        }
-        if (inString || inChar) {
-            if (escaped) {
-                escaped = false;
-            } else if (c == '\\') {
-                escaped = true;
-            } else if (inString && c == '"') {
-                inString = false;
-            } else if (inChar && c == '\'') {
-                inChar = false;
-            }
-            continue;
-        }
-        if (c == '/' && next == '/') {
-            inLineComment = true;
-            ++p;
-            continue;
-        }
-        if (c == '/' && next == '*') {
-            inBlockComment = true;
-            ++p;
-            continue;
-        }
-        if (c == '"') {
-            inString = true;
-            continue;
-        }
-        if (c == '\'') {
-            inChar = true;
-            continue;
-        }
+    for (std::size_t p = open; p < structural.size(); ++p) {
+        const char c = structural[p];
         if (c == '{') {
             ++depth;
             continue;
@@ -318,7 +300,6 @@ std::size_t scanBracedBlock(const std::string& text, std::size_t from, std::size
             if (depth == 0) {
                 return p + 1;
             }
-            continue;
         }
     }
     return std::string::npos;
@@ -335,15 +316,20 @@ std::string readFileOrEmpty(const std::string& path) {
 }
 
 // 按行首的 TEST/TEST_F/TEST_P 宏切块；块体是那对大括号内的原文。
+// 行的遍历与括号配对都读 lexCppViews 的 blanked 视图（R-B11a：全仓只有剥离器那一份词法），
+// 块体仍然回原文取 —— 判据自己负责剥注释（这样 CoverageMetaJudge 才能拿带注释的原文喂它）。
+// 顺带修掉的两件事：① 注释里的 `TEST(` 不再被当成用例（旧实现扫原文）；
+// ② 字面量里的 `TEST(` 也不再被当成用例（blanked 里那份内容已经没了）。
 std::vector<GTestBlock> collectGTestBlocks(const std::string& text) {
     std::vector<GTestBlock> blocks;
+    const CppViews views = lexCppViews(text);
     std::size_t lineStart = 0;
-    while (lineStart < text.size()) {
-        std::size_t lineEnd = text.find('\n', lineStart);
+    while (lineStart < views.blanked.size()) {
+        std::size_t lineEnd = views.blanked.find('\n', lineStart);
         if (lineEnd == std::string::npos) {
-            lineEnd = text.size();
+            lineEnd = views.blanked.size();
         }
-        const std::string line = text.substr(lineStart, lineEnd - lineStart);
+        const std::string line = views.blanked.substr(lineStart, lineEnd - lineStart);
         const std::size_t first = line.find_first_not_of(" \t");
         const std::string trimmed = (first == std::string::npos) ? std::string() : line.substr(first);
 
@@ -374,9 +360,13 @@ std::vector<GTestBlock> collectGTestBlocks(const std::string& text) {
                 block.suite = trim(args);
             }
             std::size_t bodyBegin = 0;
-            const std::size_t after = scanBracedBlock(text, lineStart, bodyBegin);
+            const std::size_t after = scanBracedBlock(views.blanked, lineStart, bodyBegin);
             if (after != std::string::npos && !block.name.empty()) {
-                block.body = text.substr(bodyBegin, after - 1 - bodyBegin);
+                // blanked 与原文的坐标用 origin 换算：bodyBegin 是 '{' 后第一个字符，
+                // after - 1 是配对的 '}'，两者都落在保留下来的字符上，所以一定有 origin。
+                const std::size_t rawBegin = views.origin[bodyBegin];
+                const std::size_t rawClose = views.origin[after - 1];
+                block.body = text.substr(rawBegin, rawClose - rawBegin);
                 blocks.push_back(block);
                 lineStart = after;
                 continue;
@@ -389,16 +379,31 @@ std::vector<GTestBlock> collectGTestBlocks(const std::string& text) {
 
 // ---------------------------------------------------------------- 判据的原文加工（N90）
 //
-// 去掉 // 行注释与 /* */ 块注释，但**原样保留字符串/字符/原始字符串字面量的内容**。
+// 去掉 // 行注释与 /* */ 块注释，但**原样保留字符串/字符/原始字符串字面量的内容**（= code 视图），
+// 同一趟扫描再产出把字面量内容抹成空格的 blanked 视图（两份的用途与"坐标对齐"见上面 CppViews）。
 // 换行留着：失败消息报的是"第几行的什么"，行号感一丢就没法对着原文核。
 //
 // WHY 保留字符串内容（本任务指定的判别方向）：F-b 的归属形状 `params["action"] = std::string("x")`
 // 的键与值整个活在字符串里，把字符串内容一起删掉等于把归属判据的依据删掉；另一方面字面量里的
 // `//`（JSON 夹具、URL、路径）不能被当成注释起点，所以这个函数必须自己走状态机，
 // 不能拿 `find("//")` 一把梭。
-std::string stripCppComments(const std::string& text) {
-    std::string out;
-    out.reserve(text.size());
+//
+// WHY 它是全仓唯一的词法（R-B11a）：块扫描器 scanBracedBlock 现在吃 blanked 视图，
+// 自己不再判断"注释到哪里结束"。它过去自带一套只认 '\n'、不认"行尾反斜杠 + 换行"拼接的行注释
+// 词法，于是同一份原文有两个答案，实测能把 GOLD 判据从红翻成绿（夹具见
+// CoverageMetaJudge.SplicedLineCommentCannotDriftBlockBraceBoundary）。
+CppViews lexCppViews(const std::string& text) {
+    CppViews v;
+    v.code.reserve(text.size());
+    v.blanked.reserve(text.size());
+    v.origin.reserve(text.size());
+    // 字面量内部的字符在 blanked 里只留换行，其余抹成空格 ⇒ 两份等长、下标可以互换着用。
+    auto blankOf = [](char ch) { return ch == '\n' ? '\n' : ' '; };
+    auto putChar = [&v](char codeCh, char blankCh, std::size_t at) {
+        v.code.push_back(codeCh);
+        v.blanked.push_back(blankCh);
+        v.origin.push_back(at);
+    };
     const std::size_t n = text.size();
     std::size_t i = 0;
     while (i < n) {
@@ -420,7 +425,7 @@ std::string stripCppComments(const std::string& text) {
                 std::size_t prev = i;
                 if (prev > 0 && text[prev - 1] == '\r') --prev;  // CRLF 原文：'\r' 不算注释行内容
                 const bool splices = prev > commentStart && text[prev - 1] == '\\';
-                out.push_back('\n');
+                putChar('\n', '\n', i);
                 ++i;
                 if (!splices) break;
             }
@@ -433,13 +438,15 @@ std::string stripCppComments(const std::string& text) {
                     i += 2;
                     break;
                 }
-                if (text[i] == '\n') out.push_back('\n');
+                if (text[i] == '\n') putChar('\n', '\n', i);
                 ++i;
             }
             continue;
         }
         if (c == 'R' && next == '"') {
-            // 原始字符串 R"delim( ... )delim"：整段按原文抄走，里面的引号与括号都不参与配对。
+            // 原始字符串 R"delim( ... )delim"：code 里整段按原文抄走；blanked 里只留
+            // `R"delim(` 与 `)delim"` 两端，中间的内容抹掉 ⇒ 内容里的 { } 不参与块配对，
+            // 也不必让块扫描器再认一遍 raw string（旧实现完全不认，靠引号奇偶巧合）。
             const std::size_t open = text.find('(', i + 2);
             const std::size_t close = open == std::string::npos ? std::string::npos : text.find(')', open);
             if (open != std::string::npos && close != std::string::npos) {
@@ -447,24 +454,27 @@ std::string stripCppComments(const std::string& text) {
                 const std::string terminator = ")" + delim + "\"";
                 const std::size_t end = text.find(terminator, close);
                 if (end != std::string::npos) {
-                    out.append(text, i, end + terminator.size() - i);
-                    i = end + terminator.size();
+                    const std::size_t stop = end + terminator.size();
+                    for (std::size_t p = i; p <= open; ++p) putChar(text[p], text[p], p);
+                    for (std::size_t p = open + 1; p < end; ++p) putChar(text[p], blankOf(text[p]), p);
+                    for (std::size_t p = end; p < stop; ++p) putChar(text[p], text[p], p);
+                    i = stop;
                     continue;
                 }
             }
         }
         if (c == '"' || c == '\'') {
             const char quote = c;
-            out.push_back(c);
+            putChar(c, c, i);
             ++i;
             while (i < n) {
                 if (text[i] == '\\' && i + 1 < n) {
-                    out.push_back(text[i]);
-                    out.push_back(text[i + 1]);
+                    putChar(text[i], blankOf(text[i]), i);
+                    putChar(text[i + 1], blankOf(text[i + 1]), i + 1);
                     i += 2;
                     continue;
                 }
-                out.push_back(text[i]);
+                putChar(text[i], blankOf(text[i]), i);
                 if (text[i] == quote) {
                     ++i;
                     break;
@@ -473,10 +483,16 @@ std::string stripCppComments(const std::string& text) {
             }
             continue;
         }
-        out.push_back(c);
+        putChar(c, c, i);
         ++i;
     }
-    return out;
+    return v;
+}
+
+// 薄封装：只要 code 视图的那几个调用点（判据单测与 ② 之前的谓词）继续用它，
+// 别再往仓库里加第三种"我自己剥一遍注释"的实现。
+std::string stripCppComments(const std::string& text) {
+    return lexCppViews(text).code;
 }
 
 // 代码（剥掉注释后的原文）里是否还有"把数值钉住"的断言。N90 之后的判据：注释里写的不算。
@@ -1484,6 +1500,83 @@ TEST(CoverageMetaJudge, AuditStripsBackslashContinuedLineCommentEndToEnd) {
         syntheticRow("processing", "threshold", "SyntheticGold.BackslashContinuedComment"), blocks);
     EXPECT_NE(problem.find("数值断言"), std::string::npos)
         << "行尾反斜杠续行后，那句 EXPECT_NEAR 整条都在注释里 ⇒ 审计必须报 problem:" << problem;
+}
+
+// R-B11a 的假绿夹具（抄 task-B8-rereview.md §1 的 S1，合法 C++，`namespace {` 提供那个多余的 `}`）：
+// victim 里唯一的"数值断言"整条活在**续行注释**里，而注释的下一行是一个真 `{`（编译器眼里它也是注释）。
+// 旧 scanBracedBlock 自带一套只认 '\n' 的行注释词法 ⇒ 那个 `{` 被多算一次 depth ⇒ 块尾向右漂到
+// namespace 的收尾 `}` ⇒ victim 把邻居的 EXPECT_NEAR 吞进来 ⇒ 审计判 victim **合格**（假绿），
+// 同时邻居整个消失（复审实测：blocks=1、bodyLen=350、hasNestedTEST=1）。
+    // ⚠ victim 只留一个"被注释吞掉的 {"、不给它配对的 }：那个补偿的 `}` 由 namespace 的收尾提供，
+    //   所以整份夹具在编译器眼里是合法 C++（续行注释把 `    {` 那行一起吃掉了）。
+    //   给 victim 补一个自己的 } 就会就地归零、块边界不漂 ⇒ 这条用例退化成恒绿装饰。
+// 现在块扫描吃 lexCppViews 的 blanked 视图，注释与字面量里的括号在到达扫描器之前就已经没了。
+TEST(CoverageMetaJudge, SplicedLineCommentCannotDriftBlockBraceBoundary) {
+    const std::string source =
+        "namespace {\n"
+        "TEST(SyntheticGold, Victim) {\n"
+        "    auto* p = mgr_.find(\"processing\");\n"
+        "    params[\"action\"] = std::string(\"threshold\");\n"
+        "    // 这一版没有数值断言 \\\n"
+        "    {\n"
+        "}\n"
+        "TEST(SyntheticGold, Neighbor) {\n"
+        "    auto* p = mgr_.find(\"processing\");\n"
+        "    params[\"action\"] = std::string(\"threshold\");\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n"
+        "}\n"
+        "}  // namespace\n";
+
+    // 先钉住"块边界"本身：两个 TEST 必须各自成块（旧词法在这里就报 1 块）。
+    const auto blocks = collectGTestBlocks(source);
+    EXPECT_EQ(blocks.size(), 2u) << "被续行注释吞掉的 '{' 不该算进 depth：块边界会因此向右漂";
+    ASSERT_FALSE(blocks.empty()) << "合成源文件解析不出块 ⇒ 本用例是空检查";
+
+    // victim 的 EXPECT_NEAR 一条都没有 ⇒ 审计必须报"数值断言"（旧词法下这里是**空串**＝假绿）。
+    const std::string victimProblem = goldEvidenceProblem(
+        syntheticRow("processing", "threshold", "SyntheticGold.Victim"), blocks);
+    EXPECT_NE(victimProblem.find("数值断言"), std::string::npos)
+        << "victim 那句断言整个在续行注释里，邻居的不算它的证据 ⇒ 审计必须报 problem:" << victimProblem;
+
+    // 邻居既不能被吞掉、也不能被误伤（正对照：改词法不许把好证据一起打掉）。
+    EXPECT_TRUE(goldEvidenceProblem(
+        syntheticRow("processing", "threshold", "SyntheticGold.Neighbor"), blocks).empty())
+        << "邻居的块体被漂走的边界截掉了（过度剥离）";
+}
+
+// ④ 的硬约束：剥离器必须继续保留换行，否则块边界与失败消息里的行号集体漂。
+// 只在合成串上钉过一次（LineCommentWithBackslashContinuationIsNotCounted），这里在**真文件**上钉，
+// 并且顺带钉住两份视图"等长 + 逐字符同下标"这条对齐性（collectGTestBlocks 靠它把 blanked 的
+// 下标用到原文上）。
+TEST(CoverageMetaJudge, CommentLexingPreservesLineCountAndViewAlignment) {
+    const std::string text = readFileOrEmpty(kPluginTestPath);
+    ASSERT_FALSE(text.empty()) << "缺少 " << kPluginTestPath;
+    const CppViews views = lexCppViews(text);
+
+    auto countNewlines = [](const std::string& s) {
+        std::size_t n = 0;
+        for (const char c : s) {
+            if (c == '\n') ++n;
+        }
+        return n;
+    };
+    EXPECT_EQ(countNewlines(views.code), countNewlines(text))
+        << "剥注释不许改变行数，否则块边界与行号对不上原文";
+    EXPECT_EQ(countNewlines(views.blanked), countNewlines(text)) << "blanked 同理";
+    EXPECT_EQ(views.code.size(), views.blanked.size()) << "两份视图必须等长，下标才能互用";
+    EXPECT_EQ(views.origin.size(), views.code.size());
+    EXPECT_LT(views.code.size(), text.size()) << "真文件里有注释，剥完必须变短（否则本用例是空检查）";
+    EXPECT_LT(views.blanked.size(), text.size());
+    // blanked 必须真的把字面量内容抹掉了：字面量里的 EXPECT_NEAR 在 blanked 里不该还剩下来。
+    const CppViews probe = lexCppViews(
+        "    qDebug() << \"EXPECT_NEAR 只是文案\";  // 注释里的 EXPECT_NEAR\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n");
+    EXPECT_NE(probe.code.find("EXPECT_NEAR 只是文案"), std::string::npos)
+        << "code 视图要保留字面量内容（归属判据的依据）";
+    EXPECT_EQ(probe.blanked.find("EXPECT_NEAR 只是文案"), std::string::npos)
+        << "blanked 视图必须抹掉字面量内容";
+    EXPECT_NE(probe.blanked.find("EXPECT_NEAR(readRasterPixel"), std::string::npos)
+        << "真代码里的断言在 blanked 里必须留下来（控制组）";
 }
 
 // F-c：requiredKeys 列了 visibleKeys 里没有的键 ⇒ 点名（今天全表无实例，所以这里用合成集证明臂会咬人）。
