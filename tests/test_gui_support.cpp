@@ -2910,19 +2910,35 @@ TEST(GuiActionConfig, AllPlanARelevantPluginsHaveActionConfigs) {
 // 前者抓 R-T10-2/3/4 那类错键名（错键既让真参数被隐藏、自己又什么都不做），
 // 后者抓"真实存在但未被渲染的必填键"—— ParamCardWidget::validate() 对不在 entries_ 里的键
 // 直接 continue，于是必填校验静默失效（与 R-F2-A 修掉的同一族）。
-// 存在性方向（action 声明在枚举里就必须有条目）只对**本集合里的**插件执法：
-// 集合外的插件仍有未补条目的 action，把它们提前加进来只会让本用例红在别人的活上。
+// 存在性方向（action 声明在枚举里就必须有条目）对**每一个产品插件**执法：本集合与
+// cmake/PluginTargets.cmake 的 GIS_PLUGIN_TARGETS 同域（名单以那个文件为准，条数不在这里记账）。
+// 循环里唯一被跳过的 test_lifecycle 是测试插件、不是产品插件，由下面那条
+//   if (name == "test_lifecycle") continue;
+// 显式排除 —— 它是"集合覆盖全部产品插件"这句话的前提，别删、别改成模糊匹配。
+// 永久纪律：新增产品插件时本集合同批加名，且该插件的每个 action 同批在
+//   src/gui/gui_data_support.cpp 补 actionUiConfig 条目；少哪一侧都是这里红，不是环境问题。
+// 历史（写成历史、不当现状陈述）：2026-10-19 登记时本集合只含 10 个插件，理由是集合外那几个插件
+//   当时确有未补条目的 action，提前加进来只会让本用例红在别人的活上；K-14 把免检桶清到 0 之后这个
+//   理由消失了 ⇒ R-B13（2026-10-20）把它扩到全部产品插件。这里不留"某插件仍有未补条目"这类会随
+//   进度失实的句子。
+// 分工（2026-10-20 判别实验实测，两条臂都有牙）：
+//   免检桶的计数断言（tests/check_action_visible_keys_read.cmake 的 NNOCFGREG vs WL_NOCONFIG）
+//   管"桶不许长"，并且已能点名是哪几条（它把实测免检集减冻结名单的差集逐条写进红字）；
+//   本用例的独有增量是 (a) 红在单元测试里、不依赖 cmake 扫描链路被跑到 —— 产物或扫描器哪天失效时
+//   守卫会假绿，本用例是进程内直接查枚举；(b) 逐键校验（visibleKeys/requiredKeys ⊆ paramSpecs、
+//   requiredKeys ⊆ visibleKeys），计数断言不做这件事。
 // WHY 集合每次扩容必须与 src/gui/gui_data_support.cpp 的新条目、以及
 //   tests/check_action_visible_keys_read.cmake 的 GIS_21C_NO_UI_CONFIG_ALLOWLIST 销账**同批提交**：
 //   只扩本集合不改表 ⇒ 这里红（存在性方向命中那些还没补的 action）；
 //   只改表不缩名单 ⇒ 名单那条"每条都必须仍是免检项"红。两侧都是设计好的红，不是环境问题。
-//   第三支路（只补条目、只缩名单、不扩集合）不是"无人把守"：实测名单清零后 21-C 的计数断言
-//   （check_action_visible_keys_read.cmake 的 NNOCFGREG vs WL_NOCONFIG）自己就会红，它管住桶不许长、如今也点名是哪几条；
-//   本用例的独有增量是逐键校验（新条目的键是否真属于该插件的 paramSpecs）且不依赖 cmake 扫描链路 ⇒ "名单清零"与"集合含该插件"必须一起到位，这就是 K-14/N91 的结案判据。
+//   第三支路（只补条目、只缩名单、不扩集合）不是"无人把守"：实测名单清零后 21-C 的计数断言自己
+//   就会红、也点得出是哪几条，但没人校验这批新条目的键是否真属于该插件的 paramSpecs ⇒ 所以
+//   "名单清零"与"集合含该插件"必须一起到位，这就是 K-14/N91 的结案判据。
 TEST(GuiActionConfig, PlanAConfigKeysAreDeclaredByThePluginAndRenderable) {
     static const std::set<std::string> kMustBeConfigured = {
         "spindex", "georef", "raster_math", "raster_render", "terrain", "cutting", "raster_manage",
-        "processing", "classification", "vector"
+        "processing", "classification", "vector",
+        "matching", "projection", "raster_inspect"
     };
 
     gis::core::initGDAL();
