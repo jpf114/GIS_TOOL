@@ -215,7 +215,8 @@ DeclaredCounts readDeclaredCounts(const std::vector<std::string>& lines) {
 // 除 gold_rows_all_lines 以外，一律**先排掉以 # 开头的注释行**，
 // 因为本项目真发生过"为解释判据而写的注释把数那条判据的 grep 撑大"。
 struct ComputedCounts {
-    int dataRows = 0;             // 非注释非空行条数（= grep -v '^#' | wc -l）
+    int dataRows = 0;             // 非注释非空行条数（机器口径，= 头部现读命令改后的口径）
+    int nonCommentLines = 0;      // 只排注释行、**不**排空行（= 旧现读命令 `grep -v '^#' | wc -l` 的口径）
     int goldRows = 0;             // 其中含 ",GOLD" 的行数
     int pendingRows = 0;          // 其中含 ",PENDING" 的行数
     int goldRowsAllLines = 0;     // 不排注释行的裸计数（头部专门记了它比 goldRows 多几）
@@ -226,6 +227,7 @@ ComputedCounts computeRegistryCounts(const std::vector<std::string>& lines) {
     ComputedCounts c;
     for (const auto& line : lines) {
         if (line.find(",GOLD") != std::string::npos) ++c.goldRowsAllLines;
+        if (line.empty() || line[0] != '#') ++c.nonCommentLines;  // 空行算进去：这一条就是命令的口径
         if (line.empty() || line[0] == '#') continue;
         ++c.dataRows;
         if (line.find(",GOLD") != std::string::npos) ++c.goldRows;
@@ -875,6 +877,13 @@ TEST(CoverageMeta, RegistryHeaderCountsMatchData) {
     // 那么下面任何"注释 vs 数据"的对撞都失去了意义。
     EXPECT_EQ(truth.dataRows, truth.goldRows + truth.pendingRows)
         << "数据行数 != GOLD 行数 + PENDING 行数：登记表里有既不算 GOLD 也不算 PENDING 的行";
+    // ⑤-b：机器口径跳空行、头部**旧**现读命令（`wc -l`）不跳。今天二者重合，所以"插一个空行"
+    // 这件事判据抓不到（复审 §2 行 9 实测：16/16 全绿而命令给 127）。这条臂把两个口径钉成同一个数，
+    // 于是空行要么被删掉、要么头部命令必须一起改 —— 注释里的命令不许变成假账。
+    EXPECT_EQ(truth.nonCommentLines, truth.dataRows)
+        << "数据区里有 " << truth.nonCommentLines - truth.dataRows
+        << " 个空行：`grep -v '^#'` 的口径与 computeRegistryCounts 的口径已经分叉"
+        << "（头部声明的 data_rows 只有后者会认，命令会多数这么多行）";
 
     // 与全部其它审计用例同一个解析器：grep 口径与 readRegistry 口径必须数出同一个集合，
     // 否则"头部注释 == 真值"里的真值本身是两套说法。
@@ -904,6 +913,16 @@ TEST(CoverageMeta, RegistryHeaderCountsMatchData) {
         ASSERT_TRUE(declaredByKey.insert({entry.key, entry.value}).second)
             << "第 " + std::to_string(entry.lineNumber) + " 行把同一个计数键写了两遍，后一个会被前一个掩盖";
     }
+    // ⑤-a：反向核对（"头部有键但 computed 里没有 ⇒ 点名没人核对它"）**必须放在条数闸之前**。
+    // 放在后面它就是一条结构上恒真的装饰：要走到那里必须先过 `entries.size() == computed.size()`、
+    // 无重复键、以及"6 个 computed 键全在头部"三道闸 ⇒ 两边的键集已经相等 ⇒ 这条永不成立。
+    // 复审 §2 行 14 实测过：注入第 7 条 COUNT bogus_key 时红的是条数闸，这条一次都没出声。
+    // 挪到前面之后，"多一个键"这件事由**它**点名（说得出是哪个键、第几行），条数闸退化成兜底。
+    for (const auto& entry : declared.entries) {
+        EXPECT_TRUE(computed.count(entry.key) != 0)
+            << "第 " << entry.lineNumber << " 行的计数键 " << entry.key
+            << " 没有任何判据会去核对它（改名或新增都要同时给 computed 加一条）";
+    }
     // 对照物本身要先存在：头部被删干净时，下面逐键的对撞会退化成"零次比较"的空检查。
     ASSERT_EQ(declared.entries.size(), computed.size())
         << "登记表头部的计数行应当恰有 " << computed.size() << " 条（键见下面 computed），"
@@ -918,11 +937,6 @@ TEST(CoverageMeta, RegistryHeaderCountsMatchData) {
         EXPECT_EQ(it->second, expect.second)
             << "登记表头部写的 COUNT " << expect.first << " = " << it->second
             << "，与数据行算出来的 " << expect.second << " 不符（口径见该行行尾的现读命令）";
-    }
-    for (const auto& entry : declared.entries) {
-        EXPECT_TRUE(computed.count(entry.key) != 0)
-            << "第 " << entry.lineNumber << " 行的计数键 " << entry.key
-            << " 没有任何判据会去核对它（改名或新增都要同时给 computed 加一条）";
     }
 
     // 上限与头部必须是同一个数：`EXPECT_LE(pending, kPendingCeiling)` 只朝"别涨"那半边卡，

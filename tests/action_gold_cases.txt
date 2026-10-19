@@ -32,7 +32,7 @@
 #   真值逐键对撞 —— 键少一个、数错一个、形状写歪都立刻红，所以 B11 晋升/降级之后忘改头部不可能绿着过去。
 #   每条声明行行尾带着它的现读命令；除 gold_rows_all_lines 以外一律先 `grep -v '^#'` 排掉注释行，
 #   因为本项目真发生过"为解释判据而写的注释把数那条判据的 grep 撑大"（差一也真发生过）。
-#   COUNT data_rows              = 126   # 现读：grep -v '^#' tests/action_gold_cases.txt | wc -l
+#   COUNT data_rows              = 126   # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -vc '^$'（还要排空行：机器侧跳空行，判据 CoverageMeta.RegistryHeaderCountsMatchData 钉住'数据区不许有空行'，两个口径才是同一个数）
 #   COUNT gold_rows              = 52    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'
 #   COUNT pending_rows           = 74    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING'
 #   COUNT gold_rows_all_lines    = 53    # 现读：grep -c '[,]GOLD' tests/action_gold_cases.txt —— 不排注释行的裸计数，比 gold_rows 多出来的那一条是本表第 2 行的格式说明（那里状态列前面正好是一个逗号），所以本表新写的注释一律用 '[:]GOLD' 这种写法避开那个字面量
