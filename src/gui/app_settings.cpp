@@ -19,9 +19,9 @@
 // 落点实测（2026-10-19 Tier-0 探针；原始三行输出与取证细节抄在任务报告里，这里只留结构性结论）：
 //   旧落点一 QSettings("GISTool","GISTool")：
 //     format = NativeFormat，fileName() = \HKEY_CURRENT_USER\Software\GISTool\GISTool，status = NoError。
-//     它的**内容随机器与历史而异、不可假设**：Tier-0 探针当时 allKeys() 是空列表，而跑完一次全量
-//     Debug 之后盘上又多出 10 条测试产物路径（既有 `gui_*_offscreen` 那条腿直接 spawn gis-gui.exe，
-//     那条链路上没人设 GIS_TOOL_SETTINGS_INI ⇒ 还是走 NativeFormat）。取证与后续处置见任务报告。
+//     它的**内容随机器与历史而异**：可能为空，也可能全是 offscreen GUI 用例留下的测试产物路径
+//     （`gui_*_offscreen` 那条腿直接 spawn gis-gui.exe，链路上没人设 GIS_TOOL_SETTINGS_INI ⇒ 还是走
+//     NativeFormat）。**不得对它做任何假设，也不得把某台机器上读到的内容/条数写进注释当证据。**
 //     ⇒ 这条正是 R-B2 必须存在的原因：读它 = 把"开发者机器上碰巧有什么"当测试输入。
 //     ⚠ 而且：**NativeFormat 的 QSettings 光是被构造出来就会在 HKCU 下把这一层键建出来**，
 //       哪怕整个进程只读不写——一次性探针只做了构造 + fileName() + allKeys()（没有任何
@@ -31,9 +31,10 @@
 //   旧落点二 默认构造 QSettings()：
 //     * 生产 GUI 进程（src/gui/main.cpp:36-37 设了 org/app = "GIS"/"GIS Tool"，且没人改
 //       defaultFormat）⇒ NativeFormat，\HKEY_CURRENT_USER\Software\GIS\GIS Tool；
-//       该键实测有内容（一条 app/first_run_complete），正是 welcome_dialog 历史写进去的那份。
-//       （探针是用等价的 QSettings("GIS","GIS Tool") 两参形式读出这条键的，
-//        生产里默认构造解析到的就是同一个位置。）
+//       这个键是 welcome_dialog 历史上的写入点（src/gui/welcome_dialog.cpp:15 的 kFirstRunKey），
+//       里面有什么随机器与历史而异（可能为空、可能有测试产物残留）⇒ 判据只能来自代码，
+//       不能来自某台机器上的一次读数。
+//       （读它要用等价的 QSettings("GIS","GIS Tool") 两参形式；生产里默认构造解析到的就是同一个位置。）
 //     * 测试进程**不是** "落点无效(invalid)"：test_main.cpp 调了 setDefaultFormat(IniFormat) +
 //       setPath(IniFormat, UserScope, <按 pid 分道的私有目录>)，org 名又没设，于是 Qt 6 回退用
 //       可执行文件名 ⇒ fileName() = <私有目录>/Unknown Organization/gis_tests.ini，
@@ -54,8 +55,8 @@ namespace {
 // R-B4 的实现本体。计数**必须在循环里自己累加**：K-21/自守断言纪律 = 任何"计数"判据不得由
 // 两个集合大小的差推断（计划 Step 3 的 ⚠ 明确否掉了 `after - before` 那种写法）。
 // WHY 一次 allKeys() 遍历就够、不需要按组递归：allKeys() 已经把组展开成**完整键路径**
-// （旧注册表落点 HKCU\Software\GIS\GIS Tool 的 allKeys() 实测返回一条
-//  "app/first_run_complete"——磁盘上它是子键 app 下的一个值，而不是组名 "app"）；
+// （磁盘/注册表里它是子键 app 下的一个值，allKeys() 给回的是 "app/<值名>" 这种带前缀的完整键，
+//  而不是组名 "app" —— 判据来自 QSettings 的键展开规则，不来自某台机器上读到几条）；
 // 反过来 beginGroup()/childKeys() 只看当前层，用它还得自己重建前缀。
 void copyMissingInto(const QSettings& from, QSettings& to, int& copied) {
     const QStringList fromKeys = from.allKeys();
@@ -123,8 +124,10 @@ QSettings appSettings() {
     // 所以**不能** `return settings;`（那是具名局部量的 NRVO，C++17 不保证消除、要求可移动）。
     // 这里先具名打开→跑一次性导入→sync 落盘，最后返回一个 **prvalue**：C++17 保证的返回值
     // 初始化把 prvalue 直接构造进调用方的对象，全程不发生拷贝。
-    // QSettings 对同一个 spec（这里就是同一个 fileName）共用一份进程内配置缓存，
-    // 所以第二个对象读到的正是上面 sync 之后的内容。
+    // 第二个对象的可见性来自"同进程内两个同 spec（= 同一个 fileName）的对象共用同一份
+    // QSettingsPrivate 缓存"，**不是**来自下面那句 sync() ⇒ 别把它读成"sync 后另一个对象才看得见"
+    // 的普适规律。bootstrap.sync() 负责的是内存→磁盘那一段（跨进程、进程被强杀时才有意义）；
+    // 本模块现在没有能鉴别它的用例（注入实验见任务报告 F-4），保留它是为了落盘窗口，不是为了让测试红。
     QSettings bootstrap(path, QSettings::IniFormat);
     migrateLegacySettings(bootstrap);
     bootstrap.sync();

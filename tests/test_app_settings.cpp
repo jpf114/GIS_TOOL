@@ -101,14 +101,20 @@ TEST(AppSettingsPath, TestHarnessAlwaysOverrides) {
 }
 
 TEST(AppSettingsPath, ProductionShapeWithoutTouchingDisk) {
-    // 断"生产路径形状"只能走纯函数（R-B2b）；在这里构造 QSettings 就会在真人机器上落盘。
+    // 断"生产路径形状"只能走纯函数 resolvedSettingsPath(QString())（R-B2b 红线）。
+    // 纪律：**这里不许构造任何指向生产路径的 QSettings 对象**。理由要说准：构造本身并不写盘
+    // （写盘要 setValue()+sync()，见任务报告的探针 #3），但一旦有人顺手补一句 setValue，
+    // 这个落点就是真人机器上的 %LOCALAPPDATA% ⇒ 污染用户目录，还是跨用例共享的定名文件。
+    // 至于"落点是不是注册表"：那由 appSettings() 里显式 IniFormat 的构造分支保证，本用例判不了，
+    // 所以也不要补 QSettings(p, IniFormat).format()==IniFormat 这种断言——format() 返回的就是
+    // 刚传进去的构造参数，与被测实现无关，任何实现下都不可能红。
     const QString p = gis::gui::resolvedSettingsPath(QString());
     const QString cfg = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     EXPECT_FALSE(p.isEmpty());
+    // 承重的是**文件名那一行**；下面 startsWith 是半自反的（cfg 取自同一次 QStandardPaths 调用，
+    // 与实现无关，永远为真），留着只为把"前缀来自本进程"这个形状说清楚，别误当它有鉴别力。
     EXPECT_TRUE(p.startsWith(cfg)) << "path=" << p.toStdString() << " cfg=" << cfg.toStdString();
     EXPECT_EQ(QFileInfo(p).fileName(), QStringLiteral("settings.ini"));
-    EXPECT_EQ(QSettings(p, QSettings::IniFormat).format(), QSettings::IniFormat)
-        << "生产落点必须是 IniFormat；NativeFormat 意味着又写回注册表";
 }
 
 TEST(AppSettingsPath, OverrideWinsAndSkipsLegacyRead) {
@@ -121,6 +127,16 @@ TEST(AppSettingsPath, OverrideWinsAndSkipsLegacyRead) {
     ASSERT_TRUE(dir.isValid());
     const QString injected = dir.filePath(QStringLiteral("injected.ini"));
     qputenv("GIS_TOOL_SETTINGS_INI", injected.toLocal8Bit());  // 只改指到别的私有文件，绝不 qunsetenv
+    // F-1（评审严重项）：override 的"最高优先"必须由**真实对象的落点**钉住，不能只靠"注入文件里
+    // 除我写的键外为空"。后者在退化成"appSettings() 永远吃 AppConfigLocation"时仍然全绿
+    // ——写与读落在同一个路径上，键集合当然干净，而落点已变成非 pid 私有、跨用例共享的定名文件。
+    // 先断纯函数、再断 appSettings() 这个真实对象返回的 fileName()（先例：tests/test_mainwindow.cpp:93-99
+    // 直测 SettingsManager 的落点）；只有后者能鉴别"实现忽略了 override"。
+    EXPECT_TRUE(gis::gui::appSettingsPath().endsWith(QStringLiteral("injected.ini")))
+        << "override 未生效：appSettingsPath()=" << gis::gui::appSettingsPath().toStdString();
+    EXPECT_EQ(gis::gui::appSettings().fileName(), injected)
+        << "落点必须逐字等于注入路径（先例：tests/test_mainwindow.cpp:93-99 直测真实对象落点）"
+        << " 实际=" << gis::gui::appSettings().fileName().toStdString();
     {
         QSettings s = gis::gui::appSettings();
         s.setValue("probe/x", 1);
