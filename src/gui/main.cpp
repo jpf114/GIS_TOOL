@@ -6,6 +6,7 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QFile>
+#include <QImage>
 #include <QPixmap>
 #include <QSaveFile>
 #include <QTimer>
@@ -21,6 +22,57 @@
 #include <optional>
 #include <string>
 #include <vector>
+
+namespace {
+
+// 批次 B / B7（N98）内容层：grab() 之后由**渲染进程自己**数不同颜色数，连同帧宽高一起写进
+//   既有 status 文件，让 driver 第一次能把"窗口真的画出来了"当断言判，而不是按平台名跳过。
+// WHY 做在 gis-gui 里而不是 CMake 侧：CMake 没有 zlib，逐扫描线还原 PNG filter 不现实；
+//   可行路径只剩"每用例 spawn 一次外部解码器"，那才是把解码开销搬进每条 gui_ 截图腿的地方。
+// WHY 三个值一起报：自报口径单独看是自证循环 ⇒ driver 必须拿它跟 IHDR 独立解出的宽高交叉比对
+//   （结构层见 tests/gui_regression_helpers.cmake 的 gis_gui_parse_png_ihdr_size），对不上即红。
+// WHY 全量像元而非抽样：整帧去重只是进程内一次遍历，成本远小于为解码再 spawn 一个外部解释器；
+//   而且抽样子集的颜色数不等于全帧的颜色数 ⇒ 阈值口径就没法说清了。
+struct ScreenshotStats {
+    int width = 0;
+    int height = 0;
+    int distinctColors = 0;
+};
+
+ScreenshotStats collectScreenshotStats(const QPixmap& pixmap)
+{
+    ScreenshotStats stats;
+    if (pixmap.isNull()) {
+        return stats;  // 0/0/0：结构层与内容层都会据此判红，这里不重复报错、也不假装成功
+    }
+    const QImage image = pixmap.toImage();
+    stats.width = image.width();
+    stats.height = image.height();
+
+    // 逐像元取 QRgb（QImage::pixel 内部按格式还原 ⇒ 不必先转 Format_ARGB32，
+    //   也就不踩"这版 Qt 有没有 convertedToFormat"的接口差异）。
+    std::vector<QRgb> pixels;
+    pixels.reserve(static_cast<size_t>(image.width()) * static_cast<size_t>(image.height()));
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            pixels.push_back(image.pixel(x, y));
+        }
+    }
+    std::sort(pixels.begin(), pixels.end());
+    const auto distinctEnd = std::unique(pixels.begin(), pixels.end());
+    stats.distinctColors = static_cast<int>(std::distance(pixels.begin(), distinctEnd));
+    return stats;
+}
+
+void insertScreenshotStats(QJsonObject& status, const QPixmap& pixmap)
+{
+    const ScreenshotStats stats = collectScreenshotStats(pixmap);
+    status.insert(QStringLiteral("screenshot_width"), stats.width);
+    status.insert(QStringLiteral("screenshot_height"), stats.height);
+    status.insert(QStringLiteral("screenshot_distinct_colors"), stats.distinctColors);
+}
+
+}  // namespace
 
 int main(int argc, char* argv[])
 {
@@ -184,6 +236,14 @@ int main(int argc, char* argv[])
                     return joined;
                 }().c_str());
 
+            // B7 内容层的落点顺序：先抓图，再写 status ⇒ 统计值能在 status 落盘前插进去。
+            //   这条腿判的是"参数应用失败"（退出码 2），但窗口照样画得出来 ⇒ 截图判据对它同样成立，
+            //   而它断言的失败口径（success=false / raw_message / 不产出文件）一条都没被改动。
+            std::optional<QPixmap> capturedScreenshot;
+            if (screenshotPath.has_value()) {
+                capturedScreenshot = window.grab();
+            }
+
             if (statusFilePath.has_value()) {
                 const QFileInfo info(statusFilePath.value());
                 if (!info.absoluteDir().exists()) {
@@ -198,6 +258,10 @@ int main(int argc, char* argv[])
                 status.insert(QStringLiteral("raw_message"),
                     QStringLiteral("failed_to_apply_param:%1").arg(failedKeys));
 
+                if (capturedScreenshot.has_value()) {
+                    insertScreenshotStats(status, *capturedScreenshot);
+                }
+
                 QSaveFile statusFile(statusFilePath.value());
                 if (statusFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
                     statusFile.write(QJsonDocument(status).toJson(QJsonDocument::Indented));
@@ -205,18 +269,23 @@ int main(int argc, char* argv[])
                 }
             }
 
-            if (screenshotPath.has_value()) {
+            if (screenshotPath.has_value() && capturedScreenshot.has_value()) {
                 const QFileInfo info(screenshotPath.value());
                 if (!info.absoluteDir().exists()) {
                     info.absoluteDir().mkpath(QStringLiteral("."));
                 }
-                window.grab().save(screenshotPath.value());
+                capturedScreenshot->save(screenshotPath.value());
             }
 
             app.exit(2);
         });
     }
 
+    // 这条静止态支路**不报内容统计**：它没有 status 通道可写（B7 的内容层就搭在既有 status 文件上，
+    //   另开一条旁路文件只会多一个没人交叉比对的自报口径）⇒ 结构层（IHDR 宽高）是它唯一能拿到的判定。
+    //   现跑命令（带 --screenshot 却不带 --auto-execute 的 driver；注释行不会被数进去）：
+    //     for f in $(grep -rlE -- "--screenshot" tests/run_*.cmake); do
+    //         grep -qE -- "--auto-execute" "$f" || echo "$f"; done | wc -l
     if (screenshotPath.has_value() && !autoExecute) {
         const QString targetPath = screenshotPath.value();
         QTimer::singleShot(500, &app, [&app, &window, targetPath]() {
@@ -238,6 +307,13 @@ int main(int argc, char* argv[])
     if (autoExecute && (quitOnFinish || screenshotPath.has_value() || statusFilePath.has_value())) {
         QObject::connect(&window, &MainWindow::executionFinished, &app,
             [&app, &window, screenshotPath, statusFilePath, quitOnFinish](bool) {
+                // B7 内容层：抓取时机保持原位（执行完成之后），只是把 grab() 提到 status 之前，
+                //   好把帧宽高与不同颜色数一起写进**同一个** status 文件 ⇒ 全部 gui_ 截图腿由此拿到数据源。
+                std::optional<QPixmap> capturedScreenshot;
+                if (screenshotPath.has_value()) {
+                    capturedScreenshot = window.grab();
+                }
+
                 if (statusFilePath.has_value()) {
                     const QFileInfo info(statusFilePath.value());
                     if (!info.absoluteDir().exists()) {
@@ -250,18 +326,22 @@ int main(int argc, char* argv[])
                     status.insert(QStringLiteral("message"), window.lastExecutionMessage());
                     status.insert(QStringLiteral("raw_message"), window.lastExecutionRawMessage());
 
+                    if (capturedScreenshot.has_value()) {
+                        insertScreenshotStats(status, *capturedScreenshot);
+                    }
+
                     QSaveFile statusFile(statusFilePath.value());
                     if (statusFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
                         statusFile.write(QJsonDocument(status).toJson(QJsonDocument::Indented));
                         statusFile.commit();
                     }
                 }
-                if (screenshotPath.has_value()) {
+                if (screenshotPath.has_value() && capturedScreenshot.has_value()) {
                     const QFileInfo info(screenshotPath.value());
                     if (!info.absoluteDir().exists()) {
                         info.absoluteDir().mkpath(QStringLiteral("."));
                     }
-                    window.grab().save(screenshotPath.value());
+                    capturedScreenshot->save(screenshotPath.value());
                 }
                 if (quitOnFinish || screenshotPath.has_value() || statusFilePath.has_value()) {
                     QTimer::singleShot(150, &app, &QApplication::quit);
