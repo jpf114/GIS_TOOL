@@ -97,14 +97,6 @@ set(GIS_21C_EXEMPTIONS
 #   要读数就跑 `ctest --test-dir build/debug -C Debug -R param_guard_visible_keys_all_read
 #   --output-on-failure` 看 [21C] 的 no_ui_config= 与 no_ui_config_allowlist= 两行。
 set(GIS_21C_NO_UI_CONFIG_ALLOWLIST
-    "vector|duplicate_point_check"
-    "vector|endpoints_extract"
-    "vector|envelope"
-    "vector|geom_metrics"
-    "vector|hole_check"
-    "vector|info"
-    "vector|interior_point"
-    "vector|intersect"
     "vector|midpoints_extract"
     "vector|multipart_check"
     "vector|nearest"

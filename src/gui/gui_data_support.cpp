@@ -515,6 +515,54 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "layer", "dissolve_field"},
                 {}
             }},
+            {"duplicate_point_check", {
+                QString{},
+                QStringLiteral("按坐标键比较点要素，输出坐标重复的要素对清单 CSV。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"endpoints_extract", {
+                QString{},
+                QStringLiteral("提取线要素的起止端点并输出点要素。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"envelope", {
+                QString{},
+                QStringLiteral("为每个要素生成外接矩形（Envelope）并输出面要素。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"geom_metrics", {
+                QString{},
+                QStringLiteral("在保留原有字段的基础上为每个要素追加 geom_area、geom_length、compactness 三个统计字段。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"hole_check", {
+                QString{},
+                QStringLiteral("统计含内环（孔洞）的面要素并输出问题清单 CSV。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"info", {
+                QString{},
+                QStringLiteral("读取输入矢量的驱动、图层数、几何类型、范围与坐标参考并输出报告文本；本动作不写输出文件。"),
+                {"input", "layer"},
+                {}
+            }},
+            {"interior_point", {
+                QString{},
+                QStringLiteral("为每个要素计算质心点并输出点要素；无法计算的要素跳过。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"intersect", {
+                QString{},
+                QStringLiteral("取输入要素与 overlay_vector 的公共部分，输出交集要素。"),
+                {"input", "output", "layer", "overlay_vector"},
+                {"overlay_vector"}
+            }},
         }},
         {"projection", {
             {"reproject", {
