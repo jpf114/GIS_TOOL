@@ -31,6 +31,10 @@ cmake --preset release --fresh 2>&1 | Tee-Object build/configure_release.log
 Select-String -Path build/configure_release.log -Pattern 'Runtime dep scanner:'
 ```
 
+⚠ 这里**故意不加 `--fresh`**：`--fresh` 会连 `CMakeFiles/`（含对象文件）一起清掉 ⇒ 下一次构建变成全量重编，
+而我们只想重跑一次配置、把扫描器那一行取出来。要看的效果性检查用 `cmake --preset release` 就够。
+（第 1 节里的 `--fresh` 是另一回事：那是发布前刻意从干净配置起步，代价就是一次全量重编。）
+
 期望出现一行 `-- Runtime dep scanner: <绝对路径>`（例如 `.../Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe`）。
 
 - **没有这一行** ⇒ 配置日志里会是 `未能在配置期定位运行库依赖扫描器（dumpbin / llvm-objdump / objdump）` 的 WARNING，
@@ -41,6 +45,8 @@ Select-String -Path build/configure_release.log -Pattern 'Runtime dep scanner:'
 
 ```powershell
 # 步骤 2.1：安装（--prefix install 写的是仓库根 install/，那是 gitignored 的开发机安装位）
+#   注意：这只影响本机。CI 的 Install Release 步骤不带 --prefix ⇒ 写到它自己的默认安装目录，
+#   与本仓库根的 install/ 不是同一个地方，别拿本机的 install/ 去推断 CI 装了什么。
 cmake --install build/release --config Release --prefix install
 
 # 步骤 2.2：装完必须用退出码判定，不要用"目录里有文件"判定

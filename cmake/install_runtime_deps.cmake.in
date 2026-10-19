@@ -80,6 +80,13 @@ if(_gis_can_scan_runtime_deps)
             "api-ms-"
             "ext-ms-"
             "[Hh][Vv][Ss][Ii][Ff]ile[Tt]rust\\.dll"
+        # WHY 这三个 POST_EXCLUDE 是**有意的**，不是漏配（终审第 1 席 I-8 要求把这条写进代码现场）：
+        #   vcpkg 的第三方 dll（Lerc / Qt6Core / arrow / …）在导入表里直接引用 VC++ 运行库
+        #   （MSVCP140.dll、VCRUNTIME140(.1).dll 等十几个），而本脚本按设计**不打进 VC 运行库**——
+        #   它属于系统级可再分发包，随安装包分发既有授权问题也可能与机器上已有版本冲突。
+        #   ⇒ 后果是**用户可见**的：目标机必须自行安装 VC++ Redistributable，否则包内 exe 会以
+        #     0xC0000135（STATUS_DLL_NOT_FOUND）起不来。该要求已写进 docs/RELEASE.md 的发布说明（挂账 N87）。
+        #   改动这几条之前先回答"那 VC 运行库由谁分发"，答不出来就不要动。
         POST_EXCLUDE_REGEXES
             ".*/install/bin/.*"
             ".*/[Ww]indows/.*"
