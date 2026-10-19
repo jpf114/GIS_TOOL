@@ -962,9 +962,24 @@ endif()
 # ---- 免检桶冻结（复审 §2.1 的 Critical，新挂账 N91；名单见文件头 GIS_21C_NO_UI_CONFIG_ALLOWLIST）
 # 三条断言与 GIS_21C_EXEMPTIONS 同一套自守思路：**名单本身要被断言**，不许默默长大也不许默默变小。
 if(NOT NNOCFGREG EQUAL WL_NOCONFIG)
+  # 消息构造（R-B12 裁定）：本臂是名单清零后唯一活着的免检臂，红字必须点名到具体 action。
+  # 差集只算进新变量 NOCFG_UNREG ⇒ NOCFG_PAIRS 与 GIS_21C_NO_UI_CONFIG_ALLOWLIST 原样不动，
+  # 判据的方向与条数（violations / NNOCFGREG / WL_NOCONFIG）一个都不改。
+  set(NOCFG_UNREG "${NOCFG_PAIRS}")
+  if(NNOCFGREG GREATER 0)
+    list(REMOVE_ITEM NOCFG_UNREG ${GIS_21C_NO_UI_CONFIG_ALLOWLIST})
+  endif()
+  list(LENGTH NOCFG_UNREG NNOCFGUNREG)
+  string(REPLACE ";" "\n  " _nocfg_unreg_j "${NOCFG_UNREG}")
   message(FATAL_ERROR
       "免检桶（没有 actionUiConfig、本守卫一条都不判的 action）实测 ${WL_NOCONFIG} 行，"
-      "冻结名单登记了 ${NNOCFGREG} 条 ⇒ 桶长大了就等于给自己开了免检通道（N91）。")
+      "冻结名单登记了 ${NNOCFGREG} 条 ⇒ 桶长大了就等于给自己开了免检通道（N91）。\n"
+      "未登记的 action（实测免检集减冻结名单，格式 插件|action，共 ${NNOCFGUNREG} 个）：\n  ${_nocfg_unreg_j}\n"
+      "三选一处置见文件头 GIS_21C_NO_UI_CONFIG_ALLOWLIST 名单上方的说明；"
+      "选补条目时要同批把该插件加进 tests/test_gui_support.cpp 的 kMustBeConfigured —— "
+      "本条点得出哪几个 action 少了条目，但逐键校验（新条目的键是否真属于该插件的 paramSpecs）只有那条用例会做。\n"
+      "这一栏为空时成因不在未登记侧：要么名单里挂着已经不成立的条目（下一条 foreach 才点得出它，\n"
+      "但被本条先中止挡住了），要么同一个 action 在产物里出现了多行（实测 ${WL_NOCONFIG} 行 / 去重 ${NNOCFGPAIRS} 个）。")
 endif()
 foreach(_np IN LISTS GIS_21C_NO_UI_CONFIG_ALLOWLIST)
   list(FIND NOCFG_PAIRS "${_np}" _npHit)
@@ -974,19 +989,20 @@ foreach(_np IN LISTS GIS_21C_NO_UI_CONFIG_ALLOWLIST)
         "换了写法，要么这个 action 已经补齐了 actionUiConfig ⇒ 请把这条从名单里销掉。")
   endif()
 endforeach()
+# 当前不变式（上面 NNOCFGREG vs WL_NOCONFIG 先中止）下本臂不可达；留着是因为不变式一旦放宽，它仍是唯一给出处置指路的地方。
 foreach(_np IN LISTS NOCFG_PAIRS)
   list(FIND GIS_21C_NO_UI_CONFIG_ALLOWLIST "${_np}" _npHit)
   if(_npHit EQUAL -1)
     message(FATAL_ERROR
         "免检桶里出现没登记的新条目 ${_np}：这个 action 在 GUI 侧没有 actionUiConfig 条目，"
         "本守卫对它是**恒空差集、一条都不判**，而动作登记册只管 GOLD/PENDING、"
-        "PlanAConfigKeys 的 kMustBeConfigured 只对**集合内**的插件执法存在性方向 ⇒ 该插件不在集合里时"
-        "这三条既有守卫全绿、无人把守（这就是 N91 描述的免检通道）。"
+        "PlanAConfigKeys 的 kMustBeConfigured 只对**集合内**的插件执法存在性方向 ⇒ 集合外的插件本用例不执法；"
+        "此时只剩上面 NNOCFGREG vs WL_NOCONFIG 那条计数断言把守：它管住桶不许长、也会点名是哪几条，但不做逐键校验。"
         "三选一处置：①在 src/gui/gui_data_support.cpp 给它补 actionUiConfig（首选，直接进白名单比对）；"
         "②把 \"${_np}\" 显式登记进 GIS_21C_NO_UI_CONFIG_ALLOWLIST 并写明理由；"
         "③按 K-14/N91 挂批次 B 的账并在这里留一条可追踪的说明。\n"
         "选①时必须同时把该插件加进 tests/test_gui_support.cpp 的 kMustBeConfigured："
-        "只补条目不扩集合 ⇒ 名单清零后这三条守卫对该插件一条都不判，免检通道原样重开。")
+        "只补条目不扩集合 ⇒ 守卫照样会红（计数断言管住桶），但没人校验这批新条目的键是否真属于该插件的 paramSpecs。")
   endif()
 endforeach()
 

@@ -2916,9 +2916,9 @@ TEST(GuiActionConfig, AllPlanARelevantPluginsHaveActionConfigs) {
 //   tests/check_action_visible_keys_read.cmake 的 GIS_21C_NO_UI_CONFIG_ALLOWLIST 销账**同批提交**：
 //   只扩本集合不改表 ⇒ 这里红（存在性方向命中那些还没补的 action）；
 //   只改表不缩名单 ⇒ 名单那条"每条都必须仍是免检项"红。两侧都是设计好的红，不是环境问题。
-//   第三支路才是 N91 的免检通道本身：**只补表、只缩名单、不扩集合 ⇒ 两侧都不红**。
-//   补齐 30 条 vector 却不把 vector 加进本集合，下一个新增的 vector action 依旧无人把守
-//   —— 所以"名单清零"与"集合含该插件"必须一起到位，这两件事同批就是 K-14/N91 的结案判据。
+//   第三支路（只补条目、只缩名单、不扩集合）不是"无人把守"：实测名单清零后 21-C 的计数断言
+//   （check_action_visible_keys_read.cmake 的 NNOCFGREG vs WL_NOCONFIG）自己就会红，它管住桶不许长、如今也点名是哪几条；
+//   本用例的独有增量是逐键校验（新条目的键是否真属于该插件的 paramSpecs）且不依赖 cmake 扫描链路 ⇒ "名单清零"与"集合含该插件"必须一起到位，这就是 K-14/N91 的结案判据。
 TEST(GuiActionConfig, PlanAConfigKeysAreDeclaredByThePluginAndRenderable) {
     static const std::set<std::string> kMustBeConfigured = {
         "spindex", "georef", "raster_math", "raster_render", "terrain", "cutting", "raster_manage",

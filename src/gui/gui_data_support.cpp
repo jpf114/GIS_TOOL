@@ -464,7 +464,7 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             //         -DREPORT_FILE=<任意可写路径>
             //         -DGIS_21C_TRACE_PAIR=vector.<action>
             //         -P tests/check_action_visible_keys_read.cmake
-            //   WHY 这里把五个必填变量写全、而不是像旧注释那样只给 -DGIS_21C_TRACE_PAIR：该脚本第 2 节开头是
+            //   WHY 这里把五个必填变量写全、而不是像旧注释那样只给 -DGIS_21C_TRACE_PAIR：该脚本在编号节之前就有
             //   foreach(_req GIS_TESTS_PATH WHITELIST_FILE PLUGIN_DIR REGISTRY_FILE REPORT_FILE) 的必填哨兵，
             //   只给 TRACE_PAIR 会先撞"缺少 -D…"的 FATAL_ERROR，照旧注释复现的人只会看到一条与本片无关的红。
             // WHY displayName 一律留 QString{}：动作名的唯一来源是侧栏表 genericActionDisplayName
