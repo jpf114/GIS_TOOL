@@ -88,20 +88,143 @@ function(gis_gui_assert_status_bool actual_value expected_value description)
     endif()
 endfunction()
 
-function(gis_gui_assert_screenshot_if_supported test_name screenshot_path)
-    set(skip_screenshot FALSE)
-    gis_gui_platform_skips_screenshot(skip_screenshot)
-    if(skip_screenshot)
+# ── 截图判据（批次 B / B7，N98）：两层，谁都不许单独缺席 ──────────────────────────
+#   层 1 结构层 gis_gui_parse_png_ihdr_size()：只读文件自己头里的 IHDR 解宽高，**不读被测程序产出的
+#     任何字段** ⇒ 渲染器报什么都骗不过它，它也不依赖渲染器（所以它自己就能红，见反向证明）。
+#   层 2 内容层 gis_gui_assert_screenshot_rendered()：读 gis-gui 在 grab() 之后写进既有 status 文件的
+#     screenshot_distinct_colors 判"确实画出了内容"，并把它自报的宽高与层 1 的独立值交叉比对
+#     —— 没有这条交叉比对，层 2 就是"渲染器自报自证"。
+# 原来那条"按平台名跳过"（gis_gui_platform_skips_screenshot）已整个删除，理由见
+#   gui_regression_defaults.cmake 顶部：它对我们实际用的平台恒为真，等于把截图判定写成死代码。
+# 阈值现跑命令（对当前树已有产物重算最低值；行首锚定 ⇒ 注释不会被数进去）：
+#   最低色数：grep -rhoE '"screenshot_distinct_colors": *[0-9]+' build/debug/tests/gui_regression | grep -oE '[0-9]+' | sort -n | head -1
+#   最低宽高：grep -rhoE '"screenshot_(width|height)": *[0-9]+'  build/debug/tests/gui_regression | grep -oE '[0-9]+' | sort -n | head -1
+#   带统计的 status 文件数（与 gui_ 截图腿数对账）：
+#     grep -rlE '"screenshot_distinct_colors": *[0-9]+' build/debug/tests/gui_regression | wc -l
+
+# 结构层的宽高下限。WHY：一帧退化到几个像元以内不可能是这个应用的窗口，而 IHDR 是文件自己的字节、
+#   与被测程序的自报无关 ⇒ 留着这条，结构层才是**不靠内容层也能红**的一层。
+set(GIS_GUI_SCREENSHOT_MIN_DIMENSION 8)
+
+# 内容层的色数下限。WHY 16：空白/纯色帧按定义只有 1 色，而最差合法产物（低保真平台抓的帧）实测仍是
+#   数百色 ⇒ 16 离"空白"留了一个数量级以上余量、离"最差合法值"同样留了一个数量级以上 ⇒ 杀得掉空白
+#   又不会因平台/字体/抗锯齿差异误杀。
+#   不许换成像素哈希或基线图比对：实测同一条命令连跑两遍就有数百个像元与 md5 差异（色数只抖 ±4）
+#   ⇒ 聚合的"不同颜色数"是稳定量，逐像元不是。
+#   也不许换成文件大小阈值：实测有内容的低保真产物可以比空白产物还小一个数量级 ⇒ 体积与"画没画"不同向。
+set(GIS_GUI_SCREENSHOT_MIN_DISTINCT_COLORS 16)
+
+function(gis_gui_parse_png_ihdr_size png_path out_width out_height out_error)
+    set(${out_width} "" PARENT_SCOPE)
+    set(${out_height} "" PARENT_SCOPE)
+    set(${out_error} "" PARENT_SCOPE)
+
+    if(NOT EXISTS "${png_path}")
+        set(${out_error} "file does not exist" PARENT_SCOPE)
         return()
     endif()
 
-    if(NOT EXISTS "${screenshot_path}")
-        message(FATAL_ERROR "${test_name} did not produce screenshot: ${screenshot_path}")
+    file(SIZE "${png_path}" _png_file_size)
+    if(_png_file_size LESS 24)
+        set(${out_error} "file is ${_png_file_size} bytes, too small to hold a PNG signature plus IHDR" PARENT_SCOPE)
+        return()
     endif()
 
-    file(SIZE "${screenshot_path}" screenshot_size)
-    if(screenshot_size EQUAL 0)
-        message(FATAL_ERROR "${test_name} produced an empty screenshot: ${screenshot_path}")
+    # 头 24 字节 = 8 签名 + 4 IHDR 段长 + 4 段名 + 4 宽 + 4 高（大端 u32）；HEX 模式下正好 48 个字符。
+    file(READ "${png_path}" _png_head_hex HEX LIMIT 24)
+    string(LENGTH "${_png_head_hex}" _png_head_hex_length)
+    if(NOT _png_head_hex_length EQUAL 48)
+        set(${out_error} "read ${_png_head_hex_length} hex chars instead of 48" PARENT_SCOPE)
+        return()
+    endif()
+    if(NOT _png_head_hex MATCHES "^89504e470d0a1a0a")
+        set(${out_error} "not a PNG (signature is ${_png_head_hex})" PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${_png_head_hex}" 24 8 _png_chunk_type_hex)
+    if(NOT _png_chunk_type_hex STREQUAL "49484452")
+        set(${out_error} "first chunk is not IHDR (0x${_png_chunk_type_hex})" PARENT_SCOPE)
+        return()
+    endif()
+
+    string(SUBSTRING "${_png_head_hex}" 32 8 _png_width_hex)
+    string(SUBSTRING "${_png_head_hex}" 40 8 _png_height_hex)
+    math(EXPR _png_width "0x${_png_width_hex}")
+    math(EXPR _png_height "0x${_png_height_hex}")
+    set(${out_width} "${_png_width}" PARENT_SCOPE)
+    set(${out_height} "${_png_height}" PARENT_SCOPE)
+endfunction()
+
+function(gis_gui_read_screenshot_stats test_name status_path out_width out_height out_distinct_colors)
+    if(NOT EXISTS "${status_path}")
+        message(FATAL_ERROR
+            "${test_name} did not produce the status file that carries the screenshot stats: ${status_path}")
+    endif()
+
+    file(READ "${status_path}" _stats_json)
+    foreach(_key IN ITEMS screenshot_width screenshot_height screenshot_distinct_colors)
+        string(JSON _value ERROR_VARIABLE _lookup_error GET "${_stats_json}" ${_key})
+        if(_lookup_error)
+            message(FATAL_ERROR
+                "${test_name} status file has no ${_key}: the GUI side never reported the screenshot content, "
+                "so the content layer has nothing to judge.\n  status file: ${status_path}")
+        endif()
+        if(NOT _value MATCHES "^[0-9]+$")
+            message(FATAL_ERROR
+                "${test_name} reported a non-numeric ${_key}: '${_value}'\n  status file: ${status_path}")
+        endif()
+    endforeach()
+
+    string(JSON _reported_width GET "${_stats_json}" screenshot_width)
+    string(JSON _reported_height GET "${_stats_json}" screenshot_height)
+    string(JSON _reported_distinct GET "${_stats_json}" screenshot_distinct_colors)
+
+    set(${out_width} "${_reported_width}" PARENT_SCOPE)
+    set(${out_height} "${_reported_height}" PARENT_SCOPE)
+    set(${out_distinct_colors} "${_reported_distinct}" PARENT_SCOPE)
+endfunction()
+
+function(gis_gui_assert_screenshot_rendered test_name screenshot_path status_path)
+    # 内容层要有"渲染器自报"的数据源，而数据源只有既有 status 文件这一条通道 ⇒ 通道断了宁可红，
+    #   不许静默降级（那正是 N98 的形态）。
+    if(NOT status_path)
+        message(FATAL_ERROR
+            "${test_name} calls the screenshot judgement without a status channel: the content layer needs "
+            "gis-gui's own screenshot_width/height/distinct_colors to be cross-checked against the file's IHDR. "
+            "Give this leg a --status-file instead of leaving the render layer unjudged.")
+    endif()
+
+    # 层 1：结构。独立于被测程序，先把"这张 PNG 有一帧真实的画面"钉住。
+    gis_gui_parse_png_ihdr_size("${screenshot_path}" _ihdr_width _ihdr_height _ihdr_error)
+    if(_ihdr_error)
+        message(FATAL_ERROR
+            "${test_name} screenshot failed the structural check: ${_ihdr_error}\n  screenshot: ${screenshot_path}")
+    endif()
+    if(NOT _ihdr_width GREATER 0 OR NOT _ihdr_height GREATER 0)
+        message(FATAL_ERROR
+            "${test_name} produced a degenerate screenshot frame: ${_ihdr_width} x ${_ihdr_height}\n"
+            "  screenshot: ${screenshot_path}")
+    endif()
+    if(_ihdr_width LESS GIS_GUI_SCREENSHOT_MIN_DIMENSION OR _ihdr_height LESS GIS_GUI_SCREENSHOT_MIN_DIMENSION)
+        message(FATAL_ERROR
+            "${test_name} screenshot frame ${_ihdr_width} x ${_ihdr_height} is below the structural floor "
+            "${GIS_GUI_SCREENSHOT_MIN_DIMENSION} x ${GIS_GUI_SCREENSHOT_MIN_DIMENSION}: no application window "
+            "is that small.\n  screenshot: ${screenshot_path}")
+    endif()
+
+    # 层 2：内容 + 交叉比对。自报值必须与层 1 的独立值一致，否则"报了个大帧、实际存了张小图"照样红。
+    gis_gui_read_screenshot_stats("${test_name}" "${status_path}" _reported_width _reported_height _distinct_colors)
+    if(NOT _reported_width EQUAL _ihdr_width OR NOT _reported_height EQUAL _ihdr_height)
+        message(FATAL_ERROR
+            "${test_name} screenshot self-report disagrees with the file's own IHDR: status says "
+            "${_reported_width} x ${_reported_height}, IHDR says ${_ihdr_width} x ${_ihdr_height}\n"
+            "  screenshot: ${screenshot_path}\n  status: ${status_path}")
+    endif()
+    if(NOT _distinct_colors GREATER_EQUAL GIS_GUI_SCREENSHOT_MIN_DISTINCT_COLORS)
+        message(FATAL_ERROR
+            "${test_name} screenshot only has ${_distinct_colors} distinct colors (< "
+            "${GIS_GUI_SCREENSHOT_MIN_DISTINCT_COLORS}): the render layer produced a frame, but nothing was "
+            "drawn into it.\n  screenshot: ${screenshot_path}\n  status: ${status_path}")
     endif()
 endfunction()
 
@@ -122,7 +245,7 @@ function(gis_gui_assert_regression_result test_name exit_code stdout_text stderr
         message(FATAL_ERROR "${test_name} produced an empty output file: ${output_path}")
     endif()
 
-    gis_gui_assert_screenshot_if_supported("${test_name}" "${screenshot_path}")
+    gis_gui_assert_screenshot_rendered("${test_name}" "${screenshot_path}" "${status_path}")
 
     gis_gui_read_status_file("${test_name}" "${status_path}"
         status_success status_cancelled status_message status_raw_message)
@@ -149,7 +272,7 @@ function(gis_gui_assert_failure_result test_name exit_code stdout_text stderr_te
         endif()
     endif()
 
-    gis_gui_assert_screenshot_if_supported("${test_name}" "${screenshot_path}")
+    gis_gui_assert_screenshot_rendered("${test_name}" "${screenshot_path}" "${status_path}")
 
     gis_gui_read_status_file("${test_name}" "${status_path}"
         status_success status_cancelled status_message status_raw_message)
@@ -186,7 +309,7 @@ function(gis_gui_assert_status_only_success test_name exit_code stdout_text stde
         message(FATAL_ERROR "${test_name} preserved an empty file: ${subject_path}")
     endif()
 
-    gis_gui_assert_screenshot_if_supported("${test_name}" "${screenshot_path}")
+    gis_gui_assert_screenshot_rendered("${test_name}" "${screenshot_path}" "${status_path}")
 
     gis_gui_read_status_file("${test_name}" "${status_path}"
         status_success status_cancelled status_message status_raw_message)
@@ -205,7 +328,7 @@ function(gis_gui_assert_status_success_no_output test_name exit_code stdout_text
             "stderr:\n${stderr_text}")
     endif()
 
-    gis_gui_assert_screenshot_if_supported("${test_name}" "${screenshot_path}")
+    gis_gui_assert_screenshot_rendered("${test_name}" "${screenshot_path}" "${status_path}")
 
     gis_gui_read_status_file("${test_name}" "${status_path}"
         status_success status_cancelled status_message status_raw_message)
@@ -234,7 +357,7 @@ function(gis_gui_assert_directory_success test_name exit_code stdout_text stderr
         message(FATAL_ERROR "${test_name} produced an empty output directory: ${output_dir}")
     endif()
 
-    gis_gui_assert_screenshot_if_supported("${test_name}" "${screenshot_path}")
+    gis_gui_assert_screenshot_rendered("${test_name}" "${screenshot_path}" "${status_path}")
 
     gis_gui_read_status_file("${test_name}" "${status_path}"
         status_success status_cancelled status_message status_raw_message)

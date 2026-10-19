@@ -43,18 +43,9 @@ if(EXISTS "${OUTPUT_PATH}")
     endif()
 endif()
 
-set(_skip_screenshot FALSE)
-gis_gui_platform_skips_screenshot(_skip_screenshot)
-if(NOT _skip_screenshot)
-    if(NOT EXISTS "${SCREENSHOT_PATH}")
-        message(FATAL_ERROR "GUI invalid-param regression did not produce screenshot: ${SCREENSHOT_PATH}")
-    endif()
-
-    file(SIZE "${SCREENSHOT_PATH}" SCREENSHOT_SIZE)
-    if(SCREENSHOT_SIZE EQUAL 0)
-        message(FATAL_ERROR "GUI invalid-param regression produced an empty screenshot: ${SCREENSHOT_PATH}")
-    endif()
-endif()
+# 截图两层判据（N98 / 批次 B 的 B7）：这条腿判的是"参数应用失败"，但窗口照样要画出内容 ⇒ 判据照用。
+# 它原有的三条负向断言（退出码、不产出文件、raw_message）口径一条没动。
+gis_gui_assert_screenshot_rendered("GUI invalid-param regression" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
 
 gis_gui_read_status_file("GUI invalid-param regression" "${STATUS_PATH}"
     STATUS_SUCCESS STATUS_CANCELLED STATUS_MESSAGE STATUS_RAW_MESSAGE)

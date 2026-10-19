@@ -8,11 +8,10 @@ include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_defaults.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
 
 get_filename_component(OUTPUT_DIR "${OUTPUT_PATH}" DIRECTORY)
-get_filename_component(SCREENSHOT_DIR "${SCREENSHOT_PATH}" DIRECTORY)
-
-file(REMOVE "${OUTPUT_PATH}" "${SCREENSHOT_PATH}")
-file(MAKE_DIRECTORY "${OUTPUT_DIR}")
-file(MAKE_DIRECTORY "${SCREENSHOT_DIR}")
+# B7：这条腿原来只交一张截图、没有 status 通道 ⇒ 内容层无从判起；现在把 status 一起带上，
+#   截图判据才能拿"渲染器自报的帧宽高/色数"与文件自己的 IHDR 交叉比对。
+set(STATUS_PATH "${OUTPUT_DIR}/status.json")
+gis_gui_prepare_artifact_paths("${OUTPUT_PATH}" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
 
 if(NOT DEFINED GUI_PLATFORM)
     set(GUI_PLATFORM offscreen)
@@ -29,6 +28,7 @@ execute_process(
         --auto-execute
         --quit-on-finish
         --screenshot "${SCREENSHOT_PATH}"
+        --status-file "${STATUS_PATH}"
     RESULT_VARIABLE GUI_EXIT_CODE
     OUTPUT_VARIABLE GUI_STDOUT
     ERROR_VARIABLE GUI_STDERR
@@ -50,18 +50,8 @@ if(OUTPUT_SIZE EQUAL 0)
     message(FATAL_ERROR "GUI vector dissolve regression produced an empty output file: ${OUTPUT_PATH}")
 endif()
 
-set(_skip_screenshot FALSE)
-gis_gui_platform_skips_screenshot(_skip_screenshot)
-if(NOT _skip_screenshot)
-    if(NOT EXISTS "${SCREENSHOT_PATH}")
-        message(FATAL_ERROR "GUI vector dissolve regression did not produce screenshot: ${SCREENSHOT_PATH}")
-    endif()
-
-    file(SIZE "${SCREENSHOT_PATH}" SCREENSHOT_SIZE)
-    if(SCREENSHOT_SIZE EQUAL 0)
-        message(FATAL_ERROR "GUI vector dissolve regression produced an empty screenshot: ${SCREENSHOT_PATH}")
-    endif()
-endif()
+# 截图两层判据（N98 / 批次 B 的 B7）：结构层独立解 IHDR 宽高，内容层判自报色数并与结构层交叉比对。
+gis_gui_assert_screenshot_rendered("GUI vector dissolve regression" "${SCREENSHOT_PATH}" "${STATUS_PATH}")
 
 
 
