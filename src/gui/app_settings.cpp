@@ -22,10 +22,20 @@
 // 落点实测（2026-10-19 Tier-0 探针；原始三行输出与取证细节抄在任务报告里，这里只留结构性结论）：
 //   旧落点一 QSettings("GISTool","GISTool")：
 //     format = NativeFormat，fileName() = \HKEY_CURRENT_USER\Software\GISTool\GISTool，status = NoError。
-//     它的**内容随机器与历史而异**：可能为空，也可能全是 offscreen GUI 用例留下的测试产物路径
-//     （`gui_*_offscreen` 那条腿直接 spawn gis-gui.exe，链路上没人设 GIS_TOOL_SETTINGS_INI ⇒ 还是走
-//     NativeFormat）。**不得对它做任何假设，也不得把某台机器上读到的内容/条数写进注释当证据。**
-//     ⇒ 这条正是 R-B2 必须存在的原因：读它 = 把"开发者机器上碰巧有什么"当测试输入。
+//     它的**内容随机器与历史而异**：可能为空，也可能留着历史写进去的测试产物路径。
+//     ⚠ 这条"为什么危险"的**来源**已被 B2/N101 换掉，别再抄旧那版：旧说法是"`gui_*_offscreen` 那条腿
+//       直接 spawn gis-gui.exe、链路上没人设 GIS_TOOL_SETTINGS_INI ⇒ 还是走 NativeFormat"。现在 spawn
+//       链路的每一段都被封了：driver 腿（tests/run_*.cmake）在 include tests/gui_regression_helpers.cmake
+//       时就把两个落点变量 set(ENV{…}) 给子进程；直接 spawn gis-gui.exe 的用例由
+//       set_tests_properties(… ENVIRONMENT …) 成对注入（条数现跑：
+//       grep -cE '^[[:space:]]*COMMAND .*TARGET_FILE:gis-gui' tests/CMakeLists.txt —— 排除注释行，
+//       行首锚定 COMMAND，别用不带锚的 grep -c，那会把解释它的注释也数进去）；载体真被改坏时，
+//       被 spawn 的进程自己在 src/gui/main.cpp 的 N101/N102 守卫处 exit 3，走不到写设置那一步。
+//       ⇒ 于是"这把键里为什么还可能有东西"的答案不再是"某条测试腿在往里写"，而是：历史版本写过、
+//         真人在无注入环境下手跑过 gis-gui.exe，以及正常首启迁移本来就会读它（读也会留下空键壳，
+//         见 docs/RELEASE.md 的 N103）。
+//     **不得对它做任何假设，也不得把某台机器上读到的内容/条数写进注释当证据** ⇒ 这条正是 R-B2
+//     必须存在的原因：读它 = 把"开发者机器上碰巧有什么"当测试输入。
 //     ⚠ 而且：**NativeFormat 的 QSettings 光是被构造出来就会在 HKCU 下把这一层键建出来**，
 //       哪怕整个进程只读不写——一次性探针只做了构造 + fileName() + allKeys()（没有任何
 //       setValue/sync），就把台账记录里"已删除且未重建"的这个键重建成了空键（取证见任务报告）。

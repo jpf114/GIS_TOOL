@@ -318,6 +318,14 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   导入只做一次，靠 ini 内的 `meta/migrated_from_registry` 标记记账（标记写在 ini 而不是注册表，
   所以卸载器清掉注册表也不会让它"再导一遍"）。
 - 迁移是**只读**地访问旧注册表键：程序不会 `reg delete`、不会改写任何既有的值。
+- **但"只读"也可能留下一个空键壳（N103）**：首启迁移要打开旧落点才能读它，而 Windows 上 `QSettings`
+  在 NativeFormat 下**光是被构造出来**就会把 `HKCU\Software\GISTool\GISTool` 这一层键建出来，
+  公开 Qt API 没有"只探测存不存在、不创建"的写法。留下的壳**恒为空**（0 值 0 子键）：
+  没有任何用户数据被写进那里，既有值也没被改写，卸载器不删它、下次启动也不会往里写。
+- ⇒ 于是"有没有污染用户状态"的判据口径是：**看那把键下的 values 是否为空，不看键是否存在**
+  （键不存在才是需要机器历史才能满足的条件，它不该当判据；本仓取证一律用 values 计数 +
+  `HKCU\Software\GIS\GIS Tool\app\first_run_complete` 未被改动 + `%LOCALAPPDATA%\GIS`、
+  `%LOCALAPPDATA%\gis_tests` 不存在这三条）。
 - 测试与 CI 不落在这个位置：每条 GUI 用例另有自己私有的 ini（在它的产物目录里），
   回归跑完不会往用户配置里写东西（N101）。
 

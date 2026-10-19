@@ -1402,8 +1402,10 @@ add_test(
 #     全都不会响——写它的那个进程确实成功了。方向与 21-C 立项命题（"每条守卫各自可杀"）正相反。
 #   另一侧才是假红：后到的进程撞 Windows 共享冲突 ⇒ ASSERT_TRUE(static_cast<bool>(ofs)) 红。
 # WHY 选 RESOURCE_LOCK 而不是 RUN_SERIAL：RUN_SERIAL 的语义是"这条用例执行期间整个 ctest 不许有别人"，
-#   锁粒度是全局 ⇒ 634 条里只要有这两条被调度，其余 632 条全部被迫排队，等于把并行度清零。
+#   锁粒度是全局 ⇒ 只要这两条被调度，同一时刻注册进来的其余全部用例都被迫排队，等于把并行度清零。
 #   RESOURCE_LOCK 只在"声明了同一把锁名"的用例之间互斥，别的用例照旧并行 ⇒ 代价精确等于必要。
+#   （要那一分母就跑现跑命令，别在这里记账：ctest --test-dir build/release -C Release -N | tail -n 1
+#     把 build/release/-C Release 换成 build/debug/-C Debug 即另一棵树；条数随用例增减，K-21 纪律。）
 add_test(
     NAME GuiContract.ExportActionVisibleKeys
     COMMAND $<TARGET_FILE:gis_tests> --gtest_filter=GuiContract.ExportActionVisibleKeys

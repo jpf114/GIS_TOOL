@@ -131,9 +131,16 @@ int main(int argc, char* argv[])
     //   --self-test 也算回归驱动：gui_smoke_startup 就是靠它跑的。
     // 预设变量的判据与写者侧对齐（resolvePresetFilePath 把"trim 后非空"当覆盖生效）：
     //   守卫若只查"非空"，一串空格的注入会骗过守卫、让 store 回退到用户目录 ⇒ 这里按 store 语义查。
+    // settings 侧（GIS_TOOL_SETTINGS_INI）**故意**不 trim ⇒ 两个变量的判据不对称，这是已知且有意：
+    //   settingsOverrideActive() 的读者是"要不要构造 NativeFormat 旧源"，判据要**宽松**（非空即算有人在
+    //   注入，宁可少迁移一次也不去 HKCU 建键）；store 侧的读者是"这个路径能不能用"，判据要**严格**。
+    //   两处相反的失败方向没法共用一个函数体 ⇒ 别"顺手改一致"，完整理由写在 settingsOverrideActive()
+    //   的定义处（src/gui/app_settings.cpp）。
     // 退出码 3 与既有码可区分（0 正常 / app.exit(2) 参数应用失败），driver 侧都有
     //   RESULT_VARIABLE + "非 0 即 FATAL_ERROR" 的判据，gui_smoke_startup 由 ctest 直接读退出码。
-    // 覆盖面现跑命令：ctest --test-dir build/debug -C Debug -N -R "^gui_" | tail -n 1
+    // 覆盖面现跑命令（两棵树都照抄，只换目录与配置名）：
+    //   ctest --test-dir build/release -C Release -N -R "^gui_" | tail -n 1
+    //   ctest --test-dir build/debug   -C Debug   -N -R "^gui_" | tail -n 1
     if (selfTestMode || screenshotPath.has_value() || statusFilePath.has_value()) {
         const bool presetOverrideActive =
             !qEnvironmentVariable("GIS_CUSTOM_INDEX_PRESET_FILE").trimmed().isEmpty();
