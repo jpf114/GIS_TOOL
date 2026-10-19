@@ -58,9 +58,10 @@ QString uniqueMainWindowGroup(const char* suffix) {
 //   QSettings probe("GISTool","GISTool") 两参构造走的是 **NativeFormat**，
 //   既不吃 setDefaultFormat(IniFormat) 也不吃 setPath(IniFormat, …) ⇒ fileName() 返回
 //   HKEY_CURRENT_USER\Software\GISTool\…，与 ini 重定向无关 ⇒ 断言恒红（14 条 MainWindowTest 实测全红）。
-//   这条同时登记成一个 src 侧事实：src/gui/settings_manager.cpp:10 用的正是两参构造
-//   ⇒ SettingsManager 写的其实是注册表而不是 %APPDATA%\GISTool\GISTool.ini；
-//   测试侧改不了它（红线不许动 src），已挂账。
+//   这条同时登记一个 src 侧事实：SettingsManager 原先用的正是两参构造 ⇒ NativeFormat，
+//   写的其实是注册表 HKCU\Software\GISTool 而不是 %APPDATA%\GISTool\GISTool.ini
+//   （ ⇒ 每次跑 MainWindowTest 都在写真实用户注册表）。N100 已修：src 侧加了 GIS_TOOL_SETTINGS_INI
+//   覆盖（生产不设 ⇒ 行为与存储位置不变）与只读出口 storagePath()，落点由下面"断言 4"直接测真实对象。
 void configureSettingsForTest() {
     static bool firstRunMarked = false;
     const QString privateDir =
@@ -84,6 +85,18 @@ void configureSettingsForTest() {
             QDir::toNativeSeparators(appData + QStringLiteral("\\GISTool"))))
             << "配置写进了用户真实 %APPDATA% 下的 GISTool：" << landed.toStdString();
     }
+    // 断言 4（N100）：SettingsManager 这个**真实对象**的落点必须在本进程私有目录里，不能是注册表。
+    //   前两版这里只能断到"探针构造的 ini 在私有目录"，因为 SettingsManager 用两参
+    //   QSettings("GISTool","GISTool") ⇒ NativeFormat，测试侧改不动（当时记为挂账）。
+    //   现在 src 侧提供 GIS_TOOL_SETTINGS_INI 覆盖（生产不设 ⇒ 行为不变）与 storagePath() 只读出口，
+    //   于是可以直测真实对象的落点：删掉 test_main.cpp 里那两行 qputenv，这里立刻红。
+    const QString managerLanded = QDir::toNativeSeparators(
+        SettingsManager::instance().storagePath());
+    const QString managerWant = QDir::toNativeSeparators(
+        privateDir + QStringLiteral("/SettingsManager.ini"));
+    EXPECT_EQ(managerLanded, managerWant)
+        << "SettingsManager 没落在本进程私有文件上（GIS_TOOL_SETTINGS_INI 未生效）"
+           "⇒ 每次跑 MainWindowTest 都会写真实用户注册表 HKCU\\Software\\GISTool";
     if (!firstRunMarked) {
         gis::gui::markFirstRunComplete();
         firstRunMarked = true;
