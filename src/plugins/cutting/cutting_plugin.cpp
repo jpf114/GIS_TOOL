@@ -13,6 +13,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <sstream>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <cmath>
 #include <fstream>
@@ -608,7 +609,8 @@ static bool mapOverviewResampling(const std::string& value, int& interpolation) 
 // :999-1002 的正常路径清理，取消路径把 gis_tile_warped.tif 直接漏在系统临时目录
 // （Task 17 的 pre-fix RED 用例 TileCleansWarpedTempOnCancel 实测到了残留文件）。
 // RAII 把三条路径收敛到一个清理点；文件名带 pid（CPLGetPID）隔离跨进程，
-// 同进程并发工作流的隔离与临时目录归划仍留给 Plan 3 的 C8 统一处理。
+//   进程内的"每次调用唯一"由 Task B6 / m-4 补上（见 doTile 里拼 warped 临时路径那一段的
+//   静态原子序号），临时目录归划仍留给 Plan 3 的 C8 统一处理。
 // WHY 定义全部写进类体：批次 A 实测过"匿名命名空间内的成员函数定义 ⇒ 内部链接
 // ⇒ LNK2019"的坑，内联定义从根上避开。
 struct WarpedRasterCloser {
@@ -1199,9 +1201,17 @@ gis::framework::Result CuttingPlugin::doTile(
     // z=6 单层级 5.72s、z=7 21.26s，层级×4 外推 z=10 ≈ 21min 且临时文件按 10MB/s
     // 增长（N64/F3 的 Tier-0 探针实测；探针产物落在 build/ 下不入库，故这里只留数字本身）。
     // warped 由 unique_ptr+WarpedRasterCloser 持有：fail 提前返回与取消展开都会
-    // 关闭并删除临时文件（R-T17-4），文件名带 pid 避免跨进程互踩。
+    // 关闭并删除临时文件（R-T17-4）。
+    // Task B6 / m-4：名字必须**每次调用唯一**，原来只带 pid ⇒ 同进程内两次 tile（并发或先后）
+    //   都算出同一个路径（后一个把前一个正在读的 warped 覆盖掉，前一个的 closer 又会把
+    //   后一个的文件删掉），崩溃后 pid 被复用时还会落到上一个进程的残件上。
+    //   ⇒ pid 只保证跨进程分开，进程内再加一个单调序号：静态原子计数器 fetch_add，
+    //     不引新依赖。函数内静态量的初始化与递增都是 C++11 起线程安全的，
+    //     所以并发两次 tile 也拿不到同一个名字；序号从 1 起，第一次调用在日志里可辨认。
+    static std::atomic<uint64_t> warpedSeq{0};
     const std::string warpedPath = (std::filesystem::temp_directory_path() /
-        ("gis_tile_warped_" + std::to_string(CPLGetPID()) + ".tif")).string();
+        ("gis_tile_warped_" + std::to_string(CPLGetPID()) + "_" +
+         std::to_string(warpedSeq.fetch_add(1) + 1) + ".tif")).string();
     std::unique_ptr<GDALDataset, WarpedRasterCloser> warped;
     {
         std::vector<std::string> warpArgStorage;

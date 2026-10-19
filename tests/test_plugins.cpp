@@ -11266,28 +11266,50 @@ namespace {
 //   **别的进程**（被 timeout 杀掉的测试、gis-cli 取证、上一轮崩溃的残留）留下的同名文件
 //   也会让 #305/#306 判红，是假红而不是缺陷：本批真红过两轮（一轮是 Release 全量的 305/306，
 //   一轮是 Debug 里手工放一个 `gis_tile_warped_987654.tif` 冒充他进程残留）。
-//   产品侧文件名本来就带 CPLGetPID()（cutting_plugin.cpp:1102），所以按 pid 精确匹配
-//   不损失"漏清理必红"的原意：本进程写出的文件必然叫这个名字。
+//   产品侧文件名本来就带 CPLGetPID()，所以按 pid 归属匹配不损失"漏清理必红"的原意：
+//   本进程写出的文件必然带本进程 pid 这一段。
 //   放弃的那一半能力（顺带发现别的进程的历史残留）不属于本用例的契约，交脚本/人工巡检。
+// Task B6 / m-4：产品侧在 pid 之后又加了一段"每次调用唯一"的序号
+//   （gis_tile_warped_<pid>_<seq>.tif），所以这里必须跟着改成**两种形态都认**：
+//   `<pid>` 与 `<pid>_<数字>`。写死旧名会让这条扫描在新命名下永远扫不到东西 ——
+//   那等于把 R-T17-4 的两条清理用例（#315/#316）悄悄改成恒真。
+//   分隔符必须是 `_`：pid 1234 不能把别的进程的 `gis_tile_warped_12345_1.tif` 认成自己的。
 fs::path t17TempDir() {
     return fs::temp_directory_path();
 }
 
-std::vector<fs::path> t17ScanWarpedLeftovers() {
-    const std::string ownName =
-        "gis_tile_warped_" + std::to_string(CPLGetPID()) + ".tif";
+// name 属于本进程的 warped 临时栅格？（旧 pid-only 形态与新 pid+seq 形态都算）
+bool t17IsOwnWarpedName(const std::string& name, const std::string& ignoreName = std::string()) {
+    if (!ignoreName.empty() && name == ignoreName) return false;   // 用例自己种的哨兵不算泄漏
+    const std::string prefix = "gis_tile_warped_";
+    const std::string suffix = ".tif";
+    if (name.size() <= prefix.size() + suffix.size()) return false;
+    if (name.compare(0, prefix.size(), prefix) != 0) return false;
+    if (name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) return false;
+    const std::string middle = name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
+    const std::string ownPid = std::to_string(CPLGetPID());
+    if (middle == ownPid) return true;                                     // 旧形态（改前）
+    if (middle.size() <= ownPid.size() + 1) return false;
+    if (middle.compare(0, ownPid.size(), ownPid) != 0) return false;
+    if (middle[ownPid.size()] != '_') return false;
+    const std::string seq = middle.substr(ownPid.size() + 1);              // 新形态：<pid>_<seq>
+    return seq.find_first_not_of("0123456789") == std::string::npos;
+}
+
+std::vector<fs::path> t17ScanWarpedLeftovers(const fs::path& ignore = fs::path()) {
+    const std::string ignoreName = ignore.empty() ? std::string{} : ignore.filename().string();
     std::vector<fs::path> found;
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(t17TempDir(), ec)) {
         if (ec) break;
         if (!e.is_regular_file()) continue;
-        if (e.path().filename().string() == ownName) found.push_back(e.path());
+        if (t17IsOwnWarpedName(e.path().filename().string(), ignoreName)) found.push_back(e.path());
     }
     return found;
 }
 
-void t17ExpectNoWarpedLeftovers() {
-    const auto leftovers = t17ScanWarpedLeftovers();
+void t17ExpectNoWarpedLeftovers(const fs::path& ignore = fs::path()) {
+    const auto leftovers = t17ScanWarpedLeftovers(ignore);
     std::string detail;
     for (const auto& p : leftovers) detail += utf8PathString(p) + "; ";
     EXPECT_TRUE(leftovers.empty()) << "临时 warped 栅格未被清理: " << detail;
@@ -11908,6 +11930,95 @@ TEST_F(PluginTest, TileCleansWarpedTempOnWarpFailure) {
     params["max_zoom"] = 8;
     const auto result = p->execute(params, progress_);
     EXPECT_FALSE(result.success);
+    t17ExpectNoWarpedLeftovers();
+}
+
+// Task B6 / m-4：warped 临时栅格名必须**每次调用**唯一，不能只带 pid。
+// 缺陷形态（改前的 cutting_plugin.cpp）：名字 = gis_tile_warped_<CPLGetPID()>.tif ⇒
+//   ① 同进程内两次 tile（并发或先后）写的是同一个路径；
+//   ② 崩溃后 pid 被复用 ⇒ 新进程直接落在上一个进程残件的名字上（覆盖它，或读到它的残体）。
+// 判据（形状照 #315/#316：只看盘上事实，不读产品代码里的计数器）：
+//   在**旧名字那一格**种一个哨兵文件，然后连跑两次 tile。
+//     改前 ⇒ 调用按旧名创建 warped：GDALWarp 覆盖写把哨兵字节换掉，收尾时
+//            WarpedRasterCloser 又把该路径删掉 ⇒ 哨兵**消失** ⇒ 下面的断言红；
+//     改后 ⇒ 每次调用用的是 gis_tile_warped_<pid>_<seq>.tif，与哨兵那一格不同名字 ⇒
+//            哨兵两次都原样留存（字节没变、文件还在），且临时目录里没有本进程的残留。
+//   哨兵必须用**显式 ignore** 交给残留扫描：它本身就是 gis_tile_warped_<pid>.tif 形态的
+//   普通文件，不排除会让"无残留"这条断言在本用例里永远红（假红会掩盖真缺陷）。
+// 如实登记的判据边界：这条判据钉住的是"不再复用 pid-only 那一格"，两次调用**互相**是否
+//   不同名靠的是产品侧那个进程静态原子序号（fetch_add，见 cutting_plugin.cpp 拼名字那行）。
+//   想从测试侧直接观察第二次调用的名字，就得在临时目录里预种一片 <pid>_<seq> 候选名再数
+//   被吃掉哪一格 —— 本进程内 tile 调用总数随测试增减，候选窗口大小没有上界：窗口不够就假红，
+//   窗口够大就要在共享临时目录里种上百个本进程形态的文件，别的 tile 用例的残留扫描会先把
+//   它们当成泄漏（跨用例污染）。权衡后不做，把这条边界写在报告与这里，而不是配一条恒真断言。
+TEST_F(PluginTest, TileWarpedTempNameIsUniquePerCall) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(64 * 64, 1.0f);
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "b6_unique_input.tif", 64, 64, data, options);
+
+    // 哨兵种在**旧命名**那一格（m-4 要拆掉的正是"每次都算出同一个名字"）。
+    const fs::path sentinel =
+        t17TempDir() / ("gis_tile_warped_" + std::to_string(CPLGetPID()) + ".tif");
+    const std::string sentinelBytes = "B6-M4-SENTINEL-NOT-A-TIFF";
+    t17ExpectNoWarpedLeftovers();          // 前提自证：进场时本进程没有残留
+    std::error_code sec;
+    fs::remove(sentinel, sec);             // 上一轮崩溃可能留下的同名文件
+    {
+        std::ofstream ofs(sentinel, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(static_cast<bool>(ofs)) << "哨兵写不进去: " << utf8PathString(sentinel);
+        ofs << sentinelBytes;
+    }
+    ASSERT_TRUE(fs::exists(sentinel));
+
+    for (const char* outputTag : { "b6_unique_output_1", "b6_unique_output_2" }) {
+        const fs::path output = getTestDir() / outputTag;
+        fs::remove_all(output);
+        auto params = t17BaseTileParams(input, utf8PathString(output));
+        params["min_zoom"] = 8;
+        params["max_zoom"] = 8;
+        const auto result = p->execute(params, progress_);
+        EXPECT_TRUE(result.success) << outputTag << " 这次 tile 本该成功: " << result.message;
+        // 核心断言：这一次调用**没有**占用 pid-only 那一格。
+        std::string now;
+        {
+            std::ifstream ifs(sentinel, std::ios::binary);
+            now.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+        }
+        EXPECT_TRUE(fs::exists(sentinel))
+            << outputTag << ": 临时栅格仍按 pid-only 命名，同进程两次调用互踩（m-4）";
+        EXPECT_EQ(now, sentinelBytes) << outputTag << ": 哨兵字节被改写 ⇒ 本次调用复用了那一格";
+    }
+
+    // 收尾：哨兵不是产品产物，先删再判残留，否则"无残留"这条断言会因为哨兵自己变红。
+    fs::remove(sentinel, sec);
+    // 探针自证（guards the guard）：新命名形态的残留必须**扫得出来**，否则 #315/#316 这两条
+    //   清理判据会在"产品侧改名"之后悄悄变成恒真（扫描器只认旧名字 ⇒ 永远扫不到东西）。
+    //   这里手工造一个 <pid>_<seq> 形态的文件让扫描器认，认不出就红——它证明的是判据本身有效。
+    const fs::path probe = t17TempDir() /
+        ("gis_tile_warped_" + std::to_string(CPLGetPID()) + "_987654321.tif");
+    {
+        std::ofstream ofs(probe, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(static_cast<bool>(ofs)) << "探针文件写不进去: " << utf8PathString(probe);
+        ofs << "probe";
+    }
+    EXPECT_EQ(t17ScanWarpedLeftovers().size(), 1u)
+        << "扫描器认不出 gis_tile_warped_<pid>_<seq>.tif 这一格 ⇒ 清理判据对新命名失效";
+    // 同一 pid 前缀但**不是**本进程那一格的名字不得被认进来（F3 收窄口径的另一半）。
+    const fs::path otherProc = t17TempDir() /
+        ("gis_tile_warped_" + std::to_string(CPLGetPID()) + "x.tif");
+    {
+        std::ofstream ofs(otherProc, std::ios::binary | std::ios::trunc);
+        if (ofs) ofs << "other";
+    }
+    EXPECT_EQ(t17ScanWarpedLeftovers().size(), 1u)
+        << "扫描器把 <pid>x 这种非本进程/非本形态的名字也算进来了（假红的来源）";
+    fs::remove(probe, sec);
+    fs::remove(otherProc, sec);
     t17ExpectNoWarpedLeftovers();
 }
 
