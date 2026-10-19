@@ -18,8 +18,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // 落点实测（2026-10-19 Tier-0 探针；原始三行输出与取证细节抄在任务报告里，这里只留结构性结论）：
 //   旧落点一 QSettings("GISTool","GISTool")：
-//     format = NativeFormat，fileName() = \HKEY_CURRENT_USER\Software\GISTool\GISTool，
-//     status = NoError，allKeys() 实测是空列表（本机上这个键存在但一个值都没有）。
+//     format = NativeFormat，fileName() = \HKEY_CURRENT_USER\Software\GISTool\GISTool，status = NoError。
+//     它的**内容随机器与历史而异、不可假设**：Tier-0 探针当时 allKeys() 是空列表，而跑完一次全量
+//     Debug 之后盘上又多出 10 条测试产物路径（既有 `gui_*_offscreen` 那条腿直接 spawn gis-gui.exe，
+//     那条链路上没人设 GIS_TOOL_SETTINGS_INI ⇒ 还是走 NativeFormat）。取证与后续处置见任务报告。
+//     ⇒ 这条正是 R-B2 必须存在的原因：读它 = 把"开发者机器上碰巧有什么"当测试输入。
 //     ⚠ 而且：**NativeFormat 的 QSettings 光是被构造出来就会在 HKCU 下把这一层键建出来**，
 //       哪怕整个进程只读不写——一次性探针只做了构造 + fileName() + allKeys()（没有任何
 //       setValue/sync），就把台账记录里"已删除且未重建"的这个键重建成了空键（取证见任务报告）。
