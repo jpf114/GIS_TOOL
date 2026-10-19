@@ -6,7 +6,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringList>
-#include <QtGlobal>  // Q_ASSERT_X：open() 里那两个生产形态 arm 的禁令执行点（B3c/Q4）
+#include <QtGlobal>  // qgetenv() 的声明处（本文件里唯一的读者是 settingsOverrideActive()）
 
 // ─────────────────────────────────────────────────────────────────────────────
 // R-B2b 红线（写给下一个往这里加测试的人，他不会读到计划文档）：
@@ -31,8 +31,9 @@
 //       setValue/sync），就把台账记录里"已删除且未重建"的这个键重建成了空键（取证见任务报告）。
 //       ⇒ R-B2 那道门控（migrateLegacySettingsGated 的 `if (overrideActive) return 0;`）必须挡在
 //         **构造两个旧对象之前**：它挡住的不只是"读到用户数据"，还有"在用户注册表里建键"这个
-//         副作用本身。open() 里那两个生产形态 arm 的第一行还有一道 Q_ASSERT_X 兜底（B3c/Q4）：
-//         门控被摘掉时 Debug 测试进程当场 abort，而不是悄悄把键建出来。
+//         副作用本身。open() 里那两个生产形态 arm 的第一行还有一道**运行期拒绝**兜底（B3d，
+//         取代 B3c/Q4 的 Q_ASSERT_X——那条被 QT_NO_DEBUG 编掉，Release 里没有牙）：
+//         门控被摘掉时注入态也构造不出真实落点，两条臂给回空指针而不是悄悄把键建出来。
 //   旧落点二 默认构造 QSettings()：
 //     * 生产 GUI 进程（src/gui/main.cpp:36-37 设了 org/app = "GIS"/"GIS Tool"，且没人改
 //       defaultFormat）⇒ NativeFormat，\HKEY_CURRENT_USER\Software\GIS\GIS Tool；
@@ -109,15 +110,25 @@ std::unique_ptr<QSettings> LegacySettingsSource::open() const {
     switch (kind) {
     case Kind::NamedOrgApp: {
         // 旧落点一：SettingsManager 历史用的两参构造 ⇒ Windows 上是 NativeFormat。
-        // B3c/Q4：禁令的执行点写在**风险处的第一行**，不是声明处的注释里。
-        // 测试进程一定带着 GIS_TOOL_SETTINGS_INI（tests/test_main.cpp）⇒ 误调这里当场 abort，
-        // 而且断言在构造之前 ⇒ HKCU 键不会被建出来；生产不设该变量 ⇒ 恒真，Release 里整条被编掉。
-        Q_ASSERT_X(!settingsOverrideActive(), "productionLegacySources", "测试不得打开真实落点");
+        // 禁令的执行点在**风险处的第一行**（B3c/Q4 的立场），但形态换成**运行期拒绝**：
+        //   B3c 那条 Q_ASSERT_X 被 QT_NO_DEBUG 编掉 ⇒ 交付与 CI 都跑的 Release 二进制里根本没有它
+        //   （扫产物取证见 B3d 报告），而这条红线要求"机器级兜底、不靠约定" ⇒ 两棵配置树都得拦得住。
+        //   拒绝必须写在构造**之前**：NativeFormat 的 QSettings 光构造就会在 HKCU 下把键建出来。
+        //   不许再叠一条断言：先拒后断＝永不可达的恒真断言，先断后拒＝Release 那条分支在 Debug 测不到。
+        // 失效形态要说清，别读成"更安全了"：静默返回空**会藏住误调**（不像 abort 那样喊出来）。
+        //   它藏得住现象、藏不住后果 —— From 那层以"打开成功几条"为条件才打一次性标记（B3c/Q3），
+        //   两条都被拒 ⇒ opened==0 ⇒ 标记不写 ⇒ 状态可恢复，不会把一次性迁移机会永久烧掉。
+        //   "谁误调"改由用例抓：注入态下这两条臂必须都给回空指针
+        //   （AppSettingsLegacySources.ProductionArmsRefuseToOpenWhileOverrideActive）⇒ 摘掉下面这个 if 就红。
+        if (settingsOverrideActive())
+            return std::unique_ptr<QSettings>();
         return std::make_unique<QSettings>(first, second);
     }
     case Kind::ProcessDefault: {
         // 旧落点二：welcome_dialog 历史用的默认构造 ⇒ 跟随进程的 org/app。
-        Q_ASSERT_X(!settingsOverrideActive(), "productionLegacySources", "测试不得打开真实落点");
+        // 同一条禁令、同一个执行点（运行期拒绝、拒在构造前），理由见上一条臂的注释。
+        if (settingsOverrideActive())
+            return std::unique_ptr<QSettings>();
         return std::make_unique<QSettings>();
     }
     case Kind::IniPath:
@@ -146,8 +157,10 @@ int migrateLegacySettingsFrom(QSettings& target, const QList<LegacySettingsSourc
     int copied = 0;
     int opened = 0;
     for (const LegacySettingsSource& source : sources) {
-        // 一条源没接上（Kind::Unwired ⇒ open() 给回空指针）就跳过它：一次启动不该因为一条断源而崩，
-        // 也不该因此不再读后面的源。
+        // 一条源给回空指针就跳过它：一次启动不该因为一条断源而崩，也不该因此不再读后面的源。
+        // open() 返回空的两种形态都得被这里吃掉：Kind::Unwired（表里有、没接上）与
+        // B3d 的运行期拒绝（注入态下两条生产臂不许构造真实落点）⇒ 拒绝走的是同一条"跳过"路径，
+        // 所以 opened 仍为 0、下面那句标记照旧不打，这就是"藏住误调但藏不住后果"的落点。
         const std::unique_ptr<QSettings> legacy = source.open();
         if (!legacy)
             continue;

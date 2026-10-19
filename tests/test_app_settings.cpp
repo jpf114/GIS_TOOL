@@ -263,6 +263,8 @@ TEST(AppSettingsMigration, GateInactiveImportsThatSameSource) {
 // ⚠ 这里**不调用 open()**：两个生产源在 Windows 上都是 NativeFormat，光构造就会在 HKCU 下建键
 //   （落点实测见 src/gui/app_settings.cpp 顶部）⇒ 判据只能取"身份数据"这种不构造的形态；
 //   读 label() 是安全的（它只投影 (kind, 参数) 这份存储，不构造任何东西）。
+//   注入态下 open() 现在会先撞上 B3d 的运行期拒绝，但那条拒绝**不记在本用例的账上**：
+//   它由 ProductionArmsRefuseToOpenWhileOverrideActive 专门判 ⇒ 别把两条读成同一条判据。
 // ⚠ 这条钉的是**表**，不是 migrateLegacySettings() 那一行的调用点：R-B2 门控在任何测试进程里都先
 //   return 0，所以"调用点只交一条源"这种写法没有任何用例能观察到（B3a 报告 INJ-2、B3c 报告 §4 已登记）。
 //   想观察就得让用例真去构造 NativeFormat 源 ⇒ 读用户注册表当测试输入 + 在 HKCU 建键，两条都撞红线。
@@ -308,8 +310,9 @@ TEST(AppSettingsLegacySources, LabelPinsTheConstructionKindNotJustTheArguments) 
 
 // open() 的推导里唯一能被**安全构造**的形态（私有 ini）必须真的落到 label 说的那个文件上：
 // 这条把"Kind 说 IniFormat、构造却做了别的"这一类错误按在可测的那一侧。
-// ⚠ 覆盖面是有意不对称的：NamedOrgApp / ProcessDefault 两条 arm 的实际构造行为**不可测**
-//   （一构造就在 HKCU 建键），它们由 open() 里的 Q_ASSERT_X 兜误调（B3c/Q4），差别登记在任务报告里。
+// ⚠ 覆盖面是有意不对称的：NamedOrgApp / ProcessDefault 两条 arm 的**构造结果**不可测
+//   （一构造就在 HKCU 建键），能测的只有"注入态下它拒绝构造"——那条判据在下面的
+//   ProductionArmsRefuseToOpenWhileOverrideActive；两条臂各自的差别登记在任务报告里（G2 型缺口）。
 TEST(AppSettingsLegacySources, IniPathSourceOpensTheFileItsLabelNames) {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -326,6 +329,30 @@ TEST(AppSettingsLegacySources, IniPathSourceOpensTheFileItsLabelNames) {
         << " 实际 label=" << source.label().toStdString();
     // 没接上的那条必须给回空指针（迁移靠它跳过断源，见 SkipsMiswiredSourcesWithoutAborting）。
     EXPECT_TRUE(unwiredSource().open() == nullptr);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B3d：**禁令本身**第一次拥有用例 —— 两条生产臂在注入态下 open() 必须给回空指针。
+// WHY 这条可以安全地调用生产源的 open()：拒绝写在 QSettings 构造**之前** ⇒ 既不读用户数据，
+//   也不会在 HKCU 下建键，所以"证明它被拒"不再需要先污染才看得见。
+//   形态为什么从断言换成拒绝：B3c/Q4 用的 Q_ASSERT_X 被 QT_NO_DEBUG 编掉，而交付与 CI 都跑 Release
+//   （扫产物取证见 B3d 报告）⇒ 禁令在真正跑起来的那棵配置树里没有牙。
+// 判别性（验收口径）：摘掉 app_settings.cpp 两个 arm 里那句 `if (settingsOverrideActive())` 的早退
+//   ⇒ 本用例红在循环体的 EXPECT_TRUE 上（源被真构造出来 ⇒ 指针非空；NamedOrgApp 那条还会顺手建键）。
+// 失效形态与 open() 的注释同一口径：静默返回空**会藏住误调**，但 From 那层以"打开成功几条"为条件
+//   才打一次性标记（B3c/Q3）⇒ 被全部拒绝的启动不写标记，状态可恢复、不永久烧掉迁移。
+TEST(AppSettingsLegacySources, ProductionArmsRefuseToOpenWhileOverrideActive) {
+    // 机器级前置（不是装饰性的恒真检查）：本用例的全部安全性来自"当前是注入态"。前置不成立时必须先
+    // 红在这里、直接返回，而不是往下把两个 NativeFormat 落点构造出来。摘掉 tests/test_main.cpp 里
+    // 那条 qputenv 就能让它红（既有同族判据：AppSettingsPath.TestHarnessAlwaysOverrides）。
+    ASSERT_TRUE(gis::gui::settingsOverrideActive())
+        << "注入态前置不成立 ⇒ 不许再往下走，往下就是真去构造生产落点";
+    const QList<Source>& sources = gis::gui::productionLegacySources();
+    ASSERT_EQ(sources.size(), 2) << "表的内容归 ProductionWiringIsTheTwoLegacyLandingPoints，这里只取那两条臂";
+    for (const Source& source : sources) {
+        EXPECT_TRUE(source.open() == nullptr)
+            << "注入态下这条臂必须拒绝构造（禁令的执行点，B3d）：" << source.label().toStdString();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -60,9 +60,13 @@ struct LegacySettingsSource {
 
     // 按 kind 构造真正的 QSettings。
     // ⚠ 用例**不得**打开 NamedOrgApp / ProcessDefault 这两条：它们在 Windows 上是注册表落点，
-    //   光构造就会在 HKCU 下把键建出来（实测见 app_settings.cpp 顶部）。
-    //   这条禁令的执行点在 open() 里那两个 arm 的**第一行**（Q_ASSERT_X），不在本注释里 ——
-    //   禁令写在声明处只能防住读了它的人，写在风险处才防住没读它的人（B3c/Q4）。
+    //   光构造就会在 HKCU 下把键建出来（落点形态见 app_settings.cpp 顶部实测）。
+    //   这条禁令的执行点在 open() 里那两个 arm 的**第一行**，不在本注释里 —— 禁令写在声明处只能
+    //   防住读了它的人，写在风险处才防住没读它的人（B3c/Q4 的立场）。
+    //   执行形态是**运行期拒绝**（`if (settingsOverrideActive()) return 空指针;`，两棵配置树都有牙），
+    //   不是断言：B3c 用的 Q_ASSERT_X 被 QT_NO_DEBUG 编掉，交付与 CI 跑的 Release 二进制里没有它（B3d）。
+    //   唯一被许可的调用是"在注入态下证明它确实被拒"（tests/test_app_settings.cpp 的
+    //   ProductionArmsRefuseToOpenWhileOverrideActive），别把它读成"用例可以自由 open() 生产源"。
     std::unique_ptr<QSettings> open() const;
 };
 
