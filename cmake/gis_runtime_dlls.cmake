@@ -1,93 +1,31 @@
-set(GIS_RUNTIME_DLLS
-    double-conversion.dll
-    gdal.dll
-    geos.dll
-    geos_c.dll
-    geotiff.dll
-    jpeg62.dll
-    json-c.dll
-    libexpat.dll
-    liblzma.dll
-    libpng16.dll
-    md4c.dll
-    md4c-html.dll
-    opencv_calib3d4.dll
-    opencv_core4.dll
-    opencv_features2d4.dll
-    opencv_flann4.dll
-    opencv_imgcodecs4.dll
-    opencv_imgproc4.dll
-    opencv_ml4.dll
-    opencv_stitching4.dll
-    opencv_video4.dll
-    pcre2-16.dll
-    pcre2-32.dll
-    pcre2-8.dll
-    pcre2-posix.dll
-    proj_9.dll
-    Qt6Core.dll
-    Qt6Gui.dll
-    Qt6Sql.dll
-    Qt6Svg.dll
-    Qt6Widgets.dll
-    Qt6Xml.dll
-    sqlite3.dll
-    tiff.dll
-    turbojpeg.dll
-    z.dll
-)
-
-set(GIS_RUNTIME_DLLS_DEBUG
-    double-conversion.dll
-    gdald.dll
-    geos.dll
-    geos_c.dll
-    geotiff_d.dll
-    jpeg62.dll
-    json-c.dll
-    libexpatd.dll
-    liblzma.dll
-    libpng16d.dll
-    md4c.dll
-    md4c-html.dll
-    opencv_calib3d4d.dll
-    opencv_core4d.dll
-    opencv_features2d4d.dll
-    opencv_flann4d.dll
-    opencv_imgcodecs4d.dll
-    opencv_imgproc4d.dll
-    opencv_ml4d.dll
-    opencv_stitching4d.dll
-    opencv_video4d.dll
-    pcre2-16d.dll
-    pcre2-32d.dll
-    pcre2-8d.dll
-    pcre2-posixd.dll
-    proj_9_d.dll
-    Qt6Cored.dll
-    Qt6Guid.dll
-    Qt6Sqld.dll
-    Qt6Svgd.dll
-    Qt6Widgetsd.dll
-    Qt6Xmld.dll
-    sqlite3.dll
-    tiffd.dll
-    turbojpeg.dll
-    zd.dll
-)
+# ══ vcpkg 运行库拷贝名单（Task B6 / N88：名单单源化）═══════════════════════════════
+# 本文件只有**一份**名单：下面的 GIS_RUNTIME_DLLS_BASE 那条 `(release 名|debug 名样式)` 表。
+# GIS_RUNTIME_DLLS / GIS_RUNTIME_DLLS_DEBUG 这两个变量名仍然保留（根 CMakeLists.txt 与
+#   gis_copy_minimal_runtime 都按这两个名字读），但它们是**派生结果**，不再手抄。
+# WHY 必须派生而不是两条各抄一遍（N88）：两条手抄名单互为对照却没有人保证同步 ——
+#   加一项要记得改两处、样式标错一处不报错；本项目已经因此踩过跨配置污染（N76）。
+#   单源化后新增一个库只改表里一行，两条拷贝计划（release 名 + debug 名）由同一处约定算出。
+# 复算口径（改名单后自查用的命令，务必**限定在 set() 块内**：本文件别处的 .dll 是散文里的举例，
+#   整文件 grep 会把它们也数进去）：
+#     awk '/^set\(GIS_RUNTIME_DLLS_BASE$/,/^\)/' cmake/gis_runtime_dlls.cmake | grep -c '\.dll|'
+#     两条派生名单的项数与样式分布：看配置日志里那行 `[runtime-dlls] 单源表 …`（现算，不抄数）。
+#   派生名单与历史手抄名单是否逐项一致，不在这里留结论：那件事由**引入本表那一次提交**
+#   的对照断言 + 两棵构树生成物里逐条拷贝命令的源路径比对给出（见派生段末尾）。
 
 # ══ 唯一真源：一条 `(release 名|debug 名样式)` 表，两条拷贝计划由它派生（Task B6 / N88）══
-# 形态由**实测的命名约定分布**决定（2026-10-19 逐行复算，两名单各 36 项、一一对齐，无重名）：
-#   suffix_d      24 项  release 名去掉 .dll 后加 `d`（gdal→gdald、libexpat→libexpatd、
-#                        libpng16→libpng16d、9 个 opencv_*4、4 个 pcre2-*、6 个 Qt6*、tiff、z）
-#   underscore_d   2 项  在 .dll 前插 `_d`（geotiff→geotiff_d、proj_9→proj_9_d）
-#   same          10 项  两配置同名（double-conversion / geos / geos_c / jpeg62 / json-c /
-#                        liblzma / md4c / md4c-html / sqlite3 / turbojpeg）
-# ⇒ **不是** "两份名单互为 +d"，所以派生规则必须逐条登记，不能一句 string(REPLACE) 糊过去。
-# ⚠ 那 10 项同名的就是 N76 跨配置污染那一类：实测同一文件名**同时存在**于 vcpkg 的 bin 与 debug/bin
-#   （字节不同、CRT 不同），名字层面无法区分配置，只有"从哪个目录拷"能区分 ⇒ 单源化后
+# 形态由**实测的命名约定分布**决定（2026-10-19 逐行复算：两条手抄名单一一对齐、各自无重名，
+#   但不是"两份互为 +d"，而是三种约定混在一张表里 ⇒ 分布数字由配置期那行 [runtime-dlls] 现算，
+#   样式名直接写在表项里，这里都不抄数，免得注释变成日后数数的靶子）：
+#   · 去掉 .dll 再加一个 d 的（gdal→gdald、libexpat→libexpatd、libpng16→libpng16d、
+#     9 个 opencv_*4、4 个 pcre2-*、6 个 Qt6*、tiff、z）；
+#   · 在 .dll 前插 _d 的（geotiff→geotiff_d、proj_9→proj_9_d）；
+#   · 两配置**同名**的（double-conversion / geos / geos_c / jpeg62 / json-c / liblzma /
+#     md4c / md4c-html / sqlite3 / turbojpeg）。
+# ⇒ 派生规则必须逐条登记在表里，不能一句全局替换糊过去。
+# ⚠ 最后那一族同名的就是 N76 跨配置污染那一类：实测同一文件名**同时存在**于 vcpkg 的 bin 与
+#   debug/bin（字节不同、CRT 不同），名字层面无法区分配置，只有"从哪个目录拷"能区分 ⇒ 单源化后
 #   同名项仍必须按配置各自取源目录（见下面 GIS_VCPKG_RUNTIME_BIN_DIR 那条断言），
-#   并且拷贝计划里两配置的名字都必须进同一次 foreach（批次 A 合并成一个 foreach 正是为了这件事，
+#   并且两条名单都必须进同一次 foreach（批次 A 合并成一个 foreach 正是为了这件事，
 #   不许简化回"只留一份名字表"）。
 set(GIS_RUNTIME_DLLS_BASE
     "double-conversion.dll|same"
@@ -213,30 +151,17 @@ if(NOT GIS_VCPKG_RUNTIME_BIN_DIR MATCHES "\\$<CONFIG:")
         "固定成一个目录 = N76 跨配置污染复发。")
 endif()
 
-# ── 过渡期对照断言（N88 的保险带，第二提交删手抄名单时一并删这里）─────────────────
-# WHY 要这一条而不是"改完直接跑测试看绿"：派生规则一旦写错（样式标错、正则吃掉字符），
-#   错的是**名单本身**，构建不会报错、测试也可能照旧绿（缺的那个 dll 只是没被拷进来，
-#   而残留审计只看"有没有对面配置的件"）。所以先用还留在文件里的手抄名单当地面真相做逐项同序
-#   对账，红在配置期；对账通过、两棵树都验过之后，第二提交才把地面真相删掉。
-# WHY 比"同序字符串相等"而不是"集合相等"：foreach 是按这份顺序生成 POST_BUILD 命令的，
-#   顺序变了就不是"拷贝集合不变"而是"拷贝顺序变了"，Step 3 的判据（集合不变）就不成立。
-list(JOIN _gis_derived_release "\n" _gis_derived_release_text)
-list(JOIN GIS_RUNTIME_DLLS "\n" _gis_hand_release_text)
-list(JOIN _gis_derived_debug "\n" _gis_derived_debug_text)
-list(JOIN GIS_RUNTIME_DLLS_DEBUG "\n" _gis_hand_debug_text)
-if(NOT _gis_derived_release_text STREQUAL _gis_hand_release_text)
-    message(FATAL_ERROR
-        "单源派生的 release 名单与手抄名单 GIS_RUNTIME_DLLS 逐项不一致（N88 对照断言）。\n"
-        "派生（${_gis_n_release} 项）:\n${_gis_derived_release_text}\n"
-        "手抄（现读 ${GIS_RUNTIME_DLLS} 展开）:\n${_gis_hand_release_text}\n"
-        "⇒ 表里的样式标错、或 vcpkg 端名字变了；先查清是哪一项，再谈删手抄名单。")
-endif()
-if(NOT _gis_derived_debug_text STREQUAL _gis_hand_debug_text)
-    message(FATAL_ERROR
-        "单源派生的 debug 名单与手抄名单 GIS_RUNTIME_DLLS_DEBUG 逐项不一致（N88 对照断言）。\n"
-        "派生（${_gis_n_debug} 项）:\n${_gis_derived_debug_text}\n"
-        "手抄（现读 ${GIS_RUNTIME_DLLS_DEBUG} 展开）:\n${_gis_hand_debug_text}")
-endif()
+# ── 派生结果落到两个既有变量名上 ─────────────────────────────────────────────────
+# 这里**不再**与手抄名单对账：手抄名单已随本提交删除，地面真相在它还在的时候已经用完
+#   （上一提交 e726710 的对照断言逐字符串比过两条名单，两棵构树的 POST_BUILD 拷贝计划
+#    也逐源路径比对过一致）。此后守住名单正确性的三件事，全部是本文件里的硬闸：
+#     ① 归零 / 条目格式 / 派生项数 / 重名 四条自守（错在配置期，不靠测试）；
+#     ② 同名项的源目录必须是 $<CONFIG:> 生成器表达式（N76 那条防线）；
+#     ③ 装出来的包由 tests/check_install_closure.cmake 逐 PE 判导入闭包 ——
+#        样式标错会让某个配置的 dll 静默缺席，闭包断言是唯一能看见"少了一个"的判据
+#        （runtime_dll_cross_config_audit 只看得见"多了对面配置的残留"，看不见"少了"）。
+set(GIS_RUNTIME_DLLS ${_gis_derived_release})
+set(GIS_RUNTIME_DLLS_DEBUG ${_gis_derived_debug})
 
 function(gis_copy_minimal_runtime target_name)
     cmake_parse_arguments(ARG "" "DEST_DIR" "" ${ARGN})
@@ -261,8 +186,9 @@ function(gis_copy_minimal_runtime target_name)
     #   Debug 构树两份都是 debug ⇒ 自洽 ⇒ 只在 Release 侧暴露，所以这条缺陷在 17 轮任务里从未被踩到。
     # HOW：统一走根 CMakeLists.txt 已经算好、但本函数此前没用到的 GIS_VCPKG_RUNTIME_BIN_DIR
     #   （$<CONFIG:Debug> 生成器表达式，多配置生成器下按配置各自展开）。
-    #   两份名单里只有当前配置那一份真实存在，copy_if_exists.cmake 对不存在的源静默跳过，
+    #   两条派生名单里只有当前配置那一份真实存在，copy_if_exists.cmake 对不存在的源静默跳过，
     #   因此合并成一个 foreach 即可，不新增按配置的判断分支；重复项先去重以免同一条命令排两遍。
+    #   （同名那几项合并后只剩一条命令，但那条命令的**源目录**按配置展开 ⇒ 拷到的就是本配置那份。）
     set(_gis_runtime_dll_names "${GIS_RUNTIME_DLLS};${GIS_RUNTIME_DLLS_DEBUG}")
     list(REMOVE_DUPLICATES _gis_runtime_dll_names)
     foreach(_dll IN LISTS _gis_runtime_dll_names)
