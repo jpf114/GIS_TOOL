@@ -102,12 +102,17 @@ TEST(AppSettingsPath, TestHarnessAlwaysOverrides) {
 
 TEST(AppSettingsPath, ProductionShapeWithoutTouchingDisk) {
     // 断"生产路径形状"只能走纯函数 resolvedSettingsPath(QString())（R-B2b 红线）。
-    // 纪律：**这里不许构造任何指向生产路径的 QSettings 对象**。理由要说准：构造本身并不写盘
-    // （写盘要 setValue()+sync()，见任务报告的探针 #3），但一旦有人顺手补一句 setValue，
-    // 这个落点就是真人机器上的 %LOCALAPPDATA% ⇒ 污染用户目录，还是跨用例共享的定名文件。
-    // 至于"落点是不是注册表"：那由 appSettings() 里显式 IniFormat 的构造分支保证，本用例判不了，
-    // 所以也不要补 QSettings(p, IniFormat).format()==IniFormat 这种断言——format() 返回的就是
-    // 刚传进去的构造参数，与被测实现无关，任何实现下都不可能红。
+    // 纪律：**这里不许构造任何指向生产路径的 QSettings 对象**。理由要说准，而且"构造会不会写盘"
+    // 这件事**按 format 分岔**，不能混成一句（否则下一个读者会以为"构造永远无害"）：
+    //   * **IniFormat**：构造本身不写盘（写盘要 setValue()+sync()，见任务报告的探针 #3），但一旦有人
+    //     顺手补一句 setValue，这个落点就是真人机器上的 %LOCALAPPDATA% ⇒ 污染用户目录，
+    //     还是跨用例共享的定名文件。
+    //   * **NativeFormat**：光构造就会在 HKCU 下把这一层键建出来，哪怕全程只读（取证见
+    //     src/gui/app_settings.cpp:26-30 与任务报告 §2 的注册表 lastWriteTime）。
+    // 至于"生产落点是不是注册表"：本用例判不了（format() 返回的就是刚传给构造的参数，与被测实现
+    // 无关，任何实现下都不可能红 —— 那条恒真断言已在 B1 修复轮删掉），
+    // 所以也不要把它抄回来；这条判据由 B2 在 tests/test_mainwindow.cpp 的落点守卫块断
+    // （那里 appSettings().format() 是**被测实现自己选的**构造参数，才有鉴别力）。
     const QString p = gis::gui::resolvedSettingsPath(QString());
     const QString cfg = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     EXPECT_FALSE(p.isEmpty());

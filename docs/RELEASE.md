@@ -306,6 +306,23 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 ---
 
+## 批次 B 发布说明（用户可见变更，2026-10-19 起）
+
+### 用户设置存储位置：Windows 注册表 → ini 文件
+
+用户设置存储位置从 Windows 注册表（`HKCU\Software\GISTool`、`HKCU\Software\GIS\GIS Tool`）改为
+`%LOCALAPPDATA%\GIS\GIS Tool\settings.ini`；首次启动自动**补缺不覆盖**地导入旧值，
+旧注册表键不会被删除或改写；卸载程序不清理该 ini（避免误删未迁移用户的设置）。
+
+- "补缺不覆盖"指：只把 ini 里**还没有**的键从旧落点搬过来，已经在 ini 里写过的值不会被注册表的历史值盖掉；
+  导入只做一次，靠 ini 内的 `meta/migrated_from_registry` 标记记账（标记写在 ini 而不是注册表，
+  所以卸载器清掉注册表也不会让它"再导一遍"）。
+- 迁移是**只读**地访问旧注册表键：程序不会 `reg delete`、不会改写任何既有的值。
+- 测试与 CI 不落在这个位置：每条 GUI 用例另有自己私有的 ini（在它的产物目录里），
+  回归跑完不会往用户配置里写东西（N101）。
+
+---
+
 ## 已知限制
 
 - Windows 代码签名未配置（SmartScreen 可能提示）

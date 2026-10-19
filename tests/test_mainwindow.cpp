@@ -4,6 +4,7 @@
 #include <ogrsf_frmts.h>
 
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QLabel>
 #include <QMetaObject>
 #include <QProgressBar>
@@ -24,6 +25,7 @@
 #include "../src/gui/task_database.h"
 #include "../src/gui/welcome_dialog.h"
 #include "../src/gui/settings_manager.h"
+#include "../src/gui/app_settings.h"
 #include "test_support.h"
 
 #include <chrono>
@@ -52,16 +54,18 @@ QString uniqueMainWindowGroup(const char* suffix) {
 //   新用例忘记调用一样跑得绿，没有任何断言会发现"这条用例把配置写进了开发者机器"。
 //   现在机制在 main() 钉一次、结果在这里断言一次（落点算式两边共用
 //   gis::tests::privateSettingsDir()），任何一侧退化都会被抓到：
-//   删掉 main() 那三行 ⇒ 断言 2/3/4 红；改落点算式 ⇒ 断言 2 红。
+//   删掉 main() 那三行 ⇒ 断言 2/3/4 红；改落点算式 ⇒ 断言 2 红；
+//   welcome_dialog 若不再走 appSettings() ⇒ 断言 6 红（批次 B2 补的那一条）。
 //
-// ⚠ 断言必须用**显式带 Format/Scope 的构造形态**，不能用两参形态，这是本轮踩过的坑：
+// ⚠ 断言必须用**显式带 Format/Scope 的构造形态**，不能用两参形态，这是本块踩过的坑：
 //   QSettings probe("GISTool","GISTool") 两参构造走的是 **NativeFormat**，
 //   既不吃 setDefaultFormat(IniFormat) 也不吃 setPath(IniFormat, …) ⇒ fileName() 返回
 //   HKEY_CURRENT_USER\Software\GISTool\…，与 ini 重定向无关 ⇒ 断言恒红（14 条 MainWindowTest 实测全红）。
-//   这条同时登记一个 src 侧事实：SettingsManager 原先用的正是两参构造 ⇒ NativeFormat，
-//   写的其实是注册表 HKCU\Software\GISTool 而不是 %APPDATA%\GISTool\GISTool.ini
-//   （ ⇒ 每次跑 MainWindowTest 都在写真实用户注册表）。N100 已修：src 侧加了 GIS_TOOL_SETTINGS_INI
-//   覆盖（生产不设 ⇒ 行为与存储位置不变）与只读出口 storagePath()，落点由下面"断言 4"直接测真实对象。
+//   这条同时登记一个 src 侧历史事实：SettingsManager 原先用的正是两参构造 ⇒ NativeFormat，
+//   写的是注册表 HKCU\Software\GISTool 而不是 %APPDATA%\GISTool\GISTool.ini
+//   （⇒ 每次跑 MainWindowTest 都在写真实用户注册表）。N100 先加了 GIS_TOOL_SETTINGS_INI 覆盖把测试
+//   进程圈回私有文件，批次 B2 再把落点与迁移规则收进 gis::gui::appSettings()（生产落点
+//   = AppConfigLocation/settings.ini），只读出口 storagePath() 不变，落点仍由"断言 4"直接测真实对象。
 void configureSettingsForTest() {
     static bool firstRunMarked = false;
     const QString privateDir =
@@ -97,6 +101,36 @@ void configureSettingsForTest() {
     EXPECT_EQ(managerLanded, managerWant)
         << "SettingsManager 没落在本进程私有文件上（GIS_TOOL_SETTINGS_INI 未生效）"
            "⇒ 每次跑 MainWindowTest 都会写真实用户注册表 HKCU\\Software\\GISTool";
+    // ── 断言 5（B2）：生产落点的两条口径 ─────────────────────────────────────────
+    // 5a 生产形状只能由**纯函数**断（R-B2b）：本进程里 appSettingsPath() 返回的是 harness 注入的
+    //    文件名，拿它断 "settings.ini" 会恒假 ⇒ 那是条注定无效的守卫，所以走 resolvedSettingsPath(QString())。
+    const QString shape = gis::gui::resolvedSettingsPath(QString());
+    EXPECT_TRUE(shape.endsWith(QStringLiteral("settings.ini")))
+        << "批次 B：生产落点必须是 AppConfigLocation 下的 settings.ini，实际=" << shape.toStdString();
+    // 5b 交接自 B1 复审义务 1：**"生产落点是不是 IniFormat"这条判据归 B2**，正确落点就在这里 ——
+    //    format() 是 appSettings() 自己选的构造参数，不是测试传进去的，所以把它换成
+    //    NativeFormat/两参形态时这条会红（test_app_settings.cpp 里那条同形状的断言已被删，因为
+    //    那里传入的就是被测值本身，恒真）。
+    {
+        const QSettings probe = gis::gui::appSettings();   // 注入态 ⇒ 只写私有 ini，安全
+        EXPECT_EQ(probe.format(), QSettings::IniFormat)
+            << "welcome_dialog 走的默认构造在 Windows 生产进程上是 NativeFormat ⇒ 会写 HKCU\\Software\\GIS\\GIS Tool";
+        EXPECT_NE(QFileInfo(probe.fileName()).suffix(), QStringLiteral("Registry"))
+            << "探针落点看起来仍是注册表：fileName=" << probe.fileName().toStdString();
+    }
+    // 5c welcome_dialog 的落点守卫（本任务真正的红→绿判据）。
+    //    为什么 5b 对它不具鉴别力：test_main.cpp 调了 setDefaultFormat(IniFormat)，所以测试进程里
+    //    **默认构造的 QSettings 也是 IniFormat**，落 <私有目录>/Unknown Organization/gis_tests.ini；
+    //    而 appSettings() 走显式路径 <私有目录>/SettingsManager.ini。两个都是 ini ⇒ format() 分不出来，
+    //    但它们是**两个不同的文件**（且前者 status=AccessError 根本写不进去）。
+    //    于是只能断"写进去的那条键，appSettings() 读不读得到"：
+    //      改 welcome_dialog 之前 ⇒ markFirstRunComplete() 写的是 Unknown Organization 那份，
+    //                            这里读到 false ⇒ 本条红（同时暴露"首启标记永远写不进用户配置"这个真缺陷）；
+    //      改之后            ⇒ 两边同一个文件 ⇒ true ⇒ 绿。
+    gis::gui::markFirstRunComplete();
+    EXPECT_TRUE(gis::gui::appSettings().value(QLatin1String("app/first_run_complete"), false).toBool())
+        << "welcome_dialog 与 appSettings() 不是同一个落点 ⇒ 首启标记写到别的文件里去了"
+           "（生产进程即 HKCU\\Software\\GIS\\GIS Tool，N101 的第二条腿）";
     if (!firstRunMarked) {
         gis::gui::markFirstRunComplete();
         firstRunMarked = true;

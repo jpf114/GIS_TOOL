@@ -3,6 +3,9 @@ if(NOT DEFINED GUI_PATH OR NOT DEFINED INPUT_PATH OR NOT DEFINED OUTPUT_PATH OR 
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_defaults.cmake")
+# N101：本 driver 属于"不 include helpers"的那 4 个之一，而注入载体做在 helpers 的 include 期顶层
+# ⇒ 必须在第一次 execute_process 之前 include 它（helpers 会自己再 include defaults）。
+include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_helpers.cmake")
 
 get_filename_component(OUTPUT_DIR "${OUTPUT_PATH}" DIRECTORY)
 get_filename_component(SCREENSHOT_DIR "${SCREENSHOT_PATH}" DIRECTORY)

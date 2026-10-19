@@ -1,29 +1,17 @@
 #include "settings_manager.h"
 
-#include <QByteArray>
+#include "app_settings.h"
 
 SettingsManager& SettingsManager::instance() {
     static SettingsManager inst;
     return inst;
 }
 
-// N100：测试必须能在**不碰真实用户注册表**的前提下跑完 SettingsManager 的全部行为。
-// WHY 用环境变量而不是改默认存储位置：两参 QSettings("GISTool","GISTool") 在 Windows 上走
-//   NativeFormat ⇒ 落 HKCU\Software\GISTool（实测盘上已有 10 条测试产物路径写在 recent/files 里，
-//   因为 MainWindowTest 每次都调 instance()）。直接把它改成 IniFormat 会**改变生产行为的存储位置**
-//   ——老用户存在注册表里的"最近文件/路径"会凭空看不到。
-//   所以默认分支一字不改，只在显式设了 GIS_TOOL_SETTINGS_INI（测试进程由 tests/test_main.cpp 设）时
-//   走那个文件，测试与生产的落点从此可分别验证（见 SettingsManager::storagePath()）。
+// 落点与迁移规则见 src/gui/app_settings.cpp 的 R-B1/R-B2/R-B4。
+// 这里只保留一条本地纪律：settings_ 必须由 appSettings() 的 prvalue **直接初始化**——
+// Qt 6 的 QSettings 是 Q_DISABLE_COPY 的，先存具名局部量再拷贝/赋值会直接编译失败。
 SettingsManager::SettingsManager(QObject* parent)
-    : QObject(parent),
-      settings_([]() {
-          const QByteArray rawOverride = qgetenv("GIS_TOOL_SETTINGS_INI");
-          if (!rawOverride.isEmpty()) {
-              return QSettings(QString::fromLocal8Bit(rawOverride.constData()),
-                               QSettings::IniFormat);
-          }
-          return QSettings(QStringLiteral("GISTool"), QStringLiteral("GISTool"));
-      }()) {}
+    : QObject(parent), settings_(gis::gui::appSettings()) {}
 
 QString SettingsManager::storagePath() const {
     return settings_.fileName();

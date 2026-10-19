@@ -1,8 +1,10 @@
 #include "welcome_dialog.h"
 #include "style_constants.h"
+#include "app_settings.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QLatin1String>
 #include <QLabel>
 #include <QPushButton>
 #include <QSettings>
@@ -12,16 +14,21 @@
 
 namespace gis::gui {
 
+// 键名与旧注册表落点（HKCU\Software\GIS\GIS Tool\app）下的值名逐字一致，
+// 这样 R-B4 的"补缺不覆盖"导入才能把它原样搬到 ini 里。
 static const char* kFirstRunKey = "app/first_run_complete";
 
+// 落点统一走 appSettings()（批次 B）：默认构造的 QSettings 吃 org/app ⇒ 在生产进程里是
+// NativeFormat ⇒ 写的其实是 HKCU\Software\GIS\GIS Tool，那是 N101 的第三条腿。
+// 两个对象都由 prvalue 直接初始化（Qt 6 的 QSettings 是 Q_DISABLE_COPY 的）。
 bool isFirstRun() {
-    QSettings settings;
-    return !settings.value(kFirstRunKey, false).toBool();
+    QSettings settings = gis::gui::appSettings();
+    return !settings.value(QLatin1String(kFirstRunKey), false).toBool();
 }
 
 void markFirstRunComplete() {
-    QSettings settings;
-    settings.setValue(kFirstRunKey, true);
+    QSettings settings = gis::gui::appSettings();
+    settings.setValue(QLatin1String(kFirstRunKey), true);
 }
 
 void showWelcomeDialog(QWidget* parent) {

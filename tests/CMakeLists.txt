@@ -194,6 +194,12 @@ if(TARGET gis-gui)
     # checks.
     set_tests_properties(gui_smoke_startup PROPERTIES
         TIMEOUT 60
+        # N101：这一条是**唯一**由 ctest 直接 spawn gis-gui.exe 的用例（COMMAND $<TARGET_FILE:gis-gui>，
+        # 不经过任何 .cmake driver）⇒ helpers 的 include 期 set(ENV{…}) 载体够不到它，只能走
+        # ENVIRONMENT 属性。落点仍是"该用例自己的产物目录"，与其余 105 条同构。
+        # 只这一条用这个属性：注册侧另有 111 个字面 add_test(NAME gui_ …)，逐条手抄是 111 处，
+        # 而那批都有 driver ⇒ 由载体一处覆盖。src/gui/main.cpp 的落点守卫是这两条腿共同的兜底。
+        ENVIRONMENT "GIS_TOOL_SETTINGS_INI=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/smoke_startup/gis_gui_settings.ini"
     )
 
     add_test(
