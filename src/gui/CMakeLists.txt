@@ -144,9 +144,15 @@ install(TARGETS gis-gui
 #   会 rc=0 装出一个没有平台插件与 qsqlite 的残缺包。
 #   现在与构建侧共用同一组按配置变量（GIS_VCPKG_QT_PLATFORMS_DIR / GIS_QT_WINDOWS_DLL /
 #   GIS_QT_HEADLESS_DLL / GIS_VCPKG_QT_SQLDRIVERS_DIR / GIS_QT_SQLITE_DLL）：去掉 CONFIGURATIONS 后
-#   genex 在**安装期**按 `--config` 求值，Debug 装 qwindowsd/qoffscreen*/qsqlited（带 d），
-#   Release 装的仍是与改前逐字节同名的 release 文件。
-#   文件缺失 ⇒ 安装期直接报错而非静默跳过：宁可装不出来，不装残缺包（与 N84 同一方针）。
+#   机制（实测，别写成"安装期求值"）：genex 在**生成期**就被展开成逐配置分支
+#   （见 build/debug/src/gui/cmake_install.cmake 里的 Debug 支与 Release/MinSizeRel/RelWithDebInfo 支），
+#   安装期只是按 `--config` **选支**。⇒ Debug 装带 d 的三个名，Release 装的名字与改前**逐条相同**
+#   （判据是文件名集合 diff，**没有**做内容逐字节比对）。
+#   ⚠ "文件缺失 ⇒ 安装期直接报错"这条**只对 platforms 的 ON 臂成立**：
+#   外层 if(GIS_COPY_QT_PLATFORM_DLL) 是**配置期**用 EXISTS(调试目录) 或 EXISTS(release 目录) 算出来的，
+#   它为假时整块 platforms 安装规则根本不存在 ⇒ 两种配置都会**静默**装出没有平台插件的包（只有 :110 一句 WARNING）。
+#   sqldrivers 那条没有这层 gate ⇒ 缺文件会真的报错。两条规则形态不同是**已知不对称**，
+#   兜底交给闭包断言（N86 / tests/check_install_closure.cmake）：装了就得齐，缺一项即红。
 if(GIS_COPY_QT_PLATFORM_DLL)
     install(FILES
         "${GIS_VCPKG_QT_PLATFORMS_DIR}/${GIS_QT_WINDOWS_DLL}"

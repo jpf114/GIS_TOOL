@@ -75,7 +75,7 @@ Debug 包连 `bin/platforms/` 都没有却 rc=0 静默成功；现在与构建�
 ```powershell
 cmake --install build/debug --config Debug --prefix build/tmp/install-debug
 Get-ChildItem build/tmp/install-debug/bin/platforms, build/tmp/install-debug/bin/sqldrivers
-# 期望：qwindowsd.dll、qoffscreend.dll（headless）与 qsqlited.dll
+# 期望：qwindowsd.dll、headless 插件的带 d 名（q${GIS_QT_HEADLESS_PLATFORM}d.dll，本机该臂构建下即 qoffscreend.dll）与 qsqlited.dll
 ```
 
 `--config Release` 一侧装的仍是与改前逐字节同名的 release 文件（前后整包文件清单 diff 为空）。
@@ -344,7 +344,9 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 `cmake --install build/debug --config Debug --prefix …` 现在会装出**起得来**的 Debug 包：`bin/platforms/` 含
 `qwindowsd.dll` 与 headless 插件 `qoffscreend.dll`，`bin/sqldrivers/` 含 `qsqlited.dll`
 （此前这三条规则只随 Release 安装，Debug 包 rc=0 却是残缺的——装出来的 Debug GUI 连平台插件都没有，
-offscreen self-test 挂在 Qt 的缺插件模态框上起不了进程）。Release 包的名单与内容**逐字节不变**。
+offscreen self-test 起不了进程：改前后两次跑都只观测到 stdout 为 0 字节，而"0 字节"对
+"挂在缺插件弹窗上"与"被别的早退拦下"**没有鉴别力**，所以**机制是推断、不是观测**）。
+Release 包的**文件名集合逐条不变**（名字级 diff；未做内容逐字节比对）。
 **交付形态仍是 Release**；本条只消掉"Debug 装出残包还静默成功"这一类风险。判据命令见"发布前验证 → 第 3 步"。
 
 ---
