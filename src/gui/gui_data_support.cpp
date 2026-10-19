@@ -329,6 +329,50 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "band", "kernel_size", "sigma", "gabor_theta", "gabor_lambda", "gabor_gamma", "gabor_psi"},
                 {"input", "output"}
             }},
+            // 下面这批条目是本插件此前唯一没有条目的 action（K-14/N91 的账：没有条目 ⇒ 面板不过滤，
+            // 把插件级 spec 全集铺出来，其中绝大多数是本 action 根本不读的键）。
+            // WHY visibleKeys 逐键取自反向守卫导出的"调用闭包实读集"而不是 paramSpecs()：
+            //   spec 是插件级全集、把键按 action 归位正是这份表的职责，照 spec 抄等于把死键摆上面板，
+            //   正是 21-C 那条"白名单 − 实读 非空即红"要抓的形态。复现某条的实读集：
+            //   cmake -DGIS_21C_TRACE_PAIR=processing.<action> -P tests/check_action_visible_keys_read.cmake
+            //   （键名清单见该脚本第 5 节的 [trace] readkeys 输出）。
+            // WHY requiredKeys 只有 input/output：R-F2-A 规定本表只允许加严"插件自己就会拒绝"的空值，
+            //   这批 do* 函数对空 input 与空 output 一律 Result::fail，其余键都有可用默认值。
+            //   例外是 pansharpen 的 pan_file：doPansharpen 对空 pan_file 直接 fail，
+            //   而它的 spec 写的是 required=false —— 不列进本表，GUI 就会放行 CLI 必然拒绝的参数。
+            {"pansharpen", {
+                QString{},
+                QStringLiteral("用全色影像与多光谱影像融合，输出与全色影像同尺寸的多光谱结果。"),
+                {"input", "output", "pan_file", "pan_method"},
+                {"input", "output", "pan_file"}
+            }},
+            {"hough", {
+                QString{},
+                QStringLiteral("对输入波段执行霍夫直线或圆检测，并把检测到的几何画到输出影像上。"),
+                {"input", "output", "band", "hough_type", "hough_threshold", "min_line_length", "max_line_gap", "min_radius", "max_radius", "circle_param2"},
+                {"input", "output"}
+            }},
+            {"glcm_texture", {
+                QString{},
+                QStringLiteral("按邻域窗口计算 GLCM 纹理图（对比度、同质性、能量、熵）。"),
+                {"input", "output", "band", "kernel_size", "glcm_metric", "glcm_levels"},
+                {"input", "output"}
+            }},
+            {"mean_shift_filter", {
+                QString{},
+                QStringLiteral("执行 Mean Shift 分割滤波，按空间半径与颜色半径控制聚类尺度。"),
+                {"input", "output", "band", "spatial_radius", "color_radius", "pyramid_level"},
+                {"input", "output"}
+            }},
+            // WHY connectivity 在白名单里：Task 15 之前它是死参数（doConnectedComponents 把 8 写死），
+            //   现在 doConnectedComponents 真的 getParam<int>(params, "connectivity", 8) 读它，
+            //   不放行就等于面板上少一个用户能改且插件会照改的输入。
+            {"connected_components", {
+                QString{},
+                QStringLiteral("对二值化后的输入波段做连通组件标记，输出组件编号栅格。"),
+                {"input", "output", "band", "connectivity"},
+                {"input", "output"}
+            }},
         }},
         {"classification", {
             {"feature_stats", {

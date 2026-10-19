@@ -2910,11 +2910,16 @@ TEST(GuiActionConfig, AllPlanARelevantPluginsHaveActionConfigs) {
 // 前者抓 R-T10-2/3/4 那类错键名（错键既让真参数被隐藏、自己又什么都不做），
 // 后者抓"真实存在但未被渲染的必填键"—— ParamCardWidget::validate() 对不在 entries_ 里的键
 // 直接 continue，于是必填校验静默失效（与 R-F2-A 修掉的同一族）。
-// 存在性方向（action 声明在枚举里就必须有条目）只锁本任务补齐的 6 个插件 + raster_manage：
-// 别的插件仍有未补条目的 action，那是另一笔账，不能在这里顺手改它们的配置表。
+// 存在性方向（action 声明在枚举里就必须有条目）只锁已经补齐条目的插件：
+// 别的插件仍有未补条目的 action（vector 那一族由后续提交补齐），不能在这里顺手改它们的配置表。
+// WHY processing 必须与 src/gui/gui_data_support.cpp 的新条目、以及
+//   tests/check_action_visible_keys_read.cmake 的 GIS_21C_NO_UI_CONFIG_ALLOWLIST 销账同批提交：
+//   只扩本集合不改表 ⇒ 这里红；只改表不缩名单 ⇒ 名单那条"每条都必须仍是免检项"红。
+//   两侧都是设计好的红，不是环境问题。
 TEST(GuiActionConfig, PlanAConfigKeysAreDeclaredByThePluginAndRenderable) {
     static const std::set<std::string> kMustBeConfigured = {
-        "spindex", "georef", "raster_math", "raster_render", "terrain", "cutting", "raster_manage"
+        "spindex", "georef", "raster_math", "raster_render", "terrain", "cutting", "raster_manage",
+        "processing"
     };
 
     gis::core::initGDAL();

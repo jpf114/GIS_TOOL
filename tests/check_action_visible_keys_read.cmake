@@ -89,16 +89,18 @@ set(GIS_21C_EXEMPTIONS
 #   少一条（有人补齐了某个 actionUiConfig）⇒ 也红，逼他显式把这条从名单里销掉。
 # 红字点名的三选一处置：①补 actionUiConfig ②把这条登记进本名单并写明理由 ③按 K-14 挂批次 B 的账。
 # 名单按字典序；格式 "<插件名>|<action 名>"，与第 1 节收集的 NOCFG_PAIRS 同形，便于逐条比对。
+# 迁移状态（K-14/N91 挂在批次 B 的账）：登记时（2026-10-19）桶里是 vector 30 / processing 5 /
+#   classification 4；processing 的 5 条已补齐 actionUiConfig 并从本名单销掉 —— 注意是**销掉**而不是
+#   留着"已配置但仍在名单里"，那样断言②（表里每条都必须仍是免检项）会立刻红，双向冻结本就为此设计；
+#   classification 与 vector 两族由批次 B 的后续提交依次销账。
+# WHY 这里不写当前条数：条数是上面三条断言的判据本身，抄进注释就成了一份会漂移的假账。
+#   要读数就跑 `ctest --test-dir build/debug -C Debug -R param_guard_visible_keys_all_read
+#   --output-on-failure` 看 [21C] 的 no_ui_config= 与 no_ui_config_allowlist= 两行。
 set(GIS_21C_NO_UI_CONFIG_ALLOWLIST
     "classification|accuracy_assessment"
     "classification|max_likelihood_classify"
     "classification|random_forest_classify"
     "classification|svm_classify"
-    "processing|connected_components"
-    "processing|glcm_texture"
-    "processing|hough"
-    "processing|mean_shift_filter"
-    "processing|pansharpen"
     "vector|adjacency"
     "vector|boundary"
     "vector|centroid"
