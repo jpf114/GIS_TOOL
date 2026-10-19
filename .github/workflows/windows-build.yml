@@ -188,6 +188,39 @@ jobs:
             throw "cmake --install build/release --config Release failed with exit code $LASTEXITCODE against prefix $PWD\install: the install script refused to resolve runtime dependencies, see cmake/install_runtime_deps.cmake.in"
           }
 
+      - name: Assert installed package closure
+        shell: pwsh
+        run: |
+          # N86. A batch-A review measured this on disk: deleting install\bin\sqldrivers\qsqlite.dll
+          # from the finished package left the "Verify installed CLI and GUI" step at OUTER_RC=0.
+          # That step can only prove "the package starts"; plugin-class and sidecar resources (Qt
+          # platform plugins, sqldrivers, our own plugin_*.dll, the PROJ database) are loaded by name
+          # at RUNTIME and appear in nobody's import table, so "the exe starts" is structurally blind
+          # to them. This step runs the same script as the ctest case install_closure, so the two
+          # consumers cannot drift apart.
+          # The scanner path is NOT re-resolved here: N84 was exactly "which DLLs a package contains
+          # depended on the packager's PATH at that moment", and the fix made configure resolve it once
+          # and bake the absolute path into build\release\install_runtime_deps.cmake. This step reads
+          # that same baked value; if it is missing the step goes red instead of skipping the check.
+          $baked = $null
+          try {
+            $baked = Select-String -LiteralPath build/release/install_runtime_deps.cmake `
+              -Pattern 'set\(_gis_scanner_command "([^"]*)"\)' -ErrorAction Stop | Select-Object -First 1
+          } catch {
+            throw "Select-String could not read build/release/install_runtime_deps.cmake against prefix $PWD\install : $($_.Exception.Message) - the generated install script is the only source of the configured scanner path, without it this step cannot judge anything"
+          }
+          # Select-String is a cmdlet, so it never writes $LASTEXITCODE and a no-match yields $null
+          # rather than an error: the judgement has to be on the extracted value itself.
+          $scanner = if ($baked) { $baked.Matches[0].Groups[1].Value } else { "" }
+          if (-not $scanner) {
+            throw "no scanner path baked into build\release\install_runtime_deps.cmake against prefix $PWD\install: configure could not locate a PE import scanner, so package closure is unjudgeable here - refusing to pass instead of skipping the check (look for the 'Runtime dep scanner:' line in the Configure Release step)"
+          }
+          Write-Host "package closure scanner (baked at configure time): $scanner"
+          & cmake -DPREFIX="$PWD/install" -DCONFIG=Release "-DSCANNER=$scanner" -P tests/check_install_closure.cmake
+          if ($LASTEXITCODE -ne 0) {
+            throw "package closure assertion failed with exit code $LASTEXITCODE against prefix $PWD\install: cmake --install returned 0 but the package is incomplete (missing sidecar/plugin resource or an unpackaged hard import) - see the [install-closure] lines above"
+          }
+
       - name: Verify installed CLI and GUI
         shell: pwsh
         run: |

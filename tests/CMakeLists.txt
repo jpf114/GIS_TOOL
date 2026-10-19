@@ -1438,6 +1438,46 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_runtime_dll_config.cmake
 )
 
+# ---------------------------------------------------------- Task B5 / N86：包内闭包断言
+# 判据本体与"为什么必须有两半（存在性 + 导入闭包）"写在 tests/check_install_closure.cmake 文件头。
+# 这里只登记注册层面的四个决定，理由不重复：
+# WHY 用例自己跑 `cmake --install`（传 -DBUILD_DIR 就是让脚本这么干）而不是依赖"别人已经装过"：
+#   判的是**装出来的包**，而 ctest 之前没有任何一步保证这个包装过（CI 的 Install Release 甚至排在
+#   两个测试步之后）。自带安装 ⇒ 这条用例任何时刻单跑都成立；前缀不存在时脚本 FATAL_ERROR
+#   点名"安装步没产出"，绝不把"没装过"读成"闭包通过"（N86 的失败方向就是"绿着发坏包"）。
+# WHY 前缀钉在 <构树>/../tmp/install_closure_<CONFIG> 而不是仓库根的 install/：
+#   脚本每次先整体删除再装这个目录 —— 残留文件会把"包是齐的"假绿成上一次装的东西还在。
+#   交付目录 install/ 是 NSIS 与 zip 的取材地，不能当测试耗材；这条约束由脚本自己校验
+#   （它按 BUILD_DIR 反推唯一合法前缀，指错就拒绝执行），不是只在注释里写写。
+# WHY $<CONFIG>：本树是多配置生成器，"哪些 dll 该在包里"按配置不同（vcpkg 用带 d 的名字区分），
+#   写死 Debug 会让 Release 视角永远在判 Debug 的包，反之亦然。
+# WHY 传 ${GIS_RUNTIME_DEP_SCANNER}（根 CMakeLists.txt 的**普通变量**，与本树烘进
+#   install_runtime_deps.cmake 的那条绝对路径同源）：没有扫描器就不知道包里该有哪些 DLL，
+#   这时脚本 FATAL_ERROR 而不是跳过。解析挪到脚本里去重做一遍会造出第二套扫描器取径
+#   （N84 修的正是"装哪些 DLL 取决于当场 PATH"），必须禁止。
+# WHY RESOURCE_LOCK 而不是 RUN_SERIAL：这条用例会删装一个固定名字的目录，同树并发跑两次会互相
+#   删掉对方的现场；RUN_SERIAL 的锁粒度是整个 ctest（会把其余全部用例拖成串行），
+#   RESOURCE_LOCK 只在同名锁之间互斥 ⇒ 代价精确等于必要。
+get_filename_component(GIS_INSTALL_CLOSURE_PREFIX "${CMAKE_BINARY_DIR}/../tmp/install_closure" ABSOLUTE)
+add_test(
+    NAME install_closure
+    COMMAND ${CMAKE_COMMAND}
+        -DPREFIX=${GIS_INSTALL_CLOSURE_PREFIX}_$<CONFIG>
+        -DCONFIG=$<CONFIG>
+        -DBUILD_DIR=${CMAKE_BINARY_DIR}
+        -DSCANNER=${GIS_RUNTIME_DEP_SCANNER}
+        -DSCANNER_TOOL=${GIS_RUNTIME_DEP_SCANNER_TOOL}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_install_closure.cmake
+)
+# 这条用例比别的脚本用例多做一次完整 `cmake --install` 加上一轮逐个 PE 的扫描器调用，所以在
+# add_test 附近就把上界写明，不靠文件末尾那条 blanket 兜底。数值读的是同一个 GIS_TEST_TIMEOUT
+# 而不是另抄一遍字面量：blanket 稍后会对本目录全部用例再设一次同一个变量，
+# 两处若各写各的，改动画像上界的人只会改到一处 ⇒ 另一处静默失效。
+set_tests_properties(install_closure PROPERTIES
+    TIMEOUT ${GIS_TEST_TIMEOUT}
+    RESOURCE_LOCK gis_install_closure_prefix
+)
+
 find_program(GIS_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
 if(GIS_POWERSHELL_EXECUTABLE)
     add_custom_target(real_raster_regression
