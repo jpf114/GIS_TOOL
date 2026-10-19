@@ -334,8 +334,14 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             // WHY visibleKeys 逐键取自反向守卫导出的"调用闭包实读集"而不是 paramSpecs()：
             //   spec 是插件级全集、把键按 action 归位正是这份表的职责，照 spec 抄等于把死键摆上面板，
             //   正是 21-C 那条"白名单 − 实读 非空即红"要抓的形态。复现某条的实读集：
-            //   cmake -DGIS_21C_TRACE_PAIR=processing.<action> -P tests/check_action_visible_keys_read.cmake
-            //   （键名清单见该脚本第 5 节的 [trace] readkeys 输出）。
+            //   cmake -DGIS_TESTS_PATH=<构树>/tests/Debug/gis_tests.exe
+            //         -DWHITELIST_FILE=<构树>/tests/Debug/gui_action_visible_keys.txt
+            //         -DPLUGIN_DIR=<repo>/src/plugins
+            //         -DREGISTRY_FILE=<repo>/tests/action_gold_cases.txt
+            //         -DREPORT_FILE=<任意可写路径>
+            //         -DGIS_21C_TRACE_PAIR=processing.<action>
+            //         -P tests/check_action_visible_keys_read.cmake
+            //   （五个 -D 是那个脚本第 2 节开头的必填变量哨兵，少任何一个都会先撞"缺少 -D…" 的 FATAL_ERROR；键名读该脚本第 5 节的 [trace] readkeys= 行。）
             // WHY requiredKeys 只有 input/output：R-F2-A 规定本表只允许加严"插件自己就会拒绝"的空值，
             //   这批 do* 函数对空 input 与空 output 一律 Result::fail，其余键都有可用默认值。
             //   例外是 pansharpen 的 pan_file：doPansharpen 对空 pan_file 直接 fail，
@@ -386,7 +392,14 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             // 三个分类器会出现只有 feature_stats 用的 vector/class_map/rasters/nodatas…）。
             // WHY visibleKeys 逐键取自反向守卫导出的"调用闭包实读集"而不是 paramSpecs()：见本文件
             //   processing 块里同一段说明（同一条 21-C 判据）。复现某条的实读集：
-            //   cmake -DGIS_21C_TRACE_PAIR=classification.<action> -P tests/check_action_visible_keys_read.cmake
+            //   cmake -DGIS_TESTS_PATH=<构树>/tests/Debug/gis_tests.exe
+            //         -DWHITELIST_FILE=<构树>/tests/Debug/gui_action_visible_keys.txt
+            //         -DPLUGIN_DIR=<repo>/src/plugins
+            //         -DREGISTRY_FILE=<repo>/tests/action_gold_cases.txt
+            //         -DREPORT_FILE=<任意可写路径>
+            //         -DGIS_21C_TRACE_PAIR=classification.<action>
+            //         -P tests/check_action_visible_keys_read.cmake
+            //   （五个 -D 是那个脚本第 2 节的必填变量哨兵，少任何一个都会先撞"缺少 -D…"的FATAL_ERROR；键名读 [trace] readkeys= 行。）
             // WHY requiredKeys 是 input/training_csv/output（accuracy_assessment 换成两个栅格键）：
             //   R-F2-A 只允许加严"插件自己就会拒绝"的空值 —— doSvmClassify、doRandomForestClassify、
             //   doMaxLikelihoodClassify 三者开头都对空 input、空 training_csv、空 output 直接
@@ -602,6 +615,48 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             {"repair", {
                 QString{},
                 QStringLiteral("逐要素检查几何合法性并 MakeValid 修复；无法修复的要素跳过。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"simplify", {
+                QString{},
+                QStringLiteral("按 tolerance 简化每个要素的几何并写入输出矢量。"),
+                {"input", "output", "layer", "tolerance"},
+                {}
+            }},
+            {"singlepart", {
+                QString{},
+                QStringLiteral("把多部件几何拆成若干单部件要素；仅支持点、线、面图层。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"sliver_remove", {
+                QString{},
+                QStringLiteral("删除（或拆掉）面积小于 min_area 的碎片面；min_area 必须大于 0。"),
+                {"input", "output", "layer", "min_area"},
+                {}
+            }},
+            {"spatial_join", {
+                QString{},
+                QStringLiteral("按空间关系把 join_vector 的要素属性连接到输入要素，join_field 决定带出的目标属性字段。"),
+                {"input", "output", "layer", "join_vector", "join_field"},
+                {"join_vector"}
+            }},
+            {"topology_check", {
+                QString{},
+                QStringLiteral("逐要素与成对检查空几何、非法几何、重复几何与重叠面积，输出 issue_type 四列 CSV。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"union", {
+                QString{},
+                QStringLiteral("合并输入要素与 overlay_vector 的重叠部分，输出并集要素。"),
+                {"input", "output", "layer", "overlay_vector"},
+                {"overlay_vector"}
+            }},
+            {"vertices_extract", {
+                QString{},
+                QStringLiteral("提取几何的全部顶点并输出点要素。"),
                 {"input", "output", "layer"},
                 {}
             }},

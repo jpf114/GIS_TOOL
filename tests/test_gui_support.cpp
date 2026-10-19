@@ -2910,16 +2910,19 @@ TEST(GuiActionConfig, AllPlanARelevantPluginsHaveActionConfigs) {
 // 前者抓 R-T10-2/3/4 那类错键名（错键既让真参数被隐藏、自己又什么都不做），
 // 后者抓"真实存在但未被渲染的必填键"—— ParamCardWidget::validate() 对不在 entries_ 里的键
 // 直接 continue，于是必填校验静默失效（与 R-F2-A 修掉的同一族）。
-// 存在性方向（action 声明在枚举里就必须有条目）只锁已经补齐条目的插件：
-// 别的插件仍有未补条目的 action（vector 那一族由后续提交补齐），不能在这里顺手改它们的配置表。
-// WHY processing/classification 必须与 src/gui/gui_data_support.cpp 的新条目、以及
-//   tests/check_action_visible_keys_read.cmake 的 GIS_21C_NO_UI_CONFIG_ALLOWLIST 销账同批提交：
-//   只扩本集合不改表 ⇒ 这里红；只改表不缩名单 ⇒ 名单那条"每条都必须仍是免检项"红。
-//   两侧都是设计好的红，不是环境问题。
+// 存在性方向（action 声明在枚举里就必须有条目）只对**本集合里的**插件执法：
+// 集合外的插件仍有未补条目的 action，把它们提前加进来只会让本用例红在别人的活上。
+// WHY 集合每次扩容必须与 src/gui/gui_data_support.cpp 的新条目、以及
+//   tests/check_action_visible_keys_read.cmake 的 GIS_21C_NO_UI_CONFIG_ALLOWLIST 销账**同批提交**：
+//   只扩本集合不改表 ⇒ 这里红（存在性方向命中那些还没补的 action）；
+//   只改表不缩名单 ⇒ 名单那条"每条都必须仍是免检项"红。两侧都是设计好的红，不是环境问题。
+//   第三支路才是 N91 的免检通道本身：**只补表、只缩名单、不扩集合 ⇒ 两侧都不红**。
+//   补齐 30 条 vector 却不把 vector 加进本集合，下一个新增的 vector action 依旧无人把守
+//   —— 所以"名单清零"与"集合含该插件"必须一起到位，这两件事同批就是 K-14/N91 的结案判据。
 TEST(GuiActionConfig, PlanAConfigKeysAreDeclaredByThePluginAndRenderable) {
     static const std::set<std::string> kMustBeConfigured = {
         "spindex", "georef", "raster_math", "raster_render", "terrain", "cutting", "raster_manage",
-        "processing", "classification"
+        "processing", "classification", "vector"
     };
 
     gis::core::initGDAL();

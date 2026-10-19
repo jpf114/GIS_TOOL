@@ -80,30 +80,29 @@ set(GIS_21C_EXEMPTIONS
 # 背景：没有 ActionUiConfig 条目的 action，导出侧只有 plugin|action|@NO_ACTION_UI_CONFIG 一行，
 #   本守卫对它求的是**未定义**的 WL_<插件>_<action> ⇒ 空列表 ⇒ 差集恒空 ⇒ **一条都不判**。
 #   2026-10-19 实测：126 个 action 里 39 个落进这个桶（vector 30 / processing 5 / classification 4），
-#   而这三个插件都**不在** tests/test_gui_support.cpp 的 kMustBeConfigured（只含 7 个插件）里，
+#   而这三个插件当时都**不在** tests/test_gui_support.cpp 的 kMustBeConfigured 集合里，
 #   Task 3 的动作登记册又只管 GOLD/PENDING 覆盖、与 ActionUiConfig 无关
 #   ⇒ "新增一个 action 但不写 actionUiConfig"这条路**三条既有守卫全绿**，无人把守（复审 §2.1，Critical）。
-# 本名单**不是**给这 39 个补配置（那是 K-14 的活、批次 B 的射程，本片补它等于偷偷做 Task 10 的续集），
-# 而是把桶**冻住**：条目数、条目内容与名单逐条相等才算绿 ——
+# 这份名单当初登记的目的**不是**替那 39 个补配置（补配置是 K-14 的活、批次 B 的射程，
+#   由 B9a/B9b 两片做完了），它当时只干一件事：
+# 即把桶**冻住**：条目数、条目内容与名单逐条相等才算绿 ——
 #   多一条（有人新增 action 却不写 actionUiConfig，或把既有条目的 actionUiConfig 删掉）⇒ 红；
 #   少一条（有人补齐了某个 actionUiConfig）⇒ 也红，逼他显式把这条从名单里销掉。
 # 红字点名的三选一处置：①补 actionUiConfig ②把这条登记进本名单并写明理由 ③按 K-14 挂批次 B 的账。
 # 名单按字典序；格式 "<插件名>|<action 名>"，与第 1 节收集的 NOCFG_PAIRS 同形，便于逐条比对。
-# 迁移状态（K-14/N91 挂在批次 B 的账）：登记时（2026-10-19）桶里是 vector 30 / processing 5 /
-#   classification 4；processing 与 classification 两族已逐条补齐 actionUiConfig 并从本名单销掉
-#   —— 注意是**销掉**而不是留着"已配置但仍在名单里"，那样断言②（表里每条都必须仍是免检项）会立刻红，
-#   双向冻结本就为此设计。剩下的都是 vector 那一族。
+# 迁移状态（**历史**，不是现状陈述）：登记时（2026-10-19）桶里是 vector 30 / processing 5 /
+#   classification 4；批次 B 的 K-14 把它按 39 → 30（B9a 补 processing+classification）
+#   → 0（B9b 补 vector）逐族清空。每一片都是**销掉**条目而不是留着"已配置但仍在名单里"——
+#   那样断言②（表里每条都必须仍是免检项）会立刻红，双向冻结本就为此设计。
+# WHY 名单今天为空却**不许删掉这个 set**：第 7 节的 list(LENGTH … NNOCFGREG) 与第 8 节的
+#   if(NOT NNOCFGREG EQUAL WL_NOCONFIG) 就是靠它算出 0 并与实测免检行数对撞。把整块删掉后
+#   未定义变量同样读成 0 ⇒ "名单清零"和"名单被整块删了"在读数上再也分不开，
+#   两条 foreach 退化成零次循环，没有任何断言会因此红。留着空 set 是把"这里曾经有账、如今销清"
+#   这件事留在盘上，而不是留在某份报告里。
 # WHY 这里不写当前条数：条数是上面三条断言的判据本身，抄进注释就成了一份会漂移的假账。
 #   要读数就跑 `ctest --test-dir build/debug -C Debug -R param_guard_visible_keys_all_read
 #   --output-on-failure` 看 [21C] 的 no_ui_config= 与 no_ui_config_allowlist= 两行。
 set(GIS_21C_NO_UI_CONFIG_ALLOWLIST
-    "vector|simplify"
-    "vector|singlepart"
-    "vector|sliver_remove"
-    "vector|spatial_join"
-    "vector|topology_check"
-    "vector|union"
-    "vector|vertices_extract"
 )
 
 foreach(_req GIS_TESTS_PATH WHITELIST_FILE PLUGIN_DIR REGISTRY_FILE REPORT_FILE)
@@ -981,10 +980,13 @@ foreach(_np IN LISTS NOCFG_PAIRS)
     message(FATAL_ERROR
         "免检桶里出现没登记的新条目 ${_np}：这个 action 在 GUI 侧没有 actionUiConfig 条目，"
         "本守卫对它是**恒空差集、一条都不判**，而动作登记册只管 GOLD/PENDING、"
-        "PlanAConfigKeys 的 kMustBeConfigured 只含 7 个插件 ⇒ 三条既有守卫全绿，无人把守。"
+        "PlanAConfigKeys 的 kMustBeConfigured 只对**集合内**的插件执法存在性方向 ⇒ 该插件不在集合里时"
+        "这三条既有守卫全绿、无人把守（这就是 N91 描述的免检通道）。"
         "三选一处置：①在 src/gui/gui_data_support.cpp 给它补 actionUiConfig（首选，直接进白名单比对）；"
         "②把 \"${_np}\" 显式登记进 GIS_21C_NO_UI_CONFIG_ALLOWLIST 并写明理由；"
-        "③按 K-14/N91 挂批次 B 的账并在这里留一条可追踪的说明。")
+        "③按 K-14/N91 挂批次 B 的账并在这里留一条可追踪的说明。\n"
+        "选①时必须同时把该插件加进 tests/test_gui_support.cpp 的 kMustBeConfigured："
+        "只补条目不扩集合 ⇒ 名单清零后这三条守卫对该插件一条都不判，免检通道原样重开。")
   endif()
 endforeach()
 
