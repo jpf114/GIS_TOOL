@@ -139,27 +139,24 @@ install(TARGETS gis-gui
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
+# N85 / R-B6：这里此前整块 gate 在 CONFIGURATIONS Release 且手抄 release 文件名，
+#   与上方 POST_BUILD 拷贝（:97-136，按配置选目录与名字）不对称 ⇒ `cmake --install --config Debug`
+#   会 rc=0 装出一个没有平台插件与 qsqlite 的残缺包。
+#   现在与构建侧共用同一组按配置变量（GIS_VCPKG_QT_PLATFORMS_DIR / GIS_QT_WINDOWS_DLL /
+#   GIS_QT_HEADLESS_DLL / GIS_VCPKG_QT_SQLDRIVERS_DIR / GIS_QT_SQLITE_DLL）：去掉 CONFIGURATIONS 后
+#   genex 在**安装期**按 `--config` 求值，Debug 装 qwindowsd/qoffscreen*/qsqlited（带 d），
+#   Release 装的仍是与改前逐字节同名的 release 文件。
+#   文件缺失 ⇒ 安装期直接报错而非静默跳过：宁可装不出来，不装残缺包（与 N84 同一方针）。
 if(GIS_COPY_QT_PLATFORM_DLL)
     install(FILES
-        "${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}/qwindows.dll"
-        CONFIGURATIONS Release
+        "${GIS_VCPKG_QT_PLATFORMS_DIR}/${GIS_QT_WINDOWS_DLL}"
+        "${GIS_VCPKG_QT_PLATFORMS_DIR}/${GIS_QT_HEADLESS_DLL}"
         DESTINATION ${GIS_INSTALL_PLATFORM_DIR}
     )
-
-    if(EXISTS "${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}/q${GIS_QT_HEADLESS_PLATFORM}.dll")
-        install(FILES
-            "${GIS_VCPKG_RELEASE_QT_PLATFORMS_DIR}/q${GIS_QT_HEADLESS_PLATFORM}.dll"
-            CONFIGURATIONS Release
-            DESTINATION ${GIS_INSTALL_PLATFORM_DIR}
-        )
-    endif()
 endif()
 
-set(GIS_VCPKG_RELEASE_QT_SQLDRIVERS_DIR "${GIS_VCPKG_INSTALLED_DIR}/Qt6/plugins/sqldrivers")
-
 install(FILES
-    "${GIS_VCPKG_RELEASE_QT_SQLDRIVERS_DIR}/qsqlite.dll"
-    CONFIGURATIONS Release
+    "${GIS_VCPKG_QT_SQLDRIVERS_DIR}/${GIS_QT_SQLITE_DLL}"
     DESTINATION ${GIS_INSTALL_SQLDRIVERS_DIR}
 )
 

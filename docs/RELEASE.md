@@ -65,12 +65,21 @@ if ($LASTEXITCODE -ne 0) { throw "gis-gui.exe --self-test rc=$LASTEXITCODE" }
 - 包内容参照：`install/bin/*.dll` = **78**（扫描分支实测闭包）。
 - 无扫描器的旧行为**已废除**：过去会拷一份写死 36 项的清单、静默产出起不来的包（详见发布说明 N84 条）。
 
-### 3) 可交付配置只有 Release（N85）
+### 3) 交付形态与 Debug 安装分支（N85，批次 B 的 B4 已补齐 Debug）
 
-`cmake --install --config Debug` **不是**可交付路径：`src/gui/CMakeLists.txt:141-162` 的三条 Qt 插件安装规则
-全部 gate 在 `CONFIGURATIONS Release`，所以 Debug 包从来不含 `bin/platforms/`（Qt 平台插件）与 `qsqlite`，
-**装上就起不来**。⇒ 发布产物只做 Release。在无扫描器的机器上 `cmake --install --config Debug` 现在会被
-第 2 节那条 FATAL 拒绝，这**不是回归**：拒绝前它产出的是残缺包，两者都不可交付。
+发布产物**仍只做 Release**（交付形态是项目约束）。但"Debug 安装必然残缺"已由 B4 闭合：
+`src/gui/CMakeLists.txt` 的 Qt 平台插件与 `qsqlite` 安装规则原先整块 gate 在 `CONFIGURATIONS Release`，
+Debug 包连 `bin/platforms/` 都没有却 rc=0 静默成功；现在与构建侧 POST_BUILD 共用同一组按配置 genex，
+`--config` 决定装哪套目录与名字：
+
+```powershell
+cmake --install build/debug --config Debug --prefix build/tmp/install-debug
+Get-ChildItem build/tmp/install-debug/bin/platforms, build/tmp/install-debug/bin/sqldrivers
+# 期望：qwindowsd.dll、qoffscreend.dll（headless）与 qsqlited.dll
+```
+
+`--config Release` 一侧装的仍是与改前逐字节同名的 release 文件（前后整包文件清单 diff 为空）。
+无扫描器的机器上两种配置的 `cmake --install` 都会被第 2 节那条 FATAL **拒绝（rc≠0）**——该行为与配置无关，保持不变。
 
 ## 依赖版本快照
 
@@ -205,10 +214,11 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   36 项静默兜底清单**已废除**；无扫描器（或路径过期）⇒ **安装期 `FATAL_ERROR` 拒绝**，宁可装不出来也不要装出坏包。
   CI 的 `Install Release` / `Verify` / `makensis` / `Compress-Archive` 四步已**逐条断言退出码**。
   改后实测：`bin/*.dll` = **78**、`gis-cli.exe --list` rc=0（stdout **1852 字节 / 27 行**）。
-- **N85：安装产物只支持 Release。** Qt 平台插件与 `qsqlite` 的三条安装规则全 gate 在 `CONFIGURATIONS Release`
-  （`src/gui/CMakeLists.txt:141-162`）⇒ **Debug 包从来不是可交付物**（连 `bin/platforms/` 都没有）。
-  现在在没有扫描器的机器上 `cmake --install --config Debug` 会**从"装出残缺包"变成"直接拒绝"**；
-  这不是 21-E 引入的回归，因为残缺包本来就起不来（见上一节第 3 步）。
+- **N85（批次 A 记录；批次 B 的 B4 已补齐 Debug 安装分支）：当时安装产物只支持 Release。** Qt 平台插件与
+  `qsqlite` 的三条安装规则全 gate 在 `CONFIGURATIONS Release`（批次 A 时位于 `src/gui/CMakeLists.txt:141-162`）⇒
+  **Debug 包当时不是可交付物**（连 `bin/platforms/` 都没有）。在没有扫描器的机器上 `cmake --install --config Debug`
+  会**从"装出残缺包"变成"直接拒绝"**；这不是 21-E 引入的回归，因为残缺包本来就起不来。
+  现行状态（Debug 分支已按配置安装）见"发布前验证 → 第 3 步"。
 - **N87：安装包不含 VC++ 运行库 ⇒ 目标机需自行安装 VC++ Redistributable。**
   包内的 `Lerc` / `Qt6Core` / `arrow` 等十几个 DLL 直接导入 `MSVCP140.dll` 等，而这些被
   `cmake/install_runtime_deps.cmake.in` 的 `POST_EXCLUDE` **按设计排除**（不随包分发微软运行库）。
@@ -329,13 +339,21 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 - 测试与 CI 不落在这个位置：每条 GUI 用例另有自己私有的 ini（在它的产物目录里），
   回归跑完不会往用户配置里写东西（N101）。
 
+### Debug 配置的安装产物补齐（N85，B4）
+
+`cmake --install build/debug --config Debug --prefix …` 现在会装出**起得来**的 Debug 包：`bin/platforms/` 含
+`qwindowsd.dll` 与 headless 插件 `qoffscreend.dll`，`bin/sqldrivers/` 含 `qsqlited.dll`
+（此前这三条规则只随 Release 安装，Debug 包 rc=0 却是残缺的——装出来的 Debug GUI 连平台插件都没有，
+offscreen self-test 挂在 Qt 的缺插件模态框上起不了进程）。Release 包的名单与内容**逐字节不变**。
+**交付形态仍是 Release**；本条只消掉"Debug 装出残包还静默成功"这一类风险。判据命令见"发布前验证 → 第 3 步"。
+
 ---
 
 ## 已知限制
 
 - Windows 代码签名未配置（SmartScreen 可能提示）
 - **安装包不含 VC++ 运行库**：目标机需自行安装 VC++ Redistributable（N87，见"打包与安装"）
-- **安装/打包只支持 Release 配置**（N85，见"发布前验证 → 第 3 步"）
+- **NSIS 打包与 GitHub Release 出包只走 Release**（交付形态约束；Debug 的 `cmake --install` 分支已由批次 B 的 B4 补齐，见"发布前验证 → 第 3 步"）
 - `classification` / `georef` 插件版本 0.1.0
 - `PerformanceMonitor` 未接入主执行链；`Logger` 已接入 CLI/GUI 进度消息（任务中心日志仍为 GUI 主路径）
 - 切片预览使用本地 Leaflet 资源（`share/leaflet`），不再依赖 CDN
