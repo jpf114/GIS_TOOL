@@ -626,9 +626,15 @@ TEST(CoverageMeta, PendingCountDoesNotGrow) {
         const auto it = statusByKey.find(item.first + "." + item.second);
         if (it != statusByKey.end() && it->second == "PENDING") ++pending;
     }
-    // 基线 2026-10-15：登记表里 PENDING 的真实数量，不是估算值。
-    // 推导：grep -c ",PENDING$" tests/action_gold_cases.txt = 74（登记表共 126 行，GOLD 52 行），
-    // 逐行核对标准见 tests/action_gold_cases.txt 头部注释。随批次 A/B 修复只允许下降。
+    // 上限 = 登记表里 PENDING 的真实数量，不是估算值。
+    // B8（判据加严那次）用新判据复核过全表，降级 0 行，所以这个数与批次 A 收尾时相同。
+    // 现读命令（口径：一律先排掉以 # 开头的注释行 —— 本表头部为解释判据加了不少注释，
+    //   裸 grep 会把注释里的字样一起数进去，那是本项目真发生过的"注释污染计数"）：
+    //     数据行：grep -v '^#' tests/action_gold_cases.txt | wc -l                = 126
+    //     GOLD  ：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'    = 52
+    //     PENDING：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING' = 74
+    //   恒等式 126 = 52 + 74；只有"把某个 action 补上数值测试并改成 GOLD"才允许把这个上限调小，
+    //   逐行核对标准见 tests/action_gold_cases.txt 头部注释。
     EXPECT_LE(pending, 74) << "PENDING 数量不得增加；若某 action 已补数值测试，请把登记表改为 GOLD";
 }
 

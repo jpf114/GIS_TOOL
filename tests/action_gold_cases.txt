@@ -3,24 +3,47 @@
 #   第 4 列只对 GOLD 行有意义，写 tests/test_plugins.cpp 里那个执行该 action 的用例名，
 #   格式 Suite.Test（与 ctest 显示的用例名一致）；PENDING 行留 3 列即可。
 #
-# GOLD 判定标准（不得凭名字或印象标）：tests/test_plugins.cpp 中执行该 action 的那个用例的
-#   TEST/TEST_F/TEST_P 块体内，存在数值断言 EXPECT_NEAR / EXPECT_FLOAT_EQ / EXPECT_DOUBLE_EQ
-#   之一（逐像元、几何量或结果元数据量），并且块体内出现该行的 action 字符串。
+# GOLD 判定标准（B8 加严，2026-10-20；不得凭名字或印象标）：CoverageMeta.GoldEvidenceIsAuditable
+#   把第 4 列指向的那个 TEST/TEST_F/TEST_P 块体**先剥掉注释**（行注释与块注释；字符串字面量的内容
+#   原样保留，因为动作槽的形状整个活在字符串里），再在剩下的代码上核两条：
+#   （1）归属：同一个块体里既要出现 "<插件名>"，又要出现把 "<action>" 送进 ["action"] 动作槽的
+#        形状 —— `x["action"] = std::string("<action>")` 或 `x["action"] = "<action>"`；
+#        表驱动的用例另认 `x["action"] = 迭代变量.action`，此时该 action 必须作为 case 表项的
+#        首元素出现在同一个块里（删掉那条表项 = 覆盖被偷走 = 这一行立刻变红）。
+#   （2）数值断言：EXPECT_NEAR / EXPECT_FLOAT_EQ / EXPECT_DOUBLE_EQ 之一出现在**代码**里；
+#        写在注释里的不算（N90：旧判据直接扫块体原文，于是留一句注释就能顶替被删掉的真断言）。
 #   三者等价，都是"把数值钉住"的断言；本口径在 fix round 1 由控制器裁定把
 #   EXPECT_DOUBLE_EQ 也纳入（R-F1-A），原先低报的 action 不在本轮反向扩标。
+# 为什么要专门立"归属"这一条：旧判据只查 action 字符串在不在块里，而
+#   `params["threshold"] = 1.0` 里的 "threshold" 是一个**参数键**，
+#   于是"引用 PluginTest.MatchingChangeExecutionReportsChangedPixels 就给 processing.threshold
+#   记 GOLD"这条洗白配方在旧判据下是绿的（批次 A 复审提出，B8 复跑并拦住）。
 # PENDING 表示该 action 目前只有“成功 + 产物存在”级别的断言，数值正确性未被钉住。
 # 证据在库内：CoverageMeta.GoldEvidenceIsAuditable 直接读第 4 列回到 tests/test_plugins.cpp
-#   核对上面两条（用例存在、块体内有数值断言、块体内出现 action 字符串），
-#   所以软化或删除那条数值断言、或把用例改名，对应 GOLD 行会立刻变红；
-#   登记表的凭据不再依赖 gitignored 的 build/ 产物。
+#   核对上面两条（用例存在、块体属于这一行、剥完注释后仍有数值断言），
+#   所以软化或删除那条数值断言、把动作槽那行注释掉、给用例改名、或改指一个不执行该 action 的块，
+#   对应 GOLD 行都会立刻变红；登记表的凭据不再依赖 gitignored 的 build/ 产物。
 # 维护规则：新增 action 必须在这里加一行（CoverageMeta.EveryActionIsRegistered 会拦住漏登记，
-#   也会拦住已删除 action 留下的陈旧行）；给某个 action 补上数值断言后把 PENDING 改成 GOLD，
+#   也会拦住已删除 action 留下的陈旧行）；给某个 action 补上数值断言后把本行状态改成 GOLD，
 #   补上第 4 列的用例名，并同步下调 CoverageMeta.PendingCountDoesNotGrow 的上限——
 #   该上限只允许下降。
+# 计数口径（两种都要写清楚，本项目真发生过差一）：
+#   数据行    grep -v '^#' tests/action_gold_cases.txt | wc -l                 = 126
+#   GOLD 行   grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'     = 52
+#   PENDING   grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING'  = 74
+#   不加 grep -v '^#' 的裸计数会多数 1：本表第 2 行的格式说明里 GOLD 前面正好是一个逗号（裸数 53）。
+#   本表新写的注释一律用 '[:]GOLD' 这种写法避开那个字面量，免得把裸计数越改越歪。
 # 生成方式：ctest -R CoverageMeta 读出运行时 action 全集（126 个）并逐条核对数值断言；
 #   下面 126 行 = GOLD 52 + PENDING 74（2026-10-15 由审查者逐条核过 52 条 GOLD）。
+# B8 复核结论（2026-10-20，判据加严后跑 CoverageMeta.GoldEvidenceIsAuditable 复核全表）：
+#   降级 0 行 ⇒ 仍是 GOLD 52 + PENDING 74，上限 74 不动；晋升不在本任务（硬次序 B8 → B11）。
+#   52 行里靠"表驱动形态"成立的是第 4 列指向同一张 case 表的那一族：
+#   现读 `grep -v '^#' tests/action_gold_cases.txt | grep -c 'SpindexOtherIndicesExecution'` = 15，
+#   其余 52 − 15 = 37 行走"动作槽字面量"形态。要把这 15 行也收进单一形态，
+#   需要先把 SpindexOtherIndicesExecution 拆成逐 action 的用例（动的是 tests/test_plugins.cpp，
+#   属后续批次的挂账，不是判据能替代的事）。
 # 备注：georef.percentile_stretch 的证据用例名是历史遗留的 QUAC 旧称，动作本身没错
-#   （块体内 params["action"] = "percentile_stretch"）；用例改名归 Task 10。
+#   （块体内 params["action"] = std::string("percentile_stretch")）；用例改名归 Task 10。
 classification,feature_stats,GOLD,PluginTest.FeatureStatsRunResolvesProjectedTargetSrsAndFinestGrid
 classification,svm_classify,GOLD,PluginTest.ClassificationSvmExecution
 classification,random_forest_classify,GOLD,PluginTest.ClassificationRandomForestExecution
