@@ -381,6 +381,43 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"vector", "class_map", "rasters", "output", "feature_id_field", "feature_name_field", "bands", "nodatas", "target_epsg", "vector_output", "raster_output"},
                 {"vector", "class_map", "rasters", "output"}
             }},
+            // 下面这批条目是本插件此前唯一没有条目的 action（K-14/N91 的账：没有条目 ⇒ 面板不过滤，
+            // 把插件级 spec 全集铺出来，于是 accuracy_assessment 的卡片上会出现它不读的 input、
+            // 三个分类器会出现只有 feature_stats 用的 vector/class_map/rasters/nodatas…）。
+            // WHY visibleKeys 逐键取自反向守卫导出的"调用闭包实读集"而不是 paramSpecs()：见本文件
+            //   processing 块里同一段说明（同一条 21-C 判据）。复现某条的实读集：
+            //   cmake -DGIS_21C_TRACE_PAIR=classification.<action> -P tests/check_action_visible_keys_read.cmake
+            // WHY requiredKeys 是 input/training_csv/output（accuracy_assessment 换成两个栅格键）：
+            //   R-F2-A 只允许加严"插件自己就会拒绝"的空值 —— doSvmClassify、doRandomForestClassify、
+            //   doMaxLikelihoodClassify 三者开头都对空 input、空 training_csv、空 output 直接
+            //   Result::fail，doAccuracyAssessment 对空 classified_raster、空 reference_raster、
+            //   空 output 同样 fail。而 input/training_csv/classified_raster/reference_raster 的 spec
+            //   写的是 required=false（它们只对 feature_stats 那套键无意义），不列进本表就是
+            //   GUI 放行、CLI 必然拒绝。label_column 不列：它有默认值 "label"，插件不拒绝空串。
+            {"svm_classify", {
+                QString{},
+                QStringLiteral("用训练样本表对输入栅格做 SVM 监督分类，输出分类栅格。"),
+                {"input", "training_csv", "label_column", "output", "bands", "svm_c", "svm_gamma"},
+                {"input", "training_csv", "output"}
+            }},
+            {"random_forest_classify", {
+                QString{},
+                QStringLiteral("用训练样本表对输入栅格做随机森林监督分类，输出分类栅格。"),
+                {"input", "training_csv", "label_column", "output", "bands", "rf_max_depth", "rf_tree_count", "rf_min_sample_count"},
+                {"input", "training_csv", "output"}
+            }},
+            {"max_likelihood_classify", {
+                QString{},
+                QStringLiteral("用训练样本表对输入栅格做最大似然监督分类，输出分类栅格。"),
+                {"input", "training_csv", "label_column", "output", "bands"},
+                {"input", "training_csv", "output"}
+            }},
+            {"accuracy_assessment", {
+                QString{},
+                QStringLiteral("比对分类结果栅格与参考栅格，输出混淆矩阵、总体精度与 Kappa 的 JSON 报告。"),
+                {"classified_raster", "reference_raster", "output"},
+                {"classified_raster", "reference_raster", "output"}
+            }},
         }},
         {"vector", {
             {"buffer", {
