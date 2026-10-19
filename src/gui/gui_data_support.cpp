@@ -438,6 +438,83 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "layer", "where", "extent"},
                 {"input", "output"}
             }},
+            // 下面这批条目是本插件此前唯一没有条目的 action（K-14/N91 的账：没有条目 ⇒ 面板不过滤，
+            // 把插件级 paramSpecs 全集铺出来，其中绝大多数是本 action 根本不读的键）。
+            // 补齐后每个卡片只剩该 action 实读的键，这是**用户可见的收窄**，逐条"消失的键"清单见 B9b 报告。
+            // WHY visibleKeys 逐键取自反向守卫导出的"调用闭包实读集"而不是 paramSpecs()：见本文件
+            //   processing 块里同一段说明（同一条 21-C 判据"白名单 − 闭包实读 非空即红"）。
+            //   复现某条实读集的完整命令（控制器与本片刻意逐条跑过，rc=0；键名读 [trace] readkeys= 行）：
+            //   cmake -DGIS_TESTS_PATH=<构树>/tests/Debug/gis_tests.exe
+            //         -DWHITELIST_FILE=<构树>/tests/Debug/gui_action_visible_keys.txt
+            //         -DPLUGIN_DIR=<repo>/src/plugins
+            //         -DREGISTRY_FILE=<repo>/tests/action_gold_cases.txt
+            //         -DREPORT_FILE=<任意可写路径>
+            //         -DGIS_21C_TRACE_PAIR=vector.<action>
+            //         -P tests/check_action_visible_keys_read.cmake
+            //   WHY 这里把五个必填变量写全、而不是像旧注释那样只给 -DGIS_21C_TRACE_PAIR：该脚本第 2 节开头是
+            //   foreach(_req GIS_TESTS_PATH WHITELIST_FILE PLUGIN_DIR REGISTRY_FILE REPORT_FILE) 的必填哨兵，
+            //   只给 TRACE_PAIR 会先撞"缺少 -D…"的 FATAL_ERROR，照旧注释复现的人只会看到一条与本片无关的红。
+            // WHY displayName 一律留 QString{}：动作名的唯一来源是侧栏表 genericActionDisplayName
+            //   （本批 30 个名字逐条核过都在表里），两处各写一份同名值在改名时必然分叉。
+            // WHY requiredKeys 绝大多数留空：R-F2-A 只允许加严"插件自己就会拒绝空值、而 spec 又没声明
+            //   required=true"的键。本插件的 input 与 output 在 paramSpecs() 里声明的就是 required=true，
+            //   把它们再列进本表只是 buildEffectiveGuiParamSpecs 里 `spec.required || requiredKeys.count(key)`
+            //   的空操作；其余键对空值都有合法分支（layer 空=取第一层、format 有默认 GeoJSON、
+            //   dissolve_field 空=全部合并、band/resolution/tolerance/min_area 都是带默认值且有区间声明的
+            //   Int/Double，插件拒绝的是 <=0 而不是"空"）⇒ 列进去就是表比插件严，正是 B9a 里 bands 那条教训。
+            //   唯一的例外是三个"第二个矢量文件"键：overlay_vector / nearest_vector / join_vector 的 spec 写的
+            //   都是 required=false，而插件开头就 fail ——
+            //     vector_plugin_overlay.inc:12（union）、:191（difference）、:364（intersect）
+            //     vector_plugin_nearest.inc:13、vector_plugin_spatial_join.inc:13
+            //   不列进本表就是 GUI 放行一个 CLI 必然拒绝的表单（与 processing 的 pansharpen.pan_file 同一族）。
+            {"adjacency", {
+                QString{},
+                QStringLiteral("按共享边界长度统计面要素之间的邻接关系，输出 source_fid、target_fid、shared_length 三列 CSV。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"boundary", {
+                QString{},
+                QStringLiteral("提取每个面要素的边界线几何并写入输出矢量。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"centroid", {
+                QString{},
+                QStringLiteral("为每个要素计算质心并输出点要素；任一要素质心失败即整体失败。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"convert", {
+                QString{},
+                QStringLiteral("按 format 指定的驱动把输入矢量转换为新的文件格式。"),
+                {"input", "output", "layer", "format"},
+                {}
+            }},
+            {"convex_hull", {
+                QString{},
+                QStringLiteral("为每个要素生成凸包几何并写入输出矢量。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"dangling_endpoint_check", {
+                QString{},
+                QStringLiteral("统计只被一条线引用的端点（悬挂端点），输出问题清单 CSV。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"difference", {
+                QString{},
+                QStringLiteral("从输入要素中裁掉与 overlay_vector 重叠的部分，输出差集要素。"),
+                {"input", "output", "layer", "overlay_vector"},
+                {"overlay_vector"}
+            }},
+            {"dissolve", {
+                QString{},
+                QStringLiteral("按 dissolve_field 的取值融合要素；该字段留空时全部合并为一个要素。"),
+                {"input", "output", "layer", "dissolve_field"},
+                {}
+            }},
         }},
         {"projection", {
             {"reproject", {
