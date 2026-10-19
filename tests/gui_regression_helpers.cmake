@@ -89,8 +89,10 @@ function(gis_gui_assert_status_bool actual_value expected_value description)
 endfunction()
 
 # ── 截图判据（批次 B / B7，N98）：两层，谁都不许单独缺席 ──────────────────────────
-#   层 1 结构层 gis_gui_parse_png_ihdr_size()：只读文件自己头里的 IHDR 解宽高，**不读被测程序产出的
-#     任何字段** ⇒ 渲染器报什么都骗不过它，它也不依赖渲染器（所以它自己就能红，见反向证明）。
+#   层 1 结构层 gis_gui_parse_png_ihdr_size()：只读文件自己头里的 IHDR 解宽高，**不读 status 那条自报通道**。
+#     ⚠ 口径别说满（B7 复审纠正控制器原话"不读被测程序产出的任何字段"）：IHDR 本身也是被测程序写出去的字节，
+#     所以层 1 独立的是"文件字节 vs 进程自报字段"这一对，**不是**"文件是不是被测程序画的"。
+#     它能自己红（见反向证明 B/E），但"画了张 1x1 还自报 1x1"这种自洽错，要靠层 2 的色数才逮得住。
 #   层 2 内容层 gis_gui_assert_screenshot_rendered()：读 gis-gui 在 grab() 之后写进既有 status 文件的
 #     screenshot_distinct_colors 判"确实画出了内容"，并把它自报的宽高与层 1 的独立值交叉比对
 #     —— 没有这条交叉比对，层 2 就是"渲染器自报自证"。

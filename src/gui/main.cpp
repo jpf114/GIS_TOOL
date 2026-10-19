@@ -282,7 +282,11 @@ int main(int argc, char* argv[])
     }
 
     // 这条静止态支路**不报内容统计**：它没有 status 通道可写（B7 的内容层就搭在既有 status 文件上，
-    //   另开一条旁路文件只会多一个没人交叉比对的自报口径）⇒ 结构层（IHDR 宽高）是它唯一能拿到的判定。
+    //   另开一条旁路文件只会多一个没人交叉比对的自报口径）。
+    // ⚠ 别说成"结构层是它唯一能拿到的判定"（B7 复审纠正）：按下条命令现跑，走这条路（带 --screenshot
+    //   却不带 --auto-execute）的 driver 数是 **0** ⇒ 今天没有任何截图判据落在这里；而真有腿走进来，
+    //   它也会红在"status 缺键"（helpers 的通道闸与缺键闸都在结构层之前），不是红在"只判了结构"。
+    //   将来真要接这条腿，必须连内容层一起设计，不许只留结构层就当作有覆盖。
     //   现跑命令（带 --screenshot 却不带 --auto-execute 的 driver；注释行不会被数进去）：
     //     for f in $(grep -rlE -- "--screenshot" tests/run_*.cmake); do
     //         grep -qE -- "--auto-execute" "$f" || echo "$f"; done | wc -l
