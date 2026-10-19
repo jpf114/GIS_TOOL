@@ -149,11 +149,31 @@ jobs:
             }
           }
           Write-Host "debug-only cases absent from the Release test list: OK"
-          # Printed, never asserted: the registered total changes legitimately as later tasks
-          # add cases, and hard-coding 479 here would turn a correct state into a spurious red.
-          # The 481/479 baseline itself belongs in README.md / docs/RELEASE.md (Task 21).
-          Write-Host "Release registered test total (informational):"
-          $releaseList | Select-String -Pattern 'Total Tests:' | ForEach-Object { $_.Line }
+          # 注册数闸门（终审第 2 席 I-4 + 第 1 席 I-6）：原来这里只 Write-Host 不判断言，
+          #   而上面那条"debug-only 不得出现在 Release 列表"是**单向**的 —— 如果有人把
+          #   add_test(... CONFIGURATIONS Debug) 整条删掉，那两条名字既不在 Release 也不在 Debug，
+          #   这一步照样全绿。硬编码总数（历史上的 479/481）又会被后续任务的正常增减变成假红，
+          #   所以闸门用**跨树算术**：两棵树的注册数都现取，只钉"Release 恒等于 Debug 少 2"这条不变式
+          #   （少的正是那两条 CONFIGURATIONS Debug 的用例）。任何一侧整体塌陷都会破坏这条等式。
+          $debugList = ctest --test-dir build/debug -C Debug -N
+          if ($LASTEXITCODE -ne 0) {
+            throw "ctest --test-dir build/debug -C Debug -N failed with exit code $LASTEXITCODE"
+          }
+          $debugTotal = $null
+          $releaseTotal = $null
+          foreach ($line in $debugList) {
+            if ($line -match 'Total Tests:\s+(\d+)') { $debugTotal = [int]$Matches[1] }
+          }
+          foreach ($line in $releaseList) {
+            if ($line -match 'Total Tests:\s+(\d+)') { $releaseTotal = [int]$Matches[1] }
+          }
+          if (-not $debugTotal -or -not $releaseTotal) {
+            throw "没能从 ctest -N 输出里取到 'Total Tests:'（闸门自身失效，禁止放行；先修解析而不是删断言）"
+          }
+          if ($releaseTotal -ne ($debugTotal - 2)) {
+            throw "注册数不变式被破坏：Debug=$debugTotal Release=$releaseTotal，期望 Release == Debug - 2（少的两条是 CONFIGURATIONS Debug 的 debug-only 用例）。要么有用例整体消失/漏注册，要么那两条的注册方式变了 —— 按 tests/CMakeLists.txt 现读现核，不许改成放宽比较式"
+          }
+          Write-Host "registered test totals: Debug=$debugTotal Release=$releaseTotal (Release == Debug - 2: OK)"
 
       - name: Install Release
         shell: pwsh
