@@ -136,6 +136,112 @@ std::string describeMalformed(const Registry& registry) {
     return text;
 }
 
+// ---------------------------------------------------------------- 登记表头部的机器可核对计数
+//
+// WHY 把注释里的数字做成键值对来读，而不是把散文拿去跟真值比对：判据要能在"B11 晋升了行、
+// 却忘改头部"这件事上变红，前提是那个数字**有名字**、能被单独取出来对撞。
+// 形状：`#   COUNT <key> = <digits>`，行尾剩下的部分是给人现跑的 grep 命令。
+
+struct DeclaredCount {
+    std::string key;
+    int value = 0;
+    int lineNumber = 0;
+};
+
+// 一行是不是 COUNT 行；是就填 out 并返回 true。
+// 键后面必须紧跟 `=`，`=` 后面必须紧跟十进制数字 —— 任一处不成立就当这行不存在（调用方
+// CoverageMeta.RegistryHeaderCountsMatchData 会另外断言"含 COUNT 的行数 == 解析成功的条数"，
+// 所以这里放过畸形行不会把判据变松，只会让它红得更直接）。
+bool parseDeclaredCount(const std::string& line, std::size_t offset, DeclaredCount& out) {
+    static const std::string marker = "COUNT ";
+    const std::size_t at = line.find(marker, offset);
+    if (at == std::string::npos) return false;
+    std::size_t p = at + marker.size();
+    const std::size_t keyBegin = p;
+    while (p < line.size() && line[p] != ' ' && line[p] != '\t') ++p;
+    const std::string key = line.substr(keyBegin, p - keyBegin);
+    if (key.empty()) return false;
+    while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) ++p;
+    if (p >= line.size() || line[p] != '=') return false;
+    ++p;
+    while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) ++p;
+    const std::size_t digitsBegin = p;
+    while (p < line.size() && line[p] >= '0' && line[p] <= '9') ++p;
+    if (p == digitsBegin) return false;
+    // 位数上限：判据不许因为头部被人写进一个装不进 int 的数字而抛异常（抛异常 = 整个用例崩，
+    // 崩了的消息比红掉的消息难读得多）。
+    if (p - digitsBegin > 9) return false;
+    out.key = key;
+    out.value = std::stoi(line.substr(digitsBegin, p - digitsBegin));
+    return true;
+}
+
+std::vector<std::string> splitLines(const std::string& text) {
+    std::vector<std::string> lines;
+    std::istringstream ss(text);
+    std::string line;
+    while (std::getline(ss, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();  // 与 readRegistry 同一套行尾归一化
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+// 头部声明的全部计数，以及文件里出现过 "COUNT" 的行数（后者用来抓"写了 COUNT 但不是合法计数行"）。
+struct DeclaredCounts {
+    std::vector<DeclaredCount> entries;
+    int linesMentioningCount = 0;
+};
+
+DeclaredCounts readDeclaredCounts(const std::vector<std::string>& lines) {
+    DeclaredCounts result;
+    int lineNumber = 0;
+    for (const auto& line : lines) {
+        ++lineNumber;
+        if (line.find("COUNT") == std::string::npos) continue;
+        ++result.linesMentioningCount;
+        std::size_t offset = 0;
+        DeclaredCount parsed;
+        while (parseDeclaredCount(line, offset, parsed)) {
+            parsed.lineNumber = lineNumber;
+            result.entries.push_back(parsed);
+            offset = line.find("COUNT", offset) + 6;
+        }
+    }
+    return result;
+}
+
+// 数据行算出来的真值。口径与头部每行行尾写死的现读命令逐字一致：
+// 除 gold_rows_all_lines 以外，一律**先排掉以 # 开头的注释行**，
+// 因为本项目真发生过"为解释判据而写的注释把数那条判据的 grep 撑大"。
+struct ComputedCounts {
+    int dataRows = 0;             // 非注释非空行条数（= grep -v '^#' | wc -l）
+    int goldRows = 0;             // 其中含 ",GOLD" 的行数
+    int pendingRows = 0;          // 其中含 ",PENDING" 的行数
+    int goldRowsAllLines = 0;     // 不排注释行的裸计数（头部专门记了它比 goldRows 多几）
+    int goldRowsTableDriven = 0;  // 其中第 4 列指向 spindex 那张 case 表用例的行数
+};
+
+ComputedCounts computeRegistryCounts(const std::vector<std::string>& lines) {
+    ComputedCounts c;
+    for (const auto& line : lines) {
+        if (line.find(",GOLD") != std::string::npos) ++c.goldRowsAllLines;
+        if (line.empty() || line[0] == '#') continue;
+        ++c.dataRows;
+        if (line.find(",GOLD") != std::string::npos) ++c.goldRows;
+        if (line.find(",PENDING") != std::string::npos) ++c.pendingRows;
+        if (line.find("SpindexOtherIndicesExecution") != std::string::npos) ++c.goldRowsTableDriven;
+    }
+    return c;
+}
+
+// PENDING 的预算上限。
+// WHY 做成符号而不是在 EXPECT_LE 里写一遍、在注释里再抄一遍：这个上限的本义就是"登记表里
+// PENDING 的真实数量"，字面量抄两处就会出现"改了表、忘了改上限"这种没人红的漂移。
+// CoverageMeta.RegistryHeaderCountsMatchData 把它与登记表头部的 COUNT pending_rows 对撞，
+// 于是"表 / 上限 / 头部"三者要么一起改，要么当场红。
+constexpr int kPendingCeiling = 74;
+
 // ---------------------------------------------------------------- 源码用例块
 
 struct GTestBlock {
@@ -299,7 +405,25 @@ std::string stripCppComments(const std::string& text) {
         const char c = text[i];
         const char next = (i + 1 < n) ? text[i + 1] : '\0';
         if (c == '/' && next == '/') {
-            while (i < n && text[i] != '\n') ++i;
+            // WHY 不能停在第一个换行：C++ 翻译阶段 3 先把 `\`+换行 拼接掉，行注释才开始找换行，
+            // 所以 `// 这一版没有数值断言 \` 连它的下一行在编译器眼里是**同一条注释**。
+            // 只走到 '\n' 就会把下一行那句 EXPECT_NEAR 留在"代码"里 ⇒ N90 堵掉的
+            // "留一行注释顶替被删掉的真断言"从这种拼写重新打开
+            // （CoverageMetaJudge.LineCommentWithBackslashContinuationIsNotCounted 钉这一条）。
+            // 换行仍然原样留下：判据只读剥完的文本，但失败消息报的是"第几行的什么"，行号感不能丢。
+            const std::size_t commentStart = i;
+            while (i < n) {
+                if (text[i] != '\n') {
+                    ++i;
+                    continue;
+                }
+                std::size_t prev = i;
+                if (prev > 0 && text[prev - 1] == '\r') --prev;  // CRLF 原文：'\r' 不算注释行内容
+                const bool splices = prev > commentStart && text[prev - 1] == '\\';
+                out.push_back('\n');
+                ++i;
+                if (!splices) break;
+            }
             continue;
         }
         if (c == '/' && next == '*') {
@@ -513,7 +637,14 @@ std::string goldEvidenceProblem(const RegistryRow& row, const std::vector<GTestB
             " 块体不属于这一行：要同时出现 \"" + row.plugin + "\" 和把 \"" + row.action +
             "\" 送进 [\"action\"] 动作槽的形状（引用别的插件/别的 action 的用例记不了 GOLD）";
     }
-    if (!codeHasNumericAssertion(code)) {
+    // 数值断言这一条走 wrapper `blockHasNumericAssertion` 而不是就地再剥一次：
+    // WHY：那条 wrapper 被 CoverageMetaJudge 的三条单测钉着，审计原先抄的是第二条路径
+    // （自己调 codeHasNumericAssertion），于是"把 wrapper 里的 stripCppComments 摘掉"只会红掉
+    // 单测、动不到真判据，而"把上面那行 strip 改回原文"又只会红掉审计 —— 两条路各自半瞎。
+    // 现在只剩一条路，且 CoverageMetaJudge.AuditStripsCommentsOnBothCriteriaEndToEnd
+    // 与 .AuditStripsBackslashContinuedLineCommentEndToEnd 从链子末端（合成源文件 →
+    // collectGTestBlocks → 本函数）把这条路的剥注释能力钉死。
+    if (!blockHasNumericAssertion(*block)) {
         problem += "\n  " + row.key() + "." + row.evidence +
             " 块体的代码里没有 EXPECT_NEAR/EXPECT_FLOAT_EQ/EXPECT_DOUBLE_EQ 数值断言（写在注释里不算），GOLD 站不住";
     }
@@ -626,16 +757,87 @@ TEST(CoverageMeta, PendingCountDoesNotGrow) {
         const auto it = statusByKey.find(item.first + "." + item.second);
         if (it != statusByKey.end() && it->second == "PENDING") ++pending;
     }
-    // 上限 = 登记表里 PENDING 的真实数量，不是估算值。
-    // B8（判据加严那次）用新判据复核过全表，降级 0 行，所以这个数与批次 A 收尾时相同。
-    // 现读命令（口径：一律先排掉以 # 开头的注释行 —— 本表头部为解释判据加了不少注释，
-    //   裸 grep 会把注释里的字样一起数进去，那是本项目真发生过的"注释污染计数"）：
-    //     数据行：grep -v '^#' tests/action_gold_cases.txt | wc -l                = 126
-    //     GOLD  ：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'    = 52
-    //     PENDING：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING' = 74
-    //   恒等式 126 = 52 + 74；只有"把某个 action 补上数值测试并改成 GOLD"才允许把这个上限调小，
-    //   逐行核对标准见 tests/action_gold_cases.txt 头部注释。
-    EXPECT_LE(pending, 74) << "PENDING 数量不得增加；若某 action 已补数值测试，请把登记表改为 GOLD";
+    // 上限 = 登记表里 PENDING 的真实数量，不是估算值（常量定义见 kPendingCeiling）。
+    // 现读口径全部写在 tests/action_gold_cases.txt 头部的 COUNT 行里，数字只在那里出现一次：
+    // CoverageMeta.RegistryHeaderCountsMatchData 同时核对"头部 COUNT == 数据行真值"和
+    // "头部 COUNT pending_rows == 本用例的上限"，所以 B11 晋升后改表、改上限、改头部必须一起改齐。
+    EXPECT_LE(pending, kPendingCeiling)
+        << "PENDING 数量不得增加；若某 action 已补数值测试，请把登记表改为 GOLD 并同步下调 kPendingCeiling"
+        << " 与登记表头部的 COUNT pending_rows（现值真值见 CoverageMeta.RegistryHeaderCountsMatchData 的失败消息）";
+}
+
+// 头部注释里的那几个数必须等于数据行算出来的真值。
+// WHY 需要这条用例：`EXPECT_LE(pending, 74)` 只朝一个方向卡（多了会红，**少了不会红**），
+// 而头部注释是这张表唯一的"人读的规模感"。B11 会晋升行，届时忘改头部就是注释说谎，
+// 全表照样绿 —— 这条用例把注释与数据的对撞变成机器判据。
+// 现算口径全部来自文件自身：注释行的 COUNT 键值 vs 数据行（先排注释行）的 grep 等价计数。
+TEST(CoverageMeta, RegistryHeaderCountsMatchData) {
+    const std::string text = readFileOrEmpty(kRegistryPath);
+    ASSERT_FALSE(text.empty()) << "缺少 " << kRegistryPath;
+    const auto lines = splitLines(text);
+
+    const ComputedCounts truth = computeRegistryCounts(lines);
+    // 恒等式先钉住"真值这半边的形状"：行数若不等于两种状态之和，说明有行的状态写歪了，
+    // 那么下面任何"注释 vs 数据"的对撞都失去了意义。
+    EXPECT_EQ(truth.dataRows, truth.goldRows + truth.pendingRows)
+        << "数据行数 != GOLD 行数 + PENDING 行数：登记表里有既不算 GOLD 也不算 PENDING 的行";
+
+    // 与全部其它审计用例同一个解析器：grep 口径与 readRegistry 口径必须数出同一个集合，
+    // 否则"头部注释 == 真值"里的真值本身是两套说法。
+    const auto registry = readRegistry();
+    ASSERT_TRUE(registry.malformed.empty()) << "登记表存在无法识别的行:" << describeMalformed(registry);
+    EXPECT_EQ(truth.dataRows, static_cast<int>(registry.rows.size()));
+    int goldByStatus = 0, pendingByStatus = 0;
+    for (const auto& row : registry.rows) {
+        if (row.status == "GOLD") ++goldByStatus;
+        if (row.status == "PENDING") ++pendingByStatus;
+    }
+    EXPECT_EQ(truth.goldRows, goldByStatus) << ",GOLD 的行数与状态列解析出的 GOLD 行数不一致";
+    EXPECT_EQ(truth.pendingRows, pendingByStatus) << ",PENDING 同理";
+
+    const std::map<std::string, int> computed = {
+        {"data_rows", truth.dataRows},
+        {"gold_rows", truth.goldRows},
+        {"pending_rows", truth.pendingRows},
+        {"gold_rows_all_lines", truth.goldRowsAllLines},
+        {"gold_rows_table_driven", truth.goldRowsTableDriven},
+        {"gold_rows_literal_slot", truth.goldRows - truth.goldRowsTableDriven},
+    };
+
+    const DeclaredCounts declared = readDeclaredCounts(lines);
+    std::map<std::string, int> declaredByKey;
+    for (const auto& entry : declared.entries) {
+        ASSERT_TRUE(declaredByKey.insert({entry.key, entry.value}).second)
+            << "第 " + std::to_string(entry.lineNumber) + " 行把同一个计数键写了两遍，后一个会被前一个掩盖";
+    }
+    // 对照物本身要先存在：头部被删干净时，下面逐键的对撞会退化成"零次比较"的空检查。
+    ASSERT_EQ(declared.entries.size(), computed.size())
+        << "登记表头部的计数行应当恰有 " << computed.size() << " 条（键见下面 computed），"
+        << "实际 " << declared.entries.size() << " 条；解析到 " << declared.linesMentioningCount
+        << " 行提到 COUNT —— 提到了却没解析成功的那几行是坏形状";
+    EXPECT_EQ(declared.linesMentioningCount, declared.entries.size())
+        << "有注释行写了 COUNT 但不是 `COUNT <键> = <数字>` 的形状：那条数字不会被任何判据核对";
+
+    for (const auto& expect : computed) {
+        const auto it = declaredByKey.find(expect.first);
+        ASSERT_NE(it, declaredByKey.end()) << "登记表头部没有名为 " << expect.first << " 的计数行";
+        EXPECT_EQ(it->second, expect.second)
+            << "登记表头部写的 COUNT " << expect.first << " = " << it->second
+            << "，与数据行算出来的 " << expect.second << " 不符（口径见该行行尾的现读命令）";
+    }
+    for (const auto& entry : declared.entries) {
+        EXPECT_TRUE(computed.count(entry.key) != 0)
+            << "第 " << entry.lineNumber << " 行的计数键 " << entry.key
+            << " 没有任何判据会去核对它（改名或新增都要同时给 computed 加一条）";
+    }
+
+    // 上限与头部必须是同一个数：`EXPECT_LE(pending, kPendingCeiling)` 只朝"别涨"那半边卡，
+    // 表降了而上限忘降 ⇒ 预算被静默放宽，那是唯一还没被任何判据覆盖的漂移方向。
+    const auto ceiling = declaredByKey.find("pending_rows");
+    ASSERT_NE(ceiling, declaredByKey.end());
+    EXPECT_EQ(ceiling->second, kPendingCeiling)
+        << "登记表头部的 COUNT pending_rows(" << ceiling->second << ") 与 "
+        << "CoverageMeta.PendingCountDoesNotGrow 的上限(" << kPendingCeiling << ") 不是同一个数";
 }
 
 TEST(CoverageMeta, GoldEvidenceIsAuditable) {
@@ -1048,6 +1250,56 @@ TEST(CoverageMetaJudge, LineCommentOnlyNumericAssertionIsNotCounted) {
         << "注释里的 EXPECT_NEAR 不是断言：那条数值钉住的凭据并不存在";
 }
 
+// 续行拼写（F-a 的另一扇门）：C++ 翻译阶段 3 先做 `\`+换行 的拼接，**然后**才让行注释在换行处
+// 结束，于是 `// 这一版没有数值断言 \` 加它的下一行在编译器眼里是**同一条注释**。
+// 剥离器要是只走到第一个 '\n' 就停，那句 EXPECT_NEAR 就被留在"代码"里，留一行注释就能顶替
+// 被删掉的真断言（N90）于是从这种拼写重新打开。
+// 现役可达性：`grep -cE '\\$' tests/test_plugins.cpp` = 0（现读：该文件今天没有任何行尾反斜杠），
+// 所以这条用例钉的是"一行可伪造"这扇门，不是已有的谎报。
+TEST(CoverageMetaJudge, LineCommentWithBackslashContinuationIsNotCounted) {
+    const std::string continued =
+        "\n    const auto result = p->execute(params, progress_);\n"
+        "    // 这一版没有数值断言 \\\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n";
+    EXPECT_FALSE(blockHasNumericAssertion(syntheticBlock(continued)))
+        << "行尾反斜杠把注释续到了下一行：那句 EXPECT_NEAR 不是代码";
+
+    // 控制组：去掉那个行尾反斜杠，同一具块体就是"注释 + 真断言"，必须仍然判 true。
+    // WHY 非要有这条：少了它，"多吞一行"这种过度剥离也能让上面那条绿着过去。
+    const std::string notContinued =
+        "\n    const auto result = p->execute(params, progress_);\n"
+        "    // 这一版没有数值断言\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n";
+    EXPECT_TRUE(blockHasNumericAssertion(syntheticBlock(notContinued)))
+        << "没有行尾反斜杠时不许多吞一行代码";
+
+    // 行号感要保住：续行时换行是留在输出里的（失败消息报的是"第几行的什么"）。
+    auto countNewlines = [](const std::string& s) {
+        int n = 0;
+        for (const char c : s) {
+            if (c == '\n') ++n;
+        }
+        return n;
+    };
+    EXPECT_EQ(countNewlines(stripCppComments(continued)), countNewlines(continued))
+        << "剥注释不许改变行数，否则行号对不上原文";
+
+    // 同一扇门对**归属**判据同样成立：动作槽形状写在续行注释里 ⇒ 剥完不该还剩下来。
+    const std::string attribution = stripCppComments(
+        "    auto* p = mgr_.find(\"processing\");\n"
+        "    // 动作槽那行早废了 \\\n"
+        "    params[\"action\"] = std::string(\"threshold\");\n");
+    EXPECT_FALSE(actionSlotHoldsLiteral(attribution, "threshold"))
+        << "续行注释里的动作槽形状也是注释";
+    EXPECT_TRUE(blockAttributesAction(
+        stripCppComments(
+            "    auto* p = mgr_.find(\"processing\");\n"
+            "    params[\"action\"] = std::string(\"threshold\");  // 阈值钉在 0.5 \\\n"
+            "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n"),
+        "processing", "threshold"))
+        << "正对照：真代码里的动作槽不许被续行分支吞掉";
+}
+
 // 同上，只是换成 /* */ 形态（本项目大量用块注释写"为什么这样断言"）。
 TEST(CoverageMetaJudge, BlockCommentOnlyNumericAssertionIsNotCounted) {
     const GTestBlock block = syntheticBlock(
@@ -1161,6 +1413,77 @@ TEST(CoverageMetaJudge, BatchAReviewExploitIsRejectedOnRealSource) {
     const RegistryRow honest = syntheticRow(
         "matching", "change", "PluginTest.MatchingChangeExecutionReportsChangedPixels");
     EXPECT_TRUE(goldEvidenceProblem(honest, blocks).empty());
+}
+
+// 端到端钉住"审计这条链剥注释"（不是只钉 wrapper）：合成源文件 → collectGTestBlocks →
+// goldEvidenceProblem，走的正是 CoverageMeta.GoldEvidenceIsAuditable 对每行 GOLD 用的那条调用链。
+// WHY 要这条：wrapper 的三条单测只证明 wrapper 自己会剥；审计当初读的是 :509 那个临时量，
+// 把那一行改回 `block->body` 原文，全量照样绿 ⇒ 判据形同虚设。
+// 三条臂各自只留一个缺陷，并把"报的是哪一条判据"也钉住：
+//   臂 1 只缺数值断言（形状写在注释里）⇒ 必须报"数值断言"，且不报归属；
+//   臂 2 只缺归属（动作槽写在注释里）⇒ 必须报"不属于这一行"，且不报数值断言；
+//   臂 3 两条都齐 ⇒ 必须无问题（少了这条，前两条会因为"审计什么都报 problem"而恒绿）。
+TEST(CoverageMetaJudge, AuditStripsCommentsOnBothCriteriaEndToEnd) {
+    const std::string commentOnlyAssertion =
+        "TEST(SyntheticGold, CommentOnlyNumericAssertion) {\n"
+        "    auto* p = mgr_.find(\"processing\");\n"
+        "    params[\"action\"] = std::string(\"threshold\");\n"
+        "    // EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n"
+        "    EXPECT_TRUE(result.success);\n"
+        "}\n";
+    const auto commentOnlyBlocks = collectGTestBlocks(commentOnlyAssertion);
+    ASSERT_EQ(commentOnlyBlocks.size(), 1u) << "合成源文件解析不出块 ⇒ 本用例是空检查";
+    const std::string problemA = goldEvidenceProblem(
+        syntheticRow("processing", "threshold", "SyntheticGold.CommentOnlyNumericAssertion"),
+        commentOnlyBlocks);
+    EXPECT_NE(problemA.find("数值断言"), std::string::npos)
+        << "注释里的 EXPECT_NEAR 撑不起 GOLD，审计必须报这一条:" << problemA;
+    EXPECT_EQ(problemA.find("不属于这一行"), std::string::npos) << problemA;
+
+    const std::string commentedOutSlot =
+        "TEST(SyntheticGold, CommentedOutActionSlot) {\n"
+        "    auto* p = mgr_.find(\"processing\");\n"
+        "    // params[\"action\"] = std::string(\"threshold\");\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n"
+        "}\n";
+    const auto commentedSlotBlocks = collectGTestBlocks(commentedOutSlot);
+    ASSERT_EQ(commentedSlotBlocks.size(), 1u);
+    const std::string problemB = goldEvidenceProblem(
+        syntheticRow("processing", "threshold", "SyntheticGold.CommentedOutActionSlot"),
+        commentedSlotBlocks);
+    EXPECT_NE(problemB.find("不属于这一行"), std::string::npos)
+        << "动作槽形状只写在注释里 ⇒ 归属不成立，审计必须报这一条:" << problemB;
+    EXPECT_EQ(problemB.find("数值断言"), std::string::npos)
+        << "这条块体的数值断言是真的，不该被一起报出来（过度剥离）:" << problemB;
+
+    const std::string honestEvidence =
+        "TEST(SyntheticGold, HonestEvidence) {\n"
+        "    auto* p = mgr_.find(\"processing\");\n"
+        "    params[\"action\"] = std::string(\"threshold\");\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);  // 阈值钉在 0.5\n"
+        "}\n";
+    const auto honestBlocks = collectGTestBlocks(honestEvidence);
+    ASSERT_EQ(honestBlocks.size(), 1u);
+    EXPECT_TRUE(goldEvidenceProblem(
+        syntheticRow("processing", "threshold", "SyntheticGold.HonestEvidence"), honestBlocks).empty())
+        << "正对照：两条判据都齐的块必须判成合格证据";
+}
+
+// 续行拼写的同一扇门，端到端走一遍审计链（臂 1 的注释带行尾反斜杠，把下一行的真断言一起吃掉）。
+TEST(CoverageMetaJudge, AuditStripsBackslashContinuedLineCommentEndToEnd) {
+    const std::string source =
+        "TEST(SyntheticGold, BackslashContinuedComment) {\n"
+        "    auto* p = mgr_.find(\"processing\");\n"
+        "    params[\"action\"] = std::string(\"threshold\");\n"
+        "    // 这一版没有数值断言 \\\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n"
+        "}\n";
+    const auto blocks = collectGTestBlocks(source);
+    ASSERT_EQ(blocks.size(), 1u) << "合成源文件解析不出块 ⇒ 本用例是空检查";
+    const std::string problem = goldEvidenceProblem(
+        syntheticRow("processing", "threshold", "SyntheticGold.BackslashContinuedComment"), blocks);
+    EXPECT_NE(problem.find("数值断言"), std::string::npos)
+        << "行尾反斜杠续行后，那句 EXPECT_NEAR 整条都在注释里 ⇒ 审计必须报 problem:" << problem;
 }
 
 // F-c：requiredKeys 列了 visibleKeys 里没有的键 ⇒ 点名（今天全表无实例，所以这里用合成集证明臂会咬人）。

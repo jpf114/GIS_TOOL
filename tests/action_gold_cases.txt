@@ -27,19 +27,24 @@
 #   也会拦住已删除 action 留下的陈旧行）；给某个 action 补上数值断言后把本行状态改成 GOLD，
 #   补上第 4 列的用例名，并同步下调 CoverageMeta.PendingCountDoesNotGrow 的上限——
 #   该上限只允许下降。
-# 计数口径（两种都要写清楚，本项目真发生过差一）：
-#   数据行    grep -v '^#' tests/action_gold_cases.txt | wc -l                 = 126
-#   GOLD 行   grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'     = 52
-#   PENDING   grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING'  = 74
-#   不加 grep -v '^#' 的裸计数会多数 1：本表第 2 行的格式说明里 GOLD 前面正好是一个逗号（裸数 53）。
-#   本表新写的注释一律用 '[:]GOLD' 这种写法避开那个字面量，免得把裸计数越改越歪。
-# 生成方式：ctest -R CoverageMeta 读出运行时 action 全集（126 个）并逐条核对数值断言；
-#   下面 126 行 = GOLD 52 + PENDING 74（2026-10-15 由审查者逐条核过 52 条 GOLD）。
+# 计数口径（数字**只**写在下面的计数声明行里，散文不复述，免得改一处忘一处）：
+#   CoverageMeta.RegistryHeaderCountsMatchData 解析每一条 `<键> = <数字>` 声明，与数据行算出来的
+#   真值逐键对撞 —— 键少一个、数错一个、形状写歪都立刻红，所以 B11 晋升/降级之后忘改头部不可能绿着过去。
+#   每条声明行行尾带着它的现读命令；除 gold_rows_all_lines 以外一律先 `grep -v '^#'` 排掉注释行，
+#   因为本项目真发生过"为解释判据而写的注释把数那条判据的 grep 撑大"（差一也真发生过）。
+#   COUNT data_rows              = 126   # 现读：grep -v '^#' tests/action_gold_cases.txt | wc -l
+#   COUNT gold_rows              = 52    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'
+#   COUNT pending_rows           = 74    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING'
+#   COUNT gold_rows_all_lines    = 53    # 现读：grep -c '[,]GOLD' tests/action_gold_cases.txt —— 不排注释行的裸计数，比 gold_rows 多出来的那一条是本表第 2 行的格式说明（那里状态列前面正好是一个逗号），所以本表新写的注释一律用 '[:]GOLD' 这种写法避开那个字面量
+#   COUNT gold_rows_table_driven = 15    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c 'SpindexOtherIndicesExecution'
+#   COUNT gold_rows_literal_slot = 37    # 现读：gold_rows 减去 gold_rows_table_driven（判据里是同一条减法）
+# 生成方式：ctest -R CoverageMeta 读出运行时 action 全集并逐条核对数值断言（全集条数见 data_rows，
+#   两者必须相等，由 CoverageMeta.EveryActionIsRegistered 的双向核对保证）。
 # B8 复核结论（2026-10-20，判据加严后跑 CoverageMeta.GoldEvidenceIsAuditable 复核全表）：
-#   降级 0 行 ⇒ 仍是 GOLD 52 + PENDING 74，上限 74 不动；晋升不在本任务（硬次序 B8 → B11）。
-#   52 行里靠"表驱动形态"成立的是第 4 列指向同一张 case 表的那一族：
-#   现读 `grep -v '^#' tests/action_gold_cases.txt | grep -c 'SpindexOtherIndicesExecution'` = 15，
-#   其余 52 − 15 = 37 行走"动作槽字面量"形态。要把这 15 行也收进单一形态，
+#   降级 0 行 ⇒ GOLD / PENDING 与上面的计数声明一致，PendingCountDoesNotGrow 的上限不动；
+#   晋升不在本任务（硬次序 B8 → B11）。
+#   靠"表驱动形态"成立的是第 4 列指向同一张 case 表的那一族（见 gold_rows_table_driven），
+#   其余走"动作槽字面量"形态（见 gold_rows_literal_slot）。要把表驱动那一族也收进单一形态，
 #   需要先把 SpindexOtherIndicesExecution 拆成逐 action 的用例（动的是 tests/test_plugins.cpp，
 #   属后续批次的挂账，不是判据能替代的事）。
 # 备注：georef.percentile_stretch 的证据用例名是历史遗留的 QUAC 旧称，动作本身没错
