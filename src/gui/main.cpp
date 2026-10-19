@@ -121,20 +121,27 @@ int main(int argc, char* argv[])
         }
     }
 
-    // N101 机器级落点守卫：判据放在**被 spawn 的真 GUI 进程**里，一处覆盖 105 个 driver ——
+    // N101 + N102 机器级落点守卫：判据放在**被 spawn 的真 GUI 进程**里，一处覆盖全部 driver 腿 ——
     // 放测试侧就退化成"每个 driver 记得检查"，而 Global Constraints 明令不许靠约定。
     // WHY：gui_* 那批用例走 -DGUI_PATH=$<TARGET_FILE:gis-gui>，driver 另起独立进程，父进程的环境
     //   是唯一能把落点告诉它的通道；通道断了（载体被改/漏 include/ctest 直接 spawn）就等于
-    //   每条用例往真实用户配置写一遍设置、并把注册表里的历史值当成用户数据导入。
-    //   所以"回归驱动的运行"必须自带落点，否则宁可非零退出，也不许它悄悄污染用户状态。
+    //   每条用例往真实用户配置写一遍设置，并把"保存自定义指数预设"写进用户的 AppConfigLocation
+    //   （custom_index_preset_store.cpp 是它的第二个写者，覆盖变量是 GIS_CUSTOM_INDEX_PRESET_FILE）。
+    //   所以"回归驱动的运行"必须**两个落点变量都注入**，否则宁可非零退出，也不许它悄悄污染用户状态。
     //   --self-test 也算回归驱动：gui_smoke_startup 就是靠它跑的。
-    // 退出码 3 与既有码可区分（0 正常 / app.exit(2) 参数应用失败），且 105 个 driver 都有
+    // 预设变量的判据与写者侧对齐（resolvePresetFilePath 把"trim 后非空"当覆盖生效）：
+    //   守卫若只查"非空"，一串空格的注入会骗过守卫、让 store 回退到用户目录 ⇒ 这里按 store 语义查。
+    // 退出码 3 与既有码可区分（0 正常 / app.exit(2) 参数应用失败），driver 侧都有
     //   RESULT_VARIABLE + "非 0 即 FATAL_ERROR" 的判据，gui_smoke_startup 由 ctest 直接读退出码。
-    if ((selfTestMode || screenshotPath.has_value() || statusFilePath.has_value())
-        && !gis::gui::settingsOverrideActive()) {
-        qCritical("--self-test/--screenshot/--status 运行下 GIS_TOOL_SETTINGS_INI 未注入"
-                  " ⇒ 会写真实用户配置（N101）");
-        return 3;
+    // 覆盖面现跑命令：ctest --test-dir build/debug -C Debug -N -R "^gui_" | tail -n 1
+    if (selfTestMode || screenshotPath.has_value() || statusFilePath.has_value()) {
+        const bool presetOverrideActive =
+            !qEnvironmentVariable("GIS_CUSTOM_INDEX_PRESET_FILE").trimmed().isEmpty();
+        if (!gis::gui::settingsOverrideActive() || !presetOverrideActive) {
+            qCritical("--self-test/--screenshot/--status 运行下 GIS_TOOL_SETTINGS_INI 或 "
+                      "GIS_CUSTOM_INDEX_PRESET_FILE 未注入 ⇒ 会写真实用户配置（N101/N102）");
+            return 3;
+        }
     }
 
     if (selfTestMode || arguments.contains(QStringLiteral("--auto-execute"))) {

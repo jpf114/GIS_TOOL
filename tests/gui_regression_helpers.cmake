@@ -1,20 +1,30 @@
 include("${CMAKE_CURRENT_LIST_DIR}/gui_regression_defaults.cmake")
 
-# N101：这条腿 spawn 的是真 gis-gui.exe（独立进程），不注入就会写 HKCU\Software\GISTool。
+# N101 + N102：这条腿 spawn 的是真 gis-gui.exe（独立进程），不注入就会把用户设置写进真实
+#   AppConfigLocation（N101），并把"保存自定义指数预设"的落点（custom_index_preset_store.cpp，
+#   AppConfigLocation 的第二个写者）留在守卫管辖外（N102）。两个变量必须**成对**给：
+#   src/gui/main.cpp 的落点守卫在回归式运行下要求两个都非空才放行 ⇒ 少一条腿的变量会表现为
+#   非零退出而红，不会悄悄写用户状态。
 # 落点取"该用例自己的产物目录"⇒ 天然每用例一份，且与 build/ 同生命周期（gitignore 已覆盖）。
-# 主判据用 SCREENSHOT_PATH：控制器实测 **105/105 个 driver 都有它**，而 OUTPUT_PATH 只有 95/105
-# ⇒ 用 OUTPUT_PATH 会留下 10 条静默不注入的腿（正是本任务要消灭的形态）。
+# 主判据用 SCREENSHOT_PATH：并非每条腿都带 OUTPUT_PATH（inspect/status 类不产出新文件）
+#   ⇒ 拿它当锚会留下静默不注入的腿（正是本任务要消灭的形态）。
 # WHY 做在 include 期顶层：execute_process 没有 ENVIRONMENT 参数，set(ENV{…}) 改的是本脚本进程的
-#   环境、子进程继承 ⇒ 一处覆盖 101 个 driver，不必逐条给 add_test 抄 ENVIRONMENT（111 处手抄）。
+#   环境、子进程继承 ⇒ 一处覆盖全部 driver 腿，不必逐条给 add_test 抄 ENVIRONMENT；
+#   ctest 直接 spawn 的那条（gui_smoke_startup）走 tests/CMakeLists.txt 的 ENVIRONMENT 属性。
 #   前提是每个 driver 的 include 早于它第一次 execute_process，这一点按文件逐个核过（不是假设）。
+# 覆盖面现跑命令（行首锚定，注释行不会被数进去；数字归报告与台账，不进注释）：
+#   include 本载体的 driver 文件数：grep -rlE "^[^#]*gui_regression_helpers" tests/run_*.cmake | wc -l
+#   注册 gui_ 用例总数：ctest --test-dir build/debug -C Debug -N -R "^gui_" | tail -n 1
 if(DEFINED SCREENSHOT_PATH AND NOT SCREENSHOT_PATH STREQUAL "")
     get_filename_component(_gis_case_dir "${SCREENSHOT_PATH}" DIRECTORY)
     set(ENV{GIS_TOOL_SETTINGS_INI} "${_gis_case_dir}/gis_gui_settings.ini")
+    set(ENV{GIS_CUSTOM_INDEX_PRESET_FILE} "${_gis_case_dir}/spindex_presets.json")
 elseif(DEFINED OUTPUT_PATH AND NOT OUTPUT_PATH STREQUAL "")
     get_filename_component(_gis_case_dir "${OUTPUT_PATH}" DIRECTORY)
     set(ENV{GIS_TOOL_SETTINGS_INI} "${_gis_case_dir}/gis_gui_settings.ini")
+    set(ENV{GIS_CUSTOM_INDEX_PRESET_FILE} "${_gis_case_dir}/spindex_presets.json")
 else()
-    message(FATAL_ERROR "driver 既无 SCREENSHOT_PATH 也无 OUTPUT_PATH ⇒ 无法给出每用例私有落点，拒绝继续（N101）")
+    message(FATAL_ERROR "driver 既无 SCREENSHOT_PATH 也无 OUTPUT_PATH ⇒ 无法给出每用例私有落点，拒绝继续（N101/N102）")
 endif()
 
 function(gis_gui_prepare_output_paths output_path screenshot_path)

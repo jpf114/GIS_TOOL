@@ -194,12 +194,15 @@ if(TARGET gis-gui)
     # checks.
     set_tests_properties(gui_smoke_startup PROPERTIES
         TIMEOUT 60
-        # N101：这一条是**唯一**由 ctest 直接 spawn gis-gui.exe 的用例（COMMAND $<TARGET_FILE:gis-gui>，
-        # 不经过任何 .cmake driver）⇒ helpers 的 include 期 set(ENV{…}) 载体够不到它，只能走
-        # ENVIRONMENT 属性。落点仍是"该用例自己的产物目录"，与其余 105 条同构。
-        # 只这一条用这个属性：注册侧另有 111 个字面 add_test(NAME gui_ …)，逐条手抄是 111 处，
-        # 而那批都有 driver ⇒ 由载体一处覆盖。src/gui/main.cpp 的落点守卫是这两条腿共同的兜底。
-        ENVIRONMENT "GIS_TOOL_SETTINGS_INI=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/smoke_startup/gis_gui_settings.ini"
+        # N101 + N102：这一条是**唯一**由 ctest 直接 spawn gis-gui.exe 的用例（不经过任何 .cmake
+        # driver）⇒ helpers 的 include 期 set(ENV{…}) 载体够不到它，只能走 ENVIRONMENT 属性。
+        # 与 driver 腿一样，两个落点变量必须一起给：src/gui/main.cpp 的守卫在回归式运行下
+        # 少任一个都非零退出，这是所有 spawn 腿共同的兜底。落点仍是该用例自己的产物目录。
+        # 现跑命令（行首锚定 ⇒ 注释行不会被数进去；数字归报告，不进注释）：
+        #   直接 spawn 的用例数：grep -cE "^[[:space:]]*COMMAND \$<TARGET_FILE:gis-gui>" tests/CMakeLists.txt
+        #   用此属性的用例数：grep -cE "^[[:space:]]*ENVIRONMENT" tests/CMakeLists.txt
+        #   注册 gui_ 用例总数：ctest --test-dir build/debug -C Debug -N -R "^gui_" | tail -n 1
+        ENVIRONMENT "GIS_TOOL_SETTINGS_INI=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/smoke_startup/gis_gui_settings.ini;GIS_CUSTOM_INDEX_PRESET_FILE=${CMAKE_CURRENT_BINARY_DIR}/gui_regression/smoke_startup/spindex_presets.json"
     )
 
     add_test(
