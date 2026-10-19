@@ -341,7 +341,7 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             //         -DREPORT_FILE=<任意可写路径>
             //         -DGIS_21C_TRACE_PAIR=processing.<action>
             //         -P tests/check_action_visible_keys_read.cmake
-            //   （五个 -D 是那个脚本第 2 节开头的必填变量哨兵，少任何一个都会先撞"缺少 -D…" 的 FATAL_ERROR；键名读该脚本第 5 节的 [trace] readkeys= 行。）
+            //   （五个 -D 是那个脚本编号节之前列出的 5 个必填变量 GIS_TESTS_PATH/WHITELIST_FILE/PLUGIN_DIR/REGISTRY_FILE/REPORT_FILE，少任何一个都会先撞"缺少 -D…" 的 FATAL_ERROR；键名读该脚本第 5 节的 [trace] readkeys= 行。）
             // WHY requiredKeys 只有 input/output：R-F2-A 规定本表只允许加严"插件自己就会拒绝"的空值，
             //   这批 do* 函数对空 input 与空 output 一律 Result::fail，其余键都有可用默认值。
             //   例外是 pansharpen 的 pan_file：doPansharpen 对空 pan_file 直接 fail，
@@ -399,7 +399,7 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             //         -DREPORT_FILE=<任意可写路径>
             //         -DGIS_21C_TRACE_PAIR=classification.<action>
             //         -P tests/check_action_visible_keys_read.cmake
-            //   （五个 -D 是那个脚本第 2 节的必填变量哨兵，少任何一个都会先撞"缺少 -D…"的FATAL_ERROR；键名读 [trace] readkeys= 行。）
+            //   （五个 -D 是那个脚本编号节之前列出的 5 个必填变量，少任何一个都会先撞"缺少 -D…"的 FATAL_ERROR；键名读 [trace] readkeys= 行。）
             // WHY requiredKeys 是 input/training_csv/output（accuracy_assessment 换成两个栅格键）：
             //   R-F2-A 只允许加严"插件自己就会拒绝"的空值 —— doSvmClassify、doRandomForestClassify、
             //   doMaxLikelihoodClassify 三者开头都对空 input、空 training_csv、空 output 直接
