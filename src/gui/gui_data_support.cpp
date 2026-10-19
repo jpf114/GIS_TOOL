@@ -563,6 +563,48 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "layer", "overlay_vector"},
                 {"overlay_vector"}
             }},
+            {"midpoints_extract", {
+                QString{},
+                QStringLiteral("按线长取每条线的中点并输出点要素；零长度线退化为起点。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"multipart_check", {
+                QString{},
+                QStringLiteral("统计含多个部件的要素并输出问题清单 CSV。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"nearest", {
+                QString{},
+                QStringLiteral("在 nearest_vector 中为每个源要素查找最近的目标要素，nearest_field 决定带出的目标属性字段。"),
+                {"input", "output", "layer", "nearest_vector", "nearest_field"},
+                {"nearest_vector"}
+            }},
+            {"overlap_check", {
+                QString{},
+                QStringLiteral("成对求面要素的交集面积，输出 source_fid、target_fid、overlap_area 三列 CSV。"),
+                {"input", "output", "layer"},
+                {}
+            }},
+            {"polygonize", {
+                QString{},
+                QStringLiteral("把输入栅格 band 波段的像元值聚合为面要素；本动作读的是栅格，没有图层名可填。"),
+                {"input", "output", "band"},
+                {}
+            }},
+            {"rasterize", {
+                QString{},
+                QStringLiteral("按 resolution 把矢量要素栅格化，attribute 指定写入像元值的属性字段。"),
+                {"input", "output", "layer", "resolution", "attribute"},
+                {}
+            }},
+            {"repair", {
+                QString{},
+                QStringLiteral("逐要素检查几何合法性并 MakeValid 修复；无法修复的要素跳过。"),
+                {"input", "output", "layer"},
+                {}
+            }},
         }},
         {"projection", {
             {"reproject", {
