@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 # gis-gui executable target
 add_executable(gis-gui
     main.cpp
+    app_settings.cpp
     custom_index_preset_store.cpp
     gui_data_support.cpp
     gdal_config.cpp

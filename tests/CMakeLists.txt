@@ -11,6 +11,8 @@ add_executable(gis_tests
     test_support.cpp
     test_fixtures.cpp
     test_coverage_meta.cpp
+    test_app_settings.cpp
+    ../src/gui/app_settings.cpp
     ../src/gui/custom_index_preset_store.cpp
     ../src/gui/gui_data_support.cpp
     ../src/gui/gdal_config.cpp
