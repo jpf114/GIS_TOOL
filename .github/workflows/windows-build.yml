@@ -216,7 +216,25 @@ jobs:
             throw "no scanner path baked into build\release\install_runtime_deps.cmake against prefix $PWD\install: configure could not locate a PE import scanner, so package closure is unjudgeable here - refusing to pass instead of skipping the check (look for the 'Runtime dep scanner:' line in the Configure Release step)"
           }
           Write-Host "package closure scanner (baked at configure time): $scanner"
-          & cmake -DPREFIX="$PWD/install" -DCONFIG=Release "-DSCANNER=$scanner" -P tests/check_install_closure.cmake
+          # Same discipline for the plugin dll list (G-B5-1): the closure script asserts each
+          # plugin_*.dll is present in the package, and the only source of that list is the
+          # configure-time derivation from GIS_PLUGIN_TARGETS. The ctest case passes it straight
+          # through; here we read the very same list back out of the generated install script,
+          # which is where configure baked it. An empty/missing list must go RED instead of
+          # silently dropping the whole plugin class of assertions (that is N86's failure shape).
+          $bakedPlugins = $null
+          try {
+            $bakedPlugins = Select-String -LiteralPath build/release/install_runtime_deps.cmake `
+              -Pattern 'set\(_gis_plugin_dll_names "([^"]*)"\)' -ErrorAction Stop | Select-Object -First 1
+          } catch {
+            throw "Select-String could not read build/release/install_runtime_deps.cmake against prefix $PWD\install : $($_.Exception.Message) - the generated install script is the only source of the configured plugin dll list, without it this step cannot judge plugin resource closure at all"
+          }
+          $pluginDlls = if ($bakedPlugins) { $bakedPlugins.Matches[0].Groups[1].Value } else { "" }
+          if (-not $pluginDlls) {
+            throw "no plugin dll list baked into build\release\install_runtime_deps.cmake against prefix $PWD\install: the list comes from GIS_PLUGIN_TARGETS via the root CMakeLists.txt, so an empty one means the derivation broke - refusing to pass instead of skipping the plugin assertions"
+          }
+          Write-Host "package closure plugin list (baked at configure time): $pluginDlls"
+          & cmake -DPREFIX="$PWD/install" -DCONFIG=Release "-DSCANNER=$scanner" "-DPLUGIN_DLLS=$pluginDlls" -P tests/check_install_closure.cmake
           if ($LASTEXITCODE -ne 0) {
             throw "package closure assertion failed with exit code $LASTEXITCODE against prefix $PWD\install: cmake --install returned 0 but the package is incomplete (missing sidecar/plugin resource or an unpackaged hard import) - see the [install-closure] lines above"
           }

@@ -11,17 +11,22 @@
 #
 # 用法（ctest 用例与 CI 调的是同一条命令，判据不漂移）：
 #   cmake -DPREFIX=<安装前缀> -DCONFIG=<Debug|Release> -DSCANNER=<扫描器绝对路径> \
+#         -DPLUGIN_DLLS=<插件 dll 名，分号分隔> \
 #         [-DSCANNER_TOOL=<dumpbin|objdump>] [-DBUILD_DIR=<构树>] \
 #         -P tests/check_install_closure.cmake
 #   带 -DBUILD_DIR ⇒ 本用例**自己**先 `cmake --install` 到它专属的临时前缀（见 _own_prefix 那段），
 #     这样"闭包是否成立"不再取决于别人有没有跑过安装步；
 #   不带 ⇒ 只判已经装好的 PREFIX（CI 用它刚装出的交付前缀）。两种模式下 PREFIX 缺失都判红，
 #     绝不把"没装过"读成"闭包没问题"。
+#   -DPLUGIN_DLLS 必给（Task B6 / G-B5-1）：名单的唯一真源是 cmake/PluginTargets.cmake 的
+#     GIS_PLUGIN_TARGETS，由根 CMakeLists.txt 在配置期派生；ctest 注册直接传该变量，
+#     CI 从生成物 <build>/install_runtime_deps.cmake 里读烘好的同一条 set 行 —— 两个调用方
+#     都不再自己抄一份。脚本这里只判"给没给、给的像不像插件名"，判不出插件少没少（那归派生处）。
 
-foreach(_gis_arg PREFIX CONFIG SCANNER)
+foreach(_gis_arg PREFIX CONFIG SCANNER PLUGIN_DLLS)
     if(NOT DEFINED ${_gis_arg} OR "${${_gis_arg}}" STREQUAL "")
         message(FATAL_ERROR
-            "闭包检查拒绝执行：缺少 -D${_gis_arg}。没有前缀/配置/扫描器就无从判断，"
+            "闭包检查拒绝执行：缺少 -D${_gis_arg}。没有前缀/配置/扫描器/插件名单就无从判断，"
             "这里不允许退化成'没什么可判 ⇒ 通过'。")
     endif()
 endforeach()
@@ -121,16 +126,61 @@ set(_gis_must_exist
 
 # 自家插件 dll：运行时由插件加载器按名字 load，**不出现在任何导入表里**（N86 就是这一类）。
 # 逐个点名而不是只判"目录非空"：只判非空的话，删到目录里还剩一个 dll 就仍然是绿的。
-# 名单逐条抄自 cmake/install_runtime_deps.cmake.in 的 _gis_runtime_libraries（同一份安装期扫描根）：
-#   那是一份 CMake 源文件里的清单，本脚本跑在 `cmake -P` 独立进程里拿不到那个变量，
-#   所以这里是**有意的手抄**，改动只应发生在"两边一起改"的时候 —— 忘了改这一侧的后果是
-#   新增插件不被断言（漏判），而不是误判红。
-set(_gis_plugin_dlls
-    plugin_projection.dll plugin_cutting.dll plugin_matching.dll plugin_processing.dll
-    plugin_classification.dll plugin_vector.dll plugin_terrain.dll plugin_spindex.dll
-    plugin_georef.dll plugin_raster_math.dll plugin_raster_inspect.dll plugin_raster_manage.dll
-    plugin_raster_render.dll
-    )
+# 名单来源（Task B6 / G-B5-1，改掉了原先"照着 cmake/install_runtime_deps.cmake.in 手抄一遍"的形态）：
+#   -DPLUGIN_DLLS 由调用方从根 CMakeLists.txt 的派生结果传入，而那份派生的唯一真源是
+#   cmake/PluginTargets.cmake 的 GIS_PLUGIN_TARGETS —— 与安装期扫描根同源，两侧不再各自记一遍。
+#   本脚本因此**不判**"名单是否等于安装脚本里的扫描根"：那是一条两边同源的恒等式（伪断言，
+#   同源时永远绿、不同源时才红，而不同源已经在配置期被派生处拦住），判了也不会多抓住什么。
+#   这里只判进来的是不是一份**可用的**插件名单（非空、每条形如 plugin_*.dll、无重名）：
+#   传空 ⇒ 存在性断言直接少一整类（正是 N86 的失败方向），必须红而不是"没什么可判"。
+set(_gis_plugin_dlls "${PLUGIN_DLLS}")
+list(LENGTH _gis_plugin_dlls _gis_plugin_dll_count)
+if(_gis_plugin_dll_count LESS 1)
+    message(FATAL_ERROR
+        "闭包检查：-DPLUGIN_DLLS 是空的 ⇒ 一条插件 dll 都不会被断言存在。"
+        "名单取根 CMakeLists.txt 配置期从 GIS_PLUGIN_TARGETS 派生的 GIS_PLUGIN_DLL_NAMES："
+        "  · ctest 用例走 tests/CMakeLists.txt 里 add_test 的那条 -DPLUGIN_DLLS=；"
+        "  · CI 走 <build>/install_runtime_deps.cmake 里烘好的 set(_gis_plugin_dll_names \"…\") 那一行。")
+endif()
+set(_gis_plugin_dll_unique "${_gis_plugin_dlls}")
+list(REMOVE_DUPLICATES _gis_plugin_dll_unique)
+list(LENGTH _gis_plugin_dll_unique _gis_plugin_dll_unique_count)
+if(NOT _gis_plugin_dll_unique_count EQUAL _gis_plugin_dll_count)
+    message(FATAL_ERROR
+        "闭包检查：-DPLUGIN_DLLS 里有重名（${_gis_plugin_dll_count} 条去重后只剩 ${_gis_plugin_dll_unique_count} 条）"
+        "⇒ 传进来的名单被拼接坏了（参数被 shell 切过 / 派生处被写了两次），判红而不是照着半份名单判。")
+endif()
+foreach(_gis_plugin IN LISTS _gis_plugin_dlls)
+    if(NOT _gis_plugin MATCHES "^plugin_[A-Za-z0-9_]+\\.dll$")
+        message(FATAL_ERROR
+            "闭包检查：-DPLUGIN_DLLS 里的 '${_gis_plugin}' 不像插件 dll 名（应为 plugin_<名字>.dll）"
+            "⇒ 参数在传递路上被切坏或来源错了（名单以分号分隔传进来，被 shell 拆成多个 -D 时"
+            "只会拿到第一截），拒绝带着残缺名单判。")
+    endif()
+endforeach()
+# 名单必须覆盖包内**实际存在**的插件 dll。WHY 这不是伪断言：比较的另一侧不是"另一份同名清单"，
+#   而是刚装出来的包（对 bin/plugins 的实测 glob），与参数的来源完全无关。
+#   它能抓住两类真事故：① 参数在传递路上被切坏（CMake 的 add_test 会把含分号的变量拆成多个参数，
+#   脚本只收到第一条 ⇒ 其余插件装了却没人断言，正是 N86 的失败方向）；
+#   ② 包里出现一个没进名单的插件 dll（名单侧漏项，同样漏判）。
+#   另一侧的方向（名单要求的东西包里必须有）由下面的存在性断言判；两条方向合起来才把
+#   "名单 ↔ 包内容"这条边钉住，单靠任何一边都会漏掉另一类残缺。
+file(GLOB _gis_plugins_in_package "${_gis_prefix}/bin/plugins/plugin_*.dll")
+set(_gis_unasserted_plugins "")
+foreach(_gis_installed IN LISTS _gis_plugins_in_package)
+    get_filename_component(_gis_installed_name "${_gis_installed}" NAME)
+    if(NOT _gis_installed_name IN_LIST _gis_plugin_dlls)
+        list(APPEND _gis_unasserted_plugins "${_gis_installed_name}")
+    endif()
+endforeach()
+list(LENGTH _gis_unasserted_plugins _gis_n_unasserted)
+if(_gis_n_unasserted GREATER 0)
+    list(JOIN _gis_unasserted_plugins " " _gis_unasserted_text)
+    message(FATAL_ERROR
+        "闭包检查：包里有 ${_gis_n_unasserted} 个 plugin_*.dll 不在 -DPLUGIN_DLLS 名单内（${_gis_unasserted_text}）"
+        "⇒ 它们不被任何存在性断言覆盖，删掉也不会变红。取径见本文件用法段的 -DPLUGIN_DLLS 说明。")
+endif()
+
 foreach(_gis_plugin IN LISTS _gis_plugin_dlls)
     list(APPEND _gis_must_exist "bin/plugins/${_gis_plugin}|插件动作的载体：运行时按名字加载，导入表里查不到（N86 类）")
 endforeach()

@@ -16,21 +16,25 @@ if(EXISTS "${_gis_install_bin_dir}/gis-gui.exe")
     list(APPEND _gis_runtime_executables "${_gis_install_bin_dir}/gis-gui.exe")
 endif()
 
-set(_gis_runtime_libraries
-    "${_gis_install_plugin_dir}/plugin_projection.dll"
-    "${_gis_install_plugin_dir}/plugin_cutting.dll"
-    "${_gis_install_plugin_dir}/plugin_matching.dll"
-    "${_gis_install_plugin_dir}/plugin_processing.dll"
-    "${_gis_install_plugin_dir}/plugin_classification.dll"
-    "${_gis_install_plugin_dir}/plugin_vector.dll"
-    "${_gis_install_plugin_dir}/plugin_terrain.dll"
-    "${_gis_install_plugin_dir}/plugin_spindex.dll"
-    "${_gis_install_plugin_dir}/plugin_georef.dll"
-    "${_gis_install_plugin_dir}/plugin_raster_math.dll"
-    "${_gis_install_plugin_dir}/plugin_raster_inspect.dll"
-    "${_gis_install_plugin_dir}/plugin_raster_manage.dll"
-    "${_gis_install_plugin_dir}/plugin_raster_render.dll"
-)
+# 插件 dll 名单由根 CMakeLists.txt 的 GIS_PLUGIN_TARGETS（cmake/PluginTargets.cmake）派生后烘到这里，
+#   本脚本不再手抄第二遍（Task B6 / G-B5-1，与 N88 同族）：tests/check_install_closure.cmake 判的
+#   是同一份派生结果（ctest 注册时传 -DPLUGIN_DLLS，CI 从本文件的生成物里读同一条 set 行），
+#   ⇒ 新增插件只需要进 GIS_PLUGIN_TARGETS 一处，扫描根与包内存在性断言同时长出这一项。
+#   名字来自目标属性（PREFIX + OUTPUT_NAME + 共享库后缀），因此"插件改了 OUTPUT_NAME"也不会失配。
+set(_gis_plugin_dll_names "@GIS_PLUGIN_DLL_NAMES@")
+list(LENGTH _gis_plugin_dll_names _gis_plugin_dll_count)
+if(_gis_plugin_dll_count LESS 1)
+    # 归零在这里必须红：名单空 ⇒ LIBRARIES 只剩 exe，闭包断言会退化成"没有插件要判"的假绿（N86 的失败方向）。
+    message(FATAL_ERROR
+        "安装中止：本脚本没有拿到任何插件 dll 名（_gis_plugin_dll_names 为空）。"
+        "它由根 CMakeLists.txt 在配置期从 GIS_PLUGIN_TARGETS 派生 ⇒ 要么那一侧被改坏，"
+        "要么本文件不是当前构树生成的（重跑一次 configure）。")
+endif()
+
+set(_gis_runtime_libraries "")
+foreach(_gis_plugin_dll IN LISTS _gis_plugin_dll_names)
+    list(APPEND _gis_runtime_libraries "${_gis_install_plugin_dir}/${_gis_plugin_dll}")
+endforeach()
 
 set(_gis_can_scan_runtime_deps TRUE)
 # ⚠ WIN32 之外这段没有设计过，别把它读成"对任何平台都安全"：非 Windows 时下面的 if(WIN32) 整块跳过、

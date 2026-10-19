@@ -1455,10 +1455,27 @@ add_test(
 #   install_runtime_deps.cmake 的那条绝对路径同源）：没有扫描器就不知道包里该有哪些 DLL，
 #   这时脚本 FATAL_ERROR 而不是跳过。解析挪到脚本里去重做一遍会造出第二套扫描器取径
 #   （N84 修的正是"装哪些 DLL 取决于当场 PATH"），必须禁止。
+# WHY -DPLUGIN_DLLS 传 ${GIS_PLUGIN_DLL_NAMES} 而不是在脚本里再写一遍插件名（G-B5-1）：
+#   那条名单是根 CMakeLists.txt 在配置期从 GIS_PLUGIN_TARGETS（cmake/PluginTargets.cmake，
+#   本来也就是 gis-cli/gis-gui/gis_tests 的依赖表）按目标属性派生的，与安装脚本烘进去的那份同源；
+#   在这里抄一份就等于把 N88 的手抄名单换个地方再种一次。CMake 会把含分号的变量整体作为**一个**
+#   参数写进 CTestTestfile（生成物里是 `-DPLUGIN_DLLS=a\;b\;…`），复算口径：
+#     grep -o '\-DPLUGIN_DLLS=[^"]*' tests/CTestTestfile.cmake
+#   取到的应当是一条以分号分隔的完整名单，而不是若干条被拆开的 -D。
 # WHY RESOURCE_LOCK 而不是 RUN_SERIAL：这条用例会删装一个固定名字的目录，同树并发跑两次会互相
 #   删掉对方的现场；RUN_SERIAL 的锁粒度是整个 ctest（会把其余全部用例拖成串行），
 #   RESOURCE_LOCK 只在同名锁之间互斥 ⇒ 代价精确等于必要。
 get_filename_component(GIS_INSTALL_CLOSURE_PREFIX "${CMAKE_BINARY_DIR}/../tmp/install_closure" ABSOLUTE)
+# ⚠ 这里必须先把分号**转义**再传：add_test 会把 `${GIS_PLUGIN_DLL_NAMES}` 这种含分号的变量
+#   当成列表拆成**多个参数**（本任务实测的生成物形态：
+#   `"-DPLUGIN_DLLS=plugin_projection.dll" "plugin_cutting.dll" …` 共 13 个 arg），
+#   脚本只会看见第一条 ⇒ 其余 12 个 dll 装了却没人断言存在 —— 静默退回 N86 那个"绿着发残包"。
+#   转义后生成物是一条 `-DPLUGIN_DLLS=a\;b\;…`，cmake -P 收到时又还原成分号分隔的列表。
+#   复算口径（不要数插件名，数参数）：
+#     grep -o '"-DPLUGIN_DLLS=[^"]*"' build/debug/tests/CTestTestfile.cmake | head -1
+#   取到的应当是一条**含 \;** 的参数；这条判据本身也写在脚本里（见 _gis_unasserted_plugins 那段：
+#   名单没覆盖包内实际存在的 plugin_*.dll 就红），不靠注释自觉。
+string(REPLACE ";" "\\;" GIS_PLUGIN_DLL_NAMES_FOR_TEST "${GIS_PLUGIN_DLL_NAMES}")
 add_test(
     NAME install_closure
     COMMAND ${CMAKE_COMMAND}
@@ -1467,6 +1484,7 @@ add_test(
         -DBUILD_DIR=${CMAKE_BINARY_DIR}
         -DSCANNER=${GIS_RUNTIME_DEP_SCANNER}
         -DSCANNER_TOOL=${GIS_RUNTIME_DEP_SCANNER_TOOL}
+        -DPLUGIN_DLLS=${GIS_PLUGIN_DLL_NAMES_FOR_TEST}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_install_closure.cmake
 )
 # 这条用例比别的脚本用例多做一次完整 `cmake --install` 加上一轮逐个 PE 的扫描器调用，所以在

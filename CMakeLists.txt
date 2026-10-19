@@ -199,12 +199,6 @@ if(WIN32)
     endif()
 endif()
 
-configure_file(
-    "${CMAKE_SOURCE_DIR}/cmake/install_runtime_deps.cmake.in"
-    "${CMAKE_BINARY_DIR}/install_runtime_deps.cmake"
-    @ONLY
-)
-
 if(NOT EXISTS "${GIS_VCPKG_PROJ_DATA_DIR}")
     message(FATAL_ERROR "未找到 PROJ 数据目录: ${GIS_VCPKG_PROJ_DATA_DIR}")
 endif()
@@ -234,6 +228,75 @@ add_subdirectory(src/plugins/terrain)
 add_subdirectory(src/plugins/classification)
 add_subdirectory(src/plugins/spindex)
 add_subdirectory(src/plugins/vector)
+
+# ── 插件 dll 名单：由 GIS_PLUGIN_TARGETS 派生（Task B6 / G-B5-1，与 N88 同族）────────
+# 原先有**两处**手抄的 13 个插件 dll 名：cmake/install_runtime_deps.cmake.in 的安装期扫描根、
+#   tests/check_install_closure.cmake 的包内存在性断言。两处互为对照却没人保证同步 ⇒
+#   加一个插件要记得改两处，忘改闭包那一侧的失败方向是"新增插件不被断言"（漏判、绿着发残包），
+#   正是 N86 那一类。现在两侧都从本表取：安装脚本烘进去、闭包脚本由 ctest 注册与 CI 各自传进来，
+#   三个消费点同一份真源（cmake/PluginTargets.cmake 的 GIS_PLUGIN_TARGETS，
+#   它本来已经是 gis-cli / gis-gui / gis_tests 的依赖表）。
+# 名字按 CMake 自身的产物命名规则从**目标属性**算（PREFIX + OUTPUT_NAME + 共享库后缀），
+#   不是"目标名拼上 .dll"的第二次抄写；带 debug/release 后缀的目标会让这条推导失效，所以直接拒。
+if(NOT CMAKE_SHARED_LIBRARY_SUFFIX STREQUAL ".dll")
+    message(FATAL_ERROR
+        "插件 dll 名单推导假设共享库后缀是 .dll（收到 '${CMAKE_SHARED_LIBRARY_SUFFIX}'）。"
+        "本仓是 Windows/MSVC-only，真要出别的平台得连带重做安装期扫描根与闭包断言（挂账 S-5），"
+        "不要在这里改成通用推导把它读成'对任何平台都安全'。")
+endif()
+set(GIS_PLUGIN_DLL_NAMES "")
+foreach(_gis_plugin_target IN LISTS GIS_PLUGIN_TARGETS)
+    if(NOT TARGET ${_gis_plugin_target})
+        message(FATAL_ERROR
+            "GIS_PLUGIN_TARGETS 里的 '${_gis_plugin_target}' 到这一步还不是已定义目标 ⇒ 名字算不出来。"
+            "本段必须放在所有插件 add_subdirectory 之后（它读的是目标属性）。")
+    endif()
+    foreach(_gis_plugin_prop IN LISTS "DEBUG_POSTFIX;RELEASE_POSTFIX;RELWITHDEBINFO_POSTFIX;MINSIZEREL_POSTFIX")
+        get_target_property(_gis_plugin_postfix ${_gis_plugin_target} ${_gis_plugin_prop})
+        if(_gis_plugin_postfix)
+            message(FATAL_ERROR
+                "插件 ${_gis_plugin_target} 设了 ${_gis_plugin_prop}='${_gis_plugin_postfix}' ⇒"
+                "按配置不同的实际文件名不再是本段算出的那一个，安装扫描根与闭包断言会双双判错对象。"
+                "要加后缀就得先把这条派生改成按配置两份名单（N88 的运行库名单已有同款处理）。")
+        endif()
+    endforeach()
+    get_target_property(_gis_plugin_out ${_gis_plugin_target} OUTPUT_NAME)
+    if(NOT _gis_plugin_out)
+        set(_gis_plugin_out "${_gis_plugin_target}")
+    endif()
+    get_target_property(_gis_plugin_prefix ${_gis_plugin_target} PREFIX)
+    if(NOT _gis_plugin_prefix)
+        set(_gis_plugin_prefix "${CMAKE_SHARED_LIBRARY_PREFIX}")
+    endif()
+    list(APPEND GIS_PLUGIN_DLL_NAMES "${_gis_plugin_prefix}${_gis_plugin_out}${CMAKE_SHARED_LIBRARY_SUFFIX}")
+endforeach()
+# 归零自守（与 N88 同一条纪律）：名单空了 ⇒ 安装扫描根只剩 exe、闭包断言一条插件都不判，
+#   两侧都退化成"没什么可判 ⇒ 通过"，这种现场必须红在配置期。
+list(LENGTH GIS_PLUGIN_DLL_NAMES _gis_plugin_dll_count)
+if(_gis_plugin_dll_count LESS 1)
+    message(FATAL_ERROR
+        "插件 dll 名单归零（GIS_PLUGIN_TARGETS=${GIS_PLUGIN_TARGETS}）⇒ 派生改坏了（G-B5-1 自守）。")
+endif()
+set(_gis_plugin_dll_uniq "${GIS_PLUGIN_DLL_NAMES}")
+list(REMOVE_DUPLICATES _gis_plugin_dll_uniq)
+list(LENGTH _gis_plugin_dll_uniq _gis_plugin_dll_uniq_count)
+if(NOT _gis_plugin_dll_uniq_count EQUAL _gis_plugin_dll_count)
+    message(FATAL_ERROR
+        "插件 dll 名单里有重名（${_gis_plugin_dll_count} 个名字去重后只剩 ${_gis_plugin_dll_uniq_count} 个）"
+        "⇒ 两个插件目标会往同一目录写同一个文件名，安装扫描根与闭包断言都只看得见其中一份。")
+endif()
+message(STATUS
+    "[plugin-dlls] 由 GIS_PLUGIN_TARGETS 派生 ${_gis_plugin_dll_count} 个插件 dll："
+    "${GIS_PLUGIN_DLL_NAMES}")
+
+# 安装脚本必须在上面那段之后生成：它靠 @GIS_PLUGIN_DLL_NAMES@ 把这份名单烘进去
+#   （原先写在本文件更早处的 configure_file 会被搬到这里的唯一原因）。
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/install_runtime_deps.cmake.in"
+    "${CMAKE_BINARY_DIR}/install_runtime_deps.cmake"
+    @ONLY
+)
+
 include("${CMAKE_SOURCE_DIR}/cmake/gis_runtime_dlls.cmake")
 
 add_subdirectory(src/cli)
