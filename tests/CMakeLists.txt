@@ -1405,6 +1405,21 @@ set_tests_properties(param_guard_visible_keys_all_read PROPERTIES
     RESOURCE_LOCK gis_action_visible_keys
 )
 
+# 跨配置运行库残留审计（终审第 1 席 I-7 + 控制器存在性审计；判据与理由见该脚本文件头）。
+# WHY 用 $<CONFIG> 而不是写死 Debug：本树是多配置生成器，同一棵 build 树里两配置的产物并存，
+#   判"某个 dll 是不是属于本配置"必须按**当前被测配置**选源目录，否则 Debug 树里的 release 件
+#   会在 Release 视角下被判正常（反之亦然），审计就永远查不到自己那半边的污染。
+add_test(
+    NAME runtime_dll_cross_config_audit
+    COMMAND ${CMAKE_COMMAND}
+        -DCONFIG=$<CONFIG>
+        -DRELEASE_BIN=${GIS_VCPKG_RELEASE_BIN_DIR}
+        -DDEBUG_BIN=${GIS_VCPKG_DEBUG_BIN_DIR}
+        -DPLUGINS_DIR=${CMAKE_BINARY_DIR}/plugins
+        -DEXE_DIR=$<TARGET_FILE_DIR:gis-cli>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_runtime_dll_config.cmake
+)
+
 find_program(GIS_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
 if(GIS_POWERSHELL_EXECUTABLE)
     add_custom_target(real_raster_regression
