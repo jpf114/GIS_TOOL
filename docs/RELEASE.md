@@ -17,7 +17,7 @@ cmake --build build/release --config Release --target real_raster_regression rea
 ```
 
 `ctest` 必须带 `-C Debug` / `-C Release`（不带时两个配置的用例会被一起列出、按错误的配置执行）。
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 634 / Release 632**（Release 恒少 2 条 `debug_only` 用例，见"批次 A 发布说明 → 基线口径"）。
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 635 / Release 633**（Release 恒少 2 条 `debug_only` 用例，见"批次 A 发布说明 → 基线口径"）。
 
 ### 2) 安装态冒烟 —— 前置条件：确认运行库依赖扫描器（N84）
 
@@ -230,12 +230,12 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 634 / Release 632**；`comm -23` 差集恰为
+- **现行基线**：`ctest -N` 注册数 **Debug 635 / Release 633**；`comm -23` 差集恰为
   `gui_matching_ecc_register_debug_failure_offscreen`、`gui_matching_stitch_debug_failure_offscreen`（Release 侧无独有项）。
   ⇒ Release **恒少 2** 是注册数口径，不是"少通过 2 条"；两侧各自 100% 通过。
 - **批次 A 最终基线认证（21-D 收尾现跑，两棵树重编后各跑一次 `-j1` 全量）**：
-  Debug `100% tests passed, 0 tests failed out of 634`（370.40 s）、
-  Release `100% tests passed, 0 tests failed out of 632`（176.74 s）；
+  Debug `100% tests passed, 0 tests failed out of 635`（382.54 s）、
+  Release `100% tests passed, 0 tests failed out of 633`（188.41 s）；
   两棵树的构建日志均 **0 warning / 0 error**；日志 `build/t21D_build_debug.log`、`build/t21D_build_release.log`、
   `build/t21D_ctest_debug_full.log`、`build/t21D_ctest_release_full.log`。
 - **凡引用 `GOLD` 覆盖数，必须带 N90 限定。** 登记表的判据 `blockHasNumericAssertion`
@@ -262,14 +262,15 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 | 配置 | 注册数 | 本地全量墙钟（`-j1`、无并发构建） | 步骤超时 | 余量 |
 |---|---|---|---|---|
-| Debug | 634 | **370.40 s**（21-D 收尾现跑，`build/t21D_ctest_debug_full.log`） | 1200 s | **1200 ÷ 370.40 = 3.24×** |
-| Release | 632 | **176.74 s**（同上，`build/t21D_ctest_release_full.log`） | 1200 s | **1200 ÷ 176.74 = 6.79×** |
+| Debug | 635 | **382.54 s**（最终态现跑：`build/t21Final_ctrl_debug_full.log`，含 `runtime_dll_cross_config_audit` 与 N100 断言） | 1200 s | **1200 ÷ 382.54 = 3.14×** |
+| Release | 633 | **188.41 s**（同上，`build/t21Final_ctrl_release_full.log`） | 1200 s | **1200 ÷ 188.41 = 6.37×** |
 
   交叉核对（控制器同基线上一轮现跑）：Debug 367.37 s → 3.27×、Release 182.94 s → 6.56×；两轮相差 <3.5%，
   ⇒ **取更慢的那一轮算余量也不改变结论**：`timeout-minutes: 20` 对 Debug 仍有 3 倍以上余量。
   最贵的非 GUI 用例：`param_guard_visible_keys_all_read` 现跑 **3.95 s**（Debug）/ 3.84 s（Release），
   距 300 s 的 `TIMEOUT` 线有 **300 ÷ 3.95 = 75×** 余量。
-  ⚠ 早先流传的 197.96 s / 385.53 s 属 632/630 基线时期，**不要再引用**。
+  ⚠ 早先流传的 197.96 s / 385.53 s（632/630 时期）与 370.40 s / 176.74 s（634/632 时期，21-D 收尾）
+    都已被上表取代；留这两组只为对账，引用请走上表现值。
   ⚠ 余量的真实风险不在均值墙钟，而在**并发构建叠加**：本批实测 `ctest -j 8` 与另一棵树构建同时跑会造出 3 条假 `Timeout`（见下一节）。
 
 ### `ctest -j` 并行：现在开会得到假失败
