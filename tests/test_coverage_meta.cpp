@@ -496,6 +496,10 @@ std::string stripCppComments(const std::string& text) {
 }
 
 // 代码（剥掉注释后的原文）里是否还有"把数值钉住"的断言。N90 之后的判据：注释里写的不算。
+// ⚠ 参数应当是 lexCppViews 的 **blanked** 视图（字面量内容已抹掉）而不是 code 视图：
+//   这个名字表是三个裸标识符的子串匹配，喂 code 视图的话
+//   `qInfo() << "EXPECT_NEAR 钉住的是像素值";` 这种**只写在字符串里**的文案就能顶替真断言
+//   （钉这条的用例：CoverageMetaJudge.AssertionNameOnlyInsideStringLiteralIsNotNumericEvidence）。
 bool codeHasNumericAssertion(const std::string& code) {
     for (const auto& assertion : kNumericAssertions) {
         if (code.find(assertion) != std::string::npos) {
@@ -506,7 +510,12 @@ bool codeHasNumericAssertion(const std::string& code) {
 }
 
 bool blockHasNumericAssertion(const GTestBlock& block) {
-    return codeHasNumericAssertion(stripCppComments(block.body));
+    // ②（原 B8 复审第 2 条）：F-a 与 F-b 不再各读各的视图，而是共用 lexCppViews 一趟扫描的产物 ——
+    // 归属读 code（字面量内容必须留着，否则 `params["action"]` 的形状就没依据了），
+    // 数值断言读 blanked（字面量内容里的断言名不算断言）。
+    // 复审已经否掉过"两个视图不能同时供两者用"那句假两难：能不能，取决于视图是不是同一趟扫描出来的，
+    // 现在它们是同一次 lex 的两个字段，所以不存在"第二套词法"。
+    return codeHasNumericAssertion(lexCppViews(block.body).blanked);
 }
 
 // ---------------------------------------------------------------- 判据：归属（F-b）
@@ -606,7 +615,13 @@ bool caseTableEntryForAction(const std::string& code, const std::string& action)
     return false;
 }
 
-// 一个块体是否属于这一行的 plugin.action（输入必须是 stripCppComments 的结果）。
+// 一个块体是否属于这一行的 plugin.action。
+// ⚠ 输入必须是 lexCppViews 的 **code** 视图（剥注释、**保留**字面量内容）：
+//   归属形状 `params["action"] = std::string("threshold")` 的键与值整个活在字面量里，
+//   喂 blanked 就等于把 F-a 的依据删掉（② 的"两个视图"就是这么分的，不是假两难）。
+//   残留松弛（如实登记，见报告 §5）：raw string 的内容也在 code 视图里，
+//   把 `params["action"] = std::string("x")` 整条写进 R"(...)" 里仍会被当成形状 —— 今天 0 实例，
+//   归 B20 挂账；这一条不是 blanked 能顺手解决的（blanked 会连真归属形状一起抹掉）。
 bool blockAttributesAction(const std::string& code, const std::string& plugin, const std::string& action) {
     if (code.find('"' + plugin + '"') == std::string::npos) return false;
     if (actionSlotHoldsLiteral(code, action)) return true;
@@ -1350,6 +1365,45 @@ TEST(CoverageMetaJudge, StripCppCommentsKeepsStringLiteralContents) {
     EXPECT_EQ(code.find("真注释"), std::string::npos);
     EXPECT_EQ(code.find("不参与字符串配对"), std::string::npos);
     EXPECT_NE(code.find("params[\"action\"] = std::string(\"threshold\")"), std::string::npos);
+}
+
+// ②（原 B8 复审第 2 条）：断言名**只**活在字符串字面量里 ⇒ 数值断言判据必须判 false。
+// F-b 的名字表是三个裸标识符的子串匹配，喂"剥注释但保留字面量内容"那份视图的话，
+// 一行 qInfo("本来该有 EXPECT_NEAR …") 的文案就能顶替被删掉的真断言（复审 §3 的 X6 实测过这个口径：
+// 旧形状判 true）。现在 F-b 读 blanked（字面量内容抹成空格），F-a 仍读 code（归属的依据在字面量里）。
+TEST(CoverageMetaJudge, AssertionNameOnlyInsideStringLiteralIsNotNumericEvidence) {
+    // 负例：整块里除了字符串文案，没有任何真数值断言。
+    const GTestBlock onlyString = syntheticBlock(
+        "\n    auto* p = mgr_.find(\"processing\");\n"
+        "    qInfo(\"这里本来该有 EXPECT_NEAR 钉住像素值，暂时只判成功\");\n"
+        "    EXPECT_TRUE(result.success);\n");
+    EXPECT_FALSE(blockHasNumericAssertion(onlyString))
+        << "字符串里的 EXPECT_NEAR 只是文案，不是把数值钉住的凭据";
+
+    // 控制组：同一串名字写进真代码 ⇒ 必须判 true（少了这条，"把字面量整段删掉"这种过度剥离也能绿）。
+    const GTestBlock realCode = syntheticBlock(
+        "\n    auto* p = mgr_.find(\"processing\");\n"
+        "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.5f, 1e-4f);\n"
+        "    EXPECT_TRUE(result.success);\n");
+    EXPECT_TRUE(blockHasNumericAssertion(realCode))
+        << "真代码里的断言不许被 blanked 视图抹掉";
+
+    // 端到端走审计链：这条合成 GOLD 的归属是齐的（归属读 code，字面量内容必须在），
+    // 缺的只有数值断言 ⇒ 报的必须是"数值断言"这一条，不是"不属于这一行"。
+    const std::string source =
+        "TEST(SyntheticGold, AssertionInStringOnly) {\n"
+        "    auto* p = mgr_.find(\"processing\");\n"
+        "    params[\"action\"] = std::string(\"threshold\");\n"
+        "    qInfo(\"本来该有 EXPECT_NEAR 钉像素值\");\n"
+        "}\n";
+    const auto blocks = collectGTestBlocks(source);
+    ASSERT_EQ(blocks.size(), 1u) << "合成源文件解析不出块 ⇒ 本用例是空检查";
+    const std::string problem = goldEvidenceProblem(
+        syntheticRow("processing", "threshold", "SyntheticGold.AssertionInStringOnly"), blocks);
+    EXPECT_NE(problem.find("数值断言"), std::string::npos)
+        << "审计必须报这一条（F-b 读 blanked）:" << problem;
+    EXPECT_EQ(problem.find("不属于这一行"), std::string::npos)
+        << "F-a 仍然读 code：动作槽形状不该被一起抹掉（过度剥离）:" << problem;
 }
 
 // F-b：同名的**参数键**不是归属。块体属于 matching/change，
