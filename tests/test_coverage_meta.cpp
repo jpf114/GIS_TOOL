@@ -587,19 +587,76 @@ bool actionSlotHoldsLiteral(const std::string& code, const std::string& action) 
 }
 
 // `["action"] = <标识符>.action`：动作槽接的是循环变量的成员（表驱动用例）。
-bool actionSlotHoldsLoopMember(const std::string& code) {
-    return anyActionSlot(code, [](const std::string& text, std::size_t pos) {
+// ③：把那个**标识符的名字**带出来 —— 只判"等号后面是 `某东西.action`"是不够的，
+// 那个东西可能是函数参数、成员、外层作用域的变量，跟本块里那张 case 表毫无关系。
+bool actionSlotHoldsLoopMemberIdent(const std::string& code, std::string& ident) {
+    return anyActionSlot(code, [&ident](const std::string& text, std::size_t pos) {
         std::size_t p = matchAt(text, skipSpaces(text, pos), "=");
         if (p == std::string::npos) return std::string::npos;
         p = skipSpaces(text, p);
-        std::size_t ident = p;
-        while (ident < text.size() && isIdentChar(text[ident])) ++ident;
-        if (ident == p) return std::string::npos;  // 等号后面连标识符都没有
-        p = matchAt(text, ident, ".action");
+        std::size_t nameBegin = p;
+        std::size_t nameEnd = p;
+        while (nameEnd < text.size() && isIdentChar(text[nameEnd])) ++nameEnd;
+        if (nameEnd == p) return std::string::npos;  // 等号后面连标识符都没有
+        p = matchAt(text, nameEnd, ".action");
         if (p == std::string::npos) return std::string::npos;
         if (p < text.size() && isIdentChar(text[p])) return std::string::npos;  // .actionX 不算
+        ident = text.substr(nameBegin, nameEnd - nameBegin);
         return p;
     }) != std::string::npos;
+}
+
+bool actionSlotHoldsLoopMember(const std::string& code) {
+    std::string ignored;
+    return actionSlotHoldsLoopMemberIdent(code, ignored);
+}
+
+// ident 是不是**在这个块体内**以 `for (… <ident> :` 的形式声明的循环变量（③ 加强的那一条）。
+// 只认 range-for 的绑定名：从 `for` 后面那对括号里取头部，找深度 0 的第一个 ':'，
+// 冒号前（跳过空白后）必须以 ident 结尾，且 ident 前面不能还是标识符字符（`xitem` 不算 `item`）。
+// WHY 不判"容器名对不对"：那是更强的口径（要求 `{"<action>"` 就在这条 for 遍历的那张表里），
+// 但范围书 ③ 指定的是"同一块体内声明的循环变量"这一条；剩下那半截松弛写在报告里登记成缺口，
+// 不在这里假装已经关掉。
+bool declaresRangeForBinding(const std::string& code, const std::string& ident) {
+    if (ident.empty()) return false;
+    std::size_t at = code.find("for");
+    while (at != std::string::npos) {
+        const bool leftOk = (at == 0) || !isIdentChar(code[at - 1]);
+        const bool rightOk = (at + 3 >= code.size()) || !isIdentChar(code[at + 3]);
+        std::size_t p = leftOk && rightOk ? skipSpaces(code, at + 3) : code.size();
+        if (p < code.size() && code[p] == '(') {
+            const std::size_t headerBegin = p + 1;
+            int nest = 1;
+            std::size_t q = headerBegin;
+            std::size_t headerEnd = std::string::npos;
+            for (; q < code.size(); ++q) {
+                if (code[q] == '(') ++nest;
+                else if (code[q] == ')' && --nest == 0) { headerEnd = q; break; }
+            }
+            if (headerEnd != std::string::npos) {
+                // 头部的 ':'（跳过嵌套的 []/{} 里可能出现的，比如默认参数里的初始化列表）
+                int bracket = 0, brace = 0;
+                for (std::size_t r = headerBegin; r < headerEnd; ++r) {
+                    if (code[r] == '[') ++bracket;
+                    else if (code[r] == ']') --bracket;
+                    else if (code[r] == '{') ++brace;
+                    else if (code[r] == '}') --brace;
+                    else if (code[r] == ':' && bracket == 0 && brace == 0) {
+                        std::size_t end = r;
+                        while (end > headerBegin && isSpaceAt(code, end - 1)) --end;
+                        if (end >= headerBegin + ident.size() &&
+                            code.compare(end - ident.size(), ident.size(), ident) == 0) {
+                            const std::size_t before = end - ident.size();
+                            if (before == headerBegin || !isIdentChar(code[before - 1])) return true;
+                        }
+                        break;  // 只看这一处的 ':'：一个 for 头部只有一个 range 冒号
+                    }
+                }
+            }
+        }
+        at = code.find("for", at + 3);
+    }
+    return false;
 }
 
 // `{"<action>"`：action 的字面量作为某个初始化列表的**首元素**出现（case 表里的那一行）。
@@ -625,11 +682,17 @@ bool caseTableEntryForAction(const std::string& code, const std::string& action)
 bool blockAttributesAction(const std::string& code, const std::string& plugin, const std::string& action) {
     if (code.find('"' + plugin + '"') == std::string::npos) return false;
     if (actionSlotHoldsLiteral(code, action)) return true;
-    // 表驱动形态要两条同时成立：动作槽由 case 表的成员喂，且该 action 的字面量确实在那张表里。
-    // WHY 两条都要：只查成员访问，任意带 `.action` 的块都能蒙过去；只查 `{"x"`，
-    // 同一份字面量出现在文案表里也能蒙过去。两条合起来保住的是"删掉表项 ⇒ 对应 GOLD 行立刻红"
-    // —— 今天靠这条形态成立的是 spindex 那张 15 行的 case 表。
-    return actionSlotHoldsLoopMember(code) && caseTableEntryForAction(code, action);
+    // 表驱动形态要三条同时成立：动作槽由某个循环变量的成员喂，那个变量是**本块里 `for (… x :` 声明的**，
+    // 且该 action 的字面量确实在这个块里作为 case 表项的首元素出现。
+    // WHY 三条：只查成员访问，任意带 `.action` 的块都能蒙过去；只查 `{"x"`，同一份字面量出现在
+    // 文案表里也能蒙过去；不查"这个变量是本块的循环变量"，那么动作槽可以接**块外**那个循环的变量
+    // （③ 的残留松弛：本块的表 + 别的地方的循环 = 归属照样成立，见
+    //  CoverageMetaJudge.TableDrivenLoopBindingIsAttributed 的第 4 个反例）。
+    // 今天靠这条形态成立的是 spindex 那张 15 行的 case 表（`for (const auto& testCase : cases)`）。
+    std::string loopIdent;
+    return actionSlotHoldsLoopMemberIdent(code, loopIdent) &&
+        declaresRangeForBinding(code, loopIdent) &&
+        caseTableEntryForAction(code, action);
 }
 
 // F-c：requiredKeys 里不在 visibleKeys 中的键（面板不呈现的键，必填校验永远静默失效）。
@@ -1463,6 +1526,38 @@ TEST(CoverageMetaJudge, TableDrivenLoopBindingIsAttributed) {
         "    const std::vector<Label> labels = {{\"ndbi\", \"归一化差值植被指数\"}};\n"
         "    EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.125f, 1e-4f);\n");
     EXPECT_FALSE(blockAttributesAction(noSlotBinding, "spindex", "ndbi"));
+
+    // 反例 4（③ 加强前蒙得过的那一型，"两个分子来自不同的表"）：本块的 case 表 tableX 里确实有
+    // {"ndbi"，动作槽也确实是 `某东西.action` —— 但那个"某东西"是 **c**，而本块的 range-for
+    // 声明的循环变量叫 item（遍历的是 tableY）。c 来自块外（成员/参数/外层作用域），
+    // 于是字面量与循环变量根本不在同一张表上，归属不该成立。
+    const std::string mixedTables = stripCppComments(
+        "    auto* p = mgr_.find(\"spindex\");\n"
+        "    const std::vector<CaseSpec> tableX = {\n"
+        "        {\"ndbi\", \"e2e_spindex_ndbi_output.tif\", {{\"swir1_band\", 5}}, 0.125f},\n"
+        "    };\n"
+        "    for (const auto& item : tableY) {\n"
+        "        params[\"action\"] = c.action;\n"
+        "        EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.125f, 1e-4f);\n"
+        "    }\n");
+    EXPECT_FALSE(blockAttributesAction(mixedTables, "spindex", "ndbi"))
+        << "动作槽那个变量必须由本块里的 `for (… 它 :` 声明，否则两个分子可以来自不同的表";
+
+    // 上面那条红不能是"整段读不出形状"造成的 ⇒ 同一具夹具只把 c 换成本块声明的 item，归属就必须成立。
+    // ⚠ 这条 EXPECT_TRUE 钉的是**当前的松**（范围书 ③ 指定的加强只到"ident 在块内被 for 声明"这一层，
+    //   没有收紧到"字面量必须就在这条 for 遍历的那张表里"）：item 遍历的是 tableY，字面量却在 tableX。
+    //   将来有人把它收紧到容器级，必须顺手把这条改成 EXPECT_FALSE —— 报告 §5 已登记。
+    const std::string slotUsesBlockDeclaredVar = stripCppComments(
+        "    auto* p = mgr_.find(\"spindex\");\n"
+        "    const std::vector<CaseSpec> tableX = {\n"
+        "        {\"ndbi\", \"e2e_spindex_ndbi_output.tif\", {{\"swir1_band\", 5}}, 0.125f},\n"
+        "    };\n"
+        "    for (const auto& item : tableY) {\n"
+        "        params[\"action\"] = item.action;\n"
+        "        EXPECT_NEAR(readRasterPixel(output, 5, 5), 0.125f, 1e-4f);\n"
+        "    }\n");
+    EXPECT_TRUE(blockAttributesAction(slotUsesBlockDeclaredVar, "spindex", "ndbi"))
+        << "控制组：块内声明的循环变量喂的动作槽这一条分子是读得出的（反例 4 的红来自 declaresRangeForBinding）";
 }
 
 // 批次 A 复审给的确切洗白配方，拿**真源码**复跑一次：
