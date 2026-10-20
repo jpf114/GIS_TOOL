@@ -736,23 +736,21 @@ TEST(WorkflowParamValidation, ActionSpecificCombinationFailsStepBeforePlugin) {
 }
 
 TEST(WorkflowParamValidation, BuiltInPresetStepsMatchRegisteredDispatchOutcomes) {
-    // 验收 #4：内置预设是否会因为新增校验变红。逐预设、逐步骤单独跑一遍
+    // 验收 #4：内置预设的每一步在派发校验层会得到什么结果。逐预设、逐步骤单独跑一遍
     // WorkflowRunner（每条都真的走 execute 的派发路径），输入刻意给不存在的路径：
     // 校验层放行后插件必然打不开文件而失败，但只要消息里出现 invalid parameter
-    // 就说明新校验把内置预设挡在了门外。
+    // 就说明新校验把这一步挡在了门外。
     //
     // 实测（本用例锁住的名单，数字写死）：
     //   - terrainAnalysis 的 4 步、changeDetection 的 2 步：派发校验全部放行；
-    //   - remoteSensingPreprocess 的 3 步**全部被拒**，但这不是 B12 造成的新红：
-    //     ① georef.radiometric / georef.dos 这两个 actionKey 在 georef 的 action
-    //        enum（georef_plugin.cpp:285-288）与 execute 分派（:318-341）里都不存在，
-    //        正确键是 radiometric_calibration / dos_correction ⇒ 改前插件就会回
-    //        "Unknown action: radiometric"；
-    //     ② cutting.clip 那步既没 extent 也没 cutline，改前插件自己就回
-    //        "Either extent or cutline must be specified for clip"（cutting_plugin.cpp:224）。
-    //     新校验只是把这两类失败从插件层提前到派发层（CLI 今天也是这个口径）。
-    //     预设本身是否要修不在 B12 范围（B13/B14 相邻），这里只把现状钉住：
-    //     哪天预设被修好，本用例会在名单处红，提醒同步更新。
+    //   - remoteSensingPreprocess：Task B13 修好了 s1/s2 的错 actionKey
+    //     （radiometric/dos → radiometric_calibration/dos_correction，连同 s2/s3 的
+    //     链式占位符）。这两步现在**放行到插件**，在打开不存在的输入时失败；
+    //   - cutting.clip 仍被拒：预设没给它 extent/cutline，action 级判据在派发前拦住
+    //     （B13 不要求它跑通，只要求结果被诚实断言）。
+    //
+    // 两张表都必须**命中真实 step**才允许存在：表里一旦有按旧键登记、修好后再也
+    // 匹配不上的"死条目"，matchedKeys != tableKeys，本用例会红（见下方自守断言）。
     gis::core::initGDAL();
     gis::framework::PluginManager mgr;
     mgr.loadFromDirectory(gis::tests::testPluginDir().string());
@@ -782,15 +780,20 @@ TEST(WorkflowParamValidation, BuiltInPresetStepsMatchRegisteredDispatchOutcomes)
     }
 
     const std::map<std::string, std::string> expectedRejections = {
-        {"遥感预处理/georef.radiometric",
-         "invalid parameter action: 参数“动作”取值无效"},
-        {"遥感预处理/georef.dos",
-         "invalid parameter action: 参数“动作”取值无效"},
         {"遥感预处理/cutting.clip",
          "invalid parameter extent: 参数“裁切范围”或“裁切矢量”至少填写一个"},
     };
+    // Task B13：修好键后这两步不再是"被校验拒"，而是真的进到插件、在打开不存在的
+    // 输入时失败。"Cannot open raster" 证明它们过了校验层；若有人把预设键改回
+    // radiometric/dos，这里的期望会落空（消息变成 invalid parameter action）。
+    const std::map<std::string, std::string> expectedDispatched = {
+        {"遥感预处理/georef.radiometric_calibration", "Cannot open raster"},
+        {"遥感预处理/georef.dos_correction", "Cannot open raster"},
+    };
 
+    std::set<std::string> matchedKeys;
     int checkedSteps = 0;
+    int rejectedSteps = 0;
     for (const auto& preset : presets) {
         ASSERT_FALSE(preset.steps.empty()) << preset.name;
         for (const auto& step : preset.steps) {
@@ -800,21 +803,46 @@ TEST(WorkflowParamValidation, BuiltInPresetStepsMatchRegisteredDispatchOutcomes)
             const auto result = runner.execute(single, initial);
             const std::string stepLabel =
                 preset.name + "/" + step.pluginName + "." + step.actionKey;
-            const auto expected = expectedRejections.find(
-                preset.name + "/" + step.pluginName + "." + step.actionKey);
-            if (expected == expectedRejections.end()) {
-                EXPECT_EQ(result.message.find("invalid parameter"), std::string::npos)
-                    << stepLabel << " 被新校验挡住: " << result.message;
-            } else {
+            const bool rejected = result.message.find("invalid parameter") != std::string::npos;
+            if (rejected) {
+                ++rejectedSteps;
+            }
+            const auto expected = expectedRejections.find(stepLabel);
+            const auto dispatched = expectedDispatched.find(stepLabel);
+            if (expected != expectedRejections.end()) {
+                matchedKeys.insert(stepLabel);
                 EXPECT_NE(result.message.find(expected->second), std::string::npos)
                     << stepLabel << " 的拒绝原因与登记不符: " << result.message;
+            } else if (dispatched != expectedDispatched.end()) {
+                matchedKeys.insert(stepLabel);
+                EXPECT_FALSE(rejected) << stepLabel << " 仍被派发校验挡住: " << result.message;
+                EXPECT_NE(result.message.find(dispatched->second), std::string::npos)
+                    << stepLabel << " 没有放行到插件（期望打开文件失败）: " << result.message;
+            } else {
+                EXPECT_FALSE(rejected) << stepLabel << " 被新校验挡住: " << result.message;
             }
             ++checkedSteps;
         }
     }
     // 3 个预设的步数是 3+4+2；数字写死是为了让"预设被删/改名"在这里就红。
     EXPECT_EQ(checkedSteps, 9) << "内置预设的步数与预期不符，逐个预设复核 WorkflowPresets";
-    EXPECT_EQ(expectedRejections.size(), 3u);
+    // 反向自守 1：表项数 == 实际被拒步数。多拒=表漏登记；少拒=表里有一条不再发生。
+    EXPECT_EQ(rejectedSteps, static_cast<int>(expectedRejections.size()))
+        << "实际被拒步数与 expectedRejections 不一致";
+    // 反向自守 2：每个表项都必须命中一个真实 step。B13 修预设键时如果只改产品代码、
+    // 忘了改这张表，旧键条目会永远匹配不上而静默失效（复审 I-1 实测过的死条目形态）；
+    // matchedKeys 少了它们，这里红。
+    std::set<std::string> tableKeys;
+    for (const auto& entry : expectedRejections) {
+        tableKeys.insert(entry.first);
+    }
+    for (const auto& entry : expectedDispatched) {
+        tableKeys.insert(entry.first);
+    }
+    EXPECT_EQ(matchedKeys, tableKeys)
+        << "表里有死条目：没有对应真实 step（多半是 actionKey/预设名改了而表没跟着改）";
+    EXPECT_EQ(expectedRejections.size(), 1u);
+    EXPECT_EQ(expectedDispatched.size(), 2u);
 }
 
 // ============================================================================

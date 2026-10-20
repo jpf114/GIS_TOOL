@@ -243,20 +243,20 @@ Workflow WorkflowPresets::remoteSensingPreprocess() {
 
     WorkflowStep s1;
     s1.pluginName = "georef";
-    s1.actionKey = "radiometric";
+    s1.actionKey = "radiometric_calibration";
     s1.params["input"] = "${input}";
     s1.params["output"] = "${output_dir}/${basename}_rad.tif";
 
     WorkflowStep s2;
     s2.pluginName = "georef";
-    s2.actionKey = "dos";
-    s2.params["input"] = "${georef.radiometric.output}";
+    s2.actionKey = "dos_correction";
+    s2.params["input"] = "${georef.radiometric_calibration.output}";
     s2.params["output"] = "${output_dir}/${basename}_dos.tif";
 
     WorkflowStep s3;
     s3.pluginName = "cutting";
     s3.actionKey = "clip";
-    s3.params["input"] = "${georef.dos.output}";
+    s3.params["input"] = "${georef.dos_correction.output}";
     s3.params["output"] = "${output_dir}/${basename}_clip.tif";
 
     wf.steps.push_back(s1);
