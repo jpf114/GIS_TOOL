@@ -1,4 +1,5 @@
 #include <gis/framework/workflow.h>
+#include <gis/framework/action_validation.h>
 #include <gis/framework/plugin.h>
 #include <gis/framework/plugin_manager.h>
 #include <gis/core/progress.h>
@@ -64,26 +65,17 @@ WorkflowResult WorkflowRunner::execute(
         // Task 14：按插件声明的 ParamSpec 把字符串参数解析成带类型的 ParamValue。
         // 旧形态是这个循环体只有 `typedParams[it->first] = it->second;` 一句全透传，
         // 于是插件侧的 getParam<int|double|bool> 永远取不到对应备选、一律静默退回代码内联
-        // 默认值——数值参数在任何工作流里都不生效。解析形态与 CLI 的 convertParam
-        // （src/cli/main.cpp:70-83）一致：找到 spec 就 tryParseParamValue，找不到的未知键
-        // 保持透传字符串（把未知键改成显式报错会撞挂账 N35 的 CLI 同口径问题，本任务不动）。
+        // 默认值——数值参数在任何工作流里都不生效。
+        // Task B12 / N58：解析形态收口到 framework 的 convertParamValue（param_spec.h），
+        // 与 CLI 的 convertParam 调的是同一个函数：找到 spec 就 tryParseParamValue，
+        // 找不到的未知键保持透传字符串（把未知键改成显式报错会撞挂账 N35 的 CLI 同口径问题，
+        // 本任务不动；B14 才管未知键）。specs 取整份 plugin->paramSpecs()，与 CLI 一致。
         const std::vector<ParamSpec> specs = plugin->paramSpecs();
         std::map<std::string, ParamValue> typedParams;
         for (auto it = resolvedStringParams.begin(); it != resolvedStringParams.end(); ++it) {
-            const ParamSpec* matching = nullptr;
-            for (const auto& spec : specs) {
-                if (spec.key == it->first) {
-                    matching = &spec;
-                    break;
-                }
-            }
-            if (!matching) {
-                typedParams[it->first] = it->second;
-                continue;
-            }
             ParamValue parsed;
             std::string parseError;
-            if (!tryParseParamValue(*matching, it->second, parsed, parseError)) {
+            if (!convertParamValue(specs, it->first, it->second, parsed, parseError)) {
                 // 键名由工作流侧拼进去：tryParseParamValue 的文案取 paramDisplayName(spec)
                 // （displayName 非空时用它，见 param_spec.h:66-68），里面**没有**键名，
                 // 只有"参数“间隔步长”不是有效数字"这种人类可读串——两处都要，缺一不可定位。
@@ -96,6 +88,34 @@ WorkflowResult WorkflowRunner::execute(
             typedParams[it->first] = parsed;
         }
         typedParams["action"] = step.actionKey;
+
+        // Task B12：派发前跑与 CLI（src/cli/main.cpp:201/:212）同一套参数校验，顺序也一致：
+        // 先 validateParams（整份 specs），再 validateActionSpecificParams（action 级组合）。
+        // 缺这两段时，同一份越界参数 CLI 拒、工作流却一路送进插件（N94/N57）。
+        {
+            const std::string validationIssue = validateParams(specs, typedParams);
+            if (!validationIssue.empty()) {
+                // 键名取 findFirstInvalidParamKey：它与 validateParams 是同一份 specs、
+                // 同一个 validateParamValue、同一个循环顺序（param_spec.h:213-236），
+                // 两次扫描必然指向同一个键；为了省一趟扫描改成别的形态反而会引入不对称。
+                const std::string invalidKey = findFirstInvalidParamKey(specs, typedParams);
+                result.message = "Step " + std::to_string(i + 1) + " (" + step.pluginName + "." +
+                                 step.actionKey + ") invalid parameter " + invalidKey + ": " +
+                                 validationIssue;
+                result.stepMessages.push_back(result.message);
+                return result;
+            }
+        }
+        if (const auto issue = validateActionSpecificParams(plugin->name(), step.actionKey,
+                                                            typedParams);
+            issue.has_value()) {
+            // action 级那条直接用 issue.key / issue.message，不再调 findFirstInvalidParamKey。
+            result.message = "Step " + std::to_string(i + 1) + " (" + step.pluginName + "." +
+                             step.actionKey + ") invalid parameter " + issue->key + ": " +
+                             issue->message;
+            result.stepMessages.push_back(result.message);
+            return result;
+        }
 
         gis::core::NullProgressReporter nullProgress;
         // Task 14：插件抛出来的异常必须由工作流兜住并写成这一步的失败，

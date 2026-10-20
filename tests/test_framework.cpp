@@ -614,3 +614,194 @@ TEST(WorkflowParamTyping, PluginExceptionIsReportedNotPropagated) {
     const auto followUp = runner.execute(empty, {});
     EXPECT_TRUE(followUp.success) << followUp.message;
 }
+
+// ============================================================================
+// Task B12：工作流派发前必须跑与 CLI 同一套参数校验（N94 / N57）
+//
+// 缺陷原文：CLI 在派发插件前调 validateParams + validateActionSpecificParams
+// （src/cli/main.cpp:201/:212），工作流 WorkflowRunner::execute 一个都不调
+// ⇒ 同一份越界参数 CLI 拒、工作流放行到插件里。
+// 本套件给两类漏网各留一条用例，注入证明见报告（摘掉哪一段就红哪一条）。
+// ============================================================================
+
+namespace {
+
+std::filesystem::path workflowParamValidationTestDir(const std::string& caseName) {
+    const auto dir =
+        gis::tests::defaultTestOutputDir("workflow_param_validation_output") / caseName;
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+
+// 越界 Int 用例的夹具：带 EPSG:4326 与正北像元网格，tile 的几何守卫能通过。
+std::string writeTileInputFixture(const std::filesystem::path& dir) {
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg4326;
+    return gis::tests::writeConstantBandsRaster(dir, "tile_input.tif", 8, 8, {100.0f}, options);
+}
+
+} // namespace
+
+TEST(WorkflowParamValidation, OutOfRangeIntFailsStepBeforePlugin) {
+    // 声明区间 [128,1024]（cutting_plugin.cpp:96-99），127 越下界。
+    // 修复前：工作流不调 validateParams ⇒ 127 一路进插件、瓦片正常产出、result.success=true；
+    // 修复后：派发前失败，键名与人类可读文案都要出现，且这一步不计入已完成、不产出目录。
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_NE(mgr.find("cutting"), nullptr);
+
+    const auto dir = workflowParamValidationTestDir("out_of_range_int");
+    const std::string input = writeTileInputFixture(dir);
+    ASSERT_FALSE(input.empty()) << "夹具栅格创建失败";
+    const auto outputDir = dir / "tiles";
+
+    gis::framework::Workflow wf;
+    wf.name = "越界 Int 必须在派发前失败";
+    gis::framework::WorkflowStep step;
+    step.pluginName = "cutting";
+    step.actionKey = "tile";
+    step.params["input"] = "${input}";
+    step.params["output"] = "${output_dir}/tiles";
+    step.params["tile_pixel_size"] = "127";
+    // 钉住层级，让修复前的"放行"路径只产 z=0 一层就结束（取证快且不依赖自动算层级）。
+    step.params["min_zoom"] = "0";
+    step.params["max_zoom"] = "0";
+    wf.steps.push_back(step);
+
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(wf, {
+        {"input", input},
+        {"output_dir", dir.string()},
+        {"basename", "wf"},
+    });
+
+    ASSERT_FALSE(result.success) << "工作流放行了越界参数: " << result.message;
+    ASSERT_EQ(result.stepMessages.size(), 1u);
+    const std::string& message = result.stepMessages[0];
+    // 形状沿用 Task 14：Step <n> (<plugin>.<action>) invalid parameter <key>: <message>
+    EXPECT_EQ(message.rfind("Step 1 (cutting.tile) invalid parameter tile_pixel_size: ", 0), 0u)
+        << message;
+    // 键名 + 人类可读名 + 区间文案：validateParamValue 的文案里没有键名，调用方必须补。
+    EXPECT_NE(message.find("瓦片像素"), std::string::npos) << message;
+    EXPECT_NE(message.find("超出范围 [128, 1024]"), std::string::npos) << message;
+    EXPECT_EQ(result.completedSteps, 0) << "越界参数被算成已完成步数，说明没在进插件前拦住";
+    EXPECT_FALSE(std::filesystem::exists(outputDir)) << "越界参数那一步仍然创建了瓦片目录";
+}
+
+TEST(WorkflowParamValidation, ActionSpecificCombinationFailsStepBeforePlugin) {
+    // cutting.clip 的 action 级判据（action_validation.cpp:112-115）：extent 与 cutline
+    // 至少填一个。修复前工作流不调 validateActionSpecificParams ⇒ 参数表本身全部合法，
+    // 插件自己报 "Either extent or cutline must be specified for clip"（completedSteps=1）；
+    // 修复后必须在派发前失败（completedSteps=0）。
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_NE(mgr.find("cutting"), nullptr);
+
+    const auto dir = workflowParamValidationTestDir("action_specific_clip");
+    const std::string input = writeTileInputFixture(dir);
+    ASSERT_FALSE(input.empty()) << "夹具栅格创建失败";
+    const auto output = dir / "clip_out.tif";
+
+    gis::framework::Workflow wf;
+    wf.name = "action 级非法组合必须在派发前失败";
+    gis::framework::WorkflowStep step;
+    step.pluginName = "cutting";
+    step.actionKey = "clip";
+    step.params["input"] = "${input}";
+    step.params["output"] = "${output_dir}/clip_out.tif";
+    wf.steps.push_back(step);
+
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(wf, {
+        {"input", input},
+        {"output_dir", dir.string()},
+        {"basename", "wf"},
+    });
+
+    ASSERT_FALSE(result.success) << "工作流放行了 action 级非法组合: " << result.message;
+    ASSERT_EQ(result.stepMessages.size(), 1u);
+    const std::string& message = result.stepMessages[0];
+    EXPECT_EQ(message.rfind("Step 1 (cutting.clip) invalid parameter extent: ", 0), 0u)
+        << message;
+    EXPECT_NE(message.find("裁切范围"), std::string::npos) << message;
+    EXPECT_NE(message.find("至少填写一个"), std::string::npos) << message;
+    EXPECT_EQ(result.completedSteps, 0)
+        << "失败被算成已完成步数，说明是插件自己报的，不是派发前拦的";
+    EXPECT_FALSE(std::filesystem::exists(output)) << "非法组合那一步仍然产出了文件";
+}
+
+TEST(WorkflowParamValidation, BuiltInPresetStepsSurviveDispatchValidation) {
+    // 验收 #4：内置预设是否会因为新增校验变红。逐预设、逐步骤单独跑一遍
+    // WorkflowRunner（每条都真的走 execute 的派发路径），输入刻意给不存在的路径：
+    // 校验层放行后插件必然打不开文件而失败，但只要消息里出现 invalid parameter
+    // 就说明新校验把内置预设挡在了门外。
+    //
+    // 实测（本用例锁住的名单，数字写死）：
+    //   - terrainAnalysis 的 4 步、changeDetection 的 2 步：派发校验全部放行；
+    //   - remoteSensingPreprocess 的 3 步**全部被拒**，但这不是 B12 造成的新红：
+    //     ① georef.radiometric / georef.dos 这两个 actionKey 在 georef 的 action
+    //        enum（georef_plugin.cpp:285-288）与 execute 分派（:318-341）里都不存在，
+    //        正确键是 radiometric_calibration / dos_correction ⇒ 改前插件就会回
+    //        "Unknown action: radiometric"；
+    //     ② cutting.clip 那步既没 extent 也没 cutline，改前插件自己就回
+    //        "Either extent or cutline must be specified for clip"（cutting_plugin.cpp:224）。
+    //     新校验只是把这两类失败从插件层提前到派发层（CLI 今天也是这个口径）。
+    //     预设本身是否要修不在 B12 范围（B13/B14 相邻），这里只把现状钉住：
+    //     哪天预设被修好，本用例会在名单处红，提醒同步更新。
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+
+    const auto dir = workflowParamValidationTestDir("preset_dispatch");
+    gis::tests::ensureDirectory(dir);
+    const std::string missingInput = (dir / "definitely_missing.tif").string();
+    const std::map<std::string, std::string> initial = {
+        {"input", missingInput},
+        {"input_before", missingInput},
+        {"input_after", missingInput},
+        {"output_dir", dir.string()},
+        {"basename", "preset"},
+    };
+
+    const std::map<std::string, std::string> expectedRejections = {
+        {"遥感预处理/georef.radiometric",
+         "invalid parameter action: 参数“动作”取值无效"},
+        {"遥感预处理/georef.dos",
+         "invalid parameter action: 参数“动作”取值无效"},
+        {"遥感预处理/cutting.clip",
+         "invalid parameter extent: 参数“裁切范围”或“裁切矢量”至少填写一个"},
+    };
+
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto presets = gis::framework::WorkflowPresets::allPresets();
+    ASSERT_EQ(presets.size(), 3u);
+    int checkedSteps = 0;
+    for (const auto& preset : presets) {
+        ASSERT_FALSE(preset.steps.empty()) << preset.name;
+        for (const auto& step : preset.steps) {
+            gis::framework::Workflow single;
+            single.name = preset.name + "/" + step.actionKey;
+            single.steps.push_back(step);
+            const auto result = runner.execute(single, initial);
+            const std::string stepLabel =
+                preset.name + "/" + step.pluginName + "." + step.actionKey;
+            const auto expected = expectedRejections.find(
+                preset.name + "/" + step.pluginName + "." + step.actionKey);
+            if (expected == expectedRejections.end()) {
+                EXPECT_EQ(result.message.find("invalid parameter"), std::string::npos)
+                    << stepLabel << " 被新校验挡住: " << result.message;
+            } else {
+                EXPECT_NE(result.message.find(expected->second), std::string::npos)
+                    << stepLabel << " 的拒绝原因与登记不符: " << result.message;
+            }
+            ++checkedSteps;
+        }
+    }
+    // 3 个预设的步数是 3+4+2；数字写死是为了让"预设被删/改名"在这里就红。
+    EXPECT_EQ(checkedSteps, 9) << "内置预设的步数与预期不符，逐个预设复核 WorkflowPresets";
+    EXPECT_EQ(expectedRejections.size(), 3u);
+}

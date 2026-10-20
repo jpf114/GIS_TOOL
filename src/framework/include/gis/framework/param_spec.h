@@ -143,6 +143,25 @@ inline bool tryParseParamValue(const ParamSpec& spec,
     }
 }
 
+// Task B12 / N58：CLI 与工作流派发原先各有一份"在 specs 里线性查找 + 未命中透传字符串"
+// 的同一段逻辑：CLI 侧是 src/cli/main.cpp 的 static convertParam，工作流侧 inline 在
+// workflow.cpp 的 typedParams 循环里。抽到这里让两侧共享同一形态（Step 4 选①）。
+// 语义保持不变：命中 spec 走 tryParseParamValue，未知键 outValue = text 并返回 true
+// ——未知键透传是 N35/B14 的既有口径，本任务不收紧。
+inline bool convertParamValue(const std::vector<ParamSpec>& specs,
+                              const std::string& key,
+                              const std::string& text,
+                              ParamValue& outValue,
+                              std::string& error) {
+    for (const auto& spec : specs) {
+        if (spec.key == key) {
+            return tryParseParamValue(spec, text, outValue, error);
+        }
+    }
+    outValue = text;
+    return true;
+}
+
 inline std::string validateParamValue(const ParamSpec& spec,
                                       const ParamValue* value) {
     const std::string issuePrefix = "参数“" + paramDisplayName(spec) + "”";

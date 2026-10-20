@@ -73,13 +73,9 @@ static bool convertParam(
     gis::framework::ParamValue& outValue,
     std::string& error)
 {
-    for (auto& spec : specs) {
-        if (spec.key == key) {
-            return gis::framework::tryParseParamValue(spec, value, outValue, error);
-        }
-    }
-    outValue = value;
-    return true;
+    // Task B12 / N58：查找 + 未命中透传的同一段逻辑已收口到 framework 的
+    // convertParamValue（param_spec.h），工作流侧调的是同一个函数。
+    return gis::framework::convertParamValue(specs, key, value, outValue, error);
 }
 
 #ifdef _WIN32
