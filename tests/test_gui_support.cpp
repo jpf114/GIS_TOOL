@@ -1851,9 +1851,9 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesProjectionTransformDefaul
 
 TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsPreservesPluginRequiredFlagsWithoutOverrides) {
     std::vector<gis::framework::ParamSpec> specs = {
-        {"input", "杈撳叆", "", gis::framework::ParamType::FilePath, true},
-        {"output", "杈撳嚭", "", gis::framework::ParamType::FilePath, true},
-        {"format", "鏍煎紡", "", gis::framework::ParamType::String, false}
+        {"input", "输入", "", gis::framework::ParamType::FilePath, true},
+        {"output", "输出", "", gis::framework::ParamType::FilePath, true},
+        {"format", "格式", "", gis::framework::ParamType::String, false}
     };
 
     const auto filtered = gis::gui::buildEffectiveGuiParamSpecs(

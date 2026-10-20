@@ -207,12 +207,12 @@ bool parseIntList(const std::string& text, std::vector<int>& values, std::string
             std::size_t index = 0;
             const int value = std::stoi(item, &index);
             if (index != item.size()) {
-                error = "bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊鏆ｉ弫? " + item;
+                error = "bands 中存在无效整数: " + item;
                 return false;
             }
             values.push_back(value);
         } catch (...) {
-            error = "bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊鏆ｉ弫? " + item;
+            error = "bands 中存在无效整数: " + item;
             return false;
         }
     }
@@ -248,7 +248,7 @@ bool parseCsvHeaderAndRows(
 
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs) {
-        error = "閺冪姵纭堕幍鎾崇磻鐠侇厾绮岄弽閿嬫拱 CSV: " + path;
+        error = "无法打开训练样本 CSV: " + path;
         return false;
     }
 
@@ -655,7 +655,7 @@ std::vector<unsigned char> buildFeatureMask(
     const std::string& targetProjectionWkt) {
     GDALDriver* memDriver = GetGDALDriverManager()->GetDriverByName("MEM");
     if (memDriver == nullptr) {
-        throw std::runtime_error("閺冪姵纭堕懢宄板絿閸愬懎鐡ㄦす鍗炲З");
+        throw std::runtime_error("无法获取内存驱动");
     }
 
     auto maskDataset = makeMemDataset(memDriver, window.width, window.height, GDT_Byte, window.geotransform, targetProjectionWkt);
@@ -712,12 +712,12 @@ std::vector<int> readRasterAsTargetWindow(
 
     GDALRasterBand* sourceBand = source->GetRasterBand(rasterInput.band);
     if (sourceBand == nullptr) {
-        throw std::runtime_error("閺嶅懏鐗稿▔銏☆唽娑撳秴鐡ㄩ崷? " + rasterInput.path);
+        throw std::runtime_error("栅格波段不存在: " + rasterInput.path);
     }
 
     GDALDriver* memDriver = GetGDALDriverManager()->GetDriverByName("MEM");
     if (memDriver == nullptr) {
-        throw std::runtime_error("閺冪姵纭堕懢宄板絿閸愬懎鐡ㄦす鍗炲З");
+        throw std::runtime_error("无法获取内存驱动");
     }
 
     auto targetDataset = makeMemDataset(memDriver, window.width, window.height, GDT_Int32, window.geotransform, targetProjectionWkt);
@@ -1050,7 +1050,7 @@ void FeatureVectorOutputWriter::writeResolvedRaster(
 
     GDALDriver* memDriver = GetGDALDriverManager()->GetDriverByName("MEM");
     if (memDriver == nullptr) {
-        throw std::runtime_error("閺冪姵纭堕懢宄板絿閸愬懎鐡ㄦす鍗炲З");
+        throw std::runtime_error("无法获取内存驱动");
     }
 
     const std::string projectionWkt = buildTargetProjectionWkt(std::stoi(info.actualSrs.substr(5)));
@@ -1687,7 +1687,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     bandMats.reserve(task.bands.size());
     for (int bandIndex : task.bands) {
         if (bandIndex <= 0 || bandIndex > ds->GetRasterCount()) {
-            return gis::framework::Result::fail("bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊灏濆▓闈涘娇");
+            return gis::framework::Result::fail("bands 中存在无效波段号");
         }
         bandMats.push_back(gis::core::gdalBandToMat(ds.get(), bandIndex));
     }
@@ -1849,7 +1849,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
     bandMats.reserve(task.bands.size());
     for (int bandIndex : task.bands) {
         if (bandIndex <= 0 || bandIndex > ds->GetRasterCount()) {
-            return gis::framework::Result::fail("bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊灏濆▓闈涘娇");
+            return gis::framework::Result::fail("bands 中存在无效波段号");
         }
         bandMats.push_back(gis::core::gdalBandToMat(ds.get(), bandIndex));
     }
@@ -2032,7 +2032,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     bandMats.reserve(task.bands.size());
     for (int bandIndex : task.bands) {
         if (bandIndex <= 0 || bandIndex > ds->GetRasterCount()) {
-            return gis::framework::Result::fail("bands 娑擃厼鐡ㄩ崷銊︽￥閺佸牊灏濆▓闈涘娇");
+            return gis::framework::Result::fail("bands 中存在无效波段号");
         }
         bandMats.push_back(gis::core::gdalBandToMat(ds.get(), bandIndex));
     }
