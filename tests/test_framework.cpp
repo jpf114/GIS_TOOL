@@ -4,6 +4,7 @@
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/result.h>
 #include <gis/framework/result_display.h>
+#include <gis/framework/execute_guarded.h>
 // Task 14：WorkflowRunner::execute 的第一批用例（改动前 tests/ 里没有任何 Workflow 用例）。
 #include <gis/framework/workflow.h>
 #include <gis/core/gdal_wrapper.h>
@@ -19,6 +20,13 @@
 
 #include "test_support.h"
 #include "raster_fixture.h"
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #ifndef GIS_SOURCE_DIR
 #define GIS_SOURCE_DIR "."
@@ -1038,3 +1046,317 @@ TEST(WorkflowParamPlaceholder, FullyResolvedPlaceholdersPassThrough) {
     EXPECT_TRUE(std::filesystem::exists(output))
         << "解析后的输出路径没有被使用（占位符替换本身坏了）";
 }
+
+// ============================================================================
+// Task B15 / N66：插件调用边界的异常兜获
+//
+// 缺口：三处 `plugin->execute(...)`（GUI / CLI / 工作流）接住的层次与语义都不一样 ——
+// GUI 有 `catch (...)`、CLI 没有、工作流只 `catch (std::exception)` 且把"用户取消"写成
+// `threw:` 失败。同一次抛出于是有三种结局：GUI 安全转失败 / CLI 可能终止进程 /
+// 工作流把取消记成失败。本片的做法是 framework 里**一处**受保护调用（`executeGuarded`），
+// 三侧只负责各自的上下文文案。
+//
+// 夹具 = `tests/plugins/test_lifecycle_plugin.cpp`（test-only 插件，四个动作）：
+//   `ok`（正常返回 + metadata）/ `throw_std`（std::runtime_error）/
+//   `throw_nonstd`（`throw 42;`）/ `throw_cancelled`（gis::core::CancelledException）。
+// 每一组都带反向对照，不做"不崩就算过"的断言：先证 `ok` 与 `throw_std` 各自可分辨，
+// 再判 `throw_nonstd` / `throw_cancelled` 落到新口径上。
+// ============================================================================
+
+namespace {
+
+std::map<std::string, gis::framework::ParamValue> lifecycleParams(const std::string& action) {
+    return {{"action", action}};
+}
+
+gis::framework::Workflow lifecycleWorkflow(const std::string& action) {
+    gis::framework::Workflow wf;
+    wf.name = "B15 夹具工作流";
+    gis::framework::WorkflowStep step;
+    step.pluginName = "lifecycle_test";
+    step.actionKey = action;
+    step.params["action"] = action;
+    wf.steps.push_back(step);
+    return wf;
+}
+
+// 工作流侧用例的共同前置：夹具 DLL 落在 tests/<cfg>/ 目录（与 gis_tests.exe 同级），
+// 不在产品插件目录 testPluginDir() 里 —— 这是"夹具不污染产品口径"的结构前提。
+void loadLifecycleFixture(gis::framework::PluginManager& mgr) {
+    mgr.loadFromDirectory(gis::tests::testExecutableDir().string());
+}
+
+} // namespace
+
+TEST(GuardedExecute, MapsThreeKindsToResult) {
+    // 兜获层本身的判据：四种形态各落一格，`threwException` 把"异常"与"插件正常返回的失败"
+    // 分开（GUI 只有前者才加 `Exception: ` 前缀，工作流只有前者才写 `threw:`）。
+    gis::framework::PluginManager mgr;
+    loadLifecycleFixture(mgr);
+    auto* plugin = mgr.find("lifecycle_test");
+    ASSERT_NE(plugin, nullptr) << "夹具 DLL 不在 tests/<cfg> 目录里";
+    gis::core::NullProgressReporter progress;
+
+    {
+        bool threw = true;
+        const auto r = gis::framework::executeGuarded(
+            *plugin, lifecycleParams("ok"), progress, &threw);
+        EXPECT_TRUE(r.success);
+        EXPECT_FALSE(r.isCancelled);
+        EXPECT_EQ(r.message, "ok") << "正常返回被兜获层改写了";
+        EXPECT_EQ(r.metadata.count("lifecycle"), 1u) << "metadata 被吞了";
+        EXPECT_FALSE(threw) << "正常返回被标成了异常";
+    }
+    {
+        bool threw = false;
+        const auto r = gis::framework::executeGuarded(
+            *plugin, lifecycleParams("throw_std"), progress, &threw);
+        EXPECT_FALSE(r.success);
+        EXPECT_FALSE(r.isCancelled);
+        EXPECT_EQ(r.message, "synthetic failure") << "原始 what() 必须原样保留";
+        EXPECT_TRUE(threw);
+    }
+    {
+        bool threw = false;
+        const auto r = gis::framework::executeGuarded(
+            *plugin, lifecycleParams("throw_nonstd"), progress, &threw);
+        EXPECT_FALSE(r.success);
+        EXPECT_FALSE(r.isCancelled);
+        EXPECT_EQ(r.message, "Unknown exception (non-std)");
+        EXPECT_TRUE(threw);
+    }
+    {
+        bool threw = true;
+        const auto r = gis::framework::executeGuarded(
+            *plugin, lifecycleParams("throw_cancelled"), progress, &threw);
+        EXPECT_FALSE(r.success);
+        EXPECT_TRUE(r.isCancelled);
+        EXPECT_EQ(r.message, "操作已取消");
+        EXPECT_FALSE(threw) << "取消不是异常，不该触发调用方的异常前缀";
+    }
+}
+
+TEST(WorkflowGuarded, StdThrowKeepsThrewPrefix) {
+    gis::framework::PluginManager mgr;
+    loadLifecycleFixture(mgr);
+    ASSERT_NE(mgr.find("lifecycle_test"), nullptr) << "夹具 DLL 不在 tests/<cfg> 目录里";
+
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(lifecycleWorkflow("throw_std"), {});
+
+    EXPECT_FALSE(result.success);
+    ASSERT_EQ(result.stepMessages.size(), 1u) << result.message;
+    // 工作流侧的用户可见文案前缀保持原样：`Step n (plugin.action) threw: <what>`。
+    EXPECT_EQ(result.stepMessages[0],
+              "Step 1 (lifecycle_test.throw_std) threw: synthetic failure");
+    EXPECT_EQ(result.completedSteps, 0);
+    EXPECT_FALSE(result.isCancelled) << "异常失败被标成了取消";
+}
+
+TEST(WorkflowGuarded, NonStdThrowIsReportedNotPropagated) {
+    gis::framework::PluginManager mgr;
+    loadLifecycleFixture(mgr);
+    ASSERT_NE(mgr.find("lifecycle_test"), nullptr) << "夹具 DLL 不在 tests/<cfg> 目录里";
+
+    gis::framework::WorkflowRunner runner(mgr);
+    // 改前：`throw 42;` 穿过工作流（只 catch std::exception）⇒ 这条用例会让 gis_tests
+    // 进程直接 terminate，红成"进程没了"而不是断言失败。
+    const auto result = runner.execute(lifecycleWorkflow("throw_nonstd"), {});
+
+    EXPECT_FALSE(result.success);
+    ASSERT_EQ(result.stepMessages.size(), 1u) << result.message;
+    EXPECT_EQ(result.stepMessages[0],
+              "Step 1 (lifecycle_test.throw_nonstd) threw: Unknown exception (non-std)");
+    EXPECT_EQ(result.completedSteps, 0);
+    EXPECT_FALSE(result.isCancelled) << "非 std 抛出被标成了取消";
+}
+
+TEST(WorkflowGuarded, CancelIsReportedAsCancelled) {
+    gis::framework::PluginManager mgr;
+    loadLifecycleFixture(mgr);
+    ASSERT_NE(mgr.find("lifecycle_test"), nullptr) << "夹具 DLL 不在 tests/<cfg> 目录里";
+
+    gis::framework::WorkflowRunner runner(mgr);
+    // 改前：CancelledException 派生自 std::runtime_error ⇒ 被写成
+    // `Step 1 (lifecycle_test.throw_cancelled) threw: 操作已取消`，与"插件崩了"同格。
+    const auto result = runner.execute(lifecycleWorkflow("throw_cancelled"), {});
+
+    EXPECT_FALSE(result.success);
+    ASSERT_EQ(result.stepMessages.size(), 1u) << result.message;
+    EXPECT_EQ(result.stepMessages[0],
+              "Step 1 (lifecycle_test.throw_cancelled) cancelled: 操作已取消");
+    EXPECT_EQ(result.stepMessages[0].find("threw:"), std::string::npos)
+        << "用户取消仍然被记成异常失败: " << result.stepMessages[0];
+    EXPECT_TRUE(result.isCancelled) << "取消没有落到 WorkflowResult::isCancelled 上";
+    EXPECT_EQ(result.completedSteps, 0);
+}
+
+TEST(WorkflowGuarded, NormalStepPassesThroughUnchanged) {
+    gis::framework::PluginManager mgr;
+    loadLifecycleFixture(mgr);
+    ASSERT_NE(mgr.find("lifecycle_test"), nullptr) << "夹具 DLL 不在 tests/<cfg> 目录里";
+
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(lifecycleWorkflow("ok"), {});
+
+    // 不回归：插件正常返回的 Result 不被兜获层包装篡改（消息与 metadata 都是插件原值）。
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_EQ(result.stepMessages.size(), 1u);
+    EXPECT_EQ(result.stepMessages[0], "Step 1 (lifecycle_test.ok) completed");
+    EXPECT_EQ(result.completedSteps, 1);
+    EXPECT_FALSE(result.isCancelled);
+}
+
+// ---------------------------------------------------------------- CLI 侧
+//
+// CLI 的插件目录由 `findPluginDirectoryFrom(exeDir)` 从 exe 所在目录向上找第一个含
+// `plugin_*.dll` 的 `plugins/`（src/core/src/runtime_env.cpp:97-119），没有命令行/环境变量
+// 覆盖，而 CLI 的 `<cli>/plugins` 与 gis_tests 的 testPluginDir()（build/<cfg>/plugins）
+// 是**两个不同目录**。所以这里在测试输出目录里搭一份**只含夹具**的沙箱：
+//   <out>/b15_cli_sandbox_pid_<pid>/gis-cli.exe
+//   <out>/b15_cli_sandbox_pid_<pid>/plugins/plugin_test_lifecycle.dll
+// 子进程 cwd 设成 CLI 自己的输出目录，隐式导入的运行库从 cwd 解析（实测可用）。
+// 按 pid 分道是为了 `ctest -j` 下多条 CLI 用例各有各的沙箱，互不覆写。
+
+#ifdef _WIN32
+namespace {
+
+struct CliFixtureRun {
+    bool launched = false;   ///< CreateProcess 成功
+    bool timedOut = false;   ///< 超时被杀（改前的非 std 抛出就是这个形态）
+    int exitCode = -1;
+    std::string output;
+};
+
+std::filesystem::path cliFixtureSandbox() {
+    return gis::tests::testExecutableDir() /
+           ("b15_cli_sandbox_pid_" + std::to_string(static_cast<unsigned long>(GetCurrentProcessId())));
+}
+
+CliFixtureRun runFixtureCli(const std::string& action, DWORD timeoutMs = 30000) {
+    CliFixtureRun run;
+    const auto exeDir = gis::tests::testExecutableDir();
+    const auto buildRoot = exeDir.parent_path().parent_path();
+    const auto cliDir = buildRoot / "src" / "cli" / exeDir.filename();
+
+    const auto sandbox = cliFixtureSandbox();
+    gis::tests::ensureDirectory(sandbox);
+    gis::tests::ensureDirectory(sandbox / "plugins");
+
+    std::error_code ec;
+    std::filesystem::copy_file(cliDir / "gis-cli.exe", sandbox / "gis-cli.exe",
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+        return run;
+    }
+    std::filesystem::copy_file(exeDir / "plugin_test_lifecycle.dll",
+                               sandbox / "plugins" / "plugin_test_lifecycle.dll",
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+        return run;
+    }
+
+    const auto outPath = sandbox / ("out_" + action + ".txt");
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE output = CreateFileW(outPath.wstring().c_str(), GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (output == INVALID_HANDLE_VALUE) {
+        return run;
+    }
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    si.hStdOutput = output;
+    si.hStdError = output;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+    const std::wstring exePath = (sandbox / "gis-cli.exe").wstring();
+    std::wstring commandLine = L"\"" + exePath + L"\" lifecycle_test ";
+    commandLine += std::wstring(action.begin(), action.end());
+    std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
+    mutableCommand.push_back(L'\0');
+
+    PROCESS_INFORMATION pi{};
+    const BOOL created = CreateProcessW(exePath.c_str(), mutableCommand.data(), nullptr, nullptr,
+                                        TRUE, CREATE_NO_WINDOW, nullptr, cliDir.wstring().c_str(),
+                                        &si, &pi);
+    CloseHandle(output);
+    if (!created) {
+        return run;
+    }
+    run.launched = true;
+
+    const DWORD waited = WaitForSingleObject(pi.hProcess, timeoutMs);
+    if (waited == WAIT_TIMEOUT) {
+        run.timedOut = true;
+        TerminateProcess(pi.hProcess, 0xDEAD);
+        WaitForSingleObject(pi.hProcess, 5000);
+    }
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    run.exitCode = static_cast<int>(code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    std::ifstream in(outPath, std::ios::binary);
+    run.output.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return run;
+}
+
+} // namespace
+
+TEST(CliGuardedExecute, OkActionStillSucceeds) {
+    // 对照组（也是判据有牙的前提）：同一条沙箱/命令行跑正常动作必须 rc=0，
+    // 否则下面三条"rc=1/rc=2"可能只是沙箱搭错了。
+    const auto run = runFixtureCli("ok");
+    ASSERT_TRUE(run.launched) << "CLI 沙箱没起来（gis-cli.exe / 夹具 DLL 拷贝失败）";
+    ASSERT_FALSE(run.timedOut) << "正常动作 30 s 内没返回";
+    EXPECT_EQ(run.exitCode, 0) << run.output;
+    EXPECT_NE(run.output.find("Success: ok"), std::string::npos) << run.output;
+    EXPECT_NE(run.output.find("lifecycle: ok"), std::string::npos) << run.output;
+}
+
+TEST(CliGuardedExecute, StdThrowBecomesErrorRc1) {
+    const auto run = runFixtureCli("throw_std");
+    ASSERT_TRUE(run.launched) << "CLI 沙箱没起来（gis-cli.exe / 夹具 DLL 拷贝失败）";
+    ASSERT_FALSE(run.timedOut) << "std 抛出把 CLI 带走了";
+    EXPECT_EQ(run.exitCode, 1) << run.output;
+    EXPECT_NE(run.output.find("Error: synthetic failure"), std::string::npos) << run.output;
+}
+
+TEST(CliGuardedExecute, NonStdThrowBecomesErrorRc1) {
+    // 本片的判别用例。改前实测（Release）：rc=0xC0000409、无任何输出；
+    // 改前实测（Debug）：停在调试 CRT 的 abort 对话框，30 s 不返回。
+    const auto run = runFixtureCli("throw_nonstd");
+    ASSERT_TRUE(run.launched) << "CLI 沙箱没起来（gis-cli.exe / 夹具 DLL 拷贝失败）";
+    ASSERT_FALSE(run.timedOut)
+        << "CLI 被非 std 抛出带走了：30 s 内没有返回（改前的 abort 对话框常驻形态）";
+    EXPECT_EQ(run.exitCode, 1) << "非 std 抛出没有转成普通失败, raw rc=" << run.exitCode
+                               << " output=" << run.output;
+    EXPECT_NE(run.output.find("Error: Unknown exception (non-std)"), std::string::npos)
+        << run.output;
+}
+
+TEST(CliGuardedExecute, CancelKeepsRc2) {
+    const auto run = runFixtureCli("throw_cancelled");
+    ASSERT_TRUE(run.launched) << "CLI 沙箱没起来（gis-cli.exe / 夹具 DLL 拷贝失败）";
+    ASSERT_FALSE(run.timedOut) << "取消把 CLI 带走了";
+    EXPECT_EQ(run.exitCode, 2) << run.output;
+    EXPECT_NE(run.output.find("Cancelled."), std::string::npos) << run.output;
+}
+
+#else
+
+// 非 Windows 平台不搭沙箱：CLI 的插件目录没有覆盖手段，夹具 DLL 也放不进产品插件目录。
+// 如实跳过（SKIP_REGULAR_EXPRESSION 已让 ctest 认得 SKIPPED，不会被读成 Passed）。
+TEST(CliGuardedExecute, OkActionStillSucceeds) { GTEST_SKIP() << "CLI 夹具沙箱只在 Windows 上搭"; }
+TEST(CliGuardedExecute, StdThrowBecomesErrorRc1) { GTEST_SKIP() << "CLI 夹具沙箱只在 Windows 上搭"; }
+TEST(CliGuardedExecute, NonStdThrowBecomesErrorRc1) { GTEST_SKIP() << "CLI 夹具沙箱只在 Windows 上搭"; }
+TEST(CliGuardedExecute, CancelKeepsRc2) { GTEST_SKIP() << "CLI 夹具沙箱只在 Windows 上搭"; }
+
+#endif

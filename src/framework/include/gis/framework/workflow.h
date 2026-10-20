@@ -30,6 +30,11 @@ struct Workflow {
 /** Result of executing a complete workflow. */
 struct WorkflowResult {
     bool success = false;                  ///< Whether the entire workflow succeeded
+    /// Task B15 / N66：某一步"被取消"（`Result::isCancelled`）时置真。取消**不算成功**，
+    /// 但也不等于失败：改前用户取消被写成 `Step n (p.a) threw: 操作已取消`，与插件崩溃同格。
+    /// 只增字段、默认 false ⇒ 既有消费点（workflow_page.cpp 只读 success/completedSteps/
+    /// totalSteps/stepMessages/message）一个字都不用改。
+    bool isCancelled = false;              ///< Whether execution stopped because of cancellation
     std::string message;                   ///< Summary message
     int completedSteps = 0;                ///< Number of steps completed successfully
     int totalSteps = 0;                    ///< Total number of steps in the workflow

@@ -27,7 +27,9 @@
 #include <gis/core/gdal_wrapper.h>
 
 #include "../src/gui/custom_index_preset_store.h"
+#include "../src/gui/execute_worker.h"
 #include "../src/gui/gui_data_support.h"
+#include "../src/gui/qt_progress_reporter.h"
 #include "../src/gui/task_center_page.h"
 #include "../src/gui/task_manager.h"
 #include "test_support.h"
@@ -3050,4 +3052,90 @@ TEST(GuiActionConfig, CuttingMergeBandsDoesNotTightenInputBeyondWhatThePluginRej
         << "input 的有效 required 为真 ⇒ validate() 会挡住 bands-only 提交";
     EXPECT_FALSE(bandsSpec->required);
     EXPECT_TRUE(outputSpec->required);
+}
+
+// ============================================================================
+// Task B15 / N66：ExecuteWorker 的异常兜获（GUI 侧）
+//
+// 改前 GUI 是三处调用点里唯一"三件套齐全"的那个（CancelledException / std::exception /
+// catch(...)），但它自己写了一份 try/catch，与 CLI、工作流不同源 ⇒ 同一次抛出三种结局。
+// 收敛后 GUI 只留自己的上下文前缀 `Exception: `，捕获层次交给 framework 的 executeGuarded。
+// 夹具同上（tests/plugins/test_lifecycle_plugin.cpp 的四个动作），四种结局逐个钉住。
+// ============================================================================
+
+namespace {
+
+struct WorkerOutcome {
+    bool delivered = false;
+    gis::framework::Result result;
+};
+
+WorkerOutcome runExecuteWorkerForFixture(gis::framework::PluginManager& mgr,
+                                         const std::string& action) {
+    WorkerOutcome outcome;
+    auto* plugin = mgr.find("lifecycle_test");
+    if (!plugin) {
+        return outcome;
+    }
+    QtProgressReporter reporter(QStringLiteral("b15"));
+    ExecuteWorker worker;
+    worker.setup(plugin, {{"action", action}}, &reporter);
+    QObject::connect(&worker, &ExecuteWorker::finished,
+                     &worker, [&outcome](const gis::framework::Result& result) {
+                         outcome.delivered = true;
+                         outcome.result = result;
+                     });
+    worker.run();
+    return outcome;
+}
+
+} // namespace
+
+TEST(ExecuteWorkerGuarded, OkResultPassesThroughUnchanged) {
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testExecutableDir().string());
+    ASSERT_NE(mgr.find("lifecycle_test"), nullptr) << "夹具 DLL 不在 tests/<cfg> 目录里";
+
+    const auto outcome = runExecuteWorkerForFixture(mgr, "ok");
+    ASSERT_TRUE(outcome.delivered) << "ExecuteWorker 没有 emit finished";
+    // 不回归：正常返回的 Result 原样透传（消息、metadata 都不被兜获层改写）。
+    EXPECT_TRUE(outcome.result.success);
+    EXPECT_EQ(outcome.result.message, "ok");
+    ASSERT_EQ(outcome.result.metadata.count("lifecycle"), 1u);
+    EXPECT_EQ(outcome.result.metadata.at("lifecycle"), "ok");
+}
+
+TEST(ExecuteWorkerGuarded, StdThrowKeepsExceptionPrefix) {
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testExecutableDir().string());
+    ASSERT_NE(mgr.find("lifecycle_test"), nullptr) << "夹具 DLL 不在 tests/<cfg> 目录里";
+
+    const auto outcome = runExecuteWorkerForFixture(mgr, "throw_std");
+    ASSERT_TRUE(outcome.delivered) << "ExecuteWorker 没有 emit finished";
+    EXPECT_FALSE(outcome.result.success);
+    // GUI 侧的用户可见前缀保持不变。
+    EXPECT_EQ(outcome.result.message, "Exception: synthetic failure");
+}
+
+TEST(ExecuteWorkerGuarded, NonStdThrowBecomesFailure) {
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testExecutableDir().string());
+    ASSERT_NE(mgr.find("lifecycle_test"), nullptr) << "夹具 DLL 不在 tests/<cfg> 目录里";
+
+    const auto outcome = runExecuteWorkerForFixture(mgr, "throw_nonstd");
+    ASSERT_TRUE(outcome.delivered) << "ExecuteWorker 没有 emit finished";
+    EXPECT_FALSE(outcome.result.success);
+    // 改前文案是本地那份 "Unknown exception occurred"；收敛后统一用 framework 的措辞。
+    EXPECT_EQ(outcome.result.message, "Exception: Unknown exception (non-std)");
+}
+
+TEST(ExecuteWorkerGuarded, CancelledExceptionBecomesCancelled) {
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testExecutableDir().string());
+    ASSERT_NE(mgr.find("lifecycle_test"), nullptr) << "夹具 DLL 不在 tests/<cfg> 目录里";
+
+    const auto outcome = runExecuteWorkerForFixture(mgr, "throw_cancelled");
+    ASSERT_TRUE(outcome.delivered) << "ExecuteWorker 没有 emit finished";
+    EXPECT_FALSE(outcome.result.success);
+    EXPECT_TRUE(outcome.result.isCancelled) << outcome.result.message;
 }

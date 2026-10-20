@@ -3,6 +3,7 @@ add_library(gis_framework
     src/plugin_manager.cpp
     src/workflow.cpp
     src/result_display.cpp
+    src/execute_guarded.cpp
 )
 
 target_include_directories(gis_framework PUBLIC

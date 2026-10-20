@@ -1,5 +1,6 @@
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/action_validation.h>
+#include <gis/framework/execute_guarded.h>
 #include <gis/framework/result_display.h>
 #include <gis/core/progress.h>
 #include <gis/core/error.h>
@@ -258,19 +259,18 @@ int main(int argc, char* argv[]) {
     }
 
     gis::core::CliProgress progress;
-    gis::framework::Result result;
+    // Task B15 / N66：异常兜获收口到 framework 的 executeGuarded（一处 catch 三件套）。
+    // 改前这里只有 CancelledException / GisError / std::exception 三个 catch、**没有**
+    // `catch (...)` ⇒ 非 std 派生的抛出（如 `throw 42;`）接不住，进程被 std::terminate
+    // 带走（Release 实测 rc=0xC0000409、无任何输出；Debug 停在调试 CRT 的 abort 对话框）。
+    // 取消仍走单独分支（rc=2），其余异常与"插件自己报的失败"合流到下面的 `Error:` + rc=1
+    // —— 与改前的 GisError 分支同文案同 rc（它本来也是 `Error: <what>` / 1）。
+    const gis::framework::Result result =
+        gis::framework::executeGuarded(*plugin, params, progress);
 
-    try {
-        result = plugin->execute(params, progress);
-    } catch (const gis::core::CancelledException&) {
+    if (result.isCancelled) {
         std::cerr << "Cancelled." << std::endl;
         return 2;
-    } catch (const gis::core::GisError& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
     }
 
     if (result.success) {

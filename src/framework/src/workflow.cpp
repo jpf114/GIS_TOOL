@@ -1,5 +1,6 @@
 #include <gis/framework/workflow.h>
 #include <gis/framework/action_validation.h>
+#include <gis/framework/execute_guarded.h>
 #include <gis/framework/plugin.h>
 #include <gis/framework/plugin_manager.h>
 #include <gis/core/progress.h>
@@ -182,18 +183,29 @@ WorkflowResult WorkflowRunner::execute(
         }
 
         gis::core::NullProgressReporter nullProgress;
-        // Task 14：插件抛出来的异常必须由工作流兜住并写成这一步的失败，
+        // Task B15 / N66：插件抛出来的异常必须由**一处**兜住（framework 的 executeGuarded），
         // 不能让它穿出 execute 把调用方（GUI 线程 / CLI / 测试进程）一起带走。
-        // 真实触发路径之一：gis::core::openRaster 打不开文件时抛 GisError
-        // （src/core/src/gdal_wrapper.cpp:49-51，GisError 派生自 std::runtime_error），
-        // 而 raster_math 的 doReclassify 对它没有自家 catch（不像 spindex
-        // 在 spindex_plugin.cpp:774-776 会把异常转成 Result::fail）。
-        Result stepResult;
-        try {
-            stepResult = plugin->execute(typedParams, nullProgress);
-        } catch (const std::exception& e) {
+        // 改前这里只有 `catch (const std::exception&)`：非 std 派生的抛出直接穿出
+        // （实测 gtest 报 "Unknown C++ exception thrown in the test body"），
+        // 而真实触发路径之一 gis::core::openRaster 打不开文件时抛 GisError
+        // （src/core/src/gdal_wrapper.cpp:49-51）—— 那条路径改前能兜住，现在仍兜住。
+        // 真实触发路径之二见 tests/test_framework.cpp 的 PluginExceptionIsReportedNotPropagated。
+        bool threwException = false;
+        Result stepResult = executeGuarded(*plugin, typedParams, nullProgress, &threwException);
+
+        // 取消优先于"失败"：`CancelledException` 与插件自己返回的 `Result::cancelled()`
+        // 都按取消处理。改前 CancelledException 派生自 std::runtime_error ⇒ 落到
+        // `threw: 操作已取消`，与插件崩溃同一格；这是本片唯一的行为变更（见报告 §6）。
+        if (stepResult.isCancelled) {
+            result.isCancelled = true;
             result.message = "Step " + std::to_string(i + 1) + " (" + step.pluginName + "." +
-                             step.actionKey + ") threw: " + e.what();
+                             step.actionKey + ") cancelled: " + stepResult.message;
+            result.stepMessages.push_back(result.message);
+            return result;
+        }
+        if (threwException) {
+            result.message = "Step " + std::to_string(i + 1) + " (" + step.pluginName + "." +
+                             step.actionKey + ") threw: " + stepResult.message;
             result.stepMessages.push_back(result.message);
             return result;
         }
