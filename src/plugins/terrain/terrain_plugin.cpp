@@ -1417,7 +1417,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
         // (2) ε 加在 elevation *= z_factor **之后**的缩放高程上 ⇒ 真实单位下的微梯度是
         //     epsilon / z_factor（z_factor 区间 [0.001,10000] ⇒ 跨 7 个数量级）。本任务不改单位，
         //     但必须让描述把这件事说出去，不许留成无人知晓的隐式语义。
-        gis::framework::ParamSpec{"epsilon", "微坡度", "Monotone micro-gradient added inside each filled depression, on the cells at or below its water surface (terrain above it is never touched); values are post-z_factor, so the real-unit gradient is epsilon / z_factor", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{10.0}},
+        gis::framework::ParamSpec{"epsilon", "微坡度", "Monotone micro-gradient added inside each filled depression, on the cells strictly below its water surface (terrain above it is never touched); values are post-z_factor, so the real-unit gradient is epsilon / z_factor", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{10.0}},
         gis::framework::ParamSpec{"profile_path", "剖面路径", "Profile points formatted as x1,y1;x2,y2;...", gis::framework::ParamType::String, false, std::string{}},
         gis::framework::ParamSpec{"observer_x", "观察点X", "Observer X coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
         gis::framework::ParamSpec{"observer_y", "观察点Y", "Observer Y coordinate", gis::framework::ParamType::Double, false, double{0.0}, double{-1e15}, double{1e15}},
