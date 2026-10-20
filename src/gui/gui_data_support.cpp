@@ -1020,19 +1020,17 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
                 {"input", "output", "bands"},
                 {"output"}
             }},
-            // resample 由 B16（N36）补进白名单：此前 doTile 读的是**未声明**的 resampling，
-            // 声明的 resample 填了也不生效 ⇒ 当时列进来等于放一个死键（正是本任务要消灭的形态）。
-            // B16 让 doTile 改读 resample 之后它才"确实被读"，同一批把它放进可见键。
-            // ⚠ 已知不一致（不在这里修）：面板显示的 Default: 来自 spec 的 default（nearest），
-            // 而 doTile 的实际缺省是 average（故意保持既有产物不变）⇒ 归 B19 决策。
+            // WHY 这里没有 resample：doTile 读的是未声明的 resampling（N36：Task 10 盘点参数面时新发现
+            // 的一条——键在 doTile 里被读取却不在 paramSpecs() 声明；N36 已由 Task 17 的 R-T17-12 裁定
+            // 移出射程、留批次 B），列进白名单等于放一个填了也不生效的键，正是本任务要消灭的形态。
             // num_threads（N37 "声明后无人读取"）已由 Task 17 按 R-T17-12 从 paramSpecs() 删除。
             {"tile", {
                 QString{},
                 QStringLiteral("生成 XYZ 瓦片。"),
                 {"input", "output", "tile_scheme", "profile", "min_zoom", "max_zoom",
-                 "tile_pixel_size", "resample", "overview_resampling", "output_format",
-                 "jpeg_quality", "add_alpha", "nodata_value", "skip_blank", "resume",
-                 "tile_extent", "webviewer", "title", "copyright"},
+                 "tile_pixel_size", "overview_resampling", "output_format", "jpeg_quality",
+                 "add_alpha", "nodata_value", "skip_blank", "resume", "tile_extent",
+                 "webviewer", "title", "copyright"},
                 {"input", "output"}
             }},
         }},

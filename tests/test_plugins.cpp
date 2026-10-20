@@ -12147,8 +12147,7 @@ TEST_F(PluginTest, TileWarpedTempNameIsUniquePerCall) {
 
 // 全局闸门 (ii)：tile 自己的面板锁（形状照抄 TerrainFillSinksGuiPanel…，R-T17-11
 // ①/② 都要求的第 (ii) 件事）。overview_resampling 经处置①成为"真被读"的键，必须
-// 在渲染集合里；resample 经 B16（N36）改读声明键之后同样必须被渲染（否则只有 CLI 能用）；
-// tile 不读的键（num_threads/tile_size/overlap/extent/
+// 在渲染集合里；tile 不读的键（resample/num_threads/tile_size/overlap/extent/
 // cutline/bands/dst_srs）必须被隐藏。渲染判据用 ParamCardWidget::hasParam(entries_)，
 // 不用 ParamWidget::hasParam（它只扫 specs_，等于把有效集合再抄一遍）。
 TEST_F(PluginTest, TileGuiPanelHidesParametersTheTileActionNeverReads) {
@@ -12166,11 +12165,7 @@ TEST_F(PluginTest, TileGuiPanelHidesParametersTheTileActionNeverReads) {
     EXPECT_EQ(effectiveKeys, config->visibleKeys) << "cutting.tile 的有效键集与白名单不一致";
     EXPECT_GT(effectiveKeys.count("overview_resampling"), 0u)
         << "overview_resampling 必须被渲染（R-T17-11① 之后 doTile 真的读它）";
-    // B16（N36）：doTile 改读声明的 resample 之后，白名单必须同批补上它，
-    // 否则只有 CLI 能用、GUI 依旧不可达（B9 的教训：面板按白名单过滤）。
-    EXPECT_GT(effectiveKeys.count("resample"), 0u)
-        << "resample 必须被渲染（B16 之后 doTile 真的读它）";
-    for (const char* deadKey : {"num_threads", "tile_size", "overlap",
+    for (const char* deadKey : {"resample", "num_threads", "tile_size", "overlap",
                                 "extent", "cutline", "bands", "dst_srs"}) {
         EXPECT_EQ(effectiveKeys.count(deadKey), 0u) << deadKey << " 不被 doTile 读取，不得出现在 tile 面板";
     }
@@ -12190,9 +12185,7 @@ TEST_F(PluginTest, TileGuiPanelHidesParametersTheTileActionNeverReads) {
     }
     EXPECT_EQ(renderedKeys, effectiveKeys) << "cutting.tile 的 widget 树与有效 spec 不一致";
     EXPECT_GT(renderedKeys.count("overview_resampling"), 0u);
-    // B16：resample 进白名单后必须在 widget 树里真的被渲染出来（不是只在白名单里挂着）。
-    EXPECT_GT(renderedKeys.count("resample"), 0u)
-        << "resample 在白名单里却没渲染出来 ⇒ GUI 用户仍选不到它";
+    EXPECT_EQ(renderedKeys.count("resample"), 0u);
 }
 
 // F1（Task 17 修复轮 1，审查发现 I-2）：tile_extent 前向投影路径 + 两道零面积守卫的判别用例。
