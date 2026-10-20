@@ -8634,8 +8634,29 @@ TEST_F(PluginTest, TerrainWatershedExecution) {
 
     EXPECT_TRUE(result.success) << result.message;
     EXPECT_TRUE(fs::exists(output));
-    EXPECT_NEAR(readRasterPixel(output, 1, 4), readRasterPixel(output, 7, 4), 1e-4f);
-    EXPECT_NE(readRasterPixel(output, 4, 3), readRasterPixel(output, 4, 4));
+    // 期望值是**夹具的函数**，不从被测输出的任何像元读取。
+    // 这里原先写的是 `EXPECT_NEAR(readRasterPixel(output, 1, 4), readRasterPixel(output, 7, 4), 1e-4f)`：
+    // 第二个操作数取自被测输出本身，于是这一句只断"这两个像元相等"，完全不断"流域标签等于几"
+    // —— 把整张流域图重新编号（例如出口发号起点从 1 挪到 0，第一条流域就此与背景值 0 撞车），
+    // 这两句照样绿。下面的常量把标签值本身钉住了。
+    //
+    // 算式（地形来自 createEastDownhillRaster：9x9，dem(x,y) = 9 - x，逐行完全相同、自西向东单调下降）：
+    //   1) D8 流向：内部像元 x,y 属于 [1,7]。中心比正东邻居高 1，坡度 = 1/1.0 = 1.0；
+    //      东南、东北对角邻居同样低 1 但距离 1.41421356，坡度 = 0.707 较小；南北方向不降。
+    //      最大正坡度方向唯一 ⇒ 每个内部像元的流向码都是 1（正东）。
+    //   2) 出口：只有 x = 7 的内部像元，其东邻 x+1 = 8 触到 cols-1 = 8 ⇒ 判为出口。
+    //      出口按 (y 升序, x 升序) 依次发号，号从 1 起 ⇒ 第 y 行的出口拿到标签 y，
+    //      全图共 7 条流域，标签 1..7，每条流域恰好是"同一行的内部像元"。
+    //   3) 上游回填：按拓扑逆序把出口标签沿流向反向往西铺 ⇒ 行 y 的 x = 1..7 全部拿到标签 y。
+    //   ⇒ 结论：内部像元 (x,y) 的标签 = 行号 y，与列号 x 无关（横向同盆地不变量的来源）。
+    //   最外圈 x = 0/8、y = 0/8 不在上面两个循环的扫描范围内 ⇒ 标签 0；本用例只钉内部，
+    //   不拿"外圈为 0"当契约（那是当前实现的扫描边界，不是流域语义）。
+    EXPECT_NEAR(readRasterPixel(output, 1, 1), 1.0f, 1e-4f);  // 第 1 行流域：标签 1（发号起点是 1，不是 0）
+    EXPECT_NEAR(readRasterPixel(output, 4, 3), 3.0f, 1e-4f);  // 第 3 行：相邻两行分属两条不同流域
+    EXPECT_NEAR(readRasterPixel(output, 4, 4), 4.0f, 1e-4f);  // 第 4 行：标签 4
+    EXPECT_NEAR(readRasterPixel(output, 1, 4), 4.0f, 1e-4f);  // 同流域不变量：行 4 的西端也是 4
+    EXPECT_NEAR(readRasterPixel(output, 7, 4), 4.0f, 1e-4f);  // 同流域不变量：行 4 的出口像元也是 4
+    EXPECT_NEAR(readRasterPixel(output, 7, 7), 7.0f, 1e-4f);  // 第 7 行：标签 7（流域总数 7 的上界）
 }
 
 TEST_F(PluginTest, TerrainProfileExtractExecution) {
