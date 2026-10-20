@@ -9,6 +9,42 @@
 
 namespace gis::framework {
 
+namespace {
+
+// Task B13 / N42：占位符只认 `${name}` 这一种形态，name 的字符集是 [A-Za-z0-9_.-]
+// （覆盖 input / input_before / output_dir / basename / plugin.action.output）。
+// 不做模糊匹配：`${` 之后的字符不在字符集里、或找不到右花括号，就按普通字面量对待
+// （例如路径里自带的 `${`、或 `${a b}` 这种带空格的写法），避免把合法字符串误判成
+// 未解析占位符。判定只看**替换之后的结果串**，与替换循环本身解耦。
+bool isPlaceholderNameChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-';
+}
+
+// 返回 value 里所有 `${name}` 形态的 name（按出现顺序；同一参数内同名只报一次）。
+std::vector<std::string> findUnresolvedPlaceholderNames(const std::string& value) {
+    std::vector<std::string> names;
+    size_t pos = value.find("${");
+    while (pos != std::string::npos) {
+        size_t end = pos + 2;
+        while (end < value.size() && isPlaceholderNameChar(value[end])) {
+            ++end;
+        }
+        if (end > pos + 2 && end < value.size() && value[end] == '}') {
+            const std::string name = value.substr(pos + 2, end - (pos + 2));
+            if (std::find(names.begin(), names.end(), name) == names.end()) {
+                names.push_back(name);
+            }
+            pos = value.find("${", end + 1);
+        } else {
+            pos = value.find("${", pos + 2);
+        }
+    }
+    return names;
+}
+
+} // namespace
+
 WorkflowRunner::WorkflowRunner(PluginManager& pluginManager)
     : pluginManager_(pluginManager) {}
 
@@ -38,6 +74,10 @@ WorkflowResult WorkflowRunner::execute(
         }
 
         std::map<std::string, std::string> resolvedStringParams;
+        // Task B13 / N42：替换完还不成"纯值"的占位符记在这里。选择**一次列全**而不是
+        // 报第一个就返回：这些键都写在同一个预设/工作流里，列全用户改一轮即可；
+        // 只报第一个会让用户改一处、跑一次、再撞下一处。
+        std::vector<std::string> unresolvedPlaceholders;
         for (auto paramIt = step.params.begin(); paramIt != step.params.end(); ++paramIt) {
             std::string resolvedValue = paramIt->second;
 
@@ -59,7 +99,31 @@ WorkflowResult WorkflowRunner::execute(
                 }
             }
 
+            const std::vector<std::string> unresolvedNames =
+                findUnresolvedPlaceholderNames(resolvedValue);
+            for (const auto& name : unresolvedNames) {
+                unresolvedPlaceholders.push_back(name + " (parameter " + paramIt->first + ")");
+            }
+
             resolvedStringParams[paramIt->first] = resolvedValue;
+        }
+
+        // Task B13 / N42：未解析就显式失败并点名键名，绝不回退成"保留字面量继续跑"。
+        // 旧形态把 ${input_before} 当路径交给插件，用户看到的是"打不开文件 ${input_before}"
+        // 这种把配置问题伪装成 I/O 问题的消息（GUI 只取预设、initialParams 为空，
+        // 见 workflow_page.cpp:153-158，所以内置预设全都踩这条）。
+        if (!unresolvedPlaceholders.empty()) {
+            std::string detail;
+            for (const auto& item : unresolvedPlaceholders) {
+                if (!detail.empty()) {
+                    detail += ", ";
+                }
+                detail += item;
+            }
+            result.message = "Step " + std::to_string(i + 1) + " (" + step.pluginName + "." +
+                             step.actionKey + ") placeholder not resolved: " + detail;
+            result.stepMessages.push_back(result.message);
+            return result;
         }
 
         // Task 14：按插件声明的 ParamSpec 把字符串参数解析成带类型的 ParamValue。

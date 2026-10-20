@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -759,13 +760,26 @@ TEST(WorkflowParamValidation, BuiltInPresetStepsMatchRegisteredDispatchOutcomes)
     const auto dir = workflowParamValidationTestDir("preset_dispatch");
     gis::tests::ensureDirectory(dir);
     const std::string missingInput = (dir / "definitely_missing.tif").string();
-    const std::map<std::string, std::string> initial = {
+    std::map<std::string, std::string> initial = {
         {"input", missingInput},
         {"input_before", missingInput},
         {"input_after", missingInput},
         {"output_dir", dir.string()},
         {"basename", "preset"},
     };
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto presets = gis::framework::WorkflowPresets::allPresets();
+    ASSERT_EQ(presets.size(), 3u);
+    // Task B13：工作流现在把未解析的 ${name} 判为失败（N42）。本用例测的是"派发校验的
+    // 结果"，因此把预设每个 step 的链式输出键都喂上（值同样是不存在的路径：校验放行后
+    // 插件仍会在打开文件时失败）。键名从 step 自身派生，预设改键/改名时自动跟随；
+    // 手抄名单会在预设一改时以 "placeholder not resolved" 形式红，把本用例的靶子
+    // 从"派发校验"换成"占位符解析"，那不是本用例要测的东西。
+    for (const auto& preset : presets) {
+        for (const auto& step : preset.steps) {
+            initial[step.pluginName + "." + step.actionKey + ".output"] = missingInput;
+        }
+    }
 
     const std::map<std::string, std::string> expectedRejections = {
         {"遥感预处理/georef.radiometric",
@@ -776,9 +790,6 @@ TEST(WorkflowParamValidation, BuiltInPresetStepsMatchRegisteredDispatchOutcomes)
          "invalid parameter extent: 参数“裁切范围”或“裁切矢量”至少填写一个"},
     };
 
-    gis::framework::WorkflowRunner runner(mgr);
-    const auto presets = gis::framework::WorkflowPresets::allPresets();
-    ASSERT_EQ(presets.size(), 3u);
     int checkedSteps = 0;
     for (const auto& preset : presets) {
         ASSERT_FALSE(preset.steps.empty()) << preset.name;
@@ -804,4 +815,106 @@ TEST(WorkflowParamValidation, BuiltInPresetStepsMatchRegisteredDispatchOutcomes)
     // 3 个预设的步数是 3+4+2；数字写死是为了让"预设被删/改名"在这里就红。
     EXPECT_EQ(checkedSteps, 9) << "内置预设的步数与预期不符，逐个预设复核 WorkflowPresets";
     EXPECT_EQ(expectedRejections.size(), 3u);
+}
+
+// ============================================================================
+// Task B13 / N42：工作流里未解析的 ${占位符} 必须显式失败并点名键名
+//
+// 缺陷原文：resolvedStringParams 的替换循环只把 context 里存在的 ${key} 换掉，
+// 没换掉的保持字面量一路交给插件。GUI 的 onExecuteClicked 只取预设、
+// initialParams 是空 map（workflow_page.cpp:153-158），于是 changeDetection 的
+// ${input_before}/${input_after} 被当成路径，插件报 "Cannot open raster: ${input_after}"。
+// ============================================================================
+
+namespace {
+
+std::filesystem::path workflowPlaceholderTestDir(const std::string& caseName) {
+    const auto dir =
+        gis::tests::defaultTestOutputDir("workflow_placeholder_output") / caseName;
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+
+} // namespace
+
+TEST(WorkflowParamPlaceholder, UnresolvedPlaceholdersFailBeforeDispatch) {
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_NE(mgr.find("matching"), nullptr);
+
+    const auto wf = gis::framework::WorkflowPresets::changeDetection();
+    gis::framework::WorkflowRunner runner(mgr);
+    // 与 GUI 同形：只取预设，initialParams 为空 ⇒ 四个键全都没有写入处。
+    const auto result = runner.execute(wf, {});
+
+    EXPECT_FALSE(result.success) << "未解析占位符的工作流被当成成功: " << result.message;
+    EXPECT_EQ(result.completedSteps, 0) << "失败被算成已完成步数，说明没在派发前拦住";
+    ASSERT_EQ(result.stepMessages.size(), 1u) << result.message;
+    const std::string& message = result.stepMessages[0];
+
+    // 一次列全：input/reference/output 三个参数里的四个占位符都要点名，
+    // 用户改一次就能改完（只报第一个会逼用户跑多轮）。
+    EXPECT_NE(message.find("placeholder not resolved"), std::string::npos) << message;
+    for (const char* key : {"input_before", "input_after", "output_dir", "basename"}) {
+        EXPECT_NE(message.find(key), std::string::npos) << "未点名 " << key << ": " << message;
+    }
+    // 不许落回旧错误（把字面量当路径交给插件）：matching.register 先读 reference，
+    // 旧形态必然报 "Cannot open raster: ${input_after}"。
+    EXPECT_EQ(message.find("Cannot open raster"), std::string::npos) << message;
+    EXPECT_EQ(message.find("threw"), std::string::npos) << message;
+    EXPECT_EQ(message.find("failed:"), std::string::npos) << message;
+}
+
+TEST(WorkflowParamPlaceholder, FullyResolvedPlaceholdersPassThrough) {
+    // 反向控制组：context 给全就必须正常放行——防"把所有 ${...} 都判成未解析"的假实现。
+    // 参数表里还留了两个**不是** ${name} 形态的串（`${not a placeholder}` 名字里有空格、
+    // `${unclosed` 缺右花括号），判定规则只认 [A-Za-z0-9_.-] 组成的名字，它们必须原样透传，
+    // 不能被误判成未解析占位符。
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_NE(mgr.find("raster_math"), nullptr);
+
+    const auto dir = workflowPlaceholderTestDir("all_resolved");
+    // 单波段 8x8，像元值 = x + y（与 ValidNumericParamReachesPluginAndChangesOutput 同形）。
+    std::vector<float> gradient;
+    gradient.reserve(64);
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            gradient.push_back(static_cast<float>(x + y));
+        }
+    }
+    const std::string input =
+        gis::tests::writeFloatRaster(dir, "placeholder_input.tif", 8, 8, gradient);
+    ASSERT_FALSE(input.empty()) << "夹具栅格创建失败";
+
+    gis::framework::Workflow wf;
+    wf.name = "context 给全必须放行";
+    gis::framework::WorkflowStep step;
+    step.pluginName = "raster_math";
+    step.actionKey = "reclassify";
+    step.params["input"] = "${input}";
+    step.params["output"] = "${output_dir}/${basename}_reclass.tif";
+    step.params["reclass_mode"] = "interval";
+    step.params["interval_step"] = "5";
+    step.params["not_a_spec_key"] = "${not a placeholder}";   // 含空格：不是占位符形态
+    step.params["another_unknown"] = "${unclosed";            // 缺右花括号：不是占位符形态
+    wf.steps.push_back(step);
+
+    const std::string output = (dir / "wf_reclass.tif").string();
+    gis::framework::WorkflowRunner runner(mgr);
+    const auto result = runner.execute(wf, {
+        {"input", input},
+        {"output_dir", dir.string()},
+        {"basename", "wf"},
+    });
+    ASSERT_TRUE(result.success) << "全部占位符都能解析却失败了: " << result.message;
+    ASSERT_EQ(result.stepMessages.size(), 1u);
+    EXPECT_EQ(result.stepMessages[0].find("placeholder not resolved"), std::string::npos)
+        << result.stepMessages[0];
+    EXPECT_TRUE(std::filesystem::exists(output))
+        << "解析后的输出路径没有被使用（占位符替换本身坏了）";
 }
