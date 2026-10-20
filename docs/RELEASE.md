@@ -17,7 +17,8 @@ cmake --build build/release --config Release --target real_raster_regression rea
 ```
 
 `ctest` 必须带 `-C Debug` / `-C Release`（不带时两个配置的用例会被一起列出、按错误的配置执行）。
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 635 / Release 633**（Release 恒少 2 条 `debug_only` 用例，见"批次 A 发布说明 → 基线口径"）。
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 692 / Release 690**（2026-10-21 现读，本机两棵树各跑
+`ctest --test-dir build/<树> -C <Config> -N | tail -n 1`；Release 恒少 2 条 `debug_only` 用例，见"批次 A 发布说明 → 基线口径"）。
 
 ### 2) 安装态冒烟 —— 前置条件：确认运行库依赖扫描器（N84）
 
@@ -240,7 +241,8 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 635 / Release 633**；`comm -23` 差集恰为
+- **现行基线**：`ctest -N` 注册数 **Debug 692 / Release 690**（2026-10-21 现读；批次 A 收尾时是 635 / 633，
+  见下一条认证记录——本条只认现读值）；`comm -23` 差集仍恰为
   `gui_matching_ecc_register_debug_failure_offscreen`、`gui_matching_stitch_debug_failure_offscreen`（Release 侧无独有项）。
   ⇒ Release **恒少 2** 是注册数口径，不是"少通过 2 条"；两侧各自 100% 通过。
 - **批次 A 最终基线认证（21-D 收尾现跑，两棵树重编后各跑一次 `-j1` 全量）**：
@@ -282,6 +284,9 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   ⚠ 早先流传的 197.96 s / 385.53 s（632/630 时期）与 370.40 s / 176.74 s（634/632 时期，21-D 收尾）
     都已被上表取代；留这两组只为对账，引用请走上表现值。
   ⚠ 余量的真实风险不在均值墙钟，而在**并发构建叠加**：本批实测 `ctest -j 8` 与另一棵树构建同时跑会造出 3 条假 `Timeout`（见下一节）。
+  ⚠ 上表的**注册数与墙钟都是批次 A 收尾（21-D / 21-Final）的实测值**，不是今天的现值；今天的注册数是
+  Debug 692 / Release 690（见"基线口径"一节）。B20b 必须按发布前最后一次全量现跑重算倍率，
+  **本表的 3.14× / 6.37× 不得当终值引用**（同一批代码实测过"条数在涨而用时在降"，倍率不能按条数比例推）。
 
 ### `ctest -j` 并行：现在开会得到假失败
 
