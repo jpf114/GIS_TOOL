@@ -734,7 +734,7 @@ TEST(WorkflowParamValidation, ActionSpecificCombinationFailsStepBeforePlugin) {
     EXPECT_FALSE(std::filesystem::exists(output)) << "非法组合那一步仍然产出了文件";
 }
 
-TEST(WorkflowParamValidation, BuiltInPresetStepsSurviveDispatchValidation) {
+TEST(WorkflowParamValidation, BuiltInPresetStepsMatchRegisteredDispatchOutcomes) {
     // 验收 #4：内置预设是否会因为新增校验变红。逐预设、逐步骤单独跑一遍
     // WorkflowRunner（每条都真的走 execute 的派发路径），输入刻意给不存在的路径：
     // 校验层放行后插件必然打不开文件而失败，但只要消息里出现 invalid parameter
