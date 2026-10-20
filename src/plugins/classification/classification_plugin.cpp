@@ -583,7 +583,7 @@ OgrGeometryPtr cloneGeometryToTarget(const OGRGeometry* geometry, int sourceEpsg
 
     OgrGeometryPtr cloned(geometry->clone());
     if (!cloned) {
-        throw std::runtime_error("閻垽鍣洪崙鐘辩秿婢跺秴鍩楁径杈Е");
+        throw std::runtime_error("矢量几何复制失败");
     }
 
     if (sourceEpsg == 0 || sourceEpsg == targetEpsg) {
@@ -979,7 +979,7 @@ std::map<int, std::string> loadClassMap(const std::string& path) {
 int getFieldIndexOrThrow(OGRLayer* layer, const char* fieldName) {
     const int index = layer->GetLayerDefn()->GetFieldIndex(fieldName);
     if (index < 0) {
-        throw std::runtime_error("鏉堟挸鍤€涙顔岀紓鍝勩亼");
+        throw std::runtime_error("输出字段缺失");
     }
     return index;
 }
@@ -1011,7 +1011,7 @@ FeatureVectorOutputWriter::FeatureVectorOutputWriter(
 
     layer_ = dataset_->CreateLayer(layerName.c_str(), &srs, wkbPolygon, nullptr);
     if (layer_ == nullptr) {
-        throw std::runtime_error("閺冪姵纭堕崚娑樼紦閻垽鍣洪崚鍡欒鏉堟挸鍤崶鎯х湴");
+        throw std::runtime_error("无法创建矢量分类输出图层");
     }
 
     OGRFieldDefn fieldFeatureId("feature_id", OFTString);
@@ -1473,7 +1473,7 @@ gis::framework::Result ClassificationPlugin::doFeatureStats(
             globalWindow.geotransform);
     }
 
-    progress.onMessage("濮濓絽婀幍褑顢戦崷鎵⒖閸掑棛琚紒鐔活吀...");
+    progress.onMessage("正在执行地物分类统计...");
     FeatureStatsResultData resultData;
     resultData.actualSrs = targetSrs.epsgText;
 
@@ -1601,7 +1601,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
         return gis::framework::Result::fail(bandError);
     }
 
-    progress.onMessage("濮濓絽婀拠璇插絿鐠侇厾绮岄弽閿嬫拱...");
+    progress.onMessage("正在读取训练样本...");
     progress.throwIfCancelled();
     progress.onProgress(0.1);
 
@@ -1663,7 +1663,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
         }
     }
 
-    progress.onMessage("濮濓絽婀拋顓犵矊 SVM 閸掑棛琚崳?..");
+    progress.onMessage("正在训练 SVM 分类器...");
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1676,7 +1676,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
     svm->setGamma(svmGamma);
     svm->setTermCriteria(cv::TermCriteria(cv::TermCriteria::MAX_ITER, 1000, 1e-6));
     if (!svm->train(trainingSamples, cv::ml::ROW_SAMPLE, trainingLabels)) {
-        return gis::framework::Result::fail("SVM 鐠侇厾绮屾径杈Е");
+        return gis::framework::Result::fail("SVM 训练失败");
     }
 
     progress.onMessage("Reading raster bands...");
@@ -1704,7 +1704,7 @@ gis::framework::Result ClassificationPlugin::doSvmClassify(
         }
     }
 
-    progress.onMessage("濮濓絽婀幍褑顢戦弽鍛壐閸掑棛琚?..");
+    progress.onMessage("正在执行栅格分类...");
     progress.throwIfCancelled();
     progress.onProgress(0.7);
 
@@ -1760,7 +1760,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
         return gis::framework::Result::fail(bandError);
     }
 
-    progress.onMessage("濮濓絽婀拠璇插絿鐠侇厾绮岄弽閿嬫拱...");
+    progress.onMessage("正在读取训练样本...");
     progress.throwIfCancelled();
     progress.onProgress(0.1);
 
@@ -1822,7 +1822,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
         }
     }
 
-    progress.onMessage("濮濓絽婀拋顓犵矊闂呭繑婧€濡喗鐏勯崚鍡欒閸?..");
+    progress.onMessage("正在训练随机森林分类器...");
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1866,7 +1866,7 @@ gis::framework::Result ClassificationPlugin::doRandomForestClassify(
         }
     }
 
-    progress.onMessage("濮濓絽婀幍褑顢戦弽鍛壐閸掑棛琚?..");
+    progress.onMessage("正在执行栅格分类...");
     progress.throwIfCancelled();
     progress.onProgress(0.7);
 
@@ -1923,7 +1923,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
         return gis::framework::Result::fail(bandError);
     }
 
-    progress.onMessage("濮濓絽婀拠璇插絿鐠侇厾绮岄弽閿嬫拱...");
+    progress.onMessage("正在读取训练样本...");
     progress.throwIfCancelled();
     progress.onProgress(0.1);
 
@@ -2042,7 +2042,7 @@ gis::framework::Result ClassificationPlugin::doMaxLikelihoodClassify(
     cv::Mat result(height, width, CV_32F);
     cv::Mat sample(1, static_cast<int>(task.bands.size()), CV_32F);
 
-    progress.onMessage("濮濓絽婀幍褑顢戦張鈧径褌鎶€閻掕泛鍨庣猾?..");
+    progress.onMessage("正在执行最大似然分类...");
     progress.throwIfCancelled();
     progress.onProgress(0.7);
     for (int y = 0; y < height; ++y) {
@@ -2267,7 +2267,7 @@ gis::framework::Result ClassificationPlugin::doAccuracyAssessment(
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(
-        "缁儳瀹崇拠鍕強鐎瑰本鍨? OA=" + std::to_string(overallAccuracy) +
+        "精度评估完成: OA=" + std::to_string(overallAccuracy) +
         " Kappa=" + std::to_string(kappa), outputPath);
     result.metadata["action"] = "accuracy_assessment";
     result.metadata["overall_accuracy"] = std::to_string(overallAccuracy);
