@@ -22,6 +22,19 @@
 
 namespace gis::plugins {
 
+// skip_blank 的判空容差：不透明像元 **<= 此值** 才算空瓦片。
+// WHY 阈值不是 0（这一条有意偏离计划 Step 3 的措辞，偏离理由=盘上事实）：
+//   "0 个有效像元"这种瓦片已经被 renderTileRgba 末尾的"没有任何有效像元 ⇒ 不交付"守卫
+//   **无条件**挡掉（R-T18-6 明令保留该语义；#298 的 z=11 只写 9 张、#310 的
+//   tiles_generated=13/tiles_skipped=7 都把它钉成了与 skip_blank 无关的事实，改期望=GOLD 回归）。
+//   于是把这里的阈值也写成 0，两个谓词就完全同判据 ⇒ isTileBlank 那条调用永不可真 ⇒
+//   skip_blank 退化成"面板上能勾、CLI 能设、结果不变"的死键 —— 正是本任务要消灭的 N65 形态。
+//   留一个 >0 的小容差，skip_blank 管的就正是"只有寥寥几个不透明像元"的近空瓦片
+//   （判别用例 #315 的档 B：1×1 源栅格 ⇒ 4 个不透明像元 ⇒ true 跳过 / false 写出）。
+// WHY 仍是 4 而不是按比例：改前实现就是 4（原 :660 `if (nonzero > 4) return false`），
+//   本任务不动这条口径；要改成"占瓦片像元的百分比"属于口径变更，交控制器随 Task 21 定。
+constexpr int kBlankOpaquePixelTolerance = 4;
+
 std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
     return {
         gis::framework::ParamSpec{
@@ -127,7 +140,7 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
             double{-1e15}, double{1e15}
         },
         gis::framework::ParamSpec{
-            "skip_blank", "跳过空瓦片", "Skip tiles with at most 4 opaque pixels",
+            "skip_blank", "跳过空瓦片", std::string("Skip tiles with at most ") + std::to_string(kBlankOpaquePixelTolerance) + " opaque pixels",
             gis::framework::ParamType::Bool, false, bool{true}
         },
         gis::framework::ParamSpec{
@@ -664,19 +677,6 @@ struct BandStretch {
     double minV = 0.0;
     double maxV = 0.0;
 };
-
-// skip_blank 的判空容差：不透明像元 **<= 此值** 才算空瓦片。
-// WHY 阈值不是 0（这一条有意偏离计划 Step 3 的措辞，偏离理由=盘上事实）：
-//   "0 个有效像元"这种瓦片已经被 renderTileRgba 末尾的"没有任何有效像元 ⇒ 不交付"守卫
-//   **无条件**挡掉（R-T18-6 明令保留该语义；#298 的 z=11 只写 9 张、#310 的
-//   tiles_generated=13/tiles_skipped=7 都把它钉成了与 skip_blank 无关的事实，改期望=GOLD 回归）。
-//   于是把这里的阈值也写成 0，两个谓词就完全同判据 ⇒ isTileBlank 那条调用永不可真 ⇒
-//   skip_blank 退化成"面板上能勾、CLI 能设、结果不变"的死键 —— 正是本任务要消灭的 N65 形态。
-//   留一个 >0 的小容差，skip_blank 管的就正是"只有寥寥几个不透明像元"的近空瓦片
-//   （判别用例 #315 的档 B：1×1 源栅格 ⇒ 4 个不透明像元 ⇒ true 跳过 / false 写出）。
-// WHY 仍是 4 而不是按比例：改前实现就是 4（原 :660 `if (nonzero > 4) return false`），
-//   本任务不动这条口径；要改成"占瓦片像元的百分比"属于口径变更，交控制器随 Task 21 定。
-constexpr int kBlankOpaquePixelTolerance = 4;
 
 static bool isTileBlank(const cv::Mat& rgba) {
     if (rgba.channels() < 4) return false;
