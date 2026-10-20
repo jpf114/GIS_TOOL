@@ -262,7 +262,7 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   **不需要动上限断言**。另核：`EXPECT_LE(pending, 96)` 那一版从未进过代码
   （`git log -S'EXPECT_LE(pending, 96)' -- tests/test_coverage_meta.cpp` 零命中），96 只是计划期的估算。
 
-### CI 超时余量（本机静态核；远端待首跑验证）
+### CI 超时余量（本机实测；远端待首跑验证）
 
 - **本机 `gh auth status` 未登录 ⇒ 拿不到任何真实 CI 时长**，本节全部数字来自本地同机串行实测；
   凡涉及 CI 超时的说法都要写"**待远端首跑验证**"。
@@ -274,19 +274,20 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 | 配置 | 注册数 | 本地全量墙钟（`-j1`、无并发构建） | 步骤超时 | 余量 |
 |---|---|---|---|---|
-| Debug | 635 | **382.54 s**（最终态现跑：`build/t21Final_ctrl_debug_full.log`，含 `runtime_dll_cross_config_audit` 与 N100 断言） | 1200 s | **1200 ÷ 382.54 = 3.14×** |
-| Release | 633 | **188.41 s**（同上，`build/t21Final_ctrl_release_full.log`） | 1200 s | **1200 ÷ 188.41 = 6.37×** |
+| Debug | 692 | **347.66 s**（B20b 定稿现跑：`build/tmp/b20b_ctest_debug.log`） | 1200 s | **1200 ÷ 347.66 = 3.45×** |
+| Release | 690 | **178.91 s**（B20b 定稿现跑：`build/tmp/b20b_ctest_release.log`） | 1200 s | **1200 ÷ 178.91 = 6.71×** |
 
-  交叉核对（控制器同基线上一轮现跑）：Debug 367.37 s → 3.27×、Release 182.94 s → 6.56×；两轮相差 <3.5%，
-  ⇒ **取更慢的那一轮算余量也不改变结论**：`timeout-minutes: 20` 对 Debug 仍有 3 倍以上余量。
-  最贵的非 GUI 用例：`param_guard_visible_keys_all_read` 现跑 **3.95 s**（Debug）/ 3.84 s（Release），
-  距 300 s 的 `TIMEOUT` 线有 **300 ÷ 3.95 = 75×** 余量。
-  ⚠ 早先流传的 197.96 s / 385.53 s（632/630 时期）与 370.40 s / 176.74 s（634/632 时期，21-D 收尾）
-    都已被上表取代；留这两组只为对账，引用请走上表现值。
+  上表是 **`c265b1a` 上、机器安静时**的实测（跑前硬门控 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0，
+  两棵树各自先构建该配置、再串行 `-j1`）：Debug `100% tests passed, 0 tests failed out of 692`（347.66 s），
+  Release `100% tests passed, 0 tests failed out of 690`（178.91 s）。
+  交叉核对（批次 A 收尾 21-D 现跑，635/633 条）：Debug 382.54 s → 3.14×、Release 188.41 s → 6.37×；
+  两轮 Debug 相差约 10%（本轮更快），⇒ **取更慢的那一轮算余量也不改变结论**：`timeout-minutes: 20`
+  对 Debug 仍有 3 倍以上余量（3.14× > 3×）。
+  `param_guard_visible_keys_all_read` 现跑 **3.43 s**（Debug）/ 3.30 s（Release），
+  距 300 s 的 `TIMEOUT` 线有 **300 ÷ 3.43 = 87×** 余量；`install_closure` 现跑 14.85 s / 11.11 s（安装审计类），同样远低于 300 s。
+  ⚠ 早先流传的 197.96 s / 385.53 s（632/630 时期）、370.40 s / 176.74 s（634/632 时期，21-D 收尾）
+    与 382.54 s / 188.41 s（批次 A 收尾 635/633）都已被上表取代；留这些只为对账，引用请走上表现值。
   ⚠ 余量的真实风险不在均值墙钟，而在**并发构建叠加**：本批实测 `ctest -j 8` 与另一棵树构建同时跑会造出 3 条假 `Timeout`（见下一节）。
-  ⚠ 上表的**注册数与墙钟都是批次 A 收尾（21-D / 21-Final）的实测值**，不是今天的现值；今天的注册数是
-  Debug 692 / Release 690（见"基线口径"一节）。B20b 必须按发布前最后一次全量现跑重算倍率，
-  **本表的 3.14× / 6.37× 不得当终值引用**（同一批代码实测过"条数在涨而用时在降"，倍率不能按条数比例推）。
 
 ### `ctest -j` 并行：现在开会得到假失败
 
@@ -360,47 +361,85 @@ offscreen self-test 起不了进程：改前后两次跑都只观测到 stdout �
 Release 包的**文件名集合逐条不变**（名字级 diff；未做内容逐字节比对）。
 **交付形态仍是 Release**；本条只消掉"Debug 装出残包还静默成功"这一类风险。判据命令见"发布前验证 → 第 3 步"。
 
-### 批次 B 变更说明（草稿，供 B20b 定稿）
+### 批次 B 变更明细（用户可见变更与已知边界）
 
-本节只写**已确证**的事实，供 B20b 合并进最终发布说明；内部项一律标明"不进用户版"。
-口径、行号与复算命令见 [specs/2026-10-21-批次B收尾口径与决策稿.md](superpowers/specs/2026-10-21-批次B收尾口径与决策稿.md)。
+本节数字均为 2026-10-21 定稿时现读/现跑；设置落点与 `GIS_TOOL_SETTINGS_INI` 残留（N103）见上一节，
+口径与复算命令见 [specs/2026-10-21-批次B收尾口径与决策稿.md](superpowers/specs/2026-10-21-批次B收尾口径与决策稿.md)。
 
-**⑧ 矢量动作的参数面板收窄（用户可见）**
+**参数面板按动作收窄（39 个动作）**
 
-`vector` 插件 30 个动作的参数面板改成逐 action 的可见键：合计 **468 个** `paramSpecs` 键不再显示
-（恒等式 30 个动作 × 19 个可见位 = 570 = **102 保留 + 468 去掉**）。其中 29 个动作去掉的键都是该动作**从不读**的键
-（判据：30 条动作的实读键集与消失键集交集为空，另有 120 个键有源码级证据）；唯一需要点名的是 `vector.info`（矢量信息）：
-它的"输出文件"框被去掉——该动作只读输入、输出报告文本，spec 虽把它标成必填，插件却从不读它，去掉后产物不变。
-命令行与工作流的参数键不受影响（收窄的是 GUI 面板显示）。
+`vector` / `processing` / `classification` 中此前没有逐动作面板配置的 **39 个动作**
+（vector 30 / processing 5 / classification 4）现在各有自己的 `visibleKeys` 白名单：
+面板只显示该动作**实际读取**的键，不再把插件级 `paramSpecs` 全集铺出来。
+其中 vector 30 个动作的逐键账是 **30 × 19 = 570 = 102 个保留 + 468 个不再显示**。
+消失的键按风险分三级：**A 类 1 个 / B 类 29 个动作 / C 类 0**。唯一的 A 类是
+`vector.info`（矢量信息）的"输出文件"框：spec 把它标成必填，但 `doInfo` 只读 `input`/`layer`、
+报告写文本，从不读 `output`，去掉后产物不变。其余 29 个动作消失的键都是该动作从不读的死键
+（判据：30 条动作的实读键集与消失键集交集为空）；判据强度如实写明——468 个键里
+**120 个有源码级证据**，其余 **348 个**只由"消失键 ∩ trace 实读集 = ∅"支撑，依赖扫描器而非独立证明。
+另有 **5 处必填加严**：`difference` / `intersect` / `union` 的 `overlay_vector`、`nearest` 的
+`nearest_vector`、`spatial_join` 的 `join_vector`——spec 标 `required=false`，但插件对空值直接失败，
+面板现在按必填处理（加严，不是放宽）。命令行与工作流的参数键不受影响（收窄的只是 GUI 面板显示）。
 
-**⑨ 测试守卫的插件名单（内部项，不进用户版）**
+**工作流占位符：未解析即显式失败（含字面量边界）**
 
-`tests/test_gui_support.cpp` 的 `kMustBeConfigured` 仍是 13 个产品插件的**手抄名单**；
-建议改成"对所有加载到的插件执法 + 与 `cmake/PluginTargets.cmake` 的 13 个 target 对撞"，
-消掉"新插件不被断言"的漂移面。对用户无可见变化，本批未实施。
+参数值里形如 `${名字}`（名字限 `[A-Za-z0-9_.-]`）且上下文没有同名变量时，步骤在派发前失败并点名：
+`Step n (plugin.action) placeholder not resolved: <名字> (parameter <键>), ...`，不再把 `${...}`
+原样当路径交给动作（旧形态会报"打不开文件 `${input_before}`"这种 I/O 假象）。
+边界必须写明：**判定只看替换后的结果串，凡是 `${name}` 形态都会被当占位符**——即使用户想写的是
+字面量（例如 `.../literal_${raw}.tif`），也会收到 `placeholder not resolved: raw`；要字面量请改名，
+或等"转义/字面量"支持（已登记为后续项）。反过来，`${a b}`（含空格）与不配对的 `${` 仍按普通字面量透传。
+内置预设 `remoteSensingPreprocess` 的两个错 actionKey 同批修好
+（`georef.radiometric` → `radiometric_calibration`、`georef.dos` → `dos_correction`）：
+该预设此前两步 `Unknown action`、第三步非法组合，按定义跑不通；改后这三步的键都真实存在
+（派发校验层面：前两步放行到插件，缺输入时才报 `Cannot open raster`；第三步 `cutting.clip`
+仍要求 `extent` 或 `cutline`）——修的是"键根本不存在"，不是让预设免填参数。
+注意 GUI 工作流页只取预设、不填参数，内置预设仍会先撞上面这条未解析占位符错误（B13），
+只是失败原因从"I/O 打不开文件"变成"占位符没给值"。
+`changeDetection` 等内置预设的失败形态同样从"打不开文件 `${input_before}`"变成这条明确原因。
 
-**⑩ 参数值里的 `${…}` 一律按占位符处理（用户可见，含边界）**
+**命令行拒绝未声明键；tile 的 `--resample=` 开始生效（B14 与 B16 必须同版）**
 
-参数值里写成 `${名字}`（名字限 `[A-Za-z0-9_.-]`）就会被当成工作流占位符；上下文里没有同名变量时，
-步骤以 `placeholder not resolved: <名字> (parameter <键>)` 失败并点名，不再把这段文字原样传给动作。
-⇒ **想写字面量 `${raw}` 的用户会收到这条错误**：请改名，或等"转义/字面量"支持（已登记为后续项）。
-这条是显式失败，方向优于原来的静默透传，但必须让用户知道边界。
-
-**⑪ 命令行拒绝未声明键，工作流仍透传（已知不对称）**
-
-`gis-cli` 对**未声明**的参数键报错并点名（`rc=1`，如 `Error: unknown parameter "k" (plugin processing, action kmeans_segment)`）；
+这两条必须一起发布。B14 之后，`gis-cli` 对**未声明**的参数键报错并点名（`rc=1`，如
+`Error: unknown parameter "k" (plugin processing, action kmeans_segment); ...`，大小写敏感、不做别名）；
+`cutting.tile` 的 warp 插值此前唯一真正生效的拼写是**未声明**的 `--resampling`，它从此会被 CLI 拒绝；
+B16 让 tile 改读已声明的 `--resample` ⇒ **旧拼写被拒 + 新拼写生效**是同一版的两半
+（只发 B14 不发 B16 的中间态最糟：原来能用的键被拒、替代品还不生效）。
+tile 不传 `resample` 时仍用插件内部默认 **`average`**（与 spec 声明的默认 `nearest` 不同，
+但与改前内联默认相同；用例钉住"不传"与"显式 `resample=average`"的产物逐字节相同）；
+原来显式传 `--resampling` 的老脚本则会收到上述未声明键错误，属破坏性变化。
+GUI 面板**不显示**该键——显示它会让"没改过就提交"也实发 `nearest`，把默认产物改掉。
 **工作流**里未命中的键仍会透传给插件、由插件按默认值跑（不报错）。这是明写的范围边界、不是遗漏：
 把工作流也收紧会改变已有工作流文件的语义，属语义变更，待拍板。
-同族的一条：`--resampling` 从来不是声明键，B14 起被 CLI 拒绝；`--resample` 从 B16 起对 `cutting.tile` 真正生效，
-不传时仍按插件内部默认 `average`（与 spec 声明的默认 `nearest` 不同）；GUI 面板**不显示**该键——
-显示它会让"没改过就提交"也实发 `nearest`，把默认产物改掉，这才是它保持不可见的原因。
 
-**⑬ GUI 工作流页没有取消入口（已知限制，不是活缺陷）**
+**插件异常与工作流取消（B15）**
 
-`gis::framework::WorkflowResult.isCancelled`（`src/framework/include/gis/framework/workflow.h:37`）目前**没有任何**
-GUI 消费者：GUI 的**工作流页**既不提供取消按钮、也不读这个标志。单动作执行页走的是另一个类型
-`Result::isCancelled`（`src/framework/include/gis/framework/result.h:10`），不受影响。
-⇒ 今天没有用户可达的"取消工作流"路径；将来若加取消按钮，取消会被显示成失败（已登记，届时同批补显示分支）。
+GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeGuarded` 兜获，捕获顺序固定为
+`CancelledException` → `std::exception` → `...`：
+
+- **`std::exception` 之外的抛出不再终止进程**：此前 CLI 与工作流没有 `catch (...)`，非 std 派生的抛出
+  （实测 `throw 42;`）会走 `std::terminate`（Release 实测 rc=0xC0000409、无输出；Debug 停在 abort 对话框）；
+  现在统一转成失败消息（`Unknown exception (non-std)`），CLI 以 `rc=1` 结束。
+- **工作流的"用户取消"从失败变取消**：`WorkflowResult` 新增 `isCancelled`（默认 false，
+  `src/framework/include/gis/framework/workflow.h:37`），`CancelledException` 与插件自己返回的
+  `cancelled()` 不再写成 `Step n (plugin.action) threw: ...` 的失败，而是 `cancelled: ...` 且
+  `isCancelled=true`。但 GUI 的**工作流页**目前既不提供取消按钮、也不读这个标志
+  （单动作执行页走 `Result::isCancelled`，不受影响）⇒ 今天没有用户可达的"取消工作流"路径；
+  将来若加取消按钮，取消会被显示成失败（已登记，届时同批补显示分支）。
+
+**文案乱码清理（B17）**
+
+两批共修 **28 行**中文文案：**13 行**是可 GBK roundtrip 还原的双重编码（分类插件 10 行 + 测试支撑 3 行），
+**15 行**是有损的私用区乱码 U+E000–U+F8FF（分类插件 14 行 + GUI 主程序 1 行）；两批不重叠。
+
+**内部项与待拍板（不进用户版）**
+
+- `tests/test_gui_support.cpp` 的 `kMustBeConfigured` 仍是 13 个产品插件的手抄名单；建议改成
+  "对所有加载到的插件执法 + 与 `cmake/PluginTargets.cmake` 的 13 个 target 对撞"，本批未实施。
+- 今天没有断言锁"spec `required=true` 的键必须保持可见"；这类收窄今后仍可能静默发生（判据缺口，已登记）。
+- **待拍板、本批未实施**：① B17 乱码检测器未落库、未注册成 ctest（含正例夹具与 U+FFFD 规则的建议见决策稿 §6）；
+  ② 仓库仍无 `.gitattributes`，8 个受版本控制的文件仍带 UTF-8 BOM（加/去影响 73 个工作区文件的换行尾，
+  见决策稿 §5）。
 
 ---
 
