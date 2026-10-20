@@ -1404,7 +1404,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"input", "输入DEM", "Input DEM path", gis::framework::ParamType::FilePath, true, std::string{}},
         gis::framework::ParamSpec{"reference", "参考DEM", "Reference DEM path used by cut_fill", gis::framework::ParamType::FilePath, false, std::string{}},
         gis::framework::ParamSpec{"output", "输出结果", "Output raster or report path", gis::framework::ParamType::FilePath, true, std::string{}},
-        gis::framework::ParamSpec{"band", "波段", "DEM band index", gis::framework::ParamType::Int, false, int{1}, int{1}, int{999}},
+        gis::framework::ParamSpec{"band", "波段", "Band index of the input raster (1-based)", gis::framework::ParamType::Int, false, int{1}, int{1}, int{999}},
         gis::framework::ParamSpec{"z_factor", "Z因子", "Vertical exaggeration factor", gis::framework::ParamType::Double, false, double{1.0}, double{0.001}, double{10000.0}},
         gis::framework::ParamSpec{"azimuth", "方位角", "Light azimuth for hillshade", gis::framework::ParamType::Double, false, double{315.0}, double{0.0}, double{360.0}},
         gis::framework::ParamSpec{"altitude", "高度角", "Light altitude for hillshade", gis::framework::ParamType::Double, false, double{45.0}, double{0.0}, double{90.0}},
