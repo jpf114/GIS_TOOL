@@ -20,6 +20,10 @@
 #include "test_support.h"
 #include "raster_fixture.h"
 
+#ifndef GIS_SOURCE_DIR
+#define GIS_SOURCE_DIR "."
+#endif
+
 TEST(FrameworkTest, ResultOk) {
     auto r = gis::framework::Result::ok("success", "/path/to/output");
     EXPECT_TRUE(r.success);
@@ -286,6 +290,94 @@ TEST(FrameworkTest, CliRejectsInvalidEnumAction) {
 
     EXPECT_NE(exitCode, 0);
     EXPECT_NE(output.find("取值无效"), std::string::npos) << output;
+}
+
+// Task B14 / N35：CLI 未声明参数键的两条对照用例。
+// 正向用例必须存在：否则"把所有键都拒了"也能让反向用例变绿。
+// 反向用例的"插件确实没有被调用"用产物观察：同一条 buffer 命令在正向用例里会写出
+// 输出文件；带上未知键后被拒时该文件必须不存在（本用例先删残留再跑）。
+static std::filesystem::path gisCliPathForTests() {
+    const auto exeDir = gis::tests::testExecutableDir();
+    const auto buildRoot = exeDir.parent_path().parent_path();
+    return buildRoot / "src" / "cli" / exeDir.filename() / "gis-cli.exe";
+}
+
+static int runGisCliCaptureOutput(const std::string& arguments, std::string& output) {
+    const std::string command = "\"" + gisCliPathForTests().string() + "\" " + arguments + " 2>&1";
+    std::array<char, 512> buffer{};
+    output.clear();
+
+#ifdef _WIN32
+    FILE* pipe = _popen(command.c_str(), "r");
+#else
+    FILE* pipe = popen(command.c_str(), "r");
+#endif
+    if (!pipe) {
+        return -1;
+    }
+
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+        output += buffer.data();
+    }
+
+#ifdef _WIN32
+    return _pclose(pipe);
+#else
+    return pclose(pipe);
+#endif
+}
+
+// 注意：_popen 把整串交给 `cmd /c`，而 cmd 的引号规则会吃掉命令行里"最后一个引号"
+// （参数值再套引号就会把命令拆坏 —— 实测表现为 "系统找不到指定的路径。"）。
+// 构树与仓库路径都不含空格，故这里与既有 CLI 用例一致，不额外给参数值加引号。
+static std::string b14BufferArguments(const std::filesystem::path& outPath,
+                                      const std::string& extraArgs = {}) {
+    const std::string input = std::string(GIS_SOURCE_DIR)
+        + "/tests/data/gui_vector_projected_input.geojson";
+    std::string args = "vector buffer --input=" + input + " --output="
+        + outPath.string() + " --distance=100";
+    if (!extraArgs.empty()) {
+        args += " " + extraArgs;
+    }
+    return args;
+}
+
+TEST(FrameworkTest, CliAcceptsDeclaredParamKeys) {
+    ASSERT_TRUE(std::filesystem::exists(gisCliPathForTests())) << gisCliPathForTests().string();
+
+    auto outputDir = gis::tests::defaultTestOutputDir("test_framework_output");
+    gis::tests::ensureDirectory(outputDir);
+    const auto outPath = outputDir / "b14_declared_param_keys.gpkg";
+    std::filesystem::remove(outPath);
+
+    std::string output;
+    const int exitCode = runGisCliCaptureOutput(b14BufferArguments(outPath), output);
+
+    EXPECT_EQ(exitCode, 0) << output;
+    EXPECT_EQ(output.find("unknown parameter"), std::string::npos) << output;
+    EXPECT_NE(output.find("Success: Buffer completed"), std::string::npos) << output;
+    EXPECT_TRUE(std::filesystem::exists(outPath)) << output;
+}
+
+TEST(FrameworkTest, CliRejectsUnknownParamKeysListingAll) {
+    ASSERT_TRUE(std::filesystem::exists(gisCliPathForTests())) << gisCliPathForTests().string();
+
+    auto outputDir = gis::tests::defaultTestOutputDir("test_framework_output");
+    gis::tests::ensureDirectory(outputDir);
+    const auto outPath = outputDir / "b14_unknown_param_keys.gpkg";
+    std::filesystem::remove(outPath);
+
+    std::string output;
+    const int exitCode = runGisCliCaptureOutput(
+        b14BufferArguments(outPath, "--not_a_real_key=1 --another_typo_key=2"), output);
+
+    EXPECT_NE(exitCode, 0) << output;
+    EXPECT_NE(output.find("unknown parameters"), std::string::npos) << output;
+    EXPECT_NE(output.find("\"not_a_real_key\""), std::string::npos) << output;
+    EXPECT_NE(output.find("\"another_typo_key\""), std::string::npos) << output;
+    EXPECT_EQ(output.find("Success:"), std::string::npos) << output;
+    // 插件未被调用：正向用例证明同一条命令会写出该文件，这里它必须不存在。
+    EXPECT_FALSE(std::filesystem::exists(outPath)) << output;
 }
 
 TEST(FrameworkTest, OrderedMetadataEntriesPreferStandardKeys) {

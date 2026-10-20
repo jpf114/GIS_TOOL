@@ -192,7 +192,7 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 ### K-Means（`processing.kmeans_segment`）：旧别名 `k` 已废弃
 
-`kmeans` 的 `k` 别名已从代码里移除，请改用 `kmeans_k`。⚠ 旧写法 `--k=9` **不再报错、而是被忽略**（静默按 spec 默认 `4` 算）。
+`kmeans` 的 `k` 别名已从代码里移除，请改用 `kmeans_k`。⚠ 旧写法 `--k=9` 的行为分两个阶段：**B14 之前**不报错、被忽略（静默按 spec 默认 `4` 算）；**B14 之后**未声明键（含旧别名 `k`）由 CLI **拒绝并点名**（`rc=1`），而工作流侧未命中的键仍透传。
 影响面：面板与 CLI 今天都已不提供键 `k` 的入口 ⇒ 受影响的是**历史脚本 / 直接调库**的调用方，不是界面上的旧参数。
 
 ### 矢量检查：`duplicate_point_check` 支持 MultiPoint（计数口径）

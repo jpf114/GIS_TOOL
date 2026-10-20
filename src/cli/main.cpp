@@ -78,6 +78,31 @@ static bool convertParam(
     return gis::framework::convertParamValue(specs, key, value, outValue, error);
 }
 
+// Task B14 / N35：CLI 层拒绝"未声明的参数键"。
+// 键名匹配规则：与 paramSpecs() 的 spec.key 逐字节比较（大小写敏感、不做别名、不做前缀匹配）。
+// --help/-h、--list/-l 在 parseArgs 里已消费，不会落进 params；位置参数（插件名、动作）不是参数键。
+// 边界：本检查只发生在 CLI 调用点，convertParamValue 的"未命中透传"保持原样（B12 明令，
+// 工作流侧依赖它）；由此产生的"CLI 拒 / 工作流透传"不对称由 B19/B20 决定是否统一。
+static std::vector<std::string> findUndeclaredParamKeys(
+    const std::map<std::string, std::string>& params,
+    const std::vector<gis::framework::ParamSpec>& specs)
+{
+    std::vector<std::string> unknown;
+    for (const auto& entry : params) {
+        bool declared = false;
+        for (const auto& spec : specs) {
+            if (spec.key == entry.first) {
+                declared = true;
+                break;
+            }
+        }
+        if (!declared) {
+            unknown.push_back(entry.first);
+        }
+    }
+    return unknown;
+}
+
 #ifdef _WIN32
 static std::string wideToUtf8(const std::wstring& value) {
     if (value.empty()) {
@@ -173,6 +198,26 @@ int main(int argc, char* argv[]) {
     }
 
     auto specs = plugin->paramSpecs();
+
+    // Task B14 / N35：未声明键必须点名报错（可能不止一个 ⇒ 全部列出），
+    // 不能静默透传给插件后按默认值跑完还报 rc=0。
+    const auto undeclaredKeys = findUndeclaredParamKeys(args.params, specs);
+    if (!undeclaredKeys.empty()) {
+        std::cerr << "Error: unknown parameter";
+        if (undeclaredKeys.size() > 1) {
+            std::cerr << "s";
+        }
+        for (size_t i = 0; i < undeclaredKeys.size(); ++i) {
+            std::cerr << (i == 0 ? " " : ", ") << "\"" << undeclaredKeys[i] << "\"";
+        }
+        std::cerr << " (plugin " << plugin->name();
+        if (!args.positional.empty()) {
+            std::cerr << ", action " << args.positional[0];
+        }
+        std::cerr << "); parameters must be spelled exactly as in `gis-cli "
+                  << plugin->name() << " --help` (case-sensitive, no aliases)." << std::endl;
+        return 1;
+    }
 
     std::map<std::string, gis::framework::ParamValue> params;
     for (auto& [key, val] : args.params) {
