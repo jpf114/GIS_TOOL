@@ -1120,7 +1120,14 @@ gis::framework::Result CuttingPlugin::doTile(
     const int minZoom = gis::framework::getParam<int>(params, "min_zoom", 0);
     int maxZoom = gis::framework::getParam<int>(params, "max_zoom", -1);
     const int tileSize = gis::framework::getParam<int>(params, "tile_pixel_size", 256);
-    const std::string resampling = gis::framework::getParam<std::string>(params, "resampling", "average");
+    // B16（N36）：这里原先读的是**未声明**的 "resampling"，而 paramSpecs 声明的是 "resample"
+    // ⇒ 用户传 --resample= 对 tile 完全无效（永远走内联默认 "average"），且没有任何报错。
+    // 改读已声明的 "resample"；该键驱动下面 GDALWarp 的 -r（重投影插值）。
+    // ⚠ 默认值**故意**不是 paramSpecs 里 resample 的 default("nearest")，就是这里的 "average"：
+    //   改成 nearest 会一次性换掉**所有既有 tile 产物**的插值，那是"修死键"之外的第二件事。
+    //   由此产生的已知不一致：GUI 面板显示的 Default: 来自 spec（nearest），而实际缺省按 average
+    //   算 ⇒ 归 B19 决策（给 tile 单独默认，或接受"面板默认=插件级默认"的近似）。别当笔误改掉。
+    const std::string resampling = gis::framework::getParam<std::string>(params, "resample", "average");
     const std::string ovResampling = gis::framework::getParam<std::string>(params, "overview_resampling", "nearest");
     const std::string fmt = gis::framework::getParam<std::string>(params, "output_format", "png");
     const int jpegQuality = gis::framework::getParam<int>(params, "jpeg_quality", 75);

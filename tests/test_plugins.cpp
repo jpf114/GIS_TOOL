@@ -11407,6 +11407,47 @@ std::map<std::string, gis::framework::ParamValue> t17BaseTileParams(
     return params;
 }
 
+// B16（N36）夹具：EPSG:4326 的 0/250 棋盘格。
+// WHY 不是 3857：3857→3857 的 warp 输出网格与源网格重合，`-r` 取什么都不改变像素值
+//   （仓库里那些 3857 夹具对 `resampling` 赋值至今"看似生效"就是这个缘故）；
+//   4326→3857 时 y 向被墨卡托压缩 1/cos(40°)≈1.3 倍 ⇒ 是真实重采样，两种插值取值才会不同。
+// WHY 不是纯色：纯色下 nearest 与 average 结果必然相同，用例会假绿（任务书点名）。
+std::string t36ResampleFixtureInput(const std::string& name) {
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg4326;
+    options.originX = 116.0; options.originY = 40.0; options.pixelSize = 0.001;
+    std::vector<float> data(64 * 64, 0.0f);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x)
+            data[static_cast<size_t>(y) * 64 + x] = ((x + y) & 1) ? 250.0f : 0.0f;
+    return gis::tests::writeFloatRaster(getTestDir(), name, 64, 64, data, options);
+}
+
+// 跑一次 cutting.tile（z=8 单瓦片）并返回"全部瓦片文件的相对路径 + 字节"的拼接。
+// resample 为空串 ⇒ **不传**该键（用来钉缺省值）。故意把"有产物"也当判据：
+// 两个空串相等会把"缺省值没变"这条断言变成恒真。
+std::string t36RunTileCollectBytes(gis::framework::IGisPlugin* p, const std::string& input,
+                                   const std::string& outName, const std::string& resample,
+                                   gis::core::ProgressReporter& progress) {
+    const fs::path output = getTestDir() / outName;
+    fs::remove_all(output);
+    auto params = t17BaseTileParams(input, utf8PathString(output));
+    params["min_zoom"] = 8;
+    params["max_zoom"] = 8;
+    if (!resample.empty()) params["resample"] = resample;
+    const auto result = p->execute(params, progress);
+    EXPECT_TRUE(result.success) << outName << ": " << result.message;
+    const auto files = t17CollectTileFiles(output);
+    EXPECT_FALSE(files.empty()) << outName << " 一张瓦片都没产出";
+    std::string bytes;
+    for (const auto& f : files) {
+        bytes += f;
+        bytes += t17ReadWholeFile(output / fs::path(f));
+    }
+    EXPECT_FALSE(bytes.empty()) << outName << " 瓦片字节为空";
+    return bytes;
+}
+
 // metadata.json 的 "bounds" 解析（修复轮 1 起新用例共用）。
 // WHY 不复用 #297 里的那段 sscanf：它是既有锚（GOLD 冻结），把它的解析段抽走等于改动锚；
 // 这里按同一手法（跳过 pos 处的起始引号后从 'b' 起匹配，格式里的空白符吸收冒号与逗号后的
@@ -11864,6 +11905,45 @@ TEST_F(PluginTest, TileOverviewResamplingDrivesOutputBytes) {
     }
     EXPECT_NE(nearestBytes, averageBytes)
         << "nearest 与 average 产出字节一致 ⇒ overview_resampling 没有驱动瓦片缩放（R-T17-11①）";
+}
+
+// B16（N36）：doTile 原先读的是**未声明**的 "resampling"，paramSpecs 声明的 "resample"
+// 对它完全无效（用户传 --resample= 既无效也无报错；改前取证见 task-B16-report.md 的 E1）。
+// 改读 "resample" 之后，这个键必须真的驱动 warp 的 -r。
+// 夹具用 t36ResampleFixtureInput（4326 棋盘格）：3857→3857 的重合网格下 -r 不改变像素值，
+// 用 3857 夹具这条会恒绿。
+TEST_F(PluginTest, TileResampleDrivesOutputBytes) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    const std::string input = t36ResampleFixtureInput("t36_resample_switch_input.tif");
+    const std::string nearestBytes = t36RunTileCollectBytes(
+        p, input, "t36_resample_nearest_output", "nearest", progress_);
+    const std::string averageBytes = t36RunTileCollectBytes(
+        p, input, "t36_resample_average_output", "average", progress_);
+    ASSERT_FALSE(nearestBytes.empty());
+    ASSERT_FALSE(averageBytes.empty());
+    EXPECT_NE(nearestBytes, averageBytes)
+        << "resample=nearest 与 average 的瓦片逐字节相同 ⇒ doTile 没在读声明的 resample"
+           "（修前形态就是读死键 resampling，N36）";
+}
+
+// B16（N36）第二腿：缺省值必须**仍是** "average"，即不传 resample 的产物与显式
+// resample=average 逐字节相同。参数面声明的是 default=nearest（:paramSpecs 的 resample），
+// 这处"实际缺省 average ≠ spec 声明 nearest"是**故意**的（保持所有既有 tile 产物不变）⇒
+// 一旦有人把 doTile 的内联默认改成 nearest，本用例立刻红。
+TEST_F(PluginTest, TileOmittedResampleIsByteIdenticalToExplicitAverage) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+    const std::string input = t36ResampleFixtureInput("t36_resample_default_input.tif");
+    const std::string omittedBytes = t36RunTileCollectBytes(
+        p, input, "t36_resample_omitted_output", "", progress_);
+    const std::string explicitBytes = t36RunTileCollectBytes(
+        p, input, "t36_resample_explicit_average_output", "average", progress_);
+    ASSERT_FALSE(omittedBytes.empty());
+    ASSERT_FALSE(explicitBytes.empty());
+    EXPECT_EQ(omittedBytes, explicitBytes)
+        << "不传 resample 与显式 average 的瓦片不同 ⇒ doTile 的缺省值被改成了别的"
+           "（spec 的 nearest？那会一次性换掉所有既有 tile 产物的插值）";
 }
 
 // R-T17-11①：cv::resize 无对应项的取值必须显式失败并点名取值，不许静默降级。
