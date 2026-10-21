@@ -361,8 +361,12 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **697** | **761.78 s**（N117 修复后现跑，`build/tmp/nf_ctest_dbg.log` 不入库） | 同计数三样本 **702.01 / 741.52 / 761.78 s**（极差 59.8 s ⇒ 波动带比我先前说的 ±25 s 宽得多） | 全库最慢 `real_data_vector_full` ~186 s ⇒ 780 ÷ 186 = **4.2×**；blanket 300 那批最慢 `source_mojibake_guard` ~12 s ⇒ **25×** |
-| Release | **695** | **367.32 s**（同轮；`build/tmp/r1_full_rel.log` 不入库） | 392.67 s（同计数、修复轮之前；Δ25.35 s） | 全库最慢 `real_data_vector_full` **91.28 s** ⇒ 780 ÷ 91.28 = **8.5×**；`source_mojibake_guard` **9.40 s** ⇒ **32×** |
+| Debug | **697** | **732.32 s**（批次 C C3a 收口轮现跑，`build/tmp/c3a_close_dbg.log` 不入库） | 同计数四样本 **702.01 / 741.52 / 761.78 / 732.32 s**（极差 **59.77 s** ⇒ 波动带比我先前说的 ±25 s 宽得多） | 全库最慢 `real_data_vector_full` **197.04 s** ⇒ 780 ÷ 197.04 = **3.96×**；次慢 `real_data_vector_quick` **176.86 s** ⇒ 720 ÷ 176.86 = **4.07×**；blanket 300 那批最慢 `source_mojibake_guard` ~12 s ⇒ **25×** |
+| Release | **695** | **361.72 s**（同一轮紧随其后跑；`build/tmp/c3a_close_rel.log` 不入库） | 392.67 s → 367.32 s → **361.72 s**（同计数三样本，Δ30.95 s） | 全库最慢 `real_data_vector_full` **87.22 s** ⇒ 780 ÷ 87.22 = **8.94×**；`real_data_vector_quick` **79.97 s** ⇒ 720 ÷ 79.97 = **9.00×**；`source_mojibake_guard` **9.40 s** ⇒ **32×** |
+
+⚠ 收口轮两条腿的 `TIMEOUT` 余量**从 4.2× 掉到 3.96×（Debug）**：`real_data_vector_full` 由 ~186 s 变 197.04 s。
+这条**不作趋势结论**（按上面那条纪律，同计数跨轮差值一律不作证据），但**现值必须现读**——
+余量已经不到 4×，**再加真实数据腿或提高切片规模时这一栏要重跑**，且 `720/780` 这两个数不是可以按比例调的。
 
   两轮分开写清（上一版这里把两轮混成"本轮"，正是本文件刚修过的"表改了 prose 没改"同一形态）：
   - **收尾三轮**（693 / 691 那一档）：两棵树重配置后 `-j1` 全量，
@@ -370,6 +374,10 @@ cmake --install build/release --config Release --prefix install
   - **批次 C Task C2 + 复审修复轮**（现值 697 / 695）：+4 条 `real_data_*`，修复轮之后重配重编再全量，
     `100% tests passed, 0 tests failed out of 697`（Debug 702.01 s）与 `out of 695`（Release 367.32 s）。
     同一形式在修复轮之前的另一档是 741.52 / 392.67 s —— 两轮都全绿，差值按上面那条纪律**不作任何结论**。
+  - **批次 C C3a 收口轮**（本表现值）：树上多了 `cf50a39`（四条几何派生改两要素夹具 + 钉坐标断言）与
+    两个取证批（**零提交**，只证明判别力），跑前硬门控 = 0、串行 `-j1`，
+    `100% tests passed, 0 tests failed out of 697`（Debug **732.32 s**）与 `out of 695`（Release **361.72 s**）。
+    注册数没变 ⇒ C3a 只改断言与夹具、没增删用例，这是它该有的形状。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -732,6 +740,25 @@ dll 比源新）⇒ 这类判据抓不到"坐标轴互换"。另有夹具盲区�
 的期望按"第 i 个顶点"写死 ⇒ 顶点断言钉住了坐标但**没有覆盖多要素与跳过分支**。
 复算口径：`grep -c "feature_count" ` 那四个用例块（现 `tests/test_plugins.cpp` 内）应随批从 `"1"` 变 `"≥2"`。
 后果面：与 N118 同源的一族缺陷（循环里 `break`、聚合方向写反、跳过计数漏加）在这四条上测不出。
+
+C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、不修**，修归 C3c 之后的产品批；
+每条都带现读载体，不是"看起来像问题"）：
+
+- 挂账 **N121**（注释与行为不一致）：`buildSliverFilteredGeometry`（`src/plugins/vector/vector_plugin_common.inc:718` 起）
+  注释写 `Rebuild without interior rings that are too small (slivers)`，但循环体把 `getNumInteriorRings()` 的
+  **所有内环原样 `addRing` 搬运**，没有任何面积判断 ⇒ 用户以为"细缝多边形里的洞也会被清理"，实际只丢外环面积 `< min_area` 的面。
+  另：比较用的是 `<` 而非 `<=` ⇒ 面积**恰等于** `min_area` 的面不删，这条边界全仓无用例。
+- 挂账 **N122**（未定性，需探针）：`singlepart` / `sliver_remove` / `geom_metrics` 的扩展名判定与
+  `removeExistingVectorOutput` 用**窄** `fs::path(output)`（`common.inc:299-300`），
+  而 CSV 侧与 `ensureParentDirectoryForFile` 用 `fs::u8path`（`:311`）⇒ 非 ASCII 输出路径行为存疑。
+  **我还没跑过这个探针**（跑它要动二进制，与本表上面的纪律一样：探针不能在全量期间做）⇒ 只登记现象，不写"这是缺陷"。
+- 挂账 **N123**（判据覆盖面）：`topology_check` 的四类问题里 `empty_geometry` 与 `invalid_geometry` **无任何用例覆盖**
+  （现读实现是两个独立 `if`、可同写两行；成对判定 `duplicate_geometry` 与 `overlap` 是 `if/else if`、互斥）。
+  "自交面会不会同时被判 invalid"我**没有算式依据** ⇒ C3b-B1 明确不做这两行，等用 `IsValid()` 实测后再定期望值。
+- 挂账 **N124**（可核对性缺口）：`overlap_check` / `topology_check` / `adjacency` 三个 O(n²) 动作对
+  **空几何/非法几何静默丢弃且不计数**，metadata 只有 `relation_count` / `issue_count`，
+  **没有任何"扫了多少要素"的键** ⇒ 用户无法从产物判断覆盖范围；`nearest` 同类（空源几何 `continue` 不计数，
+  `feature_count` 可以小于输入要素数且差额无处可查），而它的 `nearest_vector` 键是**入参字符串回显**、不是目标要素数，极易读错。
 
 （原文如下，保留以便对账：）`vector.interior_point` 没有履行
 "点在面内"的语义 —— 它与 `vector.centroid` **走同一行实现**（都调 `normalized->Centroid(&point)`），
