@@ -1164,7 +1164,9 @@ function Assert-TopologyCheckCase {
             # overlap_check 对每对写行当且仅当交面积 > 0；topology_check 对同一对要么走 Equals 分支写
             # duplicate_geometry（此时交面积必然也 > 0），要么走 else-if 写 overlap，两分支互斥 ⇒
             # "成对行数" == overlap_check 的关系数，另加 empty/invalid 两类**不成对**的行。
-            # 两动作各自实现这套扫描 ⇒ 这条等式是两个独立实现的交叉验证，不是一处断言的复读。
+            # 两动作各自实现"配对枚举 + 写行 + Equals/else-if 互斥"这一层 ⇒ 等式交叉验证的是这层；
+            # ⚠ N125 修复后**交面积已单源**（两边都调 polygonIntersectionArea），
+            #   所以这条等式**不再**独立验证面积算法本身——别把它读成"两套面积实现的互证"。
             Assert-Condition -Condition ($pairRows -eq $script:C3baOverlapBufRelations) -Message (
                 $Case.Name + ":" + $pairRows + "!= overlap_check " +
                 $script:C3baOverlapBufRelations + " buf30 O(n )")
