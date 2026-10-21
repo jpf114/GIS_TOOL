@@ -125,6 +125,23 @@ cmake --install build/release --config Release --prefix install
   缺件与"装了但没人引用"都会红）。
 - ⚠ 仍然不含 VC++ 运行库（`MSVCP140.dll` / `VCRUNTIME140*.dll` 按设计排除）⇒
   目标机需要装过 VC++ Redistributable 或装过 Visual Studio。
+- **包体与运行库范围（2026-10-21 现测）**：同一棵 Release 构建树装出来的包是
+  **430 个文件 / 192.2 MB**（改前 508 个 / 359.6 MB）。少的 78 个文件、167.4 MB 是**逐字节相同的副本**：
+  安装脚本原先在装完 `bin/*.dll` 后，又把 `bin/` 里每个运行库再复制一份进 `bin/plugins/`；
+  该复制段已删（`cmake/install_runtime_deps.cmake.in`）。
+  删除依据不是"看着用不上"：插件 dll 的导入项按**进程可执行文件所在目录**起解析，而那个目录就是 `bin/`，
+  副本从未参与解析。在删掉副本的树里实测 —— `gis-cli --list` 输出与有副本时逐字节一致、
+  `vector clip`（真实 22836 要素）、`projection reproject`（要读 `share/proj/proj.db`）、
+  `gis-gui`（`QT_QPA_PLATFORM=offscreen` 起事件循环）全部照常；`install_closure` 用例 1/1 绿。
+  ⚠ 仓库根那份旧的 `install/`（330.3 MB / 535 文件，上一轮规则装的）仍含这些副本，
+  它不是我这一轮该覆盖的目录 ⇒ 重跑上面那条 `cmake --install` 前先手工删掉旧目录，
+  否则只增不删、看不出差别。
+- **剩下的 78 个运行库本项目裁不动**：它们是 GDAL / OpenCV / Qt 的传递闭包，不是"顺手多带的无关库"——
+  `gdal.dll` 直接拖进 arrow / parquet / spatialite / netcdf / hdf5 / poppler / libxml2，
+  `opencv_dnn4.dll` 拖进 `libprotobuf.dll`，`Qt6Core.dll` 拖进 `icuuc78 → icudt78`
+  （`icudt78.dll` 单文件 31.6 MB，是全包最大的一项）。
+  本项目自己的代码只有 3.6 MB（2 个 exe + 13 个插件 dll）。
+  要再小只能重编 GDAL/Qt 关掉用不上的驱动，那要动 vcpkg 树 ⇒ 与"不回退/不替换依赖"的裁定冲突，不在本轮范围。
 - 已删除的流程载体：`.github/workflows/windows-build.yml`（云端构建）与 `installer/installer.nsi`
   （NSIS 脚本）。历史文档里提到这两处的段落一律按"已停用"读。
 
@@ -278,33 +295,36 @@ cmake --install build/release --config Release --prefix install
   上一版这里写的 `:155-170,1449-1461` 就是漂了的）：`tests/CMakeLists.txt` 里搜
   `set(GIS_TEST_TIMEOUT 300)`、`gtest_discover_tests(gis_tests` 块内的 `PROPERTIES TIMEOUT`、
   文件末尾的 `set_property(TEST ${GIS_TIMED_TEST_NAMES}`。
-- **余量算式**（`timeout-minutes: 20` = 1200 s 对本地全量墙钟；job 级 90 min 为整体上限）：
+- **全量墙钟基线**（2026-10-21 收尾三轮现跑。云端构建停用后已经没有"步骤超时"这一档 ⇒
+  唯一还生效的时间上界是**单条用例 `TIMEOUT 300 s`**；全量墙钟只用作"再加用例要重跑这一栏"的触发线）：
 
-| 配置 | 注册数 | 本地全量墙钟（`-j1`、无并发构建） | 步骤超时 | 余量 |
+| 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **693** | **374.46 s**（`build/tmp/b20v_b21_debug.log`） | 1200 s | **1200 ÷ 374.46 = 3.21×** |
-| Release | **691** | **200.72 s**（`build/tmp/b20v_b21_release.log`） | 1200 s | **1200 ÷ 200.72 = 5.98×** |
+| Debug | **693** | **429.86 s**（`build/tmp/fs_ctest_dbg.log`） | 374.46 s（B21 轮，也是 693 条） | `source_mojibake_guard` **22.31 s** ⇒ 300 ÷ 22.31 = **13.4×** |
+| Release | **691** | **231.79 s**（`build/tmp/fs_ctest_rel.log`） | 200.72 s（B21 轮，也是 691 条） | `source_mojibake_guard` **18.33 s** ⇒ 300 ÷ 18.33 = **16.4×** |
 
-  上表是**批次 B 最后一棒（B21 乱码守卫落成用例）之后**那一轮的现跑：跑前两棵树都完整重配置、
-  跑前硬门控 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0、串行 `-j1`，
-  结果 `100% tests passed, 0 tests failed out of 693`（Debug）与 `out of 691`（Release）。
-  注册数从 692/690 变 693/691，是因为新增了一条 `source_mojibake_guard`（两棵树各 +1，
-  差集仍是那两条 Debug-only 的 `gui_matching_*_debug_failure_offscreen`）。
-  ⚠ **Debug 侧墙钟在近四轮是 346–374 s 的区间**（346.11 / 347.66 / 374.46，加批次 A 的 382.54），
-  本轮比上一轮慢 28 s 而用例只多一条（守卫自身约 12 s）⇒ **多出来的约 16 s 我没有解释**，
-  宁可按机器波动处理，也不挑最快那一轮写结论：按最慢的 374.46 s 算，余量 3.21×。
-  ⇒ 余量仍 > 3×，但**已从 3.5× 收到 3.2×**；再加注册用例时这一栏必须重跑，
-  **不能按条数比例外推**（本仓有"条数涨而用时降"的先例）。
-  对账用的更早三轮：终审修复轮（692/690）Debug 346.11 s → 3.47×、Release 174.16 s → 6.89×；
-  B20b 定稿轮 Debug 347.66 s → 3.45×、Release 178.91 s → 6.71×；
-  批次 A 收尾 21-D（635/633 条）Debug 382.54 s → 3.14×、Release 188.41 s → 6.37×。
-  ⇒ 四轮全在 3.1×~3.5× ⇒ 取最慢一轮也不改变结论：`timeout-minutes: 20` 对 Debug 有 3 倍以上余量。
+  本轮两棵树都完整重配置（安装规则改动必须重配才生效）、跑前硬门控
+  `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0、串行 `-j1`，结果
+  `100% tests passed, 0 tests failed out of 693`（Debug）与 `out of 691`（Release）。
+  注册数与上一轮相同（本轮没有增删用例，只改了安装规则、回归脚本判据与文档）。
+  ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
+  **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
+  所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
+  ⇒ 上一版那句"多出来的约 16 s 我没有解释"是同一个意思，只是当时样本太少；现在样本够了，
+  结论就是**这一栏只能现读现写：不许按条数外推，也不许拿它论证某个改动"变慢了"**
+  （本仓有"条数涨而用时降"的先例）。
+  ⚠ **"最慢单条"这一栏的取法要说清**：693 条的用时**全部**能被 `Passed <N> sec` 抓到
+  （逐条求和 427.8 s，与整轮墙钟 429.86 s 只差 2 s，那 2 s 是 ctest 自己的调度开销）⇒
+  最慢值 22.31 s 是全库最慢，不是子集最慢。但**名字与用时的配对**只成功 594/693 条
+  （其余断在两行），所以"最慢的是哪一条"要单独核：本轮最大值 22.31 s 恰在配对成功的那批里，
+  与 `source_mojibake_guard` 同一行 ⇒ 这一条成立；以后若最大值落在没配上的 99 条里就得手工认领。
   ⚠ 还有一轮 **371.56 s**（B17 修复后那次全量）**没有**进上表，因为当时四个终审评审席正在并发读盘
   ⇒ 按本文件"全量耗时会被并发活动污染"那条纪律，它只能算**下限样本**，不能当安静值引用。
-  同一轮里三条脚本类用例的现跑：**新增的 `source_mojibake_guard` 14.78 s（Debug）/ 12.01 s（Release）**、
-  `param_guard_visible_keys_all_read` 3.59 s / 3.33 s、`install_closure` 17.26 s / 11.92 s（安装审计类，
-  它自带 RESOURCE_LOCK、不会与别的用例抢同一个前缀）⇒ 距 300 s 的 `TIMEOUT` 线最紧的一条也有
-  **300 ÷ 17.26 = 17×** 余量。
+  三条脚本类用例的同轮现跑：`source_mojibake_guard` **22.31 s（Debug）/ 18.33 s（Release）**、
+  `install_closure` **15.40 s / 10.32 s**（安装审计类，它自带 RESOURCE_LOCK、不会与别的用例抢同一个前缀；
+  比 B21 轮的 17.26 / 11.92 各快约 1.9 s / 1.6 s —— "少拷 78 个文件"只是**候选解释**，
+  本机波动本身就是 ±2 s 量级，不作定论）、`param_guard_visible_keys_all_read` 4.19 s / 3.50 s
+  ⇒ 距 300 s 的 `TIMEOUT` 线最紧的一条有 **300 ÷ 22.31 = 13.4×** 余量。
   ⚠ 早先流传的 197.96 s / 385.53 s（632/630 时期）、370.40 s / 176.74 s（634/632 时期，21-D 收尾）
     与 382.54 s / 188.41 s（批次 A 收尾 635/633）都已被上表取代；留这些只为对账，引用请走上表现值。
   ⚠ 余量的真实风险不在均值墙钟，而在**并发构建叠加**：本批实测 `ctest -j 8` 与另一棵树构建同时跑会造出 3 条假 `Timeout`（见下一节）。
@@ -540,6 +560,50 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
   ② **`.gitattributes` 与去 BOM ⇒ 裁定不做**，保持现状（索引侧 0 变化但下次检出会让 74 个工作区文件
   换行尾；影响面非 0 而收益只在"换机器克隆"这一侧）。8 个 BOM 文件与行尾混用的现状不变，
   复算口径仍留在决策稿 §5。
+
+### 收尾二轮（2026-10-21）：真实矢量回归暴露的四条判据缺陷
+
+`real_vector_regression` 是 `add_custom_target`，**不在 ctest 的 693/691 里** ⇒ 只有
+`cmake --build build/release --config Release --target real_vector_regression` 会跑它。
+本轮按"各功能要能真出结果"的要求首跑这条链路（输入是 `data/vector/北京市_道路.shp` 过滤后的 22836 要素），
+一次暴露四处，且**全在判据侧、没有一处是产品算错**：
+
+1. **期望值是合成样本标定的常量**：脚本自 `58158e0`（2026-04-27）起优先取 `data/vector` 的真实道路，
+   而 clip / union / intersect / spatial_join / convert 的期望仍写死 `2`（那是 3 要素合成样本过滤后的数）。
+   ⇒ 本轮首跑就红；不能说它曾绿，因为这条从来不是 ctest 用例。
+   现改为**由输入图层自己的要素数推导**（`Get-LayerStats` 读 `vector info`），合成样本与真实数据同时成立。
+2. **窗口退化**：`china_bbox` 恰好完全覆盖道路实测范围 `(115.4185,39.4437)-(117.4509,41.0580)`
+   ⇒ clip 是恒等、difference 是空集，几何引擎一刀没切。现按范围生成三个窗口：外扩 20%（恒等关系）、
+   整块挪到范围之外（clip/intersect 必须 0、difference 必须全留）、取中间 25%~75%（真会切，
+   并钉住 `clip` 与 `intersect` 在同一窗口上报告的要素数必须相等）。
+3. **一条假绿**：`buffer_quick` 的判据是 `Contains("feature_count: 2")`，真实输出是 `feature_count: 22836` ——
+   `"feature_count: 2"` 恰是它的前缀，所以本轮它"通过"了，而它想钉的数字一个字都不对。现按整数相等判。
+   ⚠ 与前几条同一根：**子串包含**做判据时，短数字会被长数字的前缀吃掉，且永远不会自己响。
+4. **编码盲读**：`convert_roads_geojson` 用 `Get-Content -Raw | ConvertFrom-Json` 整读 12 MB 的 UTF-8 GeoJSON，
+   PowerShell 5.1 默认按 ANSI 代码页解码 ⇒ 中文属性值被读坏，抛的是
+   "JSON 语法无效 (position 230)" 这种**假产品缺陷**（实测该文件严格 UTF-8 可解、`次干道` 完好）。
+   现不整读 JSON，改判"文件头是 FeatureCollection + 转出的图层能被读回同样的要素数"。
+
+现值：quick 15 条全过（用例内计时合计 87.48 s，其中 buffer 38.31 s、spatial_join 40.16 s）；
+`full` 在此之上另加 clip_stress / difference_stress。
+⚠ 口径要说清：这条链路判的是**要素数与"产物还能被读回"**，不判几何顶点。
+"每一刀切得对不对"由 ctest 里的 GOLD 用例钉（`tests/action_gold_cases.txt` 现读
+126 个动作 = GOLD 54 / PENDING 72，PENDING 的定义是"只有成功+产物存在级断言，数值正确性未钉"）。
+挂账 **N112**：这四条修复自身没有机器级兜底 —— 目标不在 ctest 里，改完判据后是否还跑全靠人记得；
+把 `real_*_regression` 纳入 ctest（带数据缺失即 SKIP 的语义）留待批次 C 决定。
+
+挂账 **N114**：批次 A 改过的 17 项算法问题里，有 **4 个动作今天仍是 `PENDING`**（登记表现为机器判定，
+不是印象：`CoverageMeta.GoldEvidenceIsAuditable` 会回到用例块体核"剥完注释后是否仍有数值断言"）——
+`cutting.tile`（Task 17/18）、`processing.pansharpen`（Task 13）、`raster_math.band_math`（Task 5）、
+`vector.duplicate_point_check`（Task 20/A0）。这四处改当时都有"同一变异、旧绿新红"的判别证据，
+但**动作级数值口径没被钉下来**（`terrain.watershed` 已 GOLD，`processing.watershed` 是另一个动作、仍 PENDING）
+⇒ 批次 C 要给这四个补数值断言并把行改成 GOLD，同时把 `CoverageMeta.PendingCountDoesNotGrow` 的上限
+从 72 往下调。
+
+挂账 **N113**：`docs/算法说明/` 逐插件点数是 **125 篇 vs 126 个动作**，缺的一篇正是
+`classification.accuracy_assessment`（批次 A Task 8 改过它的 PA/UA 算法，却没有对应文档；
+`地物分类统计 / SVM 分类 / 随机森林分类 / 最大似然分类` 四篇都在）。
+其余 120 篇的参数表与 `--help` 的机械核对**仍未做**，已逐条复验的只有漂移清单里的 D1~D5。
 
 ---
 

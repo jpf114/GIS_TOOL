@@ -12,15 +12,22 @@
 
 ### 最近验收摘要（2026-10-21）
 
-- `ctest --test-dir build/debug -C Debug -j1`：**693/693** 通过（346 s 量级）
-- `ctest --test-dir build/release -C Release -j1`：**691/691** 通过（175 s 量级）
-  （Release 恒少 2 条，是两条只在 Debug 生效的轻量闸门用例，按名字核过）
-- `real_raster/matching/vector_regression`（quick）通过
+- `ctest --test-dir build/debug -C Debug -j1`：**693/693** 通过（429.86 s）
+- `ctest --test-dir build/release -C Release -j1`：**691/691** 通过（231.79 s）
+  （Release 恒少 2 条，是两条只在 Debug 生效的轻量闸门用例，按名字核过；
+  ⚠ 本机全量墙钟的 run-to-run 波动有 ±25 s，这两数以当次现读为准，不要拿来论证某个改动变慢）
+- 真实数据回归（`data/` 只读，输入是 22836 要素的北京道路）：`real_raster_regression`、
+  `real_matching_regression`、`real_vector_regression`（quick 15 条）与 `real_vector_regression_full`（17 条）
+  四个目标全部 rc=0。⚠ 这四条是 `add_custom_target`，**不在 ctest 的 693/691 里**（挂账 N112）
 - `cmake --install` + 包内导入闭包断言（`install_closure`）通过
 - 交付方式：只用 `cmake --install`；NSIS 安装包与 GitHub 云端构建已于 2026-10-21 停用
+- 包体：430 个文件 / 192.2 MB（2026-10-21 删掉"把 `bin/*.dll` 再复制一份进 `bin/plugins/`"那段后
+  比原先少 78 个文件 / 167.4 MB；本项目自己的代码只占 3.6 MB，其余全是 GDAL/OpenCV/Qt 的传递依赖）
 
-> ⚠ 本页与 `docs/` 下的部分文档存在**与代码不一致**的条目（参数名/默认值/安装路径/验收数字），
-> 逐项清单见 [docs/算法说明/文档漂移清单.md](docs/算法说明/文档漂移清单.md)。以二进制 `--list/--help` 为准。
+> ⚠ 文档与代码的一致性只**逐条复验了 5 条**（D1~D5，见
+> [docs/算法说明/文档漂移清单.md](docs/算法说明/文档漂移清单.md)）：D2/D3/D4 已在本仓库改文档，
+> D1 是 CLI 参数契约缺陷（`vector info` 被强制要求 `--output`，留待批次 C），D5 是缺一篇算法说明。
+> 其余 120 篇动作说明的参数表**尚未与 `--list/--help` 逐篇机械核对** ⇒ 参数名/类型/默认值以二进制为准。
 
 > 更早的验收明细见 [CHANGELOG.md](CHANGELOG.md) 与 [docs/RELEASE.md](docs/RELEASE.md)。
 
