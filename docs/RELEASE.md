@@ -294,21 +294,29 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 | 配置 | 注册数 | 本地全量墙钟（`-j1`、无并发构建） | 步骤超时 | 余量 |
 |---|---|---|---|---|
-| Debug | 692 | **346.11 s**（批次 B 全部落定后的最后一轮：`build/tmp/b20v_final2_debug.log`） | 1200 s | **1200 ÷ 346.11 = 3.47×** |
-| Release | 690 | **174.16 s**（同一轮：`build/tmp/b20v_final2_release.log`） | 1200 s | **1200 ÷ 174.16 = 6.89×** |
+| Debug | **693** | **374.46 s**（`build/tmp/b20v_b21_debug.log`） | 1200 s | **1200 ÷ 374.46 = 3.21×** |
+| Release | **691** | **200.72 s**（`build/tmp/b20v_b21_release.log`） | 1200 s | **1200 ÷ 200.72 = 5.98×** |
 
-  上表是**批次 B 全部修复落定后**那一轮的现跑（跑前两棵树都完整重建、跑前硬门控
-  `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0，串行 `-j1`）：
-  Debug `100% tests passed, 0 tests failed out of 692`（346.11 s），
-  Release `100% tests passed, 0 tests failed out of 690`（174.16 s）。
-  对账用的更早两轮：B20b 定稿那轮（`4591ee7` 的代码态、机器安静）Debug 347.66 s → 3.45×、
-  Release 178.91 s → 6.71×；批次 A 收尾 21-D（635/633 条）Debug 382.54 s → 3.14×、Release 188.41 s → 6.37×。
-  ⇒ 各轮 Debug 侧都在 3.1×~3.5×，**取最慢一轮也不改变结论**：`timeout-minutes: 20` 对 Debug 有 3 倍以上余量。
+  上表是**批次 B 最后一棒（B21 乱码守卫落成用例）之后**那一轮的现跑：跑前两棵树都完整重配置、
+  跑前硬门控 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0、串行 `-j1`，
+  结果 `100% tests passed, 0 tests failed out of 693`（Debug）与 `out of 691`（Release）。
+  注册数从 692/690 变 693/691，是因为新增了一条 `source_mojibake_guard`（两棵树各 +1，
+  差集仍是那两条 Debug-only 的 `gui_matching_*_debug_failure_offscreen`）。
+  ⚠ **Debug 侧墙钟在近四轮是 346–374 s 的区间**（346.11 / 347.66 / 374.46，加批次 A 的 382.54），
+  本轮比上一轮慢 28 s 而用例只多一条（守卫自身约 12 s）⇒ **多出来的约 16 s 我没有解释**，
+  宁可按机器波动处理，也不挑最快那一轮写结论：按最慢的 374.46 s 算，余量 3.21×。
+  ⇒ 余量仍 > 3×，但**已从 3.5× 收到 3.2×**；再加注册用例时这一栏必须重跑，
+  **不能按条数比例外推**（本仓有"条数涨而用时降"的先例）。
+  对账用的更早三轮：终审修复轮（692/690）Debug 346.11 s → 3.47×、Release 174.16 s → 6.89×；
+  B20b 定稿轮 Debug 347.66 s → 3.45×、Release 178.91 s → 6.71×；
+  批次 A 收尾 21-D（635/633 条）Debug 382.54 s → 3.14×、Release 188.41 s → 6.37×。
+  ⇒ 四轮全在 3.1×~3.5× ⇒ 取最慢一轮也不改变结论：`timeout-minutes: 20` 对 Debug 有 3 倍以上余量。
   ⚠ 还有一轮 **371.56 s**（B17 修复后那次全量）**没有**进上表，因为当时四个终审评审席正在并发读盘
   ⇒ 按本文件"全量耗时会被并发活动污染"那条纪律，它只能算**下限样本**，不能当安静值引用。
-  `param_guard_visible_keys_all_read` 现跑 **3.44 s**（Debug）/ 3.42 s（Release），
-  距 300 s 的 `TIMEOUT` 线有 **300 ÷ 3.44 = 87×** 余量；`install_closure` 现跑 11.62 s / 8.91 s（安装审计类，
-  它自带 RESOURCE_LOCK、不会与别的用例抢同一个前缀），同样远低于 300 s。
+  同一轮里三条脚本类用例的现跑：**新增的 `source_mojibake_guard` 14.78 s（Debug）/ 12.01 s（Release）**、
+  `param_guard_visible_keys_all_read` 3.59 s / 3.33 s、`install_closure` 17.26 s / 11.92 s（安装审计类，
+  它自带 RESOURCE_LOCK、不会与别的用例抢同一个前缀）⇒ 距 300 s 的 `TIMEOUT` 线最紧的一条也有
+  **300 ÷ 17.26 = 17×** 余量。
   ⚠ 早先流传的 197.96 s / 385.53 s（632/630 时期）、370.40 s / 176.74 s（634/632 时期，21-D 收尾）
     与 382.54 s / 188.41 s（批次 A 收尾 635/633）都已被上表取代；留这些只为对账，引用请走上表现值。
   ⚠ 余量的真实风险不在均值墙钟，而在**并发构建叠加**：本批实测 `ctest -j 8` 与另一棵树构建同时跑会造出 3 条假 `Timeout`（见下一节）。
@@ -342,10 +350,12 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   复审实测删掉包内 `bin/sqldrivers/qsqlite.dll` 时 Verify 仍然绿。
 - **N88**（内部债，不进用户可见发布说明）：~~`cmake/gis_runtime_dlls.cmake:1-77` 构建侧存在两份手抄 DLL 名单~~
   —— **已还**（`e726710` 加单源表与派生、`bcfb5cd` 删掉两条手抄名单）。它剩下的那一半"样式标错无人判"另立 **N105**。
-- **N104（审计覆盖面，B6 取证时实测出）**：`runtime_dll_cross_config_audit` 只扫
-  `${CMAKE_BINARY_DIR}/plugins` 与 `$<TARGET_FILE_DIR:gis-cli>` 两个目录，而
-  `src/cli/CMakeLists.txt:21` 的 `gis_copy_minimal_runtime(gis-cli DEST_DIR $<TARGET_FILE_DIR:gis-cli>/plugins)`
-  **每次构建都在往第三个目录写**，那个目录不在射程内。现读（`python` 递归比 vcpkg 两侧目录）：
+- **N104（审计覆盖面，B6 取证时实测出、终审席 2 独立复现并把范围算准）**：
+  `gis_copy_minimal_runtime` 一共往 **5 个**目录写运行库——`${CMAKE_BINARY_DIR}/plugins`、
+  gis-cli 的 exe 目录、gis-cli 的 `exe/plugins` 子目录、gis-gui 的 exe 目录、gis_tests 的 exe 目录
+  （调用点：`src/cli/CMakeLists.txt:20-21`、`src/gui/CMakeLists.txt:93`、`tests/CMakeLists.txt:150`、
+  根 `CMakeLists.txt:310`），而 `runtime_dll_cross_config_audit` 的 `file(GLOB "${_dir}/*.dll")`
+  **只扫其中 2 个**且不递归 ⇒ 有 3 个写入目标不在射程。现读（`python` 递归比 vcpkg 两侧目录）：
   Debug 树 `src/cli/Debug/plugins` 有 **46 个**只属 Release 命名的 dll（Qt6*/gdal.dll/opencv_*/proj_9.dll…），
   Release 树同形目录有 **45 个**只属 Debug 命名的 dll；另有 13 个插件各自的输出目录里各 1 个 `minizip.dll`
   （mtime 2026-05-22，属历史残留、当前构建不再产生）。把该目录喂给**同一条规则**立刻红
@@ -524,10 +534,24 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
 - `tests/test_gui_support.cpp` 的 `kMustBeConfigured` 仍是 13 个产品插件的手抄名单；建议改成
   "对所有加载到的插件执法 + 与 `cmake/PluginTargets.cmake` 的 13 个 target 对撞"，本批未实施。
 - 今天没有断言锁"spec `required=true` 的键必须保持可见"；这类收窄今后仍可能静默发生（判据缺口，已登记）。
-- **待拍板、本批未实施**：① B17 乱码检测器未落库、未注册成 ctest（含正例夹具与 U+FFFD 规则的建议见决策稿 §6）；
-  ② 仓库仍无 `.gitattributes`，8 个受版本控制的文件仍带 UTF-8 BOM（加 `* text=auto` 后下一次检出
-  会有 **74 个**工作区文件换行尾 = 66 个 `w/lf` + 8 个 `w/mixed`，索引 0 条变化；
-  见决策稿 §5）。
+- **待拍板项的裁定结果（2026-10-21 用户拍板）**：
+  ① **B17 乱码检测器 ⇒ 已落地**为一条 ctest 用例 `source_mojibake_guard`（四规则全带：
+  roundtrip、私用区 U+E000–U+F8FF、注音 U+3105–U+312F、排版形式/全角货币/替换符）。
+  判据本体 `tests/check_source_mojibake.ps1`（R1 要 CP936 编解码器，CMake 没有 ⇒ 用 PowerShell 实现，
+  stdout 刻意只用 ASCII，因为 PS 5.1 会把非 ASCII 输出渲染成乱码、恰恰在失败那一路读不出）；
+  载体 `tests/check_source_mojibake.cmake`（解释器缺失 ⇒ `FATAL_ERROR`，**不 SKIP**，
+  理由与 N84/N86 同：这条用例的"没检查"绝不能长得像"检查通过"）。
+  **自带夹具自证**：`tests/mojibake_fixtures/mojibake_bad.txt` 必须命中全部 4 条规则、
+  `mojibake_ok.txt`（14 行从本仓真实中文文案里抽）必须 0 命中 ⇒ 规则退化或过宽都会先红在这里。
+  取证三段：基线两棵树各 1/1 通过（11.75 s / 13.36 s）⇒ 往 `src/gui/main.cpp` 与
+  `src/gui/app_settings.cpp` 植入一行乱码 ⇒ 用例 Failed（`MOJIBAKE R1+R2+R3+R4 <路径>:<行号>`）
+  ⇒ `cp` 还原并 `cmp` 逐字节相同 ⇒ 回到 1/1 通过。
+  ⚠ **扫描范围刻意不含 `docs/`**：文档会合法地引用这些码点作为证据与说明——本文件第 511 行就写着
+  "与 € U+20AC"来解释规则本身，纳入扫描等于让解释文本被判成缺陷（决策稿 §6 原写"扫 src/tests/docs"，
+  现按这个事实收窄为 `src` `tests` `cmake` `.github` + 根 `CMakeLists.txt`/`CMakePresets.json`/`vcpkg.json`）。
+  ② **`.gitattributes` 与去 BOM ⇒ 裁定不做**，保持现状（索引侧 0 变化但下次检出会让 74 个工作区文件
+  换行尾；影响面非 0 而收益只在"换机器克隆"这一侧）。8 个 BOM 文件与行尾混用的现状不变，
+  复算口径仍留在决策稿 §5。
 
 ---
 
