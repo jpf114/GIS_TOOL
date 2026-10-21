@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 697 / Release 695**（2026-10-21 Task C2 现读，本机两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 698 / Release 696**（2026-10-22 Task C3d 现读，C3d 新增那条夹具用例让两棵树各 +1；上一档 697 / 695 是 2026-10-21 Task C2 现读，本机两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,7 +297,7 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 697 / Release 695**（2026-10-21 Task C2 现读；批次 A 收尾时是 635 / 633，
+- **现行基线**：`ctest -N` 注册数 **Debug 698 / Release 696**（2026-10-22 Task C3d 现读，比上一档 697 / 695 各多 1 条 = C3d 新增的 `PluginTest.VectorOverlapCheckMixedGeometryCollectionIntersection`；批次 A 收尾时是 635 / 633，
   见下一条认证记录——本条只认现读值；上一版这里写 692 / 690、而"全量墙钟基线"表写 693 / 691，两处差 1，
   本轮起重读为同一组现值；那 1 条 = B21 新增的 `source_mojibake_guard`，
   上一轮只改表没改这行，本轮已对齐，不留待核）；`comm -23` 差集仍恰为
@@ -361,11 +361,11 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **697** | **761.30 s**（批次 C C3b 收口轮现跑，`build/tmp/c3b_close_dbg.log` 不入库） | 同计数五样本 **702.01 / 741.52 / 761.78 / 732.32 / 761.30 s**（极差 **59.77 s** ⇒ 波动带比我先前说的 ±25 s 宽得多） | 全库最慢 `real_data_vector_full` **227.28 s** ⇒ 780 ÷ 227.28 = **3.43×**；次慢 `real_data_vector_quick` **176.85 s** ⇒ 720 ÷ 176.85 = **4.07×**；blanket 300 那批最慢 `source_mojibake_guard` ~12 s ⇒ **25×** |
-| Release | **695** | **372.09 s**（同一轮紧随其后跑；`build/tmp/c3b_close_rel.log` 不入库） | 392.67 → 367.32 → 361.72 → **372.09 s**（同计数四样本，Δ30.95 s） | 全库最慢 `real_data_vector_full` **99.79 s** ⇒ 780 ÷ 99.79 = **7.82×**；`real_data_vector_quick` **84.88 s** ⇒ 720 ÷ 84.88 = **8.48×**；`source_mojibake_guard` **9.40 s** ⇒ **32×** |
+| Debug | **698** | **751.87 s**（批次 C C3d 轮现跑，`build/tmp/c3d_debug_full_ctest.log` 不入库） | 698 条这一档只有**一个样本**，无同计数波动带可比；697 条那五样本是 **702.01 / 741.52 / 761.78 / 732.32 / 761.30 s**（极差 **59.77 s** ⇒ 波动带比 ±25 s 宽得多），本档 751.87 s 落在带内 ⇒ 按上一条纪律**不作任何结论** | 全库最慢 `real_data_vector_full` **230.89 s** ⇒ 780 ÷ 230.89 = **3.38×**；次慢 `real_data_vector_quick` **178.07 s** ⇒ 720 ÷ 178.07 = **4.04×**；60 s 档最慢 `real_data_raster` **9.73 s** ⇒ 6.2×；blanket 300 那批最慢 `source_mojibake_guard` **9.44 s** ⇒ **31.8×** |
+| Release | **696** | **373.59 s**（同一轮紧随其后跑；`build/tmp/c3d_release_full_ctest.log` 不入库） | 696 条这一档只有**一个样本**；695 条那四样本是 392.67 → 367.32 → 361.72 → **372.09 s**（Δ30.95 s），本档 373.59 s 落在带内 ⇒ 同样不作结论 | 全库最慢 `real_data_vector_full` **99.41 s** ⇒ 780 ÷ 99.41 = **7.85×**；`real_data_vector_quick` **84.56 s** ⇒ 720 ÷ 84.56 = **8.52×**；`source_mojibake_guard` **10.46 s** ⇒ **28.7×** |
 
-⚠ **C3b-A 把 11 条真实腿加进 `real_data_vector_full` 之后，Debug 侧余量从 3.96× 掉到 3.43×**（227.28 s），
-`quick` 档也从 4.07× 走平。两档都还 > 2×（**我给取证/实现批设的"余量低于 2× 就停机上报"这道门没触发**）。
+⚠ **C3b-A 把 11 条真实腿加进 `real_data_vector_full` 之后，Debug 侧余量从 3.96× 掉到 3.43×**（227.28 s），C3d 那一轮再读到 **3.38×**（230.89 s，省界腿现在多算一个 `overlap_check` 关系数、时长没有可归因的变化）。
+`quick` 档也从 4.07× 走到 **4.04×**。两档都还 > 2×（**我给取证/实现批设的"余量低于 2× 就停机上报"这道门没触发**）。
 下一批（C3c）再加腿之前**必须重跑这一栏**，`720/780` 这两个数不许按比例自己调——
 上一轮就有人（下级在执行 C3b-A 时）明确按这条纪律把实测数字交回给我裁，而不是自己抬 TIMEOUT。
 
@@ -385,6 +385,10 @@ cmake --install build/release --config Release --prefix install
     跑前硬门控 = 0、串行 `-j1`：`100% tests passed, 0 tests failed out of 697`（Debug **761.30 s**）与
     `out of 695`（Release **372.09 s**），两棵树 `Not Run/Skip/***` 计数都是 **0**。
     注册数仍 697/695 ⇒ C3b 与 C3a 一样只改判据、夹具与腿，**没有增删用例**。
+  - **批次 C C3d 轮**（本表现值，产品修复 N125）：树上多了 `19cb39f`（`overlap_check` 删本地交面积 switch、改调用 `polygonIntersectionArea()` + 新夹具用例 + 省界臂收紧）；
+    跑前硬门控 = 0、串行 `-j1`、两棵树先重编（`error C` 计数都是 0，`plugin_vector.dll` mtime 晚于被改 `.inc`）：
+    `100% tests passed, 0 tests failed out of 698`（Debug **751.87 s**）与 `out of 696`（Release **373.59 s**），
+    两棵树 `Not Run/Skip/***` 计数都是 **0**。注册数 **697 → 698 / 695 → 696**，增量恰为那一条新夹具用例 ⇒ 这是产品修复该有的形状（除它之外一条没动）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -780,7 +784,7 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   **空几何/非法几何静默丢弃且不计数**，metadata 只有 `relation_count` / `issue_count`，
   **没有任何"扫了多少要素"的键** ⇒ 用户无法从产物判断覆盖范围；`nearest` 同类（空源几何 `continue` 不计数，
   `feature_count` 可以小于输入要素数且差额无处可查），而它的 `nearest_vector` 键是**入参字符串回显**、不是目标要素数，极易读错。
-- 挂账 **N125**（**产品缺陷，已由控制器独立复现**，2026-10-22；修法与夹具见工单 C3d）：
+- 挂账 **N125**（**产品缺陷，已由控制器独立复现**，2026-10-22 立案 ⇒ **同一日由工单 C3d 修复销账**，提交 `19cb39f`；修法与夹具见工单 C3d 与 `task-C3d-report.md`）：
   `overlap_check` 与 `topology_check` 对"这两个面是否重叠"给出**互相矛盾**的答案。
   同一个真实省界派生件（`tmp/vector_benchmark/c3ba/prov3857.gpkg`，复制到 `build/tmp/n125/` 后现跑）：
   `vector overlap_check` ⇒ `Success: Overlap check completed: 0 relations`、`relation_count: 0`、CSV 只剩表头；
@@ -792,6 +796,16 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   真实省界常是 `MultiPolygon`（飞地/跨海），相邻两省的交集里同时含面与共边线段是**常态**，不是罕见角落。
   后果面：用"重叠检查"做数据质检会**漏报真实重叠**，而"拓扑检查"能报出来 ⇒ 同一份数据两个动作自相矛盾，
   这是算法口径问题，不是文案问题。
+  **销账状态（C3d，`19cb39f`）**：`overlap_check` 的那段本地 switch 已删除，改为复用同一个
+  `polygonIntersectionArea()`（单源，实现里不再有第二份面积算法）。
+  合成夹具两态取证（Release 树）：修复前那条新用例红在 `relation_count "0"` 与"CSV 只剩表头 1 行"，
+  同轮的夹具前提断言同时证明 GEOS 对这个配方给出的 `A∩B` 实测类型就是 `wkbGeometryCollection`
+  且集合里既有面子也有非面子 ⇒ 判据没有降级成"只要非 0"；修复后同一用例绿（1 行、`overlap_area` 25.0，
+  算式 `5×5 + 线部分 0`）。真实省界腿同一天复跑：`overlap_check(prov3857)` 的 CSV 现读
+  `12,14,401282`，与 `topology_check` 的 `12,14,overlap,401282` 同值同对 ⇒ 关系数 1 == 成对行数 1，
+  省界臂因此从"只敢写 `>=`"收紧成等式（`>=` 那条原样保留，等式另开一条）。
+  文档口径同步：`docs/算法说明/矢量数据处理/重叠检查.md` 与 `拓扑检查.md` 原来各说一套（前者写的正是缺陷语义），
+  现已写成同一个口径并互相点名。双树全量 698/696 全绿，见上面"全量墙钟基线"的 C3d 轮。
 - 挂账 **N126**（测试基建口径，不是产品缺陷）：C3b-A 执行者自查发现 11 条腿的判据第一次被插在
   `Invoke-SetupCommand` 的 `return` **之后**（死代码），正向跑 `rc=0` 全绿 ⇒ **"跑过"不等于"判过"**。
   识破它的是**反向对照**（故意改坏表头，`rc` 仍 0 就说明判据在空转）；修正后两条反向对照当场红，
