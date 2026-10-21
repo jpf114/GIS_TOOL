@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <charconv>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -5897,6 +5898,148 @@ TEST_F(PluginTest, VectorNearestExecution) {
     GDALClose(outDs);
 }
 
+// ============== C3b-B1：拓扑/检查四条的 CSV 拆列判据公共件 ==============
+// 工单（.superpowers/sdd/2026-10-21-批次C全功能验证与文档同步/task-C3b-brief.md §C3b-B1）把这四条
+// （overlap_check / topology_check / adjacency / dangling_endpoint_check）的判据从"子串包含"
+// 升级成"表头整串相等 + 数据行先按 ',' 拆列再逐列比较 + 数值列解析后比"。
+// WHY 不许再用 find(",50") 这类子串：子串对**列位**、**基数**和**邻近值**三件事都不敏感 ——
+//   "50" 写在 overlap_area 还是写在 target_fid 里、行里多一列还是少一列、"150" 或 "500"
+//   这类值全都命中同一个子串；于是"面积列写死 50"这种变异测不出来（工单点名的正是这个病）。
+//   拆列以后每一列有自己的位置与名字，红了当场说得出是哪一列歪了。
+// WHY 解析失败不许"以崩代红"：std::stod / std::stoll 抛异常在 gtest 里算 crash（用例被中断、
+//   消息不可读、退出码非 0），那不是干净的红。下面一律走 std::from_chars：它不抛异常，
+//   并且**要求整列被消费完**（res.ptr == last），所以 "50x" 这种部分匹配同样判失败。
+//   失败时 value 填 quiet_NaN / int64 的最小值：EXPECT_NEAR 遇 NaN 恒为假、EXPECT_EQ 遇哨兵恒为假，
+//   于是即便调用点忘了先看 ok 标志，也绝不会因为"失败值恰好等于期望 0.0"而假绿。
+
+struct CsvDoubleColumn {
+    bool ok = false;
+    double value = std::numeric_limits<double>::quiet_NaN();
+    std::string text;  // 列原文；列不存在时是一个点名用的占位串
+};
+
+struct CsvInt64Column {
+    bool ok = false;
+    long long value = std::numeric_limits<long long>::min();
+    std::string text;
+};
+
+// 按 ',' 把一行 CSV 拆成列：不修剪空白、不吞空列。
+// WHY 不吞空列：topology_check 的 empty/invalid 行形如 `fid,,empty_geometry,0`，第二列就是空的；
+//   吃掉空串会让后面每一列整体左移，"列没写歪"这件事反而被判据自己破坏了。
+static std::vector<std::string> splitCsvColumns(const std::string& line) {
+    std::vector<std::string> columns;
+    std::string current;
+    for (const char ch : line) {
+        if (ch == ',') {
+            columns.push_back(current);
+            current.clear();
+            continue;
+        }
+        current.push_back(ch);
+    }
+    columns.push_back(current);  // 末列没有尾随逗号，也要照样产出来
+    return columns;
+}
+
+// 列不存在（拆出来没那么多列）时的点名文本：红了要能一眼看出"少了一列"而不是"值不对"。
+static std::string missingCsvColumnText(std::size_t index) {
+    return "<第 " + std::to_string(index) + " 列不存在>";
+}
+
+static CsvDoubleColumn csvColumnAsDouble(const std::vector<std::string>& columns,
+                                         std::size_t index) {
+    CsvDoubleColumn out;
+    if (index >= columns.size()) {
+        out.text = missingCsvColumnText(index);
+        return out;
+    }
+    out.text = columns[index];
+    const char* first = out.text.data();
+    const char* last = first + out.text.size();
+    double parsed = 0.0;
+    const std::from_chars_result result = std::from_chars(first, last, parsed);
+    if (result.ec != std::errc() || result.ptr != last) {
+        return out;  // 空列 / 非数字 / 部分匹配 / 越界：ok 保持 false，哨兵值保持 NaN
+    }
+    out.value = parsed;
+    out.ok = true;
+    return out;
+}
+
+static CsvInt64Column csvColumnAsInt64(const std::vector<std::string>& columns,
+                                       std::size_t index) {
+    CsvInt64Column out;
+    if (index >= columns.size()) {
+        out.text = missingCsvColumnText(index);
+        return out;
+    }
+    out.text = columns[index];
+    const char* first = out.text.data();
+    const char* last = first + out.text.size();
+    long long parsed = 0;
+    const std::from_chars_result result = std::from_chars(first, last, parsed);
+    if (result.ec != std::errc() || result.ptr != last) {
+        return out;
+    }
+    out.value = parsed;
+    out.ok = true;
+    return out;
+}
+
+// 把拆好的列 + 解析结果打包成一条可读的失败上下文（"第几列叫什么、原文行长什么样"）。
+static std::string csvColumnContext(const std::vector<std::string>& columns, std::size_t index,
+                                    const std::string& rawLine) {
+    std::string note = "列数=" + std::to_string(columns.size()) +
+        " 列下标=" + std::to_string(index) + " 原文行=[" + rawLine + "]";
+    if (index < columns.size()) {
+        note += " 该列原文=[" + columns[index] + "]";
+    }
+    return note;
+}
+
+// 写完输入 GPKG 之后**重新打开输入层**，按 GetNextFeature 的顺序现读每条要素的 GetFID()。
+// WHY 必须从输入侧导出（控制器的裁定 R-B1-fid）：期望值若从产出的 CSV 回填，等于"实现写什么
+//   就认什么"，列写歪、配对写反、甚至把同一对写两遍都可能被自洽地绿过去。
+// WHY 不照抄"GeoJSON 的 FID 从 1 起"那句旧注释：那条证的是 GeoJSON 驱动，**不是 GPKG**。
+//   本函数只把驱动实际给的 FID 读出来用，不对"从 0 还是从 1 起"做任何假设。
+static std::vector<long long> readLayerFidsInCreationOrder(const std::string& path) {
+    std::vector<long long> fids;
+    GDALDataset* ds = static_cast<GDALDataset*>(GDALOpenEx(
+        path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    if (!ds) {
+        return fids;
+    }
+    OGRLayer* layer = ds->GetLayer(0);
+    if (layer) {
+        layer->ResetReading();
+        OGRFeature* feat = nullptr;
+        while ((feat = layer->GetNextFeature()) != nullptr) {
+            fids.push_back(static_cast<long long>(feat->GetFID()));
+            OGRFeature::DestroyFeature(feat);
+        }
+    }
+    GDALClose(ds);
+    return fids;
+}
+
+// 逐行读 CSV（保留行数与每行原文；拆列由调用点负责）。
+static std::vector<std::string> readCsvLines(const std::string& path) {
+    std::vector<std::string> lines;
+    std::ifstream ifs(fs::u8path(path));
+    if (!ifs.is_open()) {
+        return lines;
+    }
+    std::string line;
+    while (std::getline(ifs, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();  // 行尾归一化：只在**行尾**，绝不用 replace("",",")
+        }
+        lines.push_back(line);
+    }
+    return lines;
+}
+
 TEST_F(PluginTest, VectorAdjacencyExecution) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
@@ -5926,25 +6069,41 @@ TEST_F(PluginTest, VectorAdjacencyExecution) {
             return poly;
         };
 
+        // 三个矩形**全部写成闭合环**（makeRect 的第 5 个点回到起点），EPSG:3857 投影 ⇒ 不撞投影闸。
+        // 逐对关系（工单要求"矩形两两关系必须逐对算，不能只看想测的那一对"）：
+        //   P1 [0,10]×[0,10] ∩ P2 [10,20]×[0,10]：共竖边 x=10, y∈[0,10] ⇒ Touches 真、
+        //     交集是线 ⇒ shared_length = 10.0；
+        //   P1 ∩ P3 [-10,0]×[10,20]：只在点 (0,10) 相遇（P1 上边 y=10,x∈[0,10] 与
+        //     P3 下边 y=10,x∈[-10,0] 的交集是单点）⇒ Touches 真、交集不是线 ⇒ **0.0 但行照写**；
+        //   P2 ∩ P3：P2 的 x 从 10 起、P3 到 0 止 ⇒ 不相邻 ⇒ 无行。
+        // ⇒ relation_count = 2、CSV = 1 表头 + 2 数据行，两行长度分别是 10.0 与 0.0。
+        // ⚠ P3 不能写成 [10,20]×[10,20]：那样它会与 P2 共横边 y=10,x∈[10,20]（又一段 10.0），
+        //   关系数变 3，"点接触 ⇒ 0.0"这条新增语义覆盖就被稀释掉了。
         auto* feat1 = OGRFeature::CreateFeature(layer->GetLayerDefn());
-        OGRPolygon poly1 = makeRect(0, 0, 10, 10);
+        OGRPolygon poly1 = makeRect(0, 0, 10, 10);   // P1
         feat1->SetGeometry(&poly1);
         ASSERT_EQ(layer->CreateFeature(feat1), OGRERR_NONE);
         OGRFeature::DestroyFeature(feat1);
 
         auto* feat2 = OGRFeature::CreateFeature(layer->GetLayerDefn());
-        OGRPolygon poly2 = makeRect(10, 0, 20, 10);
+        OGRPolygon poly2 = makeRect(10, 0, 20, 10);  // P2
         feat2->SetGeometry(&poly2);
         ASSERT_EQ(layer->CreateFeature(feat2), OGRERR_NONE);
         OGRFeature::DestroyFeature(feat2);
 
         auto* feat3 = OGRFeature::CreateFeature(layer->GetLayerDefn());
-        OGRPolygon poly3 = makeRect(30, 0, 40, 10);
+        OGRPolygon poly3 = makeRect(-10, 10, 0, 20);  // P3（工单定稿；旧夹具的 [30,40]×[0,10] 谁都不挨）
         feat3->SetGeometry(&poly3);
         ASSERT_EQ(layer->CreateFeature(feat3), OGRERR_NONE);
         OGRFeature::DestroyFeature(feat3);
         GDALClose(ds);
     }
+
+    // R-B1-fid：期望的 FID 一律从**输入侧**现读（重新打开刚落盘的输入层，按创建顺序取 GetFID()），
+    // 不许从产出的 CSV 回填，也不假设"GPKG 的 FID 从 1 起"。
+    const std::vector<long long> fids = readLayerFidsInCreationOrder(input);
+    ASSERT_EQ(fids.size(), 3u)
+        << "adjacency 夹具创建了 3 个矩形，重新打开输入层却没读回 3 个 FID";
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("adjacency");
@@ -5954,18 +6113,44 @@ TEST_F(PluginTest, VectorAdjacencyExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("relation_count"), "1");
+    EXPECT_EQ(result.metadata.at("relation_count"), "2");
 
-    std::ifstream ifs(fs::u8path(output));
-    ASSERT_TRUE(ifs.is_open());
-    std::string line;
-    std::vector<std::string> lines;
-    while (std::getline(ifs, line)) {
-        lines.push_back(line);
-    }
-    ASSERT_EQ(lines.size(), 2u);
+    const std::vector<std::string> lines = readCsvLines(output);
+    ASSERT_EQ(lines.size(), 3u) << "adjacency CSV 应为 1 表头 + 2 数据行";
     EXPECT_EQ(lines[0], "source_fid,target_fid,shared_length");
-    EXPECT_NE(lines[1].find(",10"), std::string::npos);
+
+    // 实现按 (i,j) 上三角、按读入顺序写行 ⇒ 第 1 行是 (P1,P2)、第 2 行是 (P1,P3)。
+    // 旧判据是 `lines[1].find(",10")`：那一个子串既钉不住列位（target_fid=10 也命中）、
+    // 也钉不住基数（多写一行也命中），现在整段删掉，改成拆列逐列比。
+    const std::vector<std::string> row1 = splitCsvColumns(lines[1]);
+    ASSERT_EQ(row1.size(), 3u) << "adjacency 第 1 数据行列数不是 3: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Source = csvColumnAsInt64(row1, 0);
+    EXPECT_TRUE(row1Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row1, 0, lines[1]);
+    EXPECT_EQ(row1Source.value, fids[0]) << "source_fid 不是 P1: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Target = csvColumnAsInt64(row1, 1);
+    EXPECT_TRUE(row1Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row1, 1, lines[1]);
+    EXPECT_EQ(row1Target.value, fids[1]) << "target_fid 不是 P2: " << csvColumnContext(row1, 1, lines[1]);
+    const CsvDoubleColumn row1Length = csvColumnAsDouble(row1, 2);
+    EXPECT_TRUE(row1Length.ok) << "shared_length 列不是数字: " << csvColumnContext(row1, 2, lines[1]);
+    // 共竖边 x=10、y 从 0 到 10 ⇒ 长度 = 10 - 0 = 10.0。
+    EXPECT_NEAR(10.0, row1Length.value, 1e-6)
+        << "P1-P2 共边长应为 10.0: " << csvColumnContext(row1, 2, lines[1]);
+
+    const std::vector<std::string> row2 = splitCsvColumns(lines[2]);
+    ASSERT_EQ(row2.size(), 3u) << "adjacency 第 2 数据行列数不是 3: " << csvColumnContext(row2, 0, lines[2]);
+    const CsvInt64Column row2Source = csvColumnAsInt64(row2, 0);
+    EXPECT_TRUE(row2Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row2, 0, lines[2]);
+    EXPECT_EQ(row2Source.value, fids[0]) << "source_fid 不是 P1: " << csvColumnContext(row2, 0, lines[2]);
+    const CsvInt64Column row2Target = csvColumnAsInt64(row2, 1);
+    EXPECT_TRUE(row2Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row2, 1, lines[2]);
+    EXPECT_EQ(row2Target.value, fids[2]) << "target_fid 不是 P3: " << csvColumnContext(row2, 1, lines[2]);
+    const CsvDoubleColumn row2Length = csvColumnAsDouble(row2, 2);
+    EXPECT_TRUE(row2Length.ok) << "shared_length 列不是数字: " << csvColumnContext(row2, 2, lines[2]);
+    // 点接触 (0,10)：交集不是线 ⇒ sharedBoundaryLength 落到 total = 0.0，**但行照写**。
+    // WHY 这条 0.0 是新语义覆盖：全仓此前没有点接触用例，而"只在长度非零时才写行"这种
+    // 优化会把这一行整条吞掉 ⇒ 关系数与基数断言一起红。
+    EXPECT_NEAR(0.0, row2Length.value, 1e-6)
+        << "P1-P3 点接触应写成 0.0 而不是被跳过: " << csvColumnContext(row2, 2, lines[2]);
 }
 
 TEST_F(PluginTest, VectorOverlapCheckExecution) {
@@ -5997,6 +6182,14 @@ TEST_F(PluginTest, VectorOverlapCheckExecution) {
             return poly;
         };
 
+        // F1 = (0,0)-(10,10)、F2 = (5,0)-(15,10)、F3 = (0,0)-(4,4)，全部 EPSG:3857 ⇒ 不撞投影闸。
+        // 三对逐算（工单定稿）：
+        //   F1∩F2：x 重叠 [5,10]（宽 5）、y 重叠 [0,10]（高 10）⇒ 交集 5×10 = 50；
+        //   F1∩F3：F3 整个在 F1 内部 ⇒ 交集就是 F3 自己 4×4 = 16；
+        //   F2∩F3：F2 的 x 从 5 起、F3 到 4 止 ⇒ 不相交 ⇒ 无行。
+        // ⇒ relation_count = 2、CSV = 1 表头 + 2 数据行，两行面积分别是 50.0 与 16.0。
+        // ⚠ **必须有两对不同面积**：只有一对（旧夹具就是只有一对，第三个矩形 [30,40]×[0,10]
+        //   谁都不挨）的话，"面积列写死 50"这类变异测不出 —— 旧判据 find(",50") 正是这个病。
         auto* feat1 = OGRFeature::CreateFeature(layer->GetLayerDefn());
         OGRPolygon poly1 = makeRect(0, 0, 10, 10);
         feat1->SetGeometry(&poly1);
@@ -6010,12 +6203,17 @@ TEST_F(PluginTest, VectorOverlapCheckExecution) {
         OGRFeature::DestroyFeature(feat2);
 
         auto* feat3 = OGRFeature::CreateFeature(layer->GetLayerDefn());
-        OGRPolygon poly3 = makeRect(30, 0, 40, 10);
+        OGRPolygon poly3 = makeRect(0, 0, 4, 4);
         feat3->SetGeometry(&poly3);
         ASSERT_EQ(layer->CreateFeature(feat3), OGRERR_NONE);
         OGRFeature::DestroyFeature(feat3);
         GDALClose(ds);
     }
+
+    // R-B1-fid：期望 FID 从输入侧现读，不从产出的 CSV 回填。
+    const std::vector<long long> fids = readLayerFidsInCreationOrder(input);
+    ASSERT_EQ(fids.size(), 3u)
+        << "overlap_check 夹具创建了 3 个矩形，重新打开输入层却没读回 3 个 FID";
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("overlap_check");
@@ -6025,18 +6223,42 @@ TEST_F(PluginTest, VectorOverlapCheckExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("relation_count"), "1");
+    EXPECT_EQ(result.metadata.at("relation_count"), "2");
 
-    std::ifstream ifs(fs::u8path(output));
-    ASSERT_TRUE(ifs.is_open());
-    std::string line;
-    std::vector<std::string> lines;
-    while (std::getline(ifs, line)) {
-        lines.push_back(line);
-    }
-    ASSERT_EQ(lines.size(), 2u);
+    const std::vector<std::string> lines = readCsvLines(output);
+    ASSERT_EQ(lines.size(), 3u) << "overlap_check CSV 应为 1 表头 + 2 数据行";
     EXPECT_EQ(lines[0], "source_fid,target_fid,overlap_area");
-    EXPECT_NE(lines[1].find(",50"), std::string::npos);
+
+    // 实现按 (i,j) 上三角、按读入顺序写行，且 `overlapArea > 0.0` 才写 ⇒
+    // 第 1 行 (F1,F2)、第 2 行 (F1,F3)。旧判据是 `lines[1].find(",50")`，整段删掉换拆列断言。
+    const std::vector<std::string> row1 = splitCsvColumns(lines[1]);
+    ASSERT_EQ(row1.size(), 3u) << "overlap_check 第 1 数据行列数不是 3: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Source = csvColumnAsInt64(row1, 0);
+    EXPECT_TRUE(row1Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row1, 0, lines[1]);
+    EXPECT_EQ(row1Source.value, fids[0]) << "source_fid 不是 F1: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Target = csvColumnAsInt64(row1, 1);
+    EXPECT_TRUE(row1Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row1, 1, lines[1]);
+    EXPECT_EQ(row1Target.value, fids[1]) << "target_fid 不是 F2: " << csvColumnContext(row1, 1, lines[1]);
+    const CsvDoubleColumn row1Area = csvColumnAsDouble(row1, 2);
+    EXPECT_TRUE(row1Area.ok) << "overlap_area 列不是数字: " << csvColumnContext(row1, 2, lines[1]);
+    // 算式：交集宽 10-5 = 5、高 10-0 = 10 ⇒ 5×10 = 50。
+    EXPECT_NEAR(50.0, row1Area.value, 1e-6)
+        << "F1∩F2 面积应为 5×10=50: " << csvColumnContext(row1, 2, lines[1]);
+
+    const std::vector<std::string> row2 = splitCsvColumns(lines[2]);
+    ASSERT_EQ(row2.size(), 3u) << "overlap_check 第 2 数据行列数不是 3: " << csvColumnContext(row2, 0, lines[2]);
+    const CsvInt64Column row2Source = csvColumnAsInt64(row2, 0);
+    EXPECT_TRUE(row2Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row2, 0, lines[2]);
+    EXPECT_EQ(row2Source.value, fids[0]) << "source_fid 不是 F1: " << csvColumnContext(row2, 0, lines[2]);
+    const CsvInt64Column row2Target = csvColumnAsInt64(row2, 1);
+    EXPECT_TRUE(row2Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row2, 1, lines[2]);
+    EXPECT_EQ(row2Target.value, fids[2]) << "target_fid 不是 F3: " << csvColumnContext(row2, 1, lines[2]);
+    const CsvDoubleColumn row2Area = csvColumnAsDouble(row2, 2);
+    EXPECT_TRUE(row2Area.ok) << "overlap_area 列不是数字: " << csvColumnContext(row2, 2, lines[2]);
+    // 算式：F3 被 F1 完全包含 ⇒ 交集 = F3 自己 = 4×4 = 16。
+    // WHY 两行面积必须不同（50 与 16）：同值时"把面积写成第一对的面积"这种变异没有着力点。
+    EXPECT_NEAR(16.0, row2Area.value, 1e-6)
+        << "F1∩F3 面积应为 4×4=16: " << csvColumnContext(row2, 2, lines[2]);
 }
 
 TEST_F(PluginTest, VectorTopologyCheckExecution) {
@@ -6068,6 +6290,16 @@ TEST_F(PluginTest, VectorTopologyCheckExecution) {
             return poly;
         };
 
+        // 夹具（工单定稿）：F1 = (0,0)-(10,10)、F2 与 F1 **逐字节相同**、F3 = (5,0)-(15,10)。
+        // 三对逐算：
+        //   (F1,F2) 走 Equals 分支 ⇒ 1 行 duplicate_geometry；实现是 `if / else if` 互斥，
+        //     所以这一对**不会**再写一条 overlap（把互斥拆成两个独立 if 就会多出一行，基数当场红）；
+        //   (F1,F3) 交 5×10 = 50 ⇒ 1 行 overlap,50；
+        //   (F2,F3) 同样交 50 ⇒ **又 1 行** overlap,50。
+        // ⇒ issue_count = 3、CSV = 1 表头 + 3 数据行，其中 overlap 行恰好 2 条。
+        // ⚠ empty_geometry / invalid_geometry 两类行**本切片不新增**：实现里 empty 与 invalid 是
+        //   两个独立 `if`（可同写两行），而"自交面是否同时被判 invalid"没有算式依据 ⇒ 已挂 N123，
+        //   这里不猜期望值。
         auto* feat1 = OGRFeature::CreateFeature(layer->GetLayerDefn());
         OGRPolygon poly1 = makeRect(0, 0, 10, 10);
         feat1->SetGeometry(&poly1);
@@ -6088,6 +6320,11 @@ TEST_F(PluginTest, VectorTopologyCheckExecution) {
         GDALClose(ds);
     }
 
+    // R-B1-fid：期望 FID 从输入侧现读，不从产出的 CSV 回填。
+    const std::vector<long long> fids = readLayerFidsInCreationOrder(input);
+    ASSERT_EQ(fids.size(), 3u)
+        << "topology_check 夹具创建了 3 个矩形，重新打开输入层却没读回 3 个 FID";
+
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("topology_check");
     params["input"] = input;
@@ -6098,27 +6335,62 @@ TEST_F(PluginTest, VectorTopologyCheckExecution) {
     ASSERT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("issue_count"), "3");
 
-    std::ifstream ifs(fs::u8path(output));
-    ASSERT_TRUE(ifs.is_open());
-    std::string line;
-    std::vector<std::string> lines;
-    while (std::getline(ifs, line)) {
-        lines.push_back(line);
-    }
-    ASSERT_EQ(lines.size(), 4u);
+    const std::vector<std::string> lines = readCsvLines(output);
+    ASSERT_EQ(lines.size(), 4u) << "topology_check CSV 应为 1 表头 + 3 数据行";
     EXPECT_EQ(lines[0], "source_fid,target_fid,issue_type,issue_value");
-    int duplicateCount = 0;
-    int overlapCount = 0;
-    for (size_t i = 1; i < lines.size(); ++i) {
-        if (lines[i].find("duplicate_geometry") != std::string::npos) {
-            ++duplicateCount;
-        }
-        if (lines[i].find("overlap,50") != std::string::npos) {
-            ++overlapCount;
-        }
-    }
-    EXPECT_EQ(duplicateCount, 1);
-    EXPECT_EQ(overlapCount, 2);
+
+    // 实现先写逐要素的 empty/invalid 行（本夹具一条都没有），再按 (i,j) 上三角写行
+    // ⇒ 数据行顺序是 (F1,F2) duplicate、(F1,F3) overlap、(F2,F3) overlap。
+    // 旧判据是"对整行 find(\"duplicate_geometry\") / find(\"overlap,50\") 计数"：它既钉不住
+    // FID 对（哪一对重复、哪一对重叠根本没记名），也钉不住列位（issue_type 与 issue_value 串味
+    // 也能命中同一个子串），现在整段换成拆列逐列比。
+    const std::vector<std::string> row1 = splitCsvColumns(lines[1]);
+    ASSERT_EQ(row1.size(), 4u) << "topology_check 第 1 数据行列数不是 4: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Source = csvColumnAsInt64(row1, 0);
+    EXPECT_TRUE(row1Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row1, 0, lines[1]);
+    EXPECT_EQ(row1Source.value, fids[0]) << "source_fid 不是 F1: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Target = csvColumnAsInt64(row1, 1);
+    EXPECT_TRUE(row1Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row1, 1, lines[1]);
+    EXPECT_EQ(row1Target.value, fids[1]) << "target_fid 不是 F2（重复的那一对）: "
+                                        << csvColumnContext(row1, 1, lines[1]);
+    EXPECT_EQ(row1[2], "duplicate_geometry")
+        << "issue_type 列整串不相等: " << csvColumnContext(row1, 2, lines[1]);
+    const CsvDoubleColumn row1Value = csvColumnAsDouble(row1, 3);
+    EXPECT_TRUE(row1Value.ok) << "issue_value 列不是数字: " << csvColumnContext(row1, 3, lines[1]);
+    // duplicate_geometry 行的 issue_value 由实现写成常量 0（算式：面积类问题才带值，重复不带）。
+    EXPECT_NEAR(0.0, row1Value.value, 1e-6)
+        << "duplicate_geometry 的 issue_value 应为 0.0: " << csvColumnContext(row1, 3, lines[1]);
+
+    const std::vector<std::string> row2 = splitCsvColumns(lines[2]);
+    ASSERT_EQ(row2.size(), 4u) << "topology_check 第 2 数据行列数不是 4: " << csvColumnContext(row2, 0, lines[2]);
+    const CsvInt64Column row2Source = csvColumnAsInt64(row2, 0);
+    EXPECT_TRUE(row2Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row2, 0, lines[2]);
+    EXPECT_EQ(row2Source.value, fids[0]) << "source_fid 不是 F1: " << csvColumnContext(row2, 0, lines[2]);
+    const CsvInt64Column row2Target = csvColumnAsInt64(row2, 1);
+    EXPECT_TRUE(row2Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row2, 1, lines[2]);
+    EXPECT_EQ(row2Target.value, fids[2]) << "target_fid 不是 F3: " << csvColumnContext(row2, 1, lines[2]);
+    EXPECT_EQ(row2[2], "overlap") << "issue_type 列整串不相等: " << csvColumnContext(row2, 2, lines[2]);
+    const CsvDoubleColumn row2Value = csvColumnAsDouble(row2, 3);
+    EXPECT_TRUE(row2Value.ok) << "issue_value 列不是数字: " << csvColumnContext(row2, 3, lines[2]);
+    // 算式：F1 与 F3 的 x 重叠 [5,10]（宽 5）、y 重叠 [0,10]（高 10）⇒ 5×10 = 50。
+    EXPECT_NEAR(50.0, row2Value.value, 1e-6)
+        << "F1-F3 重叠面积应为 5×10=50: " << csvColumnContext(row2, 3, lines[2]);
+
+    const std::vector<std::string> row3 = splitCsvColumns(lines[3]);
+    ASSERT_EQ(row3.size(), 4u) << "topology_check 第 3 数据行列数不是 4: " << csvColumnContext(row3, 0, lines[3]);
+    const CsvInt64Column row3Source = csvColumnAsInt64(row3, 0);
+    EXPECT_TRUE(row3Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row3, 0, lines[3]);
+    EXPECT_EQ(row3Source.value, fids[1]) << "source_fid 不是 F2: " << csvColumnContext(row3, 0, lines[3]);
+    const CsvInt64Column row3Target = csvColumnAsInt64(row3, 1);
+    EXPECT_TRUE(row3Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row3, 1, lines[3]);
+    EXPECT_EQ(row3Target.value, fids[2]) << "target_fid 不是 F3: " << csvColumnContext(row3, 1, lines[3]);
+    EXPECT_EQ(row3[2], "overlap") << "issue_type 列整串不相等: " << csvColumnContext(row3, 2, lines[3]);
+    const CsvDoubleColumn row3Value = csvColumnAsDouble(row3, 3);
+    EXPECT_TRUE(row3Value.ok) << "issue_value 列不是数字: " << csvColumnContext(row3, 3, lines[3]);
+    // 算式同 F1-F3（F2 与 F1 逐字节相同）⇒ 又是 5×10 = 50。两条 overlap 各自被拆列钉住，
+    // 加上"行数 == 4"就是"overlap 恰好 2 条"的完整口径，不需要旧的子串计数循环。
+    EXPECT_NEAR(50.0, row3Value.value, 1e-6)
+        << "F2-F3 重叠面积应为 5×10=50: " << csvColumnContext(row3, 3, lines[3]);
 }
 
 // ============== C3a-4：几何派生四条（hull/envelope/boundary/midpoints）公共件 ==============
@@ -7512,11 +7784,28 @@ TEST_F(PluginTest, VectorDanglingEndpointCheckExecution) {
             OGRFeature::DestroyFeature(feat);
         };
 
-        addLine({{0, 0}, {1, 0}});
-        addLine({{1, 0}, {2, 0}});
-        addLine({{10, 0}, {11, 0}});
+        // 夹具定稿四条线（工单："一次定稿，不许派发后再改形状"），EPSG:3857：
+        //   L1 (0,0)-(1,0)、L2 (1,0)-(2,0)、L3 (10,3)-(11,3)、L4 闭合环 (20,20)-(21,20)-(21,21)-(20,20)。
+        // 端点出现次数手推（实现把每条线只取**首末两个点**，中间顶点根本不参与判定）：
+        //   (0,0) 1 次 ⇒ 悬空；(1,0) 2 次（L1 末点 + L2 起点）⇒ 非悬空；(2,0) 1 次 ⇒ 悬空；
+        //   (10,3) 1 次 ⇒ 悬空；(11,3) 1 次 ⇒ 悬空；
+        //   (20,20) 2 次（L4 的首点与末点是同一个坐标）⇒ 非悬空，
+        //   而 L4 的 (21,20) 与 (21,21) 是中间顶点，压根不入端点表 ⇒ 闭合环没有悬空端点。
+        // ⇒ 悬空 4 条 ⇒ issue_count = 4、CSV = 1 表头 + 4 数据行。
+        // WHY L3 的 y 要写成 3 而不是 0：旧夹具所有端点 y 全 0 ⇒ "y 列写成 0"这种变异测不出
+        //   （与 C3a 的 midpoints 同一族病）；y=3 让 y 这一维承重。
+        // WHY 要 L4：全仓此前没有"闭合环"这种输入，加进来才钉得住"首末同点 ⇒ 出现 2 次 ⇒ 非悬空"。
+        addLine({{0, 0}, {1, 0}});                                    // L1
+        addLine({{1, 0}, {2, 0}});                                    // L2（与 L1 在 (1,0) 相接）
+        addLine({{10, 3}, {11, 3}});                                  // L3（y=3，让 y 维承重）
+        addLine({{20, 20}, {21, 20}, {21, 21}, {20, 20}});            // L4（闭合环）
         GDALClose(ds);
     }
+
+    // R-B1-fid：期望 FID 从输入侧现读，不从产出的 CSV 回填。
+    const std::vector<long long> fids = readLayerFidsInCreationOrder(input);
+    ASSERT_EQ(fids.size(), 4u)
+        << "dangling_endpoint_check 夹具创建了 4 条线，重新打开输入层却没读回 4 个 FID";
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("dangling_endpoint_check");
@@ -7527,20 +7816,57 @@ TEST_F(PluginTest, VectorDanglingEndpointCheckExecution) {
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("issue_count"), "4");
+    // 事实表口径：scanned_count = 扫描的**源要素数**（不是端点数）。夹具创建了 4 条线 ⇒ 4。
+    EXPECT_EQ(result.metadata.at("scanned_count"), "4");
 
-    std::ifstream ifs(fs::u8path(output));
-    ASSERT_TRUE(ifs.is_open());
-    std::string line;
-    std::vector<std::string> lines;
-    while (std::getline(ifs, line)) {
-        lines.push_back(line);
-    }
-    ASSERT_EQ(lines.size(), 5u);
+    const std::vector<std::string> lines = readCsvLines(output);
+    ASSERT_EQ(lines.size(), 5u) << "dangling_endpoint_check CSV 应为 1 表头 + 4 数据行";
     EXPECT_EQ(lines[0], "source_fid,endpoint_type,x,y");
-    EXPECT_NE(lines[1].find(",0,0,0"), std::string::npos);
-    EXPECT_NE(lines[2].find(",1,2,0"), std::string::npos);
-    EXPECT_NE(lines[3].find(",0,10,0"), std::string::npos);
-    EXPECT_NE(lines[4].find(",1,11,0"), std::string::npos);
+
+    // 实现按端点表的采集顺序（要素读入顺序 × 先 start 后 end）写行，只写出现 1 次的那些 ⇒
+    //   第 1 行 (L1, start, 0, 0)、第 2 行 (L2, end, 2, 0)、第 3 行 (L3, start, 10, 3)、
+    //   第 4 行 (L3, end, 11, 3)。
+    // 旧判据是四条 `find(",0,0,0")` 之类的子串：子串对列位与基数都不敏感
+    //（endpoint_type 与 x 串味、多写一行少写一行都可能命中），整段删掉换成拆列逐列比。
+    // endpoint_type 的口径：**列名像文本、实为数字码** 0 = start / 1 = end（CHANGELOG 已记，
+    // 不是这里靠猜）；钉数字码而不是钉 "start"/"end" 字样。
+    struct ExpectedRow {
+        std::size_t fidIndex;
+        long long endpointType;
+        double x;
+        double y;
+    };
+    const std::vector<ExpectedRow> expected = {
+        {0, 0, 0.0, 0.0},    // L1 起点 (0,0)：只出现 1 次 ⇒ 悬空，type = 0 = start
+        {1, 1, 2.0, 0.0},    // L2 末点 (2,0)：只出现 1 次 ⇒ 悬空，type = 1 = end
+        {2, 0, 10.0, 3.0},   // L3 起点 (10,3)
+        {2, 1, 11.0, 3.0},   // L3 末点 (11,3)
+    };
+    ASSERT_EQ(expected.size() + 1, lines.size()) << "期望行数与 CSV 行数不一致";
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        const std::string& rawLine = lines[i + 1];
+        const std::vector<std::string> columns = splitCsvColumns(rawLine);
+        ASSERT_EQ(columns.size(), 4u) << "第 " << i + 1 << " 数据行列数不是 4: "
+                                     << csvColumnContext(columns, 0, rawLine);
+        const CsvInt64Column source = csvColumnAsInt64(columns, 0);
+        EXPECT_TRUE(source.ok) << "source_fid 列不是整数: " << csvColumnContext(columns, 0, rawLine);
+        EXPECT_EQ(source.value, fids[expected[i].fidIndex])
+            << "source_fid 不是第 " << expected[i].fidIndex << " 条线: "
+            << csvColumnContext(columns, 0, rawLine);
+        const CsvInt64Column type = csvColumnAsInt64(columns, 1);
+        EXPECT_TRUE(type.ok) << "endpoint_type 列不是整数码: " << csvColumnContext(columns, 1, rawLine);
+        EXPECT_EQ(type.value, expected[i].endpointType)
+            << "endpoint_type 码不符（0=start/1=end）: " << csvColumnContext(columns, 1, rawLine);
+        const CsvDoubleColumn x = csvColumnAsDouble(columns, 2);
+        EXPECT_TRUE(x.ok) << "x 列不是数字: " << csvColumnContext(columns, 2, rawLine);
+        EXPECT_NEAR(expected[i].x, x.value, 1e-6)
+            << "x 列不符: " << csvColumnContext(columns, 2, rawLine);
+        const CsvDoubleColumn y = csvColumnAsDouble(columns, 3);
+        EXPECT_TRUE(y.ok) << "y 列不是数字: " << csvColumnContext(columns, 3, rawLine);
+        // y 这一维靠 L3 的 3.0 承重：全 0 的旧夹具下"y 写死 0"的变异测不出。
+        EXPECT_NEAR(expected[i].y, y.value, 1e-6)
+            << "y 列不符: " << csvColumnContext(columns, 3, rawLine);
+    }
 }
 
 TEST_F(PluginTest, VectorSliverRemoveExecution) {
