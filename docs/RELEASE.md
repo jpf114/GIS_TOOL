@@ -54,19 +54,22 @@ Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests
   现读复核：`ctest --test-dir build/release -C Release -R "^real_data_"` ⇒ 4 条 **Passed**、
   一条 Skipped 都不许有（出现 Skipped：raster/matching 腿看 `data/`，vector 两条腿看 `data/vector/`）。
 - **`data/` 缺失时这四条报 `Skipped` 而不是 `Passed`**（Task C2 / 预检裁定 R-C2a）：
-  三份包装在调 `.ps1` 之前判数据目录，缺失则打印带统一前缀 `GIS_SKIP: ` 的标记并 `return()`
+  三份包装在调 `.ps1` 之前判数据目录，缺失则打印带统一前缀 `GIS_SKIP_TESTDATA_ABSENT: ` 的标记并 `return()`
   （raster / matching 判 `${WORKSPACE_ROOT}/data`；**vector 腿判到 `${WORKSPACE_ROOT}/data/vector`**，
   因为只有它的兜底分支是"退回 3 要素合成样本还全绿"；raster/matching 不能照抄——本仓根本没有
-  `data\raster` 与 `data\matching`，一收就永久 Skipped）。用例侧 `SKIP_REGULAR_EXPRESSION "GIS_SKIP: "` 认领
+  `data\raster` 与 `data\matching`，一收就永久 Skipped）。用例侧 `SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "` 认领
   ⇒ ctest 打 `***Skipped` 并把它列进 "The following tests did not run"。为什么必须有这一条：三条腿的 `.ps1`
   在真实数据缺失时各自兜底现生成合成样本、照样全绿（就是 `tests/CMakeLists.txt` 里那条
   `SKIP_REGULAR_EXPRESSION "\[  SKIPPED \]"` 注释点名的"退出码 0 ⇒ Passed"假绿形态）。
   ⚠ 检查顺序：**先判解释器缺失（红），再判数据缺失（跳）**。反序时"fresh clone（`data/` 本被 gitignore）
   + 本机没有 powershell"会被记成 Skipped，而 Skipped 不参与失败判定 ⇒ 恒注册的设计被绕过（复审 D 条实测）。
-  判别取证（**`data/` 一字节未动**，`find data -newermt 2026-10-19 -type f | wc -l` 复算 = 0）：把同一份包装
-  挂进临时最小工程当真用例跑三臂，`WORKSPACE_ROOT` 必须是**含 `tests/` 而无 `data/`** 的目录（否则先撞上
-  根校验，得到 rc=1 而不是 Skip）—— 臂 1 ⇒ `***Skipped***`；臂 2 `-DMODE=zzz` ⇒ `***Failed***`；
+  判别取证（三臂各自的根不同，混用会得到错误结论）：臂 1 的根是**含 `tests/` 而无 `data/`** 的目录
+  （用空目录会先撞根校验得到 rc=1，不是 Skip）⇒ `***Skipped***`；臂 2 必须换回**真实仓库根**（数据齐）
+  再传 `-DMODE=zzz` ⇒ `***Failed***`（沿用臂 1 的无数据根会得到 rc=0 + 标记，上一版就是这么写的）；
   臂 3 `-DPOWERSHELL_EXECUTABLE=` 留空 ⇒ `***Failed***`。逐条命令与期望 rc 写在各包装头部注释里。
+  ⚠ 取证过程没有就地打开 `data/` 下的栅格，但**本轮之前的波段探针已经在 `data/` 下留下 15 个 `.aux.xml`
+  边车**（见挂账 N115）⇒ "data/ 一字节未动 / 计数 = 0"这种话从现在起不再成立，实测口径是
+  `find data -newermt 2026-10-19 -type f ! -name '*.aux.xml' | wc -l` = **0**（像元与矢量本体未动）。
 
 ### 2) 安装态冒烟 —— 前置条件：确认运行库依赖扫描器（N84）
 
@@ -336,11 +339,12 @@ cmake --install build/release --config Release --prefix install
   7.559/1.634/89.358/84.367 s、Debug 热 11.863/1.751/170.935/190.624 s）与算式逐条写在
   `tests/CMakeLists.txt` 里 real_data_* 那一节的注释。
   ⚠ **为什么这四条不能走 blanket**：文件末尾的 `set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY TIMEOUT 300)`
-  会把它们整体改回 300，而 Debug 树实测 vector 两条腿已经 170.9 s / 190.6 s ⇒ 300 只剩 1.6× 不到，
+  会把它们整体改回 300，而 Debug 树实测 vector 两条腿已经 170.9 s / 190.6 s ⇒ 300 只剩 1.76× / 1.57×，
   随时假 Timeout（本仓已实测过并发把 300 s 线撞出 3 条假 Timeout）。所以这四条的名字必须留在
   `list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup ${GIS_REAL_DATA_TEST_NAMES})` 的豁免名单里，
   名单走变量、不在两处各抄一遍名字。复算：
-  复算**必须读生成物**：`grep 'TIMEOUT "300"' build/debug/tests/CTestTestfile.cmake | grep -c real_data` ⇒ 0。
+  复算**必须读生成物**：`grep 'TIMEOUT "300"' build/debug/tests/CTestTestfile.cmake | grep -c real_data` ⇒ 0
+  （⚠ 前提：改过 `tests/CMakeLists.txt` 要先重新 configure，否则读的是过期生成物，会稳定得到假 0）。
   只 grep 源码那条（`grep -A3 "set_tests_properties(real_data" … | grep TIMEOUT`）测不到覆盖——
   有人把豁免名单里的名字删掉、blanket 把 720/780 改回 300 时，它照样打印那四个数。
 - **全量墙钟基线**（2026-10-21 Task C2 现跑。云端构建停用后已经没有"步骤超时"这一档 ⇒
@@ -653,12 +657,15 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
 四条共用一把新锁 `RESOURCE_LOCK real_data_regression`（它们都写 <仓库根>/tmp/*_benchmark 与 *_regression），
 各带按实测墙钟 ≥4× 向上取整到 60 s 的 `TIMEOUT`（60 / 60 / 720 / 780 s，三轮样本与算式写在该文件注释里，
 不再沿用拍来的 900），并**恒注册**在 `if(GIS_POWERSHELL_EXECUTABLE)` 之外（解释器缺失由包装脚本判红，
-不是"用例静默不注册"）。`data/` 缺失时三份包装在调 `.ps1` 之前打印 `GIS_SKIP: data/ not present` 并 `return()`，
-用例侧 `SKIP_REGULAR_EXPRESSION` 认领同一串 ⇒ ctest 报 **Skipped** 而不是 Passed（裁定 R-C2a）。
-判别取证（控制器端到端复跑，`data/` 一字节未动）：把 `run_real_matching_regression.cmake` 挂进临时最小工程
-当真用例跑三臂 —— ① WORKSPACE_ROOT 指到不含 `data` 的目录 ⇒ `***Skipped***` 并列入 "did not run"；
-② WORKSPACE_ROOT 正确、`-DMODE=zzz`（腿真失败）⇒ `***Failed***`；③ `-DPOWERSHELL_EXECUTABLE` 留空 ⇒ `***Failed***`。
-⇒ Skip 只在命中那条标记时发生，真失败仍然是红 ⇒ 用例不空转。
+不是"用例静默不注册"）。`data/` 缺失时三份包装在调 `.ps1` 之前打印 `GIS_SKIP_TESTDATA_ABSENT: data/ not present` 并 `return()`，
+用例侧 `SKIP_REGULAR_EXPRESSION` 认领该 token ⇒ ctest 报 **Skipped** 而不是 Passed（裁定 R-C2a）。
+  ⚠ 认领串已从通用前缀改成独占 token：CTest 的 Skip 匹配**优先于退出码**（隔离探针里"打标记后 FATAL_ERROR"
+  仍报 Skipped 且 "100% tests passed"），所以"只允许三份包装打印"必须是**形状上不可能撞车**，不能只靠现状。
+判别取证（控制器端到端复跑；取证本身不就地打开 `data/` 下的栅格，但 `data/` 里已有本轮早先探针留下的
+15 个 `.aux.xml` 边车（见 N115），故此处不写"一字节未动"）：把 `run_real_matching_regression.cmake` 挂进临时最小工程
+当真用例跑三臂 —— ① 根含 `tests/` 而无 `data/` ⇒ `***Skipped***` 并列入 "did not run"；
+② **真实仓库根** + `-DMODE=zzz`（腿真失败）⇒ `***Failed***`；③ `-DPOWERSHELL_EXECUTABLE` 留空 ⇒ `***Failed***`。
+⇒ Skip 只在命中那个独占 token 时发生，真失败仍然是红 ⇒ 用例不空转。
 ④ 本批加固：三份包装在 data 检查**之前**先验 `${WORKSPACE_ROOT}/tests/<对应 .ps1>` 存在，缺失即 `FATAL_ERROR`。
 成因是控制器自己踩出来的：`add_test` 里把参数写成 `-DWORKSPACE_ROOT="${X}"` 时 Windows 的 argv 复原会把引号
 留在**值内部**，于是 `data` 检查认不出路径 ⇒ 四条真用例整批静默 `***Skipped***` 而全量照绿。
