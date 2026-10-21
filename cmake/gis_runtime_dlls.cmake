@@ -157,9 +157,25 @@ endif()
 #    也逐源路径比对过一致）。此后守住名单正确性的三件事，全部是本文件里的硬闸：
 #     ① 归零 / 条目格式 / 派生项数 / 重名 四条自守（错在配置期，不靠测试）；
 #     ② 同名项的源目录必须是 $<CONFIG:> 生成器表达式（N76 那条防线）；
-#     ③ 装出来的包由 tests/check_install_closure.cmake 逐 PE 判导入闭包 ——
-#        样式标错会让某个配置的 dll 静默缺席，闭包断言是唯一能看见"少了一个"的判据
-#        （runtime_dll_cross_config_audit 只看得见"多了对面配置的残留"，看不见"少了"）。
+#     ③ 样式标错**没有定向守卫**（2026-10-21 实测后登记为 N105，写在这里是为了别再把
+#        "闭包断言能看见少了一个"当成防线——那句话是失实的）：
+#        · 配置期四条自守只判格式/归零/项数/重名，把某项样式标错（实测 geotiff 的
+#          underscore_d 改成 suffix_d）**全部放行**，只有上面那行 [runtime-dlls] 的样式分布
+#          数字变了，而没人断言它；
+#        · GIS_RUNTIME_DLLS / GIS_RUNTIME_DLLS_DEBUG 只被本文件的 gis_copy_minimal_runtime 消费
+#          （根 CMakeLists.txt 里 0 处引用），而装出来的包由扫描器按导入闭包直接从 vcpkg 取
+#          ⇒ 样式标错**不影响包**，check_install_closure.cmake 看不见这种缺席；
+#        · 后果只落在构树，而且形态不是干净红：本机把 gdald.dll 从加载目录与 exe 目录各删
+#          一份，CoreTest.InitGDAL… 一路挂到 TIMEOUT（300 s 被 ctest 杀）；
+#        · runtime_dll_cross_config_audit 同样看不见（它只判"有没有对面配置的件"）。
+#        要补的闸（未做）：对派生结果逐项做**存在性断言** —— release 名单查
+#        ${GIS_VCPKG_RELEASE_BIN_DIR}/<名>、debug 名单查 debug/bin，缺项 FATAL_ERROR 点名。
+#        名单本身是派生的，所以这条闸不引入第二份真源。
+#
+# 删手抄名单前那步对照**现在仍可重跑**（不必信历史自报）：把当前表按三种样式派生出的
+#   两条名单，与 `git show e726710:cmake/gis_runtime_dlls.cmake` 里那两条手抄名单逐字符串同序
+#   比对，现读结果 release/debug 各 36 项一致；同一份对照在标错样式的那张表上会精确报出
+#   "debug 名单第 5 项 派生=geotiffd.dll 手抄=geotiff_d.dll"（release 侧仍一致 ⇒ 必须两条都判）。
 set(GIS_RUNTIME_DLLS ${_gis_derived_release})
 set(GIS_RUNTIME_DLLS_DEBUG ${_gis_derived_debug})
 
