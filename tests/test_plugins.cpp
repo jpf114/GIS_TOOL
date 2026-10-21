@@ -6835,6 +6835,14 @@ TEST_F(PluginTest, VectorMultipartCheckExecution) {
         poly2.addRing(&ring2);
         multiPoly.addGeometry(&poly2);
 
+        // 夹具三个要素（工单 §C3b-B2 定稿；本动作既无投影闸也无几何类型闸）：
+        //   F1 = MultiPolygon，**2 个部件**；
+        //   F2 = MultiPolygon，**1 个部件**（⚠ 必须在场，见下一条）；
+        //   F3 = 普通 Polygon，1 个部件（本刀新增的"两个半边都不成立"那一格）。
+        // 实现的判定是 `partCount > 1 || isMultipartGeometryType(...)`（vector_plugin_multipart_check.inc:44），
+        // 两个半边各证一头：F1 靠左半边（部件数 2），F2 靠**右半边**（类型是 Multi 但部件数 1），
+        // F3 两边都不成立 ⇒ 不许报出。"单部件 MultiPolygon 也算多部件"是本动作最容易写错的口径
+        // （控制器 2026-10-22 实测真实省层 42/42 全报多部件，走的就是右半边）⇒ 用断言钉，不靠注释。
         auto* feat1 = OGRFeature::CreateFeature(layer->GetLayerDefn());
         feat1->SetGeometry(&multiPoly);
         ASSERT_EQ(layer->CreateFeature(feat1), OGRERR_NONE);
@@ -6855,8 +6863,35 @@ TEST_F(PluginTest, VectorMultipartCheckExecution) {
         feat2->SetGeometry(&singleAsMulti);
         ASSERT_EQ(layer->CreateFeature(feat2), OGRERR_NONE);
         OGRFeature::DestroyFeature(feat2);
+
+        // F3：普通 Polygon（部件数 1、类型也不是 Multi）⇒ 判定的两个半边都不成立 ⇒ 不许进 CSV，
+        // 但它照样要被扫描 ⇒ 正是它把 scanned_count=3 与 issue_count=2 的差额撑出来。
+        // ⚠ 它写成 Polygon 落进**声明为 wkbMultiPolygon 的层**是有意的：GDAL 的
+        //   OGRGeoPackageTableLayer::CheckGeometryType 对这种组合只发一条 CE_Warning
+        //   （原文 "…which is not normally allowed by the GeoPackage specification, but the driver
+        //   will however do it"）便照原样落盘，blob 头与 WKB 都带自己的类型，读回来仍是 wkbPolygon。
+        //   若图省事把它也写成 MultiPolygon，F3 就退化成第二个 F2 ⇒ "非多部件不许报"这一格覆盖归零。
+        OGRPolygon plainPoly;
+        OGRLinearRing plainRing;
+        plainRing.addPoint(30, 0);
+        plainRing.addPoint(35, 0);
+        plainRing.addPoint(35, 5);
+        plainRing.addPoint(30, 5);
+        plainRing.addPoint(30, 0);
+        plainPoly.addRing(&plainRing);
+
+        auto* feat3 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat3->SetGeometry(&plainPoly);
+        ASSERT_EQ(layer->CreateFeature(feat3), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat3);
         GDALClose(ds);
     }
+
+    // R-B1-fid：期望的 FID 一律从**输入侧**现读（重新打开刚落盘的输入层，按创建顺序取 GetFID()），
+    // 不许从产出的 CSV 回填，也不假设"GPKG 的 FID 从 1 起"。
+    const std::vector<long long> fids = readLayerFidsInCreationOrder(input);
+    ASSERT_EQ(fids.size(), 3u)
+        << "multipart_check 夹具创建了 3 个要素，重新打开输入层却没读回 3 个 FID";
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("multipart_check");
@@ -6867,20 +6902,50 @@ TEST_F(PluginTest, VectorMultipartCheckExecution) {
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("issue_count"), "2");
+    EXPECT_EQ(result.metadata.at("scanned_count"), "3");
 
-    std::ifstream ifs(fs::u8path(output));
-    ASSERT_TRUE(ifs.is_open());
-    std::string line;
-    std::vector<std::string> lines;
-    while (std::getline(ifs, line)) {
-        lines.push_back(line);
-    }
-    ASSERT_EQ(lines.size(), 3u);
+    const std::vector<std::string> lines = readCsvLines(output);
+    ASSERT_EQ(lines.size(), 3u)
+        << "multipart_check CSV 应为 1 表头 + 2 数据行（F3 普通 Polygon 不许报出）";
     EXPECT_EQ(lines[0], "source_fid,geom_type,part_count");
-    EXPECT_NE(lines[1].find("MultiPolygon"), std::string::npos);
-    EXPECT_NE(lines[1].find(",2"), std::string::npos);
-    EXPECT_NE(lines[2].find("MultiPolygon"), std::string::npos);
-    EXPECT_NE(lines[2].find(",1"), std::string::npos);
+
+    // 实现按读入顺序写行 ⇒ 第 1 数据行是 F1、第 2 是 F2。
+    // 旧判据 `lines[1].find(",2")` / `lines[2].find(",1")`（工单点名的那两条）已整段删除，
+    // 不留新旧并存：子串对**列位**（"2" 写在 source_fid 里也命中）、**基数**（多写一行也命中）
+    // 和**邻近值**（",12"、",21" 都命中同一条）三件事都不敏感。
+    const std::vector<std::string> row1 = splitCsvColumns(lines[1]);
+    ASSERT_EQ(row1.size(), 3u)
+        << "multipart_check 第 1 数据行列数不是 3: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Fid = csvColumnAsInt64(row1, 0);
+    EXPECT_TRUE(row1Fid.ok) << "source_fid 列不是整数: " << csvColumnContext(row1, 0, lines[1]);
+    EXPECT_EQ(row1Fid.value, fids[0]) << "source_fid 不是 F1: " << csvColumnContext(row1, 0, lines[1]);
+    EXPECT_EQ(row1[1], "MultiPolygon")
+        << "geom_type 列应为 MultiPolygon: " << csvColumnContext(row1, 1, lines[1]);
+    const CsvDoubleColumn row1Parts = csvColumnAsDouble(row1, 2);
+    EXPECT_TRUE(row1Parts.ok) << "part_count 列不是数字: " << csvColumnContext(row1, 2, lines[1]);
+    // 算式：F1 由两个闭合环面拼成 ⇒ geometryPartCount 走 wkbMultiPolygon 分支取
+    //   getNumGeometries() = 2（vector_plugin_common.inc:521）。
+    // ⚠ R-C3b-1 选 ②：part_count 是**部件计数**、不是量测，写成浮比只为了让机器级判据
+    //   CoverageMeta.GoldEvidenceIsAuditable 认它作数值断言；1e-9 远小于任何整数偏差，语义损失为零。
+    EXPECT_NEAR(2.0, row1Parts.value, 1e-9)
+        << "F1 的部件计数应为 2: " << csvColumnContext(row1, 2, lines[1]);
+
+    const std::vector<std::string> row2 = splitCsvColumns(lines[2]);
+    ASSERT_EQ(row2.size(), 3u)
+        << "multipart_check 第 2 数据行列数不是 3: " << csvColumnContext(row2, 0, lines[2]);
+    const CsvInt64Column row2Fid = csvColumnAsInt64(row2, 0);
+    EXPECT_TRUE(row2Fid.ok) << "source_fid 列不是整数: " << csvColumnContext(row2, 0, lines[2]);
+    EXPECT_EQ(row2Fid.value, fids[1]) << "source_fid 不是 F2: " << csvColumnContext(row2, 0, lines[2]);
+    EXPECT_EQ(row2[1], "MultiPolygon")
+        << "geom_type 列应为 MultiPolygon: " << csvColumnContext(row2, 1, lines[2]);
+    const CsvDoubleColumn row2Parts = csvColumnAsDouble(row2, 2);
+    EXPECT_TRUE(row2Parts.ok) << "part_count 列不是数字: " << csvColumnContext(row2, 2, lines[2]);
+    // 这一行钉的是右半边：F2 只有一个部件 ⇒ 计数为 1，行却**必须存在**（靠 isMultipartGeometryType 报出）。
+    // "计数 = 1" 与 "行存在" 两条合起来才排掉"把 partCount>1 写成 partCount>=1"这类变异
+    // （那样 F3 也会被报出，行数与 issue_count 一起红）。
+    EXPECT_NEAR(1.0, row2Parts.value, 1e-9)
+        << "F2 的部件计数应为 1（单部件 MultiPolygon 也算多部件）: "
+        << csvColumnContext(row2, 2, lines[2]);
 }
 
 TEST_F(PluginTest, VectorSinglepartExecution) {
@@ -6903,25 +6968,34 @@ TEST_F(PluginTest, VectorSinglepartExecution) {
         OGRFieldDefn nameField("name", OFTString);
         ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
 
+        // 夹具（工单 §C3b-B2 定稿，EPSG:3857）：
+        //   F1 = MultiPolygon，两个部件 **4×4 = 16** 与 **2×2 = 4**；
+        //   F2 = 普通 Polygon **3×3 = 9**（本刀新增的第二要素 ⇒ 单部件要素也走一遍展开路径，
+        //        这是 N120 想要的"多要素"覆盖在 singlepart 上做实）。
+        // 三个面积故意互不相同：若全等，"把每个部件都写成同一个"这类变异测不出来。
+        // ⚠ F2 是 Polygon 写进声明为 wkbMultiPolygon 的层：GDAL 只发一条 CE_Warning 便照原样落盘，
+        //   blob 自带类型，读回来仍是 wkbPolygon（与 multipart_check 夹具同一处理，理由见那里的注释）。
+        //   层声明类型仍是 MultiPolygon ⇒ singlepartLayerGeometryType 给出 wkbPolygon，
+        //   这正是本用例要走的分支（换成未知类型会直接 fail 在类型闸上）。
         OGRMultiPolygon multiPoly;
         OGRPolygon poly1;
         OGRLinearRing ring1;
         ring1.addPoint(0, 0);
-        ring1.addPoint(5, 0);
-        ring1.addPoint(5, 5);
-        ring1.addPoint(0, 5);
+        ring1.addPoint(4, 0);
+        ring1.addPoint(4, 4);
+        ring1.addPoint(0, 4);
         ring1.addPoint(0, 0);
-        poly1.addRing(&ring1);
+        poly1.addRing(&ring1);  // 4*4 = 16
         multiPoly.addGeometry(&poly1);
 
         OGRPolygon poly2;
         OGRLinearRing ring2;
-        ring2.addPoint(10, 0);
-        ring2.addPoint(15, 0);
-        ring2.addPoint(15, 5);
-        ring2.addPoint(10, 5);
-        ring2.addPoint(10, 0);
-        poly2.addRing(&ring2);
+        ring2.addPoint(10, 10);
+        ring2.addPoint(12, 10);
+        ring2.addPoint(12, 12);
+        ring2.addPoint(10, 12);
+        ring2.addPoint(10, 10);
+        poly2.addRing(&ring2);  // 2*2 = 4
         multiPoly.addGeometry(&poly2);
 
         auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
@@ -6929,6 +7003,21 @@ TEST_F(PluginTest, VectorSinglepartExecution) {
         feat->SetGeometry(&multiPoly);
         ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
         OGRFeature::DestroyFeature(feat);
+
+        OGRPolygon soloPoly;
+        OGRLinearRing ring3;
+        ring3.addPoint(20, 0);
+        ring3.addPoint(23, 0);
+        ring3.addPoint(23, 3);
+        ring3.addPoint(20, 3);
+        ring3.addPoint(20, 0);
+        soloPoly.addRing(&ring3);  // 3*3 = 9
+
+        auto* featB = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        featB->SetField("name", "B");
+        featB->SetGeometry(&soloPoly);
+        ASSERT_EQ(layer->CreateFeature(featB), OGRERR_NONE);
+        OGRFeature::DestroyFeature(featB);
         GDALClose(ds);
     }
 
@@ -6940,21 +7029,55 @@ TEST_F(PluginTest, VectorSinglepartExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("feature_count"), "2");
-    EXPECT_EQ(result.metadata.at("source_count"), "1");
+    // 三个计数键一个不落：feature_count = 展开后的部件数（2 + 1），source_count = 源要素数（2），
+    // skipped_count = 空/缺几何被跳过的源要素数（本夹具一个都没有 ⇒ 0）。
+    // ⚠ skipped_count 至今全仓没被断言过，本刀是它第一条断言。
+    EXPECT_EQ(result.metadata.at("feature_count"), "3");
+    EXPECT_EQ(result.metadata.at("source_count"), "2");
+    EXPECT_EQ(result.metadata.at("skipped_count"), "0");
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
     ASSERT_NE(outDs, nullptr);
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
-    EXPECT_EQ(outLayer->GetFeatureCount(), 2);
-    OGRFeature* outFeat = outLayer->GetNextFeature();
-    ASSERT_NE(outFeat, nullptr);
-    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "A");
-    EXPECT_EQ(wkbFlatten(outFeat->GetGeometryRef()->getGeometryType()), wkbPolygon);
-    OGRFeature::DestroyFeature(outFeat);
+    EXPECT_EQ(outLayer->GetFeatureCount(), 3);
+    outLayer->ResetReading();
+
+    std::vector<double> areas;
+    std::map<std::string, int> nameCounts;
+    int nonPolygonCount = 0;
+    OGRFeature* outFeat = nullptr;
+    while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = outFeat->GetGeometryRef();
+        if (!geom || wkbFlatten(geom->getGeometryType()) != wkbPolygon) {
+            ++nonPolygonCount;   // 输出几何类型是契约：dstType = singlepartLayerGeometryType(wkbMultiPolygon)
+        } else {
+            // get_Area() 声明在 OGRCurvePolygon / OGRPolygon / OGRMultiPolygon 上，OGRGeometry 基类没有
+            // ⇒ 上面已核过扁平类型是 wkbPolygon，这里下推成 OGRPolygon 再取面积（本文件其它用例同一写法）。
+            areas.push_back(geom->toPolygon()->get_Area());
+        }
+        ++nameCounts[outFeat->GetFieldAsString("name")];
+        OGRFeature::DestroyFeature(outFeat);
+    }
     GDALClose(outDs);
+
+    EXPECT_EQ(nonPolygonCount, 0) << "singlepart 的输出要素必须全是 Polygon，不该有非 Polygon 几何";
+    ASSERT_EQ(areas.size(), 3u) << "singlepart 应回读到 3 个 Polygon 部件的面积";
+    // **按多重集比，不按位置比**（把三条实读面积排序后逐个比）。
+    // WHY：singlepart 写每条部件走 writeFeatureWithCopiedFieldsOwned，那里 feature->SetFID(OGRNullFID)
+    //   （vector_plugin_overlay_support.inc:134）⇒ 输出 FID 完全由驱动重排，**顺序不是契约**；
+    //   钉"第 1 条必须是 16"等于把实现细节当规格埋进库里——本仓 C3a-4 刚为顶点顺序做过同样的裁定，
+    //   同一族病。排序以后仍然钉得住"三个面积分别是 16/4/9"：少写一个部件、把面积算错、
+    //   把两个部件写成同一个，都会让某个位置红。
+    std::sort(areas.begin(), areas.end());
+    EXPECT_NEAR(4.0, areas[0], 1e-6) << "最小的部件面积应为 2*2 = 4，实读排序后 " << areas[0];
+    EXPECT_NEAR(9.0, areas[1], 1e-6) << "中间的部件面积应为 3*3 = 9，实读排序后 " << areas[1];
+    EXPECT_NEAR(16.0, areas[2], 1e-6) << "最大的部件面积应为 4*4 = 16，实读排序后 " << areas[2];
+    // 字段随部件复制（SetFrom(sourceFeature, TRUE)）：两个 F1 部件带 A、F2 部件带 B。
+    // 同样按**计数**比而不是按位置比，理由与上面那条一致。
+    EXPECT_EQ(nameCounts["A"], 2) << "F1 的两个部件都应带上 name = A";
+    EXPECT_EQ(nameCounts["B"], 1) << "F2 展开出的那个部件应带上 name = B";
 }
 
 TEST_F(PluginTest, VectorVerticesExtractExecution) {
@@ -7392,11 +7515,22 @@ TEST_F(PluginTest, VectorDuplicatePointCheckExecution) {
             OGRFeature::DestroyFeature(feat);
         };
 
+        // 夹具四个点（工单 §C3b-B2 定稿，EPSG:3857）：(0,0)、(1,1)、(0,0)、(2,2)。
+        // 键是 pointKey 把 x,y 定标到 10 位小数（vector_plugin_common.inc:626），**先到先得**记进
+        // firstPointByKey ⇒ 只有第 3 个点 (0,0) 命中已有键 ⇒ 恰好 1 行、issue_count = 1。
+        // (1,1) 与 (2,2) 是两个谁也不挨的干扰点：它们撑出 scanned_count = 4 与 issue_count = 1 的差额，
+        // 于是"把每个扫到的点都写一行"这类变异当场红。
         addPoint(0, 0);
         addPoint(1, 1);
         addPoint(0, 0);
+        addPoint(2, 2);
         GDALClose(ds);
     }
+
+    // R-B1-fid：两个 FID 列的期望值都从**输入侧**现读（创建顺序的第 1 个与第 3 个点）。
+    const std::vector<long long> fids = readLayerFidsInCreationOrder(input);
+    ASSERT_EQ(fids.size(), 4u)
+        << "duplicate_point_check 夹具创建了 4 个点，重新打开输入层却没读回 4 个 FID";
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("duplicate_point_check");
@@ -7406,25 +7540,43 @@ TEST_F(PluginTest, VectorDuplicatePointCheckExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
+    // 三个计数键一个不落。skipped_geometry_count 本夹具应为 0：四个几何都是 wkbPoint，
+    // 既不会走 :87 的"非点几何"分支，也不会走 :83 的 MultiPoint 非点子几何防御臂。
     EXPECT_EQ(result.metadata.at("issue_count"), "1");
+    EXPECT_EQ(result.metadata.at("scanned_count"), "4");
+    EXPECT_EQ(result.metadata.at("skipped_geometry_count"), "0");
 
-    std::ifstream ifs(fs::u8path(output));
-    ASSERT_TRUE(ifs.is_open());
-    std::string line;
-    std::vector<std::string> lines;
-    while (std::getline(ifs, line)) {
-        lines.push_back(line);
-    }
-    ASSERT_EQ(lines.size(), 2u);
+    const std::vector<std::string> lines = readCsvLines(output);
+    ASSERT_EQ(lines.size(), 2u) << "duplicate_point_check CSV 应为 1 表头 + 1 数据行";
     EXPECT_EQ(lines[0], "source_fid,duplicate_fid,x,y");
-    std::stringstream ss(lines[1]);
-    std::vector<std::string> fields;
-    while (std::getline(ss, line, ',')) {
-        fields.push_back(line);
-    }
-    ASSERT_EQ(fields.size(), 4u);
-    EXPECT_EQ(fields[2], "0");
-    EXPECT_EQ(fields[3], "0");
+
+    // 旧写法是手写 stringstream 按 ',' 切一遍、只比 fields[2]/fields[3] 两个字符串，整段删除：
+    // **两个 FID 列一个都没钉** ⇒ "配对写反"和"把 duplicate_fid 也写成 source 的 fid"（Task 20
+    // 修的就是同一 fid 那一族语义）都测不出；列数也只核到"切出 4 段"，没核每段是什么。
+    const std::vector<std::string> row1 = splitCsvColumns(lines[1]);
+    ASSERT_EQ(row1.size(), 4u)
+        << "duplicate_point_check 数据行列数不是 4: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Source = csvColumnAsInt64(row1, 0);
+    EXPECT_TRUE(row1Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row1, 0, lines[1]);
+    EXPECT_EQ(row1Source.value, fids[0])
+        << "source_fid 应是**先到**的那个 (0,0)（创建顺序第 1 个点）: "
+        << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Dup = csvColumnAsInt64(row1, 1);
+    EXPECT_TRUE(row1Dup.ok) << "duplicate_fid 列不是整数: " << csvColumnContext(row1, 1, lines[1]);
+    EXPECT_EQ(row1Dup.value, fids[2])
+        << "duplicate_fid 应是**后到**的那个 (0,0)（创建顺序第 3 个点），两列不许写成同一个: "
+        << csvColumnContext(row1, 1, lines[1]);
+    const CsvDoubleColumn row1X = csvColumnAsDouble(row1, 2);
+    EXPECT_TRUE(row1X.ok) << "x 列不是数字: " << csvColumnContext(row1, 2, lines[1]);
+    EXPECT_NEAR(0.0, row1X.value, 1e-6)
+        << "重复点的 x 应为 0.0: " << csvColumnContext(row1, 2, lines[1]);
+    const CsvDoubleColumn row1Y = csvColumnAsDouble(row1, 3);
+    EXPECT_TRUE(row1Y.ok) << "y 列不是数字: " << csvColumnContext(row1, 3, lines[1]);
+    // ⚠ 诚实登记：工单定稿的被重复点就在原点 ⇒ 这一对 x/y 的"非零维度"在本用例不承重
+    //   （B1 给 dangling_endpoint 换 L3 的 y=3 就是为治这个病）。整体不缺：同一 action 的
+    //   Task 20 用例 DuplicatePointCheckHandlesMultiPointLayer 用整行相等钉了非零的 "1,3,1,1"。
+    EXPECT_NEAR(0.0, row1Y.value, 1e-6)
+        << "重复点的 y 应为 0.0: " << csvColumnContext(row1, 3, lines[1]);
 }
 
 // --- Task 20：duplicate_point_check 的 MultiPoint / 非点几何处置 ---
@@ -7695,43 +7847,81 @@ TEST_F(PluginTest, VectorHoleCheckExecution) {
         auto* layer = ds->CreateLayer("polygons", srs.get(), wkbPolygon, nullptr);
         ASSERT_NE(layer, nullptr);
 
-        OGRPolygon withHole;
-        OGRLinearRing outer;
-        outer.addPoint(0, 0);
-        outer.addPoint(10, 0);
-        outer.addPoint(10, 10);
-        outer.addPoint(0, 10);
-        outer.addPoint(0, 0);
-        withHole.addRing(&outer);
+        // 夹具三个要素（工单 §C3b-B2 定稿，EPSG:3857）：
+        //   F1 = Polygon 带 **2 个内环** ⇒ hole_count = 2；
+        //   F2 = Polygon **无洞** ⇒ 不报出（正是它撑出 scanned_count=3 与 issue_count=2 的差额）；
+        //   F3 = MultiPolygon，两个子面分别带 **1 个**与 **3 个**内环 ⇒ hole_count = 1 + 3 = **4**。
+        // 洞数做成 2 / 0 / 4 三个不同档：只有一档的话"hole_count 写死成常数"这类变异测不出来。
+        // ⚠ F3 是 MultiPolygon 写进**声明为 wkbPolygon 的层**：GDAL 的 CheckGeometryType 只发一条
+        //   CE_Warning 便照原样落盘，blob 自带类型 ⇒ 读回来仍是 wkbMultiPolygon，geometryHoleCount
+        //   才会走 MultiPolygon 那一支把子面内环**加总**。层级闸看的是层声明类型
+        //   （effectiveLayerGeometryType = wkbPolygon ∈ {Polygon, MultiPolygon}）⇒ 闸照过。
+        auto makeRing = [](double minX, double minY, double maxX, double maxY) {
+            OGRLinearRing ring;
+            ring.addPoint(minX, minY);
+            ring.addPoint(maxX, minY);
+            ring.addPoint(maxX, maxY);
+            ring.addPoint(minX, maxY);
+            ring.addPoint(minX, minY);
+            return ring;
+        };
 
-        OGRLinearRing inner;
-        inner.addPoint(2, 2);
-        inner.addPoint(4, 2);
-        inner.addPoint(4, 4);
-        inner.addPoint(2, 4);
-        inner.addPoint(2, 2);
-        withHole.addRing(&inner);
+        // F1：外环 (0,0)-(10,10) + 两个互不重叠、都在外环内的内环。
+        OGRPolygon withHole;
+        OGRLinearRing f1Outer = makeRing(0, 0, 10, 10);
+        withHole.addRing(&f1Outer);
+        OGRLinearRing f1InnerA = makeRing(2, 2, 4, 4);
+        OGRLinearRing f1InnerB = makeRing(6, 2, 8, 4);
+        withHole.addRing(&f1InnerA);
+        withHole.addRing(&f1InnerB);
 
         auto* feat1 = OGRFeature::CreateFeature(layer->GetLayerDefn());
         feat1->SetGeometry(&withHole);
         ASSERT_EQ(layer->CreateFeature(feat1), OGRERR_NONE);
         OGRFeature::DestroyFeature(feat1);
 
+        // F2：只有一个外环 ⇒ getNumInteriorRings() = 0 ⇒ 不许报出，但要计入 scanned_count。
         OGRPolygon noHole;
-        OGRLinearRing ring;
-        ring.addPoint(20, 0);
-        ring.addPoint(30, 0);
-        ring.addPoint(30, 10);
-        ring.addPoint(20, 10);
-        ring.addPoint(20, 0);
+        OGRLinearRing ring = makeRing(20, 0, 30, 10);
         noHole.addRing(&ring);
 
         auto* feat2 = OGRFeature::CreateFeature(layer->GetLayerDefn());
         feat2->SetGeometry(&noHole);
         ASSERT_EQ(layer->CreateFeature(feat2), OGRERR_NONE);
         OGRFeature::DestroyFeature(feat2);
+
+        // F3：子面 A 带 1 个内环、子面 B 带 3 个内环 ⇒ 该要素的 hole_count = 1 + 3 = 4。
+        OGRPolygon f3PartA;
+        OGRLinearRing f3OuterA = makeRing(40, 0, 50, 10);
+        f3PartA.addRing(&f3OuterA);
+        OGRLinearRing f3InnerA = makeRing(42, 2, 44, 4);
+        f3PartA.addRing(&f3InnerA);
+
+        OGRPolygon f3PartB;
+        OGRLinearRing f3OuterB = makeRing(60, 0, 70, 10);
+        f3PartB.addRing(&f3OuterB);
+        OGRLinearRing f3InnerB1 = makeRing(61, 1, 62, 2);
+        OGRLinearRing f3InnerB2 = makeRing(64, 4, 65, 5);
+        OGRLinearRing f3InnerB3 = makeRing(67, 7, 68, 8);
+        f3PartB.addRing(&f3InnerB1);
+        f3PartB.addRing(&f3InnerB2);
+        f3PartB.addRing(&f3InnerB3);
+
+        OGRMultiPolygon multiWithHoles;
+        multiWithHoles.addGeometry(&f3PartA);
+        multiWithHoles.addGeometry(&f3PartB);
+
+        auto* feat3 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat3->SetGeometry(&multiWithHoles);
+        ASSERT_EQ(layer->CreateFeature(feat3), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat3);
         GDALClose(ds);
     }
+
+    // R-B1-fid：期望 FID 从**输入侧**现读；F3 是创建顺序的第 3 个要素 ⇒ fids[2]。
+    const std::vector<long long> fids = readLayerFidsInCreationOrder(input);
+    ASSERT_EQ(fids.size(), 3u)
+        << "hole_check 夹具创建了 3 个要素，重新打开输入层却没读回 3 个 FID";
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("hole_check");
@@ -7741,19 +7931,51 @@ TEST_F(PluginTest, VectorHoleCheckExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("issue_count"), "1");
+    // issue_count 的口径是**有洞的要素数**（实现每要素最多 ++issueCount，
+    // vector_plugin_hole_check.inc:49-53），不是洞的总数。本夹具洞的总数 = 2 + 4 = 6，
+    // 有洞的要素数 = 2 ⇒ 两个数不等，"2" 才算把这个口径钉住（写成 6 就是照抄误解）。
+    EXPECT_EQ(result.metadata.at("issue_count"), "2");
+    EXPECT_EQ(result.metadata.at("scanned_count"), "3");
 
-    std::ifstream ifs(fs::u8path(output));
-    ASSERT_TRUE(ifs.is_open());
-    std::string line;
-    std::vector<std::string> lines;
-    while (std::getline(ifs, line)) {
-        lines.push_back(line);
-    }
-    ASSERT_EQ(lines.size(), 2u);
+    const std::vector<std::string> lines = readCsvLines(output);
+    ASSERT_EQ(lines.size(), 3u) << "hole_check CSV 应为 1 表头 + 2 数据行（F2 无洞不许报出）";
     EXPECT_EQ(lines[0], "source_fid,geom_type,hole_count");
-    EXPECT_NE(lines[1].find("Polygon"), std::string::npos);
-    EXPECT_NE(lines[1].find(",1"), std::string::npos);
+
+    // 实现按读入顺序写行 ⇒ 第 1 数据行是 F1、第 2 是 F3（F2 被跳过）。
+    // 旧判据 `lines[1].find("Polygon")` / `lines[1].find(",1")` 整段删除，不留新旧并存：
+    // ",1" 对列位（fid 里就有 1）、基数（F2 若被误报成 hole_count=1 也命中）都不敏感。
+    const std::vector<std::string> row1 = splitCsvColumns(lines[1]);
+    ASSERT_EQ(row1.size(), 3u)
+        << "hole_check 第 1 数据行列数不是 3: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Fid = csvColumnAsInt64(row1, 0);
+    EXPECT_TRUE(row1Fid.ok) << "source_fid 列不是整数: " << csvColumnContext(row1, 0, lines[1]);
+    EXPECT_EQ(row1Fid.value, fids[0]) << "source_fid 不是 F1: " << csvColumnContext(row1, 0, lines[1]);
+    EXPECT_EQ(row1[1], "Polygon")
+        << "geom_type 列应为 Polygon（blob 自带类型，不受层声明类型影响）: "
+        << csvColumnContext(row1, 1, lines[1]);
+    const CsvDoubleColumn row1Holes = csvColumnAsDouble(row1, 2);
+    EXPECT_TRUE(row1Holes.ok) << "hole_count 列不是数字: " << csvColumnContext(row1, 2, lines[1]);
+    // 算式：F1 = 1 个外环 + 2 个内环 ⇒ getNumInteriorRings() = 2（Polygon 分支，common.inc:638）。
+    // ⚠ R-C3b-1 选 ②：hole_count 是**内环计数**、不是量测，写成浮比只为了让机器级判据
+    //   CoverageMeta.GoldEvidenceIsAuditable 认它作数值断言；1e-9 远小于任何整数偏差，语义损失为零。
+    EXPECT_NEAR(2.0, row1Holes.value, 1e-9)
+        << "F1 的内环计数应为 2: " << csvColumnContext(row1, 2, lines[1]);
+
+    const std::vector<std::string> row2 = splitCsvColumns(lines[2]);
+    ASSERT_EQ(row2.size(), 3u)
+        << "hole_check 第 2 数据行列数不是 3: " << csvColumnContext(row2, 0, lines[2]);
+    const CsvInt64Column row2Fid = csvColumnAsInt64(row2, 0);
+    EXPECT_TRUE(row2Fid.ok) << "source_fid 列不是整数: " << csvColumnContext(row2, 0, lines[2]);
+    EXPECT_EQ(row2Fid.value, fids[2])
+        << "source_fid 不是 F3（F2 无洞，不许占这一行）: " << csvColumnContext(row2, 0, lines[2]);
+    EXPECT_EQ(row2[1], "MultiPolygon")
+        << "geom_type 列应为 MultiPolygon: " << csvColumnContext(row2, 1, lines[2]);
+    const CsvDoubleColumn row2Holes = csvColumnAsDouble(row2, 2);
+    EXPECT_TRUE(row2Holes.ok) << "hole_count 列不是数字: " << csvColumnContext(row2, 2, lines[2]);
+    // 算式：F3 = 子面 A(1 内环) + 子面 B(3 内环) ⇒ MultiPolygon 分支逐子面累加 = 1 + 3 = 4
+    //   （common.inc:639-645）。这条同时钉住"只数第一个子面"（会给 1）与"数外环"（会给 2+…）两类变异。
+    EXPECT_NEAR(4.0, row2Holes.value, 1e-9)
+        << "F3 的内环计数应为 1+3=4: " << csvColumnContext(row2, 2, lines[2]);
 }
 
 TEST_F(PluginTest, VectorDanglingEndpointCheckExecution) {
