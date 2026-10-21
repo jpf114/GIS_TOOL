@@ -7058,10 +7058,12 @@ TEST_F(PluginTest, VectorSinglepartExecution) {
         OGRFieldDefn nameField("name", OFTString);
         ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
 
-        // 夹具（工单 §C3b-B2 定稿，EPSG:3857）：
+        // 夹具（工单 §C3b-B2 定稿 + §C3b-4 追加 F3，EPSG:3857）：
         //   F1 = MultiPolygon，两个部件 **4×4 = 16** 与 **2×2 = 4**；
-        //   F2 = 普通 Polygon **3×3 = 9**（本刀新增的第二要素 ⇒ 单部件要素也走一遍展开路径，
+        //   F2 = 普通 Polygon **3×3 = 9**（B2 新增的第二要素 ⇒ 单部件要素也走一遍展开路径，
         //        这是 N120 想要的"多要素"覆盖在 singlepart 上做实）。
+        //   F3 = **NULL 几何要素**（本刀 C3b-4 新增，name = "C"）⇒ 让实现的跳过分支真正被走到，
+        //        使 `skipped_count` 从恒 0（不承重）变成 1（承重）。
         // 三个面积故意互不相同：若全等，"把每个部件都写成同一个"这类变异测不出来。
         // ⚠ F2 是 Polygon 写进声明为 wkbMultiPolygon 的层：GDAL 只发一条 CE_Warning 便照原样落盘，
         //   blob 自带类型，读回来仍是 wkbPolygon（与 multipart_check 夹具同一处理，理由见那里的注释）。
@@ -7108,6 +7110,18 @@ TEST_F(PluginTest, VectorSinglepartExecution) {
         featB->SetGeometry(&soloPoly);
         ASSERT_EQ(layer->CreateFeature(featB), OGRERR_NONE);
         OGRFeature::DestroyFeature(featB);
+
+        // F3：一条**没有几何**的要素。走 GPKG + OGR API 的原路（`SetGeometry(nullptr)` 后 `CreateFeature`），
+        // 因为本用例的载体就是 GPKG ⇒ 换驱动会连读取路径一起换掉，判据就不再是 singlepart 的跳过分支。
+        // ⚠ 不要照抄 `DuplicatePointCheckToleratesMissingGeometry` 的写法——那条是在**手写 GeoJSON 字符串**里
+        //   放 `"geometry": null`，载体不同（GeoJSON 读取路径），不能拿来当 GPKG 写入的先例。
+        //   口径（谁进哪个键）参考的是 `DuplicatePointCheckSkipsNonPointFeatureGeometry`，见下面期望值处的注释。
+        auto* featC = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        featC->SetField("name", "C");
+        featC->SetGeometry(nullptr);
+        ASSERT_EQ(layer->CreateFeature(featC), OGRERR_NONE)
+            << "GPKG 拒写 NULL 几何 ⇒ 本刀前提不成立（按工单停下报告，不改用 GeoJSON 绕过）";
+        OGRFeature::DestroyFeature(featC);
         GDALClose(ds);
     }
 
@@ -7119,20 +7133,34 @@ TEST_F(PluginTest, VectorSinglepartExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    // 三个计数键一个不落：feature_count = 展开后的部件数（2 + 1），source_count = 源要素数（2），
-    // skipped_count = 空/缺几何被跳过的源要素数（本夹具一个都没有 ⇒ 0）。
+    // 三个计数键一个不落，每个都带算式（对着 vector_plugin_singlepart.inc:85-113 的循环推）：
+    //   feature_count = 展开后写出的部件数 = F1 的 2 + F2 的 1 + F3 的 0 = **3**（空几何不产出任何东西）；
+    //   source_count  = 被遍历到的源要素数 = F1 + F2 + F3 = **3**（跳过分支自己也要 ++sourceCount，:88-90
+    //                   两条出口都 ++ ⇒ 进度/审计口径不会因跳过而变小）；
+    //   skipped_count = 空/缺几何被跳过的源要素数 = F3 那一条 = **1**。
+    // ⚠ 这一刀之前钉的是 `skipped_count == "0"`，而当时夹具的 F1/F2 两条要素都合法 ⇒ 把实现里的
+    //   `++skippedCount`（:88）整行删掉，该键**仍然是 0**，断言一样绿 ⇒ 那条断言**不承重**，
+    //   变异 M-8a 在当前夹具上是等价变异。这与 topology 的"两行同值"、duplicate_point 的"零向量"
+    //   是同一族病：**期望值本身没有区分度**，不是断言写法的错。加了 F3 之后该键=1，
+    //   删掉 `++skippedCount` 会立刻红，M-8a 才有资格进取证轮。
+    // ⚠ 口径提醒（两个键同名近义、别互相引用）：
+    //   · `singlepart` 的 `skipped_count` 数的是"空/缺几何被跳过"⇒ NULL 几何**应当计入**（本用例钉的就是它）；
+    //   · `duplicate_point_check` 的 `skipped_geometry_count` 数的是"有类型但不是点类"⇒ NULL 几何**不计入**
+    //     （`DuplicatePointCheckToleratesMissingGeometry` 钉该键为 0，
+    //      `DuplicatePointCheckSkipsNonPointFeatureGeometry` 钉非点几何那条为 1）。
+    //   两条不矛盾，各自钉的是各自动作的实现分支。
     // ⚠ 这不是全仓第一条 skipped_count 断言 —— `repair` 链那条用例早就钉过它自己的该键；
     //   准确说法是"对 singlepart 这个动作，这是第一条"。
     EXPECT_EQ(result.metadata.at("feature_count"), "3");
-    EXPECT_EQ(result.metadata.at("source_count"), "2");
-    EXPECT_EQ(result.metadata.at("skipped_count"), "0");
+    EXPECT_EQ(result.metadata.at("source_count"), "3");
+    EXPECT_EQ(result.metadata.at("skipped_count"), "1");
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
     ASSERT_NE(outDs, nullptr);
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
-    EXPECT_EQ(outLayer->GetFeatureCount(), 3);
+    EXPECT_EQ(outLayer->GetFeatureCount(), 3);   // 2 + 1 + 0：F3 是空几何，一个部件都不产出
     outLayer->ResetReading();
 
     std::vector<double> areas;
@@ -7154,6 +7182,8 @@ TEST_F(PluginTest, VectorSinglepartExecution) {
     GDALClose(outDs);
 
     EXPECT_EQ(nonPolygonCount, 0) << "singlepart 的输出要素必须全是 Polygon，不该有非 Polygon 几何";
+    // 三条面积的**多重集**仍是 {4.0, 9.0, 16.0}，加 F3 前后不变：F3 没有几何，
+    // 既不进 areas、也不进 nonPolygonCount（它在实现里就被 continue 掉了，压根没写进输出层）。
     ASSERT_EQ(areas.size(), 3u) << "singlepart 应回读到 3 个 Polygon 部件的面积";
     // **按多重集比，不按位置比**（把三条实读面积排序后逐个比）。
     // WHY：singlepart 写每条部件走 writeFeatureWithCopiedFieldsOwned，那里 feature->SetFID(OGRNullFID)
@@ -7167,6 +7197,8 @@ TEST_F(PluginTest, VectorSinglepartExecution) {
     EXPECT_NEAR(16.0, areas[2], 1e-6) << "最大的部件面积应为 4*4 = 16，实读排序后 " << areas[2];
     // 字段随部件复制（SetFrom(sourceFeature, TRUE)）：两个 F1 部件带 A、F2 部件带 B。
     // 同样按**计数**比而不是按位置比，理由与上面那条一致。
+    // F3（name = "C"）那一行不用另加断言：输出总数已被上面的 `GetFeatureCount() == 3` 钉死，
+    // 而 A=2、B=1 占满这 3 行 ⇒ "C 不产出行"是这三条的推论，再加一条只是同一个事实写两遍。
     EXPECT_EQ(nameCounts["A"], 2) << "F1 的两个部件都应带上 name = A";
     EXPECT_EQ(nameCounts["B"], 1) << "F2 展开出的那个部件应带上 name = B";
 }
