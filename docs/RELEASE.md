@@ -10,15 +10,32 @@ cmake --preset release --fresh
 cmake --build build/release --config Release
 cmake --build build/debug --config Debug
 
-ctest --test-dir build/release -C Release --output-on-failure
-ctest --test-dir build/debug -C Debug --output-on-failure
-
+ctest --test-dir build/release -C Release -j1 --output-on-failure
+ctest --test-dir build/debug -C Debug -j1 --output-on-failure
 cmake --build build/release --config Release --target real_raster_regression real_matching_regression real_vector_regression
 ```
 
-`ctest` 必须带 `-C Debug` / `-C Release`（不带时两个配置的用例会被一起列出、按错误的配置执行）。
+`-j1` 与"跑全量期间任何一棵树都不许并发构建"是同一条要求：基线的用时数（见"CI 超时余量"节）
+是 `-j1` + 机器安静时测的，开并行会造出**假 Timeout**（本批实测 `ctest -j 8` 叠加另一棵树构建
+产出 3 条假失败），照那种跑法去对基线会误判。
+
+`ctest` 必须带 `-C Debug` / `-C Release`。不带时的实际形态（本机 2026-10-21 实测，原文见下）
+**不是"两个配置混着跑"，而是更坏的静默失效**：`$<CONFIG>` 展开成空串 ⇒
+gtest 发现文件的名字少了配置段，`ctest` 报"找不到 include 文件"并**列出 0 条用例**（连 `Total Tests` 都没有）
+⇒ 读起来像"没有用例 ⇒ 没有失败"。实测输出：
+
+```
+$ ctest --test-dir build/debug -N
+CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
+  include could not find requested file:
+    …/build/debug/tests/gis_tests[1]_include-.cmake
+Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
+```
 跑全量前先用 `-N` 记注册数：**当前基线 Debug 692 / Release 690**（2026-10-21 现读，本机两棵树各跑
-`ctest --test-dir build/<树> -C <Config> -N | tail -n 1`；Release 恒少 2 条 `debug_only` 用例，见"批次 A 发布说明 → 基线口径"）。
+`ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。Release 少的那 2 条**必须按名字核、不能只看总数**
+（只看数会漏"某条在 Release 静默消失"）：`comm -23` 实测差集恰为
+`gui_matching_stitch_debug_failure_offscreen` 与 `gui_matching_ecc_register_debug_failure_offscreen`，
+反向 `comm -13` 为空 ⇒ 这两条是 Debug 轻量闸门用例（见"批次 A 发布说明 → 基线口径"）。
 
 ### 2) 安装态冒烟 —— 前置条件：确认运行库依赖扫描器（N84）
 
