@@ -361,7 +361,7 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **697** | **702.01 s**（复审修复轮之后现跑，**已含四条 `real_data_*`**；日志 `build/tmp/r1_full_dbg.log` 不入库，数值已内联，要复算就重跑） | 741.52 s（同计数、修复轮之前；Δ39.51 s） | 全库最慢 `real_data_vector_full` **186.12 s** ⇒ 780 ÷ 186.12 = **4.19×**；走 blanket 300 那批里最慢 `source_mojibake_guard` **8.97 s** ⇒ **33×** |
+| Debug | **697** | **761.78 s**（N117 修复后现跑，`build/tmp/nf_ctest_dbg.log` 不入库） | 同计数三样本 **702.01 / 741.52 / 761.78 s**（极差 59.8 s ⇒ 波动带比我先前说的 ±25 s 宽得多） | 全库最慢 `real_data_vector_full` ~186 s ⇒ 780 ÷ 186 = **4.2×**；blanket 300 那批最慢 `source_mojibake_guard` ~12 s ⇒ **25×** |
 | Release | **695** | **367.32 s**（同轮；`build/tmp/r1_full_rel.log` 不入库） | 392.67 s（同计数、修复轮之前；Δ25.35 s） | 全库最慢 `real_data_vector_full` **91.28 s** ⇒ 780 ÷ 91.28 = **8.5×**；`source_mojibake_guard` **9.40 s** ⇒ **32×** |
 
   两轮分开写清（上一版这里把两轮混成"本轮"，正是本文件刚修过的"表改了 prose 没改"同一形态）：
