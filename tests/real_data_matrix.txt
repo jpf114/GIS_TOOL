@@ -15,6 +15,12 @@
 #     data/vector/*.shp|*.geojson                                      ⇒ 矢量类
 #   开批规则：每个动作在写用例前必须先把 primary_input 落到上面某一行的真实文件（或明确写 synthetic），
 #   不许凭 input_kind 推断"数据应该有"。
+#   批次 C C3b-A 现读事实（2026-10-22）：vector 拓扑/检查批 11 个动作的真实腿落在
+#   tests/run_real_vector_regression.ps1 的 Mode=full 分支（⇒ ctest 用例 real_data_vector_full），
+#   输入由脚本自己现造的派生件：w212（roads 3857 取 20×20 km 窗，212 条线）→ buf30（30 m 缓冲，212 个面）、
+#   prov3857（data/vector/中国_省.geojson 重投影，42 要素、图层声明 Unknown 的混合层）→ boundary →
+#   ring_endpoints（闭合环的首末点 ⇒ 悬空端点必然 0、重复点必然 >= 点数/2，这两条判据由构造给出）。
+#   派生件全部落 tmp/vector_benchmark/c3ba/，data/ 只被复制读（N115）。
 classification,feature_stats,raster,not-consumed,real_regression,relation,C9,腿走合成兜底
 classification,svm_classify,raster+samples,synthetic,real_regression,relation,C9,夹具来源为启发式判定，开批前核对
 classification,random_forest_classify,raster+samples,synthetic,real_regression,relation,C9,夹具来源为启发式判定，开批前核对
@@ -121,23 +127,23 @@ vector,intersect,vector,data,real_regression,relation,C3,
 vector,dissolve,vector,data,real_regression,gold,C3,
 vector,simplify,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
 vector,repair,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
-vector,geom_metrics,vector,data,none,relation,C3,夹具来源为启发式判定，开批前核对
-vector,nearest,vector,data,none,relation,C3,夹具来源为启发式判定，开批前核对
+vector,geom_metrics,vector,data,real_regression,relation,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
+vector,nearest,vector,data,real_regression,relation,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
 vector,spatial_join,vector,data,real_regression,gold,C3,
-vector,adjacency,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
-vector,overlap_check,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
-vector,topology_check,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
+vector,adjacency,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
+vector,overlap_check,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
+vector,topology_check,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
 vector,convex_hull,vector,data,real_regression,relation,C3,夹具来源为启发式判定，开批前核对；C3a 起有真实腿
 vector,centroid,vector,data,real_regression,relation,C3,夹具来源为启发式判定，开批前核对；C3a 起有真实腿
 vector,envelope,vector,data,real_regression,relation,C3,夹具来源为启发式判定，开批前核对；C3a 起有真实腿
 vector,boundary,vector,data,real_regression,relation,C3,夹具来源为启发式判定，开批前核对；C3a 起有真实腿
-vector,multipart_check,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
-vector,singlepart,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
+vector,multipart_check,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
+vector,singlepart,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
 vector,vertices_extract,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3a 起有真实腿
 vector,endpoints_extract,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3a 起有真实腿
 vector,midpoints_extract,vector,data,real_regression,relation,C3,夹具来源为启发式判定，开批前核对；C3a 起有真实腿
 vector,interior_point,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3a 起有真实腿
-vector,duplicate_point_check,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
-vector,hole_check,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
-vector,dangling_endpoint_check,vector,data,none,gold,C3,夹具来源为启发式判定，开批前核对
-vector,sliver_remove,vector,data,none,relation,C3,夹具来源为启发式判定，开批前核对
+vector,duplicate_point_check,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
+vector,hole_check,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
+vector,dangling_endpoint_check,vector,data,real_regression,gold,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
+vector,sliver_remove,vector,data,real_regression,relation,C3,夹具来源为启发式判定，开批前核对；C3b-A 起有真实腿
