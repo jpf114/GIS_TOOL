@@ -20,10 +20,18 @@ endif()
 #   本腿为什么最该拦：四条里只有它判的是 data\vector 的真实道路（现 22836 要素），
 #   而 data\vector 缺失时脚本会退回 roads_sample.geojson / china_sample.geojson 两个合成样本，
 #   期望值又已改成"由输入图层自己的要素数推导"（e54f7d6）⇒ 合成样本下 15 条全绿的含金量
-#   远低于真实数据，绝不能让它冒充"真实回归通过"。
-#   复算（不动 data/ 内容）：
-#     cmake -DCLI_PATH=<gis-cli> -DWORKSPACE_ROOT=<不含 data 的空目录> \
-#       -DPOWERSHELL_EXECUTABLE=<powershell> -DMODE=quick -P tests/run_real_vector_regression.cmake
+#   远低于真实数据，绝不能让它冒充"真实回归通过"。⇒ 本腿的门控收到 data\vector 这一级
+#   （raster / matching 两条**不能**照抄这个收紧：本仓根本没有 data\raster 与 data\matching，
+#   一收就永久 Skipped；那两条的实情由 tests/real_data_matrix.txt 的 not-consumed 列承担）。
+#   复算（两臂都要用"含 tests/ 的合法根"当 WORKSPACE_ROOT，否则会先撞上下面的根校验；
+#   整件事不动 data/ 一个字节）：
+#     臂 1 缺数据 => Skip：cmake -DCLI_PATH=<gis-cli> -DGUI_TEST_DATA_HELPER_PATH=<helper> \
+#       -DWORKSPACE_ROOT=<含 tests/ 而无 data/ 的目录> -DPOWERSHELL_EXECUTABLE=<powershell> \
+#       -DMODE=quick -P tests/run_real_vector_regression.cmake     ⇒ 打印 GIS_SKIP 标记、rc=0
+#     臂 2 腿真失败 => 红：同一行把 -DMODE 改成 zzz                        ⇒ rc=1、输出无 GIS_SKIP 标记
+#     臂 3 缺解释器 => 红：同一行把 -DPOWERSHELL_EXECUTABLE 留空            ⇒ rc=1（FATAL_ERROR）
+#   实测于 2026-10-21（三臂逐一在隔离最小工程里挂**同一份包装**跑过：
+#   臂 1 ***Skipped*** 并进 "did not run"、臂 2 与臂 3 均 ***Failed***）。
 # WORKSPACE_ROOT 拼错时**必须判红**，不许顺着下面的 data 检查静默滑成 Skip。
 #   成因实测于 2026-10-21 控制器自己的探针：同一条参数写成 -DWORKSPACE_ROOT="${X}"（引号在值里）时
 #   下面的 EXISTS 认不出该路径，去掉引号即正常 => 拼错根目录的表现不是报错，而是整批静默走 Skip 分支，
@@ -33,14 +41,16 @@ if(NOT EXISTS "${WORKSPACE_ROOT}/tests/run_real_vector_regression.ps1")
     message(FATAL_ERROR "WORKSPACE_ROOT 不是可用的仓库根：找不到 tests/run_real_vector_regression.ps1（当前值 ${WORKSPACE_ROOT}）")
 endif()
 
-if(NOT EXISTS "${WORKSPACE_ROOT}/data")
-    message(STATUS "GIS_SKIP: data/ not present (${WORKSPACE_ROOT}/data)")
-    return()
-endif()
-
-# 解释器缺失时由这里判红，而不是"用例不注册"（这四条恒注册，见 tests/CMakeLists.txt 里 real_data_* 那节）。
+# 解释器缺失时由这里判红，**并且必须判在数据检查之前**（这四条恒注册，见 tests/CMakeLists.txt 里 real_data_* 那节）。
+#   顺序反过来的后果实测过：fresh clone 时 data/ 本来就被 gitignore 不存在，若先判数据就打印 Skip 标记并 return()，
+#   连"本机根本没有 powershell"都被记成 Skipped ⇒ Skipped 不参与失败判定，恒注册的设计被绕过。
 if(POWERSHELL_EXECUTABLE STREQUAL "")
     message(FATAL_ERROR "POWERSHELL_EXECUTABLE 为空：本机找不到 powershell / pwsh，真实矢量回归无法执行")
+endif()
+
+if(NOT EXISTS "${WORKSPACE_ROOT}/data/vector")
+    message(STATUS "GIS_SKIP: data/vector not present (${WORKSPACE_ROOT}/data/vector)")
+    return()
 endif()
 
 execute_process(

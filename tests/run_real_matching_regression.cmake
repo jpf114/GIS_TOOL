@@ -23,10 +23,15 @@ endif()
 #   tests/run_real_raster_regression.cmake 的文件内注释（三份包装同一套语义，不重复论证）。
 #   本腿的退化点：data\matching 缺 reference.tif / input.tif / change_input.tif 时，脚本改从
 #   tmp\matching_benchmark\generated_data 生成同样的输入 ⇒ 用例照绿，判的却是合成图。
-#   复算（不动 data/ 内容）：
-#     cmake -DCLI_PATH=<gis-cli> -DGUI_TEST_DATA_HELPER_PATH=<gui_test_data_helper> \
-#       -DWORKSPACE_ROOT=<不含 data 的空目录> -DPOWERSHELL_EXECUTABLE=<powershell> \
-#       -DMODE=quick -P tests/run_real_matching_regression.cmake
+#   复算（两臂都要用"含 tests/ 的合法根"当 WORKSPACE_ROOT，否则会先撞上下面的根校验；
+#   整件事不动 data/ 一个字节）：
+#     臂 1 缺数据 => Skip：cmake -DCLI_PATH=<gis-cli> -DGUI_TEST_DATA_HELPER_PATH=<helper> \
+#       -DWORKSPACE_ROOT=<含 tests/ 而无 data/ 的目录> -DPOWERSHELL_EXECUTABLE=<powershell> \
+#       -DMODE=quick -P tests/run_real_matching_regression.cmake      ⇒ 打印 GIS_SKIP 标记、rc=0
+#     臂 2 腿真失败 => 红：同一行把 -DMODE 改成 zzz                        ⇒ rc=1、输出无 GIS_SKIP 标记
+#     臂 3 缺解释器 => 红：同一行把 -DPOWERSHELL_EXECUTABLE 留空            ⇒ rc=1（FATAL_ERROR）
+#   实测于 2026-10-21（三臂逐一在隔离最小工程里挂**同一份包装**跑过：
+#   臂 1 ***Skipped*** 并进 "did not run"、臂 2 与臂 3 均 ***Failed***）。
 # WORKSPACE_ROOT 拼错时**必须判红**，不许顺着下面的 data 检查静默滑成 Skip。
 #   成因实测于 2026-10-21 控制器自己的探针：同一条参数写成 -DWORKSPACE_ROOT="${X}"（引号在值里）时
 #   下面的 EXISTS 认不出该路径，去掉引号即正常 => 拼错根目录的表现不是报错，而是整批静默走 Skip 分支，
@@ -36,14 +41,14 @@ if(NOT EXISTS "${WORKSPACE_ROOT}/tests/run_real_matching_regression.ps1")
     message(FATAL_ERROR "WORKSPACE_ROOT 不是可用的仓库根：找不到 tests/run_real_matching_regression.ps1（当前值 ${WORKSPACE_ROOT}）")
 endif()
 
-if(NOT EXISTS "${WORKSPACE_ROOT}/data")
-    message(STATUS "GIS_SKIP: data/ not present (${WORKSPACE_ROOT}/data)")
-    return()
-endif()
-
 # 解释器缺失时由这里判红，而不是"用例不注册"（这四条恒注册，见 tests/CMakeLists.txt 里 real_data_* 那节）。
 if(POWERSHELL_EXECUTABLE STREQUAL "")
     message(FATAL_ERROR "POWERSHELL_EXECUTABLE 为空：本机找不到 powershell / pwsh，真实匹配回归无法执行")
+endif()
+
+if(NOT EXISTS "${WORKSPACE_ROOT}/data")
+    message(STATUS "GIS_SKIP: data/ not present (${WORKSPACE_ROOT}/data)")
+    return()
 endif()
 
 execute_process(

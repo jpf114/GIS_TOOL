@@ -12,13 +12,16 @@
 
 ### 最近验收摘要（2026-10-21）
 
-- `ctest --test-dir build/debug -C Debug -j1`：**693/693** 通过（429.86 s）
-- `ctest --test-dir build/release -C Release -j1`：**691/691** 通过（231.79 s）
+- `ctest --test-dir build/debug -C Debug -j1`：**697/697** 通过（702.01 s）
+- `ctest --test-dir build/release -C Release -j1`：**695/695** 通过（367.32 s）
   （Release 恒少 2 条，是两条只在 Debug 生效的轻量闸门用例，按名字核过；
   ⚠ 本机全量墙钟的 run-to-run 波动有 ±25 s，这两数以当次现读为准，不要拿来论证某个改动变慢）
-- 真实数据回归（`data/` 只读，输入是 22836 要素的北京道路）：`real_raster_regression`、
-  `real_matching_regression`、`real_vector_regression`（quick 15 条）与 `real_vector_regression_full`（17 条）
-  四个目标全部 rc=0。⚠ 这四条是 `add_custom_target`，**不在 ctest 的 693/691 里**（挂账 N112）
+- 真实数据回归四条腿已全部纳入 ctest（`real_data_raster` / `real_data_matching` /
+  `real_data_vector_quick` / `real_data_vector_full`，挂账 N112 已销），六个 `add_custom_target`
+  保留做人工入口。现读：vector 腿判的是 22836 要素的北京道路（`data/` 只读）；
+  ⚠ **raster 与 matching 两条腿目前判的是脚本自生成的合成图**——本仓没有 `data/raster` 与 `data/matching`，
+  把它们改接 `data/dem` 与 `data/image`（4 波段的 H48E 系列；N01 场景只有 1 波段，做不了指数类）
+  归批次 C 的 C4~C15 各批（`tests/real_data_matrix.txt` 的 `not-consumed` 列就是这件事的台账）
 - `cmake --install` + 包内导入闭包断言（`install_closure`）通过
 - 交付方式：只用 `cmake --install`；NSIS 安装包与 GitHub 云端构建已于 2026-10-21 停用
 - 包体：430 个文件 / 192.2 MB（2026-10-21 删掉"把 `bin/*.dll` 再复制一份进 `bin/plugins/`"那段后

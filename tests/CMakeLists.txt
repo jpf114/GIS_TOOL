@@ -1593,12 +1593,17 @@ endif()
 # WHY data 缺失报 Skip 而不是 Passed：本文件既有的那条 SKIP_REGULAR_EXPRESSION（搜
 #   `SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]"`）的注释点名批评过"退出码 0 ⇒ Passed 就是假绿"，
 #   而这三条腿的 .ps1 在真实数据缺失时会兜底现生成合成样本 ⇒ "没有真实数据"会跑成"全绿"。
-#   所以缺 data 时包装打印固定标记 `GIS_SKIP: data/ not present` 并 return()，用例侧按 **per-test** 的
-#   SKIP_REGULAR_EXPRESSION 认领（per-test 就是本仓既有形态，目录级没有这个机制可抄）。
+#   所以缺 data 时包装打印带统一前缀的标记 `GIS_SKIP: `（vector 腿精确到 data/vector）并 return()，
+#   用例侧按 **per-test** 的 SKIP_REGULAR_EXPRESSION "GIS_SKIP: " 认领（per-test 是本仓既有形态，
+#   目录级没有这个机制可抄）。⚠ 这串前缀只允许三份包装打印：三条 .ps1 的正常输出里没有它。
+#   检查顺序也有讲究：**先判解释器缺失（红），再判数据缺失（跳）**——反过来的话，
+#   "fresh clone（data/ 本就被 gitignore）+ 没有 powershell"这个组合会被记成 Skipped，
+#   而 Skipped 不参与失败判定 ⇒ "恒注册以便判红"这条设计就被绕过去了（复审 D 条实测）。
 #   实测（本机 ctest 4.3.0-rc2，端到端三臂，data/ 一字节未动）：把同一份 run_real_matching_regression.cmake
 #   挂进一个临时最小工程当真用例跑 ⇒ ① WORKSPACE_ROOT 指到不含 data 的目录 = `***Skipped***` 并进
 #   "did not run"；② WORKSPACE_ROOT 正确但 -DMODE 传非法值（腿真失败）= `***Failed***`；
 #   ③ -DPOWERSHELL_EXECUTABLE 留空 = `***Failed***`。⇒ 命中标记才 Skip，真失败仍然是红，用例不空转。
+#   三臂的复算命令行逐条写在三份 run_real_*.cmake 头部注释（臂 1/2/3 各带期望 rc）。
 #   ⚠ 只有"退出码 0 + 命中标记"这一形态被用作 return() 的依据；非 0 那一侧本轮没复现，不引为论据。
 #   复算命令与逐臂结果见三份 run_real_*.cmake 头部注释；另见下面 WORKSPACE_ROOT 判红那段的成因。
 # WHY RESOURCE_LOCK real_data_regression（四条共用一把**新**锁）：四条腿都往
@@ -1663,7 +1668,7 @@ add_test(
 set_tests_properties(real_data_raster PROPERTIES
     TIMEOUT 60
     RESOURCE_LOCK real_data_regression
-    SKIP_REGULAR_EXPRESSION "GIS_SKIP: data/ not present"
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP: "
 )
 
 add_test(
@@ -1679,7 +1684,7 @@ add_test(
 set_tests_properties(real_data_matching PROPERTIES
     TIMEOUT 60
     RESOURCE_LOCK real_data_regression
-    SKIP_REGULAR_EXPRESSION "GIS_SKIP: data/ not present"
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP: "
 )
 
 add_test(
@@ -1694,7 +1699,7 @@ add_test(
 set_tests_properties(real_data_vector_quick PROPERTIES
     TIMEOUT 720
     RESOURCE_LOCK real_data_regression
-    SKIP_REGULAR_EXPRESSION "GIS_SKIP: data/ not present"
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP: "
 )
 
 add_test(
@@ -1709,7 +1714,7 @@ add_test(
 set_tests_properties(real_data_vector_full PROPERTIES
     TIMEOUT 780
     RESOURCE_LOCK real_data_regression
-    SKIP_REGULAR_EXPRESSION "GIS_SKIP: data/ not present"
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP: "
 )
 
 # ── Task B21 / B17：源码乱码守卫落成用例（用户 2026-10-21 拍板：四规则全带）──────────
@@ -1747,11 +1752,13 @@ get_property(GIS_TIMED_TEST_NAMES DIRECTORY PROPERTY TESTS)
 # gui_smoke_startup already has the tighter 60s bound set above; the blanket value must not
 # overwrite it, so it is excluded here instead of being re-set afterwards.
 # GIS_REAL_DATA_TEST_NAMES（Task C2 / N112 那四条 real_data_*）是同一个坑的反方向：它们按"实测墙钟
-#   ≥4× 向上取整到 60 s"算出的上界**高于** 300（vector 两条腿冷启动实测 115~153 s，300 只剩 2× 出头），
+#   ≥4× 向上取整到 60 s"算出的上界**高于** 300（vector 两条腿冷启动实测 115.9~153.1 s ⇒ 300 ÷ 153.05 = **1.96×**（连 2× 都不到）），
 #   blanket 会把那四个写好的数悄悄改回 300 ⇒ 注释里的算式当场作废、上界失真。名单走变量
 #   GIS_REAL_DATA_TEST_NAMES 传进来，不在这里手抄第二遍名字（两处各改各的正是本文件反复在防的漂移）。
-#   复算（四条的 TIMEOUT 现值，应逐条等于 tests/CMakeLists.txt 里 set_tests_properties 写的那四个数）：
+#   复算（现值 60/60/720/780）。⚠ 必须读**生成物**而不是读源码：源码侧那条
 #     grep -A3 "set_tests_properties(real_data" tests/CMakeLists.txt | grep TIMEOUT
+#   即使有人把豁免名单 GIS_REAL_DATA_TEST_NAMES 里的名字删掉、blanket 把值改回 300，它照样打印那四个数。
+#     grep 'TIMEOUT "300"' build/debug/tests/CTestTestfile.cmake | grep -c real_data   ⇒ 必须为 0
 list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup ${GIS_REAL_DATA_TEST_NAMES})
 # The guard exists only because set_property(TEST) with no names is a configure error.
 # Note the premise this used to state ("every configure-time case in this file is registered

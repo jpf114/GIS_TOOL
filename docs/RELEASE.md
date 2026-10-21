@@ -48,20 +48,25 @@ Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests
 
 - **四条 `real_data_*` 也必须带 `-C`**（Task C2 / 预检裁定 R-C2c，本批按裁定**不加兜底**）：这四条的命令里
   同样有 `$<TARGET_FILE:gis-cli>` ⇒ 上面那段"不带 `-C` 时展开成空串"的实测对它们一样成立。
-  注册数本身不看 `-C`、也不看解释器的脸色：四条恒注册（写在 `if(GIS_POWERSHELL_EXECUTABLE)` 之外），
-  所以 `-N` 里永远有它们，解释器缺失由包装脚本 `FATAL_ERROR` 判红。
+  不看脸色的是**注册与否**（四条恒注册，写在 `if(GIS_POWERSHELL_EXECUTABLE)` 之外，解释器缺失由包装
+  `FATAL_ERROR` 判红）；但 `-N` 本身**仍必须带 `-C`**——上一段实测就是证据：不带 `-C` 时整棵
+  CTestTestfile 报错、一条都不列，所以"`-N` 里永远有它们"这种说法是错的。
   现读复核：`ctest --test-dir build/release -C Release -R "^real_data_"` ⇒ 4 条 **Passed**、
-  一条 Skipped 都不许有（出现 Skipped 就是 `data/` 不在，见下一条）。
+  一条 Skipped 都不许有（出现 Skipped：raster/matching 腿看 `data/`，vector 两条腿看 `data/vector/`）。
 - **`data/` 缺失时这四条报 `Skipped` 而不是 `Passed`**（Task C2 / 预检裁定 R-C2a）：
-  `tests/run_real_{raster,matching,vector}_regression.cmake` 在调 `.ps1` 之前判 `${WORKSPACE_ROOT}/data`，
-  缺失则打印 `GIS_SKIP: data/ not present` 后 `return()`，用例侧 `SKIP_REGULAR_EXPRESSION` 认领同一串
+  三份包装在调 `.ps1` 之前判数据目录，缺失则打印带统一前缀 `GIS_SKIP: ` 的标记并 `return()`
+  （raster / matching 判 `${WORKSPACE_ROOT}/data`；**vector 腿判到 `${WORKSPACE_ROOT}/data/vector`**，
+  因为只有它的兜底分支是"退回 3 要素合成样本还全绿"；raster/matching 不能照抄——本仓根本没有
+  `data\raster` 与 `data\matching`，一收就永久 Skipped）。用例侧 `SKIP_REGULAR_EXPRESSION "GIS_SKIP: "` 认领
   ⇒ ctest 打 `***Skipped` 并把它列进 "The following tests did not run"。为什么必须有这一条：三条腿的 `.ps1`
   在真实数据缺失时各自兜底现生成合成样本、照样全绿（就是 `tests/CMakeLists.txt` 里那条
   `SKIP_REGULAR_EXPRESSION "\[  SKIPPED \]"` 注释点名的"退出码 0 ⇒ Passed"假绿形态）。
-  判别取证（**`data/` 一字节未动**，`find data -newermt 2026-10-19 -type f | wc -l` 复算 = 0）：
-  把同一份包装挂进临时最小工程当真用例跑三臂 —— WORKSPACE_ROOT 指到不含 `data` 的目录 ⇒ `***Skipped***`
-  并列入 "did not run"；`-DMODE` 传非法值 ⇒ `***Failed***`；`-DPOWERSHELL_EXECUTABLE` 留空 ⇒ `***Failed***`。
-  三条臂的复算命令写在各包装头部注释里。
+  ⚠ 检查顺序：**先判解释器缺失（红），再判数据缺失（跳）**。反序时"fresh clone（`data/` 本被 gitignore）
+  + 本机没有 powershell"会被记成 Skipped，而 Skipped 不参与失败判定 ⇒ 恒注册的设计被绕过（复审 D 条实测）。
+  判别取证（**`data/` 一字节未动**，`find data -newermt 2026-10-19 -type f | wc -l` 复算 = 0）：把同一份包装
+  挂进临时最小工程当真用例跑三臂，`WORKSPACE_ROOT` 必须是**含 `tests/` 而无 `data/`** 的目录（否则先撞上
+  根校验，得到 rc=1 而不是 Skip）—— 臂 1 ⇒ `***Skipped***`；臂 2 `-DMODE=zzz` ⇒ `***Failed***`；
+  臂 3 `-DPOWERSHELL_EXECUTABLE=` 留空 ⇒ `***Failed***`。逐条命令与期望 rc 写在各包装头部注释里。
 
 ### 2) 安装态冒烟 —— 前置条件：确认运行库依赖扫描器（N84）
 
@@ -335,26 +340,32 @@ cmake --install build/release --config Release --prefix install
   随时假 Timeout（本仓已实测过并发把 300 s 线撞出 3 条假 Timeout）。所以这四条的名字必须留在
   `list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup ${GIS_REAL_DATA_TEST_NAMES})` 的豁免名单里，
   名单走变量、不在两处各抄一遍名字。复算：
-  `grep -A3 "set_tests_properties(real_data" tests/CMakeLists.txt | grep TIMEOUT`。
+  复算**必须读生成物**：`grep 'TIMEOUT "300"' build/debug/tests/CTestTestfile.cmake | grep -c real_data` ⇒ 0。
+  只 grep 源码那条（`grep -A3 "set_tests_properties(real_data" … | grep TIMEOUT`）测不到覆盖——
+  有人把豁免名单里的名字删掉、blanket 把 720/780 改回 300 时，它照样打印那四个数。
 - **全量墙钟基线**（2026-10-21 Task C2 现跑。云端构建停用后已经没有"步骤超时"这一档 ⇒
   时间上界只有**单条用例的 `TIMEOUT`**：blanket 是 300 s，四条 `real_data_*` 是上面那条例外（60/60/720/780）。
-  全量墙钟只用作"再加用例要重跑这一栏"的触发线；⚠ 本轮起它比上一版涨了三分钟量级，
-  **原因就是那四条腿进了全量**（逐条相加现读：Debug 11.39 + 1.56 + 170.46 + 193.20 = **376.61 s**；
-  Release 7.36 + 1.63 + 92.39 + 90.06 = **191.44 s**），不是别的用例变慢。
-  但要如实登记一处**没解释的差**：上一轮 693 条 429.86 s，本轮扣掉那四条腿后其余部分只跑了
-  741.52 − 376.61 = **364.91 s**，比上一轮的同一批用例**快约 65 s**，超出我给本机定的 ±25 s 波动带。
-  我没有这 65 s 的因果（两轮之间只改了安装规则与判据文本，都不该影响其余用例），
-  ⇒ 按未解释项登记，不拿它论证任何东西；这一栏以后仍按现读写，不做跨轮比较。
+  全量墙钟只用作"再加用例要重跑这一栏"的触发线；⚠ 四条腿进全量后新增的耗时是可分的：
+  现读 Debug 那四条在全量里 10.20 + 1.47 + 167.46 + 186.12 = **365.25 s**，
+  Release 6.36 + 1.51 + 85.86 + 91.28 = **185.01 s**。
+  ⚠ **我先前给的"本机波动 ±25 s"是低估**：同一个 697 条的树，fix round 之前跑 741.52 s、之后跑 **702.01 s**
+  （差 **39.51 s**，两轮之间只有注释与包装检查顺序这类改动），Release 同计数 392.67 → **367.32 s**（差 25.35 s）。
+  更难看的一笔：把四条腿剥掉后"其余用例"本轮只跑 702.01 − 365.25 = **336.76 s**，
+  而上一轮 693 条那一档是 429.86 s ⇒ 同一批用例快了约 93 s，**我给不出因果**（候选是文件系统缓存/杀软状态，
+  未验证）。⇒ 结论只有一条能站住：**这一栏只能现读现写，跨轮差值（无论涨跌）一律不作证据**，
+  连"某个改动让它变慢了"这种话都不许说。
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **697** | **741.52 s**（`build/tmp/c2_full_dbg.log`，Task C2 现跑，**已含四条 `real_data_*`**） | —— 697 条是本轮新形态，没有同计数历史 | `real_data_vector_full` **193.20 s** ⇒ 它自己的 780 ÷ 193.20 = **4.0×**；走 blanket 300 那批里最慢是 `source_mojibake_guard` 22.31 s ⇒ **13.4×** |
-| Release | **695** | **392.67 s**（`build/tmp/c2_full_rel.log`，同轮） | —— | `real_data_vector_full` **90.06 s** ⇒ 780 ÷ 90.06 = **8.7×**；`source_mojibake_guard` 18.33 s ⇒ **16.4×** |
+| Debug | **697** | **702.01 s**（复审修复轮之后现跑，**已含四条 `real_data_*`**；日志 `build/tmp/r1_full_dbg.log` 不入库，数值已内联，要复算就重跑） | 741.52 s（同计数、修复轮之前；Δ39.51 s） | 全库最慢 `real_data_vector_full` **186.12 s** ⇒ 780 ÷ 186.12 = **4.19×**；走 blanket 300 那批里最慢 `source_mojibake_guard` **8.97 s** ⇒ **33×** |
+| Release | **695** | **367.32 s**（同轮；`build/tmp/r1_full_rel.log` 不入库） | 392.67 s（同计数、修复轮之前；Δ25.35 s） | 全库最慢 `real_data_vector_full` **91.28 s** ⇒ 780 ÷ 91.28 = **8.5×**；`source_mojibake_guard` **9.40 s** ⇒ **32×** |
 
-  本轮两棵树都完整重配置（安装规则改动必须重配才生效）、跑前硬门控
-  `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0、串行 `-j1`，结果
-  `100% tests passed, 0 tests failed out of 693`（Debug）与 `out of 691`（Release）。
-  注册数与上一轮相同（本轮没有增删用例，只改了安装规则、回归脚本判据与文档）。
+  两轮分开写清（上一版这里把两轮混成"本轮"，正是本文件刚修过的"表改了 prose 没改"同一形态）：
+  - **收尾三轮**（693 / 691 那一档）：两棵树重配置后 `-j1` 全量，
+    `100% tests passed, 0 tests failed out of 693`（Debug）与 `out of 691`（Release），429.86 / 231.79 s。
+  - **批次 C Task C2 + 复审修复轮**（现值 697 / 695）：+4 条 `real_data_*`，修复轮之后重配重编再全量，
+    `100% tests passed, 0 tests failed out of 697`（Debug 702.01 s）与 `out of 695`（Release 367.32 s）。
+    同一形式在修复轮之前的另一档是 741.52 / 392.67 s —— 两轮都全绿，差值按上面那条纪律**不作任何结论**。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -655,6 +666,28 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
 **没有** `data/raster` 与 `data/matching` ⇒ raster 与 matching 两条腿的"真实数据"取径一直在走
 `tmp/*_benchmark/generated_data` 的合成兜底分支。这四条兜住的是"`data/` 整目录不在时不装绿"与
 "判据本体每次全量都真跑"，**不等于**那两条腿判的是真图（要按真实图收紧判据，等 C1 矩阵排到那两个插件）。
+挂账 **N116**（复审第 6 条的残留，非 C2 引入）：已提交的批次 B 工单里有一处把细节只留在 gitignored 台账里
+——`docs/superpowers/plans/2026-10-19-批次B设置迁移与构建测试补齐.md:747`"细节清单见
+`.superpowers/sdd/<本计划目录>/task-B3-extra-obligations.md` 的 §A"。拿不到那个文件的人就丢了这份义务清单。
+同文件 :525 与 :644 两处经核**不算违规**（一个是取证命令的落盘路径、一个显式写着"证据，不入库"）。
+⇒ 归 C22/C24 文档批把 §A 内联进工单；本轮只登记不动（改历史工单要连着核对它引用的现状，不该塞进 fix round）。
+
+挂账 **N115**（本轮控制器自己撞出来的产品缺陷，判据级严重）：**`raster_inspect info` 不是只读操作**。
+它计算波段统计后，GDAL 会把结果写进输入文件旁边的 `<name>.aux.xml`。证据：本轮两批波段探针在 `data/`
+  下若干栅格上跑过 `info` 之后，`find data -newermt 2026-10-19 -type f` 从 **0 变成 15**，逐条列出后
+  **15 个全是 `.aux.xml` 边车**（20:47~20:50 落盘；新建还是更新已无法区分——`data/` 被 gitignore，没有基线）；同时核 `.tif/.tiff/.shp` 本体的 mtime 仍是 2014 / 2016 / 2024-06 / 2026-04，
+**像元数据未被改动**，被写的是边车。后果有两层：① 对用户是"我给的只读数据被工具悄悄加了文件"，
+与交付承诺冲突；② 对测试是纪律问题——阶段一要求"以真实数据出结果"，如果各批就地打开 `data/` 下的栅格，
+每跑一次都在改用户目录，而且这个改动**不会被 git 看见**（`data/` 被 gitignore），所以不会有任何人发现。
+⇒ 本轮起加硬规则（已写进工单 Global Constraints）：**测试与探针一律先把输入复制到 `build/tmp/` 再跑**，
+`data/` 只允许被复制、不允许被就地打开；`find data -newermt <批次起始日> -type f | wc -l` 必须 = 0
+作为每批收尾断言。修复面（归批次 C 之后的独立小批，或 C22 一并处理）：`info` 类只读路径应改为
+不写 PAM 边车（`GDAL_PAM_ENABLED=NO` 或不调 `bForceCreate=true` 的统计缓存），并在用例里断言
+"跑完 info 后输入目录不新增文件"。
+⚠ 本轮不改代码：这条是我探针触发的既有行为，不是 C2 引入的回归；把它塞进 C2 提交会混淆两件事。
+另需说明：本轮之前我报给用户的"`data/` 一字节未动（计数 = 0）"在当时是**真测过的**，
+是这次波段探针之后才变成 15 的——所以这条也是对我自己"只读证明"纪律的修正：证明必须在最后一次触碰之后重取。
+
 挂账 **N114**：批次 A 改过的 17 项算法问题里，有 **4 个动作今天仍是 `PENDING`**（登记表现为机器判定，
 不是印象：`CoverageMeta.GoldEvidenceIsAuditable` 会回到用例块体核"剥完注释后是否仍有数值断言"）——
 `cutting.tile`（Task 17/18）、`processing.pansharpen`（Task 13）、`raster_math.band_math`（Task 5）、
