@@ -63,8 +63,7 @@ Select-String -Path build/configure_release.log -Pattern 'Runtime dep scanner:'
 
 ```powershell
 # 步骤 2.1：安装（--prefix install 写的是仓库根 install/，那是 gitignored 的开发机安装位）
-#   注意：这只影响本机。CI 的 Install Release 步骤不带 --prefix ⇒ 写到它自己的默认安装目录，
-#   与本仓库根的 install/ 不是同一个地方，别拿本机的 install/ 去推断 CI 装了什么。
+#   这就是本项目唯一的交付路径（云端构建与 NSIS 已停用，见"交付方式"节）。
 cmake --install build/release --config Release --prefix install
 
 # 步骤 2.2：装完必须用退出码判定，不要用"目录里有文件"判定
@@ -109,37 +108,25 @@ Get-ChildItem build/tmp/install-debug/bin/platforms, build/tmp/install-debug/bin
 
 默认输出：[docs/vcpkg-versions.lock.txt](vcpkg-versions.lock.txt)
 
-## NSIS 安装包
+## 交付方式（只保留本机 install）
 
-前置：
-
-1. 已完成上面**第 2 节步骤 2.0**（配置日志里有 `Runtime dep scanner: <绝对路径>`）——没有它 `cmake --install` 会拒绝安装，`makensis` 拿到的 `install/` 是空的或旧的。
-2. 已安装 [NSIS](https://nsis.sourceforge.io/)，且 `makensis` 在 PATH 中。
+本项目**不出安装包、不走云端构建**（2026-10-21 决定：一切从简）。交付物就是 `cmake --install` 产出的目录树：
 
 ```powershell
 cmake --install build/release --config Release --prefix install
-makensis installer\installer.nsi
 ```
 
-产物：`installer/gis-toolkit-1.0.0-win64-setup.exe`（约 64MB，zlib 压缩）。
-
-⚠ 安装包**不含 VC++ 运行库**（`MSVCP140.dll` 等被 `POST_EXCLUDE` 按设计排除）⇒
-**目标机需自行安装 VC++ Redistributable**，见"批次 A 发布说明 → 打包与安装"。
-
-CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-build.yml) 中 `Build installer` 步骤。
-
-## GitHub Release
-
-1. 推送 `master` 并打标签：`git tag v1.0.0`
-2. 在 GitHub 创建 Release，关联标签 `v1.0.0`
-3. 附资产：
-   - `gis-toolkit-1.0.0-win64-setup.exe`（NSIS）
-   - `gis-tool-win64.zip`（CI artifact，含 `install/` 树）
-4. 发布说明正文：**以本页"批次 A 发布说明"为最新口径**，可与之合并 [v1.0.0发布说明.md](v1.0.0发布说明.md)、
-   [CHANGELOG.md](../CHANGELOG.md) 或 [v1.0.0_GITHUB_RELEASE.md](v1.0.0_GITHUB_RELEASE.md)；
-   那两份文件写于批次 A 之前，其中的行为描述凡与本页冲突者以本页为准。
-
----
+- 产物：仓库根 `install/`（gitignored 的开发机安装位），里面是 `bin/gis-cli.exe`、`bin/gis-gui.exe`、
+  `bin/plugins/*.dll`、`bin/platforms/`、`share/proj`、`share/gdal`、`share/leaflet`。
+- 要给别人用就直接压缩这个目录；运行库由安装脚本按**导入表实测**拷贝（见"发布前验证 → 第 2 节"），
+  所以 `install/` 本身就是自洽的，不需要 NSIS 再包一层。
+- 验证它装对了：`ctest --test-dir build/release -C Release -R "^install_closure$"`（这条用例自己会
+  跑一次 `cmake --install` 到 `build/tmp/install_closure_Release` 再逐个 PE 判导入闭包，
+  缺件与"装了但没人引用"都会红）。
+- ⚠ 仍然不含 VC++ 运行库（`MSVCP140.dll` / `VCRUNTIME140*.dll` 按设计排除）⇒
+  目标机需要装过 VC++ Redistributable 或装过 Visual Studio。
+- 已删除的流程载体：`.github/workflows/windows-build.yml`（云端构建）与 `installer/installer.nsi`
+  （NSIS 脚本）。历史文档里提到这两处的段落一律按"已停用"读。
 
 ## 批次 A 发布说明（测试基建 + 算法缺陷修复，2026-10-14 ~ 2026-10-19）
 
@@ -230,7 +217,8 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   ⚠ `78 − 36 = 42` **不是任何口径的结果，请勿引用**。
   改后：扫描器在**配置期**解析成绝对路径并烘进安装脚本（`Runtime dep scanner: <绝对路径>` 那一行）；
   36 项静默兜底清单**已废除**；无扫描器（或路径过期）⇒ **安装期 `FATAL_ERROR` 拒绝**，宁可装不出来也不要装出坏包。
-  CI 的 `Install Release` / `Verify` / `makensis` / `Compress-Archive` 四步已**逐条断言退出码**。
+  （批次 A 当时还把这四步的退出码逐条断言过；那套云端步骤已于 2026-10-21 停用，
+  留这句只为说明当时的验证范围。）
   改后实测：`bin/*.dll` = **78**、`gis-cli.exe --list` rc=0（stdout **1852 字节 / 27 行**）。
 - **N85（批次 A 记录；批次 B 的 B4 已补齐 Debug 安装分支）：当时安装产物只支持 Release。** Qt 平台插件与
   `qsqlite` 的三条安装规则全 gate 在 `CONFIGURATIONS Release`（批次 A 时位于 `src/gui/CMakeLists.txt:141-162`）⇒
@@ -279,10 +267,10 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   **不需要动上限断言**。另核：`EXPECT_LE(pending, 96)` 那一版从未进过代码
   （`git log -S'EXPECT_LE(pending, 96)' -- tests/test_coverage_meta.cpp` 零命中），96 只是计划期的估算。
 
-### CI 超时余量（本机实测；远端待首跑验证）
+### 全量用时与单条用例超时（本机；云端构建已停用）
 
-- **本机 `gh auth status` 未登录 ⇒ 拿不到任何真实 CI 时长**，本节全部数字来自本地同机串行实测；
-  凡涉及 CI 超时的说法都要写"**待远端首跑验证**"。
+- 云端构建已删除 ⇒ 这些数字**只用于本机跑全量的预期管理**（多久该跑完、哪条用例快撞超时），
+  不再对应任何 `timeout-minutes` 步骤。
 - **`TIMEOUT`（测试属性）是本工具链唯一的执法者**；`PROCESS_TIMEOUT` **无效** —— 它不是 CMake 属性
   （`cmake --help-property-list` 里有 `TIMEOUT`、`TIMEOUT_AFTER_MATCH`、`TIMEOUT_SIGNAL_NAME`、`TIMEOUT_SIGNAL_GRACE_PERIOD`，没有 `PROCESS_TIMEOUT`），
   接受了也不执行。现值：`GIS_TEST_TIMEOUT = 300`，configure 期用例经 `set_property(TEST …)`、
@@ -558,8 +546,9 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
 ## 已知限制
 
 - Windows 代码签名未配置（SmartScreen 可能提示）
-- **安装包不含 VC++ 运行库**：目标机需自行安装 VC++ Redistributable（N87，见"打包与安装"）
-- **NSIS 打包与 GitHub Release 出包只走 Release**（交付形态约束；Debug 的 `cmake --install` 分支已由批次 B 的 B4 补齐，见"发布前验证 → 第 3 步"）
+- **交付目录不含 VC++ 运行库**：目标机需自行安装 VC++ Redistributable（N87）
+- **只走 `cmake --install` 交付**（2026-10-21 决定：不出安装包、不做云端构建）；
+  Debug 的 `cmake --install` 分支已由批次 B 的 B4 补齐，见"发布前验证 → 第 3 步"
 - `classification` / `georef` 插件版本 0.1.0
 - `PerformanceMonitor` 未接入主执行链；`Logger` 已接入 CLI/GUI 进度消息（任务中心日志仍为 GUI 主路径）
 - 切片预览使用本地 Leaflet 资源（`share/leaflet`），不再依赖 CDN

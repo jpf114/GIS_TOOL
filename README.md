@@ -10,13 +10,17 @@
 - 依赖管理：全局 vcpkg + 仓库 [vcpkg.json](vcpkg.json) 依赖清单
 - 当前产品边界：聚焦算法工作台，不包含地图展示平台能力
 
-### 最近验收摘要（2026-05-24）
+### 最近验收摘要（2026-10-21）
 
-- `ctest --test-dir build/release -C Release`：**475/475** 通过
-- `ctest --test-dir build/debug -C Debug`：**475/475** 通过
+- `ctest --test-dir build/debug -C Debug -j1`：**693/693** 通过（346 s 量级）
+- `ctest --test-dir build/release -C Release -j1`：**691/691** 通过（175 s 量级）
+  （Release 恒少 2 条，是两条只在 Debug 生效的轻量闸门用例，按名字核过）
 - `real_raster/matching/vector_regression`（quick）通过
-- `cmake --install` + install smoke 通过
-- NSIS 安装包本地构建成功
+- `cmake --install` + 包内导入闭包断言（`install_closure`）通过
+- 交付方式：只用 `cmake --install`；NSIS 安装包与 GitHub 云端构建已于 2026-10-21 停用
+
+> ⚠ 本页与 `docs/` 下的部分文档存在**与代码不一致**的条目（参数名/默认值/安装路径/验收数字），
+> 逐项清单见 [docs/算法说明/文档漂移清单.md](docs/算法说明/文档漂移清单.md)。以二进制 `--list/--help` 为准。
 
 > 更早的验收明细见 [CHANGELOG.md](CHANGELOG.md) 与 [docs/RELEASE.md](docs/RELEASE.md)。
 
