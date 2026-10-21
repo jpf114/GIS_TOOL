@@ -226,12 +226,12 @@ bool parseDoubleList(const std::string& text, std::vector<double>& values, std::
             std::size_t index = 0;
             const double value = std::stod(item, &index);
             if (index != item.size()) {
-                error = "nodatas 娑擃厼鐡ㄩ崷銊︽￥閺佸牊鏆熺€? " + item;
+                error = "nodatas 中存在无效数字: " + item;
                 return false;
             }
             values.push_back(value);
         } catch (...) {
-            error = "nodatas 娑擃厼鐡ㄩ崷銊︽￥閺佸牊鏆熺€? " + item;
+            error = "nodatas 中存在无效数字: " + item;
             return false;
         }
     }
@@ -254,7 +254,7 @@ bool parseCsvHeaderAndRows(
 
     std::string line;
     if (!std::getline(ifs, line)) {
-        error = "鐠侇厾绮岄弽閿嬫拱 CSV 娑撹櫣鈹? " + path;
+        error = "训练样本 CSV 为空: " + path;
         return false;
     }
 
