@@ -169,12 +169,6 @@ function Assert-Condition {
     }
 }
 
-function Read-JsonPayload {
-    param([string]$Path)
-
-    return (Get-Content $Path -Raw | ConvertFrom-Json)
-}
-
 function Invoke-CliAndCaptureText {
     param(
         [string]$ResolvedCliPath,
@@ -206,41 +200,149 @@ function Assert-TextContains {
     Assert-Condition -Condition ($Text.Contains($Expected)) -Message $Message
 }
 
+function Get-ReportedCount {
+    param(
+        [string]$Text,
+        [string]$Pattern,
+        [string]$Label
+    )
+
+    $match = [regex]::Match($Text, $Pattern)
+    Assert-Condition -Condition ($match.Success) -Message ($Label + ": pattern '" + $Pattern + "' matched nothing; raw output was: " + $Text)
+    return [int]$match.Groups[1].Value
+}
+
+function Assert-CountEquals {
+    param(
+        [string]$Text,
+        [string]$Pattern,
+        [int]$Expected,
+        [string]$Label
+    )
+
+    $actual = Get-ReportedCount -Text $Text -Pattern $Pattern -Label $Label
+    Assert-Condition -Condition ($actual -eq $Expected) -Message ($Label + ": reported " + $actual + ", expected " + $Expected)
+}
+
+function Format-Coord {
+    param([double]$Value)
+
+    return $Value.ToString("0.######", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Write-BboxGeojson {
+    param(
+        [string]$Path,
+        [double[]]$Box,
+        [string]$Label
+    )
+
+    $x0 = Format-Coord -Value $Box[0]
+    $y0 = Format-Coord -Value $Box[1]
+    $x1 = Format-Coord -Value $Box[2]
+    $y1 = Format-Coord -Value $Box[3]
+    $ring = "[[$x0, $y0], [$x1, $y0], [$x1, $y1], [$x0, $y1], [$x0, $y0]]"
+
+    $json = '{"type":"FeatureCollection","name":"' + $Label + '","crs":{"type":"name","properties":{"name":"EPSG:4326"}},"features":[{"type":"Feature","properties":{"name":"' + $Label + '"},"geometry":{"type":"Polygon","coordinates":[' + $ring + ']}}]}'
+    Set-Content -Path $Path -Value $json -Encoding UTF8
+}
+
+function Get-LayerStats {
+    param(
+        [string]$ResolvedCliPath,
+        [string]$Path,
+        [string]$ScratchDir
+    )
+
+    # vector info 目前被插件级 output 必填挡住（漂移清单 D1），所以这里必须带一个占位输出；
+    # doInfo 不写文件，占位路径只是用来满足校验。
+    $text = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+        "vector", "info",
+        ("--input=" + $Path),
+        ("--output=" + (Join-Path $ScratchDir "layer_stats_placeholder.gpkg"))
+    )
+
+    $count = [regex]::Match($text, "Features:\s+(\d+)")
+    Assert-Condition -Condition ($count.Success) -Message ("layer stats: no Features line in info output for " + $Path)
+    $extent = [regex]::Match($text, "Extent:\s+(-?[0-9]+(?:\.[0-9]+)?),\s*(-?[0-9]+(?:\.[0-9]+)?)\s+-\s+(-?[0-9]+(?:\.[0-9]+)?),\s*(-?[0-9]+(?:\.[0-9]+)?)")
+    Assert-Condition -Condition ($extent.Success) -Message ("layer stats: no 'Extent: minx, miny - maxx, maxy' line in info output for " + $Path)
+
+    return [pscustomobject]@{
+        FeatureCount = [int]$count.Groups[1].Value
+        MinX = [double]$extent.Groups[1].Value
+        MinY = [double]$extent.Groups[2].Value
+        MaxX = [double]$extent.Groups[3].Value
+        MaxY = [double]$extent.Groups[4].Value
+    }
+}
+
 function Validate-CaseOutputs {
     param(
         [pscustomobject]$Case,
         [string]$ResolvedCliPath,
-        [string]$ResolvedOutputRoot
+        [string]$ResolvedOutputRoot,
+        [int]$InputFeatureCount
     )
 
+    # 期望值一律由输入图层自己的要素数推出，不写死常量。
+    # WHY：本脚本自 2026-04-27 起优先用 data/vector 里的真实道路（现 22836 要素），
+    # 而旧常量按 3 要素合成样本标定 ⇒ clip/union/intersect/spatial_join 长期红，
+    # buffer_quick 则因 "feature_count: 2" 恰是 "feature_count: 22836" 的前缀而假绿。
     switch ($Case.Name) {
         "buffer_quick" {
-            Assert-TextContains -Text $Case.Output -Expected "feature_count: 2" -Message "buffer_quick feature_count mismatch"
+            Assert-CountEquals -Text $Case.Output -Pattern "feature_count: (\d+)" -Expected $InputFeatureCount -Label "buffer_quick"
             Assert-TextContains -Text $Case.Output -Expected "srs_type: projected" -Message "buffer_quick srs_type mismatch"
         }
         "clip_focus" {
-            Assert-TextContains -Text $Case.Output -Expected "Clip completed: 2 features clipped" -Message "clip_focus feature count mismatch"
+            Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected $InputFeatureCount -Label "clip_focus"
         }
         "difference_focus" {
-            Assert-TextContains -Text $Case.Output -Expected "Difference completed: 0 features" -Message "difference_focus feature count mismatch"
+            Assert-CountEquals -Text $Case.Output -Pattern "Difference completed: (\d+) features" -Expected 0 -Label "difference_focus"
         }
         "intersect_focus" {
-            Assert-TextContains -Text $Case.Output -Expected "Intersect completed: 2 features" -Message "intersect_focus feature count mismatch"
+            Assert-CountEquals -Text $Case.Output -Pattern "Intersect completed: (\d+) features" -Expected $InputFeatureCount -Label "intersect_focus"
         }
         "spatial_join_focus" {
-            Assert-TextContains -Text $Case.Output -Expected "Spatial join completed: 2 features" -Message "spatial_join_focus feature count mismatch"
+            Assert-CountEquals -Text $Case.Output -Pattern "Spatial join completed: (\d+) features" -Expected $InputFeatureCount -Label "spatial_join_focus"
             Assert-Condition -Condition (Test-Path (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")) -Message "spatial_join_focus output missing"
         }
         "union_focus" {
-            Assert-TextContains -Text $Case.Output -Expected "Union completed: 2 features" -Message "union_focus feature count mismatch"
+            $unionCount = Get-ReportedCount -Text $Case.Output -Pattern "Union completed: (\d+) features" -Label "union_focus"
+            Assert-Condition -Condition ($unionCount -ge $InputFeatureCount) -Message ("union_focus: reported " + $unionCount + ", expected at least " + $InputFeatureCount)
+        }
+        "clip_far" {
+            Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected 0 -Label "clip_far"
+        }
+        "intersect_far" {
+            Assert-CountEquals -Text $Case.Output -Pattern "Intersect completed: (\d+) features" -Expected 0 -Label "intersect_far"
+        }
+        "difference_far" {
+            Assert-CountEquals -Text $Case.Output -Pattern "Difference completed: (\d+) features" -Expected $InputFeatureCount -Label "difference_far"
+        }
+        "clip_partial" {
+            $partialCount = Get-ReportedCount -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Label "clip_partial"
+            Assert-Condition -Condition ($partialCount -gt 0 -and $partialCount -le $InputFeatureCount) -Message ("clip_partial: reported " + $partialCount + ", expected in (0, " + $InputFeatureCount + "]")
+            $script:ClipPartialCount = $partialCount
+        }
+        "intersect_partial" {
+            $partialCount = Get-ReportedCount -Text $Case.Output -Pattern "Intersect completed: (\d+) features" -Label "intersect_partial"
+            Assert-Condition -Condition ($partialCount -gt 0 -and $partialCount -le $InputFeatureCount) -Message ("intersect_partial: reported " + $partialCount + ", expected in (0, " + $InputFeatureCount + "]")
+            Assert-Condition -Condition ($null -ne $script:ClipPartialCount) -Message "intersect_partial ran before clip_partial, cannot cross-check"
+            Assert-Condition -Condition ($script:ClipPartialCount -eq $partialCount) -Message ("clip and intersect disagree on the same partial window: " + $script:ClipPartialCount + " vs " + $partialCount)
         }
         "dissolve_bbox" {
             Assert-TextContains -Text $Case.Output -Expected "Dissolve completed: 1 features" -Message "dissolve_bbox feature count mismatch"
         }
         "convert_roads_geojson" {
-            $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "roads_core.geojson")
-            Assert-Condition -Condition ($payload.type -eq "FeatureCollection") -Message "convert_roads_geojson type mismatch"
-            Assert-Condition -Condition ($payload.features.Count -eq 2) -Message "convert_roads_geojson feature count mismatch"
+            # 不用 ConvertFrom-Json 整读：PS 5.1 的 Get-Content 默认按 ANSI 代码页解码，
+            # 这份 12 MB / 22836 要素的 UTF-8 GeoJSON 里中文属性值会被读坏，
+            # 报的是"JSON 语法无效 (position 230)"这种假产品缺陷。
+            # 改判两件事：文件头是 FeatureCollection、且转出的图层能被读回同样的要素数。
+            $geojsonPath = Join-Path $ResolvedOutputRoot "roads_core.geojson"
+            $head = (@(Get-Content -Path $geojsonPath -TotalCount 3 -Encoding UTF8) -join " ")
+            Assert-Condition -Condition ($head.Contains('"FeatureCollection"')) -Message ("convert_roads_geojson: header is not a FeatureCollection, got: " + $head)
+            $converted = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $geojsonPath -ScratchDir $ResolvedOutputRoot
+            Assert-Condition -Condition ($converted.FeatureCount -eq $InputFeatureCount) -Message ("convert_roads_geojson feature count " + $converted.FeatureCount + " != input " + $InputFeatureCount)
         }
         "rasterize_bbox" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -254,10 +356,10 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $Case.Output -Expected "Polygonize completed: 1 polygons" -Message "polygonize_bbox_raster polygon count mismatch"
         }
         "clip_stress" {
-            Assert-TextContains -Text $Case.Output -Expected "Clip completed: 2 features clipped" -Message "clip_stress feature count mismatch"
+            Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected $InputFeatureCount -Label "clip_stress"
         }
         "difference_stress" {
-            Assert-TextContains -Text $Case.Output -Expected "Difference completed: 0 features" -Message "difference_stress feature count mismatch"
+            Assert-CountEquals -Text $Case.Output -Pattern "Difference completed: (\d+) features" -Expected 0 -Label "difference_stress"
         }
     }
 }
@@ -516,6 +618,40 @@ Require-Path -Path $roadsCore3857 -Label "roads core 3857"
 Require-Path -Path $chinaBbox -Label "china bbox"
 Require-Path -Path $chinaBbox3857 -Label "china bbox 3857"
 
+# 三个窗口按输入图层自己的范围生成，因此对"合成样本"和"data/vector 真实道路"都成立：
+#   all     —— 外扩 20%，必须完全覆盖输入 ⇒ clip/intersect/ spatial_join 是恒等、difference 是空；
+#   far     —— 整块挪出范围之外 ⇒ 三个叠加动作必须一个都不留 / 一个都不少；
+#   partial —— 取范围中间的 25%~75% ⇒ 真正会切到几何，用来钉住 clip 与 intersect 的一致性。
+$roadsStats = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $roadsCore -ScratchDir $ResolvedOutputRoot
+$InputFeatureCount = $roadsStats.FeatureCount
+$spanX = [Math]::Max($roadsStats.MaxX - $roadsStats.MinX, 0.001)
+$spanY = [Math]::Max($roadsStats.MaxY - $roadsStats.MinY, 0.001)
+
+$allBox = @(
+    ($roadsStats.MinX - 0.2 * $spanX),
+    ($roadsStats.MinY - 0.2 * $spanY),
+    ($roadsStats.MaxX + 0.2 * $spanX),
+    ($roadsStats.MaxY + 0.2 * $spanY)
+)
+if (($roadsStats.MinY - 3 * $spanY) -gt -89) {
+    $farBox = @($roadsStats.MinX, ($roadsStats.MinY - 3 * $spanY), $roadsStats.MaxX, ($roadsStats.MinY - 2 * $spanY))
+} else {
+    $farBox = @($roadsStats.MinX, ($roadsStats.MaxY + 2 * $spanY), $roadsStats.MaxX, ($roadsStats.MaxY + 3 * $spanY))
+}
+$partialBox = @(
+    ($roadsStats.MinX + 0.25 * $spanX),
+    ($roadsStats.MinY + 0.25 * $spanY),
+    ($roadsStats.MinX + 0.75 * $spanX),
+    ($roadsStats.MinY + 0.75 * $spanY)
+)
+
+$allWindow = Join-Path $benchmarkRoot "win_all.geojson"
+$farWindow = Join-Path $benchmarkRoot "win_far.geojson"
+$partialWindow = Join-Path $benchmarkRoot "win_partial.geojson"
+Write-BboxGeojson -Path $allWindow -Box $allBox -Label "win_all"
+Write-BboxGeojson -Path $farWindow -Box $farBox -Label "win_far"
+Write-BboxGeojson -Path $partialWindow -Box $partialBox -Label "win_partial"
+
 $cases = @()
 $cases += New-Case -Name "buffer_quick" -CaseArgs @(
     "vector", "buffer",
@@ -528,7 +664,7 @@ $cases += New-Case -Name "buffer_quick" -CaseArgs @(
 $cases += New-Case -Name "clip_focus" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
-    ("--clip_vector=" + $chinaBbox),
+    ("--clip_vector=" + $allWindow),
     ("--output=" + (Join-Path $ResolvedOutputRoot "clip_focus.gpkg"))
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "clip_focus.gpkg")
@@ -536,7 +672,7 @@ $cases += New-Case -Name "clip_focus" -CaseArgs @(
 $cases += New-Case -Name "difference_focus" -CaseArgs @(
     "vector", "difference",
     ("--input=" + $roadsCore),
-    ("--overlay_vector=" + $chinaBbox),
+    ("--overlay_vector=" + $allWindow),
     ("--output=" + (Join-Path $ResolvedOutputRoot "difference_focus.gpkg"))
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "difference_focus.gpkg")
@@ -544,7 +680,7 @@ $cases += New-Case -Name "difference_focus" -CaseArgs @(
 $cases += New-Case -Name "union_focus" -CaseArgs @(
     "vector", "union",
     ("--input=" + $roadsCore),
-    ("--overlay_vector=" + $chinaBbox),
+    ("--overlay_vector=" + $allWindow),
     ("--output=" + (Join-Path $ResolvedOutputRoot "union_focus.gpkg"))
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "union_focus.gpkg")
@@ -552,15 +688,55 @@ $cases += New-Case -Name "union_focus" -CaseArgs @(
 $cases += New-Case -Name "intersect_focus" -CaseArgs @(
     "vector", "intersect",
     ("--input=" + $roadsCore),
-    ("--overlay_vector=" + $chinaBbox),
+    ("--overlay_vector=" + $allWindow),
     ("--output=" + (Join-Path $ResolvedOutputRoot "intersect_focus.gpkg"))
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "intersect_focus.gpkg")
 )
+$cases += New-Case -Name "clip_far" -CaseArgs @(
+    "vector", "clip",
+    ("--input=" + $roadsCore),
+    ("--clip_vector=" + $farWindow),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "clip_far.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "clip_far.gpkg")
+)
+$cases += New-Case -Name "intersect_far" -CaseArgs @(
+    "vector", "intersect",
+    ("--input=" + $roadsCore),
+    ("--overlay_vector=" + $farWindow),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "intersect_far.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "intersect_far.gpkg")
+)
+$cases += New-Case -Name "difference_far" -CaseArgs @(
+    "vector", "difference",
+    ("--input=" + $roadsCore),
+    ("--overlay_vector=" + $farWindow),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "difference_far.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "difference_far.gpkg")
+)
+$cases += New-Case -Name "clip_partial" -CaseArgs @(
+    "vector", "clip",
+    ("--input=" + $roadsCore),
+    ("--clip_vector=" + $partialWindow),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "clip_partial.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "clip_partial.gpkg")
+)
+$cases += New-Case -Name "intersect_partial" -CaseArgs @(
+    "vector", "intersect",
+    ("--input=" + $roadsCore),
+    ("--overlay_vector=" + $partialWindow),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "intersect_partial.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "intersect_partial.gpkg")
+)
 $cases += New-Case -Name "spatial_join_focus" -CaseArgs @(
     "vector", "spatial_join",
     ("--input=" + $roadsCore),
-    ("--join_vector=" + $chinaBbox),
+    ("--join_vector=" + $allWindow),
     ("--output=" + (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg"))
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")
@@ -601,7 +777,7 @@ if ($Mode -eq "full") {
     $cases += New-Case -Name "clip_stress" -CaseArgs @(
         "vector", "clip",
         ("--input=" + $roadsCore),
-        ("--clip_vector=" + $chinaBbox),
+        ("--clip_vector=" + $allWindow),
         ("--output=" + (Join-Path $ResolvedOutputRoot "clip_stress.gpkg"))
     ) -ExpectedOutputs @(
         (Join-Path $ResolvedOutputRoot "clip_stress.gpkg")
@@ -609,7 +785,7 @@ if ($Mode -eq "full") {
     $cases += New-Case -Name "difference_stress" -CaseArgs @(
         "vector", "difference",
         ("--input=" + $roadsCore),
-        ("--overlay_vector=" + $chinaBbox),
+        ("--overlay_vector=" + $allWindow),
         ("--output=" + (Join-Path $ResolvedOutputRoot "difference_stress.gpkg"))
     ) -ExpectedOutputs @(
         (Join-Path $ResolvedOutputRoot "difference_stress.gpkg")
@@ -619,7 +795,7 @@ if ($Mode -eq "full") {
 $results = @()
 foreach ($case in $cases) {
     $result = Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
-    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot
+    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount
     $results += $result
 }
 
