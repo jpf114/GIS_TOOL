@@ -262,17 +262,260 @@ function Get-LayerStats {
         ("--output=" + (Join-Path $ScratchDir "layer_stats_placeholder.gpkg"))
     )
 
-    $count = [regex]::Match($text, "Features:\s+(\d+)")
+    # 数字一律抓整串再比相等，抓不到就判红 —— 禁止用 Contains 判数字：
+    # 本文件写过 "feature_count: 2" 这种判据，被真实值 22836 当**前缀**吃掉，假了很多轮。
+    # 坐标必须带可选指数段并按 ^…$ 整行锚定：vector info 用 %g 打印坐标，3857 的度量坐标被打成
+    # "1.28483e+07"。不带指数段的正则在 "1.28483" 处就对不上后面的逗号 ⇒ 整条匹配失败（好），
+    # 但"匹配上却把 e+07 截掉"这种更坏的形态也必须被锚点挡住，所以这里用锚而不只是放宽。
+    $number = "-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
+    $count = [regex]::Match($text, ("(?m)^\s*Features:\s+(\d+)\s*$"))
     Assert-Condition -Condition ($count.Success) -Message ("layer stats: no Features line in info output for " + $Path)
-    $extent = [regex]::Match($text, "Extent:\s+(-?[0-9]+(?:\.[0-9]+)?),\s*(-?[0-9]+(?:\.[0-9]+)?)\s+-\s+(-?[0-9]+(?:\.[0-9]+)?),\s*(-?[0-9]+(?:\.[0-9]+)?)")
+    $extent = [regex]::Match($text, ("(?m)^\s*Extent:\s+(" + $number + "),\s*(" + $number + ")\s+-\s+(" + $number + "),\s*(" + $number + ")\s*$"))
     Assert-Condition -Condition ($extent.Success) -Message ("layer stats: no 'Extent: minx, miny - maxx, maxy' line in info output for " + $Path)
+    # 图层几何类型也现读回来：派生腿要用它钉住"我喂的确实是线图层"，不许按 input_kind 猜。
+    $geometry = [regex]::Match($text, ("(?m)^\s*Geometry:\s+(\S+)\s*$"))
+    Assert-Condition -Condition ($geometry.Success) -Message ("layer stats: no Geometry line in info output for " + $Path)
 
     return [pscustomobject]@{
         FeatureCount = [int]$count.Groups[1].Value
+        Geometry = $geometry.Groups[1].Value
         MinX = [double]$extent.Groups[1].Value
         MinY = [double]$extent.Groups[2].Value
         MaxX = [double]$extent.Groups[3].Value
         MaxY = [double]$extent.Groups[4].Value
+    }
+}
+
+function Format-Extent {
+    param([object]$Stats)
+
+    return ("[" + $Stats.MinX + ", " + $Stats.MinY + " - " + $Stats.MaxX + ", " + $Stats.MaxY + "]")
+}
+
+function Assert-ExtentEqualTo {
+    param(
+        [object]$Expected,
+        [object]$Actual,
+        [double]$Tolerance,
+        [string]$Label
+    )
+
+    # 凸包与外包框保范围：四个边界各自与输入对撞，取最大偏差报出来。
+    $offsets = @(
+        [Math]::Abs($Actual.MinX - $Expected.MinX),
+        [Math]::Abs($Actual.MinY - $Expected.MinY),
+        [Math]::Abs($Actual.MaxX - $Expected.MaxX),
+        [Math]::Abs($Actual.MaxY - $Expected.MaxY)
+    )
+    $worst = ($offsets | Measure-Object -Maximum).Maximum
+    Assert-Condition -Condition ($worst -le $Tolerance) -Message (
+        $Label + ": extent not equal to input extent, worst boundary offset " + $worst +
+        " > tolerance " + $Tolerance + "; input " + (Format-Extent $Expected) +
+        ", output " + (Format-Extent $Actual))
+}
+
+function Assert-ExtentInsideOf {
+    param(
+        [object]$Outer,
+        [object]$Inner,
+        [double]$Tolerance,
+        [string]$Label
+    )
+
+    # 图层级几何包含：派生点/线只会落在输入自己的范围里。容差把**外框**往外扩（不是把内框往外拉）：
+    # 违规是 inner.min < outer.min - tol 与 inner.max > outer.max + tol。
+    # ⚠ 这里写反过一次（写成 inner.min - tol < outer.min），那条错判据会把"内外完全相等"也判红 ——
+    # boundary 的输出 Extent 与输入逐字符相同，于是当场红在跑动里，不是红在推理里。
+    # 逐边报出是哪一条越界、越了多少，红的时候不用重跑就知道方向。
+    $violations = @()
+    if ($Inner.MinX -lt ($Outer.MinX - $Tolerance)) { $violations += ("minx " + $Inner.MinX + " < " + $Outer.MinX) }
+    if ($Inner.MinY -lt ($Outer.MinY - $Tolerance)) { $violations += ("miny " + $Inner.MinY + " < " + $Outer.MinY) }
+    if ($Inner.MaxX -gt ($Outer.MaxX + $Tolerance)) { $violations += ("maxx " + $Inner.MaxX + " > " + $Outer.MaxX) }
+    if ($Inner.MaxY -gt ($Outer.MaxY + $Tolerance)) { $violations += ("maxy " + $Inner.MaxY + " > " + $Outer.MaxY) }
+    Assert-Condition -Condition ($violations.Count -eq 0) -Message (
+        $Label + ": output extent not contained in input extent (" + ($violations -join "; ") +
+        "); input " + (Format-Extent $Outer) + ", output " + (Format-Extent $Inner))
+}
+
+function Get-ReportedMetadataCount {
+    param(
+        [string]$Text,
+        [string]$Key,
+        [string]$Label
+    )
+
+    # 整行锚定（^…$）+ 抓完整数字串：键前不许有别的单词字符、行尾不许有尾巴，
+    # 于是 "source_count" 不会被 "feature_count" 的判据顺带满足，短数字也不会被长数字当前缀吃。
+    return Get-ReportedCount -Text $Text -Pattern ("(?m)^\s*" + $Key + ":\s+(\d+)\s*$") -Label $Label
+}
+
+# ── C3a：几何派生批（convex_hull / centroid / envelope / boundary / 三个 extract / interior_point）──
+# 每条用例的判据都是"与数据无关的关系"，全部由输入图层自己的现读属性推出来：
+#   输出可被 vector info 读回（读不回即红，Features 行缺失即红，解析失败即红，不许静默归零）；
+#   输出 Geometry 类型必须是该动作定义的产物类型（centroid/interior_point/三个 extract ⇒ Point，
+#     convex_hull/envelope ⇒ Polygon，boundary ⇒ LineString/MultiLineString）；
+#   envelope 与 convex_hull ⇒ 输出 Extent 与输入 Extent 相等（保范围，直接打死"只取第一个要素"
+#     与"聚合方向写反"）；其余 ⇒ 输出 Extent 被输入 Extent 包含（外扩 1e-6 吸收 %g 打印舍入）；
+#   逐要素派生的动作 ⇒ 输出 Features == 输入 Features；三个 extract 是"把几何炸开成点"，
+#     要素数按定义必然大于输入（实测 800 要素的线切片 ⇒ 6655 顶点 / 1600 端点 / 800 中点），
+#     所以它们之间核关系：vertices >= 2*midpoints、endpoints == 2*midpoints、vertices >= endpoints，
+#     这三条一起打死"中点按段数算""端点漏一半""只处理第一个要素"。
+#   每个动作另外核"CLI 自报的 feature_count == vector info 现读回来的 Features"（报数与落盘对撞）。
+$script:DerivedExtentTolerance = 1e-6
+
+function Assert-DerivedGeometryCase {
+    param(
+        [string]$Name,
+        [string]$ResolvedCliPath,
+        [string]$OutputPath,
+        [string]$ScratchDir,
+        [string]$CliOutput,
+        [object]$InputStats,
+        [string]$ExpectedGeometryPattern,
+        [ValidateSet("equal", "inside", "none")]
+        [string]$ExtentMode,
+        [ValidateSet("equal", "none")]
+        [string]$FeaturesMode
+    )
+
+    $read = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $OutputPath -ScratchDir $ScratchDir
+
+    Assert-Condition -Condition ($read.FeatureCount -gt 0) -Message (
+        $Name + ": output layer has no feature (Features: " + $read.FeatureCount + ")")
+    # 允许同一坐标类的 Multi* 形态（boundary 在多边形输入上产出 MultiLineString 而不是 LineString），
+    # 但不允许跨类： centroid 变成 Polygon、vertices 变成 MultiPolygon 这种"派生成了别的东西"必须红。
+    Assert-Condition -Condition ($read.Geometry -match $ExpectedGeometryPattern) -Message (
+        $Name + ": output geometry type is " + $read.Geometry + ", expected pattern " + $ExpectedGeometryPattern)
+
+    if ($ExtentMode -eq "equal") {
+        Assert-ExtentEqualTo -Expected $InputStats -Actual $read -Tolerance $script:DerivedExtentTolerance -Label $Name
+    } elseif ($ExtentMode -eq "inside") {
+        Assert-ExtentInsideOf -Outer $InputStats -Inner $read -Tolerance $script:DerivedExtentTolerance -Label $Name
+    }
+
+    if ($FeaturesMode -eq "equal") {
+        Assert-Condition -Condition ($read.FeatureCount -eq $InputStats.FeatureCount) -Message (
+            $Name + ": output Features " + $read.FeatureCount + " != input Features " + $InputStats.FeatureCount +
+            " (per-feature derivation must not add or drop features)")
+    }
+
+    $reported = Get-ReportedMetadataCount -Text $CliOutput -Key "feature_count" -Label ($Name + " reported feature_count")
+    Assert-Condition -Condition ($reported -eq $read.FeatureCount) -Message (
+        $Name + ": CLI reported feature_count " + $reported + " but vector info reads back " +
+        $read.FeatureCount + " (自报数与落盘数不一致)")
+
+    return $read
+}
+
+function Validate-DerivedGeometryRelations {
+    param(
+        [string]$Name,
+        [int]$VertexCount,
+        [int]$EndpointCount,
+        [int]$MidpointCount,
+        [int]$InputFeatureCount
+    )
+
+    # 三个 extract 只在彼此之间核关系，不核绝对数：绝对数会随 data/vector 换文件而漂移，
+    # 而"每段 2 个端点 / 1 个中点 / >=2 个顶点"是这些动作自己的定义。
+    if ($Name -eq "midpoints_line") {
+        Assert-Condition -Condition ($VertexCount -ge 0) -Message "midpoints_line ran before vertices_line, cannot cross-check"
+        Assert-Condition -Condition ($VertexCount -ge 2 * $MidpointCount) -Message (
+            "midpoints_line: vertices " + $VertexCount + " < 2 * midpoints " + $MidpointCount +
+            " (每条线至少 2 个顶点却只有 1 个中点)")
+        Assert-Condition -Condition ($MidpointCount -ge $InputFeatureCount) -Message (
+            "midpoints_line: midpoints " + $MidpointCount + " < input features " + $InputFeatureCount +
+            " (每个线要素至少产出 1 个中点)")
+    }
+    if ($Name -eq "endpoints_line") {
+        Assert-Condition -Condition ($MidpointCount -ge 0) -Message "endpoints_line ran before midpoints_line, cannot cross-check"
+        Assert-Condition -Condition ($EndpointCount -eq 2 * $MidpointCount) -Message (
+            "endpoints_line: endpoints " + $EndpointCount + " != 2 * midpoints " + $MidpointCount +
+            " (每条线首尾各 1 个端点)")
+        Assert-Condition -Condition ($VertexCount -ge $EndpointCount) -Message (
+            "endpoints_line: vertices " + $VertexCount + " < endpoints " + $EndpointCount +
+            " (端点是顶点的子集)")
+    }
+}
+
+function Ensure-DerivedGeometryInputs {
+    param(
+        [string]$ResolvedCliPath,
+        [string]$ResolvedWorkspaceRoot,
+        [string]$RoadsCore3857
+    )
+
+    # WHY 先复制再喂 CLI：N115 实测 vector info 会在**被喂进去的那份输入旁边**写 .aux.xml
+    # （GPKG 会写、GeoJSON 不写，写不写取决于驱动，不是"矢量都不写"）。
+    # data/ 只许被复制 ⇒ 本批所有输入落进 build/tmp/c3a/，边车也种在那里。
+    $scratchRoot = Join-Path $ResolvedWorkspaceRoot "build\tmp\c3a"
+    New-Item -ItemType Directory -Force -Path $scratchRoot | Out-Null
+
+    $vectorDataRoot = Join-Path $ResolvedWorkspaceRoot "data\vector"
+    Require-Path -Path $vectorDataRoot -Label "data/vector"
+
+    # 面输入：工单指定的 data/vector/中国_省.geojson。名字按码点拼而不写字面中文 ——
+    # 这份 .ps1 是无 BOM 的 UTF-8，PowerShell 5.1 按 ANSI 代码页解码源文件，字面中文路径
+    # 在这台机器上会变成乱码（与本仓"PS5.1 不带 -Encoding 读坏 UTF-8"是同一条成因）。
+    $provinceName = (-join @([char]0x4E2D, [char]0x56FD, [char]0x005F, [char]0x7701)) + ".geojson"
+    $provinceRaw = Join-Path $vectorDataRoot $provinceName
+    if (-not (Test-Path $provinceRaw)) {
+        # 指定文件不在了也要红着说明，不许静默换一个图层继续跑。
+        $fallback = Get-ChildItem $vectorDataRoot -Filter "*.geojson" |
+            Sort-Object Length |
+            Select-Object -First 1
+        Assert-Condition -Condition ($null -ne $fallback) -Message (
+            "derived geometry leg: province input missing and no *.geojson fallback in " + $vectorDataRoot)
+        $provinceRaw = $fallback.FullName
+    }
+
+    $polygonInput = Join-Path $scratchRoot "province.geojson"
+    Copy-Item $provinceRaw $polygonInput -Force
+    $lineInput = Join-Path $scratchRoot "roads_3857.gpkg"
+    Copy-Item $RoadsCore3857 $lineInput -Force
+
+    # 三个 extract 跑在"真实线的切片"上：整层 22836 要素在 Debug 树实测
+    # vertices 563.9 s + endpoints 115.9 s + midpoints 105.5 s = 785.3 s，
+    # 单这三条就顶穿本腿 720 s 的 TIMEOUT（本腿今天整条 Debug 热跑 170.935 s）⇒ 取真实图层的
+    # 前 800 个要素做切片（实测切片本身 0.9 s、三条合计 15.6 s）。切片仍由真实几何构成，
+    # 判据也全部从切片自己的现读属性推导，不写死数字。
+    $lineSlice = Join-Path $scratchRoot "roads_3857_slice.gpkg"
+    Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_derived_line_slice" -CaseArgs @(
+        "vector", "filter",
+        ("--input=" + $lineInput),
+        ("--output=" + $lineSlice),
+        "--where=fid <= 800"
+    )
+
+    $outputs = [ordered]@{
+        hull_polygon     = Join-Path $scratchRoot "out_hull_polygon.gpkg"
+        envelope_polygon = Join-Path $scratchRoot "out_envelope_polygon.gpkg"
+        centroid_polygon = Join-Path $scratchRoot "out_centroid_polygon.gpkg"
+        interior_polygon = Join-Path $scratchRoot "out_interior_polygon.gpkg"
+        boundary_polygon = Join-Path $scratchRoot "out_boundary_polygon.gpkg"
+        vertices_line    = Join-Path $scratchRoot "out_vertices_line.gpkg"
+        midpoints_line   = Join-Path $scratchRoot "out_midpoints_line.gpkg"
+        endpoints_line   = Join-Path $scratchRoot "out_endpoints_line.gpkg"
+    }
+
+    # 输入侧现读：面用 data/vector 的省份图层，线用真实道路图层的切片。
+    # 判据的全部期望值都从这两个对象推出来 —— 换一个数据文件它们照样成立，写死数字就做不到。
+    $polygonStats = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $polygonInput -ScratchDir $scratchRoot
+    $lineStats = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $lineSlice -ScratchDir $scratchRoot
+    Assert-Condition -Condition ($lineStats.Geometry -match "LineString") -Message (
+        "derived geometry leg: line slice geometry is " + $lineStats.Geometry +
+        ", not a line layer (extract 三兄弟只对线图层有定义，喂错图层必须红)")
+    Assert-Condition -Condition ($polygonStats.FeatureCount -gt 0) -Message "derived geometry leg: polygon input has no feature"
+    Assert-Condition -Condition ($lineStats.FeatureCount -gt 0) -Message "derived geometry leg: line slice has no feature"
+
+    return [pscustomobject]@{
+        ScratchRoot = $scratchRoot
+        PolygonInput = $polygonInput
+        LineInput = $lineInput
+        LineSlice = $lineSlice
+        Outputs = $outputs
+        PolygonStats = $polygonStats
+        LineStats = $lineStats
     }
 }
 
@@ -281,7 +524,8 @@ function Validate-CaseOutputs {
         [pscustomobject]$Case,
         [string]$ResolvedCliPath,
         [string]$ResolvedOutputRoot,
-        [int]$InputFeatureCount
+        [int]$InputFeatureCount,
+        [object]$DerivedRefs
     )
 
     # 期望值一律由输入图层自己的要素数推出，不写死常量。
@@ -354,6 +598,64 @@ function Validate-CaseOutputs {
         }
         "polygonize_bbox_raster" {
             Assert-TextContains -Text $Case.Output -Expected "Polygonize completed: 1 polygons" -Message "polygonize_bbox_raster polygon count mismatch"
+        }
+        # ── C3a 几何派生 8 条：判据全部由输入图层自己的现读属性推导 ──
+        "hull_polygon" {
+            Assert-DerivedGeometryCase -Name "hull_polygon" -ResolvedCliPath $ResolvedCliPath `
+                -OutputPath ([string]$DerivedRefs.Outputs["hull_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
+                -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
+                -ExpectedGeometryPattern "Polygon" -ExtentMode "equal" -FeaturesMode "equal" | Out-Null
+        }
+        "envelope_polygon" {
+            Assert-DerivedGeometryCase -Name "envelope_polygon" -ResolvedCliPath $ResolvedCliPath `
+                -OutputPath ([string]$DerivedRefs.Outputs["envelope_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
+                -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
+                -ExpectedGeometryPattern "Polygon" -ExtentMode "equal" -FeaturesMode "equal" | Out-Null
+        }
+        "centroid_polygon" {
+            Assert-DerivedGeometryCase -Name "centroid_polygon" -ResolvedCliPath $ResolvedCliPath `
+                -OutputPath ([string]$DerivedRefs.Outputs["centroid_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
+                -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
+                -ExpectedGeometryPattern "Point" -ExtentMode "inside" -FeaturesMode "equal" | Out-Null
+        }
+        "interior_polygon" {
+            Assert-DerivedGeometryCase -Name "interior_polygon" -ResolvedCliPath $ResolvedCliPath `
+                -OutputPath ([string]$DerivedRefs.Outputs["interior_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
+                -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
+                -ExpectedGeometryPattern "Point" -ExtentMode "inside" -FeaturesMode "equal" | Out-Null
+        }
+        "boundary_polygon" {
+            Assert-DerivedGeometryCase -Name "boundary_polygon" -ResolvedCliPath $ResolvedCliPath `
+                -OutputPath ([string]$DerivedRefs.Outputs["boundary_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
+                -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
+                -ExpectedGeometryPattern "^(Multi)?LineString$" -ExtentMode "inside" -FeaturesMode "equal" | Out-Null
+        }
+        "vertices_line" {
+            $read = Assert-DerivedGeometryCase -Name "vertices_line" -ResolvedCliPath $ResolvedCliPath `
+                -OutputPath ([string]$DerivedRefs.Outputs["vertices_line"]) -ScratchDir $DerivedRefs.ScratchRoot `
+                -CliOutput $Case.Output -InputStats $DerivedRefs.LineStats `
+                -ExpectedGeometryPattern "Point" -ExtentMode "inside" -FeaturesMode "none"
+            $script:DerivedVertexCount = $read.FeatureCount
+        }
+        "midpoints_line" {
+            $read = Assert-DerivedGeometryCase -Name "midpoints_line" -ResolvedCliPath $ResolvedCliPath `
+                -OutputPath ([string]$DerivedRefs.Outputs["midpoints_line"]) -ScratchDir $DerivedRefs.ScratchRoot `
+                -CliOutput $Case.Output -InputStats $DerivedRefs.LineStats `
+                -ExpectedGeometryPattern "Point" -ExtentMode "inside" -FeaturesMode "none"
+            $script:DerivedMidpointCount = $read.FeatureCount
+            Validate-DerivedGeometryRelations -Name "midpoints_line" `
+                -VertexCount $script:DerivedVertexCount -EndpointCount $script:DerivedEndpointCount `
+                -MidpointCount $script:DerivedMidpointCount -InputFeatureCount $DerivedRefs.LineStats.FeatureCount
+        }
+        "endpoints_line" {
+            $read = Assert-DerivedGeometryCase -Name "endpoints_line" -ResolvedCliPath $ResolvedCliPath `
+                -OutputPath ([string]$DerivedRefs.Outputs["endpoints_line"]) -ScratchDir $DerivedRefs.ScratchRoot `
+                -CliOutput $Case.Output -InputStats $DerivedRefs.LineStats `
+                -ExpectedGeometryPattern "Point" -ExtentMode "inside" -FeaturesMode "none"
+            $script:DerivedEndpointCount = $read.FeatureCount
+            Validate-DerivedGeometryRelations -Name "endpoints_line" `
+                -VertexCount $script:DerivedVertexCount -EndpointCount $script:DerivedEndpointCount `
+                -MidpointCount $script:DerivedMidpointCount -InputFeatureCount $DerivedRefs.LineStats.FeatureCount
         }
         "clip_stress" {
             Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected $InputFeatureCount -Label "clip_stress"
@@ -773,6 +1075,49 @@ $cases += New-Case -Name "polygonize_bbox_raster" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "bbox_polygonized.gpkg")
 )
 
+# ── C3a：矢量几何派生 8 动作的真实数据链路（每动作 1 条 quick 用例）──
+# 输入全部是复制件（build/tmp/c3a/），data/ 只读；判据见 Assert-DerivedGeometryCase 的注释块。
+# 切片、现读属性、输出路径都由 Ensure-DerivedGeometryInputs 一次性带回来（属性在返回对象上
+# 一次建齐；PS 5.1 的 pscustomobject 事后加属性会报"找不到可设置的属性"，这是本机事实）。
+$derivedRefs = Ensure-DerivedGeometryInputs -ResolvedCliPath $ResolvedCliPath `
+    -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -RoadsCore3857 $roadsCore3857
+$script:DerivedVertexCount = -1
+$script:DerivedMidpointCount = -1
+$script:DerivedEndpointCount = -1
+
+function New-DerivedCase {
+    param(
+        [string]$Name,
+        [string]$Action,
+        [string]$InputPath,
+        [string]$OutputPath
+    )
+
+    return New-Case -Name $Name -CaseArgs @(
+        "vector", $Action,
+        ("--input=" + $InputPath),
+        ("--output=" + $OutputPath)
+    ) -ExpectedOutputs @($OutputPath)
+}
+
+$cases += New-DerivedCase -Name "hull_polygon" -Action "convex_hull" `
+    -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["hull_polygon"]
+$cases += New-DerivedCase -Name "envelope_polygon" -Action "envelope" `
+    -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["envelope_polygon"]
+$cases += New-DerivedCase -Name "centroid_polygon" -Action "centroid" `
+    -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["centroid_polygon"]
+$cases += New-DerivedCase -Name "interior_polygon" -Action "interior_point" `
+    -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["interior_polygon"]
+$cases += New-DerivedCase -Name "boundary_polygon" -Action "boundary" `
+    -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["boundary_polygon"]
+# 顺序即依赖：vertices 先跑，midpoints/endpoints 的关系判据要用它的现读数。
+$cases += New-DerivedCase -Name "vertices_line" -Action "vertices_extract" `
+    -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["vertices_line"]
+$cases += New-DerivedCase -Name "midpoints_line" -Action "midpoints_extract" `
+    -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["midpoints_line"]
+$cases += New-DerivedCase -Name "endpoints_line" -Action "endpoints_extract" `
+    -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["endpoints_line"]
+
 if ($Mode -eq "full") {
     $cases += New-Case -Name "clip_stress" -CaseArgs @(
         "vector", "clip",
@@ -795,7 +1140,7 @@ if ($Mode -eq "full") {
 $results = @()
 foreach ($case in $cases) {
     $result = Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
-    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount
+    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs
     $results += $result
 }
 

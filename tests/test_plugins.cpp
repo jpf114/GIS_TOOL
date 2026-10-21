@@ -6204,12 +6204,21 @@ TEST_F(PluginTest, VectorCentroidExecution) {
         OGRFieldDefn nameField("name", OFTString);
         ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
 
+        // 夹具是不对称 L 形 (0,0)-(12,0)-(12,3)-(4,3)-(4,8)-(0,8)：
+        //   底条 12x3 = 36，形心 (6, 1.5)；左条 4x5 = 20，形心 (2, 5.5)；总面积 56
+        //   cx = (36*6 + 20*2)/56 = 256/56 = 32/7
+        //   cy = (36*1.5 + 20*5.5)/56 = 164/56 = 41/14
+        // 三个要点：① cx != cy ⇒ "坐标轴写反"会红（正方形夹具上这条永远测不出）；
+        // ② 与包框中心 (6,4) 不同 ⇒ "面积重心写成包框中心"会红；
+        // ③ 期望值由夹具自己的形状算出来，不从产物回填。
         OGRPolygon poly;
         OGRLinearRing ring;
         ring.addPoint(0, 0);
-        ring.addPoint(10, 0);
-        ring.addPoint(10, 10);
-        ring.addPoint(0, 10);
+        ring.addPoint(12, 0);
+        ring.addPoint(12, 3);
+        ring.addPoint(4, 3);
+        ring.addPoint(4, 8);
+        ring.addPoint(0, 8);
         ring.addPoint(0, 0);
         poly.addRing(&ring);
 
@@ -6241,8 +6250,10 @@ TEST_F(PluginTest, VectorCentroidExecution) {
     EXPECT_STREQ(outFeat->GetFieldAsString("name"), "A");
     auto* centroid = outFeat->GetGeometryRef()->toPoint();
     ASSERT_NE(centroid, nullptr);
-    EXPECT_NEAR(centroid->getX(), 5.0, 1e-6);
-    EXPECT_NEAR(centroid->getY(), 5.0, 1e-6);
+    EXPECT_NEAR(centroid->getX(), 32.0 / 7.0, 1e-6);
+    EXPECT_NEAR(centroid->getY(), 41.0 / 14.0, 1e-6);
+    // 这里不核"重心在形内"：centroid 的定义性质允许落在凹形之外，
+    // 与 interior_point 的区别正在这里（那条用例核形内）。
     OGRFeature::DestroyFeature(outFeat);
     GDALClose(outDs);
 }
@@ -6595,6 +6606,27 @@ TEST_F(PluginTest, VectorVerticesExtractExecution) {
     EXPECT_EQ(outFeat->GetFieldAsInteger("vertex_idx"), 0);
     EXPECT_EQ(wkbFlatten(outFeat->GetGeometryRef()->getGeometryType()), wkbPoint);
     OGRFeature::DestroyFeature(outFeat);
+
+    // 只数要素数抓不到"顶点顺序写反""丢掉收尾点""坐标轴互换"这三类错，
+    // 所以按 vertex_idx 的顺序把三个点的坐标逐个钉死（夹具折线 (0,0)-(5,5)-(10,0)）。
+    // 数值直接由夹具自己的顶点表推出，不从产物回填。
+    static const double kExpectedVertices[3][2] = { {0.0, 0.0}, {5.0, 5.0}, {10.0, 0.0} };
+    outLayer->ResetReading();
+    int vertexSeen = 0;
+    for (int i = 0; i < 3; ++i) {
+        OGRFeature* vertexFeat = outLayer->GetNextFeature();
+        ASSERT_NE(vertexFeat, nullptr) << "vertex feature " << i << " missing";
+        EXPECT_EQ(vertexFeat->GetFieldAsInteger("vertex_idx"), i);
+        ASSERT_NE(vertexFeat->GetGeometryRef(), nullptr);
+        EXPECT_EQ(wkbFlatten(vertexFeat->GetGeometryRef()->getGeometryType()), wkbPoint);
+        const auto* vertexPoint = vertexFeat->GetGeometryRef()->toPoint();
+        EXPECT_NEAR(vertexPoint->getX(), kExpectedVertices[i][0], 1e-9);
+        EXPECT_NEAR(vertexPoint->getY(), kExpectedVertices[i][1], 1e-9);
+        OGRFeature::DestroyFeature(vertexFeat);
+        ++vertexSeen;
+    }
+    EXPECT_EQ(vertexSeen, 3);
+    EXPECT_EQ(outLayer->GetNextFeature(), nullptr);
     GDALClose(outDs);
 }
 
@@ -6653,6 +6685,30 @@ TEST_F(PluginTest, VectorEndpointsExtractExecution) {
     EXPECT_EQ(outFeat->GetFieldAsInteger("endpoint_type"), 0);
     EXPECT_EQ(wkbFlatten(outFeat->GetGeometryRef()->getGeometryType()), wkbPoint);
     OGRFeature::DestroyFeature(outFeat);
+
+    // 两个端点必须分别是折线的 StartPoint 与 EndPoint：夹具 (0,0)-(5,5)-(10,0) 的首尾是
+    // (0,0) 与 (10,0)，两点不重合，所以"只吐起点""首尾都取起点""端点写成重心"
+    // 这三种变异在这里都会红（只数 feature 数则三种全绿）。
+    outLayer->ResetReading();
+    OGRFeature* startFeat = outLayer->GetNextFeature();
+    ASSERT_NE(startFeat, nullptr);
+    EXPECT_EQ(startFeat->GetFieldAsInteger("endpoint_type"), 0);
+    const auto* startPoint = startFeat->GetGeometryRef()->toPoint();
+    ASSERT_NE(startPoint, nullptr);
+    EXPECT_NEAR(startPoint->getX(), 0.0, 1e-9);
+    EXPECT_NEAR(startPoint->getY(), 0.0, 1e-9);
+    OGRFeature::DestroyFeature(startFeat);
+
+    OGRFeature* endFeat = outLayer->GetNextFeature();
+    ASSERT_NE(endFeat, nullptr);
+    EXPECT_EQ(endFeat->GetFieldAsInteger("endpoint_type"), 1);
+    const auto* endPoint = endFeat->GetGeometryRef()->toPoint();
+    ASSERT_NE(endPoint, nullptr);
+    EXPECT_NEAR(endPoint->getX(), 10.0, 1e-9);
+    EXPECT_NEAR(endPoint->getY(), 0.0, 1e-9);
+    OGRFeature::DestroyFeature(endFeat);
+
+    EXPECT_EQ(outLayer->GetNextFeature(), nullptr);
     GDALClose(outDs);
 }
 
@@ -6736,10 +6792,15 @@ TEST_F(PluginTest, VectorInteriorPointExecution) {
 
         OGRPolygon poly;
         OGRLinearRing ring;
+        // 夹具是 10x4 的矩形，不是正方形：x 与 y 的中心坐标不相等（5 与 2），
+        // 于是"坐标轴写反"在这里必红；而矩形上"面积重心""包框中心""面内代表点"
+        // 三种定义给出同一个点 (5,2)，所以这条期望值不与"interior_point 该用哪种算法"绑定，
+        // 不会把有争议的语义当成真值钉进库（本批实测 interior_point 目前与 centroid 逐点同值，
+        // 凹面上会把点放到形外，那条差异只登记进工单，不在这里固定）。
         ring.addPoint(0, 0);
         ring.addPoint(10, 0);
-        ring.addPoint(10, 10);
-        ring.addPoint(0, 10);
+        ring.addPoint(10, 4);
+        ring.addPoint(0, 4);
         ring.addPoint(0, 0);
         poly.addRing(&ring);
 
@@ -6771,10 +6832,22 @@ TEST_F(PluginTest, VectorInteriorPointExecution) {
     EXPECT_STREQ(outFeat->GetFieldAsString("name"), "A");
     const auto* point = outFeat->GetGeometryRef()->toPoint();
     ASSERT_NE(point, nullptr);
+    EXPECT_NEAR(point->getX(), 5.0, 1e-6);
+    EXPECT_NEAR(point->getY(), 2.0, 1e-6);
+    // 代表点必须真的落在面上：这是 interior_point 区别于"随便一个中心"的定义级下界。
+    OGRPolygon expectedPolygon;
+    OGRLinearRing expectedRing;
+    expectedRing.addPoint(0, 0);
+    expectedRing.addPoint(10, 0);
+    expectedRing.addPoint(10, 4);
+    expectedRing.addPoint(0, 4);
+    expectedRing.addPoint(0, 0);
+    expectedPolygon.addRing(&expectedRing);
+    EXPECT_TRUE(expectedPolygon.Contains(point));
     EXPECT_GE(point->getX(), 0.0);
     EXPECT_LE(point->getX(), 10.0);
     EXPECT_GE(point->getY(), 0.0);
-    EXPECT_LE(point->getY(), 10.0);
+    EXPECT_LE(point->getY(), 4.0);
     OGRFeature::DestroyFeature(outFeat);
     GDALClose(outDs);
 }

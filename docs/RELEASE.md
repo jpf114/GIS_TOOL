@@ -673,6 +673,19 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
 **没有** `data/raster` 与 `data/matching` ⇒ raster 与 matching 两条腿的"真实数据"取径一直在走
 `tmp/*_benchmark/generated_data` 的合成兜底分支。这四条兜住的是"`data/` 整目录不在时不装绿"与
 "判据本体每次全量都真跑"，**不等于**那两条腿判的是真图（要按真实图收紧判据，等 C1 矩阵排到那两个插件）。
+挂账 **N117**（批次 C C3a 实测发现的算法语义缺陷，产品侧未修）：`vector.interior_point` 没有履行
+"点在面内"的语义 —— 它与 `vector.centroid` **走同一行实现**（都调 `normalized->Centroid(&point)`），
+所以对凹形给出的是**面积重心**，可以落在形外。实测夹具：不对称 L 形 `(0,0)-(12,0)-(12,3)-(4,3)-(4,8)-(0,8)`
+（底条 12×3、左条 4×5、总面积 56）⇒ 两动作都输出 `(3.2222, 3.2222)`，而该 L 形只在
+`x∈[0,4]∪y∈[0,3]` 上有条带，点 `(3.2222, 3.2222)` 不在形内。
+复算：`ctest --test-dir build/release -C Release -R "Vector(Centroid|InteriorPoint)Execution" -j1` 对照
+`src/plugins/vector/` 里两处 `Centroid(&point)` 调用点。
+后果面：用户按"内部点"取标注/放置点位时，点可能掉在面外（GIS 里 ` interior point` 的定义性要求就是在形内）。
+正解候选：改用 GEOS `OGRGeometry::PointOnSurface()` / `Centroid` 与 `PointOnSurface` 二选一，
+并按动作语义分开（`centroid`=重心、`interior_point`=形内点）。**属行为变更 ⇒ 需要用户裁定**，
+本批不擅自改 `src/`；`interior_point` 的 GOLD 断言因此只钉"两种定义都唯一"的矩形夹具（中心 (5,2)），
+不把"落在形外的值"当期望锁进库。
+
 挂账 **N116**（复审第 6 条的残留，非 C2 引入）：已提交的批次 B 工单里有一处把细节只留在 gitignored 台账里
 ——`docs/superpowers/plans/2026-10-19-批次B设置迁移与构建测试补齐.md:747`"细节清单见
 `.superpowers/sdd/<本计划目录>/task-B3-extra-obligations.md` 的 §A"。拿不到那个文件的人就丢了这份义务清单。
