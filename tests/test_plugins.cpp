@@ -6121,6 +6121,137 @@ TEST_F(PluginTest, VectorTopologyCheckExecution) {
     EXPECT_EQ(overlapCount, 2);
 }
 
+// ============== C3a-4：几何派生四条（hull/envelope/boundary/midpoints）公共件 ==============
+// 这批用例的判据形状由工单钉死（.superpowers/sdd/2026-10-21-批次C全功能验证与文档同步/
+// task-C3a4-brief.md）：夹具从单要素改成两要素非对称 L，断言改成"先基数、后成员"的顶点集合比较
+// + 包框四个极值 + name↔几何配对。下面几件公共件只为这个目的存在，不做通用化。
+
+// 顶点规范化键：去重这一步先把坐标量化到 1e-6 网格，再拿整数对当键。
+// WHY 不用字符串拼接相等当键：拼串键对末位抖动敏感（同一个 6 可能拼成 "6"，也可能拼成
+// "6.000000000000001"），基数断言会随格式化规则漂移，红了也说不清是几何变了还是字符串变了。
+using DerivedVertexKey = std::pair<long long, long long>;
+
+// 顶点比较的容差：与工单规定的 EXPECT_NEAR(.., 1e-6) 同值。
+// WHY 成员判断用容差而不是 ==：几何派生回来的坐标是 double，末位抖动是常态；整数网格键只
+// 负责"把同一个点认作一个"，判"这个点在不在集合里"仍然按 1e-6 容差比。
+constexpr double kDerivedVertexTolerance = 1e-6;
+
+static DerivedVertexKey makeDerivedVertexKey(double x, double y) {
+    return {std::llround(x * 1e6), std::llround(y * 1e6)};
+}
+
+// 取一条线/环上的**去重**顶点集合（保留首次出现的那个原值，供容差比较用）。
+// 闭合环首尾重复的那个点在集合里只算一次 ⇒ 5 个顶点的凸包环（存 6 个点）数出来是 5，
+// 6 个顶点的输入环（存 7 个点）数出来是 6。
+static std::vector<std::pair<double, double>> collectDerivedVertices(const OGRSimpleCurve* curve) {
+    std::vector<std::pair<double, double>> verts;
+    std::set<DerivedVertexKey> seen;
+    if (!curve) {
+        return verts;
+    }
+    OGRPoint pt;
+    for (int i = 0; i < curve->getNumPoints(); ++i) {
+        curve->getPoint(i, &pt);
+        if (seen.insert(makeDerivedVertexKey(pt.getX(), pt.getY())).second) {
+            verts.emplace_back(pt.getX(), pt.getY());
+        }
+    }
+    return verts;
+}
+
+// 先断基数、再断成员（工单要求的 fail-closed 形状），基数不等时**不**进成员那一步。
+// WHY 基数必须先行：只写"每个期望点都能在集合里找到"，空集合与错集合都可能是恒真的假绿
+//（本仓 N108 那一族）。基数相等 + 每个期望点都在场 ⇒ 两个集合相等，这才是完整判据。
+// WHY 按集合比、不钉顺序：GEOS 给的环起点与绕向是实现细节（本批实测凸包 A 的环是
+// (0,0)→(0,8)→(4,8)→(12,3)→(12,0)，顺时针、起点不定），而本仓已因 GEOS 升级出过一次堆损坏
+//（Task A0）⇒ 钉顺序等于把实现细节当规格埋进库，换版本就红一片。
+static ::testing::AssertionResult expectDerivedVertexSet(
+    const std::vector<std::pair<double, double>>& actual,
+    const std::vector<std::pair<double, double>>& expected,
+    const char* what) {
+    if (actual.size() != expected.size()) {
+        std::string dump;
+        for (const auto& v : actual) {
+            dump += "(" + std::to_string(v.first) + ", " + std::to_string(v.second) + ")";
+        }
+        return ::testing::AssertionFailure()
+            << what << " 顶点集合基数 = " << actual.size() << "（期望 " << expected.size()
+            << "：先去重再比基数，空集合也算不等），实际集合 = {" << dump << "}";
+    }
+    for (const auto& point : expected) {
+        bool found = false;
+        for (const auto& v : actual) {
+            if (std::fabs(v.first - point.first) <= kDerivedVertexTolerance &&
+                std::fabs(v.second - point.second) <= kDerivedVertexTolerance) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return ::testing::AssertionFailure()
+                << what << " 基数 " << expected.size() << " 对上了，但在 1e-6 容差内找不到期望顶点 ("
+                << point.first << ", " << point.second << ')';
+        }
+    }
+    return ::testing::AssertionSuccess();
+}
+
+// 面类三条（convex_hull / envelope / boundary）共用的两要素夹具。
+// A = 非对称 L：(0,0)-(12,0)-(12,3)-(4,3)-(4,8)-(0,8) 闭合，与 centroid 用例同一只 L。
+//     ① 点集关于 y=x 转置后是 {(0,0),(0,12),(3,12),(3,4),(8,4),(8,0)} ≠ 自身 ⇒ "坐标轴写反"
+//        这类镜像变异在钉坐标的断言上必红（旧夹具 (0,0),(10,0),(10,2),(2,2),(2,10),(0,10)
+//        自己关于 y=x 对称，转置后逐点仍在集合内，连"形状不同"都造不出来）；
+//     ② 面积 = 底条 12×3=36 + 左条 4×5=20 = 56；周长 = 12+3+8+5+4+8 = 40。
+// B = 小矩形：(20,0)-(24,0)-(24,2)-(20,2) 闭合，包框 [20,24]×[0,2] 与 A 的 [0,12]×[0,8] 完全
+//     不相交，自身转置后也不等于自己；面积 4×2=8，周长 4+2+4+2=12。
+// WHY 非要从 1 要素改成 2 要素：单要素夹具上"只处理第一个要素"这一族缺陷结构性不可见
+//（C3a-3a/3b 实测），只有"基数 == 2"+"第 2 要素 name 是 B 且几何也是 B 的"才打得住。
+static bool writeTwoPolygonFixture(const std::string& path) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    OGRFieldDefn nameField("name", OFTString);
+    if (layer->CreateField(&nameField) != OGRERR_NONE) {
+        GDALClose(ds);
+        return false;
+    }
+
+    auto addPolygon = [&](const char* name,
+                          const std::vector<std::pair<double, double>>& ring) {
+        OGRPolygon poly;
+        OGRLinearRing linearRing;
+        for (const auto& point : ring) {
+            linearRing.addPoint(point.first, point.second);
+        }
+        linearRing.addPoint(ring.front().first, ring.front().second);  // 闭合
+        poly.addRing(&linearRing);
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetField("name", name);
+        feat->SetGeometry(&poly);
+        const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+        return ok;
+    };
+
+    bool ok = addPolygon("A", {{0.0, 0.0}, {12.0, 0.0}, {12.0, 3.0},
+                               {4.0, 3.0}, {4.0, 8.0}, {0.0, 8.0}});
+    ok = addPolygon("B", {{20.0, 0.0}, {24.0, 0.0}, {24.0, 2.0}, {20.0, 2.0}}) && ok;
+    GDALClose(ds);
+    return ok;
+}
+
 TEST_F(PluginTest, VectorConvexHullExecution) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
@@ -6128,37 +6259,7 @@ TEST_F(PluginTest, VectorConvexHullExecution) {
     const std::string input = utf8PathString(getTestDir() / "e2e_convex_hull_input.gpkg");
     const std::string output = utf8PathString(getTestDir() / "e2e_convex_hull_output.gpkg");
 
-    {
-        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
-        ASSERT_NE(driver, nullptr);
-        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-        ASSERT_NE(ds, nullptr);
-        auto srs = std::make_unique<OGRSpatialReference>();
-        srs->importFromEPSG(3857);
-        auto* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
-        ASSERT_NE(layer, nullptr);
-
-        OGRFieldDefn nameField("name", OFTString);
-        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
-
-        OGRPolygon poly;
-        OGRLinearRing ring;
-        ring.addPoint(0, 0);
-        ring.addPoint(10, 0);
-        ring.addPoint(10, 2);
-        ring.addPoint(2, 2);
-        ring.addPoint(2, 10);
-        ring.addPoint(0, 10);
-        ring.addPoint(0, 0);
-        poly.addRing(&ring);
-
-        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
-        feat->SetField("name", "A");
-        feat->SetGeometry(&poly);
-        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
-        OGRFeature::DestroyFeature(feat);
-        GDALClose(ds);
-    }
+    ASSERT_TRUE(writeTwoPolygonFixture(input));
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("convex_hull");
@@ -6168,19 +6269,46 @@ TEST_F(PluginTest, VectorConvexHullExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("feature_count"), "1");
+    // 派生不增删要素：两个输入 ⇒ 两个输出。旧夹具只有 1 个要素，"只处理第一个要素"看不见。
+    EXPECT_EQ(result.metadata.at("feature_count"), "2");
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
     ASSERT_NE(outDs, nullptr);
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
-    OGRFeature* outFeat = outLayer->GetNextFeature();
-    ASSERT_NE(outFeat, nullptr);
-    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "A");
-    ASSERT_NE(outFeat->GetGeometryRef(), nullptr);
-    EXPECT_NEAR(outFeat->GetGeometryRef()->toPolygon()->get_Area(), 68.0, 1e-6);
-    OGRFeature::DestroyFeature(outFeat);
+    // 元数据说 2 条，落盘的也必须是 2 条：只看 metadata 等于信实现自己的记账。
+    EXPECT_EQ(outLayer->GetFeatureCount(), 2);
+
+    // 要素 A（非对称 L，面积 56）：凸包 = L 补上缺口三角形，即去掉凹角 (4,3)。
+    //   缺口三角形 = ½·8·5 = 20（水平边 12-4=8，竖直边 8-3=5）⇒ 凸包面积 = 56 + 20 = 76。
+    //   顶点集合 = 输入环去掉凹角 = {(0,0),(12,0),(12,3),(4,8),(0,8)} 共 5 个。
+    //   x 与 y 不同尺（[0,12] 与 [0,8]）⇒ 转置类变异在下面这套点面前必红。
+    OGRFeature* featA = outLayer->GetNextFeature();
+    ASSERT_NE(featA, nullptr);
+    EXPECT_STREQ(featA->GetFieldAsString("name"), "A");
+    ASSERT_NE(featA->GetGeometryRef(), nullptr);
+    const auto* hullA = featA->GetGeometryRef()->toPolygon();
+    ASSERT_NE(hullA, nullptr);
+    const auto hullAVerts = collectDerivedVertices(hullA->getExteriorRing());
+    ASSERT_TRUE(expectDerivedVertexSet(hullAVerts, {{0.0, 0.0}, {12.0, 0.0}, {12.0, 3.0},
+                                                    {4.0, 8.0}, {0.0, 8.0}}, "convex_hull A"));
+    EXPECT_NEAR(hullA->get_Area(), 76.0, 1e-6);
+    OGRFeature::DestroyFeature(featA);
+
+    // 要素 B（4×2 矩形）：凸包就是它自己 ⇒ 顶点集合 {(20,0),(24,0),(24,2),(20,2)}，面积 4×2=8。
+    //   name↔几何配对：两个输出若都写 A 的几何，这里 4 个顶点与面积 8 一起红。
+    OGRFeature* featB = outLayer->GetNextFeature();
+    ASSERT_NE(featB, nullptr);
+    EXPECT_STREQ(featB->GetFieldAsString("name"), "B");
+    ASSERT_NE(featB->GetGeometryRef(), nullptr);
+    const auto* hullB = featB->GetGeometryRef()->toPolygon();
+    ASSERT_NE(hullB, nullptr);
+    const auto hullBVerts = collectDerivedVertices(hullB->getExteriorRing());
+    ASSERT_TRUE(expectDerivedVertexSet(hullBVerts, {{20.0, 0.0}, {24.0, 0.0}, {24.0, 2.0},
+                                                   {20.0, 2.0}}, "convex_hull B"));
+    EXPECT_NEAR(hullB->get_Area(), 8.0, 1e-6);
+    OGRFeature::DestroyFeature(featB);
     GDALClose(outDs);
 }
 
@@ -6265,37 +6393,7 @@ TEST_F(PluginTest, VectorEnvelopeExecution) {
     const std::string input = utf8PathString(getTestDir() / "e2e_envelope_input.gpkg");
     const std::string output = utf8PathString(getTestDir() / "e2e_envelope_output.gpkg");
 
-    {
-        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
-        ASSERT_NE(driver, nullptr);
-        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-        ASSERT_NE(ds, nullptr);
-        auto srs = std::make_unique<OGRSpatialReference>();
-        srs->importFromEPSG(3857);
-        auto* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
-        ASSERT_NE(layer, nullptr);
-
-        OGRFieldDefn nameField("name", OFTString);
-        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
-
-        OGRPolygon poly;
-        OGRLinearRing ring;
-        ring.addPoint(0, 0);
-        ring.addPoint(10, 0);
-        ring.addPoint(10, 2);
-        ring.addPoint(2, 2);
-        ring.addPoint(2, 10);
-        ring.addPoint(0, 10);
-        ring.addPoint(0, 0);
-        poly.addRing(&ring);
-
-        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
-        feat->SetField("name", "A");
-        feat->SetGeometry(&poly);
-        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
-        OGRFeature::DestroyFeature(feat);
-        GDALClose(ds);
-    }
+    ASSERT_TRUE(writeTwoPolygonFixture(input));
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("envelope");
@@ -6305,19 +6403,51 @@ TEST_F(PluginTest, VectorEnvelopeExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("feature_count"), "1");
+    // 派生不增删要素：两个输入 ⇒ 两个输出（旧夹具只有 1 个要素）。
+    EXPECT_EQ(result.metadata.at("feature_count"), "2");
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
     ASSERT_NE(outDs, nullptr);
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
-    OGRFeature* outFeat = outLayer->GetNextFeature();
-    ASSERT_NE(outFeat, nullptr);
-    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "A");
-    ASSERT_NE(outFeat->GetGeometryRef(), nullptr);
-    EXPECT_NEAR(outFeat->GetGeometryRef()->toPolygon()->get_Area(), 100.0, 1e-6);
-    OGRFeature::DestroyFeature(outFeat);
+    EXPECT_EQ(outLayer->GetFeatureCount(), 2);
+
+    // 期望值来自夹具点集逐维取极值（不是从产物回填）：
+    //   A 的非对称 L：x∈{0,12,12,4,4,0} → [0,12]，y∈{0,0,3,3,8,8} → [0,8] ⇒ 0/0/12/8
+    //   B 的小矩形  ：x∈{20,24,24,20}   → [20,24]，y∈{0,0,2,2}   → [0,2] ⇒ 20/0/24/2
+    // WHY 四个极值而不是只断面积：包框面积（12×8=96、4×2=8）在 x↔y 转置下数值不变，
+    // 是镜像不变量 ⇒ 承重的是这四个带方向的极值；面积两条留着只是顺手核对乘出来的矩形没变形。
+    OGRFeature* featA = outLayer->GetNextFeature();
+    ASSERT_NE(featA, nullptr);
+    EXPECT_STREQ(featA->GetFieldAsString("name"), "A");
+    ASSERT_NE(featA->GetGeometryRef(), nullptr);
+    OGREnvelope envA;
+    featA->GetGeometryRef()->getEnvelope(&envA);
+    EXPECT_NEAR(envA.MinX, 0.0, 1e-6);
+    EXPECT_NEAR(envA.MinY, 0.0, 1e-6);
+    EXPECT_NEAR(envA.MaxX, 12.0, 1e-6);
+    EXPECT_NEAR(envA.MaxY, 8.0, 1e-6);
+    const auto* envPolyA = featA->GetGeometryRef()->toPolygon();
+    ASSERT_NE(envPolyA, nullptr);
+    EXPECT_NEAR(envPolyA->get_Area(), 96.0, 1e-6);
+    OGRFeature::DestroyFeature(featA);
+
+    // 要素 B：若实现"只处理第一个要素"，这里四个极值会全部读成 A 的 0/0/12/8 ⇒ 必红。
+    OGRFeature* featB = outLayer->GetNextFeature();
+    ASSERT_NE(featB, nullptr);
+    EXPECT_STREQ(featB->GetFieldAsString("name"), "B");
+    ASSERT_NE(featB->GetGeometryRef(), nullptr);
+    OGREnvelope envB;
+    featB->GetGeometryRef()->getEnvelope(&envB);
+    EXPECT_NEAR(envB.MinX, 20.0, 1e-6);
+    EXPECT_NEAR(envB.MinY, 0.0, 1e-6);
+    EXPECT_NEAR(envB.MaxX, 24.0, 1e-6);
+    EXPECT_NEAR(envB.MaxY, 2.0, 1e-6);
+    const auto* envPolyB = featB->GetGeometryRef()->toPolygon();
+    ASSERT_NE(envPolyB, nullptr);
+    EXPECT_NEAR(envPolyB->get_Area(), 8.0, 1e-6);
+    OGRFeature::DestroyFeature(featB);
     GDALClose(outDs);
 }
 
@@ -6328,35 +6458,7 @@ TEST_F(PluginTest, VectorBoundaryExecution) {
     const std::string input = utf8PathString(getTestDir() / "e2e_boundary_input.gpkg");
     const std::string output = utf8PathString(getTestDir() / "e2e_boundary_output.gpkg");
 
-    {
-        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
-        ASSERT_NE(driver, nullptr);
-        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
-        ASSERT_NE(ds, nullptr);
-        auto srs = std::make_unique<OGRSpatialReference>();
-        srs->importFromEPSG(3857);
-        auto* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
-        ASSERT_NE(layer, nullptr);
-
-        OGRFieldDefn nameField("name", OFTString);
-        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
-
-        OGRPolygon poly;
-        OGRLinearRing ring;
-        ring.addPoint(0, 0);
-        ring.addPoint(10, 0);
-        ring.addPoint(10, 10);
-        ring.addPoint(0, 10);
-        ring.addPoint(0, 0);
-        poly.addRing(&ring);
-
-        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
-        feat->SetField("name", "A");
-        feat->SetGeometry(&poly);
-        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
-        OGRFeature::DestroyFeature(feat);
-        GDALClose(ds);
-    }
+    ASSERT_TRUE(writeTwoPolygonFixture(input));
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("boundary");
@@ -6366,28 +6468,60 @@ TEST_F(PluginTest, VectorBoundaryExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("feature_count"), "1");
+    // 派生不增删要素：两个面 ⇒ 两条边界（旧夹具只有 1 个要素）。
+    EXPECT_EQ(result.metadata.at("feature_count"), "2");
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
     ASSERT_NE(outDs, nullptr);
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
-    OGRFeature* outFeat = outLayer->GetNextFeature();
-    ASSERT_NE(outFeat, nullptr);
-    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "A");
-    ASSERT_NE(outFeat->GetGeometryRef(), nullptr);
-    const auto* outGeom = outFeat->GetGeometryRef();
-    const auto flatType = wkbFlatten(outGeom->getGeometryType());
-    EXPECT_TRUE(flatType == wkbLineString || flatType == wkbMultiLineString);
-    double length = 0.0;
-    if (flatType == wkbLineString) {
-        length = outGeom->toLineString()->get_Length();
-    } else {
-        length = outGeom->toMultiLineString()->get_Length();
-    }
-    EXPECT_NEAR(length, 40.0, 1e-6);
-    OGRFeature::DestroyFeature(outFeat);
+    EXPECT_EQ(outLayer->GetFeatureCount(), 2);
+
+    // 简单面的边界 = 它自己的环 ⇒ 顶点集合就是输入环的 6 个点（顺序无关，见 expectDerivedVertexSet）。
+    // 周长算式：A 的 L 形 12+3+8+5+4+8 = 40。
+    // ⚠ 这个 40.0 与旧夹具（10×10 正方形，周长恒 40）撞值，是改夹具之后**重算**出来的同一个数，
+    //   不是忘了更新期望值；单看这条数值没有判别力，承重的是新加的点集合、闭合断言和 B 的 12.0。
+    const auto assertBoundaryOf = [&](OGRFeature* feat, const char* name,
+                                      const std::vector<std::pair<double, double>>& verts,
+                                      double perimeter) {
+        ASSERT_NE(feat, nullptr);
+        EXPECT_STREQ(feat->GetFieldAsString("name"), name);
+        ASSERT_NE(feat->GetGeometryRef(), nullptr);
+        const auto* outGeom = feat->GetGeometryRef();
+        const auto flatType = wkbFlatten(outGeom->getGeometryType());
+        // 宽松的"两者之一"保留（不把语义争议钉在类型上）；结构事实由下面那条成员数断言补上。
+        EXPECT_TRUE(flatType == wkbLineString || flatType == wkbMultiLineString)
+            << static_cast<int>(flatType);
+        const OGRLineString* member = nullptr;
+        if (flatType == wkbLineString) {
+            member = outGeom->toLineString();
+        } else {
+            const auto* mls = outGeom->toMultiLineString();
+            ASSERT_NE(mls, nullptr);
+            // 本批实测结构事实：boundary 对简单面的输出是 wkbMultiLineString 且**只含 1 条成员线**
+            //（不是 LineString）。多写一条成员就是"把每个环拆开"，少写就是丢边界。
+            ASSERT_EQ(mls->getNumGeometries(), 1);
+            member = mls->getGeometryRef(0)->toLineString();
+        }
+        ASSERT_NE(member, nullptr);
+        // 环闭合：面的边界不该是开口的折线。
+        EXPECT_TRUE(member->get_IsClosed());
+        const auto actual = collectDerivedVertices(member);
+        EXPECT_TRUE(expectDerivedVertexSet(actual, verts, name)) << "（boundary 的顶点集合）";
+        EXPECT_NEAR(member->get_Length(), perimeter, 1e-6);
+    };
+
+    OGRFeature* featA = outLayer->GetNextFeature();
+    assertBoundaryOf(featA, "A", {{0.0, 0.0}, {12.0, 0.0}, {12.0, 3.0},
+                                  {4.0, 3.0}, {4.0, 8.0}, {0.0, 8.0}}, 40.0);
+    OGRFeature::DestroyFeature(featA);
+
+    // 要素 B：矩形环 4 个点、周长 4+2+4+2 = 12。
+    // name↔几何配对：两个输出若都写第一个要素的环，这里 4 个点与 12.0 一起红。
+    OGRFeature* featB = outLayer->GetNextFeature();
+    assertBoundaryOf(featB, "B", {{20.0, 0.0}, {24.0, 0.0}, {24.0, 2.0}, {20.0, 2.0}}, 12.0);
+    OGRFeature::DestroyFeature(featB);
     GDALClose(outDs);
 }
 
@@ -6720,6 +6854,13 @@ TEST_F(PluginTest, VectorMidpointsExtractExecution) {
     const std::string output = utf8PathString(getTestDir() / "e2e_midpoints_extract_output.gpkg");
 
     {
+        // 两要素折线夹具。旧夹具是单条 2 顶点水平线 (0,0)-(10,0) ⇒ 只有 x 承重：
+        // "端点平均""每段各取中点""0.25 分位"这些变异在水平线上都与真值重合（C3a-3b 实测）。
+        // 换成每条 2 段、且 y 非零的折线后：
+        //   A = (0,0)-(6,0)-(6,8)：总长 6+8=14 ⇒ 半分位 7 ⇒ 落在第二段、距起点 7-6=1 ⇒ (6, 1)
+        //       （端点平均给 (3,4)、每段中点给 {(3,0),(6,4)}、起点给 (0,0)、0.25 分位给 (3.5,0) ⇒ 五个候选两两不同）
+        //   B = (0,10)-(5,10)-(5,16)：总长 5+6=11 ⇒ 半分位 5.5 ⇒ 第二段上移 5.5-5=0.5 ⇒ (5, 10.5)
+        // 两条线的 y 期望都是非零值 ⇒ y 这一维真的承重；x↔y 转置类变异在下面四条 EXPECT_NEAR 上必红。
         auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
         ASSERT_NE(driver, nullptr);
         auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
@@ -6732,15 +6873,21 @@ TEST_F(PluginTest, VectorMidpointsExtractExecution) {
         OGRFieldDefn nameField("name", OFTString);
         ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
 
-        OGRLineString line;
-        line.addPoint(0, 0);
-        line.addPoint(10, 0);
-
-        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
-        feat->SetField("name", "A");
-        feat->SetGeometry(&line);
-        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
-        OGRFeature::DestroyFeature(feat);
+        auto addLine = [&](const char* name,
+                           const std::vector<std::pair<double, double>>& pts) {
+            OGRLineString line;
+            for (const auto& pt : pts) {
+                line.addPoint(pt.first, pt.second);
+            }
+            auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            feat->SetField("name", name);
+            feat->SetGeometry(&line);
+            const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+            OGRFeature::DestroyFeature(feat);
+            return ok;
+        };
+        ASSERT_TRUE(addLine("A", {{0.0, 0.0}, {6.0, 0.0}, {6.0, 8.0}}));
+        ASSERT_TRUE(addLine("B", {{0.0, 10.0}, {5.0, 10.0}, {5.0, 16.0}}));
         GDALClose(ds);
     }
 
@@ -6752,21 +6899,36 @@ TEST_F(PluginTest, VectorMidpointsExtractExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("feature_count"), "1");
+    // 每条线一个中点 ⇒ 两个输入要素给两个输出（派生不增删要素）。
+    EXPECT_EQ(result.metadata.at("feature_count"), "2");
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
     ASSERT_NE(outDs, nullptr);
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
-    OGRFeature* outFeat = outLayer->GetNextFeature();
-    ASSERT_NE(outFeat, nullptr);
-    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "A");
-    const auto* point = outFeat->GetGeometryRef()->toPoint();
-    ASSERT_NE(point, nullptr);
-    EXPECT_NEAR(point->getX(), 5.0, 1e-6);
-    EXPECT_NEAR(point->getY(), 0.0, 1e-6);
-    OGRFeature::DestroyFeature(outFeat);
+    EXPECT_EQ(outLayer->GetFeatureCount(), 2);
+
+    OGRFeature* featA = outLayer->GetNextFeature();
+    ASSERT_NE(featA, nullptr);
+    EXPECT_STREQ(featA->GetFieldAsString("name"), "A");
+    ASSERT_NE(featA->GetGeometryRef(), nullptr);
+    const auto* midA = featA->GetGeometryRef()->toPoint();
+    ASSERT_NE(midA, nullptr);
+    EXPECT_NEAR(midA->getX(), 6.0, 1e-6);
+    EXPECT_NEAR(midA->getY(), 1.0, 1e-6);
+    OGRFeature::DestroyFeature(featA);
+
+    // name↔几何配对：若两条输出都写第一个要素的中点，B 的 (5,10.5) 会读成 (6,1) ⇒ x、y 一起红。
+    OGRFeature* featB = outLayer->GetNextFeature();
+    ASSERT_NE(featB, nullptr);
+    EXPECT_STREQ(featB->GetFieldAsString("name"), "B");
+    ASSERT_NE(featB->GetGeometryRef(), nullptr);
+    const auto* midB = featB->GetGeometryRef()->toPoint();
+    ASSERT_NE(midB, nullptr);
+    EXPECT_NEAR(midB->getX(), 5.0, 1e-6);
+    EXPECT_NEAR(midB->getY(), 10.5, 1e-6);
+    OGRFeature::DestroyFeature(featB);
     GDALClose(outDs);
 }
 
