@@ -7031,7 +7031,8 @@ TEST_F(PluginTest, VectorSinglepartExecution) {
     ASSERT_TRUE(fs::exists(output));
     // 三个计数键一个不落：feature_count = 展开后的部件数（2 + 1），source_count = 源要素数（2），
     // skipped_count = 空/缺几何被跳过的源要素数（本夹具一个都没有 ⇒ 0）。
-    // ⚠ skipped_count 至今全仓没被断言过，本刀是它第一条断言。
+    // ⚠ 这不是全仓第一条 skipped_count 断言 —— `repair` 链那条用例早就钉过它自己的该键；
+    //   准确说法是"对 singlepart 这个动作，这是第一条"。
     EXPECT_EQ(result.metadata.at("feature_count"), "3");
     EXPECT_EQ(result.metadata.at("source_count"), "2");
     EXPECT_EQ(result.metadata.at("skipped_count"), "0");
