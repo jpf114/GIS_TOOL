@@ -6290,13 +6290,22 @@ TEST_F(PluginTest, VectorTopologyCheckExecution) {
             return poly;
         };
 
-        // 夹具（工单定稿）：F1 = (0,0)-(10,10)、F2 与 F1 **逐字节相同**、F3 = (5,0)-(15,10)。
-        // 三对逐算：
-        //   (F1,F2) 走 Equals 分支 ⇒ 1 行 duplicate_geometry；实现是 `if / else if` 互斥，
-        //     所以这一对**不会**再写一条 overlap（把互斥拆成两个独立 if 就会多出一行，基数当场红）；
-        //   (F1,F3) 交 5×10 = 50 ⇒ 1 行 overlap,50；
-        //   (F2,F3) 同样交 50 ⇒ **又 1 行** overlap,50。
-        // ⇒ issue_count = 3、CSV = 1 表头 + 3 数据行，其中 overlap 行恰好 2 条。
+        // 夹具（C3b-3 定稿）：F1 = (0,0)-(10,10)、F2 与 F1 **逐字节相同**、F3 = (5,0)-(15,10)、
+        // 本刀新增 F4 = (0,0)-(2,4)，即矩形 [0,2]×[0,4]（面积 8）。
+        // 四要素逐对算（实现按 i<j 的 fid 顺序遍历上三角 ⇒ 行序确定，见 topology_check 的双层循环）：
+        //   (F1,F2) Equals 真 ⇒ 1 行 duplicate_geometry；实现是 `if / else if` **互斥**，
+        //     所以这一对不会再写一条 overlap（把互斥拆成两个独立 if 就会多出一行，基数当场红）；
+        //   (F1,F3) x 重叠 [5,10]（宽 5）、y 重叠 [0,10]（高 10）⇒ 5×10 = 50 ⇒ 1 行 overlap,50；
+        //   (F1,F4) F4 整块落在 F1 内部 ⇒ 交集 = F4 自己 = 2×4 = 8 ⇒ 1 行 overlap,8；
+        //   (F2,F3) F2 与 F1 逐字节相同 ⇒ 算式同 (F1,F3) ⇒ **又 1 行** overlap,50；
+        //   (F2,F4) 同理 ⇒ **又 1 行** overlap,8；
+        //   (F3,F4) F3 的 x 从 5 起、F4 的 x 到 2 止 ⇒ 两块不相交 ⇒ Intersects 假 ⇒ 无行。
+        // ⇒ issue_count = 5、CSV = 1 表头 + 5 数据行，其中 duplicate_geometry 恰好 1 条、
+        //   overlap 恰好 4 条，且 issue_value 的面积集合是 {50, 8} —— **两种值都在**。
+        // WHY 非加 F4 不可（这一刀的存在理由，不是锦上添花）：改前只有 F1/F2/F3，两条 overlap 行的
+        //   期望值都是 50.0 ⇒ "把面积写成常量 50.0"这类变异在**新臂也不会红**，等于把常数当期望值钉进库。
+        //   加 F4 后同一个 issue_value 列同时承载 50.0 与 8.0：写死任一个常量都会红在另一行的拆列断言上，
+        //   "把 overlap 行少写一条 / 多写一条"也会红在行数与计数上。
         // ⚠ empty_geometry / invalid_geometry 两类行**本切片不新增**：实现里 empty 与 invalid 是
         //   两个独立 `if`（可同写两行），而"自交面是否同时被判 invalid"没有算式依据 ⇒ 已挂 N123，
         //   这里不猜期望值。
@@ -6317,13 +6326,19 @@ TEST_F(PluginTest, VectorTopologyCheckExecution) {
         feat3->SetGeometry(&poly3);
         ASSERT_EQ(layer->CreateFeature(feat3), OGRERR_NONE);
         OGRFeature::DestroyFeature(feat3);
+
+        auto* feat4 = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly4 = makeRect(0, 0, 2, 4);   // F4 = [0,2]×[0,4]，面积 8
+        feat4->SetGeometry(&poly4);
+        ASSERT_EQ(layer->CreateFeature(feat4), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat4);
         GDALClose(ds);
     }
 
     // R-B1-fid：期望 FID 从输入侧现读，不从产出的 CSV 回填。
     const std::vector<long long> fids = readLayerFidsInCreationOrder(input);
-    ASSERT_EQ(fids.size(), 3u)
-        << "topology_check 夹具创建了 3 个矩形，重新打开输入层却没读回 3 个 FID";
+    ASSERT_EQ(fids.size(), 4u)
+        << "topology_check 夹具创建了 4 个矩形，重新打开输入层却没读回 4 个 FID";
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("topology_check");
@@ -6333,14 +6348,15 @@ TEST_F(PluginTest, VectorTopologyCheckExecution) {
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
-    EXPECT_EQ(result.metadata.at("issue_count"), "3");
+    EXPECT_EQ(result.metadata.at("issue_count"), "5");
 
     const std::vector<std::string> lines = readCsvLines(output);
-    ASSERT_EQ(lines.size(), 4u) << "topology_check CSV 应为 1 表头 + 3 数据行";
+    ASSERT_EQ(lines.size(), 6u) << "topology_check CSV 应为 1 表头 + 5 数据行";
     EXPECT_EQ(lines[0], "source_fid,target_fid,issue_type,issue_value");
 
     // 实现先写逐要素的 empty/invalid 行（本夹具一条都没有），再按 (i,j) 上三角写行
-    // ⇒ 数据行顺序是 (F1,F2) duplicate、(F1,F3) overlap、(F2,F3) overlap。
+    // ⇒ 数据行顺序是 (F1,F2) duplicate、(F1,F3) overlap 50、(F1,F4) overlap 8、
+    //   (F2,F3) overlap 50、(F2,F4) overlap 8；(F3,F4) 两块不相交 ⇒ 没有第 6 条数据行。
     // 旧判据是"对整行 find(\"duplicate_geometry\") / find(\"overlap,50\") 计数"：它既钉不住
     // FID 对（哪一对重复、哪一对重叠根本没记名），也钉不住列位（issue_type 与 issue_value 串味
     // 也能命中同一个子串），现在整段换成拆列逐列比。
@@ -6380,17 +6396,91 @@ TEST_F(PluginTest, VectorTopologyCheckExecution) {
     ASSERT_EQ(row3.size(), 4u) << "topology_check 第 3 数据行列数不是 4: " << csvColumnContext(row3, 0, lines[3]);
     const CsvInt64Column row3Source = csvColumnAsInt64(row3, 0);
     EXPECT_TRUE(row3Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row3, 0, lines[3]);
-    EXPECT_EQ(row3Source.value, fids[1]) << "source_fid 不是 F2: " << csvColumnContext(row3, 0, lines[3]);
+    EXPECT_EQ(row3Source.value, fids[0]) << "source_fid 不是 F1: " << csvColumnContext(row3, 0, lines[3]);
     const CsvInt64Column row3Target = csvColumnAsInt64(row3, 1);
     EXPECT_TRUE(row3Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row3, 1, lines[3]);
-    EXPECT_EQ(row3Target.value, fids[2]) << "target_fid 不是 F3: " << csvColumnContext(row3, 1, lines[3]);
+    EXPECT_EQ(row3Target.value, fids[3]) << "target_fid 不是 F4: " << csvColumnContext(row3, 1, lines[3]);
     EXPECT_EQ(row3[2], "overlap") << "issue_type 列整串不相等: " << csvColumnContext(row3, 2, lines[3]);
     const CsvDoubleColumn row3Value = csvColumnAsDouble(row3, 3);
     EXPECT_TRUE(row3Value.ok) << "issue_value 列不是数字: " << csvColumnContext(row3, 3, lines[3]);
-    // 算式同 F1-F3（F2 与 F1 逐字节相同）⇒ 又是 5×10 = 50。两条 overlap 各自被拆列钉住，
-    // 加上"行数 == 4"就是"overlap 恰好 2 条"的完整口径，不需要旧的子串计数循环。
-    EXPECT_NEAR(50.0, row3Value.value, 1e-6)
-        << "F2-F3 重叠面积应为 5×10=50: " << csvColumnContext(row3, 3, lines[3]);
+    // 算式：F4 = [0,2]×[0,4] 整块落在 F1 = [0,10]×[0,10] 内部 ⇒ 交集就是 F4 自己 = 2×4 = 8。
+    // ⚠ 这一行是本刀的全部意义：改前 issue_value 列只有 50.0 这一个值 ⇒ "面积写死成常量 50.0"
+    //   在新臂也不会红。现在同一列同时承载 50.0 与 8.0，写死任何一个都红在另一行上。
+    EXPECT_NEAR(8.0, row3Value.value, 1e-6)
+        << "F1-F4 重叠面积应为 2×4=8: " << csvColumnContext(row3, 3, lines[3]);
+
+    const std::vector<std::string> row4 = splitCsvColumns(lines[4]);
+    ASSERT_EQ(row4.size(), 4u) << "topology_check 第 4 数据行列数不是 4: " << csvColumnContext(row4, 0, lines[4]);
+    const CsvInt64Column row4Source = csvColumnAsInt64(row4, 0);
+    EXPECT_TRUE(row4Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row4, 0, lines[4]);
+    EXPECT_EQ(row4Source.value, fids[1]) << "source_fid 不是 F2: " << csvColumnContext(row4, 0, lines[4]);
+    const CsvInt64Column row4Target = csvColumnAsInt64(row4, 1);
+    EXPECT_TRUE(row4Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row4, 1, lines[4]);
+    EXPECT_EQ(row4Target.value, fids[2]) << "target_fid 不是 F3: " << csvColumnContext(row4, 1, lines[4]);
+    EXPECT_EQ(row4[2], "overlap") << "issue_type 列整串不相等: " << csvColumnContext(row4, 2, lines[4]);
+    const CsvDoubleColumn row4Value = csvColumnAsDouble(row4, 3);
+    EXPECT_TRUE(row4Value.ok) << "issue_value 列不是数字: " << csvColumnContext(row4, 3, lines[4]);
+    // 算式同 (F1,F3)（F2 与 F1 逐字节相同）⇒ 又是 5×10 = 50。这一行同时钉住"(F1,F2) 那一对
+    //   走 Equals 分支之后，F2 仍然照常参与后面每一对的 overlap 判定"。
+    EXPECT_NEAR(50.0, row4Value.value, 1e-6)
+        << "F2-F3 重叠面积应为 5×10=50: " << csvColumnContext(row4, 3, lines[4]);
+
+    const std::vector<std::string> row5 = splitCsvColumns(lines[5]);
+    ASSERT_EQ(row5.size(), 4u) << "topology_check 第 5 数据行列数不是 4: " << csvColumnContext(row5, 0, lines[5]);
+    const CsvInt64Column row5Source = csvColumnAsInt64(row5, 0);
+    EXPECT_TRUE(row5Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row5, 0, lines[5]);
+    EXPECT_EQ(row5Source.value, fids[1]) << "source_fid 不是 F2: " << csvColumnContext(row5, 0, lines[5]);
+    const CsvInt64Column row5Target = csvColumnAsInt64(row5, 1);
+    EXPECT_TRUE(row5Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row5, 1, lines[5]);
+    EXPECT_EQ(row5Target.value, fids[3]) << "target_fid 不是 F4: " << csvColumnContext(row5, 1, lines[5]);
+    EXPECT_EQ(row5[2], "overlap") << "issue_type 列整串不相等: " << csvColumnContext(row5, 2, lines[5]);
+    const CsvDoubleColumn row5Value = csvColumnAsDouble(row5, 3);
+    EXPECT_TRUE(row5Value.ok) << "issue_value 列不是数字: " << csvColumnContext(row5, 3, lines[5]);
+    // 算式同 (F1,F4)（F2 与 F1 逐字节相同）⇒ 2×4 = 8。
+    EXPECT_NEAR(8.0, row5Value.value, 1e-6)
+        << "F2-F4 重叠面积应为 2×4=8: " << csvColumnContext(row5, 3, lines[5]);
+
+    // 类别与面积集合的**计数**口径：从拆好的列统计，不用旧的子串 find。
+    // WHY 逐行拆列之后还要再数一遍：逐行断言钉的是"第 k 行长什么样"，而这里钉的是
+    //   "全表只允许这两类、条数正好 1 + 4，且面积集合 {50, 8} 两种都在、各 2 条"——
+    //   两个口径互为对照：行序被改动时逐行断言红，同类行被多写/少写时这里红。
+    int duplicateRowCount = 0;
+    int overlapRowCount = 0;
+    int otherTypeRowCount = 0;
+    int overlapArea50Count = 0;
+    int overlapArea8Count = 0;
+    int overlapAreaOtherCount = 0;
+    for (std::size_t lineIndex = 1; lineIndex < lines.size(); ++lineIndex) {
+        const std::vector<std::string> columns = splitCsvColumns(lines[lineIndex]);
+        if (columns.size() != 4u) {
+            ADD_FAILURE() << "topology_check 数据行列数不是 4: "
+                          << csvColumnContext(columns, 0, lines[lineIndex]);
+            continue;
+        }
+        if (columns[2] == "duplicate_geometry") {
+            ++duplicateRowCount;
+        } else if (columns[2] == "overlap") {
+            ++overlapRowCount;
+            const CsvDoubleColumn value = csvColumnAsDouble(columns, 3);
+            if (value.ok && std::fabs(value.value - 50.0) <= 1e-6) {
+                ++overlapArea50Count;   // (F1,F3) 与 (F2,F3)
+            } else if (value.ok && std::fabs(value.value - 8.0) <= 1e-6) {
+                ++overlapArea8Count;    // (F1,F4) 与 (F2,F4)
+            } else {
+                ++overlapAreaOtherCount;
+            }
+        } else {
+            ++otherTypeRowCount;
+        }
+    }
+    EXPECT_EQ(duplicateRowCount, 1) << "duplicate_geometry 行应恰好 1 条（只有 (F1,F2) 这一对）";
+    EXPECT_EQ(overlapRowCount, 4) << "overlap 行应恰好 4 条：(F1,F3) (F1,F4) (F2,F3) (F2,F4)";
+    EXPECT_EQ(otherTypeRowCount, 0)
+        << "出现了预期之外的 issue_type（empty/invalid 本夹具一条都不该有，N123 仍未覆盖）";
+    // 两种面积都必须在场，各 2 条 ⇒ 这才是"面积列真的按每对算出来"的证据，而不是一个常量。
+    EXPECT_EQ(overlapArea50Count, 2) << "overlap 面积 5×10=50 的行应恰好 2 条";
+    EXPECT_EQ(overlapArea8Count, 2) << "overlap 面积 2×4=8 的行应恰好 2 条";
+    EXPECT_EQ(overlapAreaOtherCount, 0) << "出现了 50 与 8 之外的 overlap 面积";
 }
 
 // ============== C3a-4：几何派生四条（hull/envelope/boundary/midpoints）公共件 ==============
@@ -7516,14 +7606,19 @@ TEST_F(PluginTest, VectorDuplicatePointCheckExecution) {
             OGRFeature::DestroyFeature(feat);
         };
 
-        // 夹具四个点（工单 §C3b-B2 定稿，EPSG:3857）：(0,0)、(1,1)、(0,0)、(2,2)。
+        // 夹具四个点（C3b-3 定稿，EPSG:3857）：(3,5)、(1,1)、(3,5)、(2,2)。
         // 键是 pointKey 把 x,y 定标到 10 位小数（vector_plugin_common.inc:626），**先到先得**记进
-        // firstPointByKey ⇒ 只有第 3 个点 (0,0) 命中已有键 ⇒ 恰好 1 行、issue_count = 1。
+        // firstPointByKey ⇒ 只有第 3 个点 (3,5) 命中已有键 ⇒ 恰好 1 行、issue_count = 1；
+        // (1,1) 与 (2,2) 各只出现一次 ⇒ 谁也不成对。算式就是这一条：重复对 = {(3,5) 的第 1 次与第 3 次}。
         // (1,1) 与 (2,2) 是两个谁也不挨的干扰点：它们撑出 scanned_count = 4 与 issue_count = 1 的差额，
         // 于是"把每个扫到的点都写一行"这类变异当场红。
-        addPoint(0, 0);
+        // WHY 把重复点从原点挪走（这一刀的存在理由）：B2 定稿的重复对是 (0,0) ⇒ 那一行是 `…,0,0`，
+        //   **x 与 y 两维同时为 0** ⇒ "把坐标两列写成常量 0"这类变异在新臂也不会红，与 topology 那处、
+        //   C3a 的 midpoints、C3b-B1 给 dangling_endpoint 换 L3 的 y=3 全是同族病（期望值等于零向量就不承重）。
+        //   改成 (3,5) 后两维都非零 ⇒ x 列与 y 列各自成为能单独判别的断言。
+        addPoint(3, 5);
         addPoint(1, 1);
-        addPoint(0, 0);
+        addPoint(3, 5);
         addPoint(2, 2);
         GDALClose(ds);
     }
@@ -7560,24 +7655,25 @@ TEST_F(PluginTest, VectorDuplicatePointCheckExecution) {
     const CsvInt64Column row1Source = csvColumnAsInt64(row1, 0);
     EXPECT_TRUE(row1Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row1, 0, lines[1]);
     EXPECT_EQ(row1Source.value, fids[0])
-        << "source_fid 应是**先到**的那个 (0,0)（创建顺序第 1 个点）: "
+        << "source_fid 应是**先到**的那个 (3,5)（创建顺序第 1 个点）: "
         << csvColumnContext(row1, 0, lines[1]);
     const CsvInt64Column row1Dup = csvColumnAsInt64(row1, 1);
     EXPECT_TRUE(row1Dup.ok) << "duplicate_fid 列不是整数: " << csvColumnContext(row1, 1, lines[1]);
     EXPECT_EQ(row1Dup.value, fids[2])
-        << "duplicate_fid 应是**后到**的那个 (0,0)（创建顺序第 3 个点），两列不许写成同一个: "
+        << "duplicate_fid 应是**后到**的那个 (3,5)（创建顺序第 3 个点），两列不许写成同一个: "
         << csvColumnContext(row1, 1, lines[1]);
     const CsvDoubleColumn row1X = csvColumnAsDouble(row1, 2);
     EXPECT_TRUE(row1X.ok) << "x 列不是数字: " << csvColumnContext(row1, 2, lines[1]);
-    EXPECT_NEAR(0.0, row1X.value, 1e-6)
-        << "重复点的 x 应为 0.0: " << csvColumnContext(row1, 2, lines[1]);
+    // 算式：被写进 CSV 的是**后到**那个点的坐标，即夹具里第 3 个点 (3,5) ⇒ x = 3。
+    // ⚠ 两维都必须非零正是本刀要买的东西：x=3 ⇒ "把 x 列写成常量 0"当场红在这里。
+    EXPECT_NEAR(3.0, row1X.value, 1e-6)
+        << "重复点的 x 应为 3.0: " << csvColumnContext(row1, 2, lines[1]);
     const CsvDoubleColumn row1Y = csvColumnAsDouble(row1, 3);
     EXPECT_TRUE(row1Y.ok) << "y 列不是数字: " << csvColumnContext(row1, 3, lines[1]);
-    // ⚠ 诚实登记：工单定稿的被重复点就在原点 ⇒ 这一对 x/y 的"非零维度"在本用例不承重
-    //   （B1 给 dangling_endpoint 换 L3 的 y=3 就是为治这个病）。整体不缺：同一 action 的
-    //   Task 20 用例 DuplicatePointCheckHandlesMultiPointLayer 用整行相等钉了非零的 "1,3,1,1"。
-    EXPECT_NEAR(0.0, row1Y.value, 1e-6)
-        << "重复点的 y 应为 0.0: " << csvColumnContext(row1, 3, lines[1]);
+    // 算式同上 ⇒ y = 5。（B2 当时如实上报"这一维不承重、按工单逐字采用没擅自改夹具"是对的；
+    //   本刀把夹具换成 (3,5) 后这条欠账清掉，那一维现在承重了。）
+    EXPECT_NEAR(5.0, row1Y.value, 1e-6)
+        << "重复点的 y 应为 5.0: " << csvColumnContext(row1, 3, lines[1]);
 }
 
 // --- Task 20：duplicate_point_check 的 MultiPoint / 非点几何处置 ---
