@@ -294,17 +294,21 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 
 | 配置 | 注册数 | 本地全量墙钟（`-j1`、无并发构建） | 步骤超时 | 余量 |
 |---|---|---|---|---|
-| Debug | 692 | **347.66 s**（B20b 定稿现跑：`build/tmp/b20b_ctest_debug.log`） | 1200 s | **1200 ÷ 347.66 = 3.45×** |
-| Release | 690 | **178.91 s**（B20b 定稿现跑：`build/tmp/b20b_ctest_release.log`） | 1200 s | **1200 ÷ 178.91 = 6.71×** |
+| Debug | 692 | **346.11 s**（批次 B 全部落定后的最后一轮：`build/tmp/b20v_final2_debug.log`） | 1200 s | **1200 ÷ 346.11 = 3.47×** |
+| Release | 690 | **174.16 s**（同一轮：`build/tmp/b20v_final2_release.log`） | 1200 s | **1200 ÷ 174.16 = 6.89×** |
 
-  上表是 **`c265b1a` 上、机器安静时**的实测（跑前硬门控 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0，
-  两棵树各自先构建该配置、再串行 `-j1`）：Debug `100% tests passed, 0 tests failed out of 692`（347.66 s），
-  Release `100% tests passed, 0 tests failed out of 690`（178.91 s）。
-  交叉核对（批次 A 收尾 21-D 现跑，635/633 条）：Debug 382.54 s → 3.14×、Release 188.41 s → 6.37×；
-  两轮 Debug 相差约 10%（本轮更快），⇒ **取更慢的那一轮算余量也不改变结论**：`timeout-minutes: 20`
-  对 Debug 仍有 3 倍以上余量（3.14× > 3×）。
-  `param_guard_visible_keys_all_read` 现跑 **3.43 s**（Debug）/ 3.30 s（Release），
-  距 300 s 的 `TIMEOUT` 线有 **300 ÷ 3.43 = 87×** 余量；`install_closure` 现跑 14.85 s / 11.11 s（安装审计类），同样远低于 300 s。
+  上表是**批次 B 全部修复落定后**那一轮的现跑（跑前两棵树都完整重建、跑前硬门控
+  `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0，串行 `-j1`）：
+  Debug `100% tests passed, 0 tests failed out of 692`（346.11 s），
+  Release `100% tests passed, 0 tests failed out of 690`（174.16 s）。
+  对账用的更早两轮：B20b 定稿那轮（`4591ee7` 的代码态、机器安静）Debug 347.66 s → 3.45×、
+  Release 178.91 s → 6.71×；批次 A 收尾 21-D（635/633 条）Debug 382.54 s → 3.14×、Release 188.41 s → 6.37×。
+  ⇒ 各轮 Debug 侧都在 3.1×~3.5×，**取最慢一轮也不改变结论**：`timeout-minutes: 20` 对 Debug 有 3 倍以上余量。
+  ⚠ 还有一轮 **371.56 s**（B17 修复后那次全量）**没有**进上表，因为当时四个终审评审席正在并发读盘
+  ⇒ 按本文件"全量耗时会被并发活动污染"那条纪律，它只能算**下限样本**，不能当安静值引用。
+  `param_guard_visible_keys_all_read` 现跑 **3.44 s**（Debug）/ 3.42 s（Release），
+  距 300 s 的 `TIMEOUT` 线有 **300 ÷ 3.44 = 87×** 余量；`install_closure` 现跑 11.62 s / 8.91 s（安装审计类，
+  它自带 RESOURCE_LOCK、不会与别的用例抢同一个前缀），同样远低于 300 s。
   ⚠ 早先流传的 197.96 s / 385.53 s（632/630 时期）、370.40 s / 176.74 s（634/632 时期，21-D 收尾）
     与 382.54 s / 188.41 s（批次 A 收尾 635/633）都已被上表取代；留这些只为对账，引用请走上表现值。
   ⚠ 余量的真实风险不在均值墙钟，而在**并发构建叠加**：本批实测 `ctest -j 8` 与另一棵树构建同时跑会造出 3 条假 `Timeout`（见下一节）。
@@ -360,6 +364,26 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
   release 名单逐项 `EXISTS ${GIS_VCPKG_RELEASE_BIN_DIR}/<名>`、debug 名单逐项查 `debug/bin`，
   缺项就 `FATAL_ERROR` 点名（名单是派生的、不是手抄，所以这条闸本身不引入新的真源）。
 - **N90**：`blockHasNumericAssertion` 可被注释满足（见上面"GOLD 限定"）。
+- **N108（终审席 3 H1，静态取证，未实测红）**：数值断言的判据只认断言宏名，所以
+  "期望侧的值取自被测产物"这一型（批次 A 之后、B11 刚修过的那类自指）**没有任何一臂在守**。
+  评审给出的静态变异是把 `tests/test_plugins.cpp:8656` 的字面量参数改回
+  `readRasterPixel(output, 7, 4)` ⇒ 判据仍判它"有数值断言"。⇒ 修法需要第三臂"期望侧不得含读产物调用"，
+  且必须避开会把"用夹具算期望"的正常写法误判（"期望侧必须含字面量"那版写法实测会误降 16 行，已排除）。
+  ⚠ 本条**未做变异实验**（评审席按任务书只读、未跑测试），落笔前要先跑一次注入确认。
+- **N109（终审席 1 A2，静态取证）**：反向参数守卫只算 `白名单 − 实读集`（多列的键会红），
+  **不判 `实读集 − 白名单`** ⇒ "有意藏键"与"抄漏一个键"不可区分。HEAD 上就有一个有意实例：
+  `cutting.tile` 的 `resample` 被 `doTile` 读取却故意不进面板（进来会让未改动提交实发 spec 默认 `nearest`，
+  改变既有产物 ⇒ 见 R-B20 与本文件"命令行拒绝未声明键"那节）。⇒ 修法不是加一条对称判据，
+  而是加一张**带理由的豁免表**并把"表外即红"钉住。
+- **N110（终审席 4 F1，静态取证）**：`copyMissingKeys` 缺"旧落点打开成功但 0 键"这一格的用例，
+  于是"干净机器不该每次启动重扫真实旧落点"这条语义无人判（`app_settings.h` 的声明与实现都承认这个形状）。
+  评审的推演是"把 `if (opened == 0)` 改成 `if (copied == 0)`，17 条用例逐条静态核对都还绿"——
+  ⚠ 这是**静态核对不是实测**（该席按任务书未跑测试），落地前先跑一次注入确认。
+- **N111（终审席 4 F2，静态取证）**：GUI 侧 `execute_worker.cpp` 用 `threwException` 决定要不要加
+  `Exception: ` 前缀，这条分流**无判据**（把条件换成 `if (!result.success)` 没有用例会红），
+  而"绝大多数失败是插件自己报的"这一类用户可见文案正是它在管。对照：工作流侧同一区分**有**判据
+  （`tests/test_framework.cpp` 断插件自报失败必须走 `failed:` 而非 `threw:`），CLI 侧是**明写的合流**
+  （同文案同 rc）⇒ 所以这不是"全网都缺"，是 GUI 半边单独缺。
 - **`ctest -j` 并行安全改造**：见上一节，先改冲突用例再开并行。
 
 ---
@@ -419,9 +443,18 @@ Release 包的**文件名集合逐条不变**（名字级 diff；未做内容逐
 报告写文本，从不读 `output`，去掉后产物不变。其余 29 个动作消失的键都是该动作从不读的死键
 （判据：30 条动作的实读键集与消失键集交集为空）；判据强度如实写明——468 个键里
 **120 个有源码级证据**，其余 **348 个**只由"消失键 ∩ trace 实读集 = ∅"支撑，依赖扫描器而非独立证明。
-另有 **5 处必填加严**：`difference` / `intersect` / `union` 的 `overlay_vector`、`nearest` 的
-`nearest_vector`、`spatial_join` 的 `join_vector`——spec 标 `required=false`，但插件对空值直接失败，
-面板现在按必填处理（加严，不是放宽）。命令行与工作流的参数键不受影响（收窄的只是 GUI 面板显示）。
+另有 **14 处必填加严**（判据是 `required = spec.required || 面板 requiredKeys`，
+所以"加严"= 面板列了、而 spec 标 `required=false` 的键）：
+`difference` / `intersect` / `union` 的 `overlay_vector`、`nearest` 的 `nearest_vector`、
+`spatial_join` 的 `join_vector`（vector 5 处）；`pansharpen` 的 `pan_file`（processing 1 处）；
+`svm_classify` / `random_forest_classify` / `max_likelihood_classify` 各自的 `input` + `training_csv`、
+`accuracy_assessment` 的 `classified_raster` + `reference_raster`（classification 8 处）。
+这些键插件对空值直接失败，面板现在按必填处理（加严，不是放宽）。
+⚠ 这一条本批第一版发布说明只写了"5 处"（只数了 vector 那一族），漏报 processing 与 classification
+的 9 处 ⇒ 由终审复算纠正；复算口径见上一条里的判据式子。
+同一批还为这 39 个动作**新写了动作级"功能说明"文案**（此前面板显示的是插件级说明，
+`buildActionSelectionText` 里"动作说明为空才回退插件说明"那条分支）⇒ 也是用户可见的文案变化，只是不改产物。
+命令行与工作流的参数键不受影响（收窄的只是 GUI 面板显示）。
 
 **工作流占位符：未解析即显式失败（含字面量边界）**
 
@@ -471,8 +504,20 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
 
 **文案乱码清理（B17）**
 
-两批共修 **28 行**中文文案：**13 行**是可 GBK roundtrip 还原的双重编码（分类插件 10 行 + 测试支撑 3 行），
-**15 行**是有损的私用区乱码 U+E000–U+F8FF（分类插件 14 行 + GUI 主程序 1 行）；两批不重叠。
+三批共修 **31 行**中文文案：
+**13 行**是可 GBK roundtrip 还原的双重编码（分类插件 10 行 + 测试支撑 3 行，`cd774e4`），
+**15 行**是有损的私用区乱码 U+E000–U+F8FF（分类插件 14 行 + GUI 主程序 1 行，`fe0a1b2`），
+**3 行**是终审复查时才发现的第三种形状（分类插件 `:229/:234/:257`，不可 roundtrip 还原、
+也不在私用区：损坏尾部落在注音 U+3105–U+312F、排版形式 U+FE30–U+FE4F、全角货币 U+FFE0–U+FFE6 与 € U+20AC，
+按 `e6b7f8b` 的历史原文逐行重建）。三批互不重叠，合计 31 行。
+
+⚠ 这条要说清**判据为什么曾经漏掉那 3 行**（否则读者会以为"检测器归零"等于"清干净了"）：
+最初的检测器只有"GBK roundtrip 成功"一条规则 ⇒ 漏掉一切不可还原的形态；补上私用区规则后
+本批仍报 0，而这 3 行**在工单 Step 1 的核对清单里被点过名**（它们的孪生行 `:210/:215/:251` 被修了，
+`:229/:234/:257` 没修）。⇒ 归零类验收的正确姿势是**先证规则覆盖该缺陷族的形状**，
+不是跑一遍看它返回 0；现在的规则是 4 条（roundtrip、私用区、注音/假名异物、排版形式/货币/替换符）。
+复算口径：`PYTHONIOENCODING=utf-8 python build/tmp/b20v_b17_detector.py`（现读 283 个受控源文件、命中 0 行）。
+**检测器本身仍未落库、未注册成 ctest**（待拍板项见下一节）。
 
 **内部项与待拍板（不进用户版）**
 
