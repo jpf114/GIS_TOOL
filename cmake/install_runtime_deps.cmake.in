@@ -177,17 +177,8 @@ foreach(_gis_dep IN LISTS _gis_filtered_resolved_deps)
     )
 endforeach()
 
-file(GLOB _gis_installed_plugin_dlls "${_gis_install_plugin_dir}/plugin_*.dll")
-if(_gis_installed_plugin_dlls)
-    file(GLOB _gis_installed_bin_dlls "${_gis_install_bin_dir}/*.dll")
-    foreach(_gis_bin_dll IN LISTS _gis_installed_bin_dlls)
-        get_filename_component(_gis_bin_dll_name "${_gis_bin_dll}" NAME)
-        if(NOT _gis_bin_dll_name MATCHES "^plugin_" AND NOT _gis_bin_dll_name MATCHES "^gis-")
-            file(INSTALL
-                DESTINATION "${_gis_install_plugin_dir}"
-                TYPE SHARED_LIBRARY
-                FILES "${_gis_bin_dll}"
-            )
-        endif()
-    endforeach()
-endif()
+# 这里曾经把上面装进 bin/ 的每个运行库再复制一份到 bin/plugins/。
+# 2026-10-21 实测删除：包内 78 个运行库因此存在逐字节相同的两份，多占 167.4 MB（包 361 MB 的 46%）。
+# 插件的导入由"进程可执行文件所在目录"起解析，bin/ 就是那个目录 ⇒ 副本从未参与解析；
+# 去掉副本后 bin 树里跑 gis-cli --list、vector clip（22836 要素）、projection reproject（读 share/proj）
+# 与 gis-gui（offscreen）全部照常，--list 输出与副本存在时逐字节一致。

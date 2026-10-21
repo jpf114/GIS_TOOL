@@ -126,7 +126,9 @@ endif()
 # 清单按**包的实际布局**列，每条对应一条 install() 规则（不是任何人的记忆）：
 #   CMakeLists.txt 的 install(DIRECTORY proj/gdal/icons/leaflet)、install(TARGETS gis-cli/gis-gui)、
 #   src/gui/CMakeLists.txt 的 platforms/sqldrivers install(FILES)、
-#   cmake/install_runtime_deps.cmake.in 的插件清单 + 末尾把 bin/*.dll 复制进 bin/plugins 的那段。
+#   cmake/install_runtime_deps.cmake.in 的插件清单与运行库安装段。
+#   bin/plugins 里只放 plugin_*.dll：原先"把 bin/*.dll 再复制一份进 bin/plugins"那段已于
+#   2026-10-21 删除（78 个逐字节相同的副本、167.4 MB），理由与实测见该文件。
 # ⚠ PROJ 数据在 **share/proj/proj.db**（CMAKE_INSTALL_DATADIR），不是 bin/proj.db。
 set(_gis_must_exist
     "bin/gis-cli.exe|交付的 CLI 本体（install(TARGETS gis-cli)）"
