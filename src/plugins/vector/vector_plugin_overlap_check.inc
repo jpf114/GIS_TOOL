@@ -73,21 +73,14 @@ gis::framework::Result VectorPlugin::doOverlapCheck(
                 continue;
             }
 
-            std::unique_ptr<OGRGeometry> intersection(lhs.geometry->Intersection(rhs.geometry.get()));
-            double overlapArea = 0.0;
-            if (intersection && !intersection->IsEmpty()) {
-                switch (wkbFlatten(intersection->getGeometryType())) {
-                    case wkbPolygon:
-                        overlapArea = intersection->toPolygon()->get_Area();
-                        break;
-                    case wkbMultiPolygon:
-                        overlapArea = intersection->toMultiPolygon()->get_Area();
-                        break;
-                    default:
-                        overlapArea = 0.0;
-                        break;
-                }
-            }
+            // N125 销账（C3d）：交面积口径必须与 topology_check **同源**，所以这里不再自带一份
+            // 只认 Polygon / MultiPolygon 的本地 switch，改为复用 common.inc 的 polygonIntersectionArea()
+            // （它自己求交、并对 GeometryCollection 累加子面/子多面面积，vector_plugin_common.inc:492-511）。
+            // 旧写法的后果：真实省界这类 MultiPolygon 层的交集常常是**混合维度**的
+            // GEOMETRYCOLLECTION(POLYGON, LINESTRING)（共面积 + 共边同时发生），旧 switch 落 default 得 0.0
+            // ⇒ 下面 `overlapArea > 0.0` 不成立 ⇒ 整行不写，而 topology_check 报得出同一对的面积 ⇒ 自相矛盾。
+            // WHY 不许复制第二份面积逻辑：两处各写一遍正是这两个动作口径漂移的成因，单源才是修复。
+            const double overlapArea = polygonIntersectionArea(lhs.geometry.get(), rhs.geometry.get());
 
             if (overlapArea > 0.0) {
                 ofs << lhs.fid << "," << rhs.fid << "," << overlapArea << "\n";

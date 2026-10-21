@@ -554,13 +554,15 @@ function Resolve-ProvinceVectorInput {
 #     各被钉死一次，而且三条判据都与样本里恰好有什么无关。
 # WHY 面类动作喂 Geometry: Unknown 的混合层：工单 2026-10-22 现读确认四个面动作的类型闸都走
 #   effectiveLayerGeometryType（从要素推断），Unknown 层照样 Success ⇒ 混层不是"绕过闸"，是多一条真实覆盖。
-# WHY 判据成对写（工单 C3b-A）：overlap(buf30) >= 1 / overlap(prov3857) == 0 / adjacency(prov3857) >= 1 /
-#   adjacency(buf30) == 0 四条一起，才既不是"猜 0"也不是给这份样本标定的常量。
-# ⚠ 本刀现读到一处**产品口径差**（候选挂账，见批次报告 §1b）：overlap_check 的交面积 switch 只认
-#   Polygon/MultiPolygon，交集是 GeometryCollection 时落 default 得 0 ⇒ 不写行；而 topology_check 走
-#   polygonIntersectionArea()（common.inc:499-509）显式累加 GeometryCollection 的子面面积。
-#   prov3857 上实测 overlap 报 0、topology 报 1 条（12,14,overlap,401282）⇒ 两动作的跨动作等式只在
-#   buf30（交集全是面）这一臂写，省界臂只写 ">=" 的单向关系：把缺陷钉成契约是错的，修好后单向关系仍成立。
+# WHY 判据成对写（工单 C3b-A）：overlap(buf30) >= 1 / overlap(prov3857) 修复前实测 == 0、C3d 修复后 >= 1 /
+#   adjacency(prov3857) >= 1 / adjacency(buf30) == 0 四条一起，才既不是"猜 0"也不是给这份样本标定的常量。
+# ⚠ 产品口径差 N125（工单 C3b-A 现读到并登记、**C3d 已修复销账**）：overlap_check 曾自带一份只认
+#   Polygon/MultiPolygon 的交面积 switch，交集是 GeometryCollection 时落 default 得 0 ⇒ 不写行；而
+#   topology_check 走 polygonIntersectionArea()（common.inc:499-509）显式累加 GeometryCollection 的子面面积。
+#   prov3857 上修复前实测 overlap 报 0、topology 报 1 条（12,14,overlap,401282）⇒ 同一对要素两个动作自相矛盾。
+#   C3d 让 overlap_check 复用同一个 polygonIntersectionArea()（**单源**，本地 switch 已删除）⇒ 省界臂现读
+#   写出 12,14,401282，与 topology 那一行同值 ⇒ 跨动作等式不再需要"只在 buf30 那一臂写"的例外；
+#   但 9d98497 留下的 ">=" 单向关系**原样保留**（修好后依然成立、且保持可追溯），等式由 C3d 新增断言承重。
 
 function Get-CsvTable {
     param([string]$Path)
@@ -1172,13 +1174,22 @@ function Assert-TopologyCheckCase {
             Assert-CsvHeader -Table $table -Expected "source_fid,target_fid,overlap_area" -Label $Case.Name
             $relations = Get-ReportedMetadataCount -Text $Case.Output -Key "relation_count" -Label ($Case.Name + " relation_count")
             Assert-CsvRowsEqualReported -Table $table -Reported $relations -Label $Case.Name
-            # 工单指定的三条之一：省层是**按行政边界拼合**的，面与面只共边不共面积 ⇒ 恒 0。
-            # "恒 0 是这份数据的性质、不是普适律"⇒ 必须与 overlap_check(buf30) >= 1、
-            # adjacency(prov3857) >= 1、adjacency(buf30) == 0 一起读：同一批动作、两份数据，
+            # 工单指定的三条之一（C3b-A 原文）：省层是**按行政边界拼合**的，面与面只共边不共面积 ⇒ 恒 0。
+            # ⚠ 这条"恒 0"已被 C3d 实测推翻，而推翻它的正是 N125 本身：这份拼合层里 fid 12 与 fid 14 有
+            #   401,282 m² 的**真实共面积**（topology_check 一直报得出来），旧实现只是把混合维度的交集
+            #   算成 0 ⇒ 那一行根本没写。所以退役的不是一条判据，而是"把产品缺陷当成数据性质"的契约。
+            #   被替换掉的旧断言原文登记在此，便于追溯：
+            #     Assert-Condition -Condition ($relations -eq 0)   # 修复前实测 relations = 0
+            #   须知第 5 条说"不改老 case 的名字或语义"——用例名 overlap_check_prov、它读的 CSV、
+            #   表头整串核对、"行数 == 报告计数"全部原样保留；只有这条 "== 0" 被事实本身推翻。
+            # 仍然成对读：overlap_check(buf30) >= 1 与 adjacency(buf30) == 0、
+            # adjacency(prov3857) >= 1 与 overlap_check(prov3857) >= 1 —— 同一批动作、两份数据，
             # "共边"与"共面积"两个谓词各自承重，任何一方"恒 0"或"恒正"都会被另一臂抓住。
-            Assert-Condition -Condition ($relations -eq 0) -Message (
-                $Case.Name + ":" + $relations + " buf30 " +
-                $script:C3baOverlapBufRelations + " ")
+            # C3d 新增（工单"互证"第一条）：混合维度交集不得再被漏报 ⇒ 省界 relation_count >= 1。
+            Assert-Condition -Condition ($relations -ge 1) -Message (
+                $Case.Name + ": relation_count=" + $relations +
+                " expected >= 1 after N125 fix (buf30 relation_count=" +
+                $script:C3baOverlapBufRelations + ")")
             Assert-Condition -Condition ($script:C3baOverlapBufRelations -ge 1) -Message (
                 $Case.Name + ": overlap buf30 > 0 " +
                 $script:C3baOverlapBufRelations)
@@ -1193,13 +1204,21 @@ function Assert-TopologyCheckCase {
             Assert-CsvRowsEqualReported -Table $table -Reported $issue -Label $Case.Name
             $pairRows = 0
             Assert-TopologyIssueCsvShape -Table $table -PairRowCount ([ref]$pairRows) -Label $Case.Name
-            # 这里**不**写"成对行数 == overlap 关系数"的等式，只写单向关系，原因是现读实测到的
-            # GeometryCollection 口径差（见本文件顶部 ⚠ 与批次报告 §1b）：同一对要素省层上
-            # topology 报 1 条（12,14,overlap,401282）而 overlap 报 0 条。
-            # 写成等式就是把缺陷钉成契约；写成 ">=" 则产品修好后依然成立。
+            # 9d98497 写的单向关系 ">=" **保持原样不动**（工单 C3d 须知第 5 条：老 case 的 ">=" 写法要可追溯）。
+            # C3b-A 当时之所以只敢写单向，是因为省界臂实测 overlap 报 0 条而 topology 报 1 条 —— 那是 N125，
+            # 当时写成 "==" 就等于把产品缺陷钉成契约。C3d 把两个动作的交面积收成单源后，等式才第一次被允许写。
             Assert-Condition -Condition ($pairRows -ge $script:C3baOverlapProvRelations) -Message (
                 $Case.Name + ":" + $pairRows + "< overlap_check " +
                 $script:C3baOverlapProvRelations + " overlap topology")
+            # C3d 新增（工单"互证"第二条：把省界臂收紧成等式，另开一条、不改上面那条）：
+            # 修好后两个动作是同一套 i<j 扫描 + 同一个 polygonIntersectionArea() ⇒ 对每一对要素，
+            # topology 的成对行 = duplicate_geometry 行 + overlap 行；Equals 为真的那对交集就是它自己、
+            # 面积必然 > 0 ⇒ overlap_check 对同一对也写行 ⇒ 成对行数 == relation_count。
+            # buf30 臂早就这么写（那里两个动作本来同源），省界臂此前只能写 ">="。这条一红就说明
+            # 有人又把交面积口径拆成了两份（或把 GeometryCollection 那支改回了 default 0）。
+            Assert-Condition -Condition ($pairRows -eq $script:C3baOverlapProvRelations) -Message (
+                $Case.Name + ": pairRows=" + $pairRows + " != overlap_check relation_count=" +
+                $script:C3baOverlapProvRelations + " (C3d cross-check on prov3857, N125 closed)")
             # 真实省界不是严丝合缝的：这份拼合层至少报出一个拓扑问题（现读 1 条 GeometryCollection 型重叠）。
             Assert-Condition -Condition ($issue -ge 1) -Message (
                 $Case.Name + ":" + $issue + " adjacency " +

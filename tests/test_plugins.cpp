@@ -6261,6 +6261,166 @@ TEST_F(PluginTest, VectorOverlapCheckExecution) {
         << "F1∩F3 面积应为 4×4=16: " << csvColumnContext(row2, 2, lines[2]);
 }
 
+// ============== C3d（N125 销账）：混合维度交集不得被 overlap_check 漏报 ==============
+// 工单：.superpowers/sdd/2026-10-21-批次C全功能验证与文档同步/task-C3d-brief.md
+// 缺陷：overlap_check 曾在本地写一份"只认 Polygon / MultiPolygon"的交面积 switch，交集是
+//   GEOMETRYCOLLECTION 时落 default 得 0.0 ⇒ `overlapArea > 0.0` 不成立 ⇒ 整行不写；
+//   同一对要素在 topology_check 那侧走 common.inc 的 polygonIntersectionArea()（递归累加集合里的
+//   子面）⇒ 报得出面积。两个动作对"交集"的算法口径不一致，真实省界上实测 overlap 报 0 条、
+//   topology 报 1 条（12,14,overlap,401282）。本用例把这条分支单独钉住。
+// 夹具（EPSG:3857，两个要素都必须是 MultiPolygon 成员 —— 两个单 Polygon 的交集不会跨维度，
+//   构造不出集合，也就测不到这条分支）：
+//   A = MultiPolygon{ A1 = [0,10]×[0,10], A2 = [20,25]×[20,26] }
+//   B = MultiPolygon{ B1 = [5,15]×[5,15], B2 = [20,25]×[26,30] }
+// 交集逐成员算（A 的两个成员 × B 的两个成员共 4 对）：
+//   A1∩B1：x 重叠 [5,10]（宽 10-5 = 5）、y 重叠 [5,10]（高 10-5 = 5）⇒ POLYGON，面积 5×5 = 25；
+//   A1∩B2：A1 的 y 到 10 止、B2 的 y 从 26 起 ⇒ EMPTY，不进集合；
+//   A2∩B1：A2 的 x 从 20 起、B1 的 x 到 15 止 ⇒ EMPTY，不进集合；
+//   A2∩B2：A2 的 y 到 26 止、B2 的 y 从 26 起 ⇒ 只在直线 y=26 上共边，x∈[20,25]
+//     ⇒ LINESTRING（长 25-20 = 5，**面积 0**）。
+// ⇒ A∩B 同时含面与线两种维度 ⇒ GEOS 返回 GEOMETRYCOLLECTION(POLYGON, LINESTRING)。
+// 期望面积算式（线部分贡献 0，必须写清，否则"25"看着像抄来的）：
+//   overlap_area = area(POLYGON) + area(LINESTRING) = 5×5 + 0 = 25。
+// WHY 判据不许降级成"只要非 0"：那样"把面积写成常量 50""把集合里的线当成面算"这一族变异全绿；
+//   本用例同时钉基数（relation_count 与行数）、FID 对号（拆列 + 从输入侧现读的 FID）与面积（25.0）。
+TEST_F(PluginTest, VectorOverlapCheckMixedGeometryCollectionIntersection) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_overlap_check_mixed_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_overlap_check_mixed_output.csv");
+
+    auto makeRect = [&](double minX, double minY, double maxX, double maxY) {
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(minX, minY);
+        ring.addPoint(maxX, minY);
+        ring.addPoint(maxX, maxY);
+        ring.addPoint(minX, maxY);
+        ring.addPoint(minX, minY);
+        poly.addRing(&ring);
+        return poly;
+    };
+
+    auto makeMultiPolygon = [&](const OGRPolygon& first, const OGRPolygon& second) {
+        OGRMultiPolygon multi;
+        multi.addGeometry(&first);
+        multi.addGeometry(&second);
+        return multi;
+    };
+
+    const OGRPolygon polyA1 = makeRect(0, 0, 10, 10);
+    const OGRPolygon polyA2 = makeRect(20, 20, 25, 26);
+    const OGRPolygon polyB1 = makeRect(5, 5, 15, 15);
+    const OGRPolygon polyB2 = makeRect(20, 26, 25, 30);
+    const OGRMultiPolygon multiA = makeMultiPolygon(polyA1, polyA2);
+    const OGRMultiPolygon multiB = makeMultiPolygon(polyB1, polyB2);
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        // 图层类型必须是 wkbMultiPolygon：overlap_check:25 的类型闸只放行 Polygon / MultiPolygon，
+        // 而"两个 MultiPolygon 的交集跨维度"正是本用例要走的分支。
+        auto* layer = ds->CreateLayer("parcels", srs.get(), wkbMultiPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        auto* featA = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        featA->SetGeometry(&multiA);
+        ASSERT_EQ(layer->CreateFeature(featA), OGRERR_NONE);
+        OGRFeature::DestroyFeature(featA);
+
+        auto* featB = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        featB->SetGeometry(&multiB);
+        ASSERT_EQ(layer->CreateFeature(featB), OGRERR_NONE);
+        OGRFeature::DestroyFeature(featB);
+        GDALClose(ds);
+    }
+
+    // R-B1-fid：期望 FID 从输入侧现读，不从产出的 CSV 回填。
+    const std::vector<long long> fids = readLayerFidsInCreationOrder(input);
+    ASSERT_EQ(fids.size(), 2u)
+        << "overlap_check 混合交集夹具创建了 2 个 MultiPolygon 要素，重新打开输入层却没读回 2 个 FID";
+
+    // ---- 夹具前提：从**文件里读回**的两个几何现算交集，必须是 GeometryCollection。----
+    // WHY 从文件读回而不是用内存里那份 multiA/multiB：产品看到的就是磁盘上的几何，
+    //   前提必须由同一份几何证明；GPKG 往返若改了维度（例如塌成 MultiPolygon），这条会当场红，
+    //   而"产品断言"跟着红就分不清是配方没构造出来还是实现有问题。
+    // WHY 把实际类型写进消息：工单第 3 条要求"实测类型不是 wkbGeometryCollection 就停下报实际类型"，
+    //   红了要能直接读出那个类型，不必再跑第二遍探针。
+    {
+        GDALDataset* probeDs = static_cast<GDALDataset*>(GDALOpenEx(
+            input.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        ASSERT_NE(probeDs, nullptr);
+        OGRLayer* probeLayer = probeDs->GetLayer(0);
+        ASSERT_NE(probeLayer, nullptr);
+        probeLayer->ResetReading();
+        OGRFeature* first = probeLayer->GetNextFeature();
+        OGRFeature* second = probeLayer->GetNextFeature();
+        ASSERT_NE(first, nullptr);
+        ASSERT_NE(second, nullptr);
+        std::unique_ptr<OGRGeometry> intersection(
+            first->GetGeometryRef()->Intersection(second->GetGeometryRef()));
+        OGRFeature::DestroyFeature(first);
+        OGRFeature::DestroyFeature(second);
+        ASSERT_NE(intersection, nullptr);
+        const OGRwkbGeometryType flatType = wkbFlatten(intersection->getGeometryType());
+        EXPECT_EQ(flatType, wkbGeometryCollection)
+            << "夹具的 A∩B 实测几何类型是 " << intersection->getGeometryName()
+            << "（" << static_cast<int>(flatType) << "），不是 wkbGeometryCollection ⇒ 配方没构造出混合维度";
+        // 混合维度还得**真的**同时含有面成员与非面成员：只把集合里全换成面，default 分支同样测不到。
+        if (flatType == wkbGeometryCollection) {
+            OGRGeometryCollection* collection = intersection->toGeometryCollection();
+            int polygonParts = 0;
+            int nonPolygonParts = 0;
+            for (int i = 0; i < collection->getNumGeometries(); ++i) {
+                const OGRwkbGeometryType subType =
+                    wkbFlatten(collection->getGeometryRef(i)->getGeometryType());
+                if (subType == wkbPolygon || subType == wkbMultiPolygon) ++polygonParts;
+                else ++nonPolygonParts;
+            }
+            EXPECT_GE(polygonParts, 1) << "集合里没有面子 ⇒ 修复后的面积无从计算";
+            EXPECT_GE(nonPolygonParts, 1) << "集合里没有非面子 ⇒ 不是混合维度，测不到那条分支";
+        }
+        GDALClose(probeDs);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("overlap_check");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    // 修复前红在这里：本地 switch 落 default ⇒ 面积 0.0 ⇒ 整行不写 ⇒ relation_count 报 "0"。
+    EXPECT_EQ(result.metadata.at("relation_count"), "1")
+        << "混合维度交集必须算出面积并写出这一行（N125）";
+
+    const std::vector<std::string> lines = readCsvLines(output);
+    // 修复前 CSV 只有表头 ⇒ 这一条 1u vs 2u 是缺陷证据本身；修复后是 1 表头 + 1 数据行。
+    ASSERT_EQ(lines.size(), 2u) << "overlap_check 混合交集 CSV 应为 1 表头 + 1 数据行";
+    EXPECT_EQ(lines[0], "source_fid,target_fid,overlap_area");
+
+    const std::vector<std::string> row1 = splitCsvColumns(lines[1]);
+    ASSERT_EQ(row1.size(), 3u) << "overlap_check 第 1 数据行列数不是 3: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Source = csvColumnAsInt64(row1, 0);
+    EXPECT_TRUE(row1Source.ok) << "source_fid 列不是整数: " << csvColumnContext(row1, 0, lines[1]);
+    EXPECT_EQ(row1Source.value, fids[0]) << "source_fid 不是 A: " << csvColumnContext(row1, 0, lines[1]);
+    const CsvInt64Column row1Target = csvColumnAsInt64(row1, 1);
+    EXPECT_TRUE(row1Target.ok) << "target_fid 列不是整数: " << csvColumnContext(row1, 1, lines[1]);
+    EXPECT_EQ(row1Target.value, fids[1]) << "target_fid 不是 B: " << csvColumnContext(row1, 1, lines[1]);
+    const CsvDoubleColumn row1Area = csvColumnAsDouble(row1, 2);
+    EXPECT_TRUE(row1Area.ok) << "overlap_area 列不是数字: " << csvColumnContext(row1, 2, lines[1]);
+    // 算式：面部分 5×5 = 25、线部分贡献 0 ⇒ overlap_area = 25。
+    EXPECT_NEAR(25.0, row1Area.value, 1e-6)
+        << "GEOMETRYCOLLECTION(POLYGON, LINESTRING) 的面积应为 5×5+0=25: "
+        << csvColumnContext(row1, 2, lines[1]);
+}
+
 TEST_F(PluginTest, VectorTopologyCheckExecution) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
