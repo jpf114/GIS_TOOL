@@ -2914,9 +2914,13 @@ TEST(GuiActionConfig, AllPlanARelevantPluginsHaveActionConfigs) {
 // 直接 continue，于是必填校验静默失效（与 R-F2-A 修掉的同一族）。
 // 存在性方向（action 声明在枚举里就必须有条目）对**每一个产品插件**执法：本集合与
 // cmake/PluginTargets.cmake 的 GIS_PLUGIN_TARGETS 同域（名单以那个文件为准，条数不在这里记账）。
-// 循环里唯一被跳过的 test_lifecycle 是测试插件、不是产品插件，由下面那条
-//   if (name == "test_lifecycle") continue;
+// 循环里唯一被跳过的是测试夹具插件（name() 返回 "lifecycle_test"），由下面那条
+//   if (name == "lifecycle_test") continue;
 // 显式排除 —— 它是"集合覆盖全部产品插件"这句话的前提，别删、别改成模糊匹配。
+// ⚠ 这条排除今天**空转**：夹具 dll 只进各用例自己的私有沙箱目录，不在被测的那个
+//   plugins 目录里（复算：列该目录看有没有 plugin_test_lifecycle.dll）。名字此前写成
+//   "test_lifecycle" 时这条过滤永不成立 ⇒ 夹具一旦真进那个目录，它会因为"没有
+//   actionUiConfig 条目"把本用例判红，而不是被豁免（2026-10-21 终审 H2 纠正）。
 // 永久纪律：新增产品插件时本集合同批加名，且该插件的每个 action 同批在
 //   src/gui/gui_data_support.cpp 补 actionUiConfig 条目；少哪一侧都是这里红，不是环境问题。
 // 历史（写成历史、不当现状陈述）：2026-10-19 登记时本集合只含 10 个插件，理由是集合外那几个插件
@@ -2955,7 +2959,7 @@ TEST(GuiActionConfig, PlanAConfigKeysAreDeclaredByThePluginAndRenderable) {
             continue;
         }
         const std::string name = plugin->name();
-        if (name == "test_lifecycle") {
+        if (name == "lifecycle_test") {
             continue;
         }
         const auto specs = plugin->paramSpecs();

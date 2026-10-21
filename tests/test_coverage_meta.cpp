@@ -766,7 +766,7 @@ AllActions collectAllActions(gis::framework::PluginManager& mgr) {
     for (auto* plugin : mgr.plugins()) {
         if (!plugin) continue;
         const std::string name = plugin->name();
-        if (name == "test_lifecycle") continue;
+        if (name == "lifecycle_test") continue;  // 夹具插件 name() 的真值，见 tests/plugins/test_lifecycle_plugin.cpp
         for (const auto& spec : plugin->paramSpecs()) {
             if (spec.key == "action") {
                 for (const auto& action : spec.enumValues) {
@@ -1007,7 +1007,7 @@ TEST(GuiContract, EffectiveSpecsAgreeWithPluginSpecs) {
     for (auto* plugin : mgr.plugins()) {
         if (!plugin) continue;
         const std::string name = plugin->name();
-        if (name == "test_lifecycle") continue;
+        if (name == "lifecycle_test") continue;  // 夹具插件 name() 的真值，见 tests/plugins/test_lifecycle_plugin.cpp
         const auto specs = plugin->paramSpecs();
         const gis::framework::ParamSpec* actionSpec = nullptr;
         for (const auto& spec : specs) {
