@@ -266,7 +266,7 @@ TEST(AppSettingsMigration, GateInactiveImportsThatSameSource) {
 //   注入态下 open() 现在会先撞上 B3d 的运行期拒绝，但那条拒绝**不记在本用例的账上**：
 //   它由 ProductionArmsRefuseToOpenWhileOverrideActive 专门判 ⇒ 别把两条读成同一条判据。
 // ⚠ 这条钉的是**表**，不是 migrateLegacySettings() 那一行的调用点：R-B2 门控在任何测试进程里都先
-//   return 0，所以"调用点只交一条源"这种写法没有任何用例能观察到（B3a 报告 INJ-2、B3c 报告 §4 已登记）。
+//   return 0，所以"调用点只交一条源"这种写法没有任何用例能观察到（两次注入都复现过，登记为已知判据缺口）。
 //   想观察就得让用例真去构造 NativeFormat 源 ⇒ 读用户注册表当测试输入 + 在 HKCU 建键，两条都撞红线。
 TEST(AppSettingsLegacySources, ProductionWiringIsTheTwoLegacyLandingPoints) {
     const QList<Source>& sources = gis::gui::productionLegacySources();
@@ -336,7 +336,7 @@ TEST(AppSettingsLegacySources, IniPathSourceOpensTheFileItsLabelNames) {
 // WHY 这条可以安全地调用生产源的 open()：拒绝写在 QSettings 构造**之前** ⇒ 既不读用户数据，
 //   也不会在 HKCU 下建键，所以"证明它被拒"不再需要先污染才看得见。
 //   形态为什么从断言换成拒绝：B3c/Q4 用的 Q_ASSERT_X 被 QT_NO_DEBUG 编掉，而交付与 CI 都跑 Release
-//   （扫产物取证见 B3d 报告）⇒ 禁令在真正跑起来的那棵配置树里没有牙。
+//   （取证口径=扫两棵配置树的产物，不是读源码）⇒ 禁令在真正跑起来的那棵配置树里没有牙。
 // 判别性（验收口径）：摘掉 app_settings.cpp 两个 arm 里那句 `if (settingsOverrideActive())` 的早退
 //   ⇒ 本用例红在循环体的 EXPECT_TRUE 上（源被真构造出来 ⇒ 指针非空；NamedOrgApp 那条还会顺手建键）。
 // 失效形态与 open() 的注释同一口径：静默返回空**会藏住误调**，但 From 那层以"打开成功几条"为条件

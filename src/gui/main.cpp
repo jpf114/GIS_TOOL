@@ -31,7 +31,8 @@ namespace {
 //   可行路径只剩"每用例 spawn 一次外部解码器"，那才是把解码开销搬进每条 gui_ 截图腿的地方。
 // WHY 三个值一起报：自报口径单独看是自证循环 ⇒ driver 必须拿它跟 IHDR 独立解出的宽高交叉比对
 //   （结构层见 tests/gui_regression_helpers.cmake 的 gis_gui_parse_png_ihdr_size），对不上即红。
-// WHY 全量像元而非抽样：整帧去重只是进程内一次遍历，成本远小于为解码再 spawn 一个外部解释器；
+// WHY 全量像元而非抽样：整帧去重是进程内一次排序 + 一趟扫描（O(n log n)，代价是一个 W×H 的
+//   QRgb 临时缓冲），仍远小于为解码 spawn 一个外部解释器；
 //   而且抽样子集的颜色数不等于全帧的颜色数 ⇒ 阈值口径就没法说清了。
 struct ScreenshotStats {
     int width = 0;

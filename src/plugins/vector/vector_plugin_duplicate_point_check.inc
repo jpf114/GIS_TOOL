@@ -79,7 +79,7 @@ gis::framework::Result VectorPlugin::doDuplicatePointCheck(
                         points.push_back(part->toPoint());
                     } else {
                         // MultiPoint 里的非点子几何同样显式计数（OGRMultiPoint 正常不会持有非点子几何，
-                        // 这条是防御臂，见 Task 20 报告的"不可达防御"登记）。
+                        // 这条是防御臂，当前几何路径不可达）。
                         ++skippedGeometryCount;
                     }
                 }

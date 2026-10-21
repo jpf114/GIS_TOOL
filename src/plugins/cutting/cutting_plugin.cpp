@@ -720,7 +720,7 @@ static uchar stretchByte(double v, const BandStretch& s) {
 //   层级只剩索引网格、**不再是可统计的数据对象**；要按层级统计就得按该层分辨率把整幅
 //   包络重读一遍，代价与语义都不划算。整幅一次是原设计的**超集**（连层级之间都一致），
 //   实现的正是承诺的那件事：同一地物跨瓦片/跨层级亮度一致。
-//   判别用例 #312 TileStretchIsWholeSceneWideNotPerTile；变异取证（S6 台账 R3a：把整幅 stretch 换成
+//   判别用例 #312 TileStretchIsWholeSceneWideNotPerTile；变异取证（R3a 那一组：把整幅 stretch 换成
 //   "helper 内先算 tileStretches 再取代 in.stretches"的提变量形态）实测 **killed**，红点正是 #312 的
 //   东列三条断言（同轮另一条 R3b 另杀 #298/#310/#315，不是这条变异的功劳）。这条偏离已登记进 Task 21 的口径同步清单。
 // WHY 用 ComputeStatistics 的**精算**（形参是 GDAL 的 bApproxOK，传 false ⇒ 不许近似；

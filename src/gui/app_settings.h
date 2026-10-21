@@ -31,12 +31,12 @@ int copyMissingKeys(const QSettings& from, QSettings& to);
 //   两参 QSettings(organization, application) 在 Windows 上就是 NativeFormat，既不吃
 //   setDefaultFormat() 也不吃 setPath()（tests/test_mainwindow.cpp:59-62 为此踩过一次）。
 //   工厂是闭包、label 是另一份手写格式串时，把工厂换成四参 QSettings(IniFormat, UserScope, org, app)
-//   一字不动 label ⇒ 接线用例照绿（这个洞在 HEAD 上实测复现，见 B3c 报告的 INJ-Q1-0）。
+//   一字不动 label ⇒ 接线用例照绿（这个洞在本仓 HEAD 上实测复现过）。
 //   现在改形态就得改 Kind ⇒ label 必变 ⇒ 用例红。
 //
 // open() 返回 std::unique_ptr<QSettings>，不是 QSettings、也不是 std::optional<QSettings>：
-// Qt 6 的 QSettings 在 qsettings.h:184 是 Q_DISABLE_COPY ⇒ 既不可拷贝也不可移动。四版最小编译探针
-// （输出见 B3c 报告 §1）把可选形状收窄到只剩这一个：
+// Qt 6 的 QSettings 类体里那行 Q_DISABLE_COPY(QSettings)（vcpkg 侧现读 include/Qt6/QtCore/qsettings.h:184，按宏名找） ⇒ 既不可拷贝也不可移动。四版最小编译探针
+// （探针产物在 build/tmp/，不入库）把可选形状收窄到只剩这一个：
 //   * 具名局部量再包一层 unique_ptr ⇒ C2280；std::optional<QSettings> ⇒ C2440（没有可用转换）；
 //   * 按值返回 prvalue **编得过**，但它要求每个 arm 写成一条 return 表达式，且表达不了"这条源没接上"；
 //   * 只有把所有权放堆上，"原地读法"与"没接上"两种形态才都能表达。

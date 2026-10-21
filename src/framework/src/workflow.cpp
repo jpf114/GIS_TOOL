@@ -154,14 +154,14 @@ WorkflowResult WorkflowRunner::execute(
         }
         typedParams["action"] = step.actionKey;
 
-        // Task B12：派发前跑与 CLI（src/cli/main.cpp:201/:212）同一套参数校验，顺序也一致：
+        // Task B12：派发前跑与 CLI 同一套参数校验（`src/cli/main.cpp` 里调 `validateParams` 与 `validateActionSpecificParams` 的那两行；行号会漂，按函数名找），顺序也一致：
         // 先 validateParams（整份 specs），再 validateActionSpecificParams（action 级组合）。
         // 缺这两段时，同一份越界参数 CLI 拒、工作流却一路送进插件（N94/N57）。
         {
             const std::string validationIssue = validateParams(specs, typedParams);
             if (!validationIssue.empty()) {
                 // 键名取 findFirstInvalidParamKey：它与 validateParams 是同一份 specs、
-                // 同一个 validateParamValue、同一个循环顺序（param_spec.h:213-236），
+                // 同一个 validateParamValue、同一个循环顺序（`param_spec.h` 里 `validateParams` 与 `findFirstInvalidParamKey` 两个函数体），
                 // 两次扫描必然指向同一个键；为了省一趟扫描改成别的形态反而会引入不对称。
                 const std::string invalidKey = findFirstInvalidParamKey(specs, typedParams);
                 result.message = "Step " + std::to_string(i + 1) + " (" + step.pluginName + "." +

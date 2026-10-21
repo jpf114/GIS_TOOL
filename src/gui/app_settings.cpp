@@ -45,9 +45,9 @@
 //         取代 B3c/Q4 的 Q_ASSERT_X——那条被 QT_NO_DEBUG 编掉，Release 里没有牙）：
 //         门控被摘掉时注入态也构造不出真实落点，两条臂给回空指针而不是悄悄把键建出来。
 //   旧落点二 默认构造 QSettings()：
-//     * 生产 GUI 进程（src/gui/main.cpp:36-37 设了 org/app = "GIS"/"GIS Tool"，且没人改
+//     * 生产 GUI 进程（`src/gui/main.cpp` 里 `setOrganizationName`/`setApplicationName` 那两行设了 org/app = "GIS"/"GIS Tool"，且没人改
 //       defaultFormat）⇒ NativeFormat，\HKEY_CURRENT_USER\Software\GIS\GIS Tool；
-//       这个键是 welcome_dialog 历史上的写入点（src/gui/welcome_dialog.cpp:15 的 kFirstRunKey），
+//       这个键是 welcome_dialog 历史上的写入点（`src/gui/welcome_dialog.cpp` 里 `kFirstRunKey` 那一定义），
 //       里面有什么随机器与历史而异（可能为空、可能有测试产物残留）⇒ 判据只能来自代码，
 //       不能来自某台机器上的一次读数。
 //       （读它要用等价的 QSettings("GIS","GIS Tool") 两参形式；生产里默认构造解析到的就是同一个位置。）
@@ -96,7 +96,7 @@ int copyMissingKeys(const QSettings& from, QSettings& to) {
 // R-B7：生产接线本体。**唯一存储是 (kind, first, second)**，label() 与 open() 都是它的读者，
 // 这里既没有手写的身份字符串、也没有工厂闭包（B3c/Q1）。
 // WHY 闭包要拿掉：闭包里的构造形态与 label 里的格式串是两份互不知情的表达，
-// 改前者不动后者 ⇒ 接线用例照绿（HEAD 上实测复现，见 B3c 报告 INJ-Q1-0）。
+// 改前者不动后者 ⇒ 接线用例照绿（本仓 HEAD 上实测复现过这个洞：只改调用侧不改被调侧，用例不红）。
 // 这里不出现任何注册表路径字面量（R-B3）：落点由 QSettings 对象自己按 org/app 解析。
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ std::unique_ptr<QSettings> LegacySettingsSource::open() const {
         // 旧落点一：SettingsManager 历史用的两参构造 ⇒ Windows 上是 NativeFormat。
         // 禁令的执行点在**风险处的第一行**（B3c/Q4 的立场），但形态换成**运行期拒绝**：
         //   B3c 那条 Q_ASSERT_X 被 QT_NO_DEBUG 编掉 ⇒ 交付与 CI 都跑的 Release 二进制里根本没有它
-        //   （扫产物取证见 B3d 报告），而这条红线要求"机器级兜底、不靠约定" ⇒ 两棵配置树都得拦得住。
+        //   （取证口径=扫两棵配置树的产物，不是读源码），而这条红线要求"机器级兜底、不靠约定" ⇒ 两棵配置树都得拦得住。
         //   拒绝必须写在构造**之前**：NativeFormat 的 QSettings 光构造就会在 HKCU 下把键建出来。
         //   不许再叠一条断言：先拒后断＝永不可达的恒真断言，先断后拒＝Release 那条分支在 Debug 测不到。
         // 失效形态要说清，别读成"更安全了"：静默返回空**会藏住误调**（不像 abort 那样喊出来）。
@@ -230,8 +230,9 @@ int migrateLegacySettings(QSettings& target) {
     // ⚠ 这一行只许"整张表 + 真门控"原样交出去：判据钉在 productionLegacySources() 那张表和
     //   Gated 的两臂上，**钉不到这里**（测试进程里 overrideActive 恒真 ⇒ 本函数无论如何都只返回 0，
     //   观察不到交出的是几条源；想观察就得 qunsetenv 或构造 NativeFormat 源，两条都是红线）。
-    //   所以"少一个源"必须表现为"表里少一条"，不能表现为这里少交一条 —— B3c 报告把这条硬边界
-    //   与"能红它的唯一代价是污染注册表"的推导写全，别在本行加恒真断言冒充已经闭掉。
+    //   所以"少一个源"必须表现为"表里少一条"，不能表现为这里少交一条
+    //   （想在这里观察，唯一手段是 qunsetenv 或构造 NativeFormat 源 ⇒ 会污染真实注册表，是红线）；
+    //   别在本行加恒真断言冒充这条已经闭掉。
     return migrateLegacySettingsGated(target, productionLegacySources(), settingsOverrideActive());
 }
 

@@ -1389,8 +1389,9 @@ add_test(
 # ------------------------------------------------------------------ 21-FixA part2 C-1：导出产物的并发写
 # GuiContract.ExportActionVisibleKeys 与上面的守卫用例写/读的是**同一个固定路径**
 #   $<TARGET_FILE_DIR:gis_tests>/gui_action_visible_keys.txt
-#   （写侧：test_coverage_meta.cpp:745 std::ofstream(..., trunc)；读侧：脚本第 0 节自己 spawn 的
-#    子进程写完后再 file(STRINGS) 回来，脚本第 116 行）。
+#   （写侧：`tests/test_coverage_meta.cpp` 里那行 `std::ofstream ofs(outPath, … trunc)`；
+#    读侧：`tests/check_action_visible_keys_read.cmake` 里那行 `file(STRINGS "${WHITELIST_FILE}" …)`。
+#    两处都按代码文本找、不挂裸行号——同批已裁定过一次（`c0573ba`）。
 # 全仓此前没有任何 RUN_SERIAL / RESOURCE_LOCK（grep -rcE "RESOURCE_LOCK|RUN_SERIAL" tests/CMakeLists.txt = 0），
 # 而这条导出用例**同时**是 gtest 发现出来的独立用例 ⇒ `ctest -j≥2` 下两者可以在两个进程里
 # 同时打开同一个文件。

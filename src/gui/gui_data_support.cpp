@@ -453,7 +453,7 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             }},
             // 下面这批条目是本插件此前唯一没有条目的 action（K-14/N91 的账：没有条目 ⇒ 面板不过滤，
             // 把插件级 paramSpecs 全集铺出来，其中绝大多数是本 action 根本不读的键）。
-            // 补齐后每个卡片只剩该 action 实读的键，这是**用户可见的收窄**，逐条"消失的键"清单见 B9b 报告。
+            // 补齐后每个卡片只剩该 action 实读的键，这是**用户可见的收窄**，逐条"消失的键"与 A/B/C 分级表在版本库里：docs/superpowers/specs/2026-10-21-批次B收尾口径与决策稿.md §7。
             // WHY visibleKeys 逐键取自反向守卫导出的"调用闭包实读集"而不是 paramSpecs()：见本文件
             //   processing 块里同一段说明（同一条 21-C 判据"白名单 − 闭包实读 非空即红"）。
             //   复现某条实读集的完整命令（控制器与本片刻意逐条跑过，rc=0；键名读 [trace] readkeys= 行）：
