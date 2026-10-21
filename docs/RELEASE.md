@@ -748,10 +748,24 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   注释写 `Rebuild without interior rings that are too small (slivers)`，但循环体把 `getNumInteriorRings()` 的
   **所有内环原样 `addRing` 搬运**，没有任何面积判断 ⇒ 用户以为"细缝多边形里的洞也会被清理"，实际只丢外环面积 `< min_area` 的面。
   另：比较用的是 `<` 而非 `<=` ⇒ 面积**恰等于** `min_area` 的面不删，这条边界全仓无用例。
-- 挂账 **N122**（未定性，需探针）：`singlepart` / `sliver_remove` / `geom_metrics` 的扩展名判定与
-  `removeExistingVectorOutput` 用**窄** `fs::path(output)`（`common.inc:299-300`），
-  而 CSV 侧与 `ensureParentDirectoryForFile` 用 `fs::u8path`（`:311`）⇒ 非 ASCII 输出路径行为存疑。
-  **我还没跑过这个探针**（跑它要动二进制，与本表上面的纪律一样：探针不能在全量期间做）⇒ 只登记现象，不写"这是缺陷"。
+- 挂账 **N122**（**已复现的产品缺陷**，2026-10-22 探针；建账时我写的是"未探针、只登记现象"，那条说法已被实测推翻，此处更正）：
+  `singlepart` / `sliver_remove` / `geom_metrics` / `nearest` 的扩展名判定与 `removeExistingVectorOutput`
+  用**窄** `fs::path(output)`（`src/plugins/vector/vector_plugin_common.inc:299-300`），
+  而 CSV 侧与 `ensureParentDirectoryForFile` 用 `fs::u8path`（`:311`）。
+  Windows 上从 UTF-8 `std::string` 构造窄 `fs::path` 会按 **ANSI** 解码 ⇒ 含非 ASCII 的目录名在
+  `fs::directory_iterator(parent_path())` 里找不到 ⇒ **"先删旧产物"这一步静默什么都没删**。
+  五臂实测（都现跑，输入同一个 2 部件 `MultiPolygon`，输出 `build/tmp/n122/`）：
+  ① ASCII 路径 + 预置非法同名文件 ⇒ `Success`；② 非 ASCII 路径 + 同一份非法同名文件 ⇒
+  **`Error: Cannot create output file: build/tmp/n122/中文目录/bad2.gpkg`**；③ 重复 ② 仍失败（可复现，不是偶发）；
+  ④ 非 ASCII + 先手工删掉该文件 ⇒ `Success`（⇒ 唯一障碍确实是"删不掉"）；
+  ⑤ 非 ASCII + 已存在**合法** GPKG ⇒ `Success`（GPKG 驱动能就地覆盖 ⇒ **这就是它一直没被发现的原因**：
+  只有"目标位置上躺着一个不是数据库的文件"时才暴露）。
+  对照：同目录下 CSV 动作（走 `fs::u8path` + `ofstream` trunc）写 `r.csv` 正常 ⇒ 现象只属于那四个矢量化动作。
+  后果面：用户把成果导到中文目录（很常见的习惯）时，若目标文件是上次别的东西留下的占位文件，
+  动作直接失败而报错文案只说"Cannot create output file"，**不会提示是路径编码问题**。
+  修法与门：把这几处 `fs::path(output)` 换成 `fs::u8path(output)`（共享 helper 被全部矢量化动作使用 ⇒ 属跨动作改动），
+  并补一条机器级用例：在非 ASCII 目录里预置非法同名文件、跑一次、断言成功且产物可读。
+  **本批不修**（正在跑的取证/晋升批共享同一棵树与同一套用例，改 `src/` 会污染它们 ⇒ 单独开一批带用例修）。
 - 挂账 **N123**（判据覆盖面）：`topology_check` 的四类问题里 `empty_geometry` 与 `invalid_geometry` **无任何用例覆盖**
   （现读实现是两个独立 `if`、可同写两行；成对判定 `duplicate_geometry` 与 `overlap` 是 `if/else if`、互斥）。
   "自交面会不会同时被判 invalid"我**没有算式依据** ⇒ C3b-B1 明确不做这两行，等用 `IsValid()` 实测后再定期望值。
