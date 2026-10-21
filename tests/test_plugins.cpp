@@ -11908,7 +11908,7 @@ TEST_F(PluginTest, TileOverviewResamplingDrivesOutputBytes) {
 }
 
 // B16（N36）：doTile 原先读的是**未声明**的 "resampling"，paramSpecs 声明的 "resample"
-// 对它完全无效（用户传 --resample= 既无效也无报错；改前取证见 task-B16-report.md 的 E1）。
+// 对它完全无效（用户传 --resample= 既无效也无报错；改前实测过：传 --resample= 既无效也无报错）。
 // 改读 "resample" 之后，这个键必须真的驱动 warp 的 -r。
 // 夹具用 t36ResampleFixtureInput（4326 棋盘格）：3857→3857 的重合网格下 -r 不改变像素值，
 // 用 3857 夹具这条会恒绿。
@@ -12165,10 +12165,20 @@ TEST_F(PluginTest, TileGuiPanelHidesParametersTheTileActionNeverReads) {
     EXPECT_EQ(effectiveKeys, config->visibleKeys) << "cutting.tile 的有效键集与白名单不一致";
     EXPECT_GT(effectiveKeys.count("overview_resampling"), 0u)
         << "overview_resampling 必须被渲染（R-T17-11① 之后 doTile 真的读它）";
-    for (const char* deadKey : {"resample", "num_threads", "tile_size", "overlap",
+    // 两类「不在面板里」的键要分开钉，因为理由不同；混在一堆里会让红字说假话。
+    for (const char* deadKey : {"num_threads", "tile_size", "overlap",
                                 "extent", "cutline", "bands", "dst_srs"}) {
-        EXPECT_EQ(effectiveKeys.count(deadKey), 0u) << deadKey << " 不被 doTile 读取，不得出现在 tile 面板";
+        EXPECT_EQ(effectiveKeys.count(deadKey), 0u)
+            << deadKey << " 不被 doTile 读取，不得出现在 tile 面板";
     }
+    // resample 是另一类：Task B16 之后 doTile 真的读它（cutting_plugin.cpp 里
+    // getParam(params, "resample", "average")），它留在面板外是**有意藏键**，理由是
+    // GUI 白名单会实发 spec 默认值（R-B20）——显示它 ⇒ 用户没改过就提交也会把缺省插值
+    // 从 average 换成 nearest ⇒ 既有产物静默改变。所以这条断言钉的是「有意不显示」，
+    // 不是「没被读」。
+    EXPECT_EQ(config->visibleKeys.count("resample"), 0u)
+        << "resample 被 doTile 读取，但必须不出现在面板：显示它会让未改动提交实发 spec 默认"
+        << " nearest，从而改变既有默认产物（不是因为它没被读）";
     EXPECT_EQ(config->visibleKeys.count("action"), 0u);
 
     ParamWidget panel;
@@ -12799,7 +12809,7 @@ TEST_F(PluginTest, TileAddAlphaChangesTransparencyForPartialBandNoData) {
     // 洞带在 true 档必须是"绿道=0 的黑洞 + 不透明"（0 的来源见上面循环里的注释：
     // 洞带在色波段里是 -dstalpha 写回的 0，而 band2 的整幅 min 也是 0）；false 档整像素为 0（含颜色），
     // 所以 R=255 且 G=0 的像元不存在。这两条各钉一个产物口径，"把 true/false 两支写成同一个掩膜"
-    // 那类退化形态（S6 台账 R1b）实测红的就是这一组。
+    // 那类退化形态（R1b 那一组变异）实测红的就是这一组。
     EXPECT_GT(holeGreenOn, 200)
         << "true 档的洞带没把绿道落成 0（红道应仍是 255）：" << holeGreenOn;
     EXPECT_EQ(holeGreenOff, 0)
