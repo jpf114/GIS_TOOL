@@ -308,7 +308,7 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 | 2 | `t17_profile_input.tif`（2 块） | `TileRejectsGeodeticProfileAndNamesIt`、`TileRejectsRasterProfileAndNamesIt` | **是** —— 两块都写 `getTestDir()/t17_profile_input.tif`（内容逐字段相同） | **真冲突** | 各用例改用各自的输入名（或挪进各自子目录）；GDAL 的 `.aux.xml` 边车随同一根因一起消失 |
 | 3 | `e2e_spatial_join_output.gpkg`（2 块） | `VectorSpatialJoinRejectsMismatchedSrs`、`VectorSpatialJoinWritesJoinCountAndValue` | **是** —— 同一个 `getTestDir()/` 平铺路径（两块的输入靠 `.shp` / `.gpkg` 扩展名区分，不冲突） | **真冲突**（既知） | 输出名按用例分开；顺带把这一族平铺命名统一成 `用例名/` 前缀 |
 | 4 | `10/512/512.png` 一类的瓦片路径（3 块） | 同 #1 的前三块 | **否** —— `z/x/y` 只是相对路径，父目录已按 #1 分开 | 不冲突 | 无需改 |
-| 5 | `t17ScanWarpedLeftovers`（扫系统临时目录） | `TileCleansWarpedTempOnCancel`、`TileCleansWarpedTempOnWarpFailure` | 目录相同，但**文件名按 pid 隔离**（`gis_tile_warped_<CPLGetPID()>.tif`；Task 18 F3 已把判据从"扫全目录"收窄到"只扫本进程那一份"） | 不冲突 | 无需改；历史残留（例如 `build/gis_tile_warped_17548.tif`、`…_28940.tif`）归脚本/人工巡检，不属用例间冲突 |
+| 5 | `t17ScanWarpedLeftovers`（扫系统临时目录） | `TileCleansWarpedTempOnCancel`、`TileCleansWarpedTempOnWarpFailure` | 目录相同，但**文件名按 pid 隔离**（现为 `gis_tile_warped_<CPLGetPID()>_<seq>.tif`：pid 分开进程、进程内再加一个静态原子序号分开先后调用，批次 B 的 m-4；`TileCleansWarpedTempOnCancel` 现场抓到的实例名 `gis_tile_warped_12212_1.tif`。判据认两种形态，旧 `<pid>.tif` 也算本进程的）；Task 18 F3 已把判据从"扫全目录"收窄到"只扫本进程那一份" | 不冲突 | 无需改；历史残留（例如 `build/gis_tile_warped_17548.tif`、`…_28940.tif`）归脚本/人工巡检，不属用例间冲突 |
 | 6 | `.aux.xml`（`tests/` 现跑 43 处 = `test_plugins.cpp` 40 + 3 个 GUI cmake 脚本） | 多处 | —— | GDAL 边车，**不算用例间冲突** | 无需单独立项 |
 
 ⇒ 净结论：**只有 #2 与 #3 是真冲突**（同一 `getTestDir()/` 平铺路径被两个用例块写），把它们分开 + 保证不并发构建，
@@ -319,7 +319,29 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
 - **N86**（内部债，不进用户可见发布说明）：包内容完整度无人自动断言 —— `Unresolved` 只 WARNING；
   复审实测删掉包内 `bin/sqldrivers/qsqlite.dll` 时 Verify 仍然绿。
-- **N88**（内部债，不进用户可见发布说明）：`cmake/gis_runtime_dlls.cmake:1-77` 构建侧存在两份手抄 DLL 名单。
+- **N88**（内部债，不进用户可见发布说明）：~~`cmake/gis_runtime_dlls.cmake:1-77` 构建侧存在两份手抄 DLL 名单~~
+  —— **已还**（`e726710` 加单源表与派生、`bcfb5cd` 删掉两条手抄名单）。它剩下的那一半"样式标错无人判"另立 **N105**。
+- **N104（审计覆盖面，B6 取证时实测出）**：`runtime_dll_cross_config_audit` 只扫
+  `${CMAKE_BINARY_DIR}/plugins` 与 `$<TARGET_FILE_DIR:gis-cli>` 两个目录，而
+  `src/cli/CMakeLists.txt:21` 的 `gis_copy_minimal_runtime(gis-cli DEST_DIR $<TARGET_FILE_DIR:gis-cli>/plugins)`
+  **每次构建都在往第三个目录写**，那个目录不在射程内。现读（`python` 递归比 vcpkg 两侧目录）：
+  Debug 树 `src/cli/Debug/plugins` 有 **46 个**只属 Release 命名的 dll（Qt6*/gdal.dll/opencv_*/proj_9.dll…），
+  Release 树同形目录有 **45 个**只属 Debug 命名的 dll；另有 13 个插件各自的输出目录里各 1 个 `minizip.dll`
+  （mtime 2026-05-22，属历史残留、当前构建不再产生）。把该目录喂给**同一条规则**立刻红
+  （`cmake -DPLUGINS_DIR=<该目录> -P tests/check_runtime_dll_config.cmake` ⇒ rc=1，报"跨配置残留=46"）
+  ⇒ 规则本身没问题，**是覆盖面窄**；先前"构树残留已清零"这个结论只对那两个受检目录成立。
+  修法（未做，需要单独一轮）：审计改成从 `${CMAKE_BINARY_DIR}` 递归取目录、并显式排除 `tmp/`（测试耗材树，
+  里面装的是对面配置的包），清理现存残留后用"植入⇒红／还原⇒绿"复验。
+- **N105（样式标错无定向守卫，B6 取证时实测出）**：单源表里把某项的样式标错（实测把
+  `geotiff.dll|underscore_d` 改成 `suffix_d`）后，配置期四条自守（格式 / 归零 / 派生项数 / 重名）
+  **全部放行**，配置照常绿；只有那行 `[runtime-dlls] 单源表 36 项（suffix_d=25 underscore_d=1 same=10）`
+  的分布数字变了，而没人断言它。为什么闭包也看不见：`GIS_RUNTIME_DLLS*` 只被
+  `gis_copy_minimal_runtime` 消费（根 `CMakeLists.txt` 里 0 处引用），**装出来的包**由扫描器按导入闭包
+  直接从 vcpkg 取，与这份名单无关 ⇒ 样式标错的后果只落在构树。而构树少一个运行库 dll 的实测形态是
+  **用例 Timeout 挂住**（本机把 `gdald.dll` 从加载目录与 exe 目录各删一份 ⇒ `CoreTest.InitGDAL…`
+  跑到 300 s 超时被杀，不是干净红）。修法（未做）：配置期对派生结果做**存在性断言**——
+  release 名单逐项 `EXISTS ${GIS_VCPKG_RELEASE_BIN_DIR}/<名>`、debug 名单逐项查 `debug/bin`，
+  缺项就 `FATAL_ERROR` 点名（名单是派生的、不是手抄，所以这条闸本身不引入新的真源）。
 - **N90**：`blockHasNumericAssertion` 可被注释满足（见上面"GOLD 限定"）。
 - **`ctest -j` 并行安全改造**：见上一节，先改冲突用例再开并行。
 
