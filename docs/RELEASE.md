@@ -813,6 +813,43 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   ⇒ 现口径：**每批真实腿交付必须至少附一条"已知会红"的反向对照原始输出**；
   是否把反向自检臂做进脚本（工单 C3e）待定，代价是每轮多跑一次与脚本复杂度。
 
+批次 C 的 C3c 建账（只读调研 12 个动作 + 控制器逐条复核）又查出五条产品侧缺陷，**本批只立案、修在 C3f~C3i**
+（细节、射程与"哪些还没核"都写在工单 `Task C3c` 那张表里，这里只给结论级描述）：
+
+- 挂账 **N127**（**优先级最高**，`vector filter`）：**非 ASCII 的 `--where` 一律被拒** ⇒ 中文属性值过滤不了，
+  而本仓样例数据（省名/市名）全是中文，这是用户主场景。现读根因在
+  `src/plugins/vector/vector_plugin_info_filter.inc:1-16`——白名单用 `std::isalnum(unsigned char)`，
+  默认 C locale 下 `>=0x80` 字节不是"字母数字" ⇒ 落到 `return false`；调用点唯一（`:157`）⇒ **射程只有 filter**。
+  **双臂实测**（控制器现跑，夹具 `build/tmp/cnfilter/in.json`）：
+  `--where=name='北京'` ⇒ `Error: WHERE clause contains disallowed characters or keywords`；
+  同一文件 `--where=name='shanghai'` ⇒ `Success: Filter completed: 1 features written`。
+  修复方向是"UTF-8 字节序列合法化 + 保留注入面拦截（引号/分号/`DROP` 等关键字）"，不是把白名单整个删掉。
+- 挂账 **N128**（`vector union`）：**它不是并集**。只遍历源图层要素（`vector_plugin_overlay.inc` union 段的
+  `while (srcLayer->GetNextFeature())`）⇒ 叠加层独有的几何被静默丢弃，产物覆盖 ⊆ 源覆盖，
+  与 `docs/算法说明/矢量数据处理/并集.md` 的语义相反；**并且输出图层只建一个 `source` 字符串字段**（`:85-86`），
+  源属性整表丢失——而同一文件里的 `intersect`/`difference` 都各自有字段循环（`:264`、`:437`）
+  ⇒ **同一文件三个动作两种口径**，union 是异类。改动面最大，且要先定"union 到底该给什么属性"，可能要先问用户。
+- 挂账 **N129**（`vector dissolve`）：`dissolve_field` 写错（输入层没有这个字段）时**不报错**，
+  静默把所有几何并入一组（`vector_plugin_dissolve.inc:41-47` 的 `else allGeoms.push_back`）⇒ 用户以为按字段融合、实际融成一坨；
+  对立面是同插件 `spatial_join.inc:38-43` 对"字段不存在"**硬失败** ⇒ 同类错误两种行为。
+  （输出字段在该分支是否恒空**未核**。）
+- 挂账 **N130**（`buffer` / `dissolve` / `simplify`）：**投影闸三档并存**——前两者只拒 `geographic`
+  （无 CRS ⇒ 放行并**静默按"度"做米制运算**），`simplify` 要求 `== "projected"`（无 CRS ⇒ 拒）
+  （现读 `vector_plugin_buffer_clip.inc:27-29`、`vector_plugin_dissolve.inc:24`、`vector_plugin_simplify.inc:26`）。
+  同一份无 CRS 数据在两个动作能跑、在第三个被拒 ⇒ 属跨动作口径问题，修复要单独一刀。
+- 挂账 **N131**（`vector rasterize`）：`attribute` 字段不存在时不校验（`vector_plugin_raster_convert.inc:72-78`），
+  而初始化已经是 `band->Fill(0)` + `SetNoDataValue(0)`（`:63-65`）⇒ 产物整幅是背景 0，
+  **用户无法区分"这一片本来就没有面"与"字段名写错"**；成功返回还不带任何 metadata 键（`:103-105`）⇒ 事后也查不出烧了什么。
+  （GDAL 在该路径是否发 `CE_Warning` **未核**，发也没被采集。）
+
+另有四条**代码质量类**可疑点登记在工单里（`overlay.inc:285` 混合维路径每要素泄一条几何、
+两处死代码、`buffer_clip.inc:53` 造成的 4 处死臂、`dissolve.inc:119/:138` 两处 `delete nullptr`），
+归"冗余/一致性"顺手批，不与修复刀混批。
+
+**执行顺序裁定（R-C3c-1）**：**已确诊缺陷的动作先修后测**——C3d 刚发生过"真实腿把缺陷产物形状钉成期望值
+（`overlap_check_prov` 的 `-eq 0`），修好后那条断言必须跟着退役"，所以本轮不允许先写测试再修缺陷。
+
+
 （原文如下，保留以便对账：）`vector.interior_point` 没有履行
 "点在面内"的语义 —— 它与 `vector.centroid` **走同一行实现**（都调 `normalized->Centroid(&point)`），
 所以对凹形给出的是**面积重心**，可以落在形外。实测夹具：不对称 L 形 `(0,0)-(12,0)-(12,3)-(4,3)-(4,8)-(0,8)`
