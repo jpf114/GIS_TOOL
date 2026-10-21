@@ -1576,6 +1576,142 @@ if(GIS_POWERSHELL_EXECUTABLE)
     )
 endif()
 
+# ── Task C2 / N112：四条真实数据回归纳入 ctest ──────────────────────────────────
+# WHY 必须进 ctest（N112 本体）：上面那六个 add_custom_target 不在 ctest 注册数里 ⇒ 判据写坏了
+#   没有任何机器级兜底，"改完判据后是否还跑"全靠人记得。2026-10-21 这批真实回归首跑就抓到 4 条
+#   判据缺陷（期望值是合成样本标定的常量、china_bbox 窗口退化、`Contains("feature_count: 2")` 被真实
+#   输出 `feature_count: 22836` 当**前缀**吃掉的假绿、PowerShell 5.1 按 ANSI 解 UTF-8 JSON 报的假产品
+#   缺陷；判据正文见 docs/RELEASE.md"收尾二轮：真实矢量回归暴露的四条判据缺陷"一节），其中三条的方向
+#   都是"绿着什么都没判"⇒ 只修判据本体不等于销账，进了 ctest 才有"下次改坏当场红/跳"这一层。
+# WHY 用例名走 real_data_*（不沿用 custom target 的 real_*_regression）：同名会让
+#   `ctest -R real_vector_regression` 一次筛出两条语义不同的东西（构建期目标 vs 测试期用例），
+#   红了也分不清是哪一侧；分开后 `-R "^real_data_"` 只认这四条。custom target 原样保留，
+#   人工入口与 docs/RELEASE.md 第 1 节那条 `cmake --build --target …` 的引用都不受影响。
+# WHY 恒注册（写在 if(GIS_POWERSHELL_EXECUTABLE) 之外，与下面 source_mojibake_guard 同一形态）：
+#   躲进那条 if 里 ⇒ 找不到解释器的机器上这四条**静默不注册**（ctest -N 少 4 条、全量照绿），
+#   正是本批反复在消灭的"没检查长得像检查通过"。解释器缺失由包装脚本 FATAL_ERROR 判红。
+# WHY data 缺失报 Skip 而不是 Passed：本文件既有的那条 SKIP_REGULAR_EXPRESSION（搜
+#   `SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]"`）的注释点名批评过"退出码 0 ⇒ Passed 就是假绿"，
+#   而这三条腿的 .ps1 在真实数据缺失时会兜底现生成合成样本 ⇒ "没有真实数据"会跑成"全绿"。
+#   所以缺 data 时包装打印固定标记 `GIS_SKIP: data/ not present` 并 return()，用例侧按 **per-test** 的
+#   SKIP_REGULAR_EXPRESSION 认领（per-test 就是本仓既有形态，目录级没有这个机制可抄）。
+#   实测（本机 ctest 4.3.0-rc2，端到端三臂，data/ 一字节未动）：把同一份 run_real_matching_regression.cmake
+#   挂进一个临时最小工程当真用例跑 ⇒ ① WORKSPACE_ROOT 指到不含 data 的目录 = `***Skipped***` 并进
+#   "did not run"；② WORKSPACE_ROOT 正确但 -DMODE 传非法值（腿真失败）= `***Failed***`；
+#   ③ -DPOWERSHELL_EXECUTABLE 留空 = `***Failed***`。⇒ 命中标记才 Skip，真失败仍然是红，用例不空转。
+#   ⚠ 只有"退出码 0 + 命中标记"这一形态被用作 return() 的依据；非 0 那一侧本轮没复现，不引为论据。
+#   复算命令与逐臂结果见三份 run_real_*.cmake 头部注释；另见下面 WORKSPACE_ROOT 判红那段的成因。
+# WHY RESOURCE_LOCK real_data_regression（四条共用一把**新**锁）：四条腿都往
+#   <仓库根>/tmp/*_benchmark 与 <仓库根>/tmp/*_regression 写产物（复算：
+#   `grep -rl 'WorkspaceRoot.*tmp' tests/*.ps1` 恰好只有这三份脚本，仓库根 tmp/ 没有别的 ctest 写者），
+#   vector 腿还会把 plugin_*.dll 覆盖到 gis-cli 旁边的 plugins/ ⇒ 并发跑就是两个进程同时改同一批耗材，
+#   假绿假红两个方向都出得起。不复用 gis_install_closure_prefix：那条的前缀由
+#   ${CMAKE_BINARY_DIR}/../tmp 反推 ⇒ 落在 **build/tmp**/install_closure_<CONFIG>（现读：
+#   `ls build/tmp | grep install_closure`），与这四条写的 <仓库根>/tmp 不共享路径，
+#   共用一把锁只会把两件不相干的事绑成串行。
+#   ⚠ 本批不扩口的残留重叠：Sync-PluginDlls 覆盖的 gis-cli/plugins 目录，读它的是构建期的
+#   copy_runtime_dlls（不在 ctest 里）⇒ `-j1` 下无争用；真要开 `-j` 时这一条得单独进
+#   docs/RELEASE.md 那张"开 -j 前必须改什么"表。
+# WHY 不用 RUN_SERIAL：锁粒度是整个 ctest ⇒ 这四条一被调度就拖其余全部用例排队（同上面
+#   GuiContract.ExportActionVisibleKeys 那处已经定过的判断）。
+# WHY TIMEOUT 各写各的、不进 GIS_TEST_TIMEOUT：GIS_TEST_TIMEOUT=300 对 vector 两条腿只剩 1.6× 不到
+#   （Debug 树热跑实测 170.935 s / 190.624 s，见下表），对 raster/matching 又是空头上界；
+#   数值按"实测墙钟 ≥4× 向上取整到 60 s 的倍数"给。
+#   ⚠ 文件末尾那条 blanket `set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY TIMEOUT …)` 会把这里写的
+#   值整体重写回 300 ⇒ 这四个名字必须同时进下面 `list(REMOVE_ITEM GIS_TIMED_TEST_NAMES …)` 的豁免名单
+#   （名单走变量 GIS_REAL_DATA_TEST_NAMES，不在两处各抄一遍名字）。不豁免的后果不是"上界宽松"，
+#   而是 **vector 两条腿在 Debug 树随时假 Timeout** —— 本仓已实测过并发把 300 s 线撞出 3 条假 Timeout。
+# 实测于 2026-10-21（本机安静态、跑前硬门控 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0；
+#   取**整条腿墙钟**= `cmake -P` 包装的进程用时，含包装自身与 .ps1 里 Sync-PluginDlls / 生成
+#   tmp/*_benchmark 的开销，**不是**用例内计时合计）。三遍跑法：Release 冷（先把 tmp/*_benchmark 与
+#   tmp/*_regression 整体清空）、Release 热、Debug 热（Debug 没有冷样本，而冷跑只会更慢 ⇒ 取值以现读
+#   最大者为准）；按三者的**最大值** ≥4× 向上取整到 60 s 的倍数：
+#     腿                     Rel 冷      Rel 热      Debug 热     取值         4×            ⇒ TIMEOUT
+#     real_data_raster       11.569 s    7.559 s     11.863 s     11.863 s     47.452 s      ⇒ 60 s
+#     real_data_matching     2.047 s     1.634 s     1.751 s      2.047 s      8.188 s       ⇒ 60 s
+#     real_data_vector_quick 153.050 s   89.358 s    170.935 s    170.935 s    683.740 s     ⇒ 720 s
+#     real_data_vector_full  115.943 s   84.367 s    190.624 s    190.624 s    762.496 s     ⇒ 780 s
+#   ⚠ 这四个 TIMEOUT 是**余量设计**，不是性能结论：本机同套用例 run-to-run 波动 ±25 s（口径见
+#     docs/RELEASE.md 全量墙钟基线那节 ⇒ 这一栏只可现读不可外推，也不许拿它论证某个改动变慢了）。
+# WHY 命令里用 $<TARGET_FILE:gis-cli> 而不写死 build/<树>/… 路径：与既有全部 configure-time 用例同形态，
+#   代价也是那条已知事实 —— `ctest -N` 不带 `-C` 时它展开成空串（docs/RELEASE.md 第 1 节有实测原文）。
+#   本批按预检裁定 R-C2c **不加兜底**，只在发布前验证清单里点明"这四条也必须带 -C"。
+if(GIS_POWERSHELL_EXECUTABLE)
+    set(GIS_REAL_DATA_POWERSHELL "${GIS_POWERSHELL_EXECUTABLE}")
+else()
+    # 空串而不是 ...-NOTFOUND：让包装脚本那条"为空即判红"的检查看到明确的缺失。
+    set(GIS_REAL_DATA_POWERSHELL "")
+endif()
+
+set(GIS_REAL_DATA_TEST_NAMES
+    real_data_raster
+    real_data_matching
+    real_data_vector_quick
+    real_data_vector_full
+)
+
+add_test(
+    NAME real_data_raster
+    COMMAND ${CMAKE_COMMAND}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+        -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+        -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
+        -DMODE=quick
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_raster_regression.cmake
+)
+set_tests_properties(real_data_raster PROPERTIES
+    TIMEOUT 60
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP: data/ not present"
+)
+
+add_test(
+    NAME real_data_matching
+    COMMAND ${CMAKE_COMMAND}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DGUI_TEST_DATA_HELPER_PATH=$<TARGET_FILE:gui_test_data_helper>
+        -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+        -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
+        -DMODE=quick
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_matching_regression.cmake
+)
+set_tests_properties(real_data_matching PROPERTIES
+    TIMEOUT 60
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP: data/ not present"
+)
+
+add_test(
+    NAME real_data_vector_quick
+    COMMAND ${CMAKE_COMMAND}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+        -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
+        -DMODE=quick
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
+)
+set_tests_properties(real_data_vector_quick PROPERTIES
+    TIMEOUT 720
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP: data/ not present"
+)
+
+add_test(
+    NAME real_data_vector_full
+    COMMAND ${CMAKE_COMMAND}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+        -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
+        -DMODE=full
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
+)
+set_tests_properties(real_data_vector_full PROPERTIES
+    TIMEOUT 780
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP: data/ not present"
+)
+
 # ── Task B21 / B17：源码乱码守卫落成用例（用户 2026-10-21 拍板：四规则全带）──────────
 # WHY 判据不在 CMake 里写：四规则里 R1（GBK roundtrip）要 CP936 编解码器，CMake 没有编解码器
 #   （同族限制："CMake 无 zlib ⇒ 像素级独立判定不可行"）。R2-R4 只比码点，但**不能**因为
@@ -1610,7 +1746,13 @@ add_test(
 get_property(GIS_TIMED_TEST_NAMES DIRECTORY PROPERTY TESTS)
 # gui_smoke_startup already has the tighter 60s bound set above; the blanket value must not
 # overwrite it, so it is excluded here instead of being re-set afterwards.
-list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup)
+# GIS_REAL_DATA_TEST_NAMES（Task C2 / N112 那四条 real_data_*）是同一个坑的反方向：它们按"实测墙钟
+#   ≥4× 向上取整到 60 s"算出的上界**高于** 300（vector 两条腿冷启动实测 115~153 s，300 只剩 2× 出头），
+#   blanket 会把那四个写好的数悄悄改回 300 ⇒ 注释里的算式当场作废、上界失真。名单走变量
+#   GIS_REAL_DATA_TEST_NAMES 传进来，不在这里手抄第二遍名字（两处各改各的正是本文件反复在防的漂移）。
+#   复算（四条的 TIMEOUT 现值，应逐条等于 tests/CMakeLists.txt 里 set_tests_properties 写的那四个数）：
+#     grep -A3 "set_tests_properties(real_data" tests/CMakeLists.txt | grep TIMEOUT
+list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup ${GIS_REAL_DATA_TEST_NAMES})
 # The guard exists only because set_property(TEST) with no names is a configure error.
 # Note the premise this used to state ("every configure-time case in this file is registered
 # inside the if(TARGET gis-gui) block above") is FALSE, and has been since before this round:

@@ -12,6 +12,11 @@ cmake --build build/debug --config Debug
 
 ctest --test-dir build/release -C Release -j1 --output-on-failure
 ctest --test-dir build/debug -C Debug -j1 --output-on-failure
+
+# 四条真实数据回归已进 ctest（N112 销账，用例名 real_data_raster / real_data_matching /
+# real_data_vector_quick / real_data_vector_full）⇒ 上面两条全量就已经跑到它们，
+# "改完判据后是否还跑全靠人记得"这一层没有了。下面这一行只保留给"要看某条腿完整 stdout"
+# 或"单跑 raster/matching 的 full 模式"（那两个 custom target 仍不在 ctest 里）的场合。
 cmake --build build/release --config Release --target real_raster_regression real_matching_regression real_vector_regression
 ```
 
@@ -31,11 +36,32 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 692 / Release 690**（2026-10-21 现读，本机两棵树各跑
-`ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。Release 少的那 2 条**必须按名字核、不能只看总数**
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 697 / Release 695**（2026-10-21 Task C2 现读，本机两棵树各跑
+`ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
+"全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
+  与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
+  `source_mojibake_guard` 落成用例**之前**的旧值（两棵树各 +1 ⇒ 693 / 691），我上一轮只改了下面那张表、
+  漏改了这一行 prose ⇒ 差集就是这一条，本轮把两处统一成现读值 697 / 695。Release 少的那 2 条**必须按名字核、不能只看总数**
 （只看数会漏"某条在 Release 静默消失"）：`comm -23` 实测差集恰为
 `gui_matching_stitch_debug_failure_offscreen` 与 `gui_matching_ecc_register_debug_failure_offscreen`，
 反向 `comm -13` 为空 ⇒ 这两条是 Debug 轻量闸门用例（见"批次 A 发布说明 → 基线口径"）。
+
+- **四条 `real_data_*` 也必须带 `-C`**（Task C2 / 预检裁定 R-C2c，本批按裁定**不加兜底**）：这四条的命令里
+  同样有 `$<TARGET_FILE:gis-cli>` ⇒ 上面那段"不带 `-C` 时展开成空串"的实测对它们一样成立。
+  注册数本身不看 `-C`、也不看解释器的脸色：四条恒注册（写在 `if(GIS_POWERSHELL_EXECUTABLE)` 之外），
+  所以 `-N` 里永远有它们，解释器缺失由包装脚本 `FATAL_ERROR` 判红。
+  现读复核：`ctest --test-dir build/release -C Release -R "^real_data_"` ⇒ 4 条 **Passed**、
+  一条 Skipped 都不许有（出现 Skipped 就是 `data/` 不在，见下一条）。
+- **`data/` 缺失时这四条报 `Skipped` 而不是 `Passed`**（Task C2 / 预检裁定 R-C2a）：
+  `tests/run_real_{raster,matching,vector}_regression.cmake` 在调 `.ps1` 之前判 `${WORKSPACE_ROOT}/data`，
+  缺失则打印 `GIS_SKIP: data/ not present` 后 `return()`，用例侧 `SKIP_REGULAR_EXPRESSION` 认领同一串
+  ⇒ ctest 打 `***Skipped` 并把它列进 "The following tests did not run"。为什么必须有这一条：三条腿的 `.ps1`
+  在真实数据缺失时各自兜底现生成合成样本、照样全绿（就是 `tests/CMakeLists.txt` 里那条
+  `SKIP_REGULAR_EXPRESSION "\[  SKIPPED \]"` 注释点名的"退出码 0 ⇒ Passed"假绿形态）。
+  判别取证（**`data/` 一字节未动**，`find data -newermt 2026-10-19 -type f | wc -l` 复算 = 0）：
+  把同一份包装挂进临时最小工程当真用例跑三臂 —— WORKSPACE_ROOT 指到不含 `data` 的目录 ⇒ `***Skipped***`
+  并列入 "did not run"；`-DMODE` 传非法值 ⇒ `***Failed***`；`-DPOWERSHELL_EXECUTABLE` 留空 ⇒ `***Failed***`。
+  三条臂的复算命令写在各包装头部注释里。
 
 ### 2) 安装态冒烟 —— 前置条件：确认运行库依赖扫描器（N84）
 
@@ -263,8 +289,10 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 692 / Release 690**（2026-10-21 现读；批次 A 收尾时是 635 / 633，
-  见下一条认证记录——本条只认现读值）；`comm -23` 差集仍恰为
+- **现行基线**：`ctest -N` 注册数 **Debug 697 / Release 695**（2026-10-21 Task C2 现读；批次 A 收尾时是 635 / 633，
+  见下一条认证记录——本条只认现读值；上一版这里写 692 / 690、而"全量墙钟基线"表写 693 / 691，两处差 1，
+  本轮起重读为同一组现值；那 1 条 = B21 新增的 `source_mojibake_guard`，
+  上一轮只改表没改这行，本轮已对齐，不留待核）；`comm -23` 差集仍恰为
   `gui_matching_ecc_register_debug_failure_offscreen`、`gui_matching_stitch_debug_failure_offscreen`（Release 侧无独有项）。
   ⇒ Release **恒少 2** 是注册数口径，不是"少通过 2 条"；两侧各自 100% 通过。
 - **批次 A 最终基线认证（21-D 收尾现跑，两棵树重编后各跑一次 `-j1` 全量）**：
@@ -295,13 +323,33 @@ cmake --install build/release --config Release --prefix install
   上一版这里写的 `:155-170,1449-1461` 就是漂了的）：`tests/CMakeLists.txt` 里搜
   `set(GIS_TEST_TIMEOUT 300)`、`gtest_discover_tests(gis_tests` 块内的 `PROPERTIES TIMEOUT`、
   文件末尾的 `set_property(TEST ${GIS_TIMED_TEST_NAMES}`。
-- **全量墙钟基线**（2026-10-21 收尾三轮现跑。云端构建停用后已经没有"步骤超时"这一档 ⇒
-  唯一还生效的时间上界是**单条用例 `TIMEOUT 300 s`**；全量墙钟只用作"再加用例要重跑这一栏"的触发线）：
+- **300 s 那条线现在有四个例外**（Task C2 / 预检裁定 R-C2b，2026-10-21 把四条真实数据回归纳入 ctest 起）：
+  `real_data_raster` / `real_data_matching` 各 **60 s**、`real_data_vector_quick` **720 s**、
+  `real_data_vector_full` **780 s**。数值不是拍的：取"整条腿墙钟"（`cmake -P` 包装的进程用时，含 `.ps1`
+  里 `Sync-PluginDlls` 与生成 `tmp/*_benchmark` 的开销，**不是**用例内计时合计）的实测最大值按 ≥4×
+  向上取整到 60 s 的倍数；三轮样本（Release 冷 11.569/2.047/153.050/115.943 s、Release 热
+  7.559/1.634/89.358/84.367 s、Debug 热 11.863/1.751/170.935/190.624 s）与算式逐条写在
+  `tests/CMakeLists.txt` 里 real_data_* 那一节的注释。
+  ⚠ **为什么这四条不能走 blanket**：文件末尾的 `set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY TIMEOUT 300)`
+  会把它们整体改回 300，而 Debug 树实测 vector 两条腿已经 170.9 s / 190.6 s ⇒ 300 只剩 1.6× 不到，
+  随时假 Timeout（本仓已实测过并发把 300 s 线撞出 3 条假 Timeout）。所以这四条的名字必须留在
+  `list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup ${GIS_REAL_DATA_TEST_NAMES})` 的豁免名单里，
+  名单走变量、不在两处各抄一遍名字。复算：
+  `grep -A3 "set_tests_properties(real_data" tests/CMakeLists.txt | grep TIMEOUT`。
+- **全量墙钟基线**（2026-10-21 Task C2 现跑。云端构建停用后已经没有"步骤超时"这一档 ⇒
+  时间上界只有**单条用例的 `TIMEOUT`**：blanket 是 300 s，四条 `real_data_*` 是上面那条例外（60/60/720/780）。
+  全量墙钟只用作"再加用例要重跑这一栏"的触发线；⚠ 本轮起它比上一版涨了三分钟量级，
+  **原因就是那四条腿进了全量**（逐条相加现读：Debug 11.39 + 1.56 + 170.46 + 193.20 = **376.61 s**；
+  Release 7.36 + 1.63 + 92.39 + 90.06 = **191.44 s**），不是别的用例变慢。
+  但要如实登记一处**没解释的差**：上一轮 693 条 429.86 s，本轮扣掉那四条腿后其余部分只跑了
+  741.52 − 376.61 = **364.91 s**，比上一轮的同一批用例**快约 65 s**，超出我给本机定的 ±25 s 波动带。
+  我没有这 65 s 的因果（两轮之间只改了安装规则与判据文本，都不该影响其余用例），
+  ⇒ 按未解释项登记，不拿它论证任何东西；这一栏以后仍按现读写，不做跨轮比较。
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **693** | **429.86 s**（`build/tmp/fs_ctest_dbg.log`） | 374.46 s（B21 轮，也是 693 条） | `source_mojibake_guard` **22.31 s** ⇒ 300 ÷ 22.31 = **13.4×** |
-| Release | **691** | **231.79 s**（`build/tmp/fs_ctest_rel.log`） | 200.72 s（B21 轮，也是 691 条） | `source_mojibake_guard` **18.33 s** ⇒ 300 ÷ 18.33 = **16.4×** |
+| Debug | **697** | **741.52 s**（`build/tmp/c2_full_dbg.log`，Task C2 现跑，**已含四条 `real_data_*`**） | —— 697 条是本轮新形态，没有同计数历史 | `real_data_vector_full` **193.20 s** ⇒ 它自己的 780 ÷ 193.20 = **4.0×**；走 blanket 300 那批里最慢是 `source_mojibake_guard` 22.31 s ⇒ **13.4×** |
+| Release | **695** | **392.67 s**（`build/tmp/c2_full_rel.log`，同轮） | —— | `real_data_vector_full` **90.06 s** ⇒ 780 ÷ 90.06 = **8.7×**；`source_mojibake_guard` 18.33 s ⇒ **16.4×** |
 
   本轮两棵树都完整重配置（安装规则改动必须重配才生效）、跑前硬门控
   `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0、串行 `-j1`，结果
@@ -563,8 +611,10 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
 
 ### 收尾二轮（2026-10-21）：真实矢量回归暴露的四条判据缺陷
 
-`real_vector_regression` 是 `add_custom_target`，**不在 ctest 的 693/691 里** ⇒ 只有
-`cmake --build build/release --config Release --target real_vector_regression` 会跑它。
+`real_vector_regression` 当时是 `add_custom_target`，**不在 ctest 的 693/691 里** ⇒ 只有
+`cmake --build build/release --config Release --target real_vector_regression` 会跑它
+（**本批 Task C2 已把四条腿纳入 ctest**，用例名 `real_data_*` ⇒ 判据再被改坏就是全量当场红/跳，
+销账记录见本节末尾 N112 那一条）。
 本轮按"各功能要能真出结果"的要求首跑这条链路（输入是 `data/vector/北京市_道路.shp` 过滤后的 22836 要素），
 一次暴露四处，且**全在判据侧、没有一处是产品算错**：
 
@@ -584,14 +634,27 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
    "JSON 语法无效 (position 230)" 这种**假产品缺陷**（实测该文件严格 UTF-8 可解、`次干道` 完好）。
    现不整读 JSON，改判"文件头是 FeatureCollection + 转出的图层能被读回同样的要素数"。
 
-现值：quick 15 条全过（用例内计时合计 87.48 s，其中 buffer 38.31 s、spatial_join 40.16 s）；
-`full` 在此之上另加 clip_stress / difference_stress。
-⚠ 口径要说清：这条链路判的是**要素数与"产物还能被读回"**，不判几何顶点。
-"每一刀切得对不对"由 ctest 里的 GOLD 用例钉（`tests/action_gold_cases.txt` 现读
-126 个动作 = GOLD 54 / PENDING 72，PENDING 的定义是"只有成功+产物存在级断言，数值正确性未钉"）。
-挂账 **N112**：这四条修复自身没有机器级兜底 —— 目标不在 ctest 里，改完判据后是否还跑全靠人记得；
-把 `real_*_regression` 纳入 ctest（带数据缺失即 SKIP 的语义）留待批次 C 决定。
-
+挂账 **N112**（**批次 C Task C2 已销**，2026-10-21）：这四条修复自身没有机器级兜底 —— 目标不在 ctest 里，
+改完判据后是否还跑全靠人记得；把 `real_*_regression` 纳入 ctest（带数据缺失即 SKIP 的语义）留待批次 C 决定。
+→ **销账内容**：`tests/CMakeLists.txt` 新增四条 ctest 用例 `real_data_raster` / `real_data_matching` /
+`real_data_vector_quick` / `real_data_vector_full`，复用同一套 `tests/run_real_*.cmake` 包装
+（六个 `add_custom_target` 原样保留做人工入口；用例名刻意与目标名不同 ⇒ `ctest -R` 不会把两种语义混进一次筛选）。
+四条共用一把新锁 `RESOURCE_LOCK real_data_regression`（它们都写 <仓库根>/tmp/*_benchmark 与 *_regression），
+各带按实测墙钟 ≥4× 向上取整到 60 s 的 `TIMEOUT`（60 / 60 / 720 / 780 s，三轮样本与算式写在该文件注释里，
+不再沿用拍来的 900），并**恒注册**在 `if(GIS_POWERSHELL_EXECUTABLE)` 之外（解释器缺失由包装脚本判红，
+不是"用例静默不注册"）。`data/` 缺失时三份包装在调 `.ps1` 之前打印 `GIS_SKIP: data/ not present` 并 `return()`，
+用例侧 `SKIP_REGULAR_EXPRESSION` 认领同一串 ⇒ ctest 报 **Skipped** 而不是 Passed（裁定 R-C2a）。
+判别取证（控制器端到端复跑，`data/` 一字节未动）：把 `run_real_matching_regression.cmake` 挂进临时最小工程
+当真用例跑三臂 —— ① WORKSPACE_ROOT 指到不含 `data` 的目录 ⇒ `***Skipped***` 并列入 "did not run"；
+② WORKSPACE_ROOT 正确、`-DMODE=zzz`（腿真失败）⇒ `***Failed***`；③ `-DPOWERSHELL_EXECUTABLE` 留空 ⇒ `***Failed***`。
+⇒ Skip 只在命中那条标记时发生，真失败仍然是红 ⇒ 用例不空转。
+④ 本批加固：三份包装在 data 检查**之前**先验 `${WORKSPACE_ROOT}/tests/<对应 .ps1>` 存在，缺失即 `FATAL_ERROR`。
+成因是控制器自己踩出来的：`add_test` 里把参数写成 `-DWORKSPACE_ROOT="${X}"` 时 Windows 的 argv 复原会把引号
+留在**值内部**，于是 `data` 检查认不出路径 ⇒ 四条真用例整批静默 `***Skipped***` 而全量照绿。
+⚠ **遗留（登记不修，归 C5 / C10 那类批次）**：本轮现读 `data/` 只有 `dem`、`image`、`vector` 三个子目录，
+**没有** `data/raster` 与 `data/matching` ⇒ raster 与 matching 两条腿的"真实数据"取径一直在走
+`tmp/*_benchmark/generated_data` 的合成兜底分支。这四条兜住的是"`data/` 整目录不在时不装绿"与
+"判据本体每次全量都真跑"，**不等于**那两条腿判的是真图（要按真实图收紧判据，等 C1 矩阵排到那两个插件）。
 挂账 **N114**：批次 A 改过的 17 项算法问题里，有 **4 个动作今天仍是 `PENDING`**（登记表现为机器判定，
 不是印象：`CoverageMeta.GoldEvidenceIsAuditable` 会回到用例块体核"剥完注释后是否仍有数值断言"）——
 `cutting.tile`（Task 17/18）、`processing.pansharpen`（Task 13）、`raster_math.band_math`（Task 5）、
