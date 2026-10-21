@@ -6850,6 +6850,87 @@ TEST_F(PluginTest, VectorInteriorPointExecution) {
     EXPECT_LE(point->getY(), 4.0);
     OGRFeature::DestroyFeature(outFeat);
     GDALClose(outDs);
+
+    // N117：矩形夹具上"面积重心 / 包框中心 / 面内代表点"三种定义同值，抓不到
+    // interior_point 用错算法。这一段专门用**凹面**把"代表点必须落在形内"这条定义级
+    // 性质钉住。夹具是两条宽 1 的臂组成的 L：(0,0)-(10,0)-(10,1)-(1,1)-(1,10)-(0,10)。
+    // 面积 = 横臂 10x1=10（形心 (5,0.5)）+ 竖臂 1x9=9（形心 (0.5,5.5)）= 19
+    //   cx = (10*5 + 9*0.5)/19 = 54.5/19 = 2.8684
+    //   cy = (10*0.5 + 9*5.5)/19 = 54.5/19 = 2.8684
+    // 而该 L 形只在 y<=1 或 x<=1 的条带上有点，(2.8684, 2.8684) **不在形内**
+    // ⇒ 面积重心（=现在的 Centroid()）在这里必红，面内代表点（PointOnSurface）必绿。
+    // 不钉具体坐标（代表点本来不唯一），只钉性质 —— 避免把某个 GEOS 版本的选择当期望值写死。
+    const std::string lInput = utf8PathString(getTestDir() / "e2e_interior_point_l_input.gpkg");
+    const std::string lOutput = utf8PathString(getTestDir() / "e2e_interior_point_l_output.gpkg");
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(lInput.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(0, 0);
+        ring.addPoint(10, 0);
+        ring.addPoint(10, 1);
+        ring.addPoint(1, 1);
+        ring.addPoint(1, 10);
+        ring.addPoint(0, 10);
+        ring.addPoint(0, 0);
+        poly.addRing(&ring);
+
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetField("name", "L");
+        feat->SetGeometry(&poly);
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> lParams;
+    lParams["action"] = std::string("interior_point");
+    lParams["input"] = lInput;
+    lParams["output"] = lOutput;
+
+    const auto lResult = p->execute(lParams, progress_);
+    EXPECT_TRUE(lResult.success) << lResult.message;
+    ASSERT_TRUE(fs::exists(lOutput));
+    EXPECT_EQ(lResult.metadata.at("feature_count"), "1");
+
+    OGRLinearRing lRing;
+    lRing.addPoint(0, 0);
+    lRing.addPoint(10, 0);
+    lRing.addPoint(10, 1);
+    lRing.addPoint(1, 1);
+    lRing.addPoint(1, 10);
+    lRing.addPoint(0, 10);
+    lRing.addPoint(0, 0);
+    OGRPolygon lShape;
+    lShape.addRing(&lRing);
+
+    GDALDataset* lDs = static_cast<GDALDataset*>(GDALOpenEx(
+        lOutput.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(lDs, nullptr);
+    OGRLayer* lLayer = lDs->GetLayer(0);
+    ASSERT_NE(lLayer, nullptr);
+    OGRFeature* lFeat = lLayer->GetNextFeature();
+    ASSERT_NE(lFeat, nullptr);
+    const auto* lPoint = lFeat->GetGeometryRef()->toPoint();
+    ASSERT_NE(lPoint, nullptr);
+    EXPECT_TRUE(lShape.Contains(lPoint))
+        << "interior_point 给出的代表点不在凹面内部，坐标=("
+        << lPoint->getX() << ", " << lPoint->getY() << ")";
+    EXPECT_TRUE(lShape.IsPointOnSurface(lPoint))
+        << "IsPointOnSurface 判假，坐标=(" << lPoint->getX() << ", " << lPoint->getY() << ")";
+    OGRFeature::DestroyFeature(lFeat);
+    GDALClose(lDs);
 }
 
 TEST_F(PluginTest, VectorDuplicatePointCheckExecution) {

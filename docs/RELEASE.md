@@ -673,7 +673,46 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
 **没有** `data/raster` 与 `data/matching` ⇒ raster 与 matching 两条腿的"真实数据"取径一直在走
 `tmp/*_benchmark/generated_data` 的合成兜底分支。这四条兜住的是"`data/` 整目录不在时不装绿"与
 "判据本体每次全量都真跑"，**不等于**那两条腿判的是真图（要按真实图收紧判据，等 C1 矩阵排到那两个插件）。
-挂账 **N117**（批次 C C3a 实测发现的算法语义缺陷，产品侧未修）：`vector.interior_point` 没有履行
+挂账 **N117**（**2026-10-21 已修**，用户裁定"直接改，带前后对比验证后提交"）：
+
+- 改的是什么：`src/plugins/vector/vector_plugin_interior_point.inc` 里 `interior_point` 原来调
+  `OGRGeometry::Centroid()`（面积重心），与 `centroid` 动作**同一行实现**；现改走 GDAL 的
+  `OGR_G_PointOnSurface`（GEOS point-on-surface），语义变成"保证落在几何内部的代表点"。
+  没有保留"取不到点就退回 `Centroid()`"的兜底 —— 那等于把形外点这条后门留在原地。
+- 前后对比（同一夹具、同一二进制新鲜度检查：`grep -c "error C"`=0 且 dll mtime 晚于源）：
+  · 凹面夹具（两条宽 1 的臂组成的 L 形，面积 19）：改前输出 `(2.8684210526, 2.8684210526)`，
+    `Contains()` 与 `IsPointOnSurface()` **双假**（用例红，见 `tests/test_plugins.cpp` 的
+    `VectorInteriorPointExecution`）；改后落在形内，两条性质断言均绿。
+    期望值由夹具形状手算（横臂 10×1 形心 (5,0.5) + 竖臂 1×9 形心 (0.5,5.5) ⇒ 54.5/19 = 2.8684），
+    不从产物回填。改前那次红同时就是这条断言的 R-B16 变异取证（变异 = 上一版已发布实现）。
+  · 凸/矩形夹具 `(0,0)-(10,0)-(10,4)-(0,4)`：改前改后**同为 (5,2)**（三种定义在此重合），
+    用来证明没有把简单情形改坏。
+  · 真实混合图层（`中国_省.geojson` 的副本，42 要素 = 34 面 + 8 线）：改前 `feature_count: 42 /
+    skipped_count: 0`，改后 **42 / 0 两棵构树各自复现** ⇒ 没有把线要素改写成跳过（这正是选
+    `OGR_G_PointOnSurface` 而不是 `OGRSurface::PointOnSurface` 的原因）。
+  · 纯线图层（`bj_roads_core_3857.gpkg`）：改前改后都是显式 `Error: Interior point currently only
+    supports polygon layers` ⇒ 该动作的适用面没变。
+- **用户可见行为变更**：凹面/多部件要素上，本动作输出的点坐标会变（原来可能在形外，现在保证在形内）；
+  面内点唯一的情形（凸面、矩形）不变。依赖旧坐标的下游需重跑。
+- 为什么先前用 `reinterpret_cast` 而不是直接写 `normalized->PointOnSurface(&point)`：本仓 GDAL 3.12 的
+  `OGRGeometry` **基类没有**该虚函数（它在 `OGRSurface` 上，`ogr_geometry.h:2385`），且 `OGRGeometryH`
+  是 `void*` —— 隐式转换在 Debug 配置报 `C2664`。GDAL 自己的 `FROM_H/TO_H` 也是显式转换。
+
+挂账 **N119**（未解释，登记不修）：同一份 `vector_plugin_interior_point.inc` 的隐式句柄转换，
+**Release 配置编译通过、Debug 配置报 4 个 `error C`**（两棵树的 `plugin_vector.vcxproj`
+预处理定义与 include 路径逐字比对无差异）。强制重编 Release 亦 0 error ⇒ 不是"没编译"。
+我没有这个分歧的因果，只把代码改成配置无关的显式 `reinterpret_cast` 消除依赖；
+若以后再出现"一个配置编得过一个编不过"，要先查构树差异再改代码。
+
+挂账 **N118**（C3a-3a 的负对照实测，属判据强度问题、不是登记造假）：
+`vector.convex_hull` / `vector.envelope` / `vector.boundary` 三条 GOLD 的数值判据都是**转置不变量**
+（只比 `get_Area()` / `get_Length()`）：把凸包顶点整体 x↔y 转置后三条用例**全绿**（且编译真过、
+dll 比源新）⇒ 这类判据抓不到"坐标轴互换"。另有夹具盲区：三条夹具各 1 要素 ⇒"只处理第一个要素"
+"要素数算错"不可见；`boundary` 夹具是 10×10 正方形 ⇒ 转置与起点选择都不可见。
+⇒ 需要一轮"补钉坐标断言"的小批（不是重做取证）；补断言时注意 `get_Length()` 不隐式闭合而
+`get_Area()` 隐式闭合，同一族"丢收尾点"变异在两条判据上的可见性相反，配方别照抄。
+
+（原文如下，保留以便对账：）`vector.interior_point` 没有履行
 "点在面内"的语义 —— 它与 `vector.centroid` **走同一行实现**（都调 `normalized->Centroid(&point)`），
 所以对凹形给出的是**面积重心**，可以落在形外。实测夹具：不对称 L 形 `(0,0)-(12,0)-(12,3)-(4,3)-(4,8)-(0,8)`
 （底条 12×3、左条 4×5、总面积 56）⇒ 两动作都输出 `(3.2222, 3.2222)`，而该 L 形只在
