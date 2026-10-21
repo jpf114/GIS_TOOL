@@ -269,7 +269,10 @@ CI 参考：[.github/workflows/windows-build.yml](../.github/workflows/windows-b
 - **`TIMEOUT`（测试属性）是本工具链唯一的执法者**；`PROCESS_TIMEOUT` **无效** —— 它不是 CMake 属性
   （`cmake --help-property-list` 里有 `TIMEOUT`、`TIMEOUT_AFTER_MATCH`、`TIMEOUT_SIGNAL_NAME`、`TIMEOUT_SIGNAL_GRACE_PERIOD`，没有 `PROCESS_TIMEOUT`），
   接受了也不执行。现值：`GIS_TEST_TIMEOUT = 300`，configure 期用例经 `set_property(TEST …)`、
-  gtest 发现用例经 `PROPERTIES`，两侧读同一个变量不会漂移（`tests/CMakeLists.txt:155-170,1449-1461`）。
+  gtest 发现用例经 `PROPERTIES`，两侧读同一个变量不会漂移。取证请用文本锚点（行号会随本文件增删失真，
+  上一版这里写的 `:155-170,1449-1461` 就是漂了的）：`tests/CMakeLists.txt` 里搜
+  `set(GIS_TEST_TIMEOUT 300)`、`gtest_discover_tests(gis_tests` 块内的 `PROPERTIES TIMEOUT`、
+  文件末尾的 `set_property(TEST ${GIS_TIMED_TEST_NAMES}`。
 - **余量算式**（`timeout-minutes: 20` = 1200 s 对本地全量墙钟；job 级 90 min 为整体上限）：
 
 | 配置 | 注册数 | 本地全量墙钟（`-j1`、无并发构建） | 步骤超时 | 余量 |
@@ -438,7 +441,8 @@ GUI / CLI / 工作流三侧的 `plugin->execute` 现在统一经一个 `executeG
   "对所有加载到的插件执法 + 与 `cmake/PluginTargets.cmake` 的 13 个 target 对撞"，本批未实施。
 - 今天没有断言锁"spec `required=true` 的键必须保持可见"；这类收窄今后仍可能静默发生（判据缺口，已登记）。
 - **待拍板、本批未实施**：① B17 乱码检测器未落库、未注册成 ctest（含正例夹具与 U+FFFD 规则的建议见决策稿 §6）；
-  ② 仓库仍无 `.gitattributes`，8 个受版本控制的文件仍带 UTF-8 BOM（加/去影响 73 个工作区文件的换行尾，
+  ② 仓库仍无 `.gitattributes`，8 个受版本控制的文件仍带 UTF-8 BOM（加 `* text=auto` 后下一次检出
+  会有 **74 个**工作区文件换行尾 = 66 个 `w/lf` + 8 个 `w/mixed`，索引 0 条变化；
   见决策稿 §5）。
 
 ---
