@@ -1,0 +1,15 @@
+# clean fixture: real Chinese copy from this repo; the guard must report zero rules here
+    {"accuracy_assessment", QStringLiteral("精度评估")},
+    {"adjacency", QStringLiteral("邻接关系分析")},
+    {"arvi", QStringLiteral("ARVI（大气阻抗植被指数）")},
+    "action", "子功能", "选择要执行的子功能",
+    "input", "输入文件", "输入矢量/栅格文件路径",
+    "output", "输出文件", "输出文件路径",
+    #include <utility>   // priority-flood 的堆元素 std::pair<float, int>
+    // WHY 放在 progress 之后并带默认值：只有 fill_sinks 读它，默认 0.0 让
+    // flow_direction / flow_accumulation / stream_extract / watershed 这 4 个调用点
+    #include "../src/gui/gui_data_support.h"   // 与 tests/test_framework.cpp:7 的写法一致（gui 头文件不在 include 路径中）
+    // R-T13-5 的 pan_method 标签表锁要读 ParamCardWidget::enumLabelKeys（标签表本体在 param_card_widget.cpp，
+    // gis_tests 把它与测试编在同一个可执行文件里，见 tests/CMakeLists.txt:19）。
+    // Task B13 / N42：占位符只认 `${name}` 这一种形态，name 的字符集是 [A-Za-z0-9_.-]
+    // （覆盖 input / input_before / output_dir / basename / plugin.action.output）。

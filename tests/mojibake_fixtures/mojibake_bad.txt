@@ -1,0 +1,6 @@
+# fixtures for tests/check_source_mojibake.ps1 -- this file intentionally contains mojibake
+# excluded from the repo scan; used only by the guard's self-test (bad must flag, ok must not)
+R1_TARGET error = "绮惧害璇勪及: " + item;
+R2_TARGET error = "训练样本 CSV 加载失败 鏍锋粌" + path;
+R3_TARGET error = "nodatas 参数 婜錡ㄩ崷 无效" ;
+R4_TARGET error = "波段范围 娑擃︽￥€� 解析失败" ;

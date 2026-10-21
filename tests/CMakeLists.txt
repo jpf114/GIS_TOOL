@@ -1576,6 +1576,30 @@ if(GIS_POWERSHELL_EXECUTABLE)
     )
 endif()
 
+# ── Task B21 / B17：源码乱码守卫落成用例（用户 2026-10-21 拍板：四规则全带）──────────
+# WHY 判据不在 CMake 里写：四规则里 R1（GBK roundtrip）要 CP936 编解码器，CMake 没有编解码器
+#   （同族限制："CMake 无 zlib ⇒ 像素级独立判定不可行"）。R2-R4 只比码点，但**不能**因为
+#   "CMake 写得出来"就先只落这两条 —— B17 的教训正是规则只有两条就报"归零"，缺一条就是窄规则的 0。
+# WHY 注册在 if(GIS_POWERSHELL_EXECUTABLE) 之外：那条 if 只管 real_*_regression 的 custom target。
+#   本用例如果也躲进 if 里，解释器找不到的机器上它会**静默不注册**（ctest -N 少一条、CI 照绿），
+#   正是本批反复消灭的"没检查长得像检查通过"。所以这里恒注册，解释器缺失由脚本判红。
+# 判据本身带自证：先跑 tests/mojibake_fixtures/{bad,ok} —— bad 必须命中全部 4 条规则、
+#   ok（真实中文文案）必须 0 命中 ⇒ 规则退化或过宽都会先在这里红，而不是放过仓库里的真乱码。
+# 复算：cmake -DPS=<powershell> -DREPO_ROOT=<仓库根> -P tests/check_source_mojibake.cmake
+#   （退出码 0 = 干净；非 0 时 stdout 每行形如 "MOJIBAKE <规则> <相对路径>:<行号>"）
+if(GIS_POWERSHELL_EXECUTABLE)
+    set(_gis_mojibake_ps "${GIS_POWERSHELL_EXECUTABLE}")
+else()
+    # 空串而不是 ...-NOTFOUND：让脚本那侧的"为空即拒绝放行"判据能读到明确的缺失。
+    set(_gis_mojibake_ps "")
+endif()
+add_test(
+    NAME source_mojibake_guard
+    COMMAND ${CMAKE_COMMAND}
+        -DPS=${_gis_mojibake_ps}
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_source_mojibake.cmake
+)
 # Hard timeout for every test registered at configure time: a hanging test must fail, not
 # hang the pipeline. TESTS is the documented read-only directory property that lists the
 # tests add_test() has defined in this directory so far, so reading it at the very bottom
