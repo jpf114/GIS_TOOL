@@ -773,6 +773,24 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   **空几何/非法几何静默丢弃且不计数**，metadata 只有 `relation_count` / `issue_count`，
   **没有任何"扫了多少要素"的键** ⇒ 用户无法从产物判断覆盖范围；`nearest` 同类（空源几何 `continue` 不计数，
   `feature_count` 可以小于输入要素数且差额无处可查），而它的 `nearest_vector` 键是**入参字符串回显**、不是目标要素数，极易读错。
+- 挂账 **N125**（**产品缺陷，已由控制器独立复现**，2026-10-22；修法与夹具见工单 C3d）：
+  `overlap_check` 与 `topology_check` 对"这两个面是否重叠"给出**互相矛盾**的答案。
+  同一个真实省界派生件（`tmp/vector_benchmark/c3ba/prov3857.gpkg`，复制到 `build/tmp/n125/` 后现跑）：
+  `vector overlap_check` ⇒ `Success: Overlap check completed: 0 relations`、`relation_count: 0`、CSV 只剩表头；
+  `vector topology_check` ⇒ `issue_count: 1`，行是 **`12,14,overlap,401282`**
+  ⇒ fid 12 与 14 两个省**重叠约 0.4 km²**，而"重叠检查"报"一处都不重叠"。
+  根因（现读代码）：`vector_plugin_overlap_check.inc:79-89` 的 switch 只认 `Polygon`/`MultiPolygon`，
+  交集是 `wkbGeometryCollection` 时落 `default: 0.0` ⇒ `:92` 的 `overlapArea > 0.0` 不成立 ⇒ **整行不写**；
+  而 `topology_check` 走 `polygonIntersectionArea()`（`vector_plugin_common.inc:492-511`），会**递归累加集合里的子面面积**。
+  真实省界常是 `MultiPolygon`（飞地/跨海），相邻两省的交集里同时含面与共边线段是**常态**，不是罕见角落。
+  后果面：用"重叠检查"做数据质检会**漏报真实重叠**，而"拓扑检查"能报出来 ⇒ 同一份数据两个动作自相矛盾，
+  这是算法口径问题，不是文案问题。
+- 挂账 **N126**（测试基建口径，不是产品缺陷）：C3b-A 执行者自查发现 11 条腿的判据第一次被插在
+  `Invoke-SetupCommand` 的 `return` **之后**（死代码），正向跑 `rc=0` 全绿 ⇒ **"跑过"不等于"判过"**。
+  识破它的是**反向对照**（故意改坏表头，`rc` 仍 0 就说明判据在空转）；修正后两条反向对照当场红，
+  其中 NEG-2 的红点是 `singlepart_prov: 588 != multipart_check part_count 588`。
+  ⇒ 现口径：**每批真实腿交付必须至少附一条"已知会红"的反向对照原始输出**；
+  是否把反向自检臂做进脚本（工单 C3e）待定，代价是每轮多跑一次与脚本复杂度。
 
 （原文如下，保留以便对账：）`vector.interior_point` 没有履行
 "点在面内"的语义 —— 它与 `vector.centroid` **走同一行实现**（都调 `normalized->Centroid(&point)`），
