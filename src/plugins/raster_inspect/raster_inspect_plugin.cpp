@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <vector>
 
 namespace gis::plugins {
 
@@ -94,23 +95,37 @@ gis::framework::Result RasterInspectPlugin::doHistogram(
 
     double minVal = 0;
     double maxVal = 0;
-    rasterBand->ComputeStatistics(false, &minVal, &maxVal, nullptr, nullptr, nullptr, nullptr);
+    const CPLErr statsErr = rasterBand->ComputeStatistics(
+        false, &minVal, &maxVal, nullptr, nullptr, nullptr, nullptr);
 
-    if (minVal >= maxVal) {
-        return gis::framework::Result::fail("Band has no value range (min >= max)");
+    // N133：判据从"min >= max"换成"统计到底算不算得出来"。
+    // min == max 是完全合法的栅格 —— 常数栅格（整幅同一个值）、单像元栅格、以及 rasterize
+    // 刚烧出来的产物都会这样；旧实现把它和"全 NoData / 空波段 ⇒ 统计算不出来"合并成同一句
+    // "Band has no value range (min >= max)"，于是两件事同时坏：合法产物被判成坏数据，
+    // 而真该报错的那张图给出的诊断还是假的（改前实测：16 个 1.0 的 tif 与全 0=NoData 的 tif
+    // 返回的是逐字相同的一句）。
+    // 现在：只有真的算不出统计才失败，且案文点明"没有有效像元"；min == max 正常出值（见下）。
+    if (statsErr != CE_None) {
+        return gis::framework::Result::fail(
+            "Band has no valid pixels to sample (every cell is NoData, or the band is empty)");
     }
 
     progress.throwIfCancelled();
 
     progress.onProgress(0.4);
 
-    GUIntBig* histogram = new GUIntBig[bins]();
-    const CPLErr err = rasterBand->GetHistogram(
-        minVal, maxVal, bins, histogram,
-        TRUE, FALSE, nullptr, nullptr);
-
-    if (err != CE_None) {
-        delete[] histogram;
+    // 值域宽度为 0 时没有"可分的区间"，用户要多少桶都只能给 1 个。
+    // 计数仍然交给 GDAL：它按掩膜跳过 NoData，所以桶里是**有效像元数**而不是宽×高
+    //（12 个 1.0 + 4 个 NoData 的夹具必须给 12，这是本分支唯一能被证伪的形态）。
+    // 为了让 GDAL 走普通的"落在区间内"分支，把唯一的桶对称地张成
+    // [min-0.5, min+0.5] ⇒ 桶心 (min-0.5 + 0.5) 恰好等于那个常数，不引入第二个值。
+    const bool constantRange = (minVal == maxVal);
+    const int effectiveBins = constantRange ? 1 : bins;
+    std::vector<GUIntBig> bucketCounts(static_cast<size_t>(effectiveBins), 0);
+    if (rasterBand->GetHistogram(constantRange ? minVal - 0.5 : minVal,
+                                 constantRange ? maxVal + 0.5 : maxVal,
+                                 effectiveBins, bucketCounts.data(),
+                                 TRUE, FALSE, nullptr, nullptr) != CE_None) {
         return gis::framework::Result::fail("Failed to compute histogram");
     }
 
@@ -118,29 +133,32 @@ gis::framework::Result RasterInspectPlugin::doHistogram(
 
     progress.onProgress(0.8);
 
-    const double binWidth = (maxVal - minVal) / bins;
+    const double binWidth = constantRange ? 0.0 : (maxVal - minVal) / bins;
 
     std::ostringstream oss;
     oss << "Histogram for " << input << " (Band " << band << ")\n";
     oss << "Range: [" << minVal << ", " << maxVal << "]\n";
-    oss << "Bins: " << bins << " (width=" << std::fixed << std::setprecision(6) << binWidth << ")\n\n";
+    oss << "Bins: " << effectiveBins << " (width=" << std::fixed << std::setprecision(6) << binWidth
+        << ")\n";
+    if (constantRange) {
+        oss << "Note: min == max, the band is constant => the single bin holds every valid pixel\n";
+    }
+    oss << "\n";
 
     oss << "{\"histogram\":[\n";
     GUIntBig totalCount = 0;
-    for (int i = 0; i < bins; ++i) {
-        const double binCenter = minVal + (i + 0.5) * binWidth;
-        totalCount += histogram[i];
+    for (int i = 0; i < effectiveBins; ++i) {
+        const double binCenter = constantRange ? minVal : minVal + (i + 0.5) * binWidth;
+        totalCount += bucketCounts[static_cast<size_t>(i)];
         oss << "  {\"bin\":" << i
             << ",\"center\":" << std::fixed << std::setprecision(4) << binCenter
-            << ",\"count\":" << histogram[i] << "}";
-        if (i + 1 < bins) {
+            << ",\"count\":" << bucketCounts[static_cast<size_t>(i)] << "}";
+        if (i + 1 < effectiveBins) {
             oss << ",";
         }
         oss << "\n";
     }
     oss << "],\"total\":" << totalCount << "}\n";
-
-    delete[] histogram;
 
     if (!output.empty()) {
         ensureParentDirectoryForFile(output);
@@ -155,7 +173,7 @@ gis::framework::Result RasterInspectPlugin::doHistogram(
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(oss.str(), output);
-    result.metadata["bins"] = std::to_string(bins);
+    result.metadata["bins"] = std::to_string(effectiveBins);
     result.metadata["min"] = std::to_string(minVal);
     result.metadata["max"] = std::to_string(maxVal);
     result.metadata["total_pixels"] = std::to_string(totalCount);
@@ -265,6 +283,14 @@ gis::framework::Result RasterInspectPlugin::doRasterInfo(
             oss << "  Max:    " << bMax << "\n";
             oss << "  Mean:   " << bMean << "\n";
             oss << "  StdDev: " << bStd << "\n";
+        } else {
+            // N133 的另一半：算不出统计（整波段都是 NoData / 空波段）时旧实现什么都不印，
+            // 用户只看到"这个波段没有统计块"，与"常数波段 min == max 照样算得出"两种情况
+            // 在屏幕上分不开 —— 直方图那条路径改前还把两者写成同一句案文。
+            // 这里把原因写成一行，口径与 histogram 的失败案文一致；
+            // 但**不**让整个 info 失败：info 是只读的结构报告，一个波段死掉不该藏起
+            // 驱动、尺寸、CRS、其余波段的统计（真实腿里有 33 条判据在读它的文本）。
+            oss << "  Statistics: (no valid pixels: band is entirely NoData or empty)\n";
         }
 
         const char* colorInterp = GDALGetColorInterpretationName(rasterBand->GetColorInterpretation());

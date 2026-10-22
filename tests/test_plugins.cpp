@@ -2548,6 +2548,156 @@ TEST_F(PluginTest, RasterInspectHistogramExecution) {
     EXPECT_EQ(result.metadata.at("bins"), "16");
 }
 
+// ── N133：raster_inspect 把常数栅格判成"没有值域" ────────────────────────────────
+// 改前现读（Release CLI，同一张 16 个 1.0 的合法 tif = build/tmp/n132/o3.tif）：
+//   histogram ⇒ Error: Band has no value range (min >= max)      ← 合法产物被判成坏数据
+//   info      ⇒ Min: 1 / Max: 1 / Mean: 1 / StdDev: 0（这条改前就是对的）
+//   另一张全 0 且 0=NoData 的 tif（N132 静默烧 0 的产物形状 o.tif）：
+//   histogram ⇒ Error: Band has no value range (min >= max)      ← 与上面**同一句**案文
+//   info      ⇒ 统计块整块不印、也不说为什么
+// ⇒ 两种情况（"算不出统计"和"值域宽度为 0"）共用同一个判据 min >= max，案文也不可区分。
+// 夹具算式（期望值先于产物写死）：w×h 全填 value，再把行主序末尾 tailCells 个像元填成
+//   0.0 并声明 NoData=0 ⇒ 有效像元数 = w*h - tailCells：
+//   (4,4,1.0,0)  ⇒ 16 个有效像元，min == max == 1
+//   (4,4,1.0,4)  ⇒ 12 个有效像元，min == max == 1   ← 这一条专门打死"桶数按 w*h 交差"的假修法
+//   (4,4,0.0,16) ⇒ 0 个有效像元 ⇒ 统计根本算不出来，这才是唯一该报错的情形
+static std::string createConstantRasterWithNoDataTail(const std::string& name, int w, int h,
+                                                      float value, int tailCells) {
+    const std::string path = (getTestDir() / name).string();
+    std::error_code ignored;
+    fs::remove(path, ignored);
+    fs::remove(path + ".aux.xml", ignored);   // PAM 里缓存的统计/直方图会让"改前红"变成"读到旧值"
+
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+    double adfGT[6] = {116.0, 1.0, 0.0, 40.0, 0.0, -1.0};
+    ds->SetGeoTransform(adfGT);
+
+    std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), value);
+    const int totalCells = w * h;
+    for (int i = totalCells - tailCells; i < totalCells; ++i) {
+        data[static_cast<size_t>(i)] = 0.0f;
+    }
+    auto* band = ds->GetRasterBand(1);
+    band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+    band->SetNoDataValue(0.0);
+    band->FlushCache();
+    return path;
+}
+
+// 常数栅格必须出值：值域宽度为 0 时给**一个**桶，桶心就是那个常数，数量是有效像元数。
+TEST_F(PluginTest, RasterInspectHistogramAcceptsConstantRaster) {
+    auto* p = mgr_.find("raster_inspect");
+    if (!p) {
+        FAIL() << "plugin not loaded: raster_inspect";
+    }
+
+    // 臂 1：整幅 1.0、无 NoData ⇒ 16 个有效像元
+    const std::string full = createConstantRasterWithNoDataTail(
+        "e2e_hist_const_full_input.tif", 4, 4, 1.0f, 0);
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("histogram");
+    params["input"] = full;
+    params["bins"] = 8;   // 用户要 8 个桶，常数值域下也只能给 1 个（不能凭空造 8 个区间）
+
+    const auto fullResult = p->execute(params, progress_);
+    ASSERT_TRUE(fullResult.success)
+        << "N133：常数栅格被 min >= max 判成没有值域，message=" << fullResult.message;
+    EXPECT_EQ(fullResult.metadata.at("min"), "1.000000") << fullResult.message;
+    EXPECT_EQ(fullResult.metadata.at("max"), "1.000000") << fullResult.message;
+    EXPECT_EQ(fullResult.metadata.at("bins"), "1") << "min == max ⇒ 只能给 1 个桶";
+    EXPECT_EQ(fullResult.metadata.at("total_pixels"), "16") << "手推：4*4-0 = 16 个有效像元";
+    EXPECT_EQ(fullResult.message.find("\"bin\":1"), std::string::npos)
+        << "不得出现第二个桶。实际 message=" << fullResult.message;
+    EXPECT_NE(fullResult.message.find("Range: [1, 1]"), std::string::npos)
+        << "值域要把两个端点都写出来（Min == Max），实际 message=" << fullResult.message;
+    EXPECT_NE(fullResult.message.find("\"count\":16"), std::string::npos)
+        << "那一个桶要装下全部 16 个像元，实际 message=" << fullResult.message;
+
+    // 臂 2：12 个 1.0 + 4 个 NoData ⇒ 桶里是 12，不是 w*h=16（打死"按尺寸交差"的假修法）
+    const std::string partial = createConstantRasterWithNoDataTail(
+        "e2e_hist_const_tail_input.tif", 4, 4, 1.0f, 4);
+    params["input"] = partial;
+    const auto partialResult = p->execute(params, progress_);
+    ASSERT_TRUE(partialResult.success) << partialResult.message;
+    EXPECT_EQ(partialResult.metadata.at("bins"), "1");
+    EXPECT_EQ(partialResult.metadata.at("total_pixels"), "12")
+        << "手推：4*4-4 = 12 个有效像元，NoData 不参与计数";
+    EXPECT_NE(partialResult.message.find("\"count\":12"), std::string::npos)
+        << "实际 message=" << partialResult.message;
+}
+
+// info 对常数栅格要照常报出 Min == Max（改前这一条就是绿的，留着是防"顺手把 info 也改成报错"）。
+TEST_F(PluginTest, RasterInspectInfoAcceptsConstantRaster) {
+    auto* p = mgr_.find("raster_inspect");
+    if (!p) {
+        FAIL() << "plugin not loaded: raster_inspect";
+    }
+
+    const std::string input = createConstantRasterWithNoDataTail(
+        "e2e_info_const_input.tif", 4, 4, 1.0f, 4);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("info");
+    params["input"] = input;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_NE(result.message.find("Min:    1"), std::string::npos)
+        << "常数栅格要报出最小值 1。实际 message=" << result.message;
+    EXPECT_NE(result.message.find("Max:    1"), std::string::npos)
+        << "常数栅格要报出最大值 1（与最小值相等是合法的）。实际 message=" << result.message;
+    EXPECT_EQ(result.message.find("no valid pixels"), std::string::npos)
+        << "12 个有效像元不该被说成没有有效像元。实际 message=" << result.message;
+}
+
+// 全 NoData（=N132 静默烧 0 产物的形状）才是"算不出统计"，必须报错，而且案文要和
+// 改前那句 min >= max 不同 —— 两种情况共用一句话正是本缺陷的后一半。
+TEST_F(PluginTest, RasterInspectHistogramRejectsAllNoDataBand) {
+    auto* p = mgr_.find("raster_inspect");
+    if (!p) {
+        FAIL() << "plugin not loaded: raster_inspect";
+    }
+
+    const std::string input = createConstantRasterWithNoDataTail(
+        "e2e_hist_nodata_input.tif", 4, 4, 0.0f, 16);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("histogram");
+    params["input"] = input;
+    params["bins"] = 8;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success) << "全 NoData 的波段算不出统计，必须失败：" << result.message;
+    EXPECT_NE(result.message.find("no valid pixels"), std::string::npos)
+        << "案文要明说没有有效像元，而不是含糊的没有值域。实际 message=" << result.message;
+    EXPECT_EQ(result.message.find("no value range"), std::string::npos)
+        << "不得再复用改前那句 min >= max 案文（它同时被常数栅格与全 NoData 共用 ⇒ 诊断是假的）。"
+           "实际 message=" << result.message;
+}
+
+// info 这一侧：算不出统计时不整块静默消失，要把原因写出来（与 histogram 的案文同口径），
+// 但仍不因此让整个只读报告动作失败 —— 见报告里的两条路对账。
+TEST_F(PluginTest, RasterInspectInfoDistinguishesAllNoDataBand) {
+    auto* p = mgr_.find("raster_inspect");
+    if (!p) {
+        FAIL() << "plugin not loaded: raster_inspect";
+    }
+
+    const std::string input = createConstantRasterWithNoDataTail(
+        "e2e_info_nodata_input.tif", 4, 4, 0.0f, 16);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("info");
+    params["input"] = input;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_NE(result.message.find("no valid pixels"), std::string::npos)
+        << "算不出统计时要说明原因，不能只把统计块整块删掉。实际 message=" << result.message;
+    EXPECT_EQ(result.message.find("Min:    "), std::string::npos)
+        << "没有有效像元就不该编造 Min。实际 message=" << result.message;
+}
+
 TEST_F(PluginTest, RasterRenderColormapExecution) {
     auto* p = mgr_.find("raster_render");
     ASSERT_NE(p, nullptr);
