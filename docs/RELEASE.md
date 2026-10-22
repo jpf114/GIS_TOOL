@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 719 / Release 717**（2026-10-22 批次 C C3h-1 收口轮现读；上一档 713 / 711 是同日 C3j 现读，再上一档 705 / 703 是 C3g，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 722 / Release 720**（2026-10-22 批次 C C3i 收口轮现读；上一档 719 / 717 是同日 C3h-1，再上一档 713 / 711 是 C3j，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,9 +297,10 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 719 / Release 717**（2026-10-22 批次 C C3h-1 收口轮现读，比上一档 713 / 711 各多 6 条 = N128 路径 A 新增的
-  `PluginTest.VectorUnion{EmitsOverlayOnlyPiece,SplitsIntoThreePieceClasses,RenamesOverlayFieldOnNameCollision,DeduplicatesOverlappingOverlayPolygons,ReadsMultiPolygonPieceAreaByClassFamily,KeepsUserFieldNamedSourceAndRenamesMarker}`
-  （**逐名比对**得出，删除 0 条，不是拿 719−713 反推）；上一档 713 / 711 是同日 C3j（+8 = N132/N133/N134 三刀的
+- **现行基线**：`ctest -N` 注册数 **Debug 722 / Release 720**（2026-10-22 批次 C C3i 收口轮现读；相比上一档 719 / 717 **净 +3**，
+  由两刀合成：C3k 把一条 `real_data_vector_full` 换成 `checks`/`overlay` 两条（−1+2 = **+1**），
+  C3i 新增 `PluginTest.VectorBufferRejectsMissingSrs` 与 `PluginTest.VectorDissolveRejectsMissingSrs`（**+2**）。
+  上一档 719 / 717 是同日 C3h-1 收口轮（+6 = `PluginTest.VectorUnion*` 六条，逐名比对得出）；再上一档 713 / 711 是同日 C3j（+8 = N132/N133/N134 三刀的
   4 条 `VectorRasterize*` + 4 条 `RasterInspect*`）；再上一档 705 / 703 是 C3g（+5 = dissolve/rasterize 的前置校验与元数据用例）；批次 A 收尾时是 635 / 633，
   见下一条认证记录——本条只认现读值；上一版这里写 692 / 690、而"全量墙钟基线"表写 693 / 691，两处差 1，
   当时起重读为同一组现值；那 1 条 = B21 新增的 `source_mojibake_guard`，
@@ -366,20 +367,22 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **719** | **1245.47 s**（批次 C C3h-1 收口轮现跑，`build/tmp/c3h1_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 719 条**首档**；往前八档（697~713 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 s** | 最慢 `real_data_vector_full` **378.52 s** ⇒ 780 ÷ 378.52 = **2.06×**；次慢 `real_data_vector_quick` **285.38 s** ⇒ 720 ÷ 285.38 = **2.52×**；`source_mojibake_guard` 20.98 s ⇒ 300 ÷ 20.98 = **14.3×** |
-| Release | **717** | **737.79 s**（同一轮紧随其后跑；`build/tmp/c3h1_close_rel.log` 不入库） | 717 条**首档**；往前七档（695~711 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 s** | 最慢 `real_data_vector_full` **270.78 s** ⇒ 780 ÷ 270.78 = **2.88×**；`real_data_vector_quick` **199.41 s** ⇒ 720 ÷ 199.41 = **3.61×**；`source_mojibake_guard` 19.14 s ⇒ 300 ÷ 19.14 = **15.7×** |
-⚠ **本轮两条真实腿在两台树上同时大幅变重，我不给因果**（现读，不推测）：Debug `full` 261.53 → **378.52 s**、`quick` 243.00 → **285.38 s**；Release `full` 111.10 → **270.78 s**、`quick` 94.85 → **199.41 s**。
-本轮新增的 6 条用例全是插件单测（`VectorUnion*` 6 条，单条 0.x s 级，选择器 28 条整跑 6.66 s）⇒ 增量的量级**不可能**由它们解释。
-**但这次不是"只涨一轮就回落"的噪声**：`real_data_vector_full` 在收口轮之后**又单跑了一次**（机器安静、无并发构建）⇒
-**376.63 s**，与 378.52 s 差 1.89 s ⇒ 本轮起值是**稳定新值**。候选只列不证（派生件磁盘状态、杀软对 `build/tmp` 的扫描、
-`install_closure`/`source_mojibake_guard` 同轮也各涨 2~8 s）。
+| Debug | **722** | **916.43 s**（批次 C C3i 收口轮现跑，`build/tmp/c3i_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 722 条**首档**；往前九档（697~719 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 s** | 最慢 `real_data_vector_overlay` **245.82 s** ⇒ 670 ÷ 245.82 = **2.73×**；次 `real_data_vector_quick` **211.09 s** ⇒ 720 ÷ 211.09 = **3.41×**；`real_data_vector_checks` **32.48 s** ⇒ 100 ÷ 32.48 = **3.08×**；`source_mojibake_guard` 12.79 s ⇒ **23.5×** |
+| Release | **720** | **469.43 s**（同一轮；**1 条红**，见下） | 720 条**首档**；往前八档（695~717 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 s** | 最慢 `real_data_vector_overlay` **101.80 s** ⇒ 670 ÷ 101.80 = **6.58×**；`real_data_vector_quick` **118.95 s** ⇒ 3.05×；`real_data_vector_checks` **18.97 s** ⇒ 5.27× |
+⚠ **Release 本轮不是全绿：`runtime_dll_cross_config_audit` 红（719/720）**。它判的是 `build/release/plugins` 里
+**26 个只属于 Debug 配置的运行库残留**（`Qt6Cored.dll`/`gdald.dll`/`opencv_*4d.dll`/`pcre2-*d.dll` 等）。
+这条红**与 C3i 的代码改动无关**（审计只扫构建产物目录，不碰 buffer/dissolve），登记为 **N136**；
+它的**成因我没有查清、因此不写因果**：`dir /tc` 显示这些文件 2026-10-14 就在，而同日 11:44 与 13:0x 两轮 Release 全量里
+这条审计都是绿的（`build/tmp/c3j_close_rel.log`、`c3h1_close_rel.log`）——**同一批文件、同一命令、两种结论**，
+要么时间戳不可信（`file(COPY)` 会保留源时间戳），要么前两轮的绿是空转。两种可能都必须取证后才能删文件，
+按本文件纪律**先立案不动产物**。C3i 的判据腿（两条新用例 + 判据族）在两棵树各 30/30，不受影响。
 
-**触发线（我自己给自己下的规则）——本轮已经踩到**：`real_data_vector_full` 的 `TIMEOUT` 余量本轮现读
-**Debug 2.06×（单跑复核 376.63 s ⇒ 2.07×）/ Release 2.88×**，Debug 侧**跌破 2.5× 触发线**。
-规则的处理方式是**把这条腿按插件/动作切成两条注册用例、各自带 `TIMEOUT`**，**不是抬 `TIMEOUT`** ——
-抬数字等于把"挂起"的检测窗口一起拉长，而 `TIMEOUT` 是本工具链唯一的执法者（`PROCESS_TIMEOUT` 无效）。
-⇒ 开工刀 = 工单 `Task C3k`（拆腿；并要求"两半的用例名集合之并 == 拆分前 `full` 的用例名集合"这条机器级证明，
-防止拆分过程把某条腿拆没了）。**在 C3k 落地之前，禁止再往 `full` 里加新真实腿**（含 C3h-3 的 union 面 × 面腿）。
+**触发线（我自己给自己下的规则）——已处置完毕，现在的口径按"半条腿"算**：2026-10-22 拆腿前
+`real_data_vector_full` 的 Debug 余量掉到 **2.06×**（378.52 s，单跑复核 376.63 s）⇒ 触发。
+处置 = **拆成 `real_data_vector_checks` 与 `real_data_vector_overlay` 两条注册用例、各自带 `TIMEOUT`**（**没有抬数**），
+拆后本轮现读 Debug 余量 **3.08× / 2.73×**、Release **5.27× / 6.58×**（明细见上表）。
+⇒ **以后每一半各自守 2.5×**：哪一半再跌破，就再把那一半按动作拆，仍然不许抬 `TIMEOUT`
+（抬数字等于把"挂起"的检测窗口一起拉长，而 `TIMEOUT` 是本工具链唯一的执法者，`PROCESS_TIMEOUT` 无效）。
 每轮加腿后必须现跑现填这一栏，不许按条数外推。
 
   两轮分开写清（上一版这里把两轮混成"本轮"，正是本文件刚修过的"表改了 prose 没改"同一形态）：
@@ -428,15 +431,27 @@ cmake --install build/release --config Release --prefix install
     8 条全是插件单测（4 条 `PluginTest.VectorRasterize*` + 4 条 `PluginTest.RasterInspect*`），
     两棵树差集仍恰为 `gui_matching_ecc_register_debug_failure_offscreen` /
     `gui_matching_stitch_debug_failure_offscreen`（`comm -13` 为空）。
-  - **批次 C C3h-1 收口轮**（本表现值，产品修复 N128 路径 A）：树上多了 `8ed6b75`（union 真并集三块 + 两侧整表属性 +
+  - **批次 C C3h-1 收口轮**（当时那一档，产品修复 N128 路径 A）：树上多了 `8ed6b75`（union 真并集三块 + 两侧整表属性 +
     4 个 `union_*` 计数键）、`ff86362`（复审回收：分块面积改按类族 `dynamic_cast` 读数、加 MultiPolygon 与 `source` 撞名两条判据、
     源独有块减法基换成"本轮已写面积"）、`72f8ff4`（文档去绝对句 + N135 立案）。
     跑前硬门控 = 0、串行 `-j1`、期间无并发构建：`100% tests passed, 0 tests failed out of 719`（Debug **1245.47 s**）
     与 `out of 717`（Release **737.79 s**），两棵树 `Not Run/Skip/***` 计数都是 **0**。
     注册数 **713 → 719 / 711 → 717**（各 +6、删除 0，按 `-N` 名单逐名比对；6 条全是 `PluginTest.VectorUnion*`）。
     ⚠ **本轮踩到我自己的触发线**：Debug `real_data_vector_full` 余量 **2.06×**（378.52 s；收口后又单跑一次
-    **376.63 s** ⇒ 稳定新值，不是噪声）⇒ 按规则**拆腿**（`Task C3k`），不抬 `TIMEOUT`，且在拆腿落地前
-    **禁止再往 `full` 加新真实腿**（含 union 的面 × 面真实腿）。
+    **376.63 s** ⇒ 稳定新值，不是噪声）⇒ 按规则**拆腿**（`Task C3k`），不抬 `TIMEOUT`。
+  - **批次 C C3k 轮**（当时那一档，测试基建：拆腿）：树上多了 `3554165`
+    （`real_data_vector_full` → `checks` 与 `overlay` 两条，各按"消费哪批派生件"造件，新增三份名单不变量 +
+    "`Group=checks` 必须与 C3b-A 名单逐名相等"）。⚠ 该刀**实现由子代理完成、它撞每日额度上限中断**，
+    工作树里留下未提交改动且无报告 ⇒ 控制器按快照复核、自己重建两树跑三条腿、自补反向破坏取证（改归一组 ⇒ `rc=1` 点名缺口；
+    `cp` 快照还原后 md5 一致）后提交，并在 commit message 里声明作者与验收分工。
+    实测（控制器现读）：Debug quick 236.47 / checks 34.47 / overlay 255.98 s，Release 126.39 / 20.20 / 130.05 s；
+    `TIMEOUT` 100 / 670 ⇒ 2.90× / 2.62×。注册数 719→720 / 717→718。
+  - **批次 C C3i 收口轮**（本表现值，产品修复 N130）：树上多了 `15f3ef1`（buffer/dissolve 的投影闸
+    `== "geographic"` → `!= "projected"`，文案统一 `failProjectedRequired`；两条无 SRS 判别腿）。
+    判别取证：两闸改回旧写法（标记 `N130-ARM`）⇒ 两条新用例双双 Failed；`cp` 还原后 md5 一致、标记 0 命中，
+    两棵树各 **30/30** 绿。全量：Debug `100% tests passed, 0 tests failed out of 722`（**916.43 s**，全绿）；
+    Release **719/720**——唯一红是 `runtime_dll_cross_config_audit`（**N136**，见下面挂账），与 C3i 代码路径无关。
+    注册数 720→722 / 718→720。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -928,6 +943,18 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   `geom_metrics.inc:157`、`nearest.inc:37`、`overlap_check.inc:29`、`simplify.inc:26`、`topology_check.inc:29`），
   仍是 `== "geographic"` 的只剩 2 处（buffer、dissolve）⇒ 我上一版把这条写成"三档并存"时把 `simplify` 也算成一档，
   实际它是严格族的一员，**待收的只有两刀**，不是三处。
+  **已修 `15f3ef1`**（两闸收成 `!= "projected"`，文案统一 `failProjectedRequired`；两条无 SRS 判别腿
+  经"旧闸必红"双臂验证后两树 30/30）。⚠ 工单里那条"`VectorDissolveRejectsUnknownDissolveField` 夹具没挂 SRS"
+  是**错的**（SRS 在它调用的 `buildDissolveTypeFixture`，`:4057` 有 `importFromEPSG(3857)`）⇒ 无需连带修复。
+- 挂账 **N136**（**测试基建 / 构建产物卫生，未查明**）：Release 树全量里 `runtime_dll_cross_config_audit` 红，
+  报 `build/release/plugins` 下 26 个"只属于 Debug 配置"的运行库残留（`Qt6Cored.dll`、`gdald.dll`、
+  `opencv_*4d.dll`、`pcre2-*d.dll`、`proj_9_d.dll`、`tiffd.dll`、`zd.dll` 等）。**成因未查清，不写因果**：
+  `dir /tc` 显示这些文件创建于 2026-10-14，但同日 11:44（C3j）与 13:0x（C3h-1）两轮 Release 全量里同一条审计都是绿的
+  —— 同一批文件、同一条命令（`-V` 现读 `-DCONFIG=Release`、`-DPLUGINS_DIR=build/release/plugins`）、两种结论。
+  两条互斥的可能都必须先取证：① 文件时间戳不可信（`file(COPY)`/`CopyFile` 会保留源时间戳，即它们是今天才被"搬进来"的）；
+  ② 前两轮的绿是空转（例如目录/名单当时不满足扫描条件）。**在取证前不许按审计提示直接删文件**
+  —— 残留名单里含 `gdal.dll` 这类 Release 侧运行库，删错会打断产物加载。
+  影响面：只挡 Release 全量收口，不碰任何被测代码；C3i 的两条判据腿与判据族在两棵树各 30/30。
 - 挂账 **N131**（`vector rasterize`）：`attribute` 字段不存在时不校验（`vector_plugin_raster_convert.inc:72-78`），
   而初始化已经是 `band->Fill(0)` + `SetNoDataValue(0)`（`:63-65`）⇒ 产物整幅是背景 0，
   **用户无法区分"这一片本来就没有面"与"字段名写错"**；成功返回还不带任何 metadata 键（`:103-105`）⇒ 事后也查不出烧了什么。
