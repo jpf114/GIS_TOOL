@@ -4915,6 +4915,235 @@ TEST_F(PluginTest, VectorFilterShapefileChineseOutputReopens) {
     GDALClose(outDs);
 }
 
+// ── C3f / N127：--where 白名单必须 UTF-8 感知（中文属性值过滤） ──
+// 编码约定（要动这两条用例先读这段，别凭猜改）：
+//   tests/CMakeLists.txt:63 给 gis_tests 加了 /utf-8 ⇒ 源文件按 UTF-8 解码，
+//   **窄字符串字面量的执行字符集同样是 UTF-8**，与 GDAL 内部用的编码、与本仓 data/ 里
+//   GeoJSON/GPKG 属性值的字节序列是同一套 ⇒ 这里可以直接写 "北京"，
+//   不需要 u8"" 前缀、也不需要 \x 转义（转义反而会让"源码里的中文"这件事失去可读性）。
+//   本文件是无 BOM 的 UTF-8、行尾 LF；有人用 ANSI/GBK 另存出乱码时，
+//   先红的是 `ctest -R source_mojibake_guard`（B17 检测器），不是人眼。
+// 反向那臂里的坏字节**必须**用 static_cast<char>(0xNN) 逐字节拼：
+//   C++ 的十六进制转义会一路吃掉后续十六进制数字（"\xff\xfe" 是一个 \xfffe 而不是两个字节），
+//   写成转义串就是在测别的字节序列，判据当场失去意义。
+TEST_F(PluginTest, VectorFilterWhereClauseAcceptsChineseAttributeValue) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_filter_where_cn_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_filter_where_cn_output.gpkg");
+
+    // 全部期望值从**输入侧**手推，在本用例自己的构造段一次定死（不从产物回填）：
+    //   keptName 是唯一该被 --where 留下的要素，droppedName 必须整条消失；
+    //   code 与 ringPoints 是 name↔几何 的配对锚 —— 只断 name 的话，
+    //   "留下对的字段但把两条几何写反"这种产物照样绿，所以配对要一起钉。
+    //   这两条都是整数断言：filter 的 GOLD 凭据（数值容差断言）不在本刀范围内，见工单"不许动登记表"。
+    const std::string keptName = "北京";
+    const std::string droppedName = "上海";
+    const int keptCode = 1;
+    const int droppedCode = 2;
+    const int keptRingPoints = 5;     // 四边形闭合 ⇒ 5 个点
+    const int droppedRingPoints = 4;  // 三角形闭合 ⇒ 4 个点
+
+    {
+        std::error_code ec;
+        fs::remove(input, ec);  // 夹具对本次运行负责：上一轮的同名文件不许渗进这一轮
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        // 输出层类型由 resultLayerGeometryType() 归一成 MultiPolygon（common.inc:388-402），
+        // 输入直接按 MultiPolygon 建 ⇒ 回读时两侧同形，断言不必再猜驱动会怎么升维。
+        auto* layer = ds->CreateLayer("provinces", srs.get(), wkbMultiPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+        OGRFieldDefn codeField("code", OFTInteger);
+        ASSERT_EQ(layer->CreateField(&codeField), OGRERR_NONE);
+
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRMultiPolygon polys;
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(0, 0);
+        ring.addPoint(1000, 0);
+        ring.addPoint(1000, 1000);
+        ring.addPoint(0, 1000);
+        ring.closeRings();
+        poly.addRing(&ring);
+        polys.addGeometry(&poly);
+        feat->SetGeometry(&polys);
+        feat->SetField("name", keptName.c_str());
+        feat->SetField("code", keptCode);
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+
+        feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRMultiPolygon polys2;
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(5000, 5000);
+        ring2.addPoint(6000, 5000);
+        ring2.addPoint(5500, 6000);
+        ring2.closeRings();
+        poly2.addRing(&ring2);
+        polys2.addGeometry(&poly2);
+        feat->SetGeometry(&polys2);
+        feat->SetField("name", droppedName.c_str());
+        feat->SetField("code", droppedCode);
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("filter");
+    params["input"] = input;
+    params["output"] = output;
+    params["where"] = "name='" + keptName + "'";
+
+    const auto result = p->execute(params, progress_);
+    // N127 的正面形态：中文属性值的 --where 必须被接受并且真的留下那一条。
+    ASSERT_TRUE(result.success)
+        << "N127：中文 --where 被 WHERE 白名单拒了，message = " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    // filter **没有** feature_count 元数据（doFilter 只回消息与输出路径，见
+    // vector_plugin_info_filter.inc:237-238 与 docs/算法说明/矢量数据处理/空间过滤.md
+    // "返回消息中的数量是实际写入输出图层的要素数"）⇒ 自报数只能整串核对消息，
+    // 再用落盘侧的 GetFeatureCount 与它对撞（报数与产物不一致必须红）。
+    EXPECT_EQ(result.message, "Filter completed: 1 features written");
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(outLayer->GetFeatureCount(FALSE), 1);
+
+    int readBack = 0;
+    outLayer->ResetReading();
+    OGRFeature* outFeat = nullptr;
+    while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
+        ++readBack;
+        const std::string gotName(outFeat->GetFieldAsString("name"));
+        EXPECT_EQ(gotName, keptName) << "第 " << readBack << " 条的 name 不等于输入侧手推的保留值";
+        EXPECT_NE(gotName, droppedName) << "被 --where 排除的那条漏进了输出";
+        EXPECT_EQ(outFeat->GetFieldAsInteger("code"), keptCode);
+        EXPECT_NE(outFeat->GetFieldAsInteger("code"), droppedCode);
+        ASSERT_NE(outFeat->GetGeometryRef(), nullptr);
+        // 点数走 MultiPolygon → Polygon → 外环这条实路径（getNumPoints() 只在 OGRSurface
+        // 及其子类上声明，基类 OGRGeometry 没有 ⇒ 直接对 GetGeometryRef() 调它编不过）。
+        OGRMultiPolygon* outPolys = outFeat->GetGeometryRef()->toMultiPolygon();
+        ASSERT_NE(outPolys, nullptr);
+        ASSERT_EQ(outPolys->getNumGeometries(), 1);
+        OGRPolygon* outPoly = outPolys->getGeometryRef(0);
+        ASSERT_NE(outPoly, nullptr);
+        ASSERT_NE(outPoly->getExteriorRing(), nullptr);
+        EXPECT_EQ(outPoly->getExteriorRing()->getNumPoints(), keptRingPoints)
+            << "name↔几何 配对断了：留下的字段配上了另一条要素的几何";
+        EXPECT_NE(outPoly->getExteriorRing()->getNumPoints(), droppedRingPoints);
+        OGRFeature::DestroyFeature(outFeat);
+    }
+    EXPECT_EQ(readBack, 1) << "输出层逐条数出来的要素数与自报数不一致";
+    GDALClose(outDs);
+}
+
+TEST_F(PluginTest, VectorFilterWhereClauseStillRejectsInjectionAndBrokenUtf8) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    // 这一条只验"白名单该拒的还得拒"，不验过滤结果 ⇒ 输入只要**能打开**就够了：
+    // doFilter 的顺序是 打开输入 → 定位图层 → 校验 --where（inc:148-159），
+    // 输入不存在时先红在 "Cannot open vector file"，那就成了"任何错误都算过"的空转。
+    const std::string input = utf8PathString(getTestDir() / "e2e_filter_where_reject_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_filter_where_reject_output.gpkg");
+    const std::string expectedError = "WHERE clause contains disallowed characters or keywords";
+
+    {
+        std::error_code ec;
+        fs::remove(input, ec);
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("provinces", srs.get(), wkbMultiPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRMultiPolygon polys;
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(0, 0);
+        ring.addPoint(10, 0);
+        ring.addPoint(10, 10);
+        ring.closeRings();
+        poly.addRing(&ring);
+        polys.addGeometry(&poly);
+        feat->SetGeometry(&polys);
+        feat->SetField("name", "北京");  // 窄字面量即 UTF-8 字节（见上方编码约定注释块）
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    const char lead = static_cast<char>(0xE4);  // 合法 3 字节 lead（"北" = E5 8C 97 那一类）
+    const std::string goodCn = "北京";
+
+    struct Arm {
+        const char* label;
+        std::string where;
+    };
+    const std::vector<Arm> arms = {
+        // ① 工单点名的注入串：分号（inc:38）+ 危险关键字 DROP（inc:21-24）双重命中
+        {"semicolon_and_drop", "1=1; DROP TABLE x"},
+        // ①' 双引号从来不在白名单里（inc:6-9 只放行单引号）
+        {"double_quote", "name=\"" + goodCn + "\""},
+        // ①'' 反引号同样从来不在白名单里
+        {"backtick", "name=`" + goodCn + "`"},
+        // ② 非法 UTF-8：0xFF / 0xFE 任何位置都不能作 lead
+        {"invalid_utf8_ff_fe", std::string("name='") + std::string(1, static_cast<char>(0xFF)) +
+                                   std::string(1, static_cast<char>(0xFE)) + "'"},
+        // ③ overlong：0xC0/0xC1 领头的 2 字节序列是禁止形态（U+0080 以下必须走单字节）
+        {"overlong_c0_80", std::string("name='") + std::string(1, static_cast<char>(0xC0)) +
+                              std::string(1, static_cast<char>(0x80)) + "'"},
+        // ④ 超出 U+10FFFF：0xF5..0xF7 不是合法的 4 字节 lead
+        {"above_u10ffff_f5", std::string("name='") + std::string(1, static_cast<char>(0xF5)) +
+                                std::string(1, static_cast<char>(0x80)) +
+                                std::string(1, static_cast<char>(0x80)) +
+                                std::string(1, static_cast<char>(0x80)) + "'"},
+        // ⑤ 悬挂 lead：合法 lead 后面缺续接字节
+        {"dangling_lead", std::string("name='") + std::string(1, lead) + "'"},
+        // ⑥ 落单的续接字节（前面没有 lead）
+        {"lone_continuation", std::string("name='") + std::string(1, static_cast<char>(0x80)) + "'"},
+    };
+    ASSERT_GE(arms.size(), 4u) << "反向臂少于工单要求的四条，本用例就成了空检查";
+
+    for (const auto& arm : arms) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("filter");
+        params["input"] = input;
+        params["output"] = output;
+        params["where"] = arm.where;
+
+        const auto result = p->execute(params, progress_);
+        EXPECT_FALSE(result.success) << "反向臂 " << arm.label << " 竟然通过了";
+        // 不只断"失败了"：必须失败在**这一条**白名单文案上，
+        // 否则任何错误（打不开输入、找不到图层、写盘失败）都会让它"绿"。
+        EXPECT_EQ(result.message, expectedError) << "反向臂 " << arm.label << " 的失败文案不是白名单";
+    }
+}
+
 TEST_F(PluginTest, VectorInfoSupportsChinesePath) {
     auto* p = mgr_.find("vector");
     if (!p) {

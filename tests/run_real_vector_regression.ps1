@@ -1485,6 +1485,238 @@ function Assert-TopologyCheckCase {
     }
 }
 
+# ── C3f / N127：--where 用中文属性值过滤真实省层（真实数据腿）──
+# 编码纪律（先读这段再动这一批函数）：本文件是无 BOM 的 UTF-8 + CRLF，PowerShell 5.1 用 -File
+#   按 ANSI 代码页解码源文件 ⇒ **中文字面量只能出现在注释里**，出现在字符串里就是乱码路径。
+#   要用的中文属性值一律在运行时从输入自己的 JSON 现读（Get-Content -Encoding UTF8），
+#   这也顺带满足工单"期望值从输入侧手推，不从产物回填"。
+# 现读到的输入层形状（vector info + 同一份复制件的 JSON 对撞）：
+#   data/vector/中国_省.geojson 的复制件 = 42 要素（34 面 + 8 线，Geometry: Unknown），
+#   CRS EPSG:4490，字段两个 name(String，全中文) 与 gb(String，纯数字)，name 共 35 个不同取值、
+#   众数是"境界线"那一档（8 条）。
+# 判据全部是关系式，期望值由输入自己推出 ⇒ 换一份数据文件照样成立，写死数字就做不到：
+#   ① 目标值必须含非 ASCII 码点 ⇒ 这条腿测的确实是 N127 那半边（选中纯 ASCII 值时旧实现也过，腿就白搭）；
+#   ② 目标值必须不含单引号 ⇒ WHERE 用单引号包裹，含引号时构造本身不成立，先红在这里而不是红在 GDAL；
+#   ③ 1 <= M < 全层要素数（M = 输入侧数出来的 name==目标值 的条数）⇒ 过滤真的丢了东西，
+#      选众数而不是选第一条就是为了让 M > 1，于是"匹配到第一条就 break"这种实现必然红；
+#   ④ CLI 自报数 == vector info 现读的输出 Features == M 三段等式；
+#      ⚠ filter **没有** feature_count 元数据（doFilter 只回消息与输出路径，见
+#        src/plugins/vector/vector_plugin_info_filter.inc 的 return 与
+#        docs/算法说明/矢量数据处理/空间过滤.md"返回消息中的数量"）⇒ 自报数只能取消息里那个数；
+#   ⑤ 输出 Extent == 输入侧那 M 条要素自己坐标的包框（从 JSON 现算）；
+#   ⑥ 输出 Extent 的四边不得与输入全层 Extent 逐边相同 ⇒ 打死"WHERE 被当成没写"（恒等产物）；
+#   ⑦ 输出 Extent 必须仍被输入全层 Extent 包含 ⇒ 没被空间过滤误伤、也没凭空放大；
+#   ⑧ 输出字段数 == 输入字段数（filter 不删字段）。
+# ⑤ 的量纲不是 1e-6：vector info 用默认 6 位有效数字打印坐标，122.816588 会被打成 "122.817"
+#   （偏差上限 ~5e-4，是本仓既有 1e-6 绝对容差撑不住的量级），所以这里按**相对**容差判，
+#   取 1e-5（本层量级 ~1e2 ⇒ 绝对上限 ~1.3e-3 度）：比 %g 舍入宽，比最窄的一条被留要素（0.106 度）窄。
+$script:C3fExtentRelativeTolerance = 1e-5
+
+function Add-JsonNumberLeaves {
+    param($Node, $Acc, [ref]$Skipped)
+
+    # GeoJSON 的 coordinates 是任意深度的嵌套数组，最深一层是 [x, y]（本层无 Z）。
+    # 不认识的东西不静默丢：计入 Skipped，调用方判它必须为 0 ⇒ "解析器归零"这类假绿没有藏身处。
+    if ($Node -is [array]) {
+        foreach ($child in $Node) {
+            Add-JsonNumberLeaves -Node $child -Acc $Acc -Skipped $Skipped
+        }
+    } elseif ($Node -is [double] -or $Node -is [int] -or $Node -is [long] -or $Node -is [decimal]) {
+        $Acc.Add([double]$Node) | Out-Null
+    } else {
+        $Skipped.Value = $Skipped.Value + 1
+    }
+}
+
+function Get-FeaturesExtentStats {
+    param([array]$Features, [string]$Label)
+
+    # 输入侧手推包框：逐条要素把坐标摊平成 x,y 序列，再取四极值。
+    # 要素为空、坐标个数不是偶数、个数 < 4 都当场红 —— 期望值一旦来自"读不到就算 0"，
+    # 后面 ⑤⑥⑦ 三条判据会集体失去判别力。
+    $xs = New-Object "System.Collections.Generic.List[double]"
+    $ys = New-Object "System.Collections.Generic.List[double]"
+    $skipped = 0
+    foreach ($feature in $Features) {
+        $leaves = New-Object "System.Collections.Generic.List[double]"
+        Add-JsonNumberLeaves -Node $feature.geometry.coordinates -Acc $leaves -Skipped ([ref]$skipped)
+        Assert-Condition -Condition ($leaves.Count -ge 4 -and ($leaves.Count % 2) -eq 0) -Message (
+            $Label + ": a kept feature flattens to " + $leaves.Count +
+            " coordinate numbers, expected an even count >= 4 (x,y pairs; 3D/Z coordinates are out of scope here)")
+        for ($i = 0; $i -lt $leaves.Count; $i += 2) {
+            $xs.Add($leaves[$i]) | Out-Null
+            $ys.Add($leaves[$i + 1]) | Out-Null
+        }
+    }
+    Assert-Condition -Condition ($skipped -eq 0) -Message (
+        $Label + ": coordinate tree left " + $skipped + " unparsed node(s) => the extent expectation would be built on partial data")
+    Assert-Condition -Condition ($xs.Count -ge 2) -Message ($Label + ": no coordinate pair collected")
+
+    return [pscustomobject]@{
+        MinX = ($xs | Measure-Object -Minimum).Minimum
+        MinY = ($ys | Measure-Object -Minimum).Minimum
+        MaxX = ($xs | Measure-Object -Maximum).Maximum
+        MaxY = ($ys | Measure-Object -Maximum).Maximum
+    }
+}
+
+function Ensure-ChineseAttributeFilterInput {
+    param(
+        [string]$ResolvedCliPath,
+        [string]$ResolvedWorkspaceRoot
+    )
+
+    # N115：data/ 只许被复制，边车（.aux.xml 一类）必须种在 build/tmp/ 里。
+    $scratchRoot = Join-Path $ResolvedWorkspaceRoot "build\tmp\c3f"
+    New-Item -ItemType Directory -Force -Path $scratchRoot | Out-Null
+
+    $vectorDataRoot = Join-Path $ResolvedWorkspaceRoot "data\vector"
+    $provinceRaw = Resolve-ProvinceVectorInput -VectorDataRoot $vectorDataRoot -Label "chinese attribute filter leg"
+    $inputPath = Join-Path $scratchRoot "province.geojson"
+    Copy-Item $provinceRaw $inputPath -Force
+
+    $layerStats = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $inputPath -ScratchDir $scratchRoot
+    Assert-Condition -Condition ($layerStats.FeatureCount -gt 1) -Message (
+        "chinese attribute filter leg: input layer has " + $layerStats.FeatureCount +
+        " feature(s); a single-feature layer cannot show whether the WHERE clause filtered anything")
+
+    # PS 5.1 的 Get-Content 不带 -Encoding 按 ANSI 代码页解码，UTF-8 的中文属性值会被读坏，
+    # 报出来的是"JSON 无效/匹配不到"这种假产品缺陷 ⇒ -Encoding UTF8 是这条腿的前提，不是风格问题。
+    $jsonText = Get-Content -Path $inputPath -Raw -Encoding UTF8
+    Assert-Condition -Condition ($null -ne $jsonText -and $jsonText.Length -gt 0) -Message (
+        "chinese attribute filter leg: input copy read back empty: " + $inputPath)
+    $doc = $jsonText | ConvertFrom-Json
+    Assert-Condition -Condition ($null -ne $doc.features) -Message (
+        "chinese attribute filter leg: GeoJSON has no features member: " + $inputPath)
+    $featureCount = @($doc.features).Count
+    Assert-Condition -Condition ($featureCount -eq $layerStats.FeatureCount) -Message (
+        "chinese attribute filter leg: JSON carries " + $featureCount + " feature(s) but vector info reports " +
+        $layerStats.FeatureCount + " (input side disagrees with itself, expectation cannot be trusted)")
+
+    $fieldNames = @()
+    foreach ($feature in @($doc.features)) {
+        foreach ($prop in $feature.properties.PSObject.Properties) {
+            if ($fieldNames -notcontains $prop.Name) { $fieldNames += $prop.Name }
+        }
+    }
+    Assert-Condition -Condition ($fieldNames.Count -ge 1) -Message (
+        "chinese attribute filter leg: no property found in " + $inputPath)
+    if ($null -ne $layerStats.FieldCount) {
+        Assert-Condition -Condition ($fieldNames.Count -eq $layerStats.FieldCount) -Message (
+            "chinese attribute filter leg: JSON exposes " + $fieldNames.Count + " property name(s) but vector info reports Fields: " +
+            $layerStats.FieldCount + " (field list disagrees between the two readers)")
+    }
+
+    # 选字段：第一个"取值里出现非 ASCII 码点"的字符串字段。本层实测选中 name（全中文），
+    # gb 是纯数字 ⇒ 选不中。写成"按码点找"而不是"写死 name"，换一份数据也不会悄悄测到 ASCII 那半边。
+    $chosenField = ""
+    $chosenValues = @()
+    foreach ($candidate in $fieldNames) {
+        $values = @(@($doc.features) | ForEach-Object { $_.properties.$candidate } | Where-Object { $_ -is [string] -and $_ -ne "" })
+        $nonAscii = @($values | Where-Object { [regex]::IsMatch($_, "[^\x00-\x7F]") })
+        if ($nonAscii.Count -gt 0) { $chosenField = $candidate; $chosenValues = $values; break }
+    }
+    Assert-Condition -Condition ($chosenField -ne "") -Message (
+        "chinese attribute filter leg: no string field carries a non-ASCII value, so this leg cannot exercise N127 " +
+        "(fields found: " + ($fieldNames -join ", ") + ")")
+
+    # 目标值取该字段出现次数最多的那一档（众数）：M > 1 才能打死"匹配到第一条就 break"。
+    $groups = @($chosenValues | Group-Object)
+    $distinctValues = $groups.Count
+    $modeGroup = @($groups | Sort-Object -Property Count -Descending | Select-Object -First 1)[0]
+    $targetValue = [string]$modeGroup.Name
+    $matchCount = [int]$modeGroup.Count
+    $keptFeatures = @(@($doc.features) | Where-Object { [string]$_.properties.$chosenField -eq $targetValue })
+
+    Assert-Condition -Condition ($keptFeatures.Count -eq $matchCount) -Message (
+        "chinese attribute filter leg: group-by says " + $matchCount + " but the scan found " + $keptFeatures.Count)
+    Assert-Condition -Condition ([regex]::IsMatch($targetValue, "[^\x00-\x7F]")) -Message (
+        "chinese attribute filter leg: chosen value is pure ASCII, this leg would pass on the pre-N127 whitelist")
+    Assert-Condition -Condition (-not $targetValue.Contains("'")) -Message (
+        "chinese attribute filter leg: chosen value contains a single quote, the WHERE construction below would not be valid")
+    Assert-Condition -Condition ($matchCount -ge 1 -and $matchCount -lt $featureCount -and $distinctValues -gt 1) -Message (
+        "chinese attribute filter leg: matched " + $matchCount + " of " + $featureCount +
+        " feature(s) over " + $distinctValues + " distinct value(s); the leg needs a value that keeps something AND drops something")
+
+    $where = $chosenField + "='" + $targetValue + "'"
+    $outputPath = Join-Path $scratchRoot "filter_cn_attribute.gpkg"
+    $keptExtent = Get-FeaturesExtentStats -Features $keptFeatures -Label "chinese attribute filter leg"
+    $largestAbs = 0.0
+    foreach ($v in @($keptExtent.MinX, $keptExtent.MaxX, $keptExtent.MinY, $keptExtent.MaxY,
+                      $layerStats.MinX, $layerStats.MaxX, $layerStats.MinY, $layerStats.MaxY)) {
+        if ([Math]::Abs($v) -gt $largestAbs) { $largestAbs = [Math]::Abs($v) }
+    }
+    $extentTolerance = [Math]::Max($largestAbs * $script:C3fExtentRelativeTolerance, 1e-9)
+
+    Write-Host ("  c3f leg: field=" + $chosenField + " codepoints=" +
+        ((@($targetValue.ToCharArray() | ForEach-Object { "U+{0:X4}" -f [int]$_ })) -join " ") +
+        " matched=" + $matchCount + "/" + $featureCount)
+
+    return [pscustomobject]@{
+        ScratchRoot = $scratchRoot
+        InputPath = $inputPath
+        OutputPath = $outputPath
+        FieldName = $chosenField
+        TargetValue = $targetValue
+        MatchCount = $matchCount
+        LayerStats = $layerStats
+        KeptExtent = $keptExtent
+        ExtentTolerance = $extentTolerance
+        Where = $where
+    }
+}
+
+function Assert-ChineseAttributeFilterCase {
+    param(
+        [pscustomobject]$Case,
+        [string]$ResolvedCliPath,
+        [object]$Refs
+    )
+
+    Assert-Condition -Condition ($null -ne $Refs) -Message (
+        $Case.Name + ": the chinese attribute filter leg is registered but its input refs are missing " +
+        "(Ensure-ChineseAttributeFilterInput did not run) => every expectation would be vacuous")
+    Assert-Condition -Condition ($Case.Name -eq "filter_cn_attribute") -Message (
+        "Assert-ChineseAttributeFilterCase got '" + $Case.Name + "'")
+
+    $inputStats = $Refs.LayerStats
+    $tolerance = [double]$Refs.ExtentTolerance
+    $read = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $Refs.OutputPath -ScratchDir $Refs.ScratchRoot
+
+    Assert-Condition -Condition ($read.FeatureCount -ge 1) -Message (
+        $Case.Name + ": output layer keeps " + $read.FeatureCount + " feature(s), expected at least 1")
+    # ④ 三段等式：CLI 自报数 / 落盘现读数 / 输入侧手推数。
+    $reported = Get-ReportedCount -Text $Case.Output -Pattern "Filter completed: (\d+) features written" `
+        -Label ($Case.Name + " reported count")
+    Assert-Condition -Condition ($reported -eq $read.FeatureCount) -Message (
+        $Case.Name + ": CLI says " + $reported + " but vector info reads back " + $read.FeatureCount +
+        " (自报数与落盘数不一致)")
+    Assert-Condition -Condition ($read.FeatureCount -eq $Refs.MatchCount) -Message (
+        $Case.Name + ": output keeps " + $read.FeatureCount + " feature(s), input side counted " +
+        $Refs.MatchCount + " for the same value (filter dropped or invented features)")
+    # ⑧ 字段结构原样保留
+    if ($null -ne $inputStats.FieldCount -and $null -ne $read.FieldCount) {
+        Assert-Condition -Condition ($read.FieldCount -eq $inputStats.FieldCount) -Message (
+            $Case.Name + ": output has " + $read.FieldCount + " field(s), input has " + $inputStats.FieldCount)
+    }
+    # ⑤ 输出 Extent == 被留要素在输入里的包框
+    Assert-ExtentEqualTo -Expected $Refs.KeptExtent -Actual $read -Tolerance $tolerance -Label $Case.Name
+    # ⑦ 仍被输入全层范围包含
+    Assert-ExtentInsideOf -Outer $inputStats -Inner $read -Tolerance $tolerance -Label $Case.Name
+    # ⑥ 四边不得与输入全层逐边相同（"WHERE 被当成没写"的产物恰好满足 ⑤⑦ 之外的全部判据吗？不满足：
+    #    它会把 Extent 打回全层范围 ⇒ 这一条专抓它；M < 全层时 ④ 也抓它，两条互为备份）
+    $sameEdges = @(
+        ([Math]::Abs($read.MinX - $inputStats.MinX) -le $tolerance),
+        ([Math]::Abs($read.MinY - $inputStats.MinY) -le $tolerance),
+        ([Math]::Abs($read.MaxX - $inputStats.MaxX) -le $tolerance),
+        ([Math]::Abs($read.MaxY - $inputStats.MaxY) -le $tolerance)
+    )
+    Assert-Condition -Condition (@($sameEdges | Where-Object { $_ -eq $false }).Count -ge 1) -Message (
+        $Case.Name + ": output extent equals the whole input extent => the WHERE clause behaved like a no-op")
+
+    return $read
+}
+
 function Validate-CaseOutputs {
     param(
         [pscustomobject]$Case,
@@ -1492,7 +1724,8 @@ function Validate-CaseOutputs {
         [string]$ResolvedOutputRoot,
         [int]$InputFeatureCount,
         [object]$DerivedRefs,
-        [object]$TopologyRefs
+        [object]$TopologyRefs,
+        [object]$ChineseFilterRefs
     )
 
     # 期望值一律由输入图层自己的要素数推出，不写死常量。
@@ -1623,6 +1856,11 @@ function Validate-CaseOutputs {
             Validate-DerivedGeometryRelations -Name "endpoints_line" `
                 -VertexCount $script:DerivedVertexCount -EndpointCount $script:DerivedEndpointCount `
                 -MidpointCount $script:DerivedMidpointCount -InputFeatureCount $DerivedRefs.LineStats.FeatureCount
+        }
+        # ── C3f / N127：中文属性值 --where 的真实数据腿（判据见 Ensure-ChineseAttributeFilterInput 上方注释）──
+        "filter_cn_attribute" {
+            Assert-ChineseAttributeFilterCase -Case $Case -ResolvedCliPath $ResolvedCliPath `
+                -Refs $ChineseFilterRefs | Out-Null
         }
         "clip_stress" {
             Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected $InputFeatureCount -Label "clip_stress"
@@ -2089,6 +2327,20 @@ $cases += New-DerivedCase -Name "midpoints_line" -Action "midpoints_extract" `
 $cases += New-DerivedCase -Name "endpoints_line" -Action "endpoints_extract" `
     -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["endpoints_line"]
 
+# ── C3f / N127：中文属性值的 --where 真实数据腿（quick/full 两档都跑）──
+# 输入是 data/vector/中国_省.geojson 的复制件；目标值与 M 在注册前从输入自己的 JSON 现读，
+# 判据（④⑤⑥⑦⑧）见 Ensure-ChineseAttributeFilterInput 上方的注释块。
+$script:ChineseFilterRefs = Ensure-ChineseAttributeFilterInput -ResolvedCliPath $ResolvedCliPath `
+    -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot
+$cases += New-Case -Name "filter_cn_attribute" -CaseArgs @(
+    "vector", "filter",
+    ("--input=" + $script:ChineseFilterRefs.InputPath),
+    ("--output=" + $script:ChineseFilterRefs.OutputPath),
+    ("--where=" + $script:ChineseFilterRefs.Where)
+) -ExpectedOutputs @(
+    $script:ChineseFilterRefs.OutputPath
+)
+
 # quick 档不造这批派生件（工单：11 条腿归 real_data_vector_full 那一档）⇒ 先置 $null，
 # 让"用例被单独抽出来跑"落在 Assert-TopologyCheckCase 的显式判红上，而不是变量不存在。
 $topologyRefs = $null
@@ -2191,7 +2443,7 @@ if ($Mode -eq "full") {
 $results = @()
 foreach ($case in $cases) {
     $result = Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
-    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs
+    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs
     $results += $result
 }
 

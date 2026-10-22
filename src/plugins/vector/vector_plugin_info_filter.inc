@@ -1,8 +1,60 @@
+// N127：`--where` 的字节白名单必须是 UTF-8 感知的。
+// 旧实现逐字节 `std::isalnum(static_cast<unsigned char>(c))`，默认 C locale 下 `>=0x80` 恒为 0
+// ⇒ 任何 UTF-8 多字节序列都落 `default: return false`，中文属性值（本仓样例数据全是中文）根本没法过滤。
+// 现在 `>=0x80` 的字节只有在构成**合法且规范的 UTF-8 序列**时才放行：
+// 非法字节、悬挂 lead、overlong 编码、超出 U+10FFFF、UTF-16 代理区一律照旧拒。
+// ⚠ 不许简化成 `if (c >= 0x80) continue` —— 那等于把任意二进制垃圾放进料给 GDAL 的字符串里。
+// lead 字节 → 它要求的续接字节数；返回 -1 表示这个字节不能作 lead：
+//   0x80..0xBF（落单的续接字节）、0xC0/0xC1（只会产生 overlong）、0xF5..0xFF（非 UTF-8 / >U+10FFFF）。
+static int utf8LeadContinuations(unsigned char lead) {
+    if (lead >= 0xC2 && lead <= 0xDF) return 1;
+    if (lead >= 0xE0 && lead <= 0xEF) return 2;
+    if (lead >= 0xF0 && lead <= 0xF4) return 3;
+    return -1;
+}
+
+// text[index] 开头若是一个完整且规范的 UTF-8 序列，就把 index 推到该序列的**最后一个字节**上
+// （调用点的 ++i 正好前进到下一字符），返回 true；否则返回 false 且不改动 index。
+// 第二个字节的取值区间同时承担三件事（Unicode 表 3-7 / RFC 3629 的强制形态）：
+//   0xE0 后必须 A0..BF ⇒ 排除 overlong（U+0000..U+07FF 的三字节写法）
+//   0xED 后必须 80..9F ⇒ 排除 UTF-16 代理区 U+D800..U+DFFF
+//   0xF0 后必须 90..BF ⇒ 排除 overlong 的四字节写法
+//   0xF4 后必须 80..8F ⇒ 排除 >U+10FFFF
+static bool consumeUtf8Sequence(const std::string& text, size_t& index) {
+    const unsigned char lead = static_cast<unsigned char>(text[index]);
+    const int need = utf8LeadContinuations(lead);
+    if (need < 0) return false;
+    // 悬挂 lead：序列在本串结尾处被截断
+    if (index + static_cast<size_t>(need) >= text.size()) return false;
+
+    unsigned char secondLow = 0x80;
+    unsigned char secondHigh = 0xBF;
+    if (lead == 0xE0) secondLow = 0xA0;
+    else if (lead == 0xED) secondHigh = 0x9F;
+    else if (lead == 0xF0) secondLow = 0x90;
+    else if (lead == 0xF4) secondHigh = 0x8F;
+
+    const unsigned char second = static_cast<unsigned char>(text[index + 1]);
+    if (second < secondLow || second > secondHigh) return false;
+    for (int offset = 2; offset <= need; ++offset) {
+        const unsigned char byte = static_cast<unsigned char>(text[index + static_cast<size_t>(offset)]);
+        if (byte < 0x80 || byte > 0xBF) return false;  // 续接字节必须是 10xxxxxx
+    }
+    index += static_cast<size_t>(need);
+    return true;
+}
+
 static bool isSafeWhereClause(const std::string& where) {
     // 白名单字符校验：仅允许安全字符
-    for (char c : where) {
-        if (std::isalnum(static_cast<unsigned char>(c))) continue;
-        switch (c) {
+    for (size_t i = 0; i < where.size(); ++i) {
+        const unsigned char byte = static_cast<unsigned char>(where[i]);
+        if (std::isalnum(byte)) continue;
+        if (byte >= 0x80) {
+            // N127：非 ASCII 只按合法 UTF-8 序列放行，其余（含 0xFF/0xFE、overlong、>U+10FFFF）照拒
+            if (!consumeUtf8Sequence(where, i)) return false;
+            continue;
+        }
+        switch (where[i]) {
             case ' ': case '(': case ')': case ',': case '.':
             case '=': case '<': case '>': case '!':
             case '\'': case '_': case '-': case '+': case '*':
