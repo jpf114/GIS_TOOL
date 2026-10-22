@@ -202,6 +202,41 @@ static std::vector<OverlayGeometryEntry> collectNormalizedGeometries(OGRLayer* l
     return entries;
 }
 
+// 带属性的叠加要素表：union 路径 A 要把"相交块"写成"这一条叠加要素自己的字段"，
+// 只有几何 + 包串的 OverlayGeometryEntry 撑不起这件事（属性表全丢是 N128 的第二半）。
+struct OverlayFeatureEntry {
+    std::unique_ptr<OGRFeature> feature;   // 几何已标准化
+    OGREnvelope envelope{};
+};
+
+// 取舍规则必须逐字镜像 collectNormalizedGeometries：同样用 cloneNormalizedGeometry 标准化，
+// 标准化结果为空或 IsEmpty() 的要素跳过，其余按图层读取顺序压入，包串从标准化后的几何取。
+// WHY 要逐字：两张表跳过规则一旦不一致，"各分块面积之和 == 并集面积"这类不变量就会凭空多/少一块。
+static std::vector<OverlayFeatureEntry> collectNormalizedFeatures(OGRLayer* layer) {
+    std::vector<OverlayFeatureEntry> entries;
+    if (!layer) {
+        return entries;
+    }
+
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    while ((feat = layer->GetNextFeature()) != nullptr) {
+        std::unique_ptr<OGRGeometry> geom(cloneNormalizedGeometry(feat->GetGeometryRef()));
+        if (geom && !geom->IsEmpty()) {
+            OverlayFeatureEntry entry;
+            geom->getEnvelope(&entry.envelope);
+            // 属性留、几何换成标准化后的那份：SetGeometryDirectly 接管所有权并丢弃原几何。
+            feat->SetGeometryDirectly(geom.release());
+            entry.feature.reset(feat);
+            entries.push_back(std::move(entry));
+            continue;
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    return entries;
+}
+
 static bool envelopesIntersect(const OGREnvelope& lhs, const OGREnvelope& rhs) {
     return !(lhs.MaxX < rhs.MinX || lhs.MinX > rhs.MaxX || lhs.MaxY < rhs.MinY || lhs.MinY > rhs.MaxY);
 }

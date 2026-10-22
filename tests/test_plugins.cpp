@@ -4293,6 +4293,473 @@ TEST_F(PluginTest, VectorUnionRejectsMismatchedSrs) {
     EXPECT_NE(result.message.find("CRS"), std::string::npos);
 }
 
+// ── 以下四条判 union 路径 A 的"真并集 + 整表属性"（销账 N128）──────────────────────────
+// 夹具统一 GPKG + 两边 EPSG:3857（areSameCrs 会拒不一致；不设 SRS 今天也能过路径 A，
+// 但本刀的夹具必须带 SRS，免得 CRS 闸被顺带绕过）。
+// WHY 每条都必须钉包串四个角点：面积、周长在 x↔y 转置下是不变量，只判面积抓不到坐标转置
+//（批次 C 已踩过一次），所以"某分块的 (MinX,MaxX,MinY,MaxY) == 手算常量"这条断言不许省。
+
+// union 夹具的一个要素：轴对齐矩形 + 两个可选字段。
+struct UnionFixtureFeature {
+    double minX = 0.0;
+    double minY = 0.0;
+    double maxX = 0.0;
+    double maxY = 0.0;
+    std::string name;    // 非空 ⇒ 该图层建 OFTString 字段 name 并写值
+    long long pop = -1;  // 非负 ⇒ 该图层建 OFTInteger 字段 pop 并写值
+};
+
+// 写"矩形面 + name/pop 可选字段"的 GPKG 图层当 union 夹具。
+// WHY 字段要可选：新语义要判"另一侧字段必须 IS NULL"，两侧各给一半字段才判得住；
+// T3 又要求两边都有同名 name 才能钉改名规则 ⇒ 字段名单独可控。
+// 没复用 writeTwoPolygonFixture：那份夹具是两条面的固定形状 + 固定单字段，撑不起上面两种断言。
+static bool writeUnionPolygonLayer(const fs::path& path,
+                                   const std::vector<UnionFixtureFeature>& features) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    const std::string pathText = utf8PathString(path);
+    GDALDataset* ds = driver->Create(pathText.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    OGRLayer* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+
+    bool hasName = false;
+    bool hasPop = false;
+    for (const auto& feature : features) {
+        hasName = hasName || !feature.name.empty();
+        hasPop = hasPop || feature.pop >= 0;
+    }
+
+    bool ok = true;
+    if (hasName) {
+        OGRFieldDefn nameDefn("name", OFTString);
+        ok = layer->CreateField(&nameDefn) == OGRERR_NONE;
+    }
+    if (hasPop && ok) {
+        OGRFieldDefn popDefn("pop", OFTInteger);
+        ok = layer->CreateField(&popDefn) == OGRERR_NONE;
+    }
+
+    for (const auto& feature : features) {
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(feature.minX, feature.minY);
+        ring.addPoint(feature.maxX, feature.minY);
+        ring.addPoint(feature.maxX, feature.maxY);
+        ring.addPoint(feature.minX, feature.maxY);
+        ring.addPoint(feature.minX, feature.minY);   // 闭合
+        poly.addRing(&ring);
+
+        OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetGeometry(&poly);
+        if (hasName && !feature.name.empty()) {
+            feat->SetField("name", feature.name.c_str());
+        }
+        if (hasPop && feature.pop >= 0) {
+            feat->SetField("pop", static_cast<int>(feature.pop));
+        }
+        ok = ok && layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    GDALClose(ds);
+    return ok;
+}
+
+// 输出分块的一行读数：source 值 + 面积 + 包串四角 + 每个字段"有值/NULL"。
+struct UnionOutputPiece {
+    std::string source;
+    double area = 0.0;
+    double minX = 0.0;
+    double maxX = 0.0;
+    double minY = 0.0;
+    double maxY = 0.0;
+    std::map<std::string, std::string> values;   // 已赋值字段：字段名 → GetFieldAsString
+    std::set<std::string> nullFields;            // IsFieldSetAndNotNull()==false 的字段名
+};
+
+static std::vector<UnionOutputPiece> readUnionPieces(OGRLayer* layer) {
+    std::vector<UnionOutputPiece> pieces;
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    while ((feat = layer->GetNextFeature()) != nullptr) {
+        UnionOutputPiece piece;
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (geom) {
+            // 面积读数：路径 A 的分块可能是 Polygon 也可能是 MultiPolygon，而 get_Area() 是
+            // OGRSurface / OGRGeometryCollection 上的虚函数（OGRGeometry 基类没有）⇒ 两类各问一次。
+            if (const OGRSurface* surface = geom->toSurface()) {
+                piece.area = surface->get_Area();
+            } else if (const OGRMultiSurface* multiSurface = geom->toMultiSurface()) {
+                piece.area = multiSurface->get_Area();
+            }
+            OGREnvelope env;
+            geom->getEnvelope(&env);
+            piece.minX = env.MinX;
+            piece.maxX = env.MaxX;
+            piece.minY = env.MinY;
+            piece.maxY = env.MaxY;
+        }
+        const OGRFeatureDefn* defn = feat->GetDefnRef();
+        for (int i = 0; i < defn->GetFieldCount(); ++i) {
+            const std::string fieldName = defn->GetFieldDefn(i)->GetNameRef();
+            if (feat->IsFieldSetAndNotNull(i)) {
+                piece.values[fieldName] = feat->GetFieldAsString(i);
+            } else {
+                piece.nullFields.insert(fieldName);
+            }
+        }
+        const auto sourceIt = piece.values.find("source");
+        piece.source = sourceIt == piece.values.end() ? std::string() : sourceIt->second;
+        pieces.push_back(piece);
+        OGRFeature::DestroyFeature(feat);
+    }
+    return pieces;
+}
+
+// 按"source 值 + 包串四角"定位分块，返回下标（找不到给 -1）。
+// WHY 不按下标取：实现写块的顺序不是输出契约，但每块的 source 值与包串是手算常量 ⇒
+// 配对既判得住"name↔几何"配错，也判得住 x↔y 转置（面积相同、包串不同）。
+static int findUnionPiece(const std::vector<UnionOutputPiece>& pieces, const std::string& sourceValue,
+                          double minX, double maxX, double minY, double maxY) {
+    for (size_t i = 0; i < pieces.size(); ++i) {
+        const auto& piece = pieces[i];
+        if (piece.source == sourceValue &&
+            std::fabs(piece.minX - minX) <= 1e-6 && std::fabs(piece.maxX - maxX) <= 1e-6 &&
+            std::fabs(piece.minY - minY) <= 1e-6 && std::fabs(piece.maxY - maxY) <= 1e-6) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+// 字段读数：缺列返回 "<missing>"、IS NULL 返回 "<null>"，其余给文本值。
+// WHY 不用 .at()：缺列时 .at() 抛异常会连带把同一条用例后面的断言一起跳过。
+static std::string unionFieldValue(const UnionOutputPiece& piece, const char* field) {
+    const auto valueIt = piece.values.find(field);
+    if (valueIt != piece.values.end()) {
+        return valueIt->second;
+    }
+    return piece.nullFields.count(field) != 0 ? "<null>" : "<missing>";
+}
+
+static std::string unionMetadataValue(const gis::framework::Result& result, const char* key) {
+    const auto it = result.metadata.find(key);
+    return it == result.metadata.end() ? std::string("<missing>") : it->second;
+}
+
+static std::vector<std::string> readFieldNames(OGRLayer* layer) {
+    std::vector<std::string> names;
+    const OGRFeatureDefn* defn = layer->GetLayerDefn();
+    for (int i = 0; i < defn->GetFieldCount(); ++i) {
+        names.push_back(defn->GetFieldDefn(i)->GetNameRef());
+    }
+    return names;
+}
+
+// T1：叠加图层里不与任何源要素相交的那一整块，旧实现整块丢失 ⇒ 本条专打"输出不是并集"。
+// 手算：A=[0,10]×[0,4] ⇒ 面积 10×4=40，包串 (0,10,0,4)；
+//       B=[20,30]×[2,12] ⇒ 面积 10×10=100，包串 (20,30,2,12)；x 方向 [20,30] 与 [0,10] 不相交 ⇒ 交集 0。
+//       期望恰好 2 条：input 40 + overlay 100，和为 140 = 40+100-0 = 并集面积。
+TEST_F(PluginTest, VectorUnionEmitsOverlayOnlyPiece) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_union_true_disjoint_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_union_true_disjoint_overlay.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_union_true_disjoint_output.gpkg");
+
+    UnionFixtureFeature srcA;
+    srcA.minX = 0.0; srcA.minY = 0.0; srcA.maxX = 10.0; srcA.maxY = 4.0; srcA.name = "src1";
+    ASSERT_TRUE(writeUnionPolygonLayer(inputPath, {srcA}));
+
+    UnionFixtureFeature ovlB;
+    ovlB.minX = 20.0; ovlB.minY = 2.0; ovlB.maxX = 30.0; ovlB.maxY = 12.0; ovlB.pop = 7;
+    ASSERT_TRUE(writeUnionPolygonLayer(overlayPath, {ovlB}));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.message, "Union completed: 2 features");
+
+    GDALDataset* rawOutDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(rawOutDs, nullptr);
+    gis::core::GdalDatasetPtr outDs(rawOutDs);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    const auto pieces = readUnionPieces(outLayer);
+
+    EXPECT_EQ(pieces.size(), 2u) << "真并集必须把叠加独有的一整块也写出来";
+    EXPECT_EQ(unionMetadataValue(result, "union_input_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlap_pieces"), "0");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlay_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_total_pieces"), "2");
+
+    // input 块：源几何原样 + 叠加侧字段全 NULL。
+    const int inputIdx = findUnionPiece(pieces, "input", 0.0, 10.0, 0.0, 4.0);
+    ASSERT_GE(inputIdx, 0) << "缺少 source=input 且包串 (0,10,0,4) 的分块";
+    EXPECT_NEAR(pieces[inputIdx].area, 40.0, 1e-6);
+    EXPECT_EQ(unionFieldValue(pieces[inputIdx], "name"), "src1");
+    EXPECT_EQ(unionFieldValue(pieces[inputIdx], "pop"), "<null>");
+
+    // overlay 块：叠加几何原样 + 源侧字段全 NULL（旧实现根本没有这一条）。
+    const int overlayIdx = findUnionPiece(pieces, "overlay", 20.0, 30.0, 2.0, 12.0);
+    ASSERT_GE(overlayIdx, 0) << "缺少 source=overlay 且包串 (20,30,2,12) 的分块";
+    EXPECT_NEAR(pieces[overlayIdx].area, 100.0, 1e-6);
+    EXPECT_EQ(unionFieldValue(pieces[overlayIdx], "name"), "<null>");
+    EXPECT_EQ(unionFieldValue(pieces[overlayIdx], "pop"), "7");
+
+    double totalArea = 0.0;
+    for (const auto& piece : pieces) {
+        totalArea += piece.area;
+    }
+    EXPECT_NEAR(totalArea, 140.0, 1e-6) << "分块面积之和必须等于并集面积 40+100";
+}
+
+// T2：统一坐标下的三条分块（源独有 / 相交 / 叠加独有）+ 两侧属性。
+// 手算：A=[0,10]×[0,4] 面积 10×4=40；B=[6,16]×[2,12] 面积 10×10=100；
+//       交：x 方向 [6,10]=4、y 方向 [2,4]=2 ⇒ A∩B=[6,10]×[2,4] 面积 4×2=8，包串 (6,10,2,4)；
+//       input-only = 40-8 = 32（L 形，包串 (0,10,0,4)）；overlay-only = 100-8 = 92（包串 (6,16,2,12)）；
+//       校验和 32+8+92 = 132 = 40+100-8 = 并集面积。
+// 旧实现只写 1 条"union"合并几何且不带任何属性 ⇒ 条数、面积、属性、计数一起红。
+TEST_F(PluginTest, VectorUnionSplitsIntoThreePieceClasses) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_union_true_overlap_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_union_true_overlap_overlay.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_union_true_overlap_output.gpkg");
+
+    UnionFixtureFeature srcA;
+    srcA.minX = 0.0; srcA.minY = 0.0; srcA.maxX = 10.0; srcA.maxY = 4.0; srcA.name = "src1";
+    ASSERT_TRUE(writeUnionPolygonLayer(inputPath, {srcA}));
+
+    UnionFixtureFeature ovlB;
+    ovlB.minX = 6.0; ovlB.minY = 2.0; ovlB.maxX = 16.0; ovlB.maxY = 12.0; ovlB.pop = 7;
+    ASSERT_TRUE(writeUnionPolygonLayer(overlayPath, {ovlB}));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* rawOutDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(rawOutDs, nullptr);
+    gis::core::GdalDatasetPtr outDs(rawOutDs);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    const auto pieces = readUnionPieces(outLayer);
+
+    EXPECT_EQ(pieces.size(), 3u) << "三条分块（input/both/overlay）必须各写一条";
+    EXPECT_EQ(unionMetadataValue(result, "union_input_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlap_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlay_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_total_pieces"), "3");
+
+    const int inputIdx = findUnionPiece(pieces, "input", 0.0, 10.0, 0.0, 4.0);
+    ASSERT_GE(inputIdx, 0) << "缺少 source=input 且包串 (0,10,0,4) 的分块";
+    EXPECT_NEAR(pieces[inputIdx].area, 32.0, 1e-6);
+    EXPECT_EQ(unionFieldValue(pieces[inputIdx], "name"), "src1");
+    EXPECT_EQ(unionFieldValue(pieces[inputIdx], "pop"), "<null>");
+
+    // both 块：包串必须等于 A∩B 的 (6,10,2,4)（钉坐标，转置类缺陷在这一条上必红）。
+    const int bothIdx = findUnionPiece(pieces, "both", 6.0, 10.0, 2.0, 4.0);
+    ASSERT_GE(bothIdx, 0) << "缺少 source=both 且包串 (6,10,2,4) 的分块";
+    EXPECT_NEAR(pieces[bothIdx].area, 8.0, 1e-6);
+    EXPECT_EQ(unionFieldValue(pieces[bothIdx], "name"), "src1");
+    EXPECT_EQ(unionFieldValue(pieces[bothIdx], "pop"), "7");
+
+    const int overlayIdx = findUnionPiece(pieces, "overlay", 6.0, 16.0, 2.0, 12.0);
+    ASSERT_GE(overlayIdx, 0) << "缺少 source=overlay 且包串 (6,16,2,12) 的分块";
+    EXPECT_NEAR(pieces[overlayIdx].area, 92.0, 1e-6);
+    EXPECT_EQ(unionFieldValue(pieces[overlayIdx], "name"), "<null>");
+    EXPECT_EQ(unionFieldValue(pieces[overlayIdx], "pop"), "7");
+
+    double totalArea = 0.0;
+    for (const auto& piece : pieces) {
+        totalArea += piece.area;
+    }
+    EXPECT_NEAR(totalArea, 132.0, 1e-6) << "32+8+92 必须等于并集面积 40+100-8";
+}
+
+// T3：两侧同名字段的改名规则钉死（源字段原序在前、叠加字段改名在后、末尾固定 source）。
+// 统一坐标同 T2，只是叠加侧字段也叫 name（源 "src1"、叠加 "ovl1"）。
+// 期望输出表字段名依次为 name、name_2、source —— 旧实现只建 source 一列 ⇒ 列名逐个红。
+TEST_F(PluginTest, VectorUnionRenamesOverlayFieldOnNameCollision) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_union_true_rename_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_union_true_rename_overlay.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_union_true_rename_output.gpkg");
+
+    UnionFixtureFeature srcA;
+    srcA.minX = 0.0; srcA.minY = 0.0; srcA.maxX = 10.0; srcA.maxY = 4.0; srcA.name = "src1";
+    ASSERT_TRUE(writeUnionPolygonLayer(inputPath, {srcA}));
+
+    UnionFixtureFeature ovlB;
+    ovlB.minX = 6.0; ovlB.minY = 2.0; ovlB.maxX = 16.0; ovlB.maxY = 12.0; ovlB.name = "ovl1";
+    ASSERT_TRUE(writeUnionPolygonLayer(overlayPath, {ovlB}));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* rawOutDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(rawOutDs, nullptr);
+    gis::core::GdalDatasetPtr outDs(rawOutDs);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    const auto fieldNames = readFieldNames(outLayer);
+    const auto pieces = readUnionPieces(outLayer);
+
+    // 改名规则：按下标逐个比名字（只判"存在某列"判不住源在前、叠加在后的顺序）。
+    ASSERT_EQ(fieldNames.size(), 3u) << "字段名实际为 " << fieldNames.size() << " 列";
+    EXPECT_EQ(fieldNames[0], "name");
+    EXPECT_EQ(fieldNames[1], "name_2");
+    EXPECT_EQ(fieldNames[2], "source");
+
+    EXPECT_EQ(pieces.size(), 3u);
+
+    // both 块：两侧同名字段必须各归一列（先 SetFrom 源再 SetFrom 叠加的写法会把 name 覆盖成 ovl1）。
+    const int bothIdx = findUnionPiece(pieces, "both", 6.0, 10.0, 2.0, 4.0);
+    ASSERT_GE(bothIdx, 0) << "缺少 source=both 且包串 (6,10,2,4) 的分块";
+    EXPECT_EQ(unionFieldValue(pieces[bothIdx], "name"), "src1");
+    EXPECT_EQ(unionFieldValue(pieces[bothIdx], "name_2"), "ovl1");
+
+    const int inputIdx = findUnionPiece(pieces, "input", 0.0, 10.0, 0.0, 4.0);
+    ASSERT_GE(inputIdx, 0) << "缺少 source=input 且包串 (0,10,0,4) 的分块";
+    EXPECT_EQ(unionFieldValue(pieces[inputIdx], "name"), "src1");
+    EXPECT_EQ(unionFieldValue(pieces[inputIdx], "name_2"), "<null>");
+
+    const int overlayIdx = findUnionPiece(pieces, "overlay", 6.0, 16.0, 2.0, 12.0);
+    ASSERT_GE(overlayIdx, 0) << "缺少 source=overlay 且包串 (6,16,2,12) 的分块";
+    EXPECT_EQ(unionFieldValue(pieces[overlayIdx], "name"), "<null>");
+    EXPECT_EQ(unionFieldValue(pieces[overlayIdx], "name_2"), "ovl1");
+}
+
+// T4：叠加面互相重叠时的去重（本刀最容易被漏掉的正确性点：不减已写面积）。
+// 手算：A=[0,10]×[0,10]=100；B1=[5,15]×[0,10]=100；B2=[8,18]×[0,10]=100（B1∩B2=[8,15]×[0,10]=70）。
+//   候选顺序 B1 先、B2 后：
+//     A∩B1 = [5,10]×[0,10] = 50 ⇒ 写 both，并进 consumed；
+//     A∩B2 = [8,10]×[0,10] = 20 整块落在 consumed 里 ⇒ 减完为空 ⇒ 不产出；
+//     rest = A − (B1∪B2) = [0,5]×[0,10] = 50 ⇒ 写 input；
+//     B1 − A = [10,15]×[0,10] = 50 ⇒ 写 overlay；
+//     B2 − A = [10,18]×[0,10] = 80，再减已写的 B1−A ⇒ [15,18]×[0,10] = 30 ⇒ 写 overlay。
+//   面积和 50+50+50+30 = 180 = 全并集 [0,18]×[0,10]。
+//   不减 consumed 的话面积和是 50+50+20+50+80 = 250 ≠ 180 ⇒ 本用例把减项和"A∩B2 不产出"钉死。
+TEST_F(PluginTest, VectorUnionDeduplicatesOverlappingOverlayPolygons) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_union_true_dedup_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_union_true_dedup_overlay.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_union_true_dedup_output.gpkg");
+
+    UnionFixtureFeature srcA;
+    srcA.minX = 0.0; srcA.minY = 0.0; srcA.maxX = 10.0; srcA.maxY = 10.0; srcA.name = "src1";
+    ASSERT_TRUE(writeUnionPolygonLayer(inputPath, {srcA}));
+
+    UnionFixtureFeature ovlB1;
+    ovlB1.minX = 5.0; ovlB1.minY = 0.0; ovlB1.maxX = 15.0; ovlB1.maxY = 10.0; ovlB1.pop = 1;
+    UnionFixtureFeature ovlB2;
+    ovlB2.minX = 8.0; ovlB2.minY = 0.0; ovlB2.maxX = 18.0; ovlB2.maxY = 10.0; ovlB2.pop = 2;
+    // 写入顺序 B1 先、B2 后：GPKG 按 rowid 顺序读出，候选顺序才是上面算式里的那个顺序。
+    ASSERT_TRUE(writeUnionPolygonLayer(overlayPath, {ovlB1, ovlB2}));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* rawOutDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(rawOutDs, nullptr);
+    gis::core::GdalDatasetPtr outDs(rawOutDs);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    const auto pieces = readUnionPieces(outLayer);
+
+    EXPECT_EQ(pieces.size(), 4u) << "A∩B2 应当被 consumed 减干净、一条都不产出";
+    EXPECT_EQ(unionMetadataValue(result, "union_input_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlap_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlay_pieces"), "2");
+    EXPECT_EQ(unionMetadataValue(result, "union_total_pieces"), "4");
+
+    const int inputIdx = findUnionPiece(pieces, "input", 0.0, 5.0, 0.0, 10.0);
+    ASSERT_GE(inputIdx, 0) << "缺少 source=input 且包串 (0,5,0,10) 的分块";
+    EXPECT_NEAR(pieces[inputIdx].area, 50.0, 1e-6);
+    EXPECT_EQ(unionFieldValue(pieces[inputIdx], "name"), "src1");
+    EXPECT_EQ(unionFieldValue(pieces[inputIdx], "pop"), "<null>");
+
+    const int bothIdx = findUnionPiece(pieces, "both", 5.0, 10.0, 0.0, 10.0);
+    ASSERT_GE(bothIdx, 0) << "缺少 source=both 且包串 (5,10,0,10) 的分块";
+    EXPECT_NEAR(pieces[bothIdx].area, 50.0, 1e-6);
+    // 相交块带的是"这一条叠加要素"的属性（pop=1 来自 B1，不是 B2 的 2）。
+    EXPECT_EQ(unionFieldValue(pieces[bothIdx], "name"), "src1");
+    EXPECT_EQ(unionFieldValue(pieces[bothIdx], "pop"), "1");
+
+    const int firstOverlayIdx = findUnionPiece(pieces, "overlay", 10.0, 15.0, 0.0, 10.0);
+    ASSERT_GE(firstOverlayIdx, 0) << "缺少 source=overlay 且包串 (10,15,0,10) 的分块";
+    EXPECT_NEAR(pieces[firstOverlayIdx].area, 50.0, 1e-6);
+    EXPECT_EQ(unionFieldValue(pieces[firstOverlayIdx], "name"), "<null>");
+    EXPECT_EQ(unionFieldValue(pieces[firstOverlayIdx], "pop"), "1");
+
+    // 第二条叠加要素只剩没被写过的那 30：包串 (15,18,0,10)、属性来自 B2（pop=2）。
+    const int secondOverlayIdx = findUnionPiece(pieces, "overlay", 15.0, 18.0, 0.0, 10.0);
+    ASSERT_GE(secondOverlayIdx, 0) << "缺少 source=overlay 且包串 (15,18,0,10) 的分块（不减已写面积就会少了这一块）";
+    EXPECT_NEAR(pieces[secondOverlayIdx].area, 30.0, 1e-6);
+    EXPECT_EQ(unionFieldValue(pieces[secondOverlayIdx], "pop"), "2");
+
+    double totalArea = 0.0;
+    for (const auto& piece : pieces) {
+        totalArea += piece.area;
+    }
+    EXPECT_NEAR(totalArea, 180.0, 1e-6) << "全并集 [0,18]×[0,10] = 180，重复写一次就变 200/250";
+}
+
 TEST_F(PluginTest, VectorUnionLinePolygonOutputsSplitLinesOnly) {
     auto* p = mgr_.find("vector");
     if (!p) {
