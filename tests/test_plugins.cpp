@@ -10133,6 +10133,71 @@ static std::string buildRasterizeValueFixture(const std::string& fileName) {
     return shpPath;
 }
 
+// ── N132 夹具：与 buildRasterizeValueFixture 同一批几何、同一套手推算式，只换字段类型 ──
+// 复用 N131 块里已经写死的推导（图层外包 [0,4]×[0,4]、resolution=1.0 ⇒ 4×4 = 16 个像元；
+// 地理变换左上 (0,4)、像元 (1,-1) ⇒ 像元 (i,j) 中心 = (i+0.5, 3.5-j)；未开 ALL_TOUCHED
+// ⇒ 只烧"中心落在几何内"的像元 ⇒ 非零像元恰好 3 个：(i=0,j=3)、(i=2,j=0)、(i=3,j=0)）。
+// 两条臂各钉一类缺陷：
+//   label = OFTString，值写作 "road_a"/"road_b"（真正非数值的文本）⇒ 必须被拒。
+//     WHY 不用 "3"/"5" 这种"看着像数值"的文本：实跑发现旧实现会把它烧成 3.0/5.0 ——
+//     GDAL 的 -a 走 GetFieldAsDouble，对文本域做 CPLAtof 静默转换，所以那种夹具在改前
+//     烧出来的是"碰巧对"的值，抓不到本缺陷；只有非数值文本才复现控制器的字节级症状
+//     （build/tmp/n132/o.tif 尾 64 字节 = 16 个 00 00 00 00 且 Success）。
+//     新校验按类型一律拒绝，两种文本形态（可转换 / 不可转换）都进不了烧写阶段。
+//   h     = OFTReal（值 2.5，withNumericField=true 才建）⇒ 数值型必须照常可烧（正对照）。
+// 正对照的期望值算式（写在产物之前，不许从产物回填）：
+//   烧 h ⇒ 3 个像元 = 2.5，像元和 = 3 × 2.5 = 7.5，其余 16 - 3 = 13 个像元 = 0。
+//   2.5 = 5/2 在二进制下是精确值，Float32 存下再读回 double 仍精确 ⇒ 逐像元 == 与总和 ==
+//   都站得住，这条臂不需要浮点容差。
+static std::string buildRasterizeFieldFixture(const std::string& fileName, bool withNumericField) {
+    const std::string shpPath = (getTestDir() / fileName).string();
+    const fs::path stem = fs::path(shpPath).stem();
+    for (const auto& entry : fs::directory_iterator(getTestDir())) {
+        if (entry.path().stem() == stem) {
+            std::error_code ignored;
+            fs::remove(entry.path(), ignored);
+        }
+    }
+
+    auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    EXPECT_NE(driver, nullptr);
+    auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    EXPECT_NE(ds, nullptr);
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("test", srs.get(), wkbPolygon);
+    EXPECT_NE(layer, nullptr);
+
+    OGRFieldDefn labelDefn("label", OFTString);
+    layer->CreateField(&labelDefn);
+    if (withNumericField) {
+        OGRFieldDefn heightDefn("h", OFTReal);
+        layer->CreateField(&heightDefn);
+    }
+
+    auto addRect = [&](double minX, double minY, double maxX, double maxY, const char* label) {
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(minX, minY); ring.addPoint(maxX, minY);
+        ring.addPoint(maxX, maxY); ring.addPoint(minX, maxY);
+        ring.addPoint(minX, minY);
+        poly.addRing(&ring);
+        feat->SetGeometry(&poly);
+        feat->SetField("label", label);
+        if (withNumericField) {
+            feat->SetField("h", 2.5);
+        }
+        layer->CreateFeature(feat);
+        OGRFeature::DestroyFeature(feat);
+    };
+    addRect(0.0, 0.0, 1.0, 1.0, "road_a");
+    addRect(2.0, 3.0, 4.0, 4.0, "road_b");
+
+    GDALClose(ds);
+    return shpPath;
+}
+
 static void removeRasterizeOutput(const std::string& output) {
     std::error_code ignored;
     fs::remove(output, ignored);
@@ -10291,6 +10356,102 @@ TEST_F(PluginTest, VectorRasterizeWithoutAttributeBurnsConstantOne) {
     EXPECT_EQ(countOther, 0) << "值集合必须恰好 ⊆ {0,1}";
     EXPECT_EQ(countOne, 3) << "手推：与正向臂同一批几何 ⇒ 同样 3 个像元，只是值换成 1";
     EXPECT_NEAR(sum, 3.0, 1e-4) << "手推：1+1+1=3";
+}
+
+// N132 反向臂：attribute 点名了一个**存在**但类型是 OFTString 的字段 ⇒ 必须硬失败。
+// 旧实现的真实症状（控制器双臂字节级实测，build/tmp/n132/，4×4 Float32 尾 64 字节）：
+//   --attribute=label ⇒ 16 个 00000000 且 Success；
+//   同输入不传 attribute（burn=1）⇒ 16 个 0000803f（1.0）。
+// 存在性校验（N131）在这里拦不住，因为字段确实存在；GDAL 的 -a 取不到数值 ⇒ 每个像元烧成 0，
+// 而 0 恰是本动作的 NoData ⇒ 产物"打开看不出异常"、动作还报 Success，
+// raster_inspect histogram 对它报 no valid pixels found in sampling（整幅都是 NoData）。
+// ⇒ 判据三条：success 为假 + 案文点名"不是数值型"并把字段名带回来 + 磁盘上不留半成品。
+TEST_F(PluginTest, VectorRasterizeRejectsNonNumericAttributeField) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = buildRasterizeFieldFixture("e2e_rasterize_str_input.shp", false);
+    const std::string output = (getTestDir() / "e2e_rasterize_str_output.tif").string();
+    removeRasterizeOutput(output);
+    ASSERT_FALSE(fs::exists(output)) << "本轮开始前就残留了输出，半成品判据会失真";
+
+    // 夹具里 label 是真实存在的字段 ⇒ 这条臂走的不是"字段不存在"分支，而是类型分支
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("rasterize");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["resolution"] = 1.0;
+    params["attribute"] = std::string("label");
+
+    const auto result = p->execute(params, progress_);
+
+    EXPECT_FALSE(result.success)
+        << "N132：attribute 指向 OFTString 字段仍然 success=true ⇒ 整幅静默烧成 0（而 0 是 NoData）。"
+           "实际 message=" << result.message;
+    EXPECT_NE(result.message.find("not numeric"), std::string::npos)
+        << "失败案文要说明的是类型不对，不是字段不存在。实际 message=" << result.message;
+    EXPECT_NE(result.message.find("label"), std::string::npos)
+        << "失败案文必须把点名的字段名带回来。实际 message=" << result.message;
+    EXPECT_EQ(result.message, "attribute field is not numeric: label")
+        << "案文形态要与既有两条失败文案同族（点名参数 + 带回写错的值）";
+    ASSERT_FALSE(fs::exists(output))
+        << "类型校验要在建出输出栅格之前完成，失败后不得留全 0 半成品：" << output;
+}
+
+// N132 正对照：同一夹具加一个 OFTReal 字段 h=2.5 ⇒ 数值型必须照常可烧，
+// 用来证明反向臂不是一条"把所有字段都拒掉"的窄规则（否则反向臂与正对照会同时绿在"全拒"上）。
+// 期望值全部来自夹具上方算式：3 个像元 = 2.5、和 = 3 × 2.5 = 7.5、其余 13 个像元 = 0。
+TEST_F(PluginTest, VectorRasterizeBurnsRealFieldValues) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = buildRasterizeFieldFixture("e2e_rasterize_real_input.shp", true);
+    const std::string output = (getTestDir() / "e2e_rasterize_real_output.tif").string();
+    removeRasterizeOutput(output);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("rasterize");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["resolution"] = 1.0;
+    params["attribute"] = std::string("h");   // OFTReal，夹具里两条要素都取 2.5
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success)
+        << "数值型字段被 N132 的校验顺手拒了（正对照失败）: " << result.message;
+    ASSERT_TRUE(fs::exists(output)) << output;
+
+    const auto burnField = result.metadata.find("burn_field");
+    ASSERT_NE(burnField, result.metadata.end()) << "实际键数=" << result.metadata.size();
+    EXPECT_EQ(burnField->second, "h") << "元数据要回显点名的那个数值字段";
+
+    const auto pixels = readWholeBand(output, 4, 4);
+    ASSERT_EQ(pixels.size(), 16u) << "夹具算式的前提是 4×4";
+
+    int countReal = 0;
+    int countOther = 0;
+    double sum = 0.0;
+    for (const float v : pixels) {
+        sum += static_cast<double>(v);
+        if (v == 2.5f) {
+            ++countReal;
+        } else if (v != 0.0f) {
+            ++countOther;
+        }
+    }
+    EXPECT_EQ(countOther, 0) << "值集合必须恰好 ⊆ {0, 2.5}：出现别的值就是烧错了字段";
+    EXPECT_EQ(countReal, 3) << "手推：3 个像元中心落在两条面里";
+    EXPECT_EQ(sum, 7.5) << "手推：3 × 2.5 = 7.5（2.5 在二进制下精确 ⇒ 不用容差）";
+
+    // 逐位置钉死，防"总数与和都对了但像元摆错"
+    EXPECT_EQ(pixels[3 * 4 + 0], 2.5f) << "(i=0,j=3) 必须是 2.5";
+    EXPECT_EQ(pixels[0 * 4 + 2], 2.5f) << "(i=2,j=0) 必须是 2.5";
+    EXPECT_EQ(pixels[0 * 4 + 3], 2.5f) << "(i=3,j=0) 必须是 2.5";
+    EXPECT_EQ(pixels[0], 0.0f) << "(i=0,j=0) 不在任何几何里";
 }
 
 TEST_F(PluginTest, TerrainFlowAccumulationExecution) {

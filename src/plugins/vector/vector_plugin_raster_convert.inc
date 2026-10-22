@@ -31,9 +31,30 @@ gis::framework::Result VectorPlugin::doRasterize(
     // attribute 留空仍是合法的"烧常数 1"，不走这条分支。
     // WHY 按"点名的图层"查：与下面 -a 的取域范围、以及 layer 参数自己的口径保持一致；
     // 大小写也与 GDAL 的 GetFieldIndex 同为敏感，不做额外的宽松匹配。
-    if (!attribute.empty() &&
-        layer->GetLayerDefn()->GetFieldIndex(attribute.c_str()) < 0) {
-        return gis::framework::Result::fail("attribute not found: " + attribute);
+    if (!attribute.empty()) {
+        const int attributeIndex = layer->GetLayerDefn()->GetFieldIndex(attribute.c_str());
+        if (attributeIndex < 0) {
+            return gis::framework::Result::fail("attribute not found: " + attribute);
+        }
+
+        // N132：字段**存在**但类型不是数值 ⇒ 同样必须在这里拒掉，不能交给 GDAL 的 -a。
+        // 双臂字节级实测（4×4 Float32 产物尾 64 字节，同一段几何）：
+        //   --attribute=label（label 是 OFTString，值 "road_a"/"road_b"）⇒ 16 个 00 00 00 00，
+        //     而动作仍报 Success，产物 histogram 报 "no valid pixels found in sampling"
+        //     （0 恰是本动作的 NoData ⇒ 整幅都是 NoData，打开看不出异常）；
+        //     同输入不传 attribute（burn=1）⇒ 16 个 00 00 80 3f，即 1.0。
+        // GDAL 的 -a 对文本域走的是 GetFieldAsDouble（内部 CPLAtof），"3" 这种**看着像数值**
+        // 的文本会被静默转换成 3.0 烧进去 —— 那是同一条支上的另一种静默，同样没有依据。
+        // 所以这里按**类型**一刀切：只有 OFTInteger / OFTInteger64 / OFTReal 允许被点名当烧值，
+        // 文本、日期、时间、二进制、各 List 型一律硬失败。
+        // 不退化成"非数值就当 burn=1"：那只是把"静默烧 0"换成"静默烧 1"，用户点名的字段
+        // 依旧没有被用上，产物照旧自称为那个字段烧写的结果。
+        const OGRFieldType attributeType =
+            layer->GetLayerDefn()->GetFieldDefn(attributeIndex)->GetType();
+        if (attributeType != OFTInteger && attributeType != OFTInteger64 &&
+            attributeType != OFTReal) {
+            return gis::framework::Result::fail("attribute field is not numeric: " + attribute);
+        }
     }
 
     OGREnvelope extent;
