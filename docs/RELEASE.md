@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 723 / Release 721**（2026-10-22 批次 C N122 收口轮现读；上一档 722 / 720 是同日 C3i，再上一档 719 / 717 是 C3h-1，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 724 / Release 722**（2026-10-23 批次 C C3h-2 收口轮现读；上一档 723 / 721 是同日 N122，再上一档 722 / 720 是 C3i，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,7 +297,7 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 723 / Release 721**（2026-10-22 批次 C N122 收口轮现读；相比上一档 722 / 720 **+1** = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
+- **现行基线**：`ctest -N` 注册数 **Debug 724 / Release 722**（2026-10-23 批次 C C3h-2 收口轮现读；相比上一档 723 / 721 **+1** = C3h-2 的 `PluginTest.VectorUnionMixedDimensionCarriesAttributesPerPiece`；再上一档 722 / 720 的 +1 = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
   由两刀合成：C3k 把一条 `real_data_vector_full` 换成 `checks`/`overlay` 两条（−1+2 = **+1**），
   C3i 新增 `PluginTest.VectorBufferRejectsMissingSrs` 与 `PluginTest.VectorDissolveRejectsMissingSrs`（**+2**）。
   上一档 719 / 717 是同日 C3h-1 收口轮（+6 = `PluginTest.VectorUnion*` 六条，逐名比对得出）；再上一档 713 / 711 是同日 C3j（+8 = N132/N133/N134 三刀的
@@ -367,12 +367,12 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **723** | **861.11 s**（批次 C N122 收口轮现跑，`build/tmp/n122_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 723 条**首档**；往前十档（697~722 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 s** | 最慢 `real_data_vector_overlay` **230.41 s** ⇒ 670 ÷ 230.41 = **2.91×**；次 `real_data_vector_quick` **198.79 s** ⇒ 720 ÷ 198.79 = **3.62×**；`real_data_vector_checks` **33.42 s** ⇒ 100 ÷ 33.42 = **2.99×**；`source_mojibake_guard` 12.79 s ⇒ **23.5×** |
-| Release | **721** | **562.99 s**（N136 隔离后重跑，`build/tmp/n136_rel_clean.log`；**721/721 全绿**） | 721 条**首档**；往前九档（695~720 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 s** | 最慢 `real_data_vector_overlay` **153.72 s** ⇒ 670 ÷ 153.72 = **4.36×**；`real_data_vector_quick` **146.99 s** ⇒ 4.90×；`real_data_vector_checks` **23.65 s** ⇒ 4.23× |
-⚠ **Release 在 N122 收口轮先是 720/721（唯一红 = N136），隔离 26 个 Debug 配置残留后重跑 721/721 全绿**（562.99 s）。
-第一次跑与第二次跑之间**只**动了 `build/release/plugins` 的那 26 个文件（源码与测试一条没改）——那是审计自带的补救步骤。
-**N136 的"绿→红翻转"成因仍未查明，不写因果**：同一批文件、同一命令，在 11:44 与 13:0x 两轮 Release 全量里是绿的；
-已排除的方向见下面 N136 条目的清单。下一步是给审计加"扫描清单落盘"。
+| Debug | **724** | **875.64 s**（批次 C C3h-2 收口轮现跑，`build/tmp/c3h2_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 724 条**首档**；往前十一档（697~723 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 s** | 最慢 `real_data_vector_overlay` **242.12 s** ⇒ 670 ÷ 242.12 = **2.77×**；次 `real_data_vector_quick` **214.81 s** ⇒ 720 ÷ 214.81 = **3.35×**；`real_data_vector_checks` **32.88 s** ⇒ 100 ÷ 32.88 = **3.04×**；`source_mojibake_guard` 10.34 s ⇒ **29.0×** |
+| Release | **722** | **449.02 s**（同一轮紧随其后跑，`build/tmp/c3h2_close_rel.log`；**722/722 全绿**） | 722 条**首档**；往前十档（695~721 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 s** | 最慢 `real_data_vector_overlay` **110.66 s** ⇒ 670 ÷ 110.66 = **6.05×**；`real_data_vector_quick` **116.95 s** ⇒ 6.16×；`real_data_vector_checks` **17.12 s** ⇒ 5.84× |
+⚠ **`overlay` 那一半在涨，但只有一轮对照**：Debug 230.41 → **242.12 s**（+11.71 s），Release 153.72 → **110.66 s**（−43 s）——
+同一档两边一涨一跌 ⇒ 拿它论证"路径 B 每条片段多做至多 N 次 `Difference` 所以变慢"是不成立的；
+本轮 C3h-2 确实给路径 B 加了每次分块的归属查找（真实腿 `union_focus` 走的就是路径 B），
+但**要证明是它带来的**得等下一轮现读，或做一次同码双跑。按本文件纪律：这一栏只现读、不外推。
 
 **触发线（我自己给自己下的规则）——已处置完毕，现在的口径按"半条腿"算**：2026-10-22 拆腿前
 `real_data_vector_full` 的 Debug 余量掉到 **2.06×**（378.52 s，单跑复核 376.63 s）⇒ 触发。
@@ -453,6 +453,11 @@ cmake --install build/release --config Release --prefix install
     全部改 `fs::u8path`；新增中文路径边车用例）。全量：Debug `100% tests passed, 0 tests failed out of 723`
     （**861.11 s**）；Release 首轮 **720/721**（唯一红 = N136）→ 隔离 26 个 Debug 配置残留后重跑 **721/721（562.99 s）**。
     注册数 722→723 / 720→721（+1）。真实腿余量：Debug 2.91× / 2.99× / 3.62×，Release 4.36× / 4.23× / 4.90×。
+  - **批次 C C3h-2 收口轮**（本表现值，N128 后半）：树上多了 `cb443fb`（线×面路径补两侧整表属性、
+    `split` 退役收敛为 `input`/`both`、T7 + 就地更新老用例）。实现者撞 150 回合上限但**上限前已提交**，
+    控制器自验两树 `VectorUnion*|判据族` 29/29、评审席两轴通过且无必须修。
+    全量：Debug **724/724（875.64 s）**、Release **722/722（449.02 s）**，两树 `Not Run/Skip/***` 都是 0；
+    注册数 723→724 / 721→722（+1）。真实腿余量 Debug **2.77× / 3.04× / 3.35×**、Release 6.05× / 5.84× / 6.16×。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -917,7 +922,8 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   是否也缺，本刀没核**，不外推。
 - 挂账 **N128**（`vector union`）：**它不是并集**。只遍历源图层要素（`vector_plugin_overlay.inc` union 段的
   `while (srcLayer->GetNextFeature())`）⇒ 叠加层独有的几何被静默丢弃，产物覆盖 ⊆ 源覆盖，
-  与 `docs/算法说明/矢量数据处理/并集.md` 的语义相反；**并且输出图层只建一个 `source` 字符串字段**（`:85-86`），
+  与 `docs/算法说明/矢量数据处理/并集.md` 的语义相反；**并且输出图层只建一个 `source` 字符串字段**
+  （缺陷当时的现读位置是 `:85-86`，**该号随 C3h-2 已失效**，现在两条路共用同一张建表代码），
   源属性整表丢失——而同一文件里的 `intersect`/`difference` 都各自有字段循环（`:264`、`:437`）
   ⇒ **同一文件三个动作两种口径**，union 是异类。
   **裁定（2026-10-22，用户选"真并集 + 整表属性"）**：输出必须覆盖"源 ∪ 叠加"的全部几何，两边字段整表合并，
@@ -925,6 +931,20 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   实测 `grep -rn FoundUniqueName vcpkg/installed/x64-windows/include/` 为空 ⇒ 本仓自实现并把规则写进文档）。
   开工刀 = 工单 `Task C3h-1`（只改路径 A；"线 × 面"那条混合维度路径 `usePracticalMixedUnion` 本刀逐字不动，
   它的属性补齐排在 C3h-2，因为既有 `VectorUnionLinePolygonOutputsSplitLinesOnly` 钉的就是它的 3 片段形状）。
+  **路径 B 也已兑现 `cb443fb`（C3h-2，两轴评审通过、无必须修）**：输出表与路径 A 共用同一条建表规则
+  （源字段→叠加字段撞名 `<name>_2`→标记列撞名由标记列让位），片段按归属叠加面带两侧整表属性；
+  `source` 词表收敛为 `input`/`both`（**`split` 退役**），路径 B 的 `union_overlay_pieces` 恒 0 是契约不是缺陷
+  （线×面不产出叠加面）。⚠ 工单原文写"取第一个 `Intersects` 为真的要素"是**错的**：切分结果保留切口端点 ⇒
+  三条"面外"片段对相邻面 `Intersects` 全为真（实现者与本席各自用 GEOS 复算过，
+  但注意 shapely 用的 GEOS 与本仓 vendored 3.15.0 **不是同一份**，所以真正的证据是自建构件上的 MU-A/B/C 红绿）；
+  落点改用"差集为空 = 被盖住"（等价 covered-by，允许贴边界），并已写进代码注释与文档。
+- 挂账 **N137**（GPKG 写出路径的 FID 与失败回滚，**独立立案，不由 C3h-2 承担**）：评审席在变异体 MU-C 下抓到
+  `UNIQUE constraint failed: union.fid`，且**同一条代码路径在两个夹具下 FID 起点不同**（老用例产物 fid 从 0 起、
+  新用例从 1 起）⇒ 驱动分配的 FID 序列不可期望；另有"写出失败即 `RollbackTransaction()` 把刚建的表一起回滚"
+  （现象里那两条 `no such table: main.union`）——两件事都落在共享的 `writeGeometryFeature`/GPKG 事务批量写上
+  （`SetFID(OGRNullFID)` 三处自 `99d9c91` 起就有），且 `VectorClipRepairsInvalidOverlayGeometry` 已为**同族**症状
+  专门钉过"`UNIQUE constraint failed` 不得出现"，union 这条腿却没有等价断言。
+  定位实验：MU-D（保留 covered-by、强制归属取 `overlayFeatures.front()`）与 MU-E（老用例输出换 `.geojson`）。
   **路径 A 已修 `8ed6b75` + 复审回收 `ff86362`**（六条用例 T1–T6，两棵树 `VectorUnion*|CoverageMeta*|CoverageMetaJudge*`
   选择器 28/28，三条老用例 3/3 单跑通过）：三条分块 `input`/`both`/`overlay` 互不重叠且面积可加，
   两侧字段整表合并（**撞名时让位的是我们附加的标记列 `source`→`source_2`，用户数据列名逐字保留**——
