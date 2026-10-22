@@ -900,7 +900,7 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   **N132**——`attribute` 指向**存在但非数值**的字段时静默烧 0 且 `Success`（我做了字节级双臂实测：
   4×4 Float32 尾 64 字节，传字符串字段 ⇒ 16 个 `00000000`，不传 attribute 走 burn=1 ⇒ 16 个 `0000803f`）；
   **N133**——`raster_inspect histogram`/`info` 把**常数栅格**判成"没有值域"（burn=1 那张全 1.0 的产物就报
-  `Band has no value range`）；**N134**——`rasterize` 的 `layer` 参数只做校验与取 extent，
+  `Band has no value range`）；**N134**——`rasterize` 的 `layer` 不限制烧写范围；⚠ 我原先把这条的症状写成"其余图层一起烧"是**错的**：本机 GDAL 3.12.4 的 utils 版 `GDALRasterize` 在没有 `-l`/`-sql` 时要求源数据集只有一个图层（`apps/gdal_rasterize_lib.cpp:1005-1014`）⇒ 真实症状是**多图层输入整条动作硬失败**，"全烧"这个前提从未成立。已修 `9c02668`（`GDALRasterizeLayers` 只递交点名层，`source_feature_count` 同步收紧为"只数被烧层"）
   **不限制烧写范围**（`GDALRasterize` 吃整个数据集 ⇒ 其余图层一起烧），
   所以下级把 `source_feature_count` 按全层求和反而是对的，该修的是这个不对称。
 - 还有一条**测试侧**的更正：`ctest -R` 的正则**不认 `\w`**——我写在任务书里的
