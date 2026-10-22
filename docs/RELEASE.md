@@ -881,7 +881,21 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   另带 `source` 标记；同名冲突的叠加字段改名 `<name>_2`/`<name>_3`…（GDAL 的 `OGR_F_FoundUniqueName` 不在公开头里，
   实测 `grep -rn FoundUniqueName vcpkg/installed/x64-windows/include/` 为空 ⇒ 本仓自实现并把规则写进文档）。
   开工刀 = 工单 `Task C3h-1`（只改路径 A；"线 × 面"那条混合维度路径 `usePracticalMixedUnion` 本刀逐字不动，
-  它的属性补齐排在 C3h-2，因为既有 `VectorUnionLinePolygonOutputsSplitLinesOnly` 钉的就是它的 3 片段形状）。**未修**。
+  它的属性补齐排在 C3h-2，因为既有 `VectorUnionLinePolygonOutputsSplitLinesOnly` 钉的就是它的 3 片段形状）。
+  **路径 A 已修 `8ed6b75` + 复审回收 `ff86362`**（六条用例 T1–T6，两棵树 `VectorUnion*|CoverageMeta*|CoverageMetaJudge*`
+  选择器 28/28，三条老用例 3/3 单跑通过）：三条分块 `input`/`both`/`overlay` 互不重叠且面积可加，
+  两侧字段整表合并（**撞名时让位的是我们附加的标记列 `source`→`source_2`，用户数据列名逐字保留**——
+  评审席推荐反过来，控制器否决：改用户列名会让下游按原名取值的代码静默拿不到值，正是 N128 这一族缺陷的镜像），
+  元数据 5 键（`union_input_pieces`/`union_overlap_pieces`/`union_overlay_pieces`/`union_total_pieces`
+  + 只在 >0 出现的 `union_skipped_overlay_pieces`）。
+  ⚠ **`union` 的 GOLD 登记与路径 A 的真实数据腿都还没有**：现有 `union_focus` 是线 × 面 ⇒ 走路径 B，
+  路径 A 在真实回归里是 0 覆盖。两件事分别排在 C3h-1b（变异取证 + 晋升）与 C3h-3（面 × 面真实腿）。
+- 挂账 **N135**（`vector union` 路径 A 的三条"GEOS 返回失败"分支，**今天无判据**，由 `ff86362` 复审席点名）：
+  ① 已写面积累加时某次 `Union` 返回 nullptr ⇒ 减法基少一块 ⇒ 源独有块会把已写相交面积再算进去（不计数）；
+  ② 逐条差集只减动部分候选 ⇒ 写出的叠加独有块与没减动那条源几何重叠（不计数）；
+  ③ 级联并集的子树失败返回"只并了一半"的**非空**结果（`vector_plugin_overlay_support.inc:181-186` 的
+  `if (!left) return right;`）⇒ 少减一条且不计数。三条都要靠一个"第 N 次几何运算返回失败"的测试闸才可达，
+  `docs/算法说明/矢量数据处理/并集.md` 已把这三类如实列为限制（不再写"绝不重叠"那种绝对句）。
 - 挂账 **N129**（`vector dissolve`）：`dissolve_field` 写错（输入层没有这个字段）时**不报错**，
   静默把所有几何并入一组（`vector_plugin_dissolve.inc:41-47` 的 `else allGeoms.push_back`）⇒ 用户以为按字段融合、实际融成一坨；
   对立面是同插件 `spatial_join.inc:38-43` 对"字段不存在"**硬失败** ⇒ 同类错误两种行为。
@@ -904,6 +918,19 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
 另有四条**代码质量类**可疑点登记在工单里（`overlay.inc:285` 混合维路径每要素泄一条几何、
 两处死代码、`buffer_clip.inc:53` 造成的 4 处死臂、`dissolve.inc:119/:138` 两处 `delete nullptr`），
 归"冗余/一致性"顺手批，不与修复刀混批。
+⚠ 上面这些行号是**登记时刻**的现值，`overlay.inc` 自 C3h-1 起长了 300+ 行 ⇒ 复用前必须重读，不许按名字外推。
+
+C3h-1 复审又攒出五条同类项（同样归"冗余/一致性"批，行号为 2026-10-22 现读）：
+`vector_plugin_overlay_support.inc:40` 的 `writeUnionFeatureOwned` **零调用者**（`grep -rn` 全仓只剩定义本身，
+`src/` 与 `tests/` 合计命中 1 次）；`tests/test_plugins.cpp:4464` 写的 `UnionOutputPiece::source`
+在 `findUnionPiece` 改按列名配对之后**没有读者**（`:4350`/`:4396` 那两处读的是夹具侧结构，不是这个）；
+`vector_plugin_overlay.inc:386` 与 `:469` 两处 `progress.throwIfCancelled()` 位于 `srcSRS`（裸 `Clone()` 指针）
+已分配之后 ⇒ 取消路径既泄 `srcSRS` 又不回滚已开的 GPKG 事务（**同一形态在 `difference`/`intersect` 里也存在，
+处理时要按"整个 overlay 三动作"一并核，不是只补 union**）；
+`mergeGeometryList`（`vector_plugin_overlay.inc:263-272`）把"过滤 null/空几何"的责任推给了唯一调用方，
+头上注释只写"空集合返回 nullptr"、没写这条新前置条件；
+`src/gui/gui_data_support.cpp:653` 的 union 动作描述仍是"合并输入要素与 overlay_vector 的重叠部分，输出并集要素"，
+真并集 + 整表属性之后这句已偏（GUI 文案归阶段三文档同步批，且要同时看 `N111` 的前缀分流挂账）。
 
 **执行顺序裁定（R-C3c-1）**：**已确诊缺陷的动作先修后测**——C3d 刚发生过"真实腿把缺陷产物形状钉成期望值
 （`overlap_check_prov` 的 `-eq 0`），修好后那条断言必须跟着退役"，所以本轮不允许先写测试再修缺陷。
