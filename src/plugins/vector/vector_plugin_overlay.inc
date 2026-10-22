@@ -84,9 +84,10 @@ gis::framework::Result VectorPlugin::doUnion(
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
-    // 建表分两条路：线 × 面（路径 B）本刀仍只建 `source` 一个字段，属性补齐在下一刀，这里不许顺手扩；
-    // 路径 A 按"源字段原序 → 叠加字段（同名改名）→ source"建整表，并把两侧的下标表就地算好，
+    // 建表两条路共用同一条规则（线 × 面那一侧"只建 source、属性补齐在下一刀"的特例已经在 N128 后半这一刀兑现）：
+    // 按"源字段原序 → 叠加字段（同名改名）→ 标记列"建整表，并把两侧的下标表就地算好，
     // 后面写要素一律按下标，不在循环里按字段名查。
+    // 路径 B 同样要 overlayFieldMap：线段片段带上的是"它落在哪条叠加面里"的那条要素的整表属性。
     auto* srcLayerDefn = srcLayer->GetLayerDefn();
     auto* overlayLayerDefn = overlayLayer->GetLayerDefn();
     std::vector<int> srcFieldMap;
@@ -146,24 +147,21 @@ gis::framework::Result VectorPlugin::doUnion(
         return dstLayer->GetLayerDefn()->GetFieldCount() - 1;
     };
 
-    if (usePracticalMixedUnion) {
-        sourceFieldIdx = appendFieldDefn(&sourceFieldDefn, "");
-    } else {
-        srcFieldMap.assign(srcLayerDefn->GetFieldCount(), -1);
-        for (int i = 0; i < srcLayerDefn->GetFieldCount(); ++i) {
-            srcFieldMap[i] = appendFieldDefn(srcLayerDefn->GetFieldDefn(i), "");
-        }
-
-        overlayFieldMap.assign(overlayLayerDefn->GetFieldCount(), -1);
-        for (int i = 0; i < overlayLayerDefn->GetFieldCount(); ++i) {
-            const std::string mergedName =
-                uniqueFieldName(takenFieldNames, overlayLayerDefn->GetFieldDefn(i)->GetNameRef());
-            overlayFieldMap[i] = appendFieldDefn(overlayLayerDefn->GetFieldDefn(i), mergedName);
-        }
-
-        sourceFieldIdx = appendFieldDefn(
-            &sourceFieldDefn, uniqueFieldName(takenFieldNames, sourceFieldDefn.GetNameRef()));
+    srcFieldMap.assign(srcLayerDefn->GetFieldCount(), -1);
+    for (int i = 0; i < srcLayerDefn->GetFieldCount(); ++i) {
+        srcFieldMap[i] = appendFieldDefn(srcLayerDefn->GetFieldDefn(i), "");
     }
+
+    overlayFieldMap.assign(overlayLayerDefn->GetFieldCount(), -1);
+    for (int i = 0; i < overlayLayerDefn->GetFieldCount(); ++i) {
+        const std::string mergedName =
+            uniqueFieldName(takenFieldNames, overlayLayerDefn->GetFieldDefn(i)->GetNameRef());
+        overlayFieldMap[i] = appendFieldDefn(overlayLayerDefn->GetFieldDefn(i), mergedName);
+    }
+
+    // 标记列是本工具附加的列 ⇒ 撞名时由它让位（用户数据列名逐字保留）。
+    sourceFieldIdx = appendFieldDefn(
+        &sourceFieldDefn, uniqueFieldName(takenFieldNames, sourceFieldDefn.GetNameRef()));
 
     if (sourceFieldIdx < 0) {
         delete srcSRS;
@@ -188,8 +186,64 @@ gis::framework::Result VectorPlugin::doUnion(
         dstLayer->StartTransaction();
     }
 
+    // 属性移交只按下标写，两侧都走 copyFeatureFieldsOnly（SetFieldsFrom，不碰几何）。
+    // WHY 不许先 SetFrom(源) 再 SetFrom(叠加)：OGRFeature::SetFrom 按字段名匹配，
+    // 两边同名时第二次会把第一次的值静默覆盖掉（name 会变成叠加侧的值）。
+    // 下标表在建表时就算好，NULL 字段由 SetFieldsFrom 保持未赋值（GPKG 落盘即 NULL）。
+    // 两条路共用这一个写出函数：任一侧传空指针就是"那一侧留 NULL"，标记列由调用方按分块类别给值。
+    auto writeUnionPiece = [&](OGRGeometry* geom, const OGRFeature* srcFeat,
+                               const OGRFeature* overlayFeat, const char* sourceValue) {
+        return writeGeometryFeature(dstLayer, geom, [&](OGRFeature* dstFeat) {
+            if (srcFeat) {
+                copyFeatureFieldsOnly(dstFeat, srcFeat, srcFieldMap);
+            }
+            if (overlayFeat) {
+                copyFeatureFieldsOnly(dstFeat, overlayFeat, overlayFieldMap);
+            }
+            dstFeat->SetField(sourceFieldIdx, sourceValue);
+        });
+    };
+
     if (usePracticalMixedUnion) {
-        // 路径 B（线 × 面）：写出的内容与今天逐字一致，只在计数处多记一笔 overlapCount。
+        // 路径 B（线 × 面）：输出仍是线图层 —— 线 × 面的"真并集"在维度上不相容，把叠加面当面要素写进
+        // 线图层不是本动作的契约。这一路保证的是**线段被完整切分覆盖**（不变量是长度可加，不是面积可加），
+        // 不产出叠加面 ⇒ union_overlay_pieces 在这一路恒为 0，那是契约不是缺陷。
+        // 片段的整表属性 = 生成它的那条源线 + 它落在其中的那条叠加面，另一侧留 NULL。
+        // 纯几何表（overlayEntries）继续喂 splitLineByOverlayEntries —— 那个 helper 的签名不许改
+        //（buffer_clip 与 difference/intersect 也在用），所以这里两张表并存，属性只能从要素表取。
+        const std::vector<OverlayFeatureEntry> overlayFeatures = collectNormalizedFeatures(overlayLayer);
+
+        // 片段归属查找：先按包串粗筛（与路径 A 的 featureCandidates 同一把尺 envelopesIntersect，
+        // 不在循环里回读图层），再在候选里按**叠加图层读取顺序**取第一条"盖得住整条片段"的要素。
+        // WHY 判定用"差集为空"而不是 Intersects：切分结果保留切口端点 ⇒ 面外那段的端点正好落在叠加面
+        // 边界上，Intersects 对它也为真（本机 GEOS 实测：T7 夹具的 5 条片段里 4 条对某条面 Intersects 为真），
+        // 三条面外片段会被错标成 both。"片段减掉这条面还剩东西"才叫没被盖住，等价于 DE-9IM 的 covered-by
+        //（允许贴边界），对得上"落在某个叠加面内 ⇒ both / 在所有叠加面之外 ⇒ input"这条口径。
+        // ⚠ 归属唯一性依赖 shouldRejectHighlyOverlappedMixedUnion 那条闸：叠加面互相重叠时同一片段可能被
+        // 两条同时命中，"按读取顺序取第一条"才成为约定；哪天放开那道闸，这里的归属就要重定义。
+        // ⚠ 差集返回 nullptr（GEOS 失败）时按"没盖住"处理，与全仓"宁缺不重"的方向一致。
+        auto findOverlayOwner = [&overlayFeatures](const OGRGeometry* part) -> const OGRFeature* {
+            if (!part || part->IsEmpty()) {
+                return nullptr;
+            }
+            OGREnvelope partEnvelope{};
+            part->getEnvelope(&partEnvelope);
+            for (const auto& entry : overlayFeatures) {
+                if (!envelopesIntersect(entry.envelope, partEnvelope)) {
+                    continue;
+                }
+                const OGRGeometry* overlayGeom = entry.feature->GetGeometryRef();
+                if (!overlayGeom || overlayGeom->IsEmpty()) {
+                    continue;
+                }
+                std::unique_ptr<OGRGeometry> rest(part->Difference(overlayGeom));
+                if (rest && rest->IsEmpty()) {
+                    return entry.feature.get();
+                }
+            }
+            return nullptr;
+        };
+
         srcLayer->ResetReading();
         OGRFeature* feat = nullptr;
         while ((feat = srcLayer->GetNextFeature()) != nullptr) {
@@ -199,9 +253,13 @@ gis::framework::Result VectorPlugin::doUnion(
                 auto lineParts = splitLineByOverlayEntries(geom, candidates);
 
                 for (size_t i = 0; i < lineParts.size(); ++i) {
-                    OGRGeometry* part = lineParts[i].geometry;
-                    if (!writeUnionFeature(dstLayer, part, "split")) {
-                        for (size_t j = i; j < lineParts.size(); ++j) {
+                    // 所有权在循环开头就交给 unique_ptr：失败出口不必再手工 delete 当前这条，
+                    // 只 delete 还没进过循环的后续片段，少一处漏删/双删的口径。
+                    std::unique_ptr<OGRGeometry> part(lineParts[i].geometry);
+                    lineParts[i].geometry = nullptr;
+                    const OGRFeature* owner = findOverlayOwner(part.get());
+                    if (!writeUnionPiece(part.get(), feat, owner, owner ? "both" : "input")) {
+                        for (size_t j = i + 1; j < lineParts.size(); ++j) {
                             delete lineParts[j].geometry;
                         }
                         OGRFeature::DestroyFeature(feat);
@@ -211,12 +269,14 @@ gis::framework::Result VectorPlugin::doUnion(
                         delete srcSRS;
                         return gis::framework::Result::fail("Failed to write union feature");
                     }
-                    delete part;
-                    lineParts[i].geometry = nullptr;
                     count++;
-                    // 归类说明：这条路径写的不是"相交块"，但它的 source 值既不是 input 也不是 overlay，
-                    // 按"实际写入的 source 值归类"只能落进 overlap 这一桶；下一刀补属性时别把它读成真相交块。
-                    overlapCount++;
+                    // 归类只看实际写出的标记值：盖在叠加面里的片段才是 both（记 overlap 桶），
+                    // 面外的片段是 input（记 input 桶）；这一路不产出面要素 ⇒ overlayCount 不动。
+                    if (owner) {
+                        overlapCount++;
+                    } else {
+                        inputCount++;
+                    }
                     if (useTransactions && count % transactionBatchSize == 0) {
                         dstLayer->CommitTransaction();
                         dstLayer->StartTransaction();
@@ -287,23 +347,7 @@ gis::framework::Result VectorPlugin::doUnion(
             return candidates;
         };
 
-        // 属性移交只按下标写，两侧都走 copyFeatureFieldsOnly（SetFieldsFrom，不碰几何）。
-        // WHY 不许先 SetFrom(源) 再 SetFrom(叠加)：OGRFeature::SetFrom 按字段名匹配，
-        // 两边同名时第二次会把第一次的值静默覆盖掉（name 会变成叠加侧的值）。
-        // 下标表在建表时就算好，NULL 字段由 SetFieldsFrom 保持未赋值（GPKG 落盘即 NULL）。
-        auto writeUnionPiece = [&](OGRGeometry* geom, const OGRFeature* srcFeat,
-                                   const OGRFeature* overlayFeat, const char* sourceValue) {
-            return writeGeometryFeature(dstLayer, geom, [&](OGRFeature* dstFeat) {
-                if (srcFeat) {
-                    copyFeatureFieldsOnly(dstFeat, srcFeat, srcFieldMap);
-                }
-                if (overlayFeat) {
-                    copyFeatureFieldsOnly(dstFeat, overlayFeat, overlayFieldMap);
-                }
-                dstFeat->SetField(sourceFieldIdx, sourceValue);
-            });
-        };
-
+        // 属性移交与写出走分支外那个 writeUnionPiece（两条路同一条规则，见上面定义处的注释）。
         for (const auto& feat : srcFeatures) {
             OGRGeometry* geom = feat->GetGeometryRef();
             if (!geom || geom->IsEmpty()) {

@@ -4404,11 +4404,67 @@ static bool writeUnionPolygonLayer(const fs::path& path,
     return ok;
 }
 
-// 输出分块的一行读数：source 值 + 几何类型 + 面积 + 部件/环数 + 包串四角 + 每个字段"有值/NULL"。
+// union 路径 B（线 × 面）的源侧夹具：一条水平线 + 可选 OFTString 字段 name，GPKG + EPSG:3857。
+// WHY 不复用 writeUnionPolygonLayer：那一份写的是**面**，路径 B 的输入必须是线才会走切分分支；
+// WHY 字段仍要可选：这一路要判"源侧整表属性逐条跟着片段走"，name 就是那条判据的载体。
+struct UnionFixtureLine {
+    double x0 = 0.0;
+    double x1 = 0.0;
+    double y = 0.0;
+    std::string name;   // 非空 ⇒ 建 OFTString 字段 name 并写值
+};
+
+static bool writeUnionLineLayer(const fs::path& path, const std::vector<UnionFixtureLine>& lines) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    const std::string pathText = utf8PathString(path);
+    GDALDataset* ds = driver->Create(pathText.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    OGRLayer* layer = ds->CreateLayer("shapes", srs.get(), wkbLineString, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+
+    bool hasName = false;
+    for (const auto& line : lines) {
+        hasName = hasName || !line.name.empty();
+    }
+    bool ok = true;
+    if (hasName) {
+        OGRFieldDefn nameDefn("name", OFTString);
+        ok = layer->CreateField(&nameDefn) == OGRERR_NONE;
+    }
+
+    for (const auto& line : lines) {
+        OGRLineString geom;
+        geom.addPoint(line.x0, line.y);
+        geom.addPoint(line.x1, line.y);
+        OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetGeometry(&geom);
+        if (hasName && !line.name.empty()) {
+            feat->SetField("name", line.name.c_str());
+        }
+        ok = ok && layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    GDALClose(ds);
+    return ok;
+}
+
+// 输出分块的一行读数：source 值 + 几何类型 + 面积 + 长度 + 部件/环数 + 包串四角 + 每个字段"有值/NULL"。
 struct UnionOutputPiece {
     std::string source;
     OGRwkbGeometryType geomType = wkbUnknown;
     double area = 0.0;
+    double length = 0.0;   // 线 × 面路径的"不重不漏"不变量按长度判，面积在那一路没有意义
     int partCount = 0;   // 多面 ⇒ 部件数；单面 ⇒ 环数（外环 + 内环）；其余类族为 0
     double minX = 0.0;
     double maxX = 0.0;
@@ -4443,6 +4499,15 @@ static std::vector<UnionOutputPiece> readUnionPieces(OGRLayer* layer) {
                            dynamic_cast<const OGRGeometryCollection*>(geom)) {
                 piece.area = collection->get_Area();
                 piece.partCount = collection->getNumGeometries();
+            }
+            // 长度读数的类族判据与面积同一条理由：get_Length() 只挂在 OGRCurve（LineString 那一支）
+            // 与 OGRGeometryCollection（MultiLineString 那一支，线 × 面路径写出的就是这一支）上，
+            // OGRGeometry 基类没有这份成员。
+            if (const OGRCurve* curve = dynamic_cast<const OGRCurve*>(geom)) {
+                piece.length = curve->get_Length();
+            } else if (const OGRGeometryCollection* collection =
+                           dynamic_cast<const OGRGeometryCollection*>(geom)) {
+                piece.length = collection->get_Length();
             }
             OGREnvelope env;
             geom->getEnvelope(&env);
@@ -4981,6 +5046,113 @@ TEST_F(PluginTest, VectorUnionKeepsUserFieldNamedSourceAndRenamesMarker) {
     EXPECT_EQ(unionFieldValue(pieces[overlayIdx], "pop"), "7");
 }
 
+// T7（N128 后半）：线 × 面路径（路径 B）也要两侧整表属性，标记词表收敛为 input/both（split 退役）。
+// 手算：源 1 条线 (0,0)→(30,0) 长度 30、name="road1"；叠加**两条互不相交**的面（互不相交才不触发高度重叠闸）
+//   P1=[5,10]×[-5,5]（pop=1）、P2=[20,25]×[-5,5]（pop=2）；
+//   按 x 区间的切分结果与长度：[0,5]=5 → input、[5,10]=5 → both、[10,20]=10 → input、
+//   [20,25]=5 → both、[25,30]=5 → input；
+//   长度和 5+5+10+5+5 = 30 == 源线长度 ⇒ 这就是路径 B 的"不重不漏"不变量。
+//   面积可加那一条不变量在这一路**不适用**：这一路不产出叠加面 ⇒ union_overlay_pieces 恒为 0。
+// 本刀之前的旧实现：输出表只有 source 一列、5 条片段一律写 "split" ⇒ 表结构、两侧属性、
+// 三条分桶计数与标记词表一起红（丢掉源侧 name 正是 N128 在这一路的症状）。
+// 预研实测（工单 §5）：写出顺序不是 x 单调，落盘是 (0,5)→(10,20)→(25,30)→(20,25)→(5,10)
+// ⇒ 用例一律按"包串四角 + 标记值"配对取块，不许按行号取。
+TEST_F(PluginTest, VectorUnionMixedDimensionCarriesAttributesPerPiece) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_union_mixed_attr_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_union_mixed_attr_overlay.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_union_mixed_attr_output.gpkg");
+
+    UnionFixtureLine srcLine;
+    srcLine.x0 = 0.0; srcLine.x1 = 30.0; srcLine.y = 0.0; srcLine.name = "road1";
+    ASSERT_TRUE(writeUnionLineLayer(inputPath, {srcLine}));
+
+    UnionFixtureFeature poly1;
+    poly1.minX = 5.0; poly1.minY = -5.0; poly1.maxX = 10.0; poly1.maxY = 5.0; poly1.pop = 1;
+    UnionFixtureFeature poly2;
+    poly2.minX = 20.0; poly2.minY = -5.0; poly2.maxX = 25.0; poly2.maxY = 5.0; poly2.pop = 2;
+    ASSERT_TRUE(writeUnionPolygonLayer(overlayPath, {poly1, poly2}));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.message, "Union completed: 5 features");
+
+    GDALDataset* rawOutDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(rawOutDs, nullptr);
+    gis::core::GdalDatasetPtr outDs(rawOutDs);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    const auto pieces = readUnionPieces(outLayer);
+
+    EXPECT_EQ(pieces.size(), 5u) << "两条叠加面把源线切成 3 条面外片段 + 2 条面内片段";
+    EXPECT_EQ(unionMetadataValue(result, "union_input_pieces"), "3");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlap_pieces"), "2");
+    // 这一路不产出叠加面 ⇒ 恒为 0（是契约，不是缺陷）；不重不漏由下面"长度和 == 30"那条兜住。
+    EXPECT_EQ(unionMetadataValue(result, "union_overlay_pieces"), "0");
+    EXPECT_EQ(unionMetadataValue(result, "union_total_pieces"), "5");
+
+    // 表结构与路径 A 同一条规则：源字段原序 → 叠加字段 → 标记列（不再有"只建 source 一列"的特例）。
+    const auto fieldNames = readFieldNames(outLayer);
+    ASSERT_EQ(fieldNames.size(), 3u) << "字段名实际为 " << fieldNames.size() << " 列";
+    EXPECT_EQ(fieldNames[0], "name");
+    EXPECT_EQ(fieldNames[1], "pop");
+    EXPECT_EQ(fieldNames[2], "source");
+
+    struct ExpectedPiece {
+        const char* source;
+        double minX;
+        double maxX;
+        double length;
+        const char* pop;
+    };
+    const ExpectedPiece expectations[] = {
+        {"input", 0.0, 5.0, 5.0, "<null>"},
+        {"both", 5.0, 10.0, 5.0, "1"},
+        {"input", 10.0, 20.0, 10.0, "<null>"},
+        {"both", 20.0, 25.0, 5.0, "2"},
+        {"input", 25.0, 30.0, 5.0, "<null>"},
+    };
+    double totalLength = 0.0;
+    for (const auto& expected : expectations) {
+        // 片段都在 y=0 这条水平线上 ⇒ 包串的 MinY/MaxY 都钉成 0：x↔y 转置在这一条上必红。
+        const int idx = findUnionPiece(pieces, expected.source, expected.minX, expected.maxX, 0.0, 0.0);
+        ASSERT_GE(idx, 0) << "缺少 source=" << expected.source << " 且包串 ("
+                          << expected.minX << "," << expected.maxX << ",0,0) 的片段";
+        const UnionOutputPiece& piece = pieces[static_cast<size_t>(idx)];
+        EXPECT_EQ(piece.geomType, wkbMultiLineString) << "线 × 面的输出仍是线图层（不产出叠加面）";
+        EXPECT_EQ(piece.partCount, 1) << "每条片段都是单成员 MultiLineString";
+        EXPECT_NEAR(piece.length, expected.length, 1e-6);
+        // 整表属性：源侧 name 逐条片段都带着（旧实现整列丢了）。
+        EXPECT_EQ(unionFieldValue(piece, "name"), "road1");
+        // pop 按 x 区间配对：面内取归属那条面的值，面外全 NULL。
+        EXPECT_EQ(unionFieldValue(piece, "pop"), expected.pop);
+        totalLength += piece.length;
+    }
+
+    // 词表收敛：退役的 "split" 不许再出现在任何片段上（判据不许放宽成"任意非空"）。
+    for (const auto& piece : pieces) {
+        EXPECT_TRUE(piece.source == "input" || piece.source == "both")
+            << "线 × 面路径写出了退役的标记值：" << piece.source;
+    }
+    EXPECT_NEAR(totalLength, 30.0, 1e-6) << "5+5+10+5+5 必须等于源线长度 30（路径 B 的不重不漏）";
+}
+
+// 本刀就地更新：这条用例的条数与几何类型断言逐字没动（线 × 面的**切分结果**没变），
+// 只新增"标记词表 + 源侧 name 整表属性"两组判据 —— 旧实现丢了 name 列、三条片段一律写 split，
+// 所以这两组在本刀之前必红。夹具里 (0,50)→(100,50) 被正方形 [25,75]×[25,75] 切成 外/内/外
+// ⇒ 标记值依次 input/both/input，按 x 区间 (0,25)/(25,75)/(75,100) 配对。
 TEST_F(PluginTest, VectorUnionLinePolygonOutputsSplitLinesOnly) {
     auto* p = mgr_.find("vector");
     if (!p) {
@@ -5066,6 +5238,37 @@ TEST_F(PluginTest, VectorUnionLinePolygonOutputsSplitLinesOnly) {
     }
 
     EXPECT_EQ(featureCount, 3);
+
+    // ↓↓↓ 本刀新增（不改上面条数与几何类型那两条）：线 × 面路径的标记词表与源侧整表属性。
+    // 旧实现输出表只有 source 一列、三条片段一律写 "split" ⇒ 下面两组判据在本刀之前必红。
+    // 夹具：源线 (0,50)→(100,50)（name="road"）被正方形 [25,75]×[25,75] 切成 外/内/外
+    // ⇒ 标记值依次 input/both/input，按 x 区间 (0,25)/(25,75)/(75,100) 配对（写出顺序不是契约，不许按行号取）。
+    const auto pieces = readUnionPieces(outLayer);
+    ASSERT_EQ(pieces.size(), 3u);
+
+    // 表结构：源字段在前（旧实现整列丢了它），标记列在后。
+    const auto fieldNames = readFieldNames(outLayer);
+    ASSERT_EQ(fieldNames.size(), 2u) << "字段名实际为 " << fieldNames.size() << " 列";
+    EXPECT_EQ(fieldNames[0], "name");
+    EXPECT_EQ(fieldNames[1], "source");
+
+    const int leftIdx = findUnionPiece(pieces, "input", 0.0, 25.0, 50.0, 50.0);
+    ASSERT_GE(leftIdx, 0) << "缺少 source=input 且包串 (0,25,50,50) 的片段";
+    const int middleIdx = findUnionPiece(pieces, "both", 25.0, 75.0, 50.0, 50.0);
+    ASSERT_GE(middleIdx, 0) << "缺少 source=both 且包串 (25,75,50,50) 的片段（落进叠加面的那段）";
+    const int rightIdx = findUnionPiece(pieces, "input", 75.0, 100.0, 50.0, 50.0);
+    ASSERT_GE(rightIdx, 0) << "缺少 source=input 且包串 (75,100,50,50) 的片段";
+
+    // 三条片段都带着源侧那份 name（整表属性跟着每条切分结果走）。
+    for (size_t i = 0; i < pieces.size(); ++i) {
+        EXPECT_EQ(unionFieldValue(pieces[i], "name"), "road") << "第 " << i << " 条片段丢了源侧 name";
+        EXPECT_TRUE(pieces[i].source == "input" || pieces[i].source == "both")
+            << "第 " << i << " 条片段写出了退役的标记值：" << pieces[i].source;
+    }
+    // 长度可加（路径 B 的"不重不漏"）：25 + 50 + 25 == 源线长度 100。
+    EXPECT_NEAR(pieces[leftIdx].length + pieces[middleIdx].length + pieces[rightIdx].length,
+                100.0, 1e-6);
+
     GDALClose(outDs);
 }
 
