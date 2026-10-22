@@ -21,7 +21,9 @@ gis::framework::Result VectorPlugin::doDissolve(
     if (!srcLayer) { return gis::framework::Result::fail("Cannot find layer"); }
 
     const OGRSpatialReference* srcSRSRef = srcLayer->GetSpatialRef();
-    if (detectSrsType(srcSRSRef) == "geographic") { return failProjectedRequired("Dissolve");
+    // N130：`== "geographic"` 会放过"没有坐标参考"的输入（detectSrsType 返回 "unknown"），
+    // 融合后的面积/长度单位无从谈起。用户裁定这一族统一收成"必须投影"。
+    if (detectSrsType(srcSRSRef) != "projected") { return failProjectedRequired("Dissolve");
     }
 
     progress.throwIfCancelled();

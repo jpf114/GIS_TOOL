@@ -6260,6 +6260,105 @@ TEST_F(PluginTest, VectorDissolveRejectsGeographicSrs) {
     EXPECT_NE(result.message.find("projected"), std::string::npos);
 }
 
+// ── N130：投影闸收紧为"必须投影坐标系"（用户 2026-10-22 裁定）────────────────────
+// 旧闸只拒 "geographic"，而 detectSrsType 对**没有坐标参考**的图层返回 "unknown" ⇒ 这类输入被放过去：
+// buffer 会把 distance 当"度"来算、dissolve 之后的面积/长度单位无从谈起。
+// 下面两条与地理坐标系那两条的唯一区别是 CreateLayer 传 nullptr（不挂 SRS）——
+// 判据必须落在"缺 CRS 也拒 + 失败不留产物"上，否则收紧前后都绿，等于没测到。
+TEST_F(PluginTest, VectorBufferRejectsMissingSrs) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = (getTestDir() / "e2e_buffer_nosrs_input.shp").string();
+    const std::string output = (getTestDir() / "e2e_buffer_nosrs_output.geojson").string();
+    std::error_code ignored;
+    fs::remove(output, ignored);
+    ASSERT_FALSE(fs::exists(output)) << "本轮开始前就残留了输出，半成品判据会失真";
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto* layer = ds->CreateLayer("buffer_nosrs_test", nullptr, wkbPoint);
+        ASSERT_NE(layer, nullptr);
+
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPoint pt(12950000.0, 4895000.0);
+        feat->SetGeometry(&pt);
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("buffer");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["distance"] = 100.0;
+
+    auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success)
+        << "N130：没有坐标参考的输入仍然 success=true ⇒ 缓冲距离被按度当米算（message="
+        << result.message << "）";
+    EXPECT_NE(result.message.find("requires a projected coordinate system"), std::string::npos)
+        << "失败消息必须点名需要投影坐标系。实际 message=" << result.message;
+    ASSERT_FALSE(fs::exists(output)) << "闸要在建输出之前拦下，失败后不得留半成品：" << output;
+}
+
+TEST_F(PluginTest, VectorDissolveRejectsMissingSrs) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = (getTestDir() / "e2e_dissolve_nosrs_input.shp").string();
+    const std::string output = (getTestDir() / "e2e_dissolve_nosrs_output.gpkg").string();
+    std::error_code ignored;
+    fs::remove(output, ignored);
+    ASSERT_FALSE(fs::exists(output)) << "本轮开始前就残留了输出，半成品判据会失真";
+
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto* layer = ds->CreateLayer("input", nullptr, wkbPolygon);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn fieldDefn("type", OFTString);
+        ASSERT_EQ(layer->CreateField(&fieldDefn), OGRERR_NONE);
+
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(12950000.0, 4895000.0); ring.addPoint(12951000.0, 4895000.0);
+        ring.addPoint(12951000.0, 4896000.0); ring.addPoint(12950000.0, 4896000.0);
+        ring.addPoint(12950000.0, 4895000.0);
+        poly.addRing(&ring);
+        feat->SetGeometry(&poly);
+        feat->SetField("type", "A");
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("dissolve");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["dissolve_field"] = std::string("type");
+
+    auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success)
+        << "N130：没有坐标参考的输入仍然 success=true ⇒ 融合结果没有可解释的面积/长度口径"
+           "（message=" << result.message << "）";
+    EXPECT_NE(result.message.find("requires a projected coordinate system"), std::string::npos)
+        << "失败消息必须点名需要投影坐标系。实际 message=" << result.message;
+    ASSERT_FALSE(fs::exists(output)) << "闸要在建输出之前拦下，失败后不得留半成品：" << output;
+}
+
 TEST_F(PluginTest, VectorDissolveRepairsInvalidPolygonGeometry) {
     auto* p = mgr_.find("vector");
     if (!p) {

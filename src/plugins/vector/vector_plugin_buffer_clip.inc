@@ -24,8 +24,9 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     const OGRSpatialReference* srcSRSRef = srcLayer->GetSpatialRef();
     const std::string srsType = detectSrsType(srcSRSRef);
-    if (srsType == "geographic") { return gis::framework::Result::fail(
-            "Buffer requires a projected coordinate system. Please reproject the input layer before buffering.");
+    // N130：旧闸只拒 "geographic"，而 detectSrsType 对"没有坐标参考"与"非地理非投影"都返回 "unknown"
+    // ⇒ 无 CRS 的输入被放过去，distance 按"度"当"米"算，结果量级全错。用户裁定这一族统一收成"必须投影"。
+    if (srsType != "projected") { return failProjectedRequired("Buffer");
     }
 
     namespace fs = std::filesystem;
