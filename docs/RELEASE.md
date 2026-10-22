@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 713 / Release 711**（2026-10-22 批次 C C3j 收口轮现读；上一档 705 / 703 是同日 C3g 现读，再上一档 700 / 698 是 C3f，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 719 / Release 717**（2026-10-22 批次 C C3h-1 收口轮现读；上一档 713 / 711 是同日 C3j 现读，再上一档 705 / 703 是 C3g，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,10 +297,10 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 713 / Release 711**（2026-10-22 批次 C C3j 收口轮现读，比上一档 705 / 703 各多 8 条 = N132/N133/N134 三刀新增的
-  4 条 `PluginTest.VectorRasterize{RejectsNonNumericAttributeField,BurnsRealFieldValues,LayerParameterLimitsBurnedLayer,LayerParameterCanSelectSecondLayer}` 与
-  4 条 `PluginTest.RasterInspect{HistogramAcceptsConstantRaster,HistogramRejectsAllNoDataBand,InfoAcceptsConstantRaster,InfoDistinguishesAllNoDataBand}`
-  （**逐名比对**得出，删除 0 条，不是拿 713−705 反推）；上一档 705 / 703 是同日 C3g（+5 = dissolve/rasterize 的前置校验与元数据用例）；批次 A 收尾时是 635 / 633，
+- **现行基线**：`ctest -N` 注册数 **Debug 719 / Release 717**（2026-10-22 批次 C C3h-1 收口轮现读，比上一档 713 / 711 各多 6 条 = N128 路径 A 新增的
+  `PluginTest.VectorUnion{EmitsOverlayOnlyPiece,SplitsIntoThreePieceClasses,RenamesOverlayFieldOnNameCollision,DeduplicatesOverlappingOverlayPolygons,ReadsMultiPolygonPieceAreaByClassFamily,KeepsUserFieldNamedSourceAndRenamesMarker}`
+  （**逐名比对**得出，删除 0 条，不是拿 719−713 反推）；上一档 713 / 711 是同日 C3j（+8 = N132/N133/N134 三刀的
+  4 条 `VectorRasterize*` + 4 条 `RasterInspect*`）；再上一档 705 / 703 是 C3g（+5 = dissolve/rasterize 的前置校验与元数据用例）；批次 A 收尾时是 635 / 633，
   见下一条认证记录——本条只认现读值；上一版这里写 692 / 690、而"全量墙钟基线"表写 693 / 691，两处差 1，
   当时起重读为同一组现值；那 1 条 = B21 新增的 `source_mojibake_guard`，
   上一轮只改表没改这行，本轮已对齐，不留待核）；`comm -23` 差集仍恰为
@@ -366,11 +366,21 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **713** | **936.24 s**（批次 C C3j 收口轮现跑，`build/tmp/c3j_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 713 条**首档**；往前七档（697~705 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 s** | 最慢 `real_data_vector_full` **261.53 s** ⇒ 780 ÷ 261.53 = **2.98×**；次慢 `real_data_vector_quick` **243.00 s** ⇒ 720 ÷ 243.00 = **2.96×**；`source_mojibake_guard` 12.51 s ⇒ 300 ÷ 12.51 = **23.98×** |
-| Release | **711** | **420.27 s**（同一轮紧随其后跑；`build/tmp/c3j_close_rel.log` 不入库） | 711 条**首档**；往前六档（695~703 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 s** | 最慢 `real_data_vector_full` **111.10 s** ⇒ 780 ÷ 111.10 = **7.02×**；`real_data_vector_quick` **94.85 s** ⇒ 720 ÷ 94.85 = **7.59×**；`source_mojibake_guard` 11.82 s ⇒ 300 ÷ 11.82 = **25.4×** |
-⚠ **本轮四档真实腿用时的形状是"一涨三跌"，我不找因果**（现读）：Debug `full` 270.00 → **261.53 s**（跌）、`quick` 202.19 → **243.00 s**（涨）；Release `full` 137.01 → **111.10 s**、`quick` 111.12 → **94.85 s**（都跌）。本轮新增的 8 条全是插件单测（`VectorRasterize*` 4 条 + `RasterInspect*` 4 条，按 `-N` 名单与上一档逐名比对得出，删除 0 条），单条用时都是 0.x s 级 ⇒ 按本文件既有纪律，**"某一轮变慢/变快"一律不作证据**，只认现读值。
+| Debug | **719** | **1245.47 s**（批次 C C3h-1 收口轮现跑，`build/tmp/c3h1_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 719 条**首档**；往前八档（697~713 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 s** | 最慢 `real_data_vector_full` **378.52 s** ⇒ 780 ÷ 378.52 = **2.06×**；次慢 `real_data_vector_quick` **285.38 s** ⇒ 720 ÷ 285.38 = **2.52×**；`source_mojibake_guard` 20.98 s ⇒ 300 ÷ 20.98 = **14.3×** |
+| Release | **717** | **737.79 s**（同一轮紧随其后跑；`build/tmp/c3h1_close_rel.log` 不入库） | 717 条**首档**；往前七档（695~711 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 s** | 最慢 `real_data_vector_full` **270.78 s** ⇒ 780 ÷ 270.78 = **2.88×**；`real_data_vector_quick` **199.41 s** ⇒ 720 ÷ 199.41 = **3.61×**；`source_mojibake_guard` 19.14 s ⇒ 300 ÷ 19.14 = **15.7×** |
+⚠ **本轮两条真实腿在两台树上同时大幅变重，我不给因果**（现读，不推测）：Debug `full` 261.53 → **378.52 s**、`quick` 243.00 → **285.38 s**；Release `full` 111.10 → **270.78 s**、`quick` 94.85 → **199.41 s**。
+本轮新增的 6 条用例全是插件单测（`VectorUnion*` 6 条，单条 0.x s 级，选择器 28 条整跑 6.66 s）⇒ 增量的量级**不可能**由它们解释。
+**但这次不是"只涨一轮就回落"的噪声**：`real_data_vector_full` 在收口轮之后**又单跑了一次**（机器安静、无并发构建）⇒
+**376.63 s**，与 378.52 s 差 1.89 s ⇒ 本轮起值是**稳定新值**。候选只列不证（派生件磁盘状态、杀软对 `build/tmp` 的扫描、
+`install_closure`/`source_mojibake_guard` 同轮也各涨 2~8 s）。
 
-**触发线（我自己给自己下的规则）**：`real_data_vector_full` 的 `TIMEOUT` 余量**本轮现读 Debug 2.98× / Release 7.02×**（上一档是 2.89× / 5.69×，一涨一跌，不作趋势）。再往下若 Debug 跌破 **2.5×**，处理方式是**把这条腿按插件/动作切成两条注册用例、各自带 `TIMEOUT`**，**不是抬 `TIMEOUT`** —— 抬数字等于把"挂起"的检测窗口一起拉长，而 `TIMEOUT` 是本工具链唯一的执法者（`PROCESS_TIMEOUT` 无效）。每轮加腿后必须现跑现填这一栏，不许按条数外推。
+**触发线（我自己给自己下的规则）——本轮已经踩到**：`real_data_vector_full` 的 `TIMEOUT` 余量本轮现读
+**Debug 2.06×（单跑复核 376.63 s ⇒ 2.07×）/ Release 2.88×**，Debug 侧**跌破 2.5× 触发线**。
+规则的处理方式是**把这条腿按插件/动作切成两条注册用例、各自带 `TIMEOUT`**，**不是抬 `TIMEOUT`** ——
+抬数字等于把"挂起"的检测窗口一起拉长，而 `TIMEOUT` 是本工具链唯一的执法者（`PROCESS_TIMEOUT` 无效）。
+⇒ 开工刀 = 工单 `Task C3k`（拆腿；并要求"两半的用例名集合之并 == 拆分前 `full` 的用例名集合"这条机器级证明，
+防止拆分过程把某条腿拆没了）。**在 C3k 落地之前，禁止再往 `full` 里加新真实腿**（含 C3h-3 的 union 面 × 面腿）。
+每轮加腿后必须现跑现填这一栏，不许按条数外推。
 
   两轮分开写清（上一版这里把两轮混成"本轮"，正是本文件刚修过的"表改了 prose 没改"同一形态）：
   - **收尾三轮**（693 / 691 那一档）：两棵树重配置后 `-j1` 全量，
@@ -408,7 +418,7 @@ cmake --install build/release --config Release --prefix install
     跑前硬门控 = 0、串行 `-j1`、期间无并发构建：`100% tests passed, 0 tests failed out of 705`（Debug **851.06 s**）
     与 `out of 703`（Release **471.77 s**），两棵树 `Not Run/Skip/***` 计数都是 **0**。
     注册数 **700 → 705 / 698 → 703**（+5，恰为新增用例数，其余一条没动）。
-  - **批次 C C3j 收口轮**（本表现值，三条同族产品修复 N132/N133/N134）：树上多了 `e222594`
+  - **批次 C C3j 收口轮**（当时那一档，三条同族产品修复 N132/N133/N134）：树上多了 `e222594`
     （`raster_inspect` 支持常数栅格值域、全 NoData 才报"无有效像元"）、`9c02668`（rasterize 的 `layer` 参数改用
     `GDALRasterizeLayers` 真正限制烧写图层，`source_feature_count` 同步只数被烧那层）、`3b8df59`
     （更正 N134 的症状：多图层输入在旧实现里是整条硬失败，"其余图层一起烧"从未成立）。
@@ -418,6 +428,15 @@ cmake --install build/release --config Release --prefix install
     8 条全是插件单测（4 条 `PluginTest.VectorRasterize*` + 4 条 `PluginTest.RasterInspect*`），
     两棵树差集仍恰为 `gui_matching_ecc_register_debug_failure_offscreen` /
     `gui_matching_stitch_debug_failure_offscreen`（`comm -13` 为空）。
+  - **批次 C C3h-1 收口轮**（本表现值，产品修复 N128 路径 A）：树上多了 `8ed6b75`（union 真并集三块 + 两侧整表属性 +
+    4 个 `union_*` 计数键）、`ff86362`（复审回收：分块面积改按类族 `dynamic_cast` 读数、加 MultiPolygon 与 `source` 撞名两条判据、
+    源独有块减法基换成"本轮已写面积"）、`72f8ff4`（文档去绝对句 + N135 立案）。
+    跑前硬门控 = 0、串行 `-j1`、期间无并发构建：`100% tests passed, 0 tests failed out of 719`（Debug **1245.47 s**）
+    与 `out of 717`（Release **737.79 s**），两棵树 `Not Run/Skip/***` 计数都是 **0**。
+    注册数 **713 → 719 / 711 → 717**（各 +6、删除 0，按 `-N` 名单逐名比对；6 条全是 `PluginTest.VectorUnion*`）。
+    ⚠ **本轮踩到我自己的触发线**：Debug `real_data_vector_full` 余量 **2.06×**（378.52 s；收口后又单跑一次
+    **376.63 s** ⇒ 稳定新值，不是噪声）⇒ 按规则**拆腿**（`Task C3k`），不抬 `TIMEOUT`，且在拆腿落地前
+    **禁止再往 `full` 加新真实腿**（含 union 的面 × 面真实腿）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
