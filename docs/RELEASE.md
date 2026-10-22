@@ -365,13 +365,11 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **700** | **754.82 s**（批次 C C3f 轮现跑，`build/tmp/c3f_debug_full.log` 不入库；跑前硬门控 = 0、串行 `-j1`、`Not Run/Skip/***` 计数 **0**） | 700 条这一档只有**一个样本**，无同计数波动带可比；698 条那一档是 **751.87 s**（C3d 轮，单样本）⇒ 跨计数、跨轮都不作结论 | 全库最慢 `real_data_vector_full` **229.51 s** ⇒ 780 ÷ 229.51 = **3.40×**；次慢 `real_data_vector_quick` **178.83 s** ⇒ 720 ÷ 178.83 = **4.03×**；60 s 档最慢 `real_data_raster` **9.43 s** ⇒ 6.36×；blanket 300 那批最慢 `source_mojibake_guard` **9.66 s** ⇒ **31.1×** |
-| Release | **698** | **365.34 s**（同一轮紧随其后跑；`build/tmp/c3f_release_full.log` 不入库；`Not Run/Skip/***` 计数 **0**） | 698 条这一档只有**一个样本**；696 条那一档是 **373.59 s**（C3d 轮，单样本）⇒ 同样不作结论 | 全库最慢 `real_data_vector_full` **102.49 s** ⇒ 780 ÷ 102.49 = **7.61×**；`real_data_vector_quick` **84.05 s** ⇒ 720 ÷ 84.05 = **8.57×**；`source_mojibake_guard` **9.71 s** ⇒ **30.9×** |
+| Debug | **705** | **851.06 s**（批次 C C3g 收口轮现跑，`build/tmp/c3g_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 同计数历史（697 档起）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 s** | 最慢 `real_data_vector_full` **270.00 s** ⇒ 780 ÷ 270.00 = **2.89×**；次慢 `real_data_vector_quick` **202.19 s** ⇒ 720 ÷ 202.19 = **3.56×**；`source_mojibake_guard` 14.00 s ⇒ 300 ÷ 14 = **21.4×** |
+| Release | **703** | **471.77 s**（同一轮紧随其后跑；`build/tmp/c3g_close_rel.log` 不入库） | 同计数历史 **392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 s** | 最慢 `real_data_vector_full` **137.01 s** ⇒ 780 ÷ 137.01 = **5.69×**；`real_data_vector_quick` **111.12 s** ⇒ 720 ÷ 111.12 = **6.48×**；`source_mojibake_guard` 12.24 s ⇒ **24.5×** |
+⚠ **本轮增量全部集中在两条真实腿上，而且我给不出因果**（现读，不是推测）：C3g 新增的 5 条单测合计只占 **1.14 s**（0.21/0.23/0.17/0.31/0.22），派生目录 `tmp/vector_benchmark/` 也查过没有边车累积（11 项 + 3 个 `.aux.xml`），而 `real_data_vector_full` Debug 从上一档 229.51 s 涨到 **270.00 s**、`quick` 从 178.83 s 涨到 **202.19 s**。⇒ 按本文件既有纪律**不把它写成"某个改动让它变慢了"**，候选只列不证（文件系统缓存/杀软扫描/派生件每次现造的磁盘状态）。
 
-⚠ **C3b-A 把 11 条真实腿加进 `real_data_vector_full` 之后，Debug 侧余量从 3.96× 掉到 3.43×**（227.28 s），C3d 那一轮读到 **3.38×**（230.89 s），C3f 那一轮（`filter_cn_attribute` 那条 0.82 s 的中文属性值腿加进 `real_data_vector_quick`，`full` 档本身没加腿）读到 **3.40×**（229.51 s）。
-`quick` 档从 4.07× → C3d 的 **4.04×**（178.07 s）→ C3f 的 **4.03×**（178.83 s）。两档都还 > 2×（**我给取证/实现批设的"余量低于 2× 就停机上报"这道门没触发**）。
-下一批（C3c）再加腿之前**必须重跑这一栏**，`720/780` 这两个数不许按比例自己调——
-上一轮就有人（下级在执行 C3b-A 时）明确按这条纪律把实测数字交回给我裁，而不是自己抬 TIMEOUT。
+**触发线（我自己给自己下的规则）**：`real_data_vector_full` 的 `TIMEOUT` 余量**已经掉到 2.89×**。再往下若跌破 **2.5×**，处理方式是**把这条腿按插件/动作切成两条注册用例、各自带 `TIMEOUT`**，**不是抬 `TIMEOUT`** —— 抬数字等于把"挂起"的检测窗口一起拉长，而 `TIMEOUT` 是本工具链唯一的执法者（`PROCESS_TIMEOUT` 无效）。每轮加腿后必须现跑现填这一栏，不许按条数外推。
 
   两轮分开写清（上一版这里把两轮混成"本轮"，正是本文件刚修过的"表改了 prose 没改"同一形态）：
   - **收尾三轮**（693 / 691 那一档）：两棵树重配置后 `-j1` 全量，
@@ -393,7 +391,12 @@ cmake --install build/release --config Release --prefix install
     跑前硬门控 = 0、串行 `-j1`、两棵树先重编（`error C` 计数都是 0，`plugin_vector.dll` mtime 晚于被改 `.inc`）：
     `100% tests passed, 0 tests failed out of 698`（Debug **751.87 s**）与 `out of 696`（Release **373.59 s**），
     两棵树 `Not Run/Skip/***` 计数都是 **0**。注册数 **697 → 698 / 695 → 696**，增量恰为那一条新夹具用例 ⇒ 这是产品修复该有的形状（除它之外一条没动）。
-  - **批次 C C3f 轮**（本表现值，产品修复 N127）：树上多了 `fc68e12`（`isSafeWhereClause` 改 UTF-8 感知 +
+  - **批次 C C3f 轮**（当时那一档，产品修复 N127）：树上多了 `fc68e12`（`isSafeWhereClause` 改 UTF-8 感知 +
+  - **批次 C C3g 收口轮**（本表现值，两条产品修复 N129/N131）：树上多了 `91025ec`（dissolve 字段不存在改硬失败）与
+    `08d4a14`（rasterize 前置校验 + 失败不留半成品 + 补 5 个 metadata 键），另有 5 条新单测（合计 1.14 s）。
+    跑前硬门控 = 0、串行 `-j1`、期间无并发构建：`100% tests passed, 0 tests failed out of 705`（Debug **851.06 s**）
+    与 `out of 703`（Release **471.77 s**），两棵树 `Not Run/Skip/***` 计数都是 **0**。
+    注册数 **700 → 705 / 698 → 703**（+5，恰为新增用例数，其余一条没动）。
     两条 WHERE 用例 + 中文属性值真实腿）；跑前硬门控 = 0、串行 `-j1`、两棵树先重编 `plugin_vector` 与 `gis_tests`
     （`grep -c "error C"` 都是 **0**，`plugin_vector.dll` mtime 晚于被改 `.inc`）：
     `100% tests passed, 0 tests failed out of 700`（Debug **754.82 s**）与 `out of 698`（Release **365.34 s**），
