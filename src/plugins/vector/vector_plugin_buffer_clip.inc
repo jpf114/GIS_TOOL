@@ -31,7 +31,7 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     namespace fs = std::filesystem;
     std::string outFormat = "GeoJSON";
-    std::string ext = fs::path(output).extension().string();
+    std::string ext = fs::u8path(output).extension().u8string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     if (ext == ".shp") outFormat = "ESRI Shapefile";
     else if (ext == ".gpkg") outFormat = "GPKG";
@@ -203,7 +203,7 @@ gis::framework::Result VectorPlugin::doClip(
 
     namespace fs = std::filesystem;
     std::string outFormat = "GeoJSON";
-    std::string ext = fs::path(output).extension().string();
+    std::string ext = fs::u8path(output).extension().u8string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     if (ext == ".shp") outFormat = "ESRI Shapefile";
     else if (ext == ".gpkg") outFormat = "GPKG";

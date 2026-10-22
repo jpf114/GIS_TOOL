@@ -326,20 +326,25 @@ static std::vector<const OverlayGeometryEntry*> collectCandidateOverlayEntries(
 
 static void removeExistingVectorOutput(const std::string& output, const std::string& format) {
     namespace fs = std::filesystem;
-    if (!fs::exists(output)) {
+    // N122：窄串构造 fs::path 在 Windows 按 ANSI 解，而这里的 output 是 UTF-8 ⇒ 中文路径下
+    // exists / directory_iterator / remove 三件事全部静默失效（判成"不存在"），旧产物的
+    // .dbf/.shx/.prj 边车不会被删，GDAL 再按 UTF-8 写出新 .shp ⇒ 用户拿到"新几何 + 旧属性表"。
+    // 同文件的 ensureParentDirectoryForFile 早就是这个写法（fs::u8path），这里对齐它。
+    const fs::path outputPath = fs::u8path(output);
+    if (!fs::exists(outputPath)) {
         return;
     }
 
     if (format == "ESRI Shapefile") {
-        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) {
+        for (const auto& entry : fs::directory_iterator(outputPath.parent_path())) {
+            if (entry.path().stem() == outputPath.stem()) {
                 fs::remove(entry.path());
             }
         }
         return;
     }
 
-    fs::remove(output);
+    fs::remove(outputPath);
 }
 
 static void ensureParentDirectoryForFile(const std::string& output) {

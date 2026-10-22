@@ -6216,6 +6216,106 @@ TEST_F(PluginTest, VectorBufferSupportsChinesePath) {
     EXPECT_EQ(result.metadata.at("feature_count"), "3");
 }
 
+// ── N122：非 ASCII 输出路径下"先删旧产物"──────────
+// 缺陷：窄串构造 fs::path 在 Windows 按 ANSI 解，UTF-8 中文路径下 exists/directory_iterator 全部判"不存在"
+// ⇒ 旧产物的边车不会被删；GDAL 自己按 UTF-8 写新 .shp ⇒ 用户拿到"新几何 + 旧索引/旧属性表"。
+// 夹具用 .sbn/.sbx/.qix 三个边车：它们与输出同 stem，而 Shapefile 驱动**默认不会重写**这三个
+//（.dbf/.shx 会被驱动覆盖，拿它们做判据在旧代码上也会绿 ⇒ 不承重）。
+static void writeStaleShapefileSidecars(const fs::path& shpPath) {
+    const fs::path stem = shpPath.parent_path() / shpPath.stem();
+    for (const char* ext : {".sbn", ".sbx", ".qix"}) {
+        fs::path sidecar = stem;
+        sidecar += ext;
+        std::ofstream ofs(sidecar, std::ios::binary | std::ios::trunc);
+        ofs << "STALE";
+    }
+}
+
+static void expectStaleSidecarsRemoved(const fs::path& shpPath) {
+    const fs::path stem = shpPath.parent_path() / shpPath.stem();
+    for (const char* ext : {".sbn", ".sbx", ".qix"}) {
+        fs::path sidecar = stem;
+        sidecar += ext;
+        EXPECT_FALSE(fs::exists(sidecar))
+            << "N122：旧产物边车没被清掉（窄串 fs::path 在中文路径下失效）：" << sidecar.u8string();
+    }
+}
+
+TEST_F(PluginTest, VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string input = (getTestDir() / "e2e_n122_lines.shp").string();
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("lines", srs.get(), wkbLineString);
+        ASSERT_NE(layer, nullptr);
+        auto* featDefn = layer->GetLayerDefn();
+        for (int i = 0; i < 2; ++i) {
+            auto* feat = OGRFeature::CreateFeature(featDefn);
+            OGRLineString line;
+            line.addPoint(i * 100.0, 0.0);
+            line.addPoint(i * 100.0 + 50.0, 30.0);
+            feat->SetGeometry(&line);
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(ds);
+    }
+
+    // 中文目录用 fs::u8path 构造：直接写窄串字面量在 Windows 同样会被按 ANSI 解，夹具自己就先坏了。
+    const fs::path chineseDir = getTestDir() / fs::u8path(u8"中文目录");
+    fs::create_directories(chineseDir);
+
+    struct Case {
+        const char* action;
+        const char* fileBase;
+        const char* paramKey;
+        double paramValue;
+    };
+    // buffer 走共享 helper（removeExistingVectorOutput）；simplify 走它自己的内联复制 ⇒ 两类点位各判一次。
+    const Case cases[] = {
+        {"buffer", "缓冲结果", "distance", 10.0},
+        {"simplify", "简化结果", "tolerance", 1.0},
+    };
+
+    for (const auto& c : cases) {
+        const fs::path outShp = chineseDir / fs::u8path(std::string(c.fileBase) + ".shp");
+        const std::string outUtf8 = utf8PathString(outShp);
+        // 每条腿开始前把三个边车重新摆一遍，并确认它们真的存在（否则"删掉了"可能是本来就没有）。
+        writeStaleShapefileSidecars(outShp);
+        const fs::path stem = outShp.parent_path() / outShp.stem();
+        for (const char* ext : {".sbn", ".sbx", ".qix"}) {
+            fs::path sidecar = stem;
+            sidecar += ext;
+            ASSERT_TRUE(fs::exists(sidecar)) << "夹具前置失败，边车没造出来：" << sidecar.u8string();
+        }
+
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string(c.action);
+        params["input"] = input;
+        params["output"] = outUtf8;
+        params[c.paramKey] = c.paramValue;
+
+        auto result = p->execute(params, progress_);
+        EXPECT_TRUE(result.success) << c.action << " failed: " << result.message;
+        ASSERT_TRUE(fs::exists(outShp)) << "产物没写出来：" << outUtf8;
+        expectStaleSidecarsRemoved(outShp);
+    }
+}
+
+// 注：曾经试过一条 `ProjectionRemoveStaleShapefileSidecarsUnderNonAsciiPath`（同样的中文目录 + 旧边车），
+// 但两臂取证证明它**不承重**：把 projection 的 u8path 退回窄串后该用例仍然绿 ——
+// projection 这条腿用 GDAL 覆盖式建数据集，驱动自己会把同 stem 的边车一起删掉，把 helper 的早退缺陷掩盖了。
+// 按"能红才算判据"的口径删掉；projection 的那行 u8path 仍保留（对齐同一族写法），缺口登记在 RELEASE 的 N122 条目。
+
 TEST_F(PluginTest, VectorDissolveRejectsGeographicSrs) {
     auto* p = mgr_.find("vector");
     if (!p) {

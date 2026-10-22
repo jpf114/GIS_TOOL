@@ -134,7 +134,7 @@ std::string resolveVectorInputPath(const std::string& path) {
 }
 
 std::string detectVectorFormatFromOutput(const std::string& output) {
-    std::string ext = fs::path(output).extension().u8string();
+    std::string ext = fs::u8path(output).extension().u8string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
     });
@@ -155,7 +155,9 @@ void ensureParentDirectoryForFile(const std::string& path) {
 }
 
 void removeExistingVectorOutput(const std::string& output, const std::string& format) {
-    if (!fs::exists(output)) {
+    // N122：output 是 UTF-8，窄串 exists 在 Windows 按 ANSI 解 ⇒ 中文路径下恒假、直接 return，
+    // 下面已经写对的 u8path 清理永远不执行。这一行是这条腿唯一还留在旧写法上的地方。
+    if (!fs::exists(fs::u8path(output))) {
         return;
     }
 

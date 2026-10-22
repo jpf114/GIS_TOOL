@@ -214,7 +214,7 @@ gis::framework::Result VectorPlugin::doPolygonize(
 
     namespace fs = std::filesystem;
     std::string outFormat = "GeoJSON";
-    std::string ext = fs::path(output).extension().string();
+    std::string ext = fs::u8path(output).extension().u8string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     if (ext == ".shp") outFormat = "ESRI Shapefile";
     else if (ext == ".gpkg") outFormat = "GPKG";
@@ -222,9 +222,11 @@ gis::framework::Result VectorPlugin::doPolygonize(
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
 
-    if (outFormat == "ESRI Shapefile" && fs::exists(output)) {
-        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
+    // 窄串构造 fs::path 在 Windows 按 ANSI 解 ⇒ UTF-8 中文路径会被判成"不存在"，旧产物边车永远删不掉（N122）。
+    const fs::path outputPath = fs::u8path(output);
+    if (outFormat == "ESRI Shapefile" && fs::exists(outputPath)) {
+        for (const auto& entry : fs::directory_iterator(outputPath.parent_path())) {
+            if (entry.path().stem() == outputPath.stem()) fs::remove(entry.path());
         }
     }
 
@@ -309,9 +311,11 @@ gis::framework::Result VectorPlugin::doConvert(
     }
 
     namespace fs = std::filesystem;
-    if (format == "ESRI Shapefile" && fs::exists(output)) {
-        for (const auto& entry : fs::directory_iterator(fs::path(output).parent_path())) {
-            if (entry.path().stem() == fs::path(output).stem()) fs::remove(entry.path());
+    // 同族：窄串构造 fs::path 在 Windows 按 ANSI 解（N122）。
+    const fs::path existingOutputPath = fs::u8path(output);
+    if (format == "ESRI Shapefile" && fs::exists(existingOutputPath)) {
+        for (const auto& entry : fs::directory_iterator(existingOutputPath.parent_path())) {
+            if (entry.path().stem() == existingOutputPath.stem()) fs::remove(entry.path());
         }
     }
 

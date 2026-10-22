@@ -32,7 +32,9 @@ gis::framework::Result VectorPlugin::doBoundary(
 
     namespace fs = std::filesystem;
     std::string outFormat = "GeoJSON";
-    std::string ext = fs::path(output).extension().string();
+    // N122：取扩展名也要走 u8path —— 窄串构造 fs::path 在 Windows 按 ANSI 解 UTF-8，
+    // 遇到无法映射的字节会直接抛 "No mapping for the Unicode character"（实测于中文输出路径）。
+    std::string ext = fs::u8path(output).extension().u8string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     if (ext == ".shp") outFormat = "ESRI Shapefile";
     else if (ext == ".gpkg") outFormat = "GPKG";
