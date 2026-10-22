@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 698 / Release 696**（2026-10-22 Task C3d 现读，C3d 新增那条夹具用例让两棵树各 +1；上一档 697 / 695 是 2026-10-21 Task C2 现读，本机两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 700 / Release 698**（2026-10-22 Task C3f 现读，C3f 那两条 WHERE 用例让两棵树各 +2；上一档 698 / 696 是同日 Task C3d 现读；上上档 697 / 695 是 2026-10-21 Task C2 现读，本机两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,11 +297,15 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 698 / Release 696**（2026-10-22 Task C3d 现读，比上一档 697 / 695 各多 1 条 = C3d 新增的 `PluginTest.VectorOverlapCheckMixedGeometryCollectionIntersection`；批次 A 收尾时是 635 / 633，
+- **现行基线**：`ctest -N` 注册数 **Debug 700 / Release 698**（2026-10-22 Task C3f 现读，比上一档 698 / 696 各多 2 条 = C3f 新增的
+  `PluginTest.VectorFilterWhereClauseAcceptsChineseAttributeValue` 与 `PluginTest.VectorFilterWhereClauseStillRejectsInjectionAndBrokenUtf8`；
+  上一档 698 / 696 是同日 C3d（+1 = `PluginTest.VectorOverlapCheckMixedGeometryCollectionIntersection`）；批次 A 收尾时是 635 / 633，
   见下一条认证记录——本条只认现读值；上一版这里写 692 / 690、而"全量墙钟基线"表写 693 / 691，两处差 1，
   本轮起重读为同一组现值；那 1 条 = B21 新增的 `source_mojibake_guard`，
   上一轮只改表没改这行，本轮已对齐，不留待核）；`comm -23` 差集仍恰为
-  `gui_matching_ecc_register_debug_failure_offscreen`、`gui_matching_stitch_debug_failure_offscreen`（Release 侧无独有项）。
+  `gui_matching_ecc_register_debug_failure_offscreen`、`gui_matching_stitch_debug_failure_offscreen`（Release 侧无独有项；
+  C3f 轮按名字复核过：`build/tmp/c3f_names_debug.txt` 700 行、`build/tmp/c3f_names_release.txt` 698 行，
+  反向 `comm -13` 为空，且两条新用例在两棵树的名字清单里都在）。
   ⇒ Release **恒少 2** 是注册数口径，不是"少通过 2 条"；两侧各自 100% 通过。
 - **批次 A 最终基线认证（21-D 收尾现跑，两棵树重编后各跑一次 `-j1` 全量）**：
   Debug `100% tests passed, 0 tests failed out of 635`（382.54 s）、
@@ -361,34 +365,43 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **698** | **751.87 s**（批次 C C3d 轮现跑，`build/tmp/c3d_debug_full_ctest.log` 不入库） | 698 条这一档只有**一个样本**，无同计数波动带可比；697 条那五样本是 **702.01 / 741.52 / 761.78 / 732.32 / 761.30 s**（极差 **59.77 s** ⇒ 波动带比 ±25 s 宽得多），本档 751.87 s 落在带内 ⇒ 按上一条纪律**不作任何结论** | 全库最慢 `real_data_vector_full` **230.89 s** ⇒ 780 ÷ 230.89 = **3.38×**；次慢 `real_data_vector_quick` **178.07 s** ⇒ 720 ÷ 178.07 = **4.04×**；60 s 档最慢 `real_data_raster` **9.73 s** ⇒ 6.2×；blanket 300 那批最慢 `source_mojibake_guard` **9.44 s** ⇒ **31.8×** |
-| Release | **696** | **373.59 s**（同一轮紧随其后跑；`build/tmp/c3d_release_full_ctest.log` 不入库） | 696 条这一档只有**一个样本**；695 条那四样本是 392.67 → 367.32 → 361.72 → **372.09 s**（Δ30.95 s），本档 373.59 s 落在带内 ⇒ 同样不作结论 | 全库最慢 `real_data_vector_full` **99.41 s** ⇒ 780 ÷ 99.41 = **7.85×**；`real_data_vector_quick` **84.56 s** ⇒ 720 ÷ 84.56 = **8.52×**；`source_mojibake_guard` **10.46 s** ⇒ **28.7×** |
+| Debug | **700** | **754.82 s**（批次 C C3f 轮现跑，`build/tmp/c3f_debug_full.log` 不入库；跑前硬门控 = 0、串行 `-j1`、`Not Run/Skip/***` 计数 **0**） | 700 条这一档只有**一个样本**，无同计数波动带可比；698 条那一档是 **751.87 s**（C3d 轮，单样本）⇒ 跨计数、跨轮都不作结论 | 全库最慢 `real_data_vector_full` **229.51 s** ⇒ 780 ÷ 229.51 = **3.40×**；次慢 `real_data_vector_quick` **178.83 s** ⇒ 720 ÷ 178.83 = **4.03×**；60 s 档最慢 `real_data_raster` **9.43 s** ⇒ 6.36×；blanket 300 那批最慢 `source_mojibake_guard` **9.66 s** ⇒ **31.1×** |
+| Release | **698** | **365.34 s**（同一轮紧随其后跑；`build/tmp/c3f_release_full.log` 不入库；`Not Run/Skip/***` 计数 **0**） | 698 条这一档只有**一个样本**；696 条那一档是 **373.59 s**（C3d 轮，单样本）⇒ 同样不作结论 | 全库最慢 `real_data_vector_full` **102.49 s** ⇒ 780 ÷ 102.49 = **7.61×**；`real_data_vector_quick` **84.05 s** ⇒ 720 ÷ 84.05 = **8.57×**；`source_mojibake_guard` **9.71 s** ⇒ **30.9×** |
 
-⚠ **C3b-A 把 11 条真实腿加进 `real_data_vector_full` 之后，Debug 侧余量从 3.96× 掉到 3.43×**（227.28 s），C3d 那一轮再读到 **3.38×**（230.89 s，省界腿现在多算一个 `overlap_check` 关系数、时长没有可归因的变化）。
-`quick` 档也从 4.07× 走到 **4.04×**。两档都还 > 2×（**我给取证/实现批设的"余量低于 2× 就停机上报"这道门没触发**）。
+⚠ **C3b-A 把 11 条真实腿加进 `real_data_vector_full` 之后，Debug 侧余量从 3.96× 掉到 3.43×**（227.28 s），C3d 那一轮读到 **3.38×**（230.89 s），C3f 那一轮（`filter_cn_attribute` 那条 0.82 s 的中文属性值腿加进 `real_data_vector_quick`，`full` 档本身没加腿）读到 **3.40×**（229.51 s）。
+`quick` 档从 4.07× → C3d 的 **4.04×**（178.07 s）→ C3f 的 **4.03×**（178.83 s）。两档都还 > 2×（**我给取证/实现批设的"余量低于 2× 就停机上报"这道门没触发**）。
 下一批（C3c）再加腿之前**必须重跑这一栏**，`720/780` 这两个数不许按比例自己调——
 上一轮就有人（下级在执行 C3b-A 时）明确按这条纪律把实测数字交回给我裁，而不是自己抬 TIMEOUT。
 
   两轮分开写清（上一版这里把两轮混成"本轮"，正是本文件刚修过的"表改了 prose 没改"同一形态）：
   - **收尾三轮**（693 / 691 那一档）：两棵树重配置后 `-j1` 全量，
     `100% tests passed, 0 tests failed out of 693`（Debug）与 `out of 691`（Release），429.86 / 231.79 s。
-  - **批次 C Task C2 + 复审修复轮**（现值 697 / 695）：+4 条 `real_data_*`，修复轮之后重配重编再全量，
+  - **批次 C Task C2 + 复审修复轮**（当时那一档 697 / 695）：+4 条 `real_data_*`，修复轮之后重配重编再全量，
     `100% tests passed, 0 tests failed out of 697`（Debug 702.01 s）与 `out of 695`（Release 367.32 s）。
     同一形式在修复轮之前的另一档是 741.52 / 392.67 s —— 两轮都全绿，差值按上面那条纪律**不作任何结论**。
-  - **批次 C C3a 收口轮**（本表现值）：树上多了 `cf50a39`（四条几何派生改两要素夹具 + 钉坐标断言）与
+  - **批次 C C3a 收口轮**（当时那一档）：树上多了 `cf50a39`（四条几何派生改两要素夹具 + 钉坐标断言）与
     两个取证批（**零提交**，只证明判别力），跑前硬门控 = 0、串行 `-j1`，
     `100% tests passed, 0 tests failed out of 697`（Debug **732.32 s**）与 `out of 695`（Release **361.72 s**）。
     注册数没变 ⇒ C3a 只改断言与夹具、没增删用例，这是它该有的形状。
-  - **批次 C C3b 收口轮**（本表现值）：树上多了 `b76af64`/`e0f928c`（八条拓扑检查动作拆列数值断言 + 晋升，
+  - **批次 C C3b 收口轮**（当时那一档）：树上多了 `b76af64`/`e0f928c`（八条拓扑检查动作拆列数值断言 + 晋升，
     PENDING 69→61）、`d3a10ca`（更正一条已入库的假陈述）、`a9f5a7f`/`34eb753`（三处"期望值不承重"的夹具加固）与
     `9d98497`（11 条真实数据腿 + 矩阵同步）；三个取证批共 10 处变异**零提交**。
     跑前硬门控 = 0、串行 `-j1`：`100% tests passed, 0 tests failed out of 697`（Debug **761.30 s**）与
     `out of 695`（Release **372.09 s**），两棵树 `Not Run/Skip/***` 计数都是 **0**。
     注册数仍 697/695 ⇒ C3b 与 C3a 一样只改判据、夹具与腿，**没有增删用例**。
-  - **批次 C C3d 轮**（本表现值，产品修复 N125）：树上多了 `19cb39f`（`overlap_check` 删本地交面积 switch、改调用 `polygonIntersectionArea()` + 新夹具用例 + 省界臂收紧）；
+  - **批次 C C3d 轮**（上一档，产品修复 N125）：树上多了 `19cb39f`（`overlap_check` 删本地交面积 switch、改调用 `polygonIntersectionArea()` + 新夹具用例 + 省界臂收紧）；
     跑前硬门控 = 0、串行 `-j1`、两棵树先重编（`error C` 计数都是 0，`plugin_vector.dll` mtime 晚于被改 `.inc`）：
     `100% tests passed, 0 tests failed out of 698`（Debug **751.87 s**）与 `out of 696`（Release **373.59 s**），
     两棵树 `Not Run/Skip/***` 计数都是 **0**。注册数 **697 → 698 / 695 → 696**，增量恰为那一条新夹具用例 ⇒ 这是产品修复该有的形状（除它之外一条没动）。
+  - **批次 C C3f 轮**（本表现值，产品修复 N127）：树上多了 `fc68e12`（`isSafeWhereClause` 改 UTF-8 感知 +
+    两条 WHERE 用例 + 中文属性值真实腿）；跑前硬门控 = 0、串行 `-j1`、两棵树先重编 `plugin_vector` 与 `gis_tests`
+    （`grep -c "error C"` 都是 **0**，`plugin_vector.dll` mtime 晚于被改 `.inc`）：
+    `100% tests passed, 0 tests failed out of 700`（Debug **754.82 s**）与 `out of 698`（Release **365.34 s**），
+    两棵树 `Not Run/Skip/***` 计数都是 **0**。注册数 **698 → 700 / 696 → 698**，增量恰为那两条新用例 ⇒
+    这也是产品修复该有的形状（除它之外一条没动）。收尾还单跑了两棵树各自的那道子集
+    `-R "^(PluginTest\.Vector.*Filter.*|PluginTest\.VectorOverlapCheck.*|CoverageMeta\..*)$"`：`-N` 现读 **10 条**（两棵树同数），
+    Debug **10/10 1.98 s**、Release **10/10 1.25 s**；`source_mojibake_guard` 单跑 Debug **9.61 s**、Release **9.41 s** 全绿
+    （新增的中文用例字面量与 .ps1 注释都没造出乱码，编码由这条用例兜底而不是人眼）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -814,9 +827,10 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   是否把反向自检臂做进脚本（工单 C3e）待定，代价是每轮多跑一次与脚本复杂度。
 
 批次 C 的 C3c 建账（只读调研 12 个动作 + 控制器逐条复核）又查出五条产品侧缺陷，**本批只立案、修在 C3f~C3i**
-（细节、射程与"哪些还没核"都写在工单 `Task C3c` 那张表里，这里只给结论级描述）：
+（细节、射程与"哪些还没核"都写在工单 `Task C3c` 那张表里，这里只给结论级描述；**N127 已由工单 C3f 修复销账，见该条的销账状态**）：
 
-- 挂账 **N127**（**优先级最高**，`vector filter`）：**非 ASCII 的 `--where` 一律被拒** ⇒ 中文属性值过滤不了，
+- 挂账 **N127**（**优先级最高**，`vector filter`；2026-10-22 立案 ⇒ **同一日由工单 C3f 修复销账**，提交 `fc68e12`；取证见 `task-C3f-report.md`）：
+  **非 ASCII 的 `--where` 一律被拒** ⇒ 中文属性值过滤不了，
   而本仓样例数据（省名/市名）全是中文，这是用户主场景。现读根因在
   `src/plugins/vector/vector_plugin_info_filter.inc:1-16`——白名单用 `std::isalnum(unsigned char)`，
   默认 C locale 下 `>=0x80` 字节不是"字母数字" ⇒ 落到 `return false`；调用点唯一（`:157`）⇒ **射程只有 filter**。
@@ -824,6 +838,24 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   `--where=name='北京'` ⇒ `Error: WHERE clause contains disallowed characters or keywords`；
   同一文件 `--where=name='shanghai'` ⇒ `Success: Filter completed: 1 features written`。
   修复方向是"UTF-8 字节序列合法化 + 保留注入面拦截（引号/分号/`DROP` 等关键字）"，不是把白名单整个删掉。
+  **销账状态（C3f，`fc68e12`）**：`>=0x80` 的字节现在**只有在构成合法且规范的 UTF-8 序列时**才放行
+  （新增 `utf8LeadContinuations` + `consumeUtf8Sequence`：`C0/C1`、`F5..FF`、落单续接字节不能作 lead；
+  `E0→A0..BF`、`ED→80..9F`、`F0→90..BF`、`F4→80..8F` ⇒ overlong、UTF-16 代理区、`>U+10FFFF` 全拒；悬挂 lead 拒）。
+  **不是** `c >= 0x80 continue` 那种形态，而且这一点是**变异实测**出来的：临时把它写成 `>=0x80 continue` 后，
+  反向用例的五条 UTF-8 形态臂（`0xFF 0xFE`、`0xC0 0x80`、`0xF5 80 80 80`、悬挂 `0xE4`、落单 `0x80`）当场全红。
+  ASCII 白名单集合（含 `'`、不含 `"` `` ` `` `;` `/`）、危险关键字表与单词边界匹配、分号/`--`/`/*` 三道闸**逐字未动**
+  ⇒ 注入面不回退（`1=1; DROP TABLE x`、`name="…"`、`` name=`…` `` 三条臂同钉）。
+  两态取证：未修复实现 + 新正向用例 ⇒ 红在那条 `disallowed characters or keywords` 文案上；修复后 ⇒ 绿。
+  真实数据腿 `filter_cn_attribute`（进 `real_data_vector_quick`，两档都跑）：省层复制件的 `name` 众数值
+  （现读为 3 字中文、8/42 条）做 `--where`，中文值由脚本 `-Encoding UTF8` 运行时现读构造（脚本字面量仍全 ASCII），
+  判据是自报数 == 现读 Features == 输入侧手推 M 的三段等式 + 输出 Extent 等于被留要素在输入里的包框 +
+  四边不得与全层逐边相同。反向对照同一命令只换 DLL：旧 `plugin_vector.dll` ⇒ `rc=1` + 白名单文案，新 ⇒ `8 features written`。
+  ⚠ **本刀顺手现读到一条与本缺陷无关的口径不一致，未改、请控制器裁定是否立案**：`vector filter` 是这批矢量动作里
+  **少数不写 `metadata["feature_count"]`** 的（`doFilter` 只回消息与输出路径，`grep -rn feature_count src/plugins/vector/`
+  可复现：写这个键的 18 处里没有 `vector_plugin_info_filter.inc`），而文档口径也确认"返回消息中的数量"才是它的产物
+  （`docs/算法说明/矢量数据处理/空间过滤.md` 结果解释）。后果：GUI/CLI 的统一展示面与任何"按 `feature_count` 核数"的
+  通用判据对 `filter` 都拿不到键（本刀的真实腿因此改用消息里的数）。**同族的 `clip/union/intersect/difference/spatial_join`
+  是否也缺，本刀没核**，不外推。
 - 挂账 **N128**（`vector union`）：**它不是并集**。只遍历源图层要素（`vector_plugin_overlay.inc` union 段的
   `while (srcLayer->GetNextFeature())`）⇒ 叠加层独有的几何被静默丢弃，产物覆盖 ⊆ 源覆盖，
   与 `docs/算法说明/矢量数据处理/并集.md` 的语义相反；**并且输出图层只建一个 `source` 字符串字段**（`:85-86`），
