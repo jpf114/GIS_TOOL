@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 722 / Release 720**（2026-10-22 批次 C C3i 收口轮现读；上一档 719 / 717 是同日 C3h-1，再上一档 713 / 711 是 C3j，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 723 / Release 721**（2026-10-22 批次 C N122 收口轮现读；上一档 722 / 720 是同日 C3i，再上一档 719 / 717 是 C3h-1，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,7 +297,7 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 722 / Release 720**（2026-10-22 批次 C C3i 收口轮现读；相比上一档 719 / 717 **净 +3**，
+- **现行基线**：`ctest -N` 注册数 **Debug 723 / Release 721**（2026-10-22 批次 C N122 收口轮现读；相比上一档 722 / 720 **+1** = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
   由两刀合成：C3k 把一条 `real_data_vector_full` 换成 `checks`/`overlay` 两条（−1+2 = **+1**），
   C3i 新增 `PluginTest.VectorBufferRejectsMissingSrs` 与 `PluginTest.VectorDissolveRejectsMissingSrs`（**+2**）。
   上一档 719 / 717 是同日 C3h-1 收口轮（+6 = `PluginTest.VectorUnion*` 六条，逐名比对得出）；再上一档 713 / 711 是同日 C3j（+8 = N132/N133/N134 三刀的
@@ -367,15 +367,12 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **722** | **916.43 s**（批次 C C3i 收口轮现跑，`build/tmp/c3i_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 722 条**首档**；往前九档（697~719 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 s** | 最慢 `real_data_vector_overlay` **245.82 s** ⇒ 670 ÷ 245.82 = **2.73×**；次 `real_data_vector_quick` **211.09 s** ⇒ 720 ÷ 211.09 = **3.41×**；`real_data_vector_checks` **32.48 s** ⇒ 100 ÷ 32.48 = **3.08×**；`source_mojibake_guard` 12.79 s ⇒ **23.5×** |
-| Release | **720** | **469.43 s**（同一轮；**1 条红**，见下） | 720 条**首档**；往前八档（695~717 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 s** | 最慢 `real_data_vector_overlay` **101.80 s** ⇒ 670 ÷ 101.80 = **6.58×**；`real_data_vector_quick` **118.95 s** ⇒ 3.05×；`real_data_vector_checks` **18.97 s** ⇒ 5.27× |
-⚠ **Release 本轮不是全绿：`runtime_dll_cross_config_audit` 红（719/720）**。它判的是 `build/release/plugins` 里
-**26 个只属于 Debug 配置的运行库残留**（`Qt6Cored.dll`/`gdald.dll`/`opencv_*4d.dll`/`pcre2-*d.dll` 等）。
-这条红**与 C3i 的代码改动无关**（审计只扫构建产物目录，不碰 buffer/dissolve），登记为 **N136**；
-它的**成因我没有查清、因此不写因果**：`dir /tc` 显示这些文件 2026-10-14 就在，而同日 11:44 与 13:0x 两轮 Release 全量里
-这条审计都是绿的（`build/tmp/c3j_close_rel.log`、`c3h1_close_rel.log`）——**同一批文件、同一命令、两种结论**，
-要么时间戳不可信（`file(COPY)` 会保留源时间戳），要么前两轮的绿是空转。两种可能都必须取证后才能删文件，
-按本文件纪律**先立案不动产物**。C3i 的判据腿（两条新用例 + 判据族）在两棵树各 30/30，不受影响。
+| Debug | **723** | **861.11 s**（批次 C N122 收口轮现跑，`build/tmp/n122_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 723 条**首档**；往前十档（697~722 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 s** | 最慢 `real_data_vector_overlay` **230.41 s** ⇒ 670 ÷ 230.41 = **2.91×**；次 `real_data_vector_quick` **198.79 s** ⇒ 720 ÷ 198.79 = **3.62×**；`real_data_vector_checks` **33.42 s** ⇒ 100 ÷ 33.42 = **2.99×**；`source_mojibake_guard` 12.79 s ⇒ **23.5×** |
+| Release | **721** | **562.99 s**（N136 隔离后重跑，`build/tmp/n136_rel_clean.log`；**721/721 全绿**） | 721 条**首档**；往前九档（695~720 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 s** | 最慢 `real_data_vector_overlay` **153.72 s** ⇒ 670 ÷ 153.72 = **4.36×**；`real_data_vector_quick` **146.99 s** ⇒ 4.90×；`real_data_vector_checks` **23.65 s** ⇒ 4.23× |
+⚠ **Release 在 N122 收口轮先是 720/721（唯一红 = N136），隔离 26 个 Debug 配置残留后重跑 721/721 全绿**（562.99 s）。
+第一次跑与第二次跑之间**只**动了 `build/release/plugins` 的那 26 个文件（源码与测试一条没改）——那是审计自带的补救步骤。
+**N136 的"绿→红翻转"成因仍未查明，不写因果**：同一批文件、同一命令，在 11:44 与 13:0x 两轮 Release 全量里是绿的；
+已排除的方向见下面 N136 条目的清单。下一步是给审计加"扫描清单落盘"。
 
 **触发线（我自己给自己下的规则）——已处置完毕，现在的口径按"半条腿"算**：2026-10-22 拆腿前
 `real_data_vector_full` 的 Debug 余量掉到 **2.06×**（378.52 s，单跑复核 376.63 s）⇒ 触发。
@@ -446,12 +443,16 @@ cmake --install build/release --config Release --prefix install
     `cp` 快照还原后 md5 一致）后提交，并在 commit message 里声明作者与验收分工。
     实测（控制器现读）：Debug quick 236.47 / checks 34.47 / overlay 255.98 s，Release 126.39 / 20.20 / 130.05 s；
     `TIMEOUT` 100 / 670 ⇒ 2.90× / 2.62×。注册数 719→720 / 717→718。
-  - **批次 C C3i 收口轮**（本表现值，产品修复 N130）：树上多了 `15f3ef1`（buffer/dissolve 的投影闸
+  - **批次 C C3i 收口轮**（当时那一档，产品修复 N130）：树上多了 `15f3ef1`（buffer/dissolve 的投影闸
     `== "geographic"` → `!= "projected"`，文案统一 `failProjectedRequired`；两条无 SRS 判别腿）。
     判别取证：两闸改回旧写法（标记 `N130-ARM`）⇒ 两条新用例双双 Failed；`cp` 还原后 md5 一致、标记 0 命中，
     两棵树各 **30/30** 绿。全量：Debug `100% tests passed, 0 tests failed out of 722`（**916.43 s**，全绿）；
     Release **719/720**——唯一红是 `runtime_dll_cross_config_audit`（**N136**，见下面挂账），与 C3i 代码路径无关。
     注册数 720→722 / 718→720。
+  - **批次 C N122 收口轮**（本表现值，产品修复 N122）：树上多了 `10fe182`（helper + 8 内联 + 24 处扩展名判定
+    全部改 `fs::u8path`；新增中文路径边车用例）。全量：Debug `100% tests passed, 0 tests failed out of 723`
+    （**861.11 s**）；Release 首轮 **720/721**（唯一红 = N136）→ 隔离 26 个 Debug 配置残留后重跑 **721/721（562.99 s）**。
+    注册数 722→723 / 720→721（+1）。真实腿余量：Debug 2.91× / 2.99× / 3.62×，Release 4.36× / 4.23× / 4.90×。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -840,6 +841,14 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   修法与门：把这几处 `fs::path(output)` 换成 `fs::u8path(output)`（共享 helper 被全部矢量化动作使用 ⇒ 属跨动作改动），
   并补一条机器级用例：在非 ASCII 目录里预置非法同名文件、跑一次、断言成功且产物可读。
   **本批不修**（正在跑的取证/晋升批共享同一棵树与同一套用例，改 `src/` 会污染它们 ⇒ 单独开一批带用例修）。
+  **已修 `10fe182`（2026-10-23）**：共享 helper（17 个动作）+ 8 处内联复制全部改 `fs::u8path`；
+  新用例当场又抓到**第二类同族缺陷**——`fs::path(output).extension().string()` 在中文路径上会抛
+  `No mapping for the Unicode character exists in the target multi-byte code page`，24 处
+  （vector 23 + projection 1）一并改 `fs::u8path(output).extension().u8string()`。
+  判据 = `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`（中文目录 + 驱动默认不重写的
+  `.sbn/.sbx/.qix`；buffer 走 helper、simplify 走内联各判一次）；两臂：29 个文件退回窄串 ⇒ 用例红，
+  按快照逐文件还原（md5 一致）⇒ 绿。曾加过一条 projection 侧同类用例，**两臂证明不承重**
+  （GDAL 覆盖式建数据集自己会删同 stem 边车）⇒ 已删，缺口如实登记。
 - 挂账 **N123**（判据覆盖面）：`topology_check` 的四类问题里 `empty_geometry` 与 `invalid_geometry` **无任何用例覆盖**
   （现读实现是两个独立 `if`、可同写两行；成对判定 `duplicate_geometry` 与 `overlap` 是 `if/else if`、互斥）。
   "自交面会不会同时被判 invalid"我**没有算式依据** ⇒ C3b-B1 明确不做这两行，等用 `IsValid()` 实测后再定期望值。
@@ -946,7 +955,7 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   **已修 `15f3ef1`**（两闸收成 `!= "projected"`，文案统一 `failProjectedRequired`；两条无 SRS 判别腿
   经"旧闸必红"双臂验证后两树 30/30）。⚠ 工单里那条"`VectorDissolveRejectsUnknownDissolveField` 夹具没挂 SRS"
   是**错的**（SRS 在它调用的 `buildDissolveTypeFixture`，`:4057` 有 `importFromEPSG(3857)`）⇒ 无需连带修复。
-- 挂账 **N136**（**测试基建 / 构建产物卫生，未查明**）：Release 树全量里 `runtime_dll_cross_config_audit` 红，
+- **N136（测试基建 / 构建产物卫生）——已处置，翻转成因未查明**：Release 树全量里 `runtime_dll_cross_config_audit` 曾红，
   报 `build/release/plugins` 下 26 个"只属于 Debug 配置"的运行库残留（`Qt6Cored.dll`、`gdald.dll`、
   `opencv_*4d.dll`、`pcre2-*d.dll`、`proj_9_d.dll`、`tiffd.dll`、`zd.dll` 等）。**成因未查清，不写因果**：
   `dir /tc` 显示这些文件创建于 2026-10-14，但同日 11:44（C3j）与 13:0x（C3h-1）两轮 Release 全量里同一条审计都是绿的
@@ -955,6 +964,11 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   ② 前两轮的绿是空转（例如目录/名单当时不满足扫描条件）。**在取证前不许按审计提示直接删文件**
   —— 残留名单里含 `gdal.dll` 这类 Release 侧运行库，删错会打断产物加载。
   影响面：只挡 Release 全量收口，不碰任何被测代码；C3i 的两条判据腿与判据族在两棵树各 30/30。
+  **处置（2026-10-23 01:00）**：按审计自带的补救①，把 26 个文件**移动**到 `build/tmp/n136_quarantine/`（可原样搬回），
+  重建 `plugin_vector` 后审计转绿；Release 三条真实腿（124.85 / 20.45 / 135.33 s）与随后整轮全量 **721/721（562.99 s）** 全绿
+  ⇒ 这批 Debug 库对 Release 产物确实无用。**翻转成因仍未查明**，已排除：vcpkg 两侧 bin 目录今天未变（最新 mtime 仍是 10-14 16:24）；
+  真实腿不写这些文件（跑腿前后 mtime 完全一致）；`copy_if_exists` 没有 debug 回退；两棵树都不是 junction。
+  下一步（未做）：给审计加"每次运行把扫描清单/残留清单落盘"的日志，让下一次翻转自带证据。
 - 挂账 **N131**（`vector rasterize`）：`attribute` 字段不存在时不校验（`vector_plugin_raster_convert.inc:72-78`），
   而初始化已经是 `band->Fill(0)` + `SetNoDataValue(0)`（`:63-65`）⇒ 产物整幅是背景 0，
   **用户无法区分"这一片本来就没有面"与"字段名写错"**；成功返回还不带任何 metadata 键（`:103-105`）⇒ 事后也查不出烧了什么。
