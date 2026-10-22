@@ -3895,6 +3895,134 @@ TEST_F(PluginTest, VectorDissolveExecution) {
     EXPECT_TRUE(result.success) << "Dissolve failed: " << result.message;
 }
 
+// ── N129：dissolve_field 写错 ⇒ 硬失败（旧实现不报错，静默交出一张 0 要素的空图层）────
+// WHY 夹具与 VectorDissolveExecution 同形（只建 `type` 字段、两条共边面都写 type='A'）：
+// 反向臂要的"写错"必须**只少一个字母**（`typ`），这样红点只能来自字段存在性校验，
+// 而不是"整个字段不存在"这种连旧实现都可能碰巧走对的情形。
+// 旧实现的实际症状（现读，写下来免得下一个人在这里再猜一遍）：fieldIdx<0 时要素被推进
+// allGeoms，但写出段走的却是 `!dissolveField.empty()` 那条分支、遍历的是空的 groups ⇒
+// 一个要素也不写，返回消息还是 "Dissolve completed: 0 features"（success=true）。
+// WHY 自己清同名一套副本：shapefile 是 .shp/.shx/.dbf/.prj 一套，上一轮的残留会让
+// "输出不得存在"这条判据拿到假绿。
+static std::string buildDissolveTypeFixture(const std::string& fileName) {
+    const std::string shpPath = (getTestDir() / fileName).string();
+    const fs::path stem = fs::path(shpPath).stem();
+    for (const auto& entry : fs::directory_iterator(getTestDir())) {
+        if (entry.path().stem() == stem) {
+            std::error_code ignored;
+            fs::remove(entry.path(), ignored);
+        }
+    }
+
+    auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    EXPECT_NE(driver, nullptr);
+    auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    EXPECT_NE(ds, nullptr);
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("test", srs.get(), wkbPolygon);
+    EXPECT_NE(layer, nullptr);
+    OGRFieldDefn fieldDefn("type", OFTString);
+    layer->CreateField(&fieldDefn);
+
+    auto* featDefn = layer->GetLayerDefn();
+    auto* feat1 = OGRFeature::CreateFeature(featDefn);
+    OGRPolygon poly1;
+    OGRLinearRing ring1;
+    ring1.addPoint(0.0, 0.0); ring1.addPoint(100.0, 0.0);
+    ring1.addPoint(100.0, 100.0); ring1.addPoint(0.0, 100.0);
+    ring1.addPoint(0.0, 0.0);
+    poly1.addRing(&ring1);
+    feat1->SetGeometry(&poly1);
+    feat1->SetField("type", "A");
+    layer->CreateFeature(feat1);
+    OGRFeature::DestroyFeature(feat1);
+
+    auto* feat2 = OGRFeature::CreateFeature(featDefn);
+    OGRPolygon poly2;
+    OGRLinearRing ring2;
+    ring2.addPoint(100.0, 0.0); ring2.addPoint(200.0, 0.0);
+    ring2.addPoint(200.0, 100.0); ring2.addPoint(100.0, 100.0);
+    ring2.addPoint(100.0, 0.0);
+    poly2.addRing(&ring2);
+    feat2->SetGeometry(&poly2);
+    feat2->SetField("type", "A");
+    layer->CreateFeature(feat2);
+    OGRFeature::DestroyFeature(feat2);
+
+    GDALClose(ds);
+    return shpPath;
+}
+
+// 反向臂：字段名少一个字母 ⇒ 必须硬失败，且失败点要能被 message 认出来。
+// 三条断言各自钉一件事，缺一条就退化成"任何错误都算过"的空转用例：
+//   ① !success（旧实现这条是绿的 ⇒ 这就是改前必红的红点）
+//   ② message 点名参数 dissolve_field
+//   ③ message 带回写错的值 typ（用户据此知道是自己敲错了什么）
+//   ④ 输出文件不得存在（硬失败必须发生在建盘之前，不许留半成品）
+TEST_F(PluginTest, VectorDissolveRejectsUnknownDissolveField) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = buildDissolveTypeFixture("e2e_dissolve_typo_input.shp");
+    const std::string output = (getTestDir() / "e2e_dissolve_typo_output.geojson").string();
+    std::error_code ignored;
+    fs::remove(output, ignored);
+    ASSERT_FALSE(fs::exists(output)) << "本轮开始前就残留了输出，半成品判据会失真";
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("dissolve");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["dissolve_field"] = std::string("typ");   // 夹具里的真实字段是 type
+
+    const auto result = p->execute(params, progress_);
+
+    EXPECT_FALSE(result.success)
+        << "N129：dissolve_field 写成 typ 仍然 success=true ⇒ 旧实现一个要素也不写、"
+           "静默交出一张空图层（message=" << result.message << "）";
+    EXPECT_NE(result.message.find("dissolve_field not found"), std::string::npos)
+        << "失败消息必须点名是哪个参数（与 spatial_join 的 join_field not found 同族口径），"
+           "只回 success=false 不算修好。实际 message=" << result.message;
+    EXPECT_NE(result.message.find("typ"), std::string::npos)
+        << "失败消息必须把写错的那个值带回来。实际 message=" << result.message;
+    ASSERT_FALSE(fs::exists(output))
+        << "字段校验要在建出输出文件之前完成，失败后不得留半成品：" << output;
+}
+
+// 正向对照臂：dissolve_field 留空是 GUI 承诺过的合法用法（"该字段留空时全部合并为一个要素"，
+// src/gui/gui_data_support.cpp:527），修 N129 时不得把它一起拒掉。
+// 两条共边面 ⇒ 整体融合后恰好 1 个要素。
+TEST_F(PluginTest, VectorDissolveWithoutFieldMergesAllFeatures) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = buildDissolveTypeFixture("e2e_dissolve_emptyfield_input.shp");
+    const std::string output = (getTestDir() / "e2e_dissolve_emptyfield_output.geojson").string();
+    std::error_code ignored;
+    fs::remove(output, ignored);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("dissolve");
+    params["input"] = shpPath;
+    params["output"] = output;
+    // 不写 params["dissolve_field"]：走"留空 = 全部合并"这条合法路径
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << "留空字段的合法路径被 N129 的校验顺手拒了: " << result.message;
+
+    const auto it = result.metadata.find("feature_count");
+    ASSERT_NE(it, result.metadata.end())
+        << "dissolve 必须回显写出要素数（本刀同时把这条键补进 dissolve，与同插件其它动作同形）；"
+           "实际键数=" << result.metadata.size();
+    EXPECT_EQ(it->second, "1") << "两条共边面整体融合后必须是 1 个要素";
+    EXPECT_TRUE(fs::exists(output)) << "成功臂必须真交出产物";
+}
+
 TEST_F(PluginTest, VectorClipRejectsMismatchedSrs) {
     auto* p = mgr_.find("vector");
     if (!p) {
