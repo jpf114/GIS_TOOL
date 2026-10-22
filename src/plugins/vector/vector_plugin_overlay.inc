@@ -178,6 +178,9 @@ gis::framework::Result VectorPlugin::doUnion(
     int inputCount = 0;
     int overlapCount = 0;
     int overlayCount = 0;
+    // 叠加独有块这一轮因为几何运算失败而**没写出去**的块数（缺口，宁缺不重）。
+    // 只有路径 A 的叠加独有块轮会增长，线 × 面路径恒为 0 ⇒ 正常批次看不到这个键。
+    int skippedOverlayPieces = 0;
     const int transactionBatchSize = useTransactions ? 20000 : 1000;
     if (useTransactions) {
         dstLayer->StartTransaction();
@@ -259,29 +262,27 @@ gis::framework::Result VectorPlugin::doUnion(
 
         // 把一组几何并成一块，所有权移交调用方。空集合返回 nullptr，
         // 调用方必须自己走"对面没有几何"的分支，不许拿 nullptr 去调 Difference（doDifference 里就是现例）。
-        auto mergeOverlayFeatures = [](const std::vector<const OverlayFeatureEntry*>& entries) -> OGRGeometry* {
-            std::vector<OGRGeometry*> geoms;
-            geoms.reserve(entries.size());
-            for (const auto* entry : entries) {
-                OGRGeometry* geom = entry->feature->GetGeometryRef();
-                if (geom && !geom->IsEmpty()) {
-                    geoms.push_back(geom->clone());
-                }
+        auto mergeGeometryList = [](const std::vector<const OGRGeometry*>& geoms) -> OGRGeometry* {
+            std::vector<OGRGeometry*> clones;
+            clones.reserve(geoms.size());
+            for (const OGRGeometry* geom : geoms) {
+                clones.push_back(geom->clone());
             }
-            return unionGeometryList(geoms);
+            return unionGeometryList(clones);
         };
 
-        auto mergeSourceGeometries = [&srcFeatures, &srcEnvelopes](
-            const OGREnvelope& target) -> OGRGeometry* {
-            std::vector<OGRGeometry*> geoms;
+        // 叠加独有块要用源几何表：级联并集与"并集失败时逐条差集"两条路都从同一份候选出发，
+        // 口径必须一致，否则回退分支减的几何和主路径不是同一批。
+        auto featureSourceCandidates = [&srcFeatures, &srcEnvelopes](const OGREnvelope& target) {
+            std::vector<const OGRGeometry*> candidates;
             for (size_t i = 0; i < srcFeatures.size(); ++i) {
                 const OGRGeometry* geom = srcFeatures[i]->GetGeometryRef();
                 if (!geom || geom->IsEmpty() || !envelopesIntersect(srcEnvelopes[i], target)) {
                     continue;
                 }
-                geoms.push_back(geom->clone());
+                candidates.push_back(geom);
             }
-            return unionGeometryList(geoms);
+            return candidates;
         };
 
         // 属性移交只按下标写，两侧都走 copyFeatureFieldsOnly（SetFieldsFrom，不碰几何）。
@@ -345,6 +346,10 @@ gis::framework::Result VectorPlugin::doUnion(
                 }
 
                 // consumed 单调增长；Union 失败时保留旧值（宁少并不也不多写一块）。
+                // 注意这条失败现在同时波及源独有块的减法基（它就取 consumed）：少并一块 ⇒ 那块会把已写出的
+                // both 面积再算进"源独有"里。旧写法减的是候选并集，看似不受这里影响，但它自己的级联并集
+                // 一旦失败就退回"整块克隆写出"，重叠得更彻底。两条都只在 GEOS Union 失败时出现，
+                // 今天没有用例能触发（要靠注入 GEOS 失败），故此处保持"少并"这个既有方向。
                 OGRGeometry* merged = consumed
                     ? consumed->Union(intersection.get())
                     : intersection->clone();
@@ -353,14 +358,14 @@ gis::framework::Result VectorPlugin::doUnion(
                 }
             }
 
-            // 源独有块 = geom − union(全部候选)。候选为空时对面根本没有几何，直接克隆写出。
-            std::unique_ptr<OGRGeometry> remainder;
-            if (candidates.empty()) {
-                remainder.reset(geom->clone());
-            } else {
-                std::unique_ptr<OGRGeometry> overlayUnion(mergeOverlayFeatures(candidates));
-                remainder.reset(overlayUnion ? geom->Difference(overlayUnion.get()) : geom->clone());
-            }
+            // 源独有块 = geom − consumed。减法基取"本轮已写出的相交块并集"，不取"全部候选叠加几何的并"：
+            // 两者可证等价 —— consumed 恒等于 union(candidates ∩ geom) = geom ∩ union(candidates)，
+            // 所以 geom − consumed == geom − union(candidates)；等价之外还更强：候选并集那一次
+            // GEOS 级联 Union 失败时 consumed 照样在手里，不必退回"整块克隆写出"去和已写出的 both 块重叠
+            //（"分块互不重叠、面积可加"是本动作对输出的契约，回退路径也不许破它）。
+            // 减不动（Difference 返回 nullptr）时宁可留缺口，也不写重叠块。
+            std::unique_ptr<OGRGeometry> remainder(
+                consumed ? geom->Difference(consumed.get()) : geom->clone());
             if (remainder && !remainder->IsEmpty()) {
                 if (!writeUnionPiece(remainder.get(), feat.get(), nullptr, "input")) {
                     if (useTransactions) {
@@ -391,11 +396,41 @@ gis::framework::Result VectorPlugin::doUnion(
                 continue;
             }
 
-            std::unique_ptr<OGRGeometry> srcUnion(mergeSourceGeometries(entry.envelope));
-            std::unique_ptr<OGRGeometry> raw(
-                srcUnion ? overlayGeom->Difference(srcUnion.get()) : overlayGeom->clone());
-            if (!raw || raw->IsEmpty()) {
+            const auto sourceCandidates = featureSourceCandidates(entry.envelope);
+            std::unique_ptr<OGRGeometry> srcUnion(mergeGeometryList(sourceCandidates));
+            std::unique_ptr<OGRGeometry> raw;
+            if (srcUnion) {
+                raw.reset(overlayGeom->Difference(srcUnion.get()));
+            } else if (sourceCandidates.empty()) {
+                // 包串粗筛一条源几何都没命中 ⇒ 对面确实没有几何可减，整块写出才是并集。
+                raw.reset(overlayGeom->clone());
+            } else {
+                // 候选非空但**级联并集**失败。级联并集失败不等于逐条差集失败 ⇒ 从整块出发逐条 Difference，
+                // 单条失败只跳过那一条候选、继续减剩下的；不许直接 clone() 整块写出（那会把
+                // 已经写过的源面积再算成叠加独有块，"互不重叠、面积可加"这条不变量当场破）。
+                raw.reset(overlayGeom->clone());
+                bool trimmed = false;
+                for (const OGRGeometry* candidate : sourceCandidates) {
+                    OGRGeometry* step = raw->Difference(candidate);
+                    if (!step) {
+                        continue;
+                    }
+                    raw.reset(step);
+                    trimmed = true;
+                }
+                if (!trimmed) {
+                    // 一条都减不动 ⇒ 这块和源侧面积的关系无法确定，宁缺不重：跳过并记缺口。
+                    skippedOverlayPieces++;
+                    continue;
+                }
+            }
+            if (!raw) {
+                // 级联并集成功、差集自己失败：同样是缺口（不是"这块整个落在源里"），记账后跳过。
+                skippedOverlayPieces++;
                 continue;
+            }
+            if (raw->IsEmpty()) {
+                continue;   // 没有叠加独有面积（全被源盖住），不算缺口
             }
 
             std::unique_ptr<OGRGeometry> piece(consumedOverlay
@@ -442,6 +477,11 @@ gis::framework::Result VectorPlugin::doUnion(
     result.metadata["union_overlap_pieces"] = std::to_string(overlapCount);
     result.metadata["union_overlay_pieces"] = std::to_string(overlayCount);
     result.metadata["union_total_pieces"] = std::to_string(count);
+    // 缺口计数只在 >0 时才出现：正常批次不该有这个键，出现即说明"分块面积之和 < 并集面积"，
+    // 这一条不变量靠它兜住，不许为了凑数把减不动的块整块写出去。
+    if (skippedOverlayPieces > 0) {
+        result.metadata["union_skipped_overlay_pieces"] = std::to_string(skippedOverlayPieces);
+    }
     return result;
 }
 
