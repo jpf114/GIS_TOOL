@@ -23,6 +23,19 @@ gis::framework::Result VectorPlugin::doRasterize(
     if (!layer) { return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
+    // N131：点名了 attribute 就必须存在，且要在建出输出文件之前查出来。
+    // 旧实现把它原样交给 GDAL 的 -a，烧写阶段才报 "Failed to find field <值> on layer <图层名>"：
+    // 那时 drv->Create 已经把输出 tif 建好并 Fill(0) 过 ⇒ 失败后留一张全 0 的半成品
+    //（而 0 恰是本动作的 NoData，打开看不出异常），消息也是 GDAL 内部口径、没点出参数叫 attribute。
+    // 现在与 dissolve_field / join_field not found 同族文案，失败即返回、磁盘上不留东西。
+    // attribute 留空仍是合法的"烧常数 1"，不走这条分支。
+    // WHY 按"点名的图层"查：与下面 -a 的取域范围、以及 layer 参数自己的口径保持一致；
+    // 大小写也与 GDAL 的 GetFieldIndex 同为敏感，不做额外的宽松匹配。
+    if (!attribute.empty() &&
+        layer->GetLayerDefn()->GetFieldIndex(attribute.c_str()) < 0) {
+        return gis::framework::Result::fail("attribute not found: " + attribute);
+    }
+
     OGREnvelope extent;
     if (layer->GetExtent(&extent, TRUE) != OGRERR_NONE) { return gis::framework::Result::fail("Cannot get layer extent");
     }
@@ -100,8 +113,40 @@ gis::framework::Result VectorPlugin::doRasterize(
     progress.throwIfCancelled();
     progress.onProgress(1.0);
 
-    return gis::framework::Result::ok(
+    auto result = gis::framework::Result::ok(
         "Rasterize completed: " + std::to_string(xSize) + "x" + std::to_string(ySize) + " raster", output);
+
+    // N131 的第二半：产物要能自证"烧成了多大、烧了哪些要素、烧的是哪个字段"。
+    // 此前 rasterize 的 Result::ok 一个 metadata 键都不发，这三件事只能打开 tif 反推
+    //（而"打开一看全是 0"正是本缺陷的伪装形态）。
+    mergeStandardRunMetadata(result, params, "rasterize");
+    result.metadata["raster_width"] = std::to_string(xSize);
+    result.metadata["raster_height"] = std::to_string(ySize);
+
+    GIntBig burnedFeatureCount = 0;
+    for (OGRLayer* srcLayer : srcDS->GetLayers()) {
+        GIntBig layerFeatureCount = srcLayer->GetFeatureCount();
+        if (layerFeatureCount < 0) {
+            // 少数驱动不报缓存数 ⇒ 现读遍历，不许把 -1 当"0 个要素"写进元数据
+            layerFeatureCount = 0;
+            srcLayer->ResetReading();
+            while (auto* feat = srcLayer->GetNextFeature()) {
+                ++layerFeatureCount;
+                OGRFeature::DestroyFeature(feat);
+            }
+        }
+        burnedFeatureCount += layerFeatureCount;
+    }
+    result.metadata["source_feature_count"] = std::to_string(burnedFeatureCount);
+
+    // 烧值来源二选一：点了字段就回显字段名，留空就回显常数 1（与本动作的两条合法分支一一对应）
+    if (!attribute.empty()) {
+        result.metadata["burn_field"] = attribute;
+    } else {
+        result.metadata["burn_value"] = "1";
+    }
+
+    return result;
 }
 
 gis::framework::Result VectorPlugin::doPolygonize(

@@ -10079,6 +10079,220 @@ TEST_F(PluginTest, FillSinksLeavesPitEnclosedByNoDataUnfilled) {
     }
     EXPECT_NEAR(gis::tests::readPixel(run.output, 1, 0, 0), 10.0f, 1e-4f) << "障壁之外的背景不受影响";
 }
+
+// ── N131：rasterize 的 attribute 点名就必须存在，且产物要能自证烧了什么 ────────────────
+// 夹具算式写死在这里，下面三条臂的期望值全部由它手推（不是从产物反灌回来当"实测"）：
+//   两条面：A = [0,1]×[0,1] value=3；B = [2,4]×[3,4] value=5；resolution=1.0
+//   图层外包 = [0,4]×[0,4] ⇒ xSize = ceil((4-0)/1) = 4、ySize = 4 ⇒ 输出 4×4 = 16 个像元
+//   地理变换左上 (0,4)、像元 (1,-1) ⇒ 像元 (i,j) 中心 = (i+0.5, 3.5-j)
+//   GDAL 栅格化默认只烧"中心落在几何内"的像元（未开 ALL_TOUCHED）⇒
+//     A：i=0 → x=0.5∈[0,1]；j=3 → y=0.5∈[0,1] ⇒ 唯一像元 (i=0,j=3) = 3
+//     B：i=2 → 2.5、i=3 → 3.5 都 ∈[2,4]；j=0 → y=3.5∈[3,4] ⇒ (2,0)=5、(3,0)=5
+//   ⇒ 非零像元恰好 3 个（1 个 3、2 个 5），像元总和 = 3+5+5 = 13，其余 13 个像元 = 0
+//   留空 attribute 走 -burn 1 ⇒ 同样这 3 个像元 = 1，总和 = 3
+// WHY 用 shapefile + OFTInteger：OGR 把整数域字段以 float 读出时 3.0/5.0 是精确值，
+// 逐像元 == 比较站得住；换成实数字段就得改成 EXPECT_NEAR 并把容差写进判据说明。
+static std::string buildRasterizeValueFixture(const std::string& fileName) {
+    const std::string shpPath = (getTestDir() / fileName).string();
+    const fs::path stem = fs::path(shpPath).stem();
+    for (const auto& entry : fs::directory_iterator(getTestDir())) {
+        if (entry.path().stem() == stem) {
+            std::error_code ignored;
+            fs::remove(entry.path(), ignored);
+        }
+    }
+
+    auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    EXPECT_NE(driver, nullptr);
+    auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    EXPECT_NE(ds, nullptr);
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("test", srs.get(), wkbPolygon);
+    EXPECT_NE(layer, nullptr);
+    OGRFieldDefn valueDefn("value", OFTInteger);
+    layer->CreateField(&valueDefn);
+
+    auto addRect = [&](double minX, double minY, double maxX, double maxY, int value) {
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(minX, minY); ring.addPoint(maxX, minY);
+        ring.addPoint(maxX, maxY); ring.addPoint(minX, maxY);
+        ring.addPoint(minX, minY);
+        poly.addRing(&ring);
+        feat->SetGeometry(&poly);
+        feat->SetField("value", value);
+        layer->CreateFeature(feat);
+        OGRFeature::DestroyFeature(feat);
+    };
+    addRect(0.0, 0.0, 1.0, 1.0, 3);
+    addRect(2.0, 3.0, 4.0, 4.0, 5);
+
+    GDALClose(ds);
+    return shpPath;
+}
+
+static void removeRasterizeOutput(const std::string& output) {
+    std::error_code ignored;
+    fs::remove(output, ignored);
+    fs::remove(output + ".aux.xml", ignored);
+}
+
+// 反向臂：字段名写反两个字母（valeu）⇒ 硬失败 + 点名参数 + 带回写错的值 + 不建输出文件。
+// 旧实现的真实症状（现读，改前红臂逐条对得上）：GDAL 的 `-a valeu` 会发
+// `ERROR 1: Failed to find field valeu on layer …` ⇒ 插件走 errCode 分支返回
+// "Rasterize failed: Failed to find field valeu …"，**success 已经是 false**；
+// 真正没被守住的是两件事：① 输出栅格在调用 GDAL 之前就被 drv->Create 建出来并 Fill(0)
+// 过 ⇒ 失败后磁盘上留一张全 0 的半成品 tif（0 又恰好是本动作的 NoData，肉眼看不出差别）；
+// ② 消息是 GDAL 内部口径（点名的是 layer 与文件名），没点出用户填的参数叫 attribute。
+// ⇒ 本臂的判别点是 message 口径与"输出不存在"这两条，不是 success 那条
+//   （success 断言是对新实现的契约要求，旧实现也满足，别把它当成红臂的证据）。
+TEST_F(PluginTest, VectorRasterizeRejectsUnknownAttributeField) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = buildRasterizeValueFixture("e2e_rasterize_typo_input.shp");
+    const std::string output = (getTestDir() / "e2e_rasterize_typo_output.tif").string();
+    removeRasterizeOutput(output);
+    ASSERT_FALSE(fs::exists(output)) << "本轮开始前就残留了输出，半成品判据会失真";
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("rasterize");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["resolution"] = 1.0;
+    params["attribute"] = std::string("valeu");   // 夹具里的真实字段是 value
+
+    const auto result = p->execute(params, progress_);
+
+    EXPECT_FALSE(result.success)
+        << "N131：attribute 写成 valeu 仍然 success=true ⇒ 烧出整幅 0 而 0 又是 NoData，"
+           "产物静默变成了另一种东西（message=" << result.message << "）";
+    EXPECT_NE(result.message.find("attribute not found"), std::string::npos)
+        << "失败消息必须点名是哪个参数（与 dissolve_field/join_field not found 同族口径）。实际 message="
+        << result.message;
+    EXPECT_NE(result.message.find("valeu"), std::string::npos)
+        << "失败消息必须把写错的那个值带回来。实际 message=" << result.message;
+    ASSERT_FALSE(fs::exists(output))
+        << "字段校验要在建出输出栅格之前完成，失败后不得留半成品：" << output;
+}
+
+// 正向臂：烧对字段 + 元数据自证（宽/高/被烧要素数/烧的是哪个字段）。
+// 三条臂各钉一类缺陷：像元值（烧错字段/烧错位置）、尺寸（行列数算反）、键（产物无法自证）。
+TEST_F(PluginTest, VectorRasterizeBurnsAttributeFieldAndReportsMetadata) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = buildRasterizeValueFixture("e2e_rasterize_value_input.shp");
+    const std::string output = (getTestDir() / "e2e_rasterize_value_output.tif").string();
+    removeRasterizeOutput(output);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("rasterize");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["resolution"] = 1.0;
+    params["attribute"] = std::string("value");
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output)) << output;
+
+    // 元数据：改前一条键都不发（vector_plugin_raster_convert.inc 的 Result::ok 不带 metadata）
+    for (const auto& key : std::map<std::string, std::string>{
+             {"raster_width", "4"}, {"raster_height", "4"},
+             {"source_feature_count", "2"}, {"burn_field", "value"}}) {
+        const auto it = result.metadata.find(key.first);
+        ASSERT_NE(it, result.metadata.end())
+            << "rasterize 必须回显 " << key.first << "；实际键数=" << result.metadata.size();
+        EXPECT_EQ(it->second, key.second) << "元数据键 " << key.first;
+    }
+    EXPECT_EQ(result.metadata.count("burn_value"), 0u)
+        << "点了字段的臂不得同时出现 burn_value：一个产物只能说明一种烧值来源";
+
+    const auto pixels = readWholeBand(output, 4, 4);
+    ASSERT_EQ(pixels.size(), 16u) << "夹具算式的前提是 4×4";
+
+    int count3 = 0;
+    int count5 = 0;
+    int countOther = 0;
+    double sum = 0.0;
+    for (const float v : pixels) {
+        sum += static_cast<double>(v);
+        if (v == 3.0f) {
+            ++count3;
+        } else if (v == 5.0f) {
+            ++count5;
+        } else if (v != 0.0f) {
+            ++countOther;
+        }
+    }
+    EXPECT_EQ(countOther, 0) << "值集合必须恰好 ⊆ {0,3,5}：出现别的值就是烧错了字段或烧错了位置";
+    EXPECT_EQ(count3, 1) << "手推：A 只覆盖 (i=0,j=3) 一个像元";
+    EXPECT_EQ(count5, 2) << "手推：B 覆盖 (2,0)(3,0) 两个像元";
+    EXPECT_NEAR(sum, 13.0, 1e-4) << "手推：3+5+5=13，其余 13 个像元为 0";
+
+    // 逐位置钉死，防"总和凑对了但像元摆错"（3 个非零像元若被摆成一行，上面三条全过）
+    EXPECT_EQ(pixels[3 * 4 + 0], 3.0f) << "(i=0,j=3) 必须是 3";
+    EXPECT_EQ(pixels[0 * 4 + 2], 5.0f) << "(i=2,j=0) 必须是 5";
+    EXPECT_EQ(pixels[0 * 4 + 3], 5.0f) << "(i=3,j=0) 必须是 5";
+    EXPECT_EQ(pixels[0], 0.0f) << "(i=0,j=0) 不在任何几何里";
+}
+
+// 留空臂：不点 attribute 是合法用法（GUI/spec 默认就是空串 ⇒ 走 -burn 1）。
+// 作用是证明这条修复没有顺手把默认路径也拒了，且烧值来源在两种臂下各自说得清。
+TEST_F(PluginTest, VectorRasterizeWithoutAttributeBurnsConstantOne) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = buildRasterizeValueFixture("e2e_rasterize_burn_input.shp");
+    const std::string output = (getTestDir() / "e2e_rasterize_burn_output.tif").string();
+    removeRasterizeOutput(output);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("rasterize");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["resolution"] = 1.0;
+    // 不写 params["attribute"]：走 -burn 1 这条合法路径
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << "留空 attribute 的合法路径被 N131 的校验顺手拒了: " << result.message;
+
+    const auto width = result.metadata.find("raster_width");
+    ASSERT_NE(width, result.metadata.end()) << "实际键数=" << result.metadata.size();
+    EXPECT_EQ(width->second, "4");
+    const auto burnValue = result.metadata.find("burn_value");
+    ASSERT_NE(burnValue, result.metadata.end()) << "留空臂必须说明烧的是常数：burn_value";
+    EXPECT_EQ(burnValue->second, "1");
+    EXPECT_EQ(result.metadata.count("burn_field"), 0u)
+        << "没点字段的臂不得出现 burn_field，否则元数据会把常数烧写说成字段烧写";
+
+    const auto pixels = readWholeBand(output, 4, 4);
+    ASSERT_EQ(pixels.size(), 16u);
+    int countOne = 0;
+    int countOther = 0;
+    double sum = 0.0;
+    for (const float v : pixels) {
+        sum += static_cast<double>(v);
+        if (v == 1.0f) {
+            ++countOne;
+        } else if (v != 0.0f) {
+            ++countOther;
+        }
+    }
+    EXPECT_EQ(countOther, 0) << "值集合必须恰好 ⊆ {0,1}";
+    EXPECT_EQ(countOne, 3) << "手推：与正向臂同一批几何 ⇒ 同样 3 个像元，只是值换成 1";
+    EXPECT_NEAR(sum, 3.0, 1e-4) << "手推：1+1+1=3";
+}
+
 TEST_F(PluginTest, TerrainFlowAccumulationExecution) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);
