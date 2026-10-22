@@ -5,8 +5,12 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
+// N134：烧写改走算法层 API（GDALRasterizeLayers），它的选项表是 CPL 的 NAME=VALUE 形态 ⇒ 需要 <cpl_string.h>。
+// 原本的 <gdal_utils.h> 在本插件里唯一的读点就是栅格化那两行 utils 调用（建选项结构、释放选项结构），
+// 本刀把那两行换掉了，该头文件在本插件里再无任何读点 ⇒ 一并移除，不留一张空发票。
+// ⚠ 这里不写"复算那条 grep"：本条注释自己会命中被数的那个符号名，写了就等于给下一个人数出假命中。
+#include <cpl_string.h>
 #include <gdal_alg.h>
-#include <gdal_utils.h>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>

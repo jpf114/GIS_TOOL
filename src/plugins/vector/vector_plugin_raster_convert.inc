@@ -102,33 +102,50 @@ gis::framework::Result VectorPlugin::doRasterize(
 
     progress.onProgress(0.3);
 
-    std::vector<std::string> argStorage;
+    // N134：只把**点名的那一层**递交给烧写 ⇒ layer 参数从此真正限制烧写范围。
+    // 改前三处口径不对称：属性字段校验与外包范围取的都是点名层（都在本段之前），烧写却吃整个 srcDS。
+    // ⚠ 改前的真实症状比"未点名的图层也一起烧"更糟：本机 GDAL 3.12.4 的 utils 版 GDALRasterize
+    //   在既没给 -l 也没给 -sql 时要求源数据集只有一个图层，否则在开工处就硬失败 ——
+    //   "Rasterize failed: Neither -sql nor -l are specified, but the source dataset has not one single layer."
+    //   ⇒ 多图层的输入改前**根本烧不出来**（双图层夹具的实测症状就是这句失败，不是"全烧"）。
+    //   换成按图层句柄数组调算法层 API 之后，行为变更的方向是：
+    //   烧写面收窄（只烧点名层）+ 输入面放宽（多图层输入从"整条动作失败"变成可用）。
+    // layer 留空 ⇒ 第一层，沿用 getLayer 的既有语义（vector_plugin_common.inc:27-38），不是"全部图层"。
+    //
+    // ⚠ GDALRasterizeLayers 吃的是 CPL 的 NAME=VALUE 选项表，**不是** `gdal rasterize` 的命令行 token。
+    //   本机 GDAL 3.12.4 源码 alg/gdalrasterize.cpp:1642-1658 把两件事写死在那里：
+    //     烧值字段 = CSLFetchNameValue(papszOptions, "ATTRIBUTE")；取不到 ATTRIBUTE 才会去读
+    //     padfLayerBurnValues + iLayer * nBandCount。
+    //   ⇒ 把 "-a" "<字段名>" 这种 argv token 原样递进去，取不到的是 ATTRIBUTE 这个名字、
+    //     于是落到"读烧值数组"那一支，而我们在点字段那一支根本没有数组 ⇒ 不能这么给。
+    //     两条合法分支各按各自的形态给：
+    //     点了字段 ⇒ 只给 ATTRIBUTE=<字段名>（该分支不读烧值数组，给 nullptr）；
+    //     留空     ⇒ 不给 ATTRIBUTE，给 nLayerCount * nBandCount = 1 个烧值 1.0，与改前 -burn 1 同口径。
+    // N131/N132 的字段校验按**同一层**查过存在性与类型，所以这里落不进
+    // "ATTRIBUTE 指到的字段在该层不存在"那一支 —— GDAL 对该支只发 CE_Warning 后跳过整层并返回 CE_None，
+    // 静默烧出一幅全 0，正是 N131 已经堵掉的那种伪装。
+    char** rasterizeOptions = nullptr;      // CSL 列表句柄，由 CSLSetNameValue 自己分配
+    std::vector<double> burnValues;
     if (!attribute.empty()) {
-        argStorage.push_back("-a");
-        argStorage.push_back(attribute);
+        rasterizeOptions = CSLSetNameValue(rasterizeOptions, "ATTRIBUTE", attribute.c_str());
     } else {
-        argStorage.push_back("-burn");
-        argStorage.push_back("1");
+        burnValues.assign(1, 1.0);
     }
 
-    std::vector<const char*> rasterizeArgs;
-    for (auto& a : argStorage) rasterizeArgs.push_back(a.c_str());
-    rasterizeArgs.push_back(nullptr);
-
-    GDALRasterizeOptions* rasterizeOpts = GDALRasterizeOptionsNew(
-        const_cast<char**>(rasterizeArgs.data()), nullptr);
-    if (!rasterizeOpts) {
-        return gis::framework::Result::fail("Failed to create rasterize options");
-    }
-
-    int errCode = 0;
-    GDALDatasetH dstHandle = GDALRasterize(output.c_str(),
+    const int bandList[1] = {1};                            // 本动作固定单波段
+    OGRLayerH burnLayers[1] = {OGRLayer::ToHandle(layer)};  // 只有 getLayer 选出来的那一层
+    const CPLErr rasterizeErr = GDALRasterizeLayers(
         static_cast<GDALDatasetH>(dstDS.get()),
-        static_cast<GDALDatasetH>(srcDS.get()),
-        rasterizeOpts, &errCode);
-    GDALRasterizeOptionsFree(rasterizeOpts);
+        1, const_cast<int*>(bandList),
+        1, burnLayers,
+        nullptr,    // 变换留空：GDAL 按输出栅格自己的地理变换建（点面坐标与栅格同一套）
+        nullptr,
+        burnValues.empty() ? nullptr : burnValues.data(),
+        rasterizeOptions,
+        nullptr, nullptr);
+    CSLDestroy(rasterizeOptions);
 
-    if (!dstHandle || errCode) {
+    if (rasterizeErr != CE_None) {
         return gis::framework::Result::fail("Rasterize failed: " + std::string(CPLGetLastErrorMsg()));
     }
     progress.throwIfCancelled();
@@ -144,19 +161,19 @@ gis::framework::Result VectorPlugin::doRasterize(
     result.metadata["raster_width"] = std::to_string(xSize);
     result.metadata["raster_height"] = std::to_string(ySize);
 
-    GIntBig burnedFeatureCount = 0;
-    for (OGRLayer* srcLayer : srcDS->GetLayers()) {
-        GIntBig layerFeatureCount = srcLayer->GetFeatureCount();
-        if (layerFeatureCount < 0) {
-            // 少数驱动不报缓存数 ⇒ 现读遍历，不许把 -1 当"0 个要素"写进元数据
-            layerFeatureCount = 0;
-            srcLayer->ResetReading();
-            while (auto* feat = srcLayer->GetNextFeature()) {
-                ++layerFeatureCount;
-                OGRFeature::DestroyFeature(feat);
-            }
+    // N134 的记账面：这个键从"输入数据集全部图层求和"收紧为**只数被烧的那一层**。
+    // 全层求和是旧烧写范围（整个 srcDS）的产物；范围收窄之后继续按全层求和，就等于让元数据
+    // 自称"烧了没被烧的要素"——那是本缺陷的另一面（产物无法自证），不是旧口径的延续。
+    // 单图层输入不受影响（点名层就是唯一被烧的层），所以真实腿 rasterize_bbox 仍是 1。
+    GIntBig burnedFeatureCount = layer->GetFeatureCount();
+    if (burnedFeatureCount < 0) {
+        // 少数驱动不报缓存数 ⇒ 现读遍历，不许把 -1 当"0 个要素"写进元数据
+        burnedFeatureCount = 0;
+        layer->ResetReading();
+        while (auto* feat = layer->GetNextFeature()) {
+            ++burnedFeatureCount;
+            OGRFeature::DestroyFeature(feat);
         }
-        burnedFeatureCount += layerFeatureCount;
     }
     result.metadata["source_feature_count"] = std::to_string(burnedFeatureCount);
 

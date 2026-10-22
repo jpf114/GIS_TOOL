@@ -10604,6 +10604,210 @@ TEST_F(PluginTest, VectorRasterizeBurnsRealFieldValues) {
     EXPECT_EQ(pixels[0], 0.0f) << "(i=0,j=0) 不在任何几何里";
 }
 
+// ── N134 夹具：双图层 GPKG，用来证明 layer 参数真的限制烧写范围 ───────────────────
+// 两层各**一个**多边形、字段 value 为 OFTInteger、EPSG:3857：
+//   poly_a（先建 ⇒ 第一层）：环形，外环 [0,4]×[0,4] + 内环 [1,3]×[1,3]，value=3
+//   poly_b（第二层）       ：矩形 [1,3]×[1,3]（正好填住那个洞），value=7
+// 两层的几何**互不重叠**（洞里的面积不属于 poly_a），但 poly_b 完全落在 poly_a 的外包内，
+// 而 poly_a 的几何又有一部分落在 poly_b 外包向外的取整余量里 ⇒ 三条臂都能被"全层烧写"打红。
+//
+// 期望像元数与和全部由下面的算式手推（resolution=1.5，先写死再实现，不许从产物回填）：
+//   像元 (i,j) 中心 = (MinX + (i+0.5)*1.5, MaxY - (j+0.5)*1.5)，未开 ALL_TOUCHED ⇒ 只看中心
+//   臂 A/B（layer=poly_a / 不传 layer）：范围来自 poly_a = [0,4]×[0,4]
+//     xSize = ceil((4-0)/1.5) = ceil(2.667) = 3 = ySize ⇒ 3×3 = 9 个像元
+//     中心 x ∈ {0.75, 2.25, 3.75}、y ∈ {3.25, 1.75, 0.25}
+//     洞 [1,3]×[1,3] 只吃得住中心 (2.25,1.75)（i=1,j=1）这一个 ⇒ poly_a 烧到 9-1 = 8 个像元
+//     ⇒ 修后 count3 = 8、count7 = 0、和 = 8×3 = 24、(i=1,j=1) = 0
+//     ⇒ 修前 poly_b 把 (2.25,1.75) 烧成 7 ⇒ count7 = 1 ⇒ 红
+//   臂 C（layer=poly_b）：范围来自 poly_b = [1,3]×[1,3]
+//     xSize = ceil((3-1)/1.5) = ceil(1.333) = 2 = ySize ⇒ 2×2 = 4 个像元
+//     中心 = (1 + (i+0.5)*1.5, 3 - (j+0.5)*1.5) ⇒ x ∈ {1.75, 3.25}、y ∈ {2.25, 0.75}
+//     poly_b = [1,3]×[1,3] ⇒ x 只有 1.75 在里面（3.25 > 3）、y 只有 2.25 在里面（0.75 < 1）
+//     ⇒ 只有 (i=0,j=0) 一个中心落在 poly_b 内 ⇒ 修后 count7 = 1、count3 = 0、和 = 1×7 = 7
+//     ⇒ 修前另外 3 个中心 (3.25,2.25)(1.75,0.75)(3.25,0.75) 全都在环形的环带上（洞外、外环内）
+//       ⇒ 被 poly_a 烧成 3 ⇒ count3 = 3 ⇒ 红
+static std::string buildRasterizeTwoLayerFixture(const std::string& fileName) {
+    const std::string gpkgPath = (getTestDir() / fileName).string();
+    std::error_code ignored;
+    fs::remove(gpkgPath, ignored);
+
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    EXPECT_NE(driver, nullptr);
+    auto* ds = driver->Create(gpkgPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    EXPECT_NE(ds, nullptr);
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+
+    auto addLayer = [&](const char* layerName, OGRGeometry* geom, int value) {
+        auto* layer = ds->CreateLayer(layerName, srs.get(), wkbPolygon);
+        EXPECT_NE(layer, nullptr);
+        OGRFieldDefn valueDefn("value", OFTInteger);
+        layer->CreateField(&valueDefn);
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetGeometry(geom);
+        feat->SetField("value", value);
+        layer->CreateFeature(feat);
+        OGRFeature::DestroyFeature(feat);
+        delete geom;
+    };
+
+    auto ring = [](double minX, double minY, double maxX, double maxY) {
+        auto* r = new OGRLinearRing();
+        r->addPoint(minX, minY);
+        r->addPoint(maxX, minY);
+        r->addPoint(maxX, maxY);
+        r->addPoint(minX, maxY);
+        r->addPoint(minX, minY);
+        return r;
+    };
+
+    // 第一层 poly_a：外环套内环的一个多边形（洞 = [1,3]×[1,3]）
+    auto* donut = new OGRPolygon();
+    donut->addRing(ring(0.0, 0.0, 4.0, 4.0));
+    donut->addRing(ring(1.0, 1.0, 3.0, 3.0));
+    addLayer("poly_a", donut, 3);
+
+    // 第二层 poly_b：正好填住洞的另一个多边形，与 poly_a 的几何互不重叠
+    auto* plug = new OGRPolygon();
+    plug->addRing(ring(1.0, 1.0, 3.0, 3.0));
+    addLayer("poly_b", plug, 7);
+
+    GDALClose(ds);
+    return gpkgPath;
+}
+
+// 把一次 rasterize 的产物读回来，按值分类计数并求和（三条臂共用同一套数数口径）。
+struct RasterizeBurnTally {
+    std::vector<float> pixels;
+    int count3 = 0;
+    int count7 = 0;
+    int countOther = 0;   // 既不是 3 也不是 7 又不是 0 的像元
+    double sum = 0.0;
+};
+
+static RasterizeBurnTally tallyBurnedPixels(const std::string& output, int width, int height) {
+    RasterizeBurnTally tally;
+    tally.pixels = readWholeBand(output, width, height);
+    for (const float v : tally.pixels) {
+        tally.sum += static_cast<double>(v);
+        if (v == 3.0f) {
+            ++tally.count3;
+        } else if (v == 7.0f) {
+            ++tally.count7;
+        } else if (v != 0.0f) {
+            ++tally.countOther;
+        }
+    }
+    return tally;
+}
+
+// 臂 A + 臂 B：点名 poly_a 与不传 layer 必须给出**同一个**产物，而且里面不得出现 7。
+// 这是本缺陷最硬的一条证据：改前 GDALRasterize 把整个 srcDS 交给烧写 ⇒ 未点名的 poly_b 一起烧。
+TEST_F(PluginTest, VectorRasterizeLayerParameterLimitsBurnedLayer) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string gpkgPath = buildRasterizeTwoLayerFixture("e2e_rasterize_2layer_input.gpkg");
+
+    struct Arm {
+        const char* tag;     // 进文件名 ⇒ 只用 ASCII
+        const char* name;    // 只进断言文案
+        const char* layer;   // nullptr ⇒ 不传该参数
+    };
+    const std::vector<Arm> arms = {
+        {"named", "点名 layer=poly_a", "poly_a"},
+        {"blank", "留空 layer（应当烧第一层）", nullptr},
+    };
+
+    for (const Arm& arm : arms) {
+        const std::string outputName = std::string("e2e_rasterize_2layer_a_") + arm.tag + ".tif";
+        const std::string output = utf8PathString(getTestDir() / outputName);
+        removeRasterizeOutput(output);
+
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("rasterize");
+        params["input"] = gpkgPath;
+        params["output"] = output;
+        params["resolution"] = 1.5;
+        params["attribute"] = std::string("value");
+        if (arm.layer != nullptr) {
+            params["layer"] = std::string(arm.layer);
+        }
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << arm.name << ": " << result.message;
+
+        // 尺寸来自**点名层**的外包（这一条改前就是对的，留着钉住"extent 只看点名层"）
+        ASSERT_NE(result.metadata.find("raster_width"), result.metadata.end()) << arm.name;
+        EXPECT_EQ(result.metadata.at("raster_width"), "3") << arm.name << "：ceil(4/1.5)=3";
+        EXPECT_EQ(result.metadata.at("raster_height"), "3") << arm.name << "：ceil(4/1.5)=3";
+        // N134 的记账面：source_feature_count 只数**被烧的那一层**。算式：被烧的 poly_a 有 1 个要素 ⇒ "1"；
+        // 旧的全层求和口径给 1+1 = 2，等于把没递交给烧写的 poly_b 也记进产物的自证里。
+        EXPECT_EQ(result.metadata.at("source_feature_count"), "1")
+            << arm.name << "：poly_a = 1 个要素（留空臂烧的也是第一层 = poly_a，同一答案）";
+
+        const auto tally = tallyBurnedPixels(output, 3, 3);
+        ASSERT_EQ(tally.pixels.size(), 9u) << arm.name << "：算式前提是 3×3=9 个像元";
+        EXPECT_EQ(tally.count7, 0)
+            << arm.name << "：N134 —— layer=poly_b 的像元值 7 出现在产物里，说明未点名的图层也被烧了";
+        EXPECT_EQ(tally.countOther, 0) << arm.name << "：值集合必须恰好 ⊆ {0,3}";
+        EXPECT_EQ(tally.count3, 8) << arm.name << "：手推 9 个中心里只有 (2.25,1.75) 落在洞里";
+        EXPECT_EQ(tally.sum, 24.0) << arm.name << "：手推 8×3 = 24（3 在二进制下精确）";
+        EXPECT_EQ(tally.pixels[1 * 3 + 1], 0.0f) << arm.name << "：洞心 (i=1,j=1) 不该被烧";
+        EXPECT_EQ(tally.pixels[0], 3.0f) << arm.name << "：中心 (0.75,3.25) 在环带上";
+    }
+}
+
+// 臂 C：点名第二层 poly_b ⇒ 烧写范围跟着换成 poly_b 的外包，且 3 不得出现。
+// 这条臂同样"改前必红"：2×2 栅格里有 3 个像元中心落在 poly_a 的环带上（见夹具算式），
+// 改前那 3 个会被一起烧成 3；而改前更早一步是整条动作直接失败（多图层源没有 -l/-sql）。
+TEST_F(PluginTest, VectorRasterizeLayerParameterCanSelectSecondLayer) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string gpkgPath = buildRasterizeTwoLayerFixture("e2e_rasterize_2layer_c_input.gpkg");
+    const std::string output =
+        (getTestDir() / "e2e_rasterize_2layer_c_output.tif").string();
+    removeRasterizeOutput(output);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("rasterize");
+    params["input"] = gpkgPath;
+    params["output"] = output;
+    params["resolution"] = 1.5;
+    params["attribute"] = std::string("value");
+    params["layer"] = std::string("poly_b");
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    // 范围来自点名层 poly_b = [1,3]×[1,3] ⇒ ceil(2/1.5) = 2
+    EXPECT_EQ(result.metadata.at("raster_width"), "2") << "手推：ceil((3-1)/1.5)=2";
+    EXPECT_EQ(result.metadata.at("raster_height"), "2");
+    EXPECT_EQ(result.metadata.at("burn_field"), "value");
+    // N134 的记账面（控制器裁定随本刀一起收紧）：source_feature_count 只数**被烧的那一层**，
+    // 不再按输入数据集全部图层求和。算式：点名层 poly_b 有 1 个要素 ⇒ 期望 "1"；
+    // 旧的"全层求和"口径会给 1+1 = 2，那等于宣称烧了没被递交给烧写的 poly_a。
+    EXPECT_EQ(result.metadata.at("source_feature_count"), "1")
+        << "只数被烧的那一层：poly_b = 1 个要素（全层求和的旧口径 2 会把未点名的 poly_a 也记进产物）";
+
+    const auto tally = tallyBurnedPixels(output, 2, 2);
+    ASSERT_EQ(tally.pixels.size(), 4u) << "算式前提是 2×2=4 个像元";
+    EXPECT_EQ(tally.count3, 0)
+        << "N134：点名 poly_b 却烧进了未点名的 poly_a（3 出现在产物里）";
+    EXPECT_EQ(tally.countOther, 0) << "值集合必须恰好 ⊆ {0,7}";
+    EXPECT_EQ(tally.count7, 1) << "手推：4 个中心里只有 (1.75,2.25) 落在 poly_b 内";
+    EXPECT_EQ(tally.sum, 7.0) << "手推：1×7 = 7";
+    EXPECT_EQ(tally.pixels[0 * 2 + 0], 7.0f) << "(i=0,j=0) 中心 (1.75,2.25) 在 poly_b 内";
+    EXPECT_EQ(tally.pixels[1 * 2 + 0], 0.0f) << "(i=1,j=0) 中心 (3.25,2.25) 的 x 超出 poly_b 的 3";
+    EXPECT_EQ(tally.pixels[0 * 2 + 1], 0.0f) << "(i=0,j=1) 中心 (1.75,0.75) 的 y 低于 poly_b 的 1";
+    EXPECT_EQ(tally.pixels[1 * 2 + 1], 0.0f) << "(i=1,j=1) 中心 (3.25,0.75) 两个方向都出界";
+}
+
 TEST_F(PluginTest, TerrainFlowAccumulationExecution) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);
