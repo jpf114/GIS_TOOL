@@ -16,7 +16,9 @@
 #   开批规则：每个动作在写用例前必须先把 primary_input 落到上面某一行的真实文件（或明确写 synthetic），
 #   不许凭 input_kind 推断"数据应该有"。
 #   批次 C C3b-A 现读事实（2026-10-22）：vector 拓扑/检查批 11 个动作的真实腿落在
-#   tests/run_real_vector_regression.ps1 的 Mode=full 分支（⇒ ctest 用例 real_data_vector_full），
+#   tests/run_real_vector_regression.ps1 的 Mode=full 分支的 Group=checks 那一半
+#   （⇒ ctest 用例 real_data_vector_checks；overlay 那一半是消费 roadsCore+allWindow 的叠加/分析族，
+#    两半之并由脚本内的 GIS_CASE_ROSTER 不变量对撞 ⇒ 批次 C C3k 把原 real_data_vector_full 拆成这两条），
 #   输入由脚本自己现造的派生件：w212（roads 3857 取 20×20 km 窗，212 条线）→ buf30（30 m 缓冲，212 个面）、
 #   prov3857（data/vector/中国_省.geojson 重投影，42 要素、图层声明 Unknown 的混合层）→ boundary →
 #   ring_endpoints（闭合环的首末点 ⇒ 悬空端点必然 0、重复点必然 >= 点数/2，这两条判据由构造给出）。

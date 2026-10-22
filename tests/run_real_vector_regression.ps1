@@ -3,12 +3,24 @@ param(
     [string]$WorkspaceRoot = "",
     [string]$OutputRoot = "",
     [ValidateSet("quick", "full")]
-    [string]$Mode = "quick"
+    [string]$Mode = "quick",
+    # Group 按"消费哪批派生件"划分两条真实腿（见 GIS_CASE_ROSTER 那段注释）。
+    # 取 ValidateSet 而不是自由字符串：-GROUP 写错时要在参数绑定期就红，
+    # 不许顺着下面的注册走到"一组都没匹配上 => 0 条用例 => 退出码 0"的假绿。
+    [ValidateSet("all", "checks", "overlay")]
+    [string]$Group = "all"
 )
 
 $ErrorActionPreference = "Stop"
 if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)) {
     $PSNativeCommandUseErrorActionPreference = $false
+}
+
+# quick 档不分档（24 条用例两半都跑，Group=all）：-GROUP 写成 checks/overlay 配 Mode=quick 会筛出
+# 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先判红。放在最顶上是为了在碰 data/ 与
+# tmp/ 之前就红（同 tests/run_real_vector_regression.cmake 里"参数写错要在绑定期红"那条口径）。
+if ($Mode -eq "quick" -and $Group -ne "all") {
+    throw ("Mode=quick has no group split: pass -Group all (got Mode=" + $Mode + " Group=" + $Group + ")")
 }
 
 function Get-DefaultWorkspaceRoot {
@@ -75,13 +87,17 @@ function New-Case {
     param(
         [string]$Name,
         [string[]]$CaseArgs,
-        [string[]]$ExpectedOutputs
+        [string[]]$ExpectedOutputs,
+        # Group 不设默认值：注册一条用例却忘了归组，必须由下面那条名单不变量点名判红，
+        # 不许"默认进某一档"把漏归组洗成静默的档内缺席。
+        [string]$Group
     )
 
     return [pscustomobject]@{
         Name = $Name
         Args = [string[]]$CaseArgs
         ExpectedOutputs = [string[]]$ExpectedOutputs
+        Group = $Group
     }
 }
 
@@ -139,23 +155,23 @@ function Invoke-Case {
 
 function Save-RegressionResults {
     param(
-        [string]$ResolvedOutputRoot,
+        [string]$JsonPath,
+        [string]$CsvPath,
         [string]$Mode,
+        [string]$Group,
         [object[]]$Results
     )
 
-    $jsonPath = Join-Path $ResolvedOutputRoot ("summary_" + $Mode + ".json")
-    $csvPath = Join-Path $ResolvedOutputRoot ("summary_" + $Mode + ".csv")
-
     $payload = [pscustomobject]@{
         mode = $Mode
+        group = $Group
         generated_at = (Get-Date).ToString("s")
-        output_root = $ResolvedOutputRoot
+        output_root = (Split-Path $JsonPath -Parent)
         results = $Results
     }
 
-    $payload | ConvertTo-Json -Depth 6 | Set-Content -Path $jsonPath -Encoding UTF8
-    $Results | Select-Object Name,ExitCode,Seconds | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+    $payload | ConvertTo-Json -Depth 6 | Set-Content -Path $JsonPath -Encoding UTF8
+    $Results | Select-Object Name,ExitCode,Seconds | Export-Csv -Path $CsvPath -NoTypeInformation -Encoding UTF8
 }
 
 function Assert-Condition {
@@ -383,6 +399,13 @@ function Assert-DerivedGeometryCase {
         [string]$FeaturesMode
     )
 
+    # C3k 拆腿之后 C3a 这批派生件只由 overlay 那一半构造。这条腿若被归到别的档却真的跑了起来，
+    # 传进来的现读属性就是 $null —— 必须在读产物之前判红：PS 里 $null.X 取到 $null，
+    # 后面的比较判据会退化成"既不满足也不报错"，等于把归错档洗成假绿。
+    # （同形判据已存在于 Assert-TopologyCheckCase 与 Assert-ChineseAttributeFilterCase。）
+    Assert-Condition -Condition ($null -ne $InputStats) -Message (
+        $Name + ": C3a derived input stats are null, so this leg ran in a group that never built its inputs")
+
     $read = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $OutputPath -ScratchDir $ScratchDir
 
     Assert-Condition -Condition ($read.FeatureCount -gt 0) -Message (
@@ -447,7 +470,12 @@ function Ensure-DerivedGeometryInputs {
     param(
         [string]$ResolvedCliPath,
         [string]$ResolvedWorkspaceRoot,
-        [string]$RoadsCore3857
+        [string]$RoadsCore3857,
+        # C3k 拆腿之后本函数只被 overlay 那一半真正需要。-PathsOnly 把"算路径"与"造派生件"分开：
+        # 路径表达式仍然只有这一处（注册用例要用路径，但 checks 那一半不造件），
+        # 调用方在没造件时把 refs 置 $null => "腿被归错档却真跑起来"会红在
+        # Assert-DerivedGeometryCase 的"现读输入属性"判据上，而不是拿空对象蒙过去。
+        [switch]$PathsOnly
     )
 
     # WHY 先复制再喂 CLI：N115 实测 vector info 会在**被喂进去的那份输入旁边**写 .aux.xml
@@ -464,9 +492,7 @@ function Ensure-DerivedGeometryInputs {
     $provinceRaw = Resolve-ProvinceVectorInput -VectorDataRoot $vectorDataRoot -Label "derived geometry leg"
 
     $polygonInput = Join-Path $scratchRoot "province.geojson"
-    Copy-Item $provinceRaw $polygonInput -Force
     $lineInput = Join-Path $scratchRoot "roads_3857.gpkg"
-    Copy-Item $RoadsCore3857 $lineInput -Force
 
     # 三个 extract 跑在"真实线的切片"上：整层 22836 要素在 Debug 树实测
     # vertices 563.9 s + endpoints 115.9 s + midpoints 105.5 s = 785.3 s，
@@ -474,12 +500,6 @@ function Ensure-DerivedGeometryInputs {
     # 前 800 个要素做切片（实测切片本身 0.9 s、三条合计 15.6 s）。切片仍由真实几何构成，
     # 判据也全部从切片自己的现读属性推导，不写死数字。
     $lineSlice = Join-Path $scratchRoot "roads_3857_slice.gpkg"
-    Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_derived_line_slice" -CaseArgs @(
-        "vector", "filter",
-        ("--input=" + $lineInput),
-        ("--output=" + $lineSlice),
-        "--where=fid <= 800"
-    )
 
     $outputs = [ordered]@{
         hull_polygon     = Join-Path $scratchRoot "out_hull_polygon.gpkg"
@@ -491,6 +511,27 @@ function Ensure-DerivedGeometryInputs {
         midpoints_line   = Join-Path $scratchRoot "out_midpoints_line.gpkg"
         endpoints_line   = Join-Path $scratchRoot "out_endpoints_line.gpkg"
     }
+
+    if ($PathsOnly) {
+        return [pscustomobject]@{
+            ScratchRoot = $scratchRoot
+            PolygonInput = $polygonInput
+            LineInput = $lineInput
+            LineSlice = $lineSlice
+            Outputs = $outputs
+            PolygonStats = $null
+            LineStats = $null
+        }
+    }
+
+    Copy-Item $provinceRaw $polygonInput -Force
+    Copy-Item $RoadsCore3857 $lineInput -Force
+    Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_derived_line_slice" -CaseArgs @(
+        "vector", "filter",
+        ("--input=" + $lineInput),
+        ("--output=" + $lineSlice),
+        "--where=fid <= 800"
+    )
 
     # 输入侧现读：面用 data/vector 的省份图层，线用真实道路图层的切片。
     # 判据的全部期望值都从这两个对象推出来 —— 换一个数据文件它们照样成立，写死数字就做不到。
@@ -538,7 +579,8 @@ function Resolve-ProvinceVectorInput {
     return $provinceRaw
 }
 
-# ── C3b-A：vector 拓扑/检查批 11 动作的真实数据腿（只在 Mode=full 注册，即 real_data_vector_full）──
+# ── C3b-A：vector 拓扑/检查批 11 动作的真实数据腿（只在 Mode=full 注册，归 Group=checks，
+#    即 ctest 用例 real_data_vector_checks）──
 # 派生件（全部由本脚本现造，一个都不假设上一轮探针留下过什么）：
 #   w212            = roads 3857 整层（22,836 条线）上取 20×20 km 窗 ⇒ 212 条线；
 #   buf30           = w212 的 30 m 缓冲 ⇒ 212 个 MultiPolygon（"面与面真重叠"的样本）；
@@ -803,7 +845,10 @@ function New-CheckCase {
         [string]$Action,
         [string]$InputPath,
         [string]$OutputPath,
-        [string[]]$ExtraArgs
+        [string[]]$ExtraArgs,
+        # C3b-A 这批腿整体消费 w212/buf30/prov3857/province_boundary/ring_endpoints 这一套派生件
+        # => 缺省归 checks 那一半；-Group 允许显式改写，只为让"故意破坏"那一次跑能真的把档归错。
+        [string]$Group = "checks"
     )
 
     # 不往名为 $args 的变量里写 —— 它是 PowerShell 的自动变量，遮蔽后排查成本极高。
@@ -818,20 +863,69 @@ function New-CheckCase {
         }
     }
 
-    return New-Case -Name $Name -CaseArgs $caseArgs -ExpectedOutputs @($OutputPath)
+    return New-Case -Name $Name -CaseArgs $caseArgs -ExpectedOutputs @($OutputPath) -Group $Group
 }
 
 function Ensure-TopologyCheckInputs {
     param(
         [string]$ResolvedCliPath,
         [string]$ResolvedWorkspaceRoot,
-        [string]$RoadsCore3857
+        [string]$RoadsCore3857,
+        # C3k 拆腿之后 w212/buf30/prov3857/province_boundary/ring_endpoints 这一套派生件
+        # 只有 checks 那一半消费。-PathsOnly 只把路径算出来（路径表达式仍然只有这一处）就返回，
+        # overlay 那一半于是既不造件也不删目录；调用方在没造件时把 refs 置 $null，
+        # "某条 checks 腿被归错档却真跑起来"就会红在下面那句 TopologyRefs null 的判据上。
+        [switch]$PathsOnly
     )
+
+    $scratchRoot = Join-Path $ResolvedWorkspaceRoot "tmp\vector_benchmark\c3ba"
+    $lineWindow = Join-Path $scratchRoot "w212.gpkg"
+    $bufferPolygons = Join-Path $scratchRoot "buf30.gpkg"
+    $provinceProjected = Join-Path $scratchRoot "prov3857.gpkg"
+    $provinceBoundary = Join-Path $scratchRoot "province_boundary.gpkg"
+    $ringEndpoints = Join-Path $scratchRoot "ring_endpoints.gpkg"
+
+    $outputs = [ordered]@{
+        multipart_prov_csv  = Join-Path $scratchRoot "c3ba_multipart_prov.csv"
+        multipart_buf_csv   = Join-Path $scratchRoot "c3ba_multipart_buf.csv"
+        hole_prov_csv       = Join-Path $scratchRoot "c3ba_hole_prov.csv"
+        hole_buf_csv        = Join-Path $scratchRoot "c3ba_hole_buf.csv"
+        dangling_window_csv = Join-Path $scratchRoot "c3ba_dangling_window.csv"
+        dangling_ring_csv   = Join-Path $scratchRoot "c3ba_dangling_ring.csv"
+        overlap_buf_csv     = Join-Path $scratchRoot "c3ba_overlap_buf.csv"
+        overlap_prov_csv    = Join-Path $scratchRoot "c3ba_overlap_prov.csv"
+        topology_buf_csv    = Join-Path $scratchRoot "c3ba_topology_buf.csv"
+        topology_prov_csv   = Join-Path $scratchRoot "c3ba_topology_prov.csv"
+        duplicate_ring_csv  = Join-Path $scratchRoot "c3ba_duplicate_ring.csv"
+        adjacency_prov_csv  = Join-Path $scratchRoot "c3ba_adjacency_prov.csv"
+        adjacency_buf_csv   = Join-Path $scratchRoot "c3ba_adjacency_buf.csv"
+        singlepart_prov     = Join-Path $scratchRoot "c3ba_singlepart_prov.gpkg"
+        sliver_low          = Join-Path $scratchRoot "c3ba_sliver_low.gpkg"
+        sliver_high         = Join-Path $scratchRoot "c3ba_sliver_high.gpkg"
+        metrics_buf         = Join-Path $scratchRoot "c3ba_geom_metrics.gpkg"
+        nearest_self        = Join-Path $scratchRoot "c3ba_nearest.gpkg"
+    }
+
+    if ($PathsOnly) {
+        return [pscustomobject]@{
+            ScratchRoot = $scratchRoot
+            LineWindow = $lineWindow
+            BufferPolygons = $bufferPolygons
+            ProvinceProjected = $provinceProjected
+            ProvinceBoundary = $provinceBoundary
+            RingEndpoints = $ringEndpoints
+            WindowStats = $null
+            BufferStats = $null
+            ProvinceStats = $null
+            BoundaryStats = $null
+            EndpointStats = $null
+            Outputs = $outputs
+        }
+    }
 
     # 派生件一律现造、不缓存：控制器 2026-10-22 的探针在 build/tmp/c3ba 留过同名文件，
     # "上次造过所以这次跳过"会让这条腿在清过 build 的机器上行为不同，也会让耗时低估
     # —— 而工单要求加完腿之后**现跑现报**该条的墙钟。
-    $scratchRoot = Join-Path $ResolvedWorkspaceRoot "tmp\vector_benchmark\c3ba"
     if (Test-Path $scratchRoot) {
         Remove-Item -Recurse -Force $scratchRoot
     }
@@ -843,7 +937,6 @@ function Ensure-TopologyCheckInputs {
     $provinceGeojson = Join-Path $scratchRoot "province_raw.geojson"
     Copy-Item $provinceRaw $provinceGeojson -Force
 
-    $lineWindow = Join-Path $scratchRoot "w212.gpkg"
     Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_c3ba_line_window" -CaseArgs @(
         "vector", "filter",
         ("--input=" + $RoadsCore3857),
@@ -851,7 +944,6 @@ function Ensure-TopologyCheckInputs {
         "--extent=12950000,4890000,12970000,4910000"
     )
 
-    $bufferPolygons = Join-Path $scratchRoot "buf30.gpkg"
     Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_c3ba_buffer_polygons" -CaseArgs @(
         "vector", "buffer",
         ("--input=" + $lineWindow),
@@ -859,7 +951,6 @@ function Ensure-TopologyCheckInputs {
         "--distance=30"
     )
 
-    $provinceProjected = Join-Path $scratchRoot "prov3857.gpkg"
     Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_c3ba_projected_provinces" -CaseArgs @(
         "projection", "reproject",
         ("--input=" + $provinceGeojson),
@@ -867,14 +958,12 @@ function Ensure-TopologyCheckInputs {
         "--dst_srs=EPSG:3857"
     )
 
-    $provinceBoundary = Join-Path $scratchRoot "province_boundary.gpkg"
     Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_c3ba_province_boundary" -CaseArgs @(
         "vector", "boundary",
         ("--input=" + $provinceProjected),
         ("--output=" + $provinceBoundary)
     )
 
-    $ringEndpoints = Join-Path $scratchRoot "ring_endpoints.gpkg"
     Invoke-SetupCommand -ResolvedCliPath $ResolvedCliPath -Name "prepare_c3ba_ring_endpoints" -CaseArgs @(
         "vector", "endpoints_extract",
         ("--input=" + $provinceBoundary),
@@ -911,27 +1000,6 @@ function Ensure-TopologyCheckInputs {
     Assert-Condition -Condition ($endpointStats.FeatureCount -ge 2 -and ($endpointStats.FeatureCount % 2) -eq 0) -Message (
         "topology check leg: endpoints Features " + $endpointStats.FeatureCount +
         "2")
-
-    $outputs = [ordered]@{
-        multipart_prov_csv  = Join-Path $scratchRoot "c3ba_multipart_prov.csv"
-        multipart_buf_csv   = Join-Path $scratchRoot "c3ba_multipart_buf.csv"
-        hole_prov_csv       = Join-Path $scratchRoot "c3ba_hole_prov.csv"
-        hole_buf_csv        = Join-Path $scratchRoot "c3ba_hole_buf.csv"
-        dangling_window_csv = Join-Path $scratchRoot "c3ba_dangling_window.csv"
-        dangling_ring_csv   = Join-Path $scratchRoot "c3ba_dangling_ring.csv"
-        overlap_buf_csv     = Join-Path $scratchRoot "c3ba_overlap_buf.csv"
-        overlap_prov_csv    = Join-Path $scratchRoot "c3ba_overlap_prov.csv"
-        topology_buf_csv    = Join-Path $scratchRoot "c3ba_topology_buf.csv"
-        topology_prov_csv   = Join-Path $scratchRoot "c3ba_topology_prov.csv"
-        duplicate_ring_csv  = Join-Path $scratchRoot "c3ba_duplicate_ring.csv"
-        adjacency_prov_csv  = Join-Path $scratchRoot "c3ba_adjacency_prov.csv"
-        adjacency_buf_csv   = Join-Path $scratchRoot "c3ba_adjacency_buf.csv"
-        singlepart_prov     = Join-Path $scratchRoot "c3ba_singlepart_prov.gpkg"
-        sliver_low          = Join-Path $scratchRoot "c3ba_sliver_low.gpkg"
-        sliver_high         = Join-Path $scratchRoot "c3ba_sliver_high.gpkg"
-        metrics_buf         = Join-Path $scratchRoot "c3ba_geom_metrics.gpkg"
-        nearest_self        = Join-Path $scratchRoot "c3ba_nearest.gpkg"
-    }
 
     return [pscustomobject]@{
         ScratchRoot = $scratchRoot
@@ -2163,8 +2231,22 @@ Write-BboxGeojson -Path $allWindow -Box $allBox -Label "win_all"
 Write-BboxGeojson -Path $farWindow -Box $farBox -Label "win_far"
 Write-BboxGeojson -Path $partialWindow -Box $partialBox -Label "win_partial"
 
+# ── C3k：档（Group）与造件闸门 ────────────────────────────────────────────────
+# 拆成两条注册用例之后，每一半只造自己消费的派生件：checks 消费 w212/buf30/prov3857/
+# province_boundary/ring_endpoints（Ensure-TopologyCheckInputs），overlay 消费 roadsCore +
+# allWindow 这批早于它就造好的件与 C3a/C3f 的切片、省层复制件（Ensure-DerivedGeometryInputs）。
+# 两半都**照常注册全部用例**（名单不变量要从完整 $cases 导全量，见下面 GIS_CASE_ROSTER 那段），
+# 过滤只发生在派发那一步。
+# quick 档不分档（24 条用例两半都跑，Group=all）：-GROUP 写成 checks/overlay 配 Mode=quick
+# 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先把它判红。
+if ($Mode -eq "quick" -and $Group -ne "all") {
+    throw ("Mode=quick has no group split: pass -Group all (got Mode=" + $Mode + " Group=" + $Group + ")")
+}
+$buildOverlayInputs = ($Group -eq "all" -or $Group -eq "overlay")
+$buildCheckInputs = ($Mode -eq "full") -and ($Group -eq "all" -or $Group -eq "checks")
+
 $cases = @()
-$cases += New-Case -Name "buffer_quick" -CaseArgs @(
+$cases += New-Case -Name "buffer_quick" -Group "overlay" -CaseArgs @(
     "vector", "buffer",
     ("--input=" + $roadsCore3857),
     ("--output=" + (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")),
@@ -2172,7 +2254,7 @@ $cases += New-Case -Name "buffer_quick" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")
 )
-$cases += New-Case -Name "clip_focus" -CaseArgs @(
+$cases += New-Case -Name "clip_focus" -Group "overlay" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
     ("--clip_vector=" + $allWindow),
@@ -2180,7 +2262,7 @@ $cases += New-Case -Name "clip_focus" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "clip_focus.gpkg")
 )
-$cases += New-Case -Name "difference_focus" -CaseArgs @(
+$cases += New-Case -Name "difference_focus" -Group "overlay" -CaseArgs @(
     "vector", "difference",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $allWindow),
@@ -2188,7 +2270,7 @@ $cases += New-Case -Name "difference_focus" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "difference_focus.gpkg")
 )
-$cases += New-Case -Name "union_focus" -CaseArgs @(
+$cases += New-Case -Name "union_focus" -Group "overlay" -CaseArgs @(
     "vector", "union",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $allWindow),
@@ -2196,7 +2278,7 @@ $cases += New-Case -Name "union_focus" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "union_focus.gpkg")
 )
-$cases += New-Case -Name "intersect_focus" -CaseArgs @(
+$cases += New-Case -Name "intersect_focus" -Group "overlay" -CaseArgs @(
     "vector", "intersect",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $allWindow),
@@ -2204,7 +2286,7 @@ $cases += New-Case -Name "intersect_focus" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "intersect_focus.gpkg")
 )
-$cases += New-Case -Name "clip_far" -CaseArgs @(
+$cases += New-Case -Name "clip_far" -Group "overlay" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
     ("--clip_vector=" + $farWindow),
@@ -2212,7 +2294,7 @@ $cases += New-Case -Name "clip_far" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "clip_far.gpkg")
 )
-$cases += New-Case -Name "intersect_far" -CaseArgs @(
+$cases += New-Case -Name "intersect_far" -Group "overlay" -CaseArgs @(
     "vector", "intersect",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $farWindow),
@@ -2220,7 +2302,7 @@ $cases += New-Case -Name "intersect_far" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "intersect_far.gpkg")
 )
-$cases += New-Case -Name "difference_far" -CaseArgs @(
+$cases += New-Case -Name "difference_far" -Group "overlay" -CaseArgs @(
     "vector", "difference",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $farWindow),
@@ -2228,7 +2310,7 @@ $cases += New-Case -Name "difference_far" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "difference_far.gpkg")
 )
-$cases += New-Case -Name "clip_partial" -CaseArgs @(
+$cases += New-Case -Name "clip_partial" -Group "overlay" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
     ("--clip_vector=" + $partialWindow),
@@ -2236,7 +2318,7 @@ $cases += New-Case -Name "clip_partial" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "clip_partial.gpkg")
 )
-$cases += New-Case -Name "intersect_partial" -CaseArgs @(
+$cases += New-Case -Name "intersect_partial" -Group "overlay" -CaseArgs @(
     "vector", "intersect",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $partialWindow),
@@ -2244,7 +2326,7 @@ $cases += New-Case -Name "intersect_partial" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "intersect_partial.gpkg")
 )
-$cases += New-Case -Name "spatial_join_focus" -CaseArgs @(
+$cases += New-Case -Name "spatial_join_focus" -Group "overlay" -CaseArgs @(
     "vector", "spatial_join",
     ("--input=" + $roadsCore),
     ("--join_vector=" + $allWindow),
@@ -2252,14 +2334,14 @@ $cases += New-Case -Name "spatial_join_focus" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")
 )
-$cases += New-Case -Name "dissolve_bbox" -CaseArgs @(
+$cases += New-Case -Name "dissolve_bbox" -Group "overlay" -CaseArgs @(
     "vector", "dissolve",
     ("--input=" + $chinaBbox3857),
     ("--output=" + (Join-Path $ResolvedOutputRoot "dissolve_bbox.gpkg"))
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "dissolve_bbox.gpkg")
 )
-$cases += New-Case -Name "convert_roads_geojson" -CaseArgs @(
+$cases += New-Case -Name "convert_roads_geojson" -Group "overlay" -CaseArgs @(
     "vector", "convert",
     ("--input=" + $roadsCore),
     ("--output=" + (Join-Path $ResolvedOutputRoot "roads_core.geojson")),
@@ -2268,7 +2350,7 @@ $cases += New-Case -Name "convert_roads_geojson" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "roads_core.geojson")
 )
 $rasterizeOutput = Join-Path $ResolvedOutputRoot "bbox_rasterized.tif"
-$cases += New-Case -Name "rasterize_bbox" -CaseArgs @(
+$cases += New-Case -Name "rasterize_bbox" -Group "overlay" -CaseArgs @(
     "vector", "rasterize",
     ("--input=" + $chinaBbox),
     ("--output=" + $rasterizeOutput),
@@ -2276,7 +2358,7 @@ $cases += New-Case -Name "rasterize_bbox" -CaseArgs @(
 ) -ExpectedOutputs @(
     $rasterizeOutput
 )
-$cases += New-Case -Name "polygonize_bbox_raster" -CaseArgs @(
+$cases += New-Case -Name "polygonize_bbox_raster" -Group "overlay" -CaseArgs @(
     "vector", "polygonize",
     ("--input=" + $rasterizeOutput),
     ("--output=" + (Join-Path $ResolvedOutputRoot "bbox_polygonized.gpkg"))
@@ -2288,8 +2370,11 @@ $cases += New-Case -Name "polygonize_bbox_raster" -CaseArgs @(
 # 输入全部是复制件（build/tmp/c3a/），data/ 只读；判据见 Assert-DerivedGeometryCase 的注释块。
 # 切片、现读属性、输出路径都由 Ensure-DerivedGeometryInputs 一次性带回来（属性在返回对象上
 # 一次建齐；PS 5.1 的 pscustomobject 事后加属性会报"找不到可设置的属性"，这是本机事实）。
+# C3k：这 8 条腿归 overlay 档，checks 那一半只要路径来注册（-PathsOnly），不替它造切片；
+# 造没造都由下面 $derivedRefs/$topologyRefs 的置空判据把关，归错档跑起来必红。
 $derivedRefs = Ensure-DerivedGeometryInputs -ResolvedCliPath $ResolvedCliPath `
-    -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -RoadsCore3857 $roadsCore3857
+    -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -RoadsCore3857 $roadsCore3857 `
+    -PathsOnly:(-not $buildOverlayInputs)
 $script:DerivedVertexCount = -1
 $script:DerivedMidpointCount = -1
 $script:DerivedEndpointCount = -1
@@ -2299,32 +2384,33 @@ function New-DerivedCase {
         [string]$Name,
         [string]$Action,
         [string]$InputPath,
-        [string]$OutputPath
+        [string]$OutputPath,
+        [string]$Group
     )
 
     return New-Case -Name $Name -CaseArgs @(
         "vector", $Action,
         ("--input=" + $InputPath),
         ("--output=" + $OutputPath)
-    ) -ExpectedOutputs @($OutputPath)
+    ) -ExpectedOutputs @($OutputPath) -Group $Group
 }
 
-$cases += New-DerivedCase -Name "hull_polygon" -Action "convex_hull" `
+$cases += New-DerivedCase -Name "hull_polygon" -Group "overlay" -Action "convex_hull" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["hull_polygon"]
-$cases += New-DerivedCase -Name "envelope_polygon" -Action "envelope" `
+$cases += New-DerivedCase -Name "envelope_polygon" -Group "overlay" -Action "envelope" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["envelope_polygon"]
-$cases += New-DerivedCase -Name "centroid_polygon" -Action "centroid" `
+$cases += New-DerivedCase -Name "centroid_polygon" -Group "overlay" -Action "centroid" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["centroid_polygon"]
-$cases += New-DerivedCase -Name "interior_polygon" -Action "interior_point" `
+$cases += New-DerivedCase -Name "interior_polygon" -Group "overlay" -Action "interior_point" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["interior_polygon"]
-$cases += New-DerivedCase -Name "boundary_polygon" -Action "boundary" `
+$cases += New-DerivedCase -Name "boundary_polygon" -Group "overlay" -Action "boundary" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["boundary_polygon"]
 # 顺序即依赖：vertices 先跑，midpoints/endpoints 的关系判据要用它的现读数。
-$cases += New-DerivedCase -Name "vertices_line" -Action "vertices_extract" `
+$cases += New-DerivedCase -Name "vertices_line" -Group "overlay" -Action "vertices_extract" `
     -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["vertices_line"]
-$cases += New-DerivedCase -Name "midpoints_line" -Action "midpoints_extract" `
+$cases += New-DerivedCase -Name "midpoints_line" -Group "overlay" -Action "midpoints_extract" `
     -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["midpoints_line"]
-$cases += New-DerivedCase -Name "endpoints_line" -Action "endpoints_extract" `
+$cases += New-DerivedCase -Name "endpoints_line" -Group "overlay" -Action "endpoints_extract" `
     -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["endpoints_line"]
 
 # ── C3f / N127：中文属性值的 --where 真实数据腿（quick/full 两档都跑）──
@@ -2332,7 +2418,7 @@ $cases += New-DerivedCase -Name "endpoints_line" -Action "endpoints_extract" `
 # 判据（④⑤⑥⑦⑧）见 Ensure-ChineseAttributeFilterInput 上方的注释块。
 $script:ChineseFilterRefs = Ensure-ChineseAttributeFilterInput -ResolvedCliPath $ResolvedCliPath `
     -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot
-$cases += New-Case -Name "filter_cn_attribute" -CaseArgs @(
+$cases += New-Case -Name "filter_cn_attribute" -Group "overlay" -CaseArgs @(
     "vector", "filter",
     ("--input=" + $script:ChineseFilterRefs.InputPath),
     ("--output=" + $script:ChineseFilterRefs.OutputPath),
@@ -2341,12 +2427,13 @@ $cases += New-Case -Name "filter_cn_attribute" -CaseArgs @(
     $script:ChineseFilterRefs.OutputPath
 )
 
-# quick 档不造这批派生件（工单：11 条腿归 real_data_vector_full 那一档）⇒ 先置 $null，
-# 让"用例被单独抽出来跑"落在 Assert-TopologyCheckCase 的显式判红上，而不是变量不存在。
+# quick 档整批不注册这批腿、overlay 档也不消费它（工单：11 个动作 18 条腿归 real_data_vector_checks
+# 那一档）⇒ 先置 $null，让"用例被单独抽出来跑"落在 Assert-TopologyCheckCase 的显式判红上，
+# 而不是变量不存在。下面按档置空的那一步与这条判红是同一件事。
 $topologyRefs = $null
 
 if ($Mode -eq "full") {
-    $cases += New-Case -Name "clip_stress" -CaseArgs @(
+    $cases += New-Case -Name "clip_stress" -Group "overlay" -CaseArgs @(
         "vector", "clip",
         ("--input=" + $roadsCore),
         ("--clip_vector=" + $allWindow),
@@ -2354,7 +2441,7 @@ if ($Mode -eq "full") {
     ) -ExpectedOutputs @(
         (Join-Path $ResolvedOutputRoot "clip_stress.gpkg")
     )
-    $cases += New-Case -Name "difference_stress" -CaseArgs @(
+    $cases += New-Case -Name "difference_stress" -Group "overlay" -CaseArgs @(
         "vector", "difference",
         ("--input=" + $roadsCore),
         ("--overlay_vector=" + $allWindow),
@@ -2362,10 +2449,12 @@ if ($Mode -eq "full") {
     ) -ExpectedOutputs @(
         (Join-Path $ResolvedOutputRoot "difference_stress.gpkg")
     )
-    # ── C3b-A：vector 拓扑/检查批 11 动作的真实数据腿（18 条用例；归 real_data_vector_full 那一档）──
+    # ── C3b-A：vector 拓扑/检查批 11 动作的真实数据腿（18 条用例；归 real_data_vector_checks 那一档）──
     # 派生件与判据的算式都写在 Ensure-TopologyCheckInputs / Assert-TopologyCheckCase 的注释块里。
+    # overlay 档只取路径注册、不造这批件（-PathsOnly），见函数头的说明。
     $topologyRefs = Ensure-TopologyCheckInputs -ResolvedCliPath $ResolvedCliPath `
-        -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -RoadsCore3857 $roadsCore3857
+        -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -RoadsCore3857 $roadsCore3857 `
+        -PathsOnly:(-not $buildCheckInputs)
     $c3baOutputs = $topologyRefs.Outputs
 
     $cases += New-CheckCase -Name "multipart_check_prov" -Action "multipart_check" `
@@ -2434,24 +2523,111 @@ $script:C3baSliverLowFeatures = -1
 
 # 名单与注册表对撞（正向）：名单里的每一条都必须真的注册成用例；quick 档整批不注册 ⇒ 只在 full 档核条数。
 # 反向的"进了名单却没有判据分支"由 Assert-TopologyCheckCase 的 default 负责，两侧都堵住才是闭环。
+# C3k 拆腿之后这条判据两半都跑（注册永远是全量，过滤只发生在派发）⇒ "18 条 checks 腿都注册了"
+# 在任何一半里单独都判得出来，不必把两个进程的输出凑起来才看得见。
 if ($Mode -eq "full") {
     $registered = @($cases | Where-Object { $script:TopologyCheckCaseNames -contains $_.Name })
     Assert-Condition -Condition ($registered.Count -eq $script:TopologyCheckCaseNames.Count) -Message (
         "C3b-A roster has " + $script:TopologyCheckCaseNames.Count + " name(s), but " + $registered.Count + " case(s) got registered")
 }
 
+# ── C3k：两半之并 == 拆分前的全量（本刀承重判据，只在 Mode=full 启用）───────────────
+# 三份名单一律由脚本自己导：full = 当前 $cases 里 Mode=full 注册进来的全部用例名，
+# checks/overlay = 每条用例注册时打的组标。手抄一份名单进脚本等于没写这条判据
+# （本仓出过"手抄名单漂移 ⇒ 新条目不被断言"的事故），所以这里不写任何名单字面量。
+# WHY 两半各自都算完整的三份：注册永远是全量，所以任何一半单独跑都能判出"档被拆坏了"。
+if ($Mode -eq "full") {
+    $rosterFull = @($cases | ForEach-Object { $_.Name })
+    $rosterChecks = @($cases | Where-Object { $_.Group -eq "checks" } | ForEach-Object { $_.Name })
+    $rosterOverlay = @($cases | Where-Object { $_.Group -eq "overlay" } | ForEach-Object { $_.Name })
+    $rosterUngrouped = @($cases | Where-Object { $_.Group -ne "checks" -and $_.Group -ne "overlay" } |
+        ForEach-Object { $_.Name + " (Group=[" + [string]$_.Group + "])" })
+    $rosterBoth = @($rosterChecks | Where-Object { $rosterOverlay -contains $_ })
+    $rosterFullSorted = @($rosterFull | Sort-Object)
+    $rosterChecksSorted = @($rosterChecks | Sort-Object)
+    $rosterOverlaySorted = @($rosterOverlay | Sort-Object)
+    $rosterUnionSorted = @(($rosterChecksSorted + $rosterOverlaySorted) | Sort-Object)
+
+    # 第 4 条：无论成败先打三行机器可取的名单 ⇒ 判红那一轮也拿得到名单（键名与组名同为 ASCII）。
+    Write-Host ("GIS_CASE_ROSTER[full]: " + ($rosterFullSorted -join ","))
+    Write-Host ("GIS_CASE_ROSTER[checks]: " + ($rosterChecksSorted -join ","))
+    Write-Host ("GIS_CASE_ROSTER[overlay]: " + ($rosterOverlaySorted -join ","))
+
+    # 第 1 条：Group 缺失（或取了 checks/overlay 之外的值）的 full 用例 ⇒ 点名判红。
+    Assert-Condition -Condition ($rosterUngrouped.Count -eq 0) -Message (
+        "C3k group invariant: " + $rosterUngrouped.Count + " Mode=full case(s) carry no valid Group " +
+        "(each case must be tagged checks or overlay): " + ($rosterUngrouped -join "; "))
+
+    # 第 2 条：同一名字同时进两半 ⇒ 判红。
+    Assert-Condition -Condition ($rosterBoth.Count -eq 0) -Message (
+        "C3k group invariant: " + $rosterBoth.Count + " case name(s) got tagged into both halves: " +
+        ($rosterBoth -join ","))
+
+    # 第 3 条：两半之并与全量逐名不等 ⇒ 判红，消息里带三个名单与三个条数。
+    $rosterDiff = @()
+    $rosterSlots = [Math]::Max($rosterUnionSorted.Count, $rosterFullSorted.Count)
+    for ($i = 0; $i -lt $rosterSlots; $i++) {
+        $unionName = "<absent>"
+        if ($i -lt $rosterUnionSorted.Count) { $unionName = [string]$rosterUnionSorted[$i] }
+        $fullName = "<absent>"
+        if ($i -lt $rosterFullSorted.Count) { $fullName = [string]$rosterFullSorted[$i] }
+        if ($unionName -cne $fullName) {
+            $rosterDiff += ("slot " + $i + " union=[" + $unionName + "] full=[" + $fullName + "]")
+        }
+    }
+    Assert-Condition -Condition ($rosterDiff.Count -eq 0) -Message (
+        "C3k group invariant: sort(checks)+sort(overlay) != sort(full) at " + $rosterDiff.Count +
+        " name slot(s): " + ($rosterDiff -join " | ") +
+        " || full(" + $rosterFullSorted.Count + "): " + ($rosterFullSorted -join ",") +
+        " || checks(" + $rosterChecksSorted.Count + "): " + ($rosterChecksSorted -join ",") +
+        " || overlay(" + $rosterOverlaySorted.Count + "): " + ($rosterOverlaySorted -join ","))
+
+    # 本刀自己加的第 5 条：上面三条都抓不到"把某条 checks 腿的 Group 改成 overlay"——改档不动
+    # 两半之并，第 1/2/3 条会照样绿（工单 §5 要求的正是这种破坏必须红）。checks 这一半的成员
+    # 就是既有的 C3b-A 名单 $script:TopologyCheckCaseNames（它同时是判据分发的门禁，不是本轮
+    # 新抄的名单），所以组标必须与它逐名相等，多一条少一条都红。
+    $rosterChecksExtra = @($rosterChecksSorted | Where-Object { $script:TopologyCheckCaseNames -notcontains $_ })
+    $rosterChecksMissing = @($script:TopologyCheckCaseNames | Where-Object { $rosterChecksSorted -notcontains $_ })
+    Assert-Condition -Condition ($rosterChecksExtra.Count -eq 0 -and $rosterChecksMissing.Count -eq 0) -Message (
+        "C3k group invariant: Group=checks disagrees with the C3b-A roster || tagged checks but absent " +
+        "from roster: " + ($rosterChecksExtra -join ",") + " || in roster but not tagged checks: " +
+        ($rosterChecksMissing -join ",") + " || roster(" + $script:TopologyCheckCaseNames.Count + "): " +
+        (($script:TopologyCheckCaseNames | Sort-Object) -join ","))
+}
+
+# 本档不消费的派生件没有真的造出来 ⇒ 传给判据的 refs 置 $null（而不是"有路径、没现读属性"的
+# 半成品对象）：某条腿被归错档却真跑起来时，红在下面那三处同形的 null 判据上，
+# 而不是拿 $null 的属性比较蒙成绿。
+if (-not $buildOverlayInputs) { $derivedRefs = $null }
+if (-not $buildCheckInputs) { $topologyRefs = $null }
+
+# 按档过滤：只决定"跑哪些"，不决定"注册哪些"（上面那三份名单要从全量注册里导）。
+$runCases = @($cases)
+if ($Group -ne "all") {
+    $runCases = @($cases | Where-Object { $_.Group -eq $Group })
+}
+Assert-Condition -Condition ($runCases.Count -gt 0) -Message (
+    "C3k: Mode=" + $Mode + " Group=" + $Group + " selected 0 case(s), so nothing would be asserted")
+
 $results = @()
-foreach ($case in $cases) {
+foreach ($case in $runCases) {
     $result = Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
     Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs
     $results += $result
 }
 
-Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results
+# summary_* 的落名：Group=all 时与拆分前逐字相同（summary_quick.* / summary_full.*，
+# 那两个文件名是 real_vector_regression / real_vector_regression_full 两个 custom target 的产物）；
+# 两条新腿各写自己那一份，免得后跑的一半顶着同一个文件名把前一半的用时记录覆盖掉。
+$summaryTag = $Mode
+if ($Group -ne "all") { $summaryTag = $Mode + "_" + $Group }
+$summaryJsonPath = Join-Path $ResolvedOutputRoot ("summary_" + $summaryTag + ".json")
+$summaryCsvPath = Join-Path $ResolvedOutputRoot ("summary_" + $summaryTag + ".csv")
+Save-RegressionResults -JsonPath $summaryJsonPath -CsvPath $summaryCsvPath -Mode $Mode -Group $Group -Results $results
 
 Write-Host "Vector regression completed:" -ForegroundColor Green
 foreach ($result in $results) {
     Write-Host ("  " + $result.Name.PadRight(20) + " " + $result.Seconds + "s")
 }
-Write-Host ("  summary_json".PadRight(22) + (Join-Path $ResolvedOutputRoot ("summary_" + $Mode + ".json")))
-Write-Host ("  summary_csv".PadRight(22) + (Join-Path $ResolvedOutputRoot ("summary_" + $Mode + ".csv")))
+Write-Host ("  summary_json".PadRight(22) + $summaryJsonPath)
+Write-Host ("  summary_csv".PadRight(22) + $summaryCsvPath)

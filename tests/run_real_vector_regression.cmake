@@ -14,10 +14,20 @@ if(NOT DEFINED MODE)
     set(MODE quick)
 endif()
 
+# C3k：把 -DGROUP 透传给 .ps1（取值 all/checks/overlay，缺省 all）。
+# WHY 缺省 all 而不是必填：real_vector_regression / real_vector_regression_full 两个 custom target
+#   只传 -DMODE，它们要保持拆分前那种"一条命令跑整批"的语义；ctest 侧两条新用例各传
+#   -DGROUP=checks / -DGROUP=overlay。取值写错不在这里拦：.ps1 的 param 带 [ValidateSet]，
+#   会在参数绑定期就判红（与上面 MODE 那一臂同形，见"臂 2 腿真失败"的复算说明）。
+if(NOT DEFINED GROUP)
+    set(GROUP all)
+endif()
+
 # N112（批次 C / Task C2）：data/ 缺失 ⇒ 显式 Skip，不许"退出码 0 ⇒ Passed"。
 #   判据本体、return() 的理由与标记字符串 `GIS_SKIP_TESTDATA_ABSENT: ` 的取径都写在
 #   tests/run_real_raster_regression.cmake 的文件内注释（三份包装同一套语义，不重复论证）。
-#   本腿为什么最该拦：四条里只有它判的是 data\vector 的真实道路（现 22836 要素），
+#   本腿为什么最该拦：这一批 real_data_* 里只有 vector 那三条（quick / checks / overlay）判的是
+#   data\vector 的真实道路（现 22836 要素），
 #   而 data\vector 缺失时脚本会退回 roads_sample.geojson / china_sample.geojson 两个合成样本，
 #   期望值又已改成"由输入图层自己的要素数推导"（e54f7d6）⇒ 合成样本下 15 条全绿的含金量
 #   远低于真实数据，绝不能让它冒充"真实回归通过"。⇒ 本腿的门控收到 data\vector 这一级
@@ -40,13 +50,13 @@ endif()
 # WORKSPACE_ROOT 拼错时**必须判红**，不许顺着下面的 data 检查静默滑成 Skip。
 #   成因实测于 2026-10-21 控制器自己的探针：同一条参数写成 -DWORKSPACE_ROOT="${X}"（引号在值里）时
 #   下面的 EXISTS 认不出该路径，去掉引号即正常 => 拼错根目录的表现不是报错，而是整批静默走 Skip 分支，
-#   四条真用例整批 ***Skipped*** 而全量照绿 —— 正是本任务要消灭的"没检查长得像检查通过"。
+#   这一批真用例（C3k 拆腿后 5 条）整批 ***Skipped*** 而全量照绿 —— 正是本任务要消灭的"没检查长得像检查通过"。
 #   复算：把 -DWORKSPACE_ROOT 指到一个不含 tests/ 的目录，应看到 FATAL_ERROR 而不是 GIS_SKIP 标记。
 if(NOT EXISTS "${WORKSPACE_ROOT}/tests/run_real_vector_regression.ps1")
     message(FATAL_ERROR "WORKSPACE_ROOT 不是可用的仓库根：找不到 tests/run_real_vector_regression.ps1（当前值 ${WORKSPACE_ROOT}）")
 endif()
 
-# 解释器缺失时由这里判红，**并且必须判在数据检查之前**（这四条恒注册，见 tests/CMakeLists.txt 里 real_data_* 那节）。
+# 解释器缺失时由这里判红，**并且必须判在数据检查之前**（这一批 real_data_* 恒注册，见 tests/CMakeLists.txt 里那一节）。
 #   顺序反过来的后果实测过：fresh clone 时 data/ 本来就被 gitignore 不存在，若先判数据就打印 Skip 标记并 return()，
 #   连"本机根本没有 powershell"都被记成 Skipped ⇒ Skipped 不参与失败判定，恒注册的设计被绕过。
 if(POWERSHELL_EXECUTABLE STREQUAL "")
@@ -67,6 +77,7 @@ execute_process(
         -WorkspaceRoot "${WORKSPACE_ROOT}"
         -OutputRoot "${WORKSPACE_ROOT}/tmp/vector_regression"
         -Mode "${MODE}"
+        -Group "${GROUP}"
     COMMAND_ECHO STDOUT
     RESULT_VARIABLE regression_result
 )

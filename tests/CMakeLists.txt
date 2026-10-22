@@ -1585,10 +1585,11 @@ endif()
 #   都是"绿着什么都没判"⇒ 只修判据本体不等于销账，进了 ctest 才有"下次改坏当场红/跳"这一层。
 # WHY 用例名走 real_data_*（不沿用 custom target 的 real_*_regression）：同名会让
 #   `ctest -R real_vector_regression` 一次筛出两条语义不同的东西（构建期目标 vs 测试期用例），
-#   红了也分不清是哪一侧；分开后 `-R "^real_data_"` 只认这四条。custom target 原样保留，
+#   红了也分不清是哪一侧；分开后 `-R "^real_data_"` 只认这一批（批次 C C3k 把 vector 的 full 档
+#   拆成 checks/overlay 两条之后是 5 条）。custom target 原样保留，
 #   人工入口与 docs/RELEASE.md 第 1 节那条 `cmake --build --target …` 的引用都不受影响。
 # WHY 恒注册（写在 if(GIS_POWERSHELL_EXECUTABLE) 之外，与下面 source_mojibake_guard 同一形态）：
-#   躲进那条 if 里 ⇒ 找不到解释器的机器上这四条**静默不注册**（ctest -N 少 4 条、全量照绿），
+#   躲进那条 if 里 ⇒ 找不到解释器的机器上这一批**静默不注册**（ctest -N 少 5 条、全量照绿），
 #   正是本批反复在消灭的"没检查长得像检查通过"。解释器缺失由包装脚本 FATAL_ERROR 判红。
 # WHY data 缺失报 Skip 而不是 Passed：本文件既有的那条 SKIP_REGULAR_EXPRESSION（搜
 #   `SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]"`）的注释点名批评过"退出码 0 ⇒ Passed 就是假绿"，
@@ -1612,42 +1613,59 @@ endif()
 #   改成 `GIS_SKIP_TESTDATA_ABSENT: ` 的原因：前缀那种写法的安全性只建立在"目前没有别的输出含它"上，
 #   不是机制。复算：`grep -rn "GIS_SKIP_TESTDATA_ABSENT" tests/ | grep -v run_real_ | grep -v CMakeLists` 应为空。
 #   复算命令与逐臂结果见三份 run_real_*.cmake 头部注释；另见下面 WORKSPACE_ROOT 判红那段的成因。
-# WHY RESOURCE_LOCK real_data_regression（四条共用一把**新**锁）：四条腿都往
+# WHY RESOURCE_LOCK real_data_regression（这一批 5 条共用一把**新**锁）：这几条腿都往
 #   <仓库根>/tmp/*_benchmark 与 <仓库根>/tmp/*_regression 写产物（复算：
 #   `grep -rl 'WorkspaceRoot.*tmp' tests/*.ps1` 恰好只有这三份脚本，仓库根 tmp/ 没有别的 ctest 写者），
 #   vector 腿还会把 plugin_*.dll 覆盖到 gis-cli 旁边的 plugins/ ⇒ 并发跑就是两个进程同时改同一批耗材，
 #   假绿假红两个方向都出得起。不复用 gis_install_closure_prefix：那条的前缀由
 #   ${CMAKE_BINARY_DIR}/../tmp 反推 ⇒ 落在 **build/tmp**/install_closure_<CONFIG>（现读：
-#   `ls build/tmp | grep install_closure`），与这四条写的 <仓库根>/tmp 不共享路径，
+#   `ls build/tmp | grep install_closure`），与这几条写的 <仓库根>/tmp 不共享路径，
 #   共用一把锁只会把两件不相干的事绑成串行。
 #   ⚠ 本批不扩口的残留重叠：Sync-PluginDlls 覆盖的 gis-cli/plugins 目录，读它的是构建期的
 #   copy_runtime_dlls（不在 ctest 里）⇒ `-j1` 下无争用；真要开 `-j` 时这一条得单独进
 #   docs/RELEASE.md 那张"开 -j 前必须改什么"表。
-# WHY 不用 RUN_SERIAL：锁粒度是整个 ctest ⇒ 这四条一被调度就拖其余全部用例排队（同上面
+# WHY 不用 RUN_SERIAL：锁粒度是整个 ctest ⇒ 这一批一被调度就拖其余全部用例排队（同上面
 #   GuiContract.ExportActionVisibleKeys 那处已经定过的判断）。
-# WHY TIMEOUT 各写各的、不进 GIS_TEST_TIMEOUT：GIS_TEST_TIMEOUT=300 对 vector 两条腿只剩 1.57~1.76×
-#   （现读 300 ÷ 190.624 = 1.57×、300 ÷ 170.935 = 1.76×；上一版这里写"1.6× 不到"只有前者成立）
-#   （Debug 树热跑实测 170.935 s / 190.624 s，见下表），对 raster/matching 又是空头上界；
-#   数值按"实测墙钟 ≥4× 向上取整到 60 s 的倍数"给。
+# WHY TIMEOUT 各写各的、不进 GIS_TEST_TIMEOUT：GIS_TEST_TIMEOUT=300 是给"单条用例"定的上界，
+#   真实回归这几条里 overlay 那一半（现读 Debug 265.29 s，见下表）本来就压在它之上，
+#   raster/matching 两条又是空头上界 ⇒ 各写各的。
 #   ⚠ 文件末尾那条 blanket `set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY TIMEOUT …)` 会把这里写的
-#   值整体重写回 300 ⇒ 这四个名字必须同时进下面 `list(REMOVE_ITEM GIS_TIMED_TEST_NAMES …)` 的豁免名单
+#   值整体重写回 300 ⇒ 这五个名字必须同时进下面 `list(REMOVE_ITEM GIS_TIMED_TEST_NAMES …)` 的豁免名单
 #   （名单走变量 GIS_REAL_DATA_TEST_NAMES，不在两处各抄一遍名字）。不豁免的后果不是"上界宽松"，
 #   而是 **vector 两条腿在 Debug 树随时假 Timeout** —— 本仓已实测过并发把 300 s 线撞出 3 条假 Timeout。
-# 实测于 2026-10-21（本机安静态、跑前硬门控 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0；
-#   取**整条腿墙钟**= `cmake -P` 包装的进程用时，含包装自身与 .ps1 里 Sync-PluginDlls / 生成
-#   tmp/*_benchmark 的开销，**不是**用例内计时合计）。三遍跑法：Release 冷（先把 tmp/*_benchmark 与
-#   tmp/*_regression 整体清空）、Release 热、Debug 热（Debug 没有冷样本，而冷跑只会更慢 ⇒ 取值以现读
-#   最大者为准）；按三者的**最大值** ≥4× 向上取整到 60 s 的倍数：
-#     腿                     Rel 冷      Rel 热      Debug 热     取值         4×            ⇒ TIMEOUT
-#     real_data_raster       11.569 s    7.559 s     11.863 s     11.863 s     47.452 s      ⇒ 60 s
-#     real_data_matching     2.047 s     1.634 s     1.751 s      2.047 s      8.188 s       ⇒ 60 s
-#     real_data_vector_quick 153.050 s   89.358 s    170.935 s    170.935 s    683.740 s     ⇒ 720 s
-#     real_data_vector_full  115.943 s   84.367 s    190.624 s    190.624 s    762.496 s     ⇒ 780 s
-#   ⚠ 这四个 TIMEOUT 是**余量设计**，不是性能结论：本机同套用例 run-to-run 波动 ±25 s（口径见
-#     docs/RELEASE.md 全量墙钟基线那节 ⇒ 这一栏只可现读不可外推，也不许拿它论证某个改动变慢了）。
+# 定值规则（批次 C C3k 起，只对拆分出来的两条新腿生效）：TIMEOUT = ceil(实测 Debug 墙钟 × 2.5 / 10) × 10。
+#   2.5× 同时是**触发线**：再加真实腿把余量压到 2.5× 以下时，处理方式是**按"消费哪批派生件"拆腿**，
+#   不许抬数字 —— TIMEOUT 是本仓唯一的挂起执法者（CMake 的 PROCESS_TIMEOUT 无效，已证），
+#   抬 TIMEOUT 等于把挂起的检测窗口一起拉长，那就把这条机制本身废掉了。
+#   raster/matching/quick 三条沿用 Task C2 那批按"≥4× 向上取整到 60 s 的倍数"定的值，本轮不重定；
+#   quick 本轮现读 Debug 236.47 s ⇒ 720 ÷ 236.47 = 3.05×，仍在 2.5× 之上，不需要跟着拆。
+# 实测于 2026-10-22（批次 C C3k 拆腿轮；本机安静态、跑前硬门控 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0，
+#   `ctest -R "^real_data_vector"` -j1 串行现读，Debug 树与 Release 树各一轮；
+#   取**整条腿墙钟**= ctest 报的每条用时，含 `cmake -P` 包装自身与 .ps1 里 Sync-PluginDlls /
+#   生成 tmp/*_benchmark 的开销，**不是**用例内计时合计。
+#   ⚠ 表内数字是**控制器自己在工作树上复跑**得到的；实现该刀的代理在撞每日额度上限前也报过一组
+#     （quick 236.35 / checks 37.47 与 33.60 / overlay 265.29，Release 128.20/19.53/133.97），
+#     两组差在噪声内，但本表只认控制器这组）：
+#     腿                        Debug 墙钟     Release 墙钟   取值                                   ⇒ TIMEOUT
+#     real_data_raster          （本轮未重测）  （本轮未重测）  Task C2 的 ≥4× 上界                      ⇒ 60 s
+#     real_data_matching        （本轮未重测）  （本轮未重测）  Task C2 的 ≥4× 上界                      ⇒ 60 s
+#     real_data_vector_quick    236.47 s       126.39 s       Task C2 的 ≥4× 上界，现读余量 3.05×       ⇒ 720 s
+#     real_data_vector_checks   34.47 s        20.20 s        ceil(34.47 × 2.5 / 10) × 10 = 86.2→90，取 100 ⇒ 100 s（2.90×）
+#     real_data_vector_overlay  255.98 s       130.05 s       ceil(255.98 × 2.5 / 10) × 10 = 640.0→640，取 670 ⇒ 670 s（2.62×）
+#   ⚠ 两条新腿的 TIMEOUT 都比公式算出来的整十值再高 10~30 s：定值规则写的是"**至少** 2.5×"，
+#     多留的空间是给冷机器与 file cache 空态用的；代价只是挂起时多等几十秒，不是判据放宽。
+#   ⚠ 这五个 TIMEOUT 是**余量设计**，不是性能结论：本机同套用例 run-to-run 波动几十秒级
+#     （quick 本轮 236.47 s 与同日收口轮的 285.38 s 差 48.91 s）⇒ 这一栏只可现读不可外推，
+#     也不许拿它论证某个改动变慢了；定上界取同一条腿的现读值乘 2.5 起。
+#   ⚠ 拆分前后对照：原 `real_data_vector_full` 一条现读 378.52 s（780 ÷ 378.52 = 2.06×，跌破触发线），
+#     拆出的两半本轮现读 **34.47 + 255.98 = 290.45 s** —— 比整条**少了** 88.07 s，原因是结构性的：
+#     两半各造各的派生件，谁也无需再跑另一半那批（原整条腿在一次进程里把 C3a 与 C3b-A 两套派生件
+#     全造了一遍）。checks 那条的挂起检测窗口从 780 s 收到 100 s（7.8 倍收紧），overlay 从 780 s
+#     收到 670 s；两半各自的上界都更贴自己的现读（2.90× 与 2.62×，而拆分前整条只剩 2.06×），
+#     之后再加真实腿只会先把**它自己那一半**的余量压到 2.5× 以下，不会再一脚踩过整条腿的上界。
 # WHY 命令里用 $<TARGET_FILE:gis-cli> 而不写死 build/<树>/… 路径：与既有全部 configure-time 用例同形态，
 #   代价也是那条已知事实 —— `ctest -N` 不带 `-C` 时它展开成空串（docs/RELEASE.md 第 1 节有实测原文）。
-#   本批按预检裁定 R-C2c **不加兜底**，只在发布前验证清单里点明"这四条也必须带 -C"。
+#   本批按预检裁定 R-C2c **不加兜底**，只在发布前验证清单里点明"这一批也必须带 -C"。
 if(GIS_POWERSHELL_EXECUTABLE)
     set(GIS_REAL_DATA_POWERSHELL "${GIS_POWERSHELL_EXECUTABLE}")
 else()
@@ -1659,7 +1677,8 @@ set(GIS_REAL_DATA_TEST_NAMES
     real_data_raster
     real_data_matching
     real_data_vector_quick
-    real_data_vector_full
+    real_data_vector_checks
+    real_data_vector_overlay
 )
 
 add_test(
@@ -1709,17 +1728,45 @@ set_tests_properties(real_data_vector_quick PROPERTIES
     SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
 )
 
+# ── 批次 C C3k：原 real_data_vector_full 拆成 checks / overlay 两条 ──────────────
+# WHY 按"消费哪批派生件"拆而不是按条数均分：真实腿的依赖就是这么分的 ——
+#   checks = C3b-A 那 11 个动作的 18 条腿 + 只有它们消费的 w212/buf30/prov3857/province_boundary/
+#     ring_endpoints（脚本里 Ensure-TopologyCheckInputs 造的那批）；
+#   overlay = 其余全部 Mode=full 用例，消费 roadsCore + allWindow 这批**早于**上面那批就造好的件，
+#     外加 C3a 派生 8 条与 C3f 的中文属性腿。
+#   两半各自只造自己消费的派生件（.ps1 的 -Group），名单对撞的不变量在两半里都算完整的三份
+#   ⇒ 任何一半单独跑都能判出"档被拆坏了"；细节与判据见 tests/run_real_vector_regression.ps1 里
+#   GIS_CASE_ROSTER 那一段。
+# WHY 两半都挂 RESOURCE_LOCK real_data_regression：它们共用 <仓库根>/tmp/vector_benchmark 与
+#   tmp/vector_regression（overlay 造的 bj_roads_core_3857 就是 checks 的输入），派生件目录必须串行。
 add_test(
-    NAME real_data_vector_full
+    NAME real_data_vector_checks
     COMMAND ${CMAKE_COMMAND}
         -DCLI_PATH=$<TARGET_FILE:gis-cli>
         -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
         -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
         -DMODE=full
+        -DGROUP=checks
         -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
 )
-set_tests_properties(real_data_vector_full PROPERTIES
-    TIMEOUT 780
+set_tests_properties(real_data_vector_checks PROPERTIES
+    TIMEOUT 100
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
+)
+
+add_test(
+    NAME real_data_vector_overlay
+    COMMAND ${CMAKE_COMMAND}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+        -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
+        -DMODE=full
+        -DGROUP=overlay
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
+)
+set_tests_properties(real_data_vector_overlay PROPERTIES
+    TIMEOUT 670
     RESOURCE_LOCK real_data_regression
     SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
 )
@@ -1758,13 +1805,13 @@ add_test(
 get_property(GIS_TIMED_TEST_NAMES DIRECTORY PROPERTY TESTS)
 # gui_smoke_startup already has the tighter 60s bound set above; the blanket value must not
 # overwrite it, so it is excluded here instead of being re-set afterwards.
-# GIS_REAL_DATA_TEST_NAMES（Task C2 / N112 那四条 real_data_*）是同一个坑的反方向：它们按"实测墙钟
-#   ≥4× 向上取整到 60 s"算出的上界**高于** 300（vector 两条腿冷启动实测 115.9~153.1 s ⇒ 300 ÷ 153.05 = **1.96×**（连 2× 都不到）），
-#   blanket 会把那四个写好的数悄悄改回 300 ⇒ 注释里的算式当场作废、上界失真。名单走变量
+# GIS_REAL_DATA_TEST_NAMES（Task C2 / N112 那批 real_data_*，C3k 拆腿后 5 条）是同一个坑的反方向：它们按
+#   "实测墙钟 × 余量倍数"算出的上界**高于** 300（vector 那条最重的腿现读 Debug 265.29 s ⇒ 300 ÷ 265.29 = 1.13×），
+#   blanket 会把那几个写好的数悄悄改回 300 ⇒ 注释里的算式当场作废、上界失真。名单走变量
 #   GIS_REAL_DATA_TEST_NAMES 传进来，不在这里手抄第二遍名字（两处各改各的正是本文件反复在防的漂移）。
-#   复算（现值 60/60/720/780）。⚠ 必须读**生成物**而不是读源码：源码侧那条
+#   复算（现值 60/60/720/100/670）。⚠ 必须读**生成物**而不是读源码：源码侧那条
 #     grep -A3 "set_tests_properties(real_data" tests/CMakeLists.txt | grep TIMEOUT
-#   即使有人把豁免名单 GIS_REAL_DATA_TEST_NAMES 里的名字删掉、blanket 把值改回 300，它照样打印那四个数。
+#   即使有人把豁免名单 GIS_REAL_DATA_TEST_NAMES 里的名字删掉、blanket 把值改回 300，它照样打印那几个数。
 #     grep 'TIMEOUT "300"' build/debug/tests/CTestTestfile.cmake | grep -c real_data   ⇒ 必须为 0
 list(REMOVE_ITEM GIS_TIMED_TEST_NAMES gui_smoke_startup ${GIS_REAL_DATA_TEST_NAMES})
 # The guard exists only because set_property(TEST) with no names is a configure error.
