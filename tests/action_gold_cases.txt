@@ -33,11 +33,11 @@
 #   每条声明行行尾带着它的现读命令；除 gold_rows_all_lines 以外一律先 `grep -v '^#'` 排掉注释行，
 #   因为本项目真发生过"为解释判据而写的注释把数那条判据的 grep 撑大"（差一也真发生过）。
 #   COUNT data_rows              = 126   # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -vc '^$'（还要排空行：机器侧跳空行，判据 CoverageMeta.RegistryHeaderCountsMatchData 钉住'数据区不许有空行'，两个口径才是同一个数）
-#   COUNT gold_rows              = 65    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'
-#   COUNT pending_rows           = 61    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING'
-#   COUNT gold_rows_all_lines    = 66    # 现读：grep -c '[,]GOLD' tests/action_gold_cases.txt —— 不排注释行的裸计数，比 gold_rows 多出来的那一条是本表第 2 行的格式说明（那里状态列前面正好是一个逗号），所以本表新写的注释一律用 '[:]GOLD' 这种写法避开那个字面量
+#   COUNT gold_rows              = 66    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'
+#   COUNT pending_rows           = 60    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING'
+#   COUNT gold_rows_all_lines    = 67    # 现读：grep -c '[,]GOLD' tests/action_gold_cases.txt —— 不排注释行的裸计数，比 gold_rows 多出来的那一条是本表第 2 行的格式说明（那里状态列前面正好是一个逗号），所以本表新写的注释一律用 '[:]GOLD' 这种写法避开那个字面量
 #   COUNT gold_rows_table_driven = 15    # 现读：grep -v '^#' tests/action_gold_cases.txt | grep -c 'SpindexOtherIndicesExecution'
-#   COUNT gold_rows_literal_slot = 50    # 现读：gold_rows 减去 gold_rows_table_driven（判据里是同一条减法）
+#   COUNT gold_rows_literal_slot = 51    # 现读：gold_rows 减去 gold_rows_table_driven（判据里是同一条减法）
 # 生成方式：ctest -R CoverageMeta 读出运行时 action 全集并逐条核对数值断言（全集条数见 data_rows，
 #   两者必须相等，由 CoverageMeta.EveryActionIsRegistered 的双向核对保证）。
 # B8 复核结论（2026-10-20，判据加严后跑 CoverageMeta.GoldEvidenceIsAuditable 复核全表）：
@@ -149,7 +149,7 @@ vector,clip,GOLD,PluginTest.VectorClipKeepsOnlyLinearOverlapSegments
 vector,rasterize,PENDING
 vector,polygonize,PENDING
 vector,convert,PENDING
-vector,union,PENDING
+vector,union,GOLD,PluginTest.VectorUnionSplitsIntoThreePieceClasses
 vector,difference,PENDING
 vector,intersect,GOLD,PluginTest.VectorIntersectOutputsOverlappedPolygon
 vector,dissolve,PENDING
