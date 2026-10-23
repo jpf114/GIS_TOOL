@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 735 / Release 733**（2026-10-23 批次 C C3m 收口轮现读；上一档 731 / 729 是同日 C3h-3，再上一档 730 / 728 是 C3l，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 744 / Release 742**（2026-10-24 批次 C C3k-2 拆腿轮现读；上一档 743 / 741 是 C3n-2d，再上一档 742 / 740 是 C3n-2b、741 / 739 是 C3n-2a、740 / 738 是 C3n-1，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,12 +297,15 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 735 / Release 733**（2026-10-23 批次 C C3m 收口轮现读；相比上一档 731 / 729 **+4** = C3m 的三条新审计用例
-  `PluginTest.Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated` + 一条反回潮守卫
-  `PluginTest.VectorSourceNeverDisablesGpkgSpatialIndex`（逐名比对，删除 0 条；两树差集仍恰为下面那两条 Debug 轻量闸门、
-  `comm -13` 空，快照 `build/tmp/c3m_names_{debug,release}.txt`）；
+- **现行基线**：`ctest -N` 注册数 **Debug 744 / Release 742**（2026-10-24 批次 C C3k-2 拆腿轮现读）。
+  逐档账：C3m 收口 735 / 733（那一档 **+4** = 三条 `Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated`
+  + 一条反回潮守卫 `VectorSourceNeverDisablesGpkgSpatialIndex`，详见第 2 节）⇒ C3n 系列 **+8**（C3n-1 +5、C3n-2a/2b/2c/2d +3：`VectorConvexHullMidFailure…`、
+  `VectorDoubleInputOutputMustNotOverwriteSecondInput`、`VectorIntersectRejectedFeatureWrite…`；C3n-2c 是把既有
+  clip 失败用例的断言翻契约，不增用例）⇒ 743 / 741 ⇒ C3k-2 拆腿 **净 +1**（删 `real_data_vector_overlay`、加
+  `real_data_vector_overlay_buffer_join` 与 `real_data_vector_overlay_ops` 两条）⇒ **744 / 742**。
+  两树差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空；快照 `build/tmp/c3k2_names_{debug,release}.txt`。
   ⚠ 紧随其后的 **C3m 评审席修复轮不动注册数**（守卫改的是匹配逻辑与 token 名单，两条都是注释/判据成形改动，
-  没有增删用例）⇒ 现读仍是 **735 / 733**，那一轮的墙钟与"为什么不能拿它判余量"见第 2 节"C3m 评审席修复轮"；
+  没有增删用例）⇒ 735 / 733 那一档的墙钟与"为什么不能拿它判余量"见第 2 节"C3m 评审席修复轮"；
   上一档 731 / 729 是 C3h-3（+1 = `real_data_vector_union_poly`）；再上一档 730 / 728 是 C3l（+6 = 六条 `PluginTest.Vector*GpkgSpatialIndexIsPopulated`）；再上一档 724 / 722 是 C3h-2 收口轮（C3h-1b 复验同值——那一刀只翻登记表一行的状态列，不增删用例）；
   相比再上一档 723 / 721 **+1** = C3h-2 的 `PluginTest.VectorUnionMixedDimensionCarriesAttributesPerPiece`；再上一档 722 / 720 的 +1 = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
   由两刀合成：C3k 把一条 `real_data_vector_full` 换成 `checks`/`overlay` 两条（−1+2 = **+1**），
@@ -385,8 +388,8 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **735** | **1074.54 s**（批次 C C3m 收口轮现跑，`build/tmp/c3m_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 735 条**首档**；再往前十四档（697~731 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 / 875.64 / 865.12 / 939.02 / 1083.87 s**（730 那一档另有 982.18 s 的一红轮） | 最慢 `real_data_vector_overlay` **236.75 s** ⇒ 670 ÷ 236.75 = **2.83×**；次 `real_data_vector_quick` **214.78 s** ⇒ 720 ÷ 214.78 = **3.35×**；新腿 `real_data_vector_union_poly` **145.45 s** ⇒ 600 ÷ 145.45 = **4.12×**；`real_data_vector_checks` **33.55 s** ⇒ 100 ÷ 33.55 = **2.98×**；`real_data_raster` **13.07 s** ⇒ 60 ÷ 13.07 = **4.59×**；`source_mojibake_guard` **13.54 s** ⇒ **22.2×**（上界取 `GIS_TEST_TIMEOUT`，`tests/CMakeLists.txt:157`） |
-| Release | **733** | **452.24 s**（同一轮紧随其后跑，`build/tmp/c3m_close_rel.log`；**733/733 全绿**） | 733 条**首档**；再往前十三档（695~731 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 / 449.02 / 463.39 / 436.46 / 436.88 s** | 最慢 `real_data_vector_overlay` **97.46 s** ⇒ 670 ÷ 97.46 = **6.87×**；`real_data_vector_quick` **92.87 s** ⇒ 720 ÷ 92.87 = **7.75×**；新腿 `real_data_vector_union_poly` **21.97 s** ⇒ 600 ÷ 21.97 = **27.3×**；`real_data_vector_checks` **17.60 s** ⇒ **5.68×** |
+| Debug | **744** | **1017.64 s**（批次 C C3k-2 拆腿轮现跑，`build/tmp/c3k2_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 744 条**首档**；再往前五档（740~743 各计数）**988.45 / 1033.21 / 1033.42 / 1085.26 / 1081.68 s**；再往前十四档（697~735）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 / 875.64 / 865.12 / 939.02 / 1083.87 s**（730 那一档另有 982.18 s 的一红轮） | 最慢 `real_data_vector_quick` **216.27 s** ⇒ 720 ÷ 216.27 = **3.33×**；`real_data_vector_overlay_buffer_join` **154.74 s** ⇒ 630 ÷ 154.74 = **4.07×**；`real_data_vector_overlay_ops` **103.44 s** ⇒ 430 ÷ 103.44 = **4.16×**；`real_data_vector_union_poly` **125.38 s** ⇒ 600 ÷ 125.38 = **4.79×**；`real_data_vector_checks` **31.83 s** ⇒ 100 ÷ 31.83 = **3.14×**；`real_data_raster` **9.47 s** ⇒ 60 ÷ 9.47 = **6.34×** |
+| Release | **742** | **505.37 s**（同一轮紧随其后跑，`build/tmp/c3k2_close_rel.log`；**742/742 全绿**） | 742 条**首档**；再往前五档（738~741 各计数）**511.75 / 447.55 / 537.97 / 525.53 / 497.99 s**；再往前十三档（695~733）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 / 449.02 / 463.39 / 436.46 / 436.88 s** | 最慢 `real_data_vector_overlay_buffer_join` **122.70 s** ⇒ 630 ÷ 122.70 = **5.13×**；`real_data_vector_overlay_ops` **14.73 s** ⇒ 430 ÷ 14.73 = **29.2×**；其余见历史行 |
 ⚠ **`overlay` 那一半的"在涨"已经证否——同码双读拿到了**：C3h-1b 与 C3h-2 之间**代码一行没改**（只翻了登记表状态列），
 于是这一档天然成了"同码双跑"：Debug overlay 242.12 → **242.40 s**（差 0.28 s，很紧），
 Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）；同轮 quick Release 116.95 → 115.76、checks 17.12 → 17.66。
@@ -656,6 +659,37 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     跑前硬门控 = 0）⇒ 按"同一条腿本机散布就是这个量级"处理，**只登记读数与结论，不登记因果**。
     ⚠ 由此加一条操作口径：**余量必须按安静态逐条单跑的读数判**，全量轮内的读数只能当对照——
     否则一次机器状态异常就会把我推去拆一条本来健康的腿。
+  - **批次 C C3n 输出契约系列**（五段：`b7ade30` → `c9658b8` → `e4cfd0d` → `5f78c4e` → `51000fd`）：
+    用户 2026-10-23 裁定"先写同目录临时件 → 全部成功 → 替换目标"，本系列把 vector 的 **24 个矢量写出点**
+    全部迁到同一个 helper。机制：① `begin()` 逐输入做 `fs::equivalent` 硬闸（**`output == input` 今天不是截断，
+    是 `fs::remove` 把输入文件本身删掉**）→ 生成 `<stem>.gis-tmp-<进程号>-<进程内 atomic 自增><扩展名>`
+    （同目录同卷，禁止放 `build/tmp/`）→ 清同前缀孤儿件 → `drv->Create(临时名)`；
+    ② `commit()` **先 `dataset_.reset()` 真正关闭** → 逐文件 `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)`
+    （**显式不带 `COPY_ALLOWED`**——MSVC STL 的 `std::filesystem::rename` 带这个标志，跨卷会悄悄 copy+delete，
+    本机现读 `crt/src/stl/filesystem.cpp:722`）→ 清旧边车；③ 失败/异常展开由析构 `discardStagedFiles()` 兜清理。
+    三点带事务（buffer/clip/dissolve）与 overlay 三点的事务**全部在 `commit()` 之前收口**（实现者现读：
+    union 511<519、difference 728<735、intersect 912<919）。
+    落地读数：`drv->Create(output.c_str()` 由 24 处降到 **1 处**（只剩论域外的 `doRasterize`），helper 1 处；
+    vector 侧的 `removeExistingVectorOutput` 已删；J5 名单 **24 已迁 / 0 待迁**，并新增
+    `EXPECT_EQ(stagedDeclarations.size(), 24u)` 防真空跑闸（逐条断言"每个已迁点恰好声明一次、该函数体内直写
+    output 的 Create 数为 0"）。
+    判据 10 条具名：J1 `Vector{Boundary,ConvexHull}MidFailureKeepsOldProductAndLeavesNoTempFile`、
+    J2 `VectorStagedOutputKeepsProductForm`（11 动作 / 13 臂，期望值按夹具手算）、J3 `…LeavesNoJournalSidecar`（11 动作）、
+    J4 `VectorOutputMustNotOverwriteInput`（24 动作 × 2 格式 × 2 拼法 = 94 臂）+ 双输入
+    `VectorDoubleInputOutputMustNotOverwriteSecondInput`、J5 `…HalfMigratedRosterIsLoadBearing`、
+    N139 三条 `Vector{Clip,Difference,Intersect}RejectedFeatureWriteDoesNotCorruptHeap`（先红后绿）。
+    红态证据：J1 绕开临时件 ⇒ 红；停掉临时件清理 ⇒ 红并点名残留 `boundary_out.gis-tmp-25792-2.gpkg`；
+    J3 的不先关闭 ⇒ 跑出 `Win32 error 32`（ERROR_SHARING_VIOLATION）；J5 摘名单一条 ⇒ 红"实际 3、名单 2"；
+    J4 把 simplify 的保护清单置空 ⇒ 红（点名"输出不能覆盖输入"缺失）。
+    登记缺口：J2/J3 只覆盖 11 个动作，其余 13 个由各自执行用例间接承重；J4 的 CLI 动作名与 J5 的（文件,函数）
+    是两张手抄名单、无交叉校验；N135 的三条 GEOS 失败分支按用户裁定**永久无判据**。
+  - **批次 C C3k-2 拆腿**（`9b81d2b`）：安静态复测 overlay 由 238.95/236.35 s 涨到 **273.20/265.40 s**
+    ⇒ 670 ÷ 273.20 = **2.45×**，跌破 2.5× 触发线（**成因未证，不编因果**）⇒ 按"不许抬 TIMEOUT、拆腿"，
+    依逐用例读数（`buffer_quick` 64.54、`spatial_join_focus` 55.66 是两大头）拆成
+    `real_data_vector_overlay_buffer_join`（15 条，Debug 155.30/152.78 ⇒ TIMEOUT **630** = 4.06×）与
+    `real_data_vector_overlay_ops`（11 条，Debug 105.25/103.55 ⇒ TIMEOUT **430** = 4.09×），
+    两条新腿按 ≥4× 定值；26 条用例一个没丢（15 + 11），"四组之并 == 全量 / 无重名 / 无未归组"三条名单不变量
+    现读通过。注册数 743 / 741 → **744 / 742**。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -1210,6 +1244,13 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   对用户反而更坏（跑到一半才失败）。全仓零保护（`grep -rn "output == input\|fs::equivalent" src/` 里两处
   `equivalent` 都是输入 vs 输入）⇒ 实现要在入口用 `fs::equivalent(input, output)` **硬失败**，
   口径参照同插件 `spatial_join` 对"字段不存在"的硬失败（N129 那次对齐）。
+  ⚠ **2026-10-24 C3n 收口后的状态更新**：本条两半现在一半销、一半留——
+  ① **"写失败 ⇒ 回滚把表一起撤销 ⇒ 旧产物已毁、新产物半截"那半已被彻底规避**：C3n 把 24 个矢量写出点全部改成
+  "先写同目录临时件、全部成功后替换" ⇒ 动作失败时**终名根本没被碰过**（旧产物原样在场），临时件由析构删除；
+  J1 两条用例（中途取消）与 J4（`output == input`）在两棵树绿，且各自证明过能红。
+  ② **FID 首值异常仍无解释**（4/103 个 e2e `.gpkg` 从 0 起、输入全是 `.shp`；`SetFID` 10/10 是 `OGRNullFID`），
+  但今天**没有用户可见影响的证据、也没有判据** ⇒ 状态改为"**已知未解、无判据**"，不再作为阻塞项；
+  将来要查的入口是"写出前打印 `dstFeat->GetFID()`"或 GDAL 侧 `m_bInsertStatementWithFID` 的语句缓存分支。
 - 挂账 **N138**（GPKG 空间索引写成"声明了但是空的"，**用户可见级**）——**已销 `d583c9b` + `f0b0d0e`（批次 C C3l）**：
   **射程 5 个动作**（`clip`/`dissolve`/`union`/`difference`/`intersect`）产出的 `.gpkg` 带一个 **0 行的 rtree**，
   而 `gpkg_extensions` 里已登记 `gpkg_rtree_index` ⇒ 任何按包框查的读端拿到 **0 个要素**（表里明明有 N 行）。
@@ -1290,20 +1331,23 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   成本再次实测到可忽略（22 855 要素补索引 = 文件 5 582 848 → 8 085 504 B、CLI 墙钟 134.18 → 135.20 s），
   代价改到"必须重测真实腿余量"这一头——**现值六条腿**（立案时写"四条"，C3h-3 之后多了 `union_poly` 与拆腿后的分组，
   名单以 `tests/CMakeLists.txt` 的 `GIS_REAL_DATA_TEST_NAMES` 为准）两棵树各两跑，最低余量 2.66×、未拆腿未抬 TIMEOUT。
-- 挂账 **N139**（`vector clip` / `difference` / `intersect` **把写失败吞成"少写一条"**，**今天无判据**，
-  由 C3n-0 取证席立案、控制器逐点现读复核）：这三个动作的写循环只在 `if (write…)` 为真时 `count++`，
-  **为假时既不报错也不中断**，末了照常 `CommitTransaction`/返回 `Result::ok` ⇒
-  产物少要素、stdout 的计数也跟着少，而**动作报成功**（现读 `vector_plugin_buffer_clip.inc:264`/`:291`、
-  `vector_plugin_overlay.inc:640`/`:685`/`:825`/`:846`）。
-  同一插件里 `buffer`（`buffer_clip.inc:106` 报 `Failed to write buffer feature`）、`dissolve`
-  （`dissolve.inc:125`/`:146`）、`union`（`overlay.inc:270`/`384`/`421`/`491`）都是**回滚 + 硬失败**
-  ⇒ 同类错误两种行为，与 N129（`dissolve` vs `spatial_join` 对"字段不存在"）同一族。
-  可达性：写失败要的是"第 N 次 `CreateFeature` 返回非 `OGRERR_NONE`"，命令行与真实数据都造不出来——
-  类型不兼容被 `promoteGeometryToLayerType`（定义在 `overlay_support.inc:11`，写点 `:61`/`:81` 都先升维再写）挡掉、
-  `SetField` 全不检查返回值、
-  `SetFID` 10/10 是 `OGRNullFID` ⇒ 没有任何自然的写失败入口
-  （**判据与 N135 共用同一把钥匙**：一个"第 N 次写/几何运算注入失败"的测试缝，两案一起裁）。
-  修法方向已定：三点对齐 buffer/dissolve 的硬失败形态（回滚 + `Result::fail`）。
+- 挂账 **N139**（`vector clip` / `difference` / `intersect` 把写失败吞成"少写一条"）——**2026-10-24 已修、且三支都有真载体判据**：
+  立案时的症状：这三个动作的写循环只在 `if (write…)` 为真时 `count++`，**为假时既不报错也不中断**，
+  末了照常 `CommitTransaction`/返回 `Result::ok` ⇒ 产物少要素、stdout 计数也跟着少，而**动作报成功**
+  （立案现读 `vector_plugin_buffer_clip.inc:264`/`:291`、`vector_plugin_overlay.inc:640`/`:685`/`:825`/`:846`）。
+  同一插件里 `buffer`（`:106` `Failed to write buffer feature`）、`dissolve`（`:125`/`:146`）、
+  `union`（`overlay.inc:270`/`384`/`421`/`491`）本来就是**回滚 + 硬失败** ⇒ 同类错误两种行为（N129 同族）。
+  **修法（已落地）**：clip 在 `buffer_clip.inc:290`/`:325`、difference/intersect 在 `overlay.inc` 各自的对偶点
+  一律改成"若在事务里 `RollbackTransaction()` + 返回 `Result::fail("Failed to write … feature")`"。
+  **判据（已落地，先红后绿）**：`Vector{Clip,Difference,Intersect}RejectedFeatureWriteDoesNotCorruptHeap` ——
+  载体是**驱动拒写**本身（A0 时代那条 clip 用例就已造出真实的 `CreateFeature` 失败），
+  clip 那条把旧契约的 `EXPECT_TRUE(success)` 翻成 `EXPECT_FALSE` + "失败不许留半成品"，
+  difference/intersect 是照它新写的两条。⇒ 本条的判据缺口**不需要注入缝**。
+  ⚠ 与 N135 的关系要分清：N135 的三条分支要的是"**第 N 次几何运算**返回失败（GEOS 层）"，
+  驱动拒写造不出那种失败 ⇒ **用户 2026-10-23 裁定：不为 N135/N139 在产品代码里引入失败注入缝**
+  （产品二进制零隐藏开关优先）；N139 恰好另有载体所以已覆盖，**N135 仍永久无判据**。
+  N139 剩下的缺口只有一条：`RollbackTransaction()` 那条回滚支本身**零覆盖**（用例走的是"失败后不留半成品"，
+  没有断言事务确实回滚过）。
 - 挂账 **N140**（`.kml` 输出**是一条被声明却从未被走过一次的路**，低优先，C3n 实现前顺手定口径）：
   `grep -rn 'ext == ".kml"' src/` 现读 **17 处**（vector 插件 16 处 + `projection_plugin.cpp` 1 处）⇒
   十六个矢量动作把 `.kml` 后缀接进格式分派；而 `find build -name "*.kml"` = **0 个**、
@@ -1313,6 +1357,19 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   需要判的三件事（都不在本刀）：① KML 驱动只允许单图层、图层名是它自己定的 ⇒ `CreateLayer(srcLayer->GetName(), …)`
   在这条路上会不会静默改名；② KML 要求 CRS 为 WGS84 ⇒ 投影坐标写出去是坐标原样落进 `<coordinates>` 还是被 GDAL 拒；
   ③ KML 是单文件还是 `kmz` 多文件集（关系到 N137/C3n 的"旧产物处理"口径）。
+- 挂账 **N141**（`gis::core::RasterBlockProcessor` **197 行零调用者**，低优先）：控制器 2026-10-24 现读
+  `block_processor.h` 72 行 + `block_processor.cpp` 125 行，编进 `gis_core`；四个符号
+  `RasterBlockProcessor` / `BlockProcessor` / `processBlock` / `processBlocks` 在 `src/plugins/`、`src/gui/`、
+  `tests/` 三个域逐个命中都是 **0**，全仓 6 处 `grep` 命中全在它自己的声明与实现里；`docs/` 零提及。
+  ⇒ 一件从未接进执行链的分块基础设施（同族先例："已知限制"里的 `PerformanceMonitor` 未接入主执行链）。
+  **删还是接进去用**不在本刀裁定范围内，与 C3h-2b 的冗余批一起判。
+  ⚠ 判"某东西有没有人用"要按头文件逐个符号搜：`ExpressionEngine` 这个类名搜出来也是 0，但表达式引擎的真身是
+  自由函数 `compileExpression`/`evaluateExpression`（`src/core/.../expression_engine.h`），按类名搜会得到假结论。
+- 挂账 **N142**（`projection` 插件**自己那份** `removeExistingVectorOutput` 与同族的失败契约问题）：
+  C3n 收口时把 vector 侧那份删掉后，现读 `grep -rn removeExistingVectorOutput src/` 还剩两处——
+  `projection_plugin.cpp:157` 的定义与 `:251` 的调用（该插件走 `GDALVectorTranslate`，不经 `CreateLayer`，
+  按用户裁定"先限 vector"不在 C3n 射程）。它今天的行为与 C3l/C3n 修好之前**同形**：
+  在建新产物之前先把旧产物删掉 ⇒ 失败时"旧产物已毁、新产物半截"。要不要按 C3n 的临时件契约改造，另行裁定。
 - 挂账 **N135**（`vector union` 路径 A 的三条"GEOS 返回失败"分支，**今天无判据**，由 `ff86362` 复审席点名）：
   ① 已写面积累加时某次 `Union` 返回 nullptr ⇒ 减法基少一块 ⇒ 源独有块会把已写相交面积再算进去（不计数）；
   ② 逐条差集只减动部分候选 ⇒ 写出的叠加独有块与没减动那条源几何重叠（不计数）；
