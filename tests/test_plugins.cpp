@@ -6820,7 +6820,10 @@ TEST_F(PluginTest, VectorClipKeepsOnlyLinearOverlapSegments) {
     GDALClose(outDs);
 }
 
-// ── N138：六个动作写出的 .gpkg 带一个"已登记但 0 行"的 rtree ⇒ 按包框查的读端拿到 0 个要素 ──
+// ── N138：五个动作写出的 .gpkg 带一个"已登记但 0 行"的 rtree ⇒ 按包框查的读端拿到 0 个要素 ──
+// 射程是 5 不是 6：立案时把 buffer 也算进去了，复核现读 `vector_plugin_buffer_clip.inc` 的
+// `useTransactions = false` 自 f18164a 起就在那里 ⇒ buffer 既不关索引、那条补建调用也被外层挡死（死代码），
+// 它的产物索引一直是回填过的 ⇒ 本块里 buffer 那条用例是**对照**，不是缺陷样本（详见 docs/RELEASE.md 的 N138 条目）。
 // 四条判据按读端真实用法写（顺序即工单 §3）：① 动作成功 ② 无过滤要素数 == 夹具期望数
 // ③ rtree_<层名>_geom 行数 == **非空几何要素数**（解释性）
 //    ④ 夹具包框过滤后要素数 == 夹具期望数（主判据）。
@@ -6829,7 +6832,7 @@ TEST_F(PluginTest, VectorClipKeepsOnlyLinearOverlapSegments) {
 //    拿要素数去比会把合规产物判成红（本仓现读：e2e_singlepart_input 3 行含 1 个 NULL ⇒ 索引 2 行
 //    是合规状态；t20_empty_point_input 4 行含 2 个空点 ⇒ 索引 2 行同样是合规状态）。
 //    非空几何数由本层自己遍历产物数出来（GetGeometryRef() 非空且 !IsEmpty()），不从别处借。
-// 层名从产物自己取（六个动作各写各的层名：union/difference/intersect/dissolved/源层名），
+// 层名从产物自己取（这六个动作各写各的层名，共五类：union/difference/intersect/dissolved/源层名），
 // 要素数与过滤包框一律由各用例按夹具坐标手算写死，不拿产物比产物（N108 那一族自指期望）。
 
 // 走一遍图层，数出"几何存在且不空"的要素数 —— 与 GDAL 建索引的触发器条件同判据。
@@ -7234,24 +7237,34 @@ TEST_F(PluginTest, VectorIntersectGpkgSpatialIndexIsPopulated) {
     GDALClose(outDs);
 }
 
-// ── C3m 反回潮守卫：src/plugins 里 "SPATIAL_INDEX" 这个子串必须一次都不出现 ──────────────
+// ── C3m 反回潮守卫：src/plugins 里"把 GPKG 空间索引从驱动手里拿走"的两种写法都不许出现 ──────
 // 算式：把 ${GIS_SOURCE_DIR}/src/plugins 递归下来的每个 *.inc 与 *.cpp **全文**读进来，
-//       数子串 SPATIAL_INDEX 的出现次数，断言 == 0；命中时逐条点名 "文件:行号"。
+//       在**ASCII 大小写折叠后**的副本上数两个 token 的出现次数，断言合计 == 0；命中时逐条点名
+//       "文件:行号 + 命中的是哪个 token"。
+// token 一（图层选项形）：spatial_index ⇒ 拦"发 SPATIAL_INDEX=NO 这个图层选项"。
+//   为什么要折叠大小写再比：GDAL 取图层选项名走 CSLFetchNameValue（**名字大小写不敏感**）、
+//   值走 CPLTestBool（"NO"/"no"/"OFF" 同样判假）⇒ 只数大写形的守卫会被 `spatial_index=no` 一字之差绕过。
+// token 二（补建形）：gpkgaddspatialindex ⇒ 拦"写完再调用那个只建表和触发器、不回填既有行的 SQL 函数"
+//   （C3l 删掉的就是它；它不带任何图层选项，所以 token 一看不见它，必须单独数）。
 // 扫描范围：src/plugins/**/*.inc 与 src/plugins/**/*.cpp（开工现读 42 个文件，其中 vector 目录 30 个），
 //       注释行与字符串字面量一起算，**不做任何"排除注释"的行过滤**。
 // WHY 连注释也数：这条要防的是"有人又把驱动建索引关掉"，而写回去的人多半会顺手留一句解释为什么
 //       关掉的注释 ⇒ 只数代码行的话，那处回潮会被它自己的注释洗成"设计结论的文档"。
+// ⚠ 论域就是 src/plugins：`tests/` 与 `docs/` 里出现这两个 token 是**本守卫与台账自己在解释它**，
+//   不算回潮 ⇒ 台账口径要写"src/plugins 0 命中"，不许写成"全库 0 命中"。
 // ⚠ 0 命中**不是性能结论**：索引开销的量级在 N138 的取证里已经现读过（22 855 要素多约 1 s、
 //   文件多约 2.5 MB）。这条是 N138 那条设计结论的守门 —— 产物形态由 expectGpkgSpatialIndexUsable
 //   判，本条只判"写法不许回潮"。
+// ⚠ 本条拦不住的：不提这两个名字、自己拼 `EXECUTE SQL` 建一张 rtree 表 ⇒ 源码里没有可数的形，
+//   这种回潮只有产物侧的 ③④ 两条（expectGpkgSpatialIndexUsable）能看出来。
 // 判据自带的三道"不许空跑"闸：扫描根不存在 ⇒ 红；扫到的文件数 < 30 ⇒ 红；
-//   没扫到 vector_plugin_common.inc（= 射程没真正够到那 17 个写出点所在目录）⇒ 红。
+//   没扫到 vector_plugin_common.inc（= 射程没真正够到那 17 个走 builder 的写出点所在目录）⇒ 红。
 #ifndef GIS_SOURCE_DIR
 #define GIS_SOURCE_DIR "."
 #endif
 
 TEST_F(PluginTest, VectorSourceNeverDisablesGpkgSpatialIndex) {
-    const std::string needle = "SPATIAL_INDEX";
+    const std::vector<std::string> needles = {"spatial_index", "gpkgaddspatialindex"};
     const fs::path pluginsDir = fs::u8path(std::string(GIS_SOURCE_DIR) + "/src/plugins");
     ASSERT_TRUE(fs::exists(pluginsDir))
         << "扫描根不存在 ⇒ 这条守卫没在扫任何东西，判红而不是放过：" << pluginsDir.u8string();
@@ -7284,13 +7297,24 @@ TEST_F(PluginTest, VectorSourceNeverDisablesGpkgSpatialIndex) {
         ASSERT_TRUE(in.is_open()) << "扫描射程内的文件读不开，判据无法覆盖它：" << path.u8string();
         const std::string text((std::istreambuf_iterator<char>(in)),
                                std::istreambuf_iterator<char>());
-        std::size_t pos = 0;
-        while ((pos = text.find(needle, pos)) != std::string::npos) {
-            ++hits;
-            const std::size_t line =
-                1 + static_cast<std::size_t>(std::count(text.begin(), text.begin() + pos, '\n'));
-            offenderList += "\n  " + path.u8string() + ":" + std::to_string(line);
-            pos += needle.size();
+        // ASCII 折叠（只动 A-Z，UTF-8 多字节序列的首字节都 >= 0xC0、不会被改）⇒ 长度与换行位置不变，
+        // 行号仍按原文算。
+        std::string folded = text;
+        for (char& ch : folded) {
+            if (ch >= 'A' && ch <= 'Z') {
+                ch = static_cast<char>(ch - 'A' + 'a');
+            }
+        }
+        for (const std::string& needle : needles) {
+            std::size_t pos = 0;
+            while ((pos = folded.find(needle, pos)) != std::string::npos) {
+                ++hits;
+                const std::size_t line =
+                    1 + static_cast<std::size_t>(std::count(text.begin(), text.begin() + pos, '\n'));
+                offenderList += "\n  " + path.u8string() + ":" + std::to_string(line) +
+                    " （命中 token: " + needle + "）";
+                pos += needle.size();
+            }
         }
     }
     EXPECT_FALSE(bool(ec)) << "目录递归中断于：" << ec.message();
@@ -7299,14 +7323,16 @@ TEST_F(PluginTest, VectorSourceNeverDisablesGpkgSpatialIndex) {
         << "只扫到 " << scannedFiles << " 个 *.inc|*.cpp ⇒ 判据在空跑（开工现读是 42 个），"
         << "扫描根是：" << pluginsDir.u8string();
     EXPECT_TRUE(sawCommonInc)
-        << "扫描集合里没有 vector_plugin_common.inc ⇒ 射程没够到那 17 个 .gpkg 写出点所在的目录，"
+        << "扫描集合里没有 vector_plugin_common.inc ⇒ 射程没够到那 17 个走 builder 的写出点所在的目录，"
         << "这条守卫等于没写；扫描根是：" << pluginsDir.u8string();
 
     EXPECT_EQ(hits, 0u)
-        << "在 src/plugins 全文（含注释与字符串字面量）里数到 " << hits << " 处 " << needle
-            << " ⇒ 有人又把 GeoPackage 的空间索引从驱动手里关掉了。17 个 .gpkg 写出点必须一律发零个图层选项、"
-               "让 GDAL 在 FlushCache 里延迟建索引并一次性回填（N138：先关索引批量写、写完再补的那条路径"
-               "交出的必是『扩展项已登记、rtree 0 行』的产物，任何按包框查的读端拿到 0 个要素）。"
+        << "在 src/plugins 全文（含注释与字符串字面量、大小写折叠后）数到 " << hits
+            << " 处 forbidden token ⇒ 有人又把 GeoPackage 的空间索引从驱动手里拿走了"
+               "（发 `SPATIAL_INDEX=NO` 那一类，或写完再调 GDAL 那个只建表和触发器、不回填既有行的补建函数那一类）。"
+               "17 个走 builder 的写出点必须一律发零个图层选项、让 GDAL 在 FlushCache 里延迟建索引并一次性回填"
+               "（N138：先关索引批量写、写完再补的那条路径交出的必是『扩展项已登记、rtree 0 行』的产物，"
+               "而包框真的盖住数据时读端按包框数出来就是 0 个要素）。"
                "回潮点：" << offenderList;
 }
 

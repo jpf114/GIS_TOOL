@@ -356,11 +356,12 @@ static void ensureParentDirectoryForFile(const std::string& output) {
     fs::create_directories(outputPath.parent_path());
 }
 
-// WHY 17 个 .gpkg 写出点共用这一个 builder、且它一个图层选项都不发：
-// 不发选项 ⇒ GDAL 走它自己的延迟建索引，在 FlushCache 里建 rtree 并把已经在表里的行一次性回填。
-// 反面写法（"先关掉索引批量写、写完再用 gpkgAddSpatialIndex 补"）交出的必是 0 行的索引 ——
-// 那个函数只建 rtree 表和触发器、不回填既有行，而 GDAL 只看 rtree 表在不在就认定"有索引"，
-// 于是按包框查的读端拿到 0 个要素（N138）。
+// WHY vector 的 24 个 CreateLayer 点里，这 17 个共用这一个 builder、且它一个图层选项都不发：
+// 不发选项 ⇒ GDAL 走它自己的延迟建索引，在 FlushCache 里建 rtree 并把已经在表里的行一次性回填
+// （GDAL 侧的判据就是"选项缺省即建"，`bCreateSpatialIndex = (pszSI == nullptr || CPLTestBool(pszSI))`）。
+// 反面写法（"先关掉索引批量写、写完再用 SQL 函数补建索引"）交出的必是 0 行的索引 ——
+// 那种补建只造 rtree 表和触发器、不回填既有行，而 GDAL 只看 rtree 表在不在就认定"有索引"，
+// 于是按包框查的读端拿到 0 个要素（N138；正是这条被 `PluginTest.VectorSourceNeverDisablesGpkgSpatialIndex` 拦着）。
 // 事务批量化和"索引归谁建"是两件不相干的事：buffer_clip / dissolve / overlay 那 6 个点照旧分批
 // 提交，索引仍由驱动在 FlushCache 里一次性回填 ⇒ 22 855 要素的 union 产物补索引实测只多约 1 s、
 // 文件多约 2.5 MB，"省那 1 s"不是把读端打成 0 条的理由。
