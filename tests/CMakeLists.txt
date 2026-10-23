@@ -1586,10 +1586,10 @@ endif()
 # WHY 用例名走 real_data_*（不沿用 custom target 的 real_*_regression）：同名会让
 #   `ctest -R real_vector_regression` 一次筛出两条语义不同的东西（构建期目标 vs 测试期用例），
 #   红了也分不清是哪一侧；分开后 `-R "^real_data_"` 只认这一批（批次 C C3k 把 vector 的 full 档
-#   拆成 checks/overlay 两条之后是 5 条，C3h-3 再加 union 路径 A 那条腿之后是 6 条）。custom target 原样保留，
+#   拆成 checks/overlay 两条之后是 5 条，C3h-3 加 union 路径 A、C3k-2 再把 overlay 一分为二之后是 7 条）。custom target 原样保留，
 #   人工入口与 docs/RELEASE.md 第 1 节那条 `cmake --build --target …` 的引用都不受影响。
 # WHY 恒注册（写在 if(GIS_POWERSHELL_EXECUTABLE) 之外，与下面 source_mojibake_guard 同一形态）：
-#   躲进那条 if 里 ⇒ 找不到解释器的机器上这一批**静默不注册**（ctest -N 少 6 条、全量照绿），
+#   躲进那条 if 里 ⇒ 找不到解释器的机器上这一批**静默不注册**（ctest -N 少 7 条、全量照绿），
 #   正是本批反复在消灭的"没检查长得像检查通过"。解释器缺失由包装脚本 FATAL_ERROR 判红。
 # WHY data 缺失报 Skip 而不是 Passed：本文件既有的那条 SKIP_REGULAR_EXPRESSION（搜
 #   `SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]"`）的注释点名批评过"退出码 0 ⇒ Passed 就是假绿"，
@@ -1613,7 +1613,7 @@ endif()
 #   改成 `GIS_SKIP_TESTDATA_ABSENT: ` 的原因：前缀那种写法的安全性只建立在"目前没有别的输出含它"上，
 #   不是机制。复算：`grep -rn "GIS_SKIP_TESTDATA_ABSENT" tests/ | grep -v run_real_ | grep -v CMakeLists` 应为空。
 #   复算命令与逐臂结果见三份 run_real_*.cmake 头部注释；另见下面 WORKSPACE_ROOT 判红那段的成因。
-# WHY RESOURCE_LOCK real_data_regression（这一批 6 条共用一把**新**锁）：这几条腿都往
+# WHY RESOURCE_LOCK real_data_regression（这一批 7 条共用一把**新**锁）：这几条腿都往
 #   <仓库根>/tmp/*_benchmark 与 <仓库根>/tmp/*_regression 写产物（复算：
 #   `grep -rl 'WorkspaceRoot.*tmp' tests/*.ps1` 恰好只有这三份脚本，仓库根 tmp/ 没有别的 ctest 写者），
 #   vector 腿还会把 plugin_*.dll 覆盖到 gis-cli 旁边的 plugins/ ⇒ 并发跑就是两个进程同时改同一批耗材，
@@ -1630,7 +1630,7 @@ endif()
 #   真实回归这几条里 overlay 那一半（现读 Debug 265.29 s，见下表）本来就压在它之上，
 #   raster/matching 两条又是空头上界 ⇒ 各写各的。
 #   ⚠ 文件末尾那条 blanket `set_property(TEST ${GIS_TIMED_TEST_NAMES} PROPERTY TIMEOUT …)` 会把这里写的
-#   值整体重写回 300 ⇒ 这六个名字必须同时进下面 `list(REMOVE_ITEM GIS_TIMED_TEST_NAMES …)` 的豁免名单
+#   值整体重写回 300 ⇒ 这七个名字必须同时进下面 `list(REMOVE_ITEM GIS_TIMED_TEST_NAMES …)` 的豁免名单
 #   （名单走变量 GIS_REAL_DATA_TEST_NAMES，不在两处各抄一遍名字）。不豁免的后果不是"上界宽松"，
 #   而是 **vector 两条腿在 Debug 树随时假 Timeout** —— 本仓已实测过并发把 300 s 线撞出 3 条假 Timeout。
 # 定值规则（批次 C C3k 起，只对拆分出来的新腿生效）：TIMEOUT = ceil(实测墙钟 × 2.5 / 10) × 10。
@@ -1679,7 +1679,7 @@ endif()
 #             分块数在两棵树逐字相同（现读 4/628/9、落盘 641 行、rtree 641 行）。
 #   ⚠ 两条新腿的 TIMEOUT 都比公式算出来的整十值再高 10~30 s：定值规则写的是"**至少** 2.5×"，
 #     多留的空间是给冷机器与 file cache 空态用的；代价只是挂起时多等几十秒，不是判据放宽。
-#   ⚠ 这六个 TIMEOUT 是**余量设计**，不是性能结论：本机同套用例 run-to-run 波动几十秒级
+#   ⚠ 这七个 TIMEOUT 是**余量设计**，不是性能结论：本机同套用例 run-to-run 波动几十秒级
 #     （quick 本轮 236.47 s 与同日收口轮的 285.38 s 差 48.91 s）⇒ 这一栏只可现读不可外推，
 #     也不许拿它论证某个改动变慢了；定上界取同一条腿的现读值乘 2.5 起。
 #   ⚠ 拆分前后对照：原 `real_data_vector_full` 一条现读 378.52 s（780 ÷ 378.52 = 2.06×，跌破触发线），
@@ -1709,6 +1709,32 @@ endif()
 #       （148.97）是**本刀改前的旧现读**，留着只做对照，不要拿它们算余量。
 #     ⚠ 不许把 quick 从改前 236.47 读到改后 215.32 当成"补索引之后反而更快"，也不许把 overlay 的
 #       Release 两跑（103.72 与 127.42，差 22.8%）读成任何趋势：同一条腿本机散布就是这个量级。
+#   ── C3k-2 两条新腿的现读与定值（实测于 2026-10-24，作者＝实现本刀的代理，不是控制器复跑）──
+#     为什么拆：2026-10-23 收口轮 real_data_vector_overlay 现读 Debug 273.20 / 265.40 s（取最慢 273.20）
+#       ⇒ 670 ÷ 273.20 = 2.45×，跌破本仓 2.5× 的拆腿触发线；规矩是"不许抬 TIMEOUT、拆腿"。
+#     拆法（按"重活一分为二"，不是按文件名切）：26 条按 tmp/vector_regression/summary_full_overlay.csv 的
+#       逐用例现读（合计 256.93 s）分成 15 条 + 11 条；两组的名单以 .ps1 的 GIS_CASE_ROSTER 行现读回贴。
+#     测法：本机安静态、跑前硬门控 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0、
+#       单跑 `ctest --test-dir build/<树> -C <Debug|Release> -R "^real_data_vector_overlay_<组>$" -V`
+#       （不带 -j ⇒ 本就串行），取整条腿墙钟 = ctest 报的每条用时（含 cmake -P 包装、Sync-PluginDlls
+#       与派生件生成，不是用例内计时合计）。跑后各腿 100% Passed。
+#     腿                                    Debug 三跑（含合并轮）        Release 三跑（含合并轮）      取值（两棵树更慢一跑）  ⇒ TIMEOUT（>=4×）
+#     real_data_vector_overlay_buffer_join  150.75 / 155.30 / 141.16  116.49 / 122.70 / 106.89  155.30  ⇒ ceil(155.30 × 4 / 10) × 10 = ceil(62.12) × 10 = 630  ⇒ 630 s（630 ÷ 155.30 = 4.06×）
+#     real_data_vector_overlay_ops          103.70 / 103.36 / 105.25  13.34 / 13.54 / 14.73     105.25  ⇒ ceil(105.25 × 4 / 10) × 10 = ceil(42.10) × 10 = 430  ⇒ 430 s（430 ÷ 105.25 = 4.09×）
+#       合并轮 = `ctest -R "^real_data_vector_overlay_(buffer_join|ops)$"`：两条腿同锁串行、一把跑完。
+#       ⚠ 它的读数也算进最大值：ops 的第三次 Debug 跑 105.25 s 比前两跑（103.70 / 103.36）略高 ⇒ 若按前两跑定 420 s
+#         余量只有 3.99×（420 ÷ 105.25），恰好跌破 4× 起步口径，所以最终按 105.25 定 430 s。
+#     ⚠ Release 侧 ops 13.34 s 与 Debug 103.70 s 差 7.8 倍是 GEOS 几何运算的量级差（与 union_poly 那条腿
+#       同形：两棵树的判据与产物逐字相同），不是"Release 更快一点"；TIMEOUT 是对两棵树同时生效的一个字面量，
+#       所以按更慢的 Debug 树定。
+#     ⚠ 新腿的上界按 Task C2 给"新建真实腿"的 >=4× 起步口径定，2.5× 只是拆腿触发线、不是设计目标；
+#       本刀没有抬 quick/checks/union_poly/raster/matching 任何一条的上界。
+#     ⚠ 用例数对撞：拆前 `grep -c 'Group "overlay"'` = 26，拆后 = 0；两条新组标 15 + 11 = 26。
+#       `grep -c 'New-Case'` 不能当计数（它把 function New-Case 与 New-DerivedCase 内部那两行也算进来 = 23）。
+#     ⚠ 名单不变量第 1/2/3 条在两条新腿里都按"四组之并 == full"判绿：full 45 条 = checks 18 +
+#       overlay_buffer_join 15 + overlay_ops 11 + union_poly 1；第 6 条（组标 vs union_poly 名单）
+#       在两条新腿里照旧判 1 == 1（注册是全量的），第 7 条（跑过数 == 判过数）在两腿里判 0 == 0、
+#       在 union_poly 腿里判 1 == 1。
 # WHY 命令里用 $<TARGET_FILE:gis-cli> 而不写死 build/<树>/… 路径：与既有全部 configure-time 用例同形态，
 #   代价也是那条已知事实 —— `ctest -N` 不带 `-C` 时它展开成空串（docs/RELEASE.md 第 1 节有实测原文）。
 #   本批按预检裁定 R-C2c **不加兜底**，只在发布前验证清单里点明"这一批也必须带 -C"。
@@ -1724,7 +1750,8 @@ set(GIS_REAL_DATA_TEST_NAMES
     real_data_matching
     real_data_vector_quick
     real_data_vector_checks
-    real_data_vector_overlay
+    real_data_vector_overlay_buffer_join
+    real_data_vector_overlay_ops
     real_data_vector_union_poly
 )
 
@@ -1775,18 +1802,21 @@ set_tests_properties(real_data_vector_quick PROPERTIES
     SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
 )
 
-# ── 批次 C C3k：原 real_data_vector_full 拆成 checks / overlay 两条（C3h-3 再加第三条 union_poly）──
+# ── 批次 C C3k：原 real_data_vector_full 拆成 checks / overlay 两条（C3h-3 再加第三条 union_poly；
+#    C3k-2 再把 overlay 一分为二 ⇒ 四条分组腿）──
 # WHY 按"消费哪批派生件"拆而不是按条数均分：真实腿的依赖就是这么分的 ——
 #   checks = C3b-A 那 11 个动作的 18 条腿 + 只有它们消费的 w212/buf30/prov3857/province_boundary/
 #     ring_endpoints（脚本里 Ensure-TopologyCheckInputs 造的那批）；
-#   overlay = 其余全部 Mode=full 用例，消费 roadsCore + allWindow 这批**早于**上面那批就造好的件，
-#     外加 C3a 派生 8 条与 C3f 的中文属性腿；
+#   overlay_buffer_join / overlay_ops（C3k-2）= 原 overlay 的 26 条按"重活一分为二"：
+#     buffer_quick + spatial_join_focus + 几何派生/转换小用例 + vertices_line 一边，
+#     clip/difference/union/intersect 的 focus/far/partial/stress 另一边；
+#     两组都消费 roadsCore + allWindow 这批**早于**上面那批就造好的件，外加 C3a 派生 8 条与 C3f 的中文属性腿；
 #   union_poly（C3h-3）= 只有 union 路径 A 那 1 条腿，消费 build/tmp/c3h3/ 里的省/市两个复制件。
 #   各档只造自己消费的派生件（.ps1 的 -Group），名单对撞的不变量在每一档里都算完整的全套（full +
-#   三个分组共四份）⇒ 任何一档单独跑都能判出"档被拆坏了"；细节与判据见 tests/run_real_vector_regression.ps1
+#   四个分组共五份）⇒ 任何一档单独跑都能判出"档被拆坏了"；细节与判据见 tests/run_real_vector_regression.ps1
 #   里 GIS_CASE_ROSTER 那一段。
-# WHY 三档都挂 RESOURCE_LOCK real_data_regression：它们共用 <仓库根>/tmp/vector_benchmark 与
-#   tmp/vector_regression（overlay 造的 bj_roads_core_3857 就是 checks 的输入），派生件目录必须串行。
+# WHY 四条分组腿都挂 RESOURCE_LOCK real_data_regression：它们共用 <仓库根>/tmp/vector_benchmark 与
+#   tmp/vector_regression（overlay_buffer_join 造的 bj_roads_core_3857 就是 checks 的输入），派生件目录必须串行。
 add_test(
     NAME real_data_vector_checks
     COMMAND ${CMAKE_COMMAND}
@@ -1803,18 +1833,43 @@ set_tests_properties(real_data_vector_checks PROPERTIES
     SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
 )
 
+# ── 批次 C C3k-2：原 overlay 一档按"重活一分为二"拆成两条 ────────────────────────────
+# WHY 拆：2026-10-23 收口轮 overlay 现读 Debug 273.20 / 265.40 s ⇒ 670 ÷ 273.20 = 2.45×，跌破本仓
+#   2.5× 的拆腿触发线；规矩是"不许抬 TIMEOUT、拆腿"，所以按逐用例现读把 26 条一分为二：
+#   overlay_buffer_join = buffer_quick(64.54) + spatial_join_focus(55.66) + 所有 <=5 s 的几何派生/
+#     转换小用例(17.70) + vertices_line(14.63)，15 条现读合计 152.53 s；
+#   overlay_ops = clip/difference/union/intersect 的 focus/far/partial/stress，11 条现读合计 104.40 s。
+#   两条腿都消费 roadsCore/allWindow 与 C3a 派生件（.ps1 的 $buildOverlayInputs 对两组建真），
+#   判据内容一字不动，只挪组标；两半之并由脚本内的名单不变量对撞。
+# TIMEOUT 的定值见上面测量表 C3k-2 那一栏（按 >=4× 起算，不是 2.5×）。
 add_test(
-    NAME real_data_vector_overlay
+    NAME real_data_vector_overlay_buffer_join
     COMMAND ${CMAKE_COMMAND}
         -DCLI_PATH=$<TARGET_FILE:gis-cli>
         -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
         -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
         -DMODE=full
-        -DGROUP=overlay
+        -DGROUP=overlay_buffer_join
         -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
 )
-set_tests_properties(real_data_vector_overlay PROPERTIES
-    TIMEOUT 670
+set_tests_properties(real_data_vector_overlay_buffer_join PROPERTIES
+    TIMEOUT 630
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
+)
+
+add_test(
+    NAME real_data_vector_overlay_ops
+    COMMAND ${CMAKE_COMMAND}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+        -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
+        -DMODE=full
+        -DGROUP=overlay_ops
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
+)
+set_tests_properties(real_data_vector_overlay_ops PROPERTIES
+    TIMEOUT 430
     RESOURCE_LOCK real_data_regression
     SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
 )
@@ -1883,11 +1938,11 @@ get_property(GIS_TIMED_TEST_NAMES DIRECTORY PROPERTY TESTS)
 # gui_smoke_startup already has the tighter 60s bound set above; the blanket value must not
 # overwrite it, so it is excluded here instead of being re-set afterwards.
 # GIS_REAL_DATA_TEST_NAMES（Task C2 / N112 那批 real_data_*，C3k 拆腿后 5 条、C3h-3 再加 union_poly
-#   那条腿之后 6 条）是同一个坑的反方向：它们按
+#   那条腿、C3k-2 再拆 overlay 之后 7 条）是同一个坑的反方向：它们按
 #   "实测墙钟 × 余量倍数"算出的上界**高于** 300（vector 那条最重的腿现读 Debug 265.29 s ⇒ 300 ÷ 265.29 = 1.13×），
 #   blanket 会把那几个写好的数悄悄改回 300 ⇒ 注释里的算式当场作废、上界失真。名单走变量
 #   GIS_REAL_DATA_TEST_NAMES 传进来，不在这里手抄第二遍名字（两处各改各的正是本文件反复在防的漂移）。
-#   复算（现值 60/60/720/100/670/600）。⚠ 必须读**生成物**而不是读源码：源码侧那条
+#   复算（现值 60/60/720/100/630/430/600）。⚠ 必须读**生成物**而不是读源码：源码侧那条
 #     grep -A3 "set_tests_properties(real_data" tests/CMakeLists.txt | grep TIMEOUT
 #   即使有人把豁免名单 GIS_REAL_DATA_TEST_NAMES 里的名字删掉、blanket 把值改回 300，它照样打印那几个数。
 #     grep 'TIMEOUT "300"' build/debug/tests/CTestTestfile.cmake | grep -c real_data   ⇒ 必须为 0

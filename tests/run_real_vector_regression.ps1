@@ -4,11 +4,13 @@ param(
     [string]$OutputRoot = "",
     [ValidateSet("quick", "full")]
     [string]$Mode = "quick",
-    # Group 按"消费哪批派生件"划分三条真实腿（见 GIS_CASE_ROSTER 那段注释）：
-    # checks = C3b-A 的拓扑/检查批，overlay = 叠加/分析族，union_poly = C3h-3 的 union 路径 A 腿。
+    # Group 按"消费哪批派生件"划分四条真实腿（见 GIS_CASE_ROSTER 那段注释）：
+    # checks = C3b-A 的拓扑/检查批；overlay_buffer_join = buffer / spatial_join / 几何派生与转换小用例；
+    # overlay_ops = clip/difference/intersect/union 的 focus/far/partial/stress 全族；
+    # union_poly = C3h-3 的 union 路径 A 腿（C3k-2 把原 overlay 一档按"重活一分为二"拆成前两组）。
     # 取 ValidateSet 而不是自由字符串：-GROUP 写错时要在参数绑定期就红，
     # 不许顺着下面的注册走到"一组都没匹配上 => 0 条用例 => 退出码 0"的假绿。
-    [ValidateSet("all", "checks", "overlay", "union_poly")]
+    [ValidateSet("all", "checks", "overlay_buffer_join", "overlay_ops", "union_poly")]
     [string]$Group = "all"
 )
 
@@ -17,8 +19,8 @@ if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Error
     $PSNativeCommandUseErrorActionPreference = $false
 }
 
-# quick 档不分档（24 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay/union_poly 配 Mode=quick 会筛出
-# 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先判红。放在最顶上是为了在碰 data/ 与
+# quick 档不分档（24 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/overlay_ops/
+# union_poly 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先判红。放在最顶上是为了在碰 data/ 与
 # tmp/ 之前就红（同 tests/run_real_vector_regression.cmake 里"参数写错要在绑定期红"那条口径）。
 if ($Mode -eq "quick" -and $Group -ne "all") {
     throw ("Mode=quick has no group split: pass -Group all (got Mode=" + $Mode + " Group=" + $Group + ")")
@@ -403,7 +405,7 @@ function Assert-DerivedGeometryCase {
         [string]$FeaturesMode
     )
 
-    # C3k 拆腿之后 C3a 这批派生件只由 overlay 那一半构造。这条腿若被归到别的档却真的跑了起来，
+    # C3k 拆腿之后 C3a 这批派生件只由 overlay_buffer_join / overlay_ops 两条腿构造。这条腿若被归到别的档却真的跑了起来，
     # 传进来的现读属性就是 $null —— 必须在读产物之前判红：PS 里 $null.X 取到 $null，
     # 后面的比较判据会退化成"既不满足也不报错"，等于把归错档洗成假绿。
     # （同形判据已存在于 Assert-TopologyCheckCase 与 Assert-ChineseAttributeFilterCase。）
@@ -475,7 +477,7 @@ function Ensure-DerivedGeometryInputs {
         [string]$ResolvedCliPath,
         [string]$ResolvedWorkspaceRoot,
         [string]$RoadsCore3857,
-        # C3k 拆腿之后本函数只被 overlay 那一半真正需要。-PathsOnly 把"算路径"与"造派生件"分开：
+        # C3k 拆腿之后本函数只被 overlay_buffer_join / overlay_ops 两条腿真正需要。-PathsOnly 把"算路径"与"造派生件"分开：
         # 路径表达式仍然只有这一处（注册用例要用路径，但 checks 那一半不造件），
         # 调用方在没造件时把 refs 置 $null => "腿被归错档却真跑起来"会红在
         # Assert-DerivedGeometryCase 的"现读输入属性"判据上，而不是拿空对象蒙过去。
@@ -877,7 +879,7 @@ function Ensure-TopologyCheckInputs {
         [string]$RoadsCore3857,
         # C3k 拆腿之后 w212/buf30/prov3857/province_boundary/ring_endpoints 这一套派生件
         # 只有 checks 那一半消费。-PathsOnly 只把路径算出来（路径表达式仍然只有这一处）就返回，
-        # overlay 那一半于是既不造件也不删目录；调用方在没造件时把 refs 置 $null，
+        # overlay 两条腿于是既不造件也不删目录；调用方在没造件时把 refs 置 $null，
         # "某条 checks 腿被归错档却真跑起来"就会红在下面那句 TopologyRefs null 的判据上。
         [switch]$PathsOnly
     )
@@ -1802,8 +1804,9 @@ function Assert-ChineseAttributeFilterCase {
 # 选材现读（两侧都是混合维度、同 EPSG:4490）：data/vector/中国_省 42 要素（34 MultiPolygon + 8
 #   MultiLineString）、data/vector/中国_市 388 要素（375 MultiPolygon + 13 MultiLineString）。
 #   喂给 CLI 的是 build/tmp/c3h3/ 里的复制件，data/ 全程只读（N115：边车只可能长在临时区）。
-# WHY 单独成一条注册用例（而不是挂进 overlay 那一半）：overlay 那一半现读 Debug 244.04 s / TIMEOUT 670 s
-#   = 2.75 倍余量，再塞进这条 135 s 级的腿会把该半压到 1.77 倍，跌破本仓 2.5 倍的拆腿触发线 ⇒ 拆第三条。
+# WHY 单独成一条注册用例（而不是挂进 overlay 那一半）：拆腿时（C3k）overlay 那一半现读 Debug 244.04 s /
+#   TIMEOUT 670 s = 2.75 倍余量，再塞进这条 135 s 级的腿会把该半压到 1.77 倍，跌破本仓 2.5 倍的拆腿触发线
+#   ⇒ 拆第三条。（C3k-2 起 overlay 那一半已按"重活一分为二"再拆成 overlay_buffer_join / overlay_ops，此段数字留作当时对照。）
 # 判据六条，全部是不变式，没有一个数字是从本机产物抄来的：
 #   ① stdout 自报数 == 元数据 union_total_pieces == vector info 落盘读数（三段等式，同 C3f 的 ④ 口径）；
 #   ② union_input_pieces + union_overlap_pieces + union_overlay_pieces == union_total_pieces
@@ -2636,24 +2639,32 @@ Write-BboxGeojson -Path $partialWindow -Box $partialBox -Label "win_partial"
 
 # ── C3k：档（Group）与造件闸门 ────────────────────────────────────────────────
 # 拆成多条注册用例之后，每一档只造自己消费的派生件：checks 消费 w212/buf30/prov3857/
-# province_boundary/ring_endpoints（Ensure-TopologyCheckInputs），overlay 消费 roadsCore +
-# allWindow 这批早于它就造好的件与 C3a/C3f 的切片、省层复制件（Ensure-DerivedGeometryInputs），
-# union_poly（C3h-3 加的第三条腿）只消费 build/tmp/c3h3/ 里那两个省/市复制件。
+# province_boundary/ring_endpoints（Ensure-TopologyCheckInputs），overlay_buffer_join / overlay_ops
+# （C3k-2 把原 overlay 一分为二的四条腿里的两条）都消费 roadsCore + allWindow 这批早于它就造好的件
+# 与 C3a/C3f 的切片、省层复制件（Ensure-DerivedGeometryInputs），union_poly（C3h-3 加的第四条腿）
+# 只消费 build/tmp/c3h3/ 里那两个省/市复制件。
 # 各档都**照常注册全部用例**（名单不变量要从完整 $cases 导全量，见下面 GIS_CASE_ROSTER 那段），
 # 过滤只发生在派发那一步。
-# quick 档不分档（24 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay/union_poly 配 Mode=quick
-# 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先把它判红。
+# quick 档不分档（24 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/overlay_ops/
+# union_poly 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先把它判红。
 if ($Mode -eq "quick" -and $Group -ne "all") {
     throw ("Mode=quick has no group split: pass -Group all (got Mode=" + $Mode + " Group=" + $Group + ")")
 }
-$buildOverlayInputs = ($Group -eq "all" -or $Group -eq "overlay")
+$buildOverlayInputs = ($Group -eq "all" -or $Group -eq "overlay_buffer_join" -or $Group -eq "overlay_ops")
 $buildCheckInputs = ($Mode -eq "full") -and ($Group -eq "all" -or $Group -eq "checks")
 # C3h-3：第三条腿只消费自己的两个复制件（build/tmp/c3h3/），所以造件闸门同形；
 # 它整批只在 Mode=full 注册 ⇒ quick 档（real_data_vector_quick，TIMEOUT 720 s）不会被这条 135 s 级的腿压穿。
 $buildUnionPolyInputs = ($Mode -eq "full") -and ($Group -eq "all" -or $Group -eq "union_poly")
 
 $cases = @()
-$cases += New-Case -Name "buffer_quick" -Group "overlay" -CaseArgs @(
+# ── C3k-2：原 overlay 一档按"重活一分为二"拆成两条腿（只挪组标，判据一字不动）─────────────
+# 分组依据是 2026-10-23 收口轮 tmp/vector_regression/summary_full_overlay.csv 的逐用例现读
+# （26 条合计 256.93 s）：
+#   overlay_buffer_join（15 条，现读合计 152.53 s）= buffer_quick 64.54 + spatial_join_focus 55.66
+#     + 所有 <=5 s 的几何派生/转换小用例 17.70 + vertices_line 14.63；
+#   overlay_ops（11 条，现读合计 104.40 s）= clip/difference/union/intersect 的 focus/far/partial/stress。
+# 两条腿都消费 roadsCore/allWindow 与 C3a 派生件 ⇒ $buildOverlayInputs 对两组建真（见上面的闸）。
+$cases += New-Case -Name "buffer_quick" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "buffer",
     ("--input=" + $roadsCore3857),
     ("--output=" + (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")),
@@ -2661,7 +2672,7 @@ $cases += New-Case -Name "buffer_quick" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")
 )
-$cases += New-Case -Name "clip_focus" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "clip_focus" -Group "overlay_ops" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
     ("--clip_vector=" + $allWindow),
@@ -2669,7 +2680,7 @@ $cases += New-Case -Name "clip_focus" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "clip_focus.gpkg")
 )
-$cases += New-Case -Name "difference_focus" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "difference_focus" -Group "overlay_ops" -CaseArgs @(
     "vector", "difference",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $allWindow),
@@ -2677,7 +2688,7 @@ $cases += New-Case -Name "difference_focus" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "difference_focus.gpkg")
 )
-$cases += New-Case -Name "union_focus" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "union_focus" -Group "overlay_ops" -CaseArgs @(
     "vector", "union",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $allWindow),
@@ -2685,7 +2696,7 @@ $cases += New-Case -Name "union_focus" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "union_focus.gpkg")
 )
-$cases += New-Case -Name "intersect_focus" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "intersect_focus" -Group "overlay_ops" -CaseArgs @(
     "vector", "intersect",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $allWindow),
@@ -2693,7 +2704,7 @@ $cases += New-Case -Name "intersect_focus" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "intersect_focus.gpkg")
 )
-$cases += New-Case -Name "clip_far" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "clip_far" -Group "overlay_ops" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
     ("--clip_vector=" + $farWindow),
@@ -2701,7 +2712,7 @@ $cases += New-Case -Name "clip_far" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "clip_far.gpkg")
 )
-$cases += New-Case -Name "intersect_far" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "intersect_far" -Group "overlay_ops" -CaseArgs @(
     "vector", "intersect",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $farWindow),
@@ -2709,7 +2720,7 @@ $cases += New-Case -Name "intersect_far" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "intersect_far.gpkg")
 )
-$cases += New-Case -Name "difference_far" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "difference_far" -Group "overlay_ops" -CaseArgs @(
     "vector", "difference",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $farWindow),
@@ -2717,7 +2728,7 @@ $cases += New-Case -Name "difference_far" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "difference_far.gpkg")
 )
-$cases += New-Case -Name "clip_partial" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "clip_partial" -Group "overlay_ops" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
     ("--clip_vector=" + $partialWindow),
@@ -2725,7 +2736,7 @@ $cases += New-Case -Name "clip_partial" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "clip_partial.gpkg")
 )
-$cases += New-Case -Name "intersect_partial" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "intersect_partial" -Group "overlay_ops" -CaseArgs @(
     "vector", "intersect",
     ("--input=" + $roadsCore),
     ("--overlay_vector=" + $partialWindow),
@@ -2733,7 +2744,7 @@ $cases += New-Case -Name "intersect_partial" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "intersect_partial.gpkg")
 )
-$cases += New-Case -Name "spatial_join_focus" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "spatial_join_focus" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "spatial_join",
     ("--input=" + $roadsCore),
     ("--join_vector=" + $allWindow),
@@ -2741,14 +2752,14 @@ $cases += New-Case -Name "spatial_join_focus" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")
 )
-$cases += New-Case -Name "dissolve_bbox" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "dissolve_bbox" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "dissolve",
     ("--input=" + $chinaBbox3857),
     ("--output=" + (Join-Path $ResolvedOutputRoot "dissolve_bbox.gpkg"))
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "dissolve_bbox.gpkg")
 )
-$cases += New-Case -Name "convert_roads_geojson" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "convert_roads_geojson" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "convert",
     ("--input=" + $roadsCore),
     ("--output=" + (Join-Path $ResolvedOutputRoot "roads_core.geojson")),
@@ -2757,7 +2768,7 @@ $cases += New-Case -Name "convert_roads_geojson" -Group "overlay" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "roads_core.geojson")
 )
 $rasterizeOutput = Join-Path $ResolvedOutputRoot "bbox_rasterized.tif"
-$cases += New-Case -Name "rasterize_bbox" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "rasterize_bbox" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "rasterize",
     ("--input=" + $chinaBbox),
     ("--output=" + $rasterizeOutput),
@@ -2765,7 +2776,7 @@ $cases += New-Case -Name "rasterize_bbox" -Group "overlay" -CaseArgs @(
 ) -ExpectedOutputs @(
     $rasterizeOutput
 )
-$cases += New-Case -Name "polygonize_bbox_raster" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "polygonize_bbox_raster" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "polygonize",
     ("--input=" + $rasterizeOutput),
     ("--output=" + (Join-Path $ResolvedOutputRoot "bbox_polygonized.gpkg"))
@@ -2777,7 +2788,8 @@ $cases += New-Case -Name "polygonize_bbox_raster" -Group "overlay" -CaseArgs @(
 # 输入全部是复制件（build/tmp/c3a/），data/ 只读；判据见 Assert-DerivedGeometryCase 的注释块。
 # 切片、现读属性、输出路径都由 Ensure-DerivedGeometryInputs 一次性带回来（属性在返回对象上
 # 一次建齐；PS 5.1 的 pscustomobject 事后加属性会报"找不到可设置的属性"，这是本机事实）。
-# C3k：这 8 条腿归 overlay 档，checks 那一半只要路径来注册（-PathsOnly），不替它造切片；
+# C3k-2：这 8 条腿归 overlay_buffer_join 档（vertices 与 midpoints/endpoints 同组 ⇒ 组内顺序即依赖不变），
+# checks 那一半只要路径来注册（-PathsOnly），不替它造切片；
 # 造没造都由下面 $derivedRefs/$topologyRefs 的置空判据把关，归错档跑起来必红。
 $derivedRefs = Ensure-DerivedGeometryInputs -ResolvedCliPath $ResolvedCliPath `
     -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -RoadsCore3857 $roadsCore3857 `
@@ -2802,22 +2814,22 @@ function New-DerivedCase {
     ) -ExpectedOutputs @($OutputPath) -Group $Group
 }
 
-$cases += New-DerivedCase -Name "hull_polygon" -Group "overlay" -Action "convex_hull" `
+$cases += New-DerivedCase -Name "hull_polygon" -Group "overlay_buffer_join" -Action "convex_hull" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["hull_polygon"]
-$cases += New-DerivedCase -Name "envelope_polygon" -Group "overlay" -Action "envelope" `
+$cases += New-DerivedCase -Name "envelope_polygon" -Group "overlay_buffer_join" -Action "envelope" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["envelope_polygon"]
-$cases += New-DerivedCase -Name "centroid_polygon" -Group "overlay" -Action "centroid" `
+$cases += New-DerivedCase -Name "centroid_polygon" -Group "overlay_buffer_join" -Action "centroid" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["centroid_polygon"]
-$cases += New-DerivedCase -Name "interior_polygon" -Group "overlay" -Action "interior_point" `
+$cases += New-DerivedCase -Name "interior_polygon" -Group "overlay_buffer_join" -Action "interior_point" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["interior_polygon"]
-$cases += New-DerivedCase -Name "boundary_polygon" -Group "overlay" -Action "boundary" `
+$cases += New-DerivedCase -Name "boundary_polygon" -Group "overlay_buffer_join" -Action "boundary" `
     -InputPath $derivedRefs.PolygonInput -OutputPath $derivedRefs.Outputs["boundary_polygon"]
 # 顺序即依赖：vertices 先跑，midpoints/endpoints 的关系判据要用它的现读数。
-$cases += New-DerivedCase -Name "vertices_line" -Group "overlay" -Action "vertices_extract" `
+$cases += New-DerivedCase -Name "vertices_line" -Group "overlay_buffer_join" -Action "vertices_extract" `
     -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["vertices_line"]
-$cases += New-DerivedCase -Name "midpoints_line" -Group "overlay" -Action "midpoints_extract" `
+$cases += New-DerivedCase -Name "midpoints_line" -Group "overlay_buffer_join" -Action "midpoints_extract" `
     -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["midpoints_line"]
-$cases += New-DerivedCase -Name "endpoints_line" -Group "overlay" -Action "endpoints_extract" `
+$cases += New-DerivedCase -Name "endpoints_line" -Group "overlay_buffer_join" -Action "endpoints_extract" `
     -InputPath $derivedRefs.LineSlice -OutputPath $derivedRefs.Outputs["endpoints_line"]
 
 # ── C3f / N127：中文属性值的 --where 真实数据腿（quick/full 两档都跑）──
@@ -2825,7 +2837,7 @@ $cases += New-DerivedCase -Name "endpoints_line" -Group "overlay" -Action "endpo
 # 判据（④⑤⑥⑦⑧）见 Ensure-ChineseAttributeFilterInput 上方的注释块。
 $script:ChineseFilterRefs = Ensure-ChineseAttributeFilterInput -ResolvedCliPath $ResolvedCliPath `
     -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot
-$cases += New-Case -Name "filter_cn_attribute" -Group "overlay" -CaseArgs @(
+$cases += New-Case -Name "filter_cn_attribute" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "filter",
     ("--input=" + $script:ChineseFilterRefs.InputPath),
     ("--output=" + $script:ChineseFilterRefs.OutputPath),
@@ -2834,7 +2846,7 @@ $cases += New-Case -Name "filter_cn_attribute" -Group "overlay" -CaseArgs @(
     $script:ChineseFilterRefs.OutputPath
 )
 
-# quick 档整批不注册这批腿、overlay 档也不消费它（工单：11 个动作 18 条腿归 real_data_vector_checks
+# quick 档整批不注册这批腿、overlay 两条腿也不消费它（工单：11 个动作 18 条腿归 real_data_vector_checks
 # 那一档）⇒ 先置 $null，让"用例被单独抽出来跑"落在 Assert-TopologyCheckCase 的显式判红上，
 # 而不是变量不存在。下面按档置空的那一步与这条判红是同一件事。
 $topologyRefs = $null
@@ -2843,7 +2855,7 @@ $topologyRefs = $null
 $unionPolyRefs = $null
 
 if ($Mode -eq "full") {
-    $cases += New-Case -Name "clip_stress" -Group "overlay" -CaseArgs @(
+    $cases += New-Case -Name "clip_stress" -Group "overlay_ops" -CaseArgs @(
         "vector", "clip",
         ("--input=" + $roadsCore),
         ("--clip_vector=" + $allWindow),
@@ -2851,7 +2863,7 @@ if ($Mode -eq "full") {
     ) -ExpectedOutputs @(
         (Join-Path $ResolvedOutputRoot "clip_stress.gpkg")
     )
-    $cases += New-Case -Name "difference_stress" -Group "overlay" -CaseArgs @(
+    $cases += New-Case -Name "difference_stress" -Group "overlay_ops" -CaseArgs @(
         "vector", "difference",
         ("--input=" + $roadsCore),
         ("--overlay_vector=" + $allWindow),
@@ -2861,7 +2873,7 @@ if ($Mode -eq "full") {
     )
     # ── C3b-A：vector 拓扑/检查批 11 动作的真实数据腿（18 条用例；归 real_data_vector_checks 那一档）──
     # 派生件与判据的算式都写在 Ensure-TopologyCheckInputs / Assert-TopologyCheckCase 的注释块里。
-    # overlay 档只取路径注册、不造这批件（-PathsOnly），见函数头的说明。
+    # overlay 两条腿只取路径注册、不造这批件（-PathsOnly），见函数头的说明。
     $topologyRefs = Ensure-TopologyCheckInputs -ResolvedCliPath $ResolvedCliPath `
         -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -RoadsCore3857 $roadsCore3857 `
         -PathsOnly:(-not $buildCheckInputs)
@@ -2967,32 +2979,36 @@ if ($Mode -eq "full") {
 
 # ── C3k：各分组之并 == 拆分前的全量（本刀承重判据，只在 Mode=full 启用）───────────────
 # 名单一律由脚本自己导：full = 当前 $cases 里 Mode=full 注册进来的全部用例名，
-# checks/overlay/union_poly = 每条用例注册时打的组标。手抄一份名单进脚本等于没写这条判据
+# checks/overlay_buffer_join/overlay_ops/union_poly = 每条用例注册时打的组标。手抄一份名单进脚本等于没写这条判据
 # （本仓出过"手抄名单漂移 ⇒ 新条目不被断言"的事故），所以这里不写任何组内名单字面量。
 # WHY 各档各自都算完整的全套：注册永远是全量，所以任何一半单独跑都能判出"档被拆坏了"。
 if ($Mode -eq "full") {
     # 组名只写这一处：ValidateSet（param 里那份）之外，下面的导名单、判红消息都从这个数组来，
-    # 加第四档时不必再逐条改判据（C3h-3 就是把两两交集换成"按重数数"的同一条式子才做到的）。
-    $rosterGroupNames = @("checks", "overlay", "union_poly")
+    # 加档时不必再逐条改判据（C3h-3 就是把两两交集换成"按重数数"的同一条式子才做到的；C3k-2 把
+    # overlay 一分为二时，这里只加两个名字与两条导名单）。
+    $rosterGroupNames = @("checks", "overlay_buffer_join", "overlay_ops", "union_poly")
     $rosterFull = @($cases | ForEach-Object { $_.Name })
     $rosterChecks = @($cases | Where-Object { $_.Group -eq "checks" } | ForEach-Object { $_.Name })
-    $rosterOverlay = @($cases | Where-Object { $_.Group -eq "overlay" } | ForEach-Object { $_.Name })
+    $rosterBufferJoin = @($cases | Where-Object { $_.Group -eq "overlay_buffer_join" } | ForEach-Object { $_.Name })
+    $rosterOps = @($cases | Where-Object { $_.Group -eq "overlay_ops" } | ForEach-Object { $_.Name })
     $rosterUnionPoly = @($cases | Where-Object { $_.Group -eq "union_poly" } | ForEach-Object { $_.Name })
     $rosterUngrouped = @($cases | Where-Object { $rosterGroupNames -cnotcontains $_.Group } |
         ForEach-Object { $_.Name + " (Group=[" + [string]$_.Group + "])" })
-    # 不重：同一条腿被两个组同时认领 ⇒ 在"三组之并"里数重数（对任意档数都成立，不必两两求交集）。
-    $rosterTaggedAll = @($rosterChecks + $rosterOverlay + $rosterUnionPoly)
+    # 不重：同一条腿被两个组同时认领 ⇒ 在"四组之并"里数重数（对任意档数都成立，不必两两求交集）。
+    $rosterTaggedAll = @($rosterChecks + $rosterBufferJoin + $rosterOps + $rosterUnionPoly)
     $rosterBoth = @($rosterTaggedAll | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { [string]$_.Name })
     $rosterFullSorted = @($rosterFull | Sort-Object)
     $rosterChecksSorted = @($rosterChecks | Sort-Object)
-    $rosterOverlaySorted = @($rosterOverlay | Sort-Object)
+    $rosterBufferJoinSorted = @($rosterBufferJoin | Sort-Object)
+    $rosterOpsSorted = @($rosterOps | Sort-Object)
     $rosterUnionPolySorted = @($rosterUnionPoly | Sort-Object)
-    $rosterUnionSorted = @(($rosterChecksSorted + $rosterOverlaySorted + $rosterUnionPolySorted) | Sort-Object)
+    $rosterUnionSorted = @(($rosterChecksSorted + $rosterBufferJoinSorted + $rosterOpsSorted + $rosterUnionPolySorted) | Sort-Object)
 
-    # 第 4 条：无论成败先打四行机器可取的名单 ⇒ 判红那一轮也拿得到名单（键名与组名同为 ASCII）。
+    # 第 4 条：无论成败先打五行机器可取的名单 ⇒ 判红那一轮也拿得到名单（键名与组名同为 ASCII）。
     Write-Host ("GIS_CASE_ROSTER[full]: " + ($rosterFullSorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[checks]: " + ($rosterChecksSorted -join ","))
-    Write-Host ("GIS_CASE_ROSTER[overlay]: " + ($rosterOverlaySorted -join ","))
+    Write-Host ("GIS_CASE_ROSTER[overlay_buffer_join]: " + ($rosterBufferJoinSorted -join ","))
+    Write-Host ("GIS_CASE_ROSTER[overlay_ops]: " + ($rosterOpsSorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[union_poly]: " + ($rosterUnionPolySorted -join ","))
 
     # 第 1 条：Group 缺失（或取了 $rosterGroupNames 之外的值）的 full 用例 ⇒ 点名判红。
@@ -3005,7 +3021,7 @@ if ($Mode -eq "full") {
         "C3k group invariant: " + $rosterBoth.Count + " case name(s) got tagged into more than one group: " +
         ($rosterBoth -join ","))
 
-    # 第 3 条：三组之并与全量逐名不等 ⇒ 判红，消息里带四个名单与四个条数。
+    # 第 3 条：四组之并与全量逐名不等 ⇒ 判红，消息里带五个名单与五个条数。
     $rosterDiff = @()
     $rosterSlots = [Math]::Max($rosterUnionSorted.Count, $rosterFullSorted.Count)
     for ($i = 0; $i -lt $rosterSlots; $i++) {
@@ -3018,14 +3034,15 @@ if ($Mode -eq "full") {
         }
     }
     Assert-Condition -Condition ($rosterDiff.Count -eq 0) -Message (
-        "C3k group invariant: sort(checks)+sort(overlay)+sort(union_poly) != sort(full) at " + $rosterDiff.Count +
+        "C3k group invariant: sort(checks)+sort(overlay_buffer_join)+sort(overlay_ops)+sort(union_poly) != sort(full) at " + $rosterDiff.Count +
         " name slot(s): " + ($rosterDiff -join " | ") +
         " || full(" + $rosterFullSorted.Count + "): " + ($rosterFullSorted -join ",") +
         " || checks(" + $rosterChecksSorted.Count + "): " + ($rosterChecksSorted -join ",") +
-        " || overlay(" + $rosterOverlaySorted.Count + "): " + ($rosterOverlaySorted -join ",") +
+        " || overlay_buffer_join(" + $rosterBufferJoinSorted.Count + "): " + ($rosterBufferJoinSorted -join ",") +
+        " || overlay_ops(" + $rosterOpsSorted.Count + "): " + ($rosterOpsSorted -join ",") +
         " || union_poly(" + $rosterUnionPolySorted.Count + "): " + ($rosterUnionPolySorted -join ","))
 
-    # 本刀自己加的第 5 条：上面三条都抓不到"把某条 checks 腿的 Group 改成 overlay"——改档不动
+    # 本刀自己加的第 5 条：上面三条都抓不到"把某条 checks 腿的 Group 改成 overlay_buffer_join/overlay_ops"——改档不动
     # 各分组之并，第 1/2/3 条会照样绿（工单 §5 要求的正是这种破坏必须红）。checks 这一档的成员
     # 就是既有的 C3b-A 名单 $script:TopologyCheckCaseNames（它同时是判据分发的门禁，不是本轮
     # 新抄的名单），所以组标必须与它逐名相等，多一条少一条都红。
@@ -3038,7 +3055,7 @@ if ($Mode -eq "full") {
         (($script:TopologyCheckCaseNames | Sort-Object) -join ","))
 
     # C3h-3 加的第 6 条：第 5 条只钉得住 checks 那一档，第三条腿必须有同形的钉，否则
-    # "把 union_poly_focus 的 Group 改成 overlay"改不动三组之并 ⇒ 第 1/2/3/5 条全部照样绿，
+    # "把 union_poly_focus 的 Group 改成 overlay_buffer_join/overlay_ops"改不动四组之并 ⇒ 第 1/2/3/5 条全部照样绿，
     # 而这条腿的真实覆盖已经静默丢失（工单 §4.3 要求的正是这种破坏必须红并点名缺口）。
     # 名单同样不手抄第二份：$script:UnionPolyCaseNames 既是注册名单也是判据分发的门禁。
     $rosterUnionPolyExtra = @($rosterUnionPolySorted | Where-Object { $script:UnionPolyCaseNames -notcontains $_ })
@@ -3084,7 +3101,7 @@ Assert-Condition -Condition ($executedUnionPoly.Count -eq $script:UnionPolyAsser
 
 # summary_* 的落名：Group=all 时与拆分前逐字相同（summary_quick.* / summary_full.*，
 # 那两个文件名是 real_vector_regression / real_vector_regression_full 两个 custom target 的产物）；
-# 各分组腿各写自己那一份（summary_full_checks / _overlay / C3h-3 起的 _union_poly），免得后跑的档
+# 各分组腿各写自己那一份（summary_full_checks / _overlay_buffer_join / _overlay_ops / _union_poly），免得后跑的档
 # 顶着同一个文件名把前一档的用时记录覆盖掉。
 $summaryTag = $Mode
 if ($Group -ne "all") { $summaryTag = $Mode + "_" + $Group }

@@ -17,14 +17,15 @@
 #   不许凭 input_kind 推断"数据应该有"。
 #   批次 C C3b-A 现读事实（2026-10-22）：vector 拓扑/检查批 11 个动作的真实腿落在
 #   tests/run_real_vector_regression.ps1 的 Mode=full 分支的 Group=checks 那一半
-#   （⇒ ctest 用例 real_data_vector_checks；overlay 那一半是消费 roadsCore+allWindow 的叠加/分析族，
-#    两半之并由脚本内的 GIS_CASE_ROSTER 不变量对撞 ⇒ 批次 C C3k 把原 real_data_vector_full 拆成这两条），
+#   （⇒ ctest 用例 real_data_vector_checks；原 overlay 那一半是消费 roadsCore+allWindow 的叠加/分析族，
+#    两半之并由脚本内的 GIS_CASE_ROSTER 不变量对撞 ⇒ 批次 C C3k 把原 real_data_vector_full 拆成这两条；
+#    C3k-2 再把 overlay 那一半按"重活一分为二"拆成 overlay_buffer_join / overlay_ops，见下面那段），
 #   输入由脚本自己现造的派生件：w212（roads 3857 取 20×20 km 窗，212 条线）→ buf30（30 m 缓冲，212 个面）、
 #   prov3857（data/vector/中国_省.geojson 重投影，42 要素、图层声明 Unknown 的混合层）→ boundary →
 #   ring_endpoints（闭合环的首末点 ⇒ 悬空端点必然 0、重复点必然 >= 点数/2，这两条判据由构造给出）。
 #   派生件全部落 tmp/vector_benchmark/c3ba/，data/ 只被复制读（N115）。
 #   批次 C C3h-3 现读事实（2026-10-23）：vector,union 的两条实现路径各有真实腿 ⇒
-#   Group=overlay 的 union_focus 是**线 × 面**（路径 B，只写 input/both 两类块），
+#   Group=overlay_ops 的 union_focus 是**线 × 面**（路径 B，只写 input/both 两类块），
 #   Group=union_poly 的 union_poly_focus 是**面 × 面**（路径 A，三类互不重叠分块 input/both/overlay）；
 #   ctest 用例名 real_data_vector_union_poly（TIMEOUT 600 s = ceil(148.97×4/10)×10；148.97 是这条腿
 #   四跑里的最大现读，四跑为 143.39 / 144.46 单跑、148.97 与 143.22 全组轮 ⇒ "在全组里就更慢"这个说法
@@ -35,8 +36,18 @@
 #   （vector_plugin_common.inc:421-444），省层现读首要素是 MultiPolygon（首条线在 index 2）⇒ 今天落路径 A；
 #   本腿因此把"首个非空要素是面"写成断言，另由哨兵⑥（union_overlay_pieces>=1）在产物侧兜住。复制件落
 #   build/tmp/c3h3/，data/ 只被复制读。
-#   GIS_CASE_ROSTER 从三份名单变四份（full + checks + overlay + union_poly），三组之并 == full 且
-#   各档组标各自与自己的名单逐名相等（新增的第 6 条钉住 union_poly 那一档 ⇒ "把这条腿错归到别的档"必红）。
+#   批次 C C3k-2 现读事实（2026-10-24）：原 ctest 用例 real_data_vector_overlay（TIMEOUT 670 s）已拆成
+#   - real_data_vector_overlay_buffer_join（Group=overlay_buffer_join，15 条：buffer_quick 64.54 +
+#     spatial_join_focus 55.66 + 12 条 <=5 s 的几何派生/转换小用例 17.70 + vertices_line 14.63，
+#     现读合计 152.53 s；新 TIMEOUT 630 s = ceil(155.30×4/10)×10，155.30 是 Debug 三跑最大值）；
+#   - real_data_vector_overlay_ops（Group=overlay_ops，11 条：clip/difference/union/intersect 的
+#     focus/far/partial/stress，现读合计 104.40 s；新 TIMEOUT 430 s = ceil(105.25×4/10)×10，
+#     105.25 是 Debug 三跑最大值）。
+#   ⚠ 旧 670 s 那条已拆，读数留作对照：Debug 273.20 / 265.40 s ⇒ 670 ÷ 273.20 = 2.45× 跌破 2.5× 触发线；
+#     本刀没有抬任何已有 TIMEOUT（quick/checks/union_poly/raster/matching 原值不动），只给两条新腿按 >=4× 起步口径定值。
+#   GIS_CASE_ROSTER 从四份名单变五份（full + checks + overlay_buffer_join + overlay_ops + union_poly），
+#   四组之并 == full 且各档组标各自与自己的名单逐名相等（第 6 条钉住 union_poly 那一档 ⇒ "把这条腿错归到
+#   别的档"必红；第 7 条钉住"跑过数 == 判过数"）。
 classification,feature_stats,raster,not-consumed,real_regression,relation,C9,腿走合成兜底
 classification,svm_classify,raster+samples,synthetic,real_regression,relation,C9,夹具来源为启发式判定，开批前核对
 classification,random_forest_classify,raster+samples,synthetic,real_regression,relation,C9,夹具来源为启发式判定，开批前核对
