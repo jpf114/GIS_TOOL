@@ -52,9 +52,9 @@ gis::framework::Result VectorPlugin::doBuffer(
     GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
-    // Buffer output is user-facing analysis data; prefer the driver's native
-    // GeoPackage spatial index creation path over the fragile deferred SQL path.
     const bool useTransactions = false;
+    // 这里不向 CreateLayer 传任何图层选项（buildGpkgDriverIndexedLayerOptions 恒返回空），
+    // GeoPackage 空间索引由驱动在 FlushCache 时自行创建。
     std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
 

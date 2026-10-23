@@ -31,21 +31,6 @@ static std::unique_ptr<OGRGeometry> promoteGeometryToLayerType(
     return nullptr;
 }
 
-static bool writeUnionFeature(OGRLayer* layer, OGRGeometry* geom, const char* sourceValue) {
-    return writeGeometryFeature(layer, geom, [sourceValue](OGRFeature* feature) {
-        feature->SetField("source", sourceValue);
-    });
-}
-
-static bool writeUnionFeatureOwned(
-    OGRLayer* layer,
-    std::unique_ptr<OGRGeometry> geom,
-    const char* sourceValue) {
-    return writeGeometryFeatureOwned(layer, std::move(geom), [sourceValue](OGRFeature* feature) {
-        feature->SetField("source", sourceValue);
-    });
-}
-
 static bool writeGeometryFeature(
     OGRLayer* layer,
     OGRGeometry* geom,

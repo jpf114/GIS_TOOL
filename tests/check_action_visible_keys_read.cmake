@@ -54,9 +54,9 @@ set(GIS_21C_SHAPE_PROBE_CLOSERE "[*]/")
 # 与 GIS_21C_EXEMPTIONS 同一套自守思路：命中集合与这张表**双向**比对（多一条红、少一条也红），
 # 且条数相等 ⇒ 同一条字面量在同一个文件里被复制第二遍同样会红（不 dedup 计数）。
 # 键 = "<相对插件目录的文件路径>|<剥 // 并折叠空白后的整行>"；不用行号（行号会随无关改动漂移成假账）。
-# 今天全树的**一处**合法命中：vector_plugin_info_filter.inc:41 的 where.find("/*") —— 它是
+# 今天全树的**一处**合法命中：vector_plugin_info_filter.inc:93 的 where.find("/*") —— 它是
 #   **字符串字面量**（接收者是 std::string where），不是块注释起始符。另外两处候选都不命中：
-#   :40 的 where.find("--") 不含 /* 或 */；duplicate_point_check.inc:56-57 的 /** … */
+#   :92 的 where.find("--") 不含 /* 或 */；duplicate_point_check.inc:56-57 的 /** … */
 #   整行都在 // 注释里，剥 // 后只剩空白 ⇒ 被 if(NOT clean STREQUAL "") 挡在命中之外。
 #   实测取证：build/t21Fix_item12_green.log 的 block_comment_hits 与 build/t21Fix_blockscan.log。
 # ⚠ 这条表被 ③/② 抓过一次真红（本片的自查）：豁免表初版按"全树 2 处 /*"登记了 :40 与 :41 两条，
@@ -365,7 +365,7 @@ set(UNKNOWN_READER_HITS "")
 # 块注释命中**跨文件累积**（21-FixA C-1）。
 # 复位原来写在每文件循环体内（set(BLOCK_COMMENT FALSE)），而判定在所有循环之后（if(BLOCK_COMMENT)）
 # ⇒ 最终值只反映扫描序列里**最后一个文件**，前面 21 个插件目录、54 个文件里的一切块注释
-#   都被后续文件的复位抹掉：今天这条哨兵确实在 vector_plugin_info_filter.inc:41 触发过一次 TRUE，
+#   都被后续文件的复位抹掉：今天这条哨兵确实在 vector_plugin_info_filter.inc:93 触发过一次 TRUE，
 #   然后被后面的文件复位成 FALSE 而放过 ⇒ 守卫绿恰恰证明它在空转，而不是证明前提成立。
 # 改成累积清单 + 第 8 节与 GIS_21C_BLOCK_COMMENT_ALLOWLIST 双向比对（三向：成员、销账、条数）。
 set(BLOCK_HITS "")
@@ -390,7 +390,7 @@ foreach(pdir IN LISTS PLUGIN_SUBDIRS)
       set(clean "${l}")
       # 注释口径：**只**剥 // 到行尾。
       # WHY 不做 /* */ 状态机：src/plugins 全树实测只有 2 处 /*，且没有一处是块注释——
-      #   vector_plugin_info_filter.inc:41 是 where.find("/*") 这个**字符串字面量**，
+      #   vector_plugin_info_filter.inc:93 是 where.find("/*") 这个**字符串字面量**，
       #   vector_plugin_duplicate_point_check.inc:56 在一行 // 注释里。
       #   用状态机就会被前者把整篇文件当成注释吃掉：实测该文件切出 0 段、
       #   vector.doFilter/doInfo 的全部实读消失 ⇒ 5 条假红，而且是**静默**发生的。
