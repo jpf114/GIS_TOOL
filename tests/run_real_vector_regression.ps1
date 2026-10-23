@@ -4,10 +4,11 @@ param(
     [string]$OutputRoot = "",
     [ValidateSet("quick", "full")]
     [string]$Mode = "quick",
-    # Group 按"消费哪批派生件"划分两条真实腿（见 GIS_CASE_ROSTER 那段注释）。
+    # Group 按"消费哪批派生件"划分三条真实腿（见 GIS_CASE_ROSTER 那段注释）：
+    # checks = C3b-A 的拓扑/检查批，overlay = 叠加/分析族，union_poly = C3h-3 的 union 路径 A 腿。
     # 取 ValidateSet 而不是自由字符串：-GROUP 写错时要在参数绑定期就红，
     # 不许顺着下面的注册走到"一组都没匹配上 => 0 条用例 => 退出码 0"的假绿。
-    [ValidateSet("all", "checks", "overlay")]
+    [ValidateSet("all", "checks", "overlay", "union_poly")]
     [string]$Group = "all"
 )
 
@@ -16,7 +17,7 @@ if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Error
     $PSNativeCommandUseErrorActionPreference = $false
 }
 
-# quick 档不分档（24 条用例两半都跑，Group=all）：-GROUP 写成 checks/overlay 配 Mode=quick 会筛出
+# quick 档不分档（24 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay/union_poly 配 Mode=quick 会筛出
 # 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先判红。放在最顶上是为了在碰 data/ 与
 # tmp/ 之前就红（同 tests/run_real_vector_regression.cmake 里"参数写错要在绑定期红"那条口径）。
 if ($Mode -eq "quick" -and $Group -ne "all") {
@@ -1785,6 +1786,366 @@ function Assert-ChineseAttributeFilterCase {
     return $read
 }
 
+# ── C3h-3：union 路径 A（面 × 面）的真实数据腿 ──────────────────────────────────
+# 既有 union_focus 是线 × 面：源层为线、叠加侧全为面 ⇒ vector_plugin_overlay.inc:34-35 的
+#   usePracticalMixedUnion 为真 ⇒ 落路径 B；而路径 B 按契约不产出叠加面（同文件 210 行注释原文
+#   "union_overlay_pieces 在这一路恒为 0，那是契约不是缺陷"）⇒ 三类互不重叠分块的那条路径 A
+#   在真实数据回归里是 0 覆盖，只由合成夹具钉住（GOLD != 真实数据覆盖，口径见 docs/RELEASE.md N128）。
+# 本条腿的源层含面 ⇒ isLinearGeometryType(源) 为假 ⇒ 按同一条式子必然落路径 A。
+# 选材现读（两侧都是混合维度、同 EPSG:4490）：data/vector/中国_省 42 要素（34 MultiPolygon + 8
+#   MultiLineString）、data/vector/中国_市 388 要素（375 MultiPolygon + 13 MultiLineString）。
+#   喂给 CLI 的是 build/tmp/c3h3/ 里的复制件，data/ 全程只读（N115：边车只可能长在临时区）。
+# WHY 单独成一条注册用例（而不是挂进 overlay 那一半）：overlay 那一半现读 Debug 244.04 s / TIMEOUT 670 s
+#   = 2.75 倍余量，再塞进这条 135 s 级的腿会把该半压到 1.77 倍，跌破本仓 2.5 倍的拆腿触发线 ⇒ 拆第三条。
+# 判据六条，全部是不变式，没有一个数字是从本机产物抄来的：
+#   ① stdout 自报数 == 元数据 union_total_pieces == vector info 落盘读数（三段等式，同 C3f 的 ④ 口径）；
+#   ② union_input_pieces + union_overlap_pieces + union_overlay_pieces == union_total_pieces
+#      （实现 overlay.inc:177 自己声明的不变量，少一类或多一类都红）；
+#   ③ 按 source 值把落盘产物三类各数一遍：逐类现读数 == 对应元数据值，且三类之和 == 落盘总数
+#      ⇒ 把"记账"与"真写出去的行"焊死，并钉住 source 词表只有 input/both/overlay 这三类；
+#   ④ 分块数下界 union_total_pieces >= 源层"几何非空"的要素数（推导写在
+#      Test-GeoJsonGeometryNonEmpty 的函数头，这里不重复论证）；
+#   ⑤ 建表契约：输出字段数 == 源层字段数 + 叠加层字段数 + 1（附加的标记列）⇒ 两侧整表属性移交；
+#   ⑥ 覆盖哨兵 union_overlay_pieces >= 1：它是"这一路是路径 A"的**判据**（路径 B 恒为 0，见上面 210 行），
+#      它红不代表产品坏，代表这条腿的选材不再能覆盖路径 A ⇒ 届时换料重立，不许删判据、不许改成 >= 0。
+# ⚠ 不许写"期望 641"这类从本机产物抄来的数；不许把面积/坐标写进期望：两侧输入都是地理坐标系
+#   （EPSG:4490），面积单位是度²，只能用于减法记账，不进任何判据。
+
+function Test-GeoJsonGeometryNonEmpty {
+    param($Node)
+
+    # "几何非空"只问一件事：这棵几何树里有没有出现过坐标数字。OGR 的 IsEmpty() 对
+    #   Polygon/MultiPolygon/LineString/MultiLineString 的语义就是"一个点都没有"，所以本函数与实现里
+    #   `if (!geom || geom->IsEmpty()) continue;`（overlay.inc:353-355）跳过的正是同一批要素。
+    # 判据 ④ 的下界推导（源侧）：路径 A 对每条**几何非空**的源要素只有两种收尾 ——
+    #   (a) candidates 循环里第一次拿到非空交集时 consumed 仍为 null ⇒ piece = intersection->clone() 必非空
+    #       ⇒ 写出 >= 1 个 both 块（overlay.inc:370-392）；此后 consumed 才可能非空、后续 piece 才可能为空；
+    #   (b) 循环结束时 consumed 仍为 null ⇒ remainder = geom->clone() 必非空 ⇒ 写出 1 个 input 块
+    #       （overlay.inc:413-429；Difference 返 null 只可能发生在 consumed 非空那一支，即 (a) 已经写过块）。
+    #   ⇒ "每条几何非空的源要素至少贡献一块"，于是 total_pieces >= 源层非空要素数 永远成立。
+    # 下界为什么不从叠加侧取：叠加独有块允许为 0（叠加面被源面完全吞掉时 raw->IsEmpty() ⇒ 478-480 行
+    #   continue，那是契约不是缺口）⇒ 叠加侧给不出任何非平凡下界。
+    if ($null -eq $Node) { return $false }
+    if ($Node -is [int] -or $Node -is [long] -or $Node -is [double] -or $Node -is [single] -or $Node -is [decimal]) {
+        return $true
+    }
+    if ($Node -is [System.Collections.IEnumerable]) {
+        foreach ($child in $Node) {
+            if (Test-GeoJsonGeometryNonEmpty -Node $child) { return $true }
+        }
+        return $false
+    }
+    if ($Node -is [pscustomobject]) {
+        foreach ($prop in $Node.PSObject.Properties) {
+            # 只沿坐标所在的成员下钻（coordinates；GeometryCollection 用 geometries），
+            # 别的成员（type、crs、属性值）不参与"非空"判定。
+            if ($prop.Name -eq "coordinates" -or $prop.Name -eq "geometries") {
+                if (Test-GeoJsonGeometryNonEmpty -Node $prop.Value) { return $true }
+            }
+        }
+        return $false
+    }
+    return $false
+}
+
+function Get-GeoJsonGeometryHistogram {
+    param(
+        [string]$Path,
+        [string]$Label
+    )
+
+    # PS5.1 的 Get-Content 不带 -Encoding 按 ANSI 代码页解码，UTF-8 的中文属性值会把整段 JSON 读坏，
+    # 报出来的是"JSON 无效"这类假产品缺陷 ⇒ -Encoding UTF8 是这条腿的前提，不是风格问题（同 C3f 腿）。
+    $text = Get-Content -Path $Path -Raw -Encoding UTF8
+    Assert-Condition -Condition ($null -ne $text -and $text.Length -gt 0) -Message (
+        $Label + ": staged input copy read back empty: " + $Path)
+    $doc = $text | ConvertFrom-Json
+    Assert-Condition -Condition ($null -ne $doc.features) -Message (
+        $Label + ": GeoJSON has no features member: " + $Path)
+
+    $featureCount = 0
+    $nonEmptyCount = 0
+    $arealCount = 0
+    $linearCount = 0
+    $pointCount = 0
+    $otherCount = 0
+    $nullGeomCount = 0
+    $typeNames = @()
+    foreach ($feature in @($doc.features)) {
+        $featureCount++
+        $geometry = $feature.geometry
+        if ($null -eq $geometry) {
+            $nullGeomCount++
+            continue
+        }
+        $typeName = "<absent>"
+        if ($null -ne $geometry.type) { $typeName = [string]$geometry.type }
+        if ($typeNames -cnotcontains $typeName) { $typeNames += $typeName }
+        if ($typeName -match "Polygon") { $arealCount++ }
+        elseif ($typeName -match "LineString") { $linearCount++ }
+        elseif ($typeName -match "Point") { $pointCount++ }
+        else { $otherCount++ }
+        if (Test-GeoJsonGeometryNonEmpty -Node $geometry) { $nonEmptyCount++ }
+    }
+
+    Assert-Condition -Condition ($featureCount -gt 0) -Message (
+        $Label + ": the staged copy exposes 0 feature(s), so this leg would assert nothing")
+    # 逐维度分类之并必须等于要素数（抓"有一类没被上面四个分支认领"的漏计 ⇒ 下界与前提都建立在这套计数上）。
+    Assert-Condition -Condition (($arealCount + $linearCount + $pointCount + $otherCount + $nullGeomCount) -eq $featureCount) -Message (
+        $Label + ": dimension histogram " + $arealCount + "+" + $linearCount + "+" + $pointCount + "+" +
+        $otherCount + "+" + $nullGeomCount + " != feature count " + $featureCount)
+
+    return [pscustomobject]@{
+        FeatureCount = $featureCount
+        NonEmptyGeometryCount = $nonEmptyCount
+        ArealCount = $arealCount
+        LinearCount = $linearCount
+        PointCount = $pointCount
+        OtherCount = $otherCount
+        NullGeometryCount = $nullGeomCount
+        TypeHistogram = (($typeNames | Sort-Object) -join ",")
+    }
+}
+
+function Resolve-CityVectorInput {
+    param(
+        [string]$VectorDataRoot,
+        [string]$Label
+    )
+
+    Require-Path -Path $VectorDataRoot -Label "data/vector"
+
+    # 名字按码点拼而不写字面中文（同 Resolve-ProvinceVectorInput：本 .ps1 是无 BOM 的 UTF-8，
+    # PS5.1 的 -File 按 ANSI 代码页解源码，字面中文路径在这台机器上会变成乱码）。
+    $cityName = (-join @([char]0x4E2D, [char]0x56FD, [char]0x005F, [char]0x5E02)) + ".geojson"
+    $cityRaw = Join-Path $VectorDataRoot $cityName
+    # 叠加侧**不许**像省层那样退回"随便一个 geojson"：判据 ④ 与路径 A 的前提都只对着这一对图层成立，
+    # 换一个图层就把"面 × 面"悄悄变成别的组合 ⇒ 缺它就是红着说明。
+    Assert-Condition -Condition (Test-Path $cityRaw) -Message (
+        $Label + ": overlay input " + $cityName + " is absent from " + $VectorDataRoot +
+        " (this leg names both layers explicitly; silently swapping in another layer would void " +
+        "the path-A precondition and the piece-count lower bound)")
+
+    return $cityRaw
+}
+
+function Ensure-UnionPolyInputs {
+    param(
+        [string]$ResolvedCliPath,
+        [string]$ResolvedWorkspaceRoot,
+        [string]$ResolvedOutputRoot,
+        # 与 Ensure-TopologyCheckInputs 同形：不消费这批派生件的档只取路径来注册（名单不变量要从
+        # 全量注册里导），真跑那一半才造件；调用方在没造件时把 refs 置 $null，判据函数见到 $null 直接红。
+        [switch]$PathsOnly
+    )
+
+    # 边车落点：build/tmp/c3h3（data/ 旁边一个字节都不许写，N115）。
+    $scratchRoot = Join-Path $ResolvedWorkspaceRoot "build\tmp\c3h3"
+    $sourcePath = Join-Path $scratchRoot "union_source.geojson"
+    $overlayPath = Join-Path $scratchRoot "union_overlay.geojson"
+    $outputPath = Join-Path $ResolvedOutputRoot "union_poly_focus.gpkg"
+
+    if ($PathsOnly) {
+        return [pscustomobject]@{
+            ScratchRoot = $scratchRoot
+            SourcePath = $sourcePath
+            OverlayPath = $overlayPath
+            OutputPath = $outputPath
+            SourceStats = $null
+            OverlayStats = $null
+            SourceHistogram = $null
+            ExpectedFieldCount = $null
+            ClassOutputPaths = $null
+        }
+    }
+
+    # 复制件一律现造、不缓存（同 Ensure-TopologyCheckInputs 那条口径：缓存会让清过 build 的机器行为
+    # 不同，也会把这条腿的耗时估低 —— 而工单要求加完腿之后现跑现报它的墙钟并据此定 TIMEOUT）。
+    if (Test-Path $scratchRoot) {
+        Remove-Item -Recurse -Force $scratchRoot
+    }
+    New-Item -ItemType Directory -Force -Path $scratchRoot | Out-Null
+
+    $vectorDataRoot = Join-Path $ResolvedWorkspaceRoot "data\vector"
+    $sourceRaw = Resolve-ProvinceVectorInput -VectorDataRoot $vectorDataRoot -Label "union poly-poly leg"
+    $overlayRaw = Resolve-CityVectorInput -VectorDataRoot $vectorDataRoot -Label "union poly-poly leg"
+    # 两侧不许是同一个文件：自己并自己没有"叠加独有块"可言，判据 ③④ 会退化成同义反复。
+    Assert-Condition -Condition ($sourceRaw -cne $overlayRaw) -Message (
+        "union poly-poly leg: source and overlay resolve to the same file " + $sourceRaw)
+    Copy-Item $sourceRaw $sourcePath -Force
+    Copy-Item $overlayRaw $overlayPath -Force
+
+    $sourceStats = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $sourcePath -ScratchDir $scratchRoot
+    $overlayStats = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $overlayPath -ScratchDir $scratchRoot
+    $histogram = Get-GeoJsonGeometryHistogram -Path $sourcePath -Label "union poly-poly leg (source side)"
+
+    # 下界（判据 ④）要的是"实现真正遍历到的那批要素"，所以先把两个读法对撞：JSON 里的要素数
+    # 必须等于 vector info 报的 Features —— 两个读法不一致时下界不可信，先红在这里而不是红在判据上。
+    Assert-Condition -Condition ($histogram.FeatureCount -eq $sourceStats.FeatureCount) -Message (
+        "union poly-poly leg: the staged copy exposes " + $histogram.FeatureCount + " feature(s) in JSON but " +
+        "vector info reports Features: " + $sourceStats.FeatureCount + " (the two readers disagree, so the " +
+        "piece-count lower bound cannot be trusted)")
+    Assert-Condition -Condition ($histogram.NonEmptyGeometryCount -le $sourceStats.FeatureCount) -Message (
+        "union poly-poly leg: non-empty geometry count " + $histogram.NonEmptyGeometryCount +
+        " exceeds layer Features " + $sourceStats.FeatureCount)
+    # 判据 ④ 必须是非平凡的：源层一条非空几何都没有的话 "total >= 0" 就是恒真断言（本仓在消灭的那一类）。
+    Assert-Condition -Condition ($histogram.NonEmptyGeometryCount -ge 1) -Message (
+        "union poly-poly leg: source side has " + $histogram.NonEmptyGeometryCount + " feature(s) with a " +
+        "non-empty geometry (types [" + $histogram.TypeHistogram + "]), so the lower bound is vacuous")
+    # 路径 A 的**前提**（不是结论）：源层含面 ⇒ effectiveLayerGeometryType 不是线类型 ⇒ 34-35 行的式子落 A。
+    Assert-Condition -Condition ($histogram.ArealCount -ge 1) -Message (
+        "union poly-poly leg: source side has no areal geometry (types [" + $histogram.TypeHistogram +
+        "]), so isLinearGeometryType could be true and this leg would silently fall through path B " +
+        "instead of covering path A")
+    Assert-Condition -Condition ($overlayStats.FeatureCount -ge 1) -Message (
+        "union poly-poly leg: overlay side exposes Features: " + $overlayStats.FeatureCount)
+    # 判据 ⑤ 的两个加数都要在场：vector info 不打印 Fields 行时 FieldCount 是 null，
+    # 静默跳过 ⑤ 就是"没检查长得像检查通过"，所以在这里就红。
+    Assert-Condition -Condition ($null -ne $sourceStats.FieldCount -and $null -ne $overlayStats.FieldCount) -Message (
+        "union poly-poly leg: vector info exposed no Fields line for the staged inputs " +
+        "(source=" + [string]$sourceStats.FieldCount + ", overlay=" + [string]$overlayStats.FieldCount +
+        "), so the output field-count contract cannot be checked")
+
+    $expectedFieldCount = [int]$sourceStats.FieldCount + [int]$overlayStats.FieldCount + 1
+    $classOutputPaths = [ordered]@{
+        input   = Join-Path $scratchRoot "union_class_input.gpkg"
+        both    = Join-Path $scratchRoot "union_class_both.gpkg"
+        overlay = Join-Path $scratchRoot "union_class_overlay.gpkg"
+    }
+
+    # 现读取证打印（不参与判定）：两侧维度分布与 CRS 声明，红的时候不用重跑就知道是哪一侧变了料。
+    Write-Host ("  c3h3 leg: source features=" + $histogram.FeatureCount + " non-empty=" +
+        $histogram.NonEmptyGeometryCount + " areal=" + $histogram.ArealCount + " linear=" +
+        $histogram.LinearCount + " nullGeom=" + $histogram.NullGeometryCount + " types=[" +
+        $histogram.TypeHistogram + "] layerGeom=" + $sourceStats.Geometry + " fields=" +
+        $sourceStats.FieldCount + " | overlay features=" + $overlayStats.FeatureCount +
+        " layerGeom=" + $overlayStats.Geometry + " fields=" + $overlayStats.FieldCount +
+        " | expected output fields=" + $expectedFieldCount)
+
+    return [pscustomobject]@{
+        ScratchRoot = $scratchRoot
+        SourcePath = $sourcePath
+        OverlayPath = $overlayPath
+        OutputPath = $outputPath
+        SourceStats = $sourceStats
+        OverlayStats = $overlayStats
+        SourceHistogram = $histogram
+        ExpectedFieldCount = $expectedFieldCount
+        ClassOutputPaths = $classOutputPaths
+    }
+}
+
+# C3h-3 这一档的用例名单：注册、判据分发与 GIS_CASE_ROSTER 的第 6 条不变量共用同一份名单
+# ⇒ "进了一条没有判据分支的用例"与"把这条腿错归到别的档"都会当场红（同 $script:TopologyCheckCaseNames
+# 那条机制）。名单只有这一处，别处不抄第二份。
+$script:UnionPolyCaseNames = @(
+    "union_poly_focus"
+)
+
+function Assert-UnionPolyCase {
+    param(
+        [pscustomobject]$Case,
+        [string]$ResolvedCliPath,
+        [object]$Refs
+    )
+
+    Assert-Condition -Condition ($null -ne $Refs) -Message (
+        $Case.Name + ": the union path-A leg is registered but its input refs are missing " +
+        "(Ensure-UnionPolyInputs did not run for this Group) => every expectation would be vacuous")
+    Assert-Condition -Condition ($script:UnionPolyCaseNames -ccontains $Case.Name) -Message (
+        "Assert-UnionPolyCase got an unexpected case name: " + $Case.Name)
+
+    # ① 第一段：stdout 自报数 == 元数据 union_total_pieces（键取不到即红，整行锚定不吃前缀）。
+    $reported = Get-ReportedCount -Text $Case.Output -Pattern "Union completed: (\d+) features" `
+        -Label ($Case.Name + " stdout count")
+    $totalPieces = Get-ReportedMetadataCount -Text $Case.Output -Key "union_total_pieces" `
+        -Label ($Case.Name + " union_total_pieces")
+    Assert-Condition -Condition ($reported -eq $totalPieces) -Message (
+        $Case.Name + ": stdout says " + $reported + " features but metadata union_total_pieces says " +
+        $totalPieces)
+
+    $inputPieces = Get-ReportedMetadataCount -Text $Case.Output -Key "union_input_pieces" `
+        -Label ($Case.Name + " union_input_pieces")
+    $overlapPieces = Get-ReportedMetadataCount -Text $Case.Output -Key "union_overlap_pieces" `
+        -Label ($Case.Name + " union_overlap_pieces")
+    $overlayPieces = Get-ReportedMetadataCount -Text $Case.Output -Key "union_overlay_pieces" `
+        -Label ($Case.Name + " union_overlay_pieces")
+
+    # ② 三类之和 == 总数（实现 overlay.inc:177 自述的不变量）。
+    Assert-Condition -Condition (($inputPieces + $overlapPieces + $overlayPieces) -eq $totalPieces) -Message (
+        $Case.Name + ": union_input_pieces(" + $inputPieces + ") + union_overlap_pieces(" + $overlapPieces +
+        ") + union_overlay_pieces(" + $overlayPieces + ") != union_total_pieces(" + $totalPieces + ")")
+
+    # 产物可被打开、要素数 > 0，且落盘读数 == 记账 == 自报（① 的第三段）。
+    $read = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $Refs.OutputPath `
+        -ScratchDir $Refs.ScratchRoot
+    Assert-Condition -Condition ($read.FeatureCount -gt 0) -Message (
+        $Case.Name + ": output layer reads back " + $read.FeatureCount + " feature(s), expected more than 0")
+    Assert-Condition -Condition ($read.FeatureCount -eq $totalPieces) -Message (
+        $Case.Name + ": output layer reads back " + $read.FeatureCount + " feature(s) but metadata " +
+        "union_total_pieces says " + $totalPieces + " (written rows disagree with the accounting)")
+
+    # ④ 下界：非空源要素至少贡献一块（推导见 Test-GeoJsonGeometryNonEmpty 函数头）。
+    $lowerBound = [int]$Refs.SourceHistogram.NonEmptyGeometryCount
+    Assert-Condition -Condition ($totalPieces -ge $lowerBound) -Message (
+        $Case.Name + ": union_total_pieces " + $totalPieces + " < lower bound " + $lowerBound +
+        " (= source-side features with a non-empty geometry, " + $Refs.SourceHistogram.FeatureCount +
+        " feature(s) of which " + $Refs.SourceHistogram.NullGeometryCount + " carry a null geometry);" +
+        " every non-empty source feature must contribute at least one piece")
+
+    # ⑥ 覆盖哨兵：路径 A 的判据（路径 B 契约上恒为 0）。
+    Assert-Condition -Condition ($overlayPieces -ge 1) -Message (
+        $Case.Name + ": union_overlay_pieces " + $overlayPieces + " < 1, so this run produced no " +
+        "overlay-only piece. Path B never writes any (overlay.inc:210), so either this leg silently fell " +
+        "back to path B or the chosen pair no longer leaves any overlay-only area. Either way the leg has " +
+        "lost path A coverage: re-choose the input pair, do not delete this assertion.")
+
+    # ③ 三类逐类现读：source 值 → 该类的元数据值。落盘读数只取 Features 行
+    #   （某类今天 0 行时 vector info 不打印 Extent 行，走 Get-LayerStats 会红在读取器上而不是红在判据上）。
+    $classExpected = [ordered]@{
+        input   = $inputPieces
+        both    = $overlapPieces
+        overlay = $overlayPieces
+    }
+    $classSum = 0
+    foreach ($classValue in @($classExpected.Keys)) {
+        $expected = [int]$classExpected[$classValue]
+        $classPath = [string]$Refs.ClassOutputPaths[$classValue]
+        $filterText = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+            "vector", "filter",
+            ("--input=" + $Refs.OutputPath),
+            ("--output=" + $classPath),
+            ("--where=source='" + $classValue + "'")
+        )
+        $filterSelfReport = Get-ReportedCount -Text $filterText `
+            -Pattern "Filter completed: (\d+) features written" `
+            -Label ($Case.Name + " class " + $classValue + " filter self-report")
+        $diskCount = Get-LayerFeatureCount -ResolvedCliPath $ResolvedCliPath -Path $classPath `
+            -ScratchDir $Refs.ScratchRoot
+        Assert-Condition -Condition ($filterSelfReport -eq $diskCount) -Message (
+            $Case.Name + ": class " + $classValue + " filter says " + $filterSelfReport +
+            " but the written layer reads back " + $diskCount)
+        Assert-Condition -Condition ($diskCount -eq $expected) -Message (
+            $Case.Name + ": class " + $classValue + " has " + $diskCount + " row(s) on disk but metadata " +
+            "says " + $expected + " (the source column disagrees with the piece accounting)")
+        $classSum += $diskCount
+    }
+    # 三类之并 == 落盘总数 ⇒ source 词表没有第四类取值、也没有留 NULL 的行。
+    Assert-Condition -Condition ($classSum -eq $read.FeatureCount) -Message (
+        $Case.Name + ": classes sum to " + $classSum + " but the output layer has " + $read.FeatureCount +
+        " feature(s) => some rows carry a source value outside input/both/overlay (or NULL)")
+
+    # ⑤ 建表契约：源字段 + 叠加字段 + 标记列（撞名让位只会改名、不会少列）。
+    Assert-Condition -Condition ($null -ne $read.FieldCount) -Message (
+        $Case.Name + ": vector info exposed no Fields line for the output, so the field contract was skipped")
+    Assert-Condition -Condition ($read.FieldCount -eq $Refs.ExpectedFieldCount) -Message (
+        $Case.Name + ": output has " + $read.FieldCount + " field(s), expected " + $Refs.ExpectedFieldCount +
+        " (= source " + $Refs.SourceStats.FieldCount + " + overlay " + $Refs.OverlayStats.FieldCount +
+        " + 1 marker column)")
+
+    return $read
+}
+
 function Validate-CaseOutputs {
     param(
         [pscustomobject]$Case,
@@ -1793,7 +2154,8 @@ function Validate-CaseOutputs {
         [int]$InputFeatureCount,
         [object]$DerivedRefs,
         [object]$TopologyRefs,
-        [object]$ChineseFilterRefs
+        [object]$ChineseFilterRefs,
+        [object]$UnionPolyRefs
     )
 
     # 期望值一律由输入图层自己的要素数推出，不写死常量。
@@ -1821,6 +2183,11 @@ function Validate-CaseOutputs {
         "union_focus" {
             $unionCount = Get-ReportedCount -Text $Case.Output -Pattern "Union completed: (\d+) features" -Label "union_focus"
             Assert-Condition -Condition ($unionCount -ge $InputFeatureCount) -Message ("union_focus: reported " + $unionCount + ", expected at least " + $InputFeatureCount)
+        }
+        # ── C3h-3：union 路径 A（面 × 面）的真实数据腿（判据与下界推导见 Assert-UnionPolyCase 上方注释块）──
+        # 与上面的 union_focus 同名单不同判据：union_focus 是线 × 面（路径 B），这条是面 × 面（路径 A）。
+        "union_poly_focus" {
+            Assert-UnionPolyCase -Case $Case -ResolvedCliPath $ResolvedCliPath -Refs $UnionPolyRefs | Out-Null
         }
         "clip_far" {
             Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected 0 -Label "clip_far"
@@ -2232,18 +2599,22 @@ Write-BboxGeojson -Path $farWindow -Box $farBox -Label "win_far"
 Write-BboxGeojson -Path $partialWindow -Box $partialBox -Label "win_partial"
 
 # ── C3k：档（Group）与造件闸门 ────────────────────────────────────────────────
-# 拆成两条注册用例之后，每一半只造自己消费的派生件：checks 消费 w212/buf30/prov3857/
+# 拆成多条注册用例之后，每一档只造自己消费的派生件：checks 消费 w212/buf30/prov3857/
 # province_boundary/ring_endpoints（Ensure-TopologyCheckInputs），overlay 消费 roadsCore +
-# allWindow 这批早于它就造好的件与 C3a/C3f 的切片、省层复制件（Ensure-DerivedGeometryInputs）。
-# 两半都**照常注册全部用例**（名单不变量要从完整 $cases 导全量，见下面 GIS_CASE_ROSTER 那段），
+# allWindow 这批早于它就造好的件与 C3a/C3f 的切片、省层复制件（Ensure-DerivedGeometryInputs），
+# union_poly（C3h-3 加的第三条腿）只消费 build/tmp/c3h3/ 里那两个省/市复制件。
+# 各档都**照常注册全部用例**（名单不变量要从完整 $cases 导全量，见下面 GIS_CASE_ROSTER 那段），
 # 过滤只发生在派发那一步。
-# quick 档不分档（24 条用例两半都跑，Group=all）：-GROUP 写成 checks/overlay 配 Mode=quick
+# quick 档不分档（24 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay/union_poly 配 Mode=quick
 # 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先把它判红。
 if ($Mode -eq "quick" -and $Group -ne "all") {
     throw ("Mode=quick has no group split: pass -Group all (got Mode=" + $Mode + " Group=" + $Group + ")")
 }
 $buildOverlayInputs = ($Group -eq "all" -or $Group -eq "overlay")
 $buildCheckInputs = ($Mode -eq "full") -and ($Group -eq "all" -or $Group -eq "checks")
+# C3h-3：第三条腿只消费自己的两个复制件（build/tmp/c3h3/），所以造件闸门同形；
+# 它整批只在 Mode=full 注册 ⇒ quick 档（real_data_vector_quick，TIMEOUT 720 s）不会被这条 135 s 级的腿压穿。
+$buildUnionPolyInputs = ($Mode -eq "full") -and ($Group -eq "all" -or $Group -eq "union_poly")
 
 $cases = @()
 $cases += New-Case -Name "buffer_quick" -Group "overlay" -CaseArgs @(
@@ -2431,6 +2802,9 @@ $cases += New-Case -Name "filter_cn_attribute" -Group "overlay" -CaseArgs @(
 # 那一档）⇒ 先置 $null，让"用例被单独抽出来跑"落在 Assert-TopologyCheckCase 的显式判红上，
 # 而不是变量不存在。下面按档置空的那一步与这条判红是同一件事。
 $topologyRefs = $null
+# C3h-3 同形：union 路径 A 那条腿（1 条用例，归 real_data_vector_union_poly 那一档）在别的档里只取路径注册，
+# 没造复制件时置 $null ⇒ 归错档却真跑起来会红在 Assert-UnionPolyCase 的 null 判据上。
+$unionPolyRefs = $null
 
 if ($Mode -eq "full") {
     $cases += New-Case -Name "clip_stress" -Group "overlay" -CaseArgs @(
@@ -2509,6 +2883,23 @@ if ($Mode -eq "full") {
     $cases += New-CheckCase -Name "nearest_w212_self" -Action "nearest" `
         -InputPath $topologyRefs.LineWindow -OutputPath ([string]$c3baOutputs["nearest_self"]) `
         -ExtraArgs @(("--nearest_vector=" + $topologyRefs.LineWindow))
+
+    # ── C3h-3：union 路径 A（面 × 面）的真实数据腿（1 条用例，归 real_data_vector_union_poly 那一档）──
+    # 判据六条与分块数下界的推导都写在 Ensure-UnionPolyInputs / Assert-UnionPolyCase 上方的注释块里。
+    # 只在 Mode=full 注册：real_data_vector_quick（TIMEOUT 720 s，现读 236.47 s ⇒ 3.05 倍）不注册这条腿，
+    # 否则 quick 那一半会被这条 135 s 级的腿压到 1.94 倍，同样跌破拆腿触发线。
+    # 其余两档只取路径注册（-PathsOnly），不替这条腿造复制件；见函数头的说明。
+    $unionPolyRefs = Ensure-UnionPolyInputs -ResolvedCliPath $ResolvedCliPath `
+        -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -ResolvedOutputRoot $ResolvedOutputRoot `
+        -PathsOnly:(-not $buildUnionPolyInputs)
+    $cases += New-Case -Name "union_poly_focus" -Group "union_poly" -CaseArgs @(
+        "vector", "union",
+        ("--input=" + $unionPolyRefs.SourcePath),
+        ("--overlay_vector=" + $unionPolyRefs.OverlayPath),
+        ("--output=" + $unionPolyRefs.OutputPath)
+    ) -ExpectedOutputs @(
+        $unionPolyRefs.OutputPath
+    )
 }
 
 # C3b-A 的跨臂现读数：全部初始化为 -1（"还没跑"），消费侧的守卫判 -ge 0 ⇒
@@ -2523,47 +2914,62 @@ $script:C3baSliverLowFeatures = -1
 
 # 名单与注册表对撞（正向）：名单里的每一条都必须真的注册成用例；quick 档整批不注册 ⇒ 只在 full 档核条数。
 # 反向的"进了名单却没有判据分支"由 Assert-TopologyCheckCase 的 default 负责，两侧都堵住才是闭环。
-# C3k 拆腿之后这条判据两半都跑（注册永远是全量，过滤只发生在派发）⇒ "18 条 checks 腿都注册了"
+# C3k 拆腿之后这条判据每一档都跑（注册永远是全量，过滤只发生在派发）⇒ "18 条 checks 腿都注册了"
 # 在任何一半里单独都判得出来，不必把两个进程的输出凑起来才看得见。
 if ($Mode -eq "full") {
     $registered = @($cases | Where-Object { $script:TopologyCheckCaseNames -contains $_.Name })
     Assert-Condition -Condition ($registered.Count -eq $script:TopologyCheckCaseNames.Count) -Message (
         "C3b-A roster has " + $script:TopologyCheckCaseNames.Count + " name(s), but " + $registered.Count + " case(s) got registered")
+
+    # C3h-3 同形的正向对撞：union 路径 A 名单里的每一条都必须真的注册成用例（反向由
+    # Assert-UnionPolyCase 开头的名单门禁负责 ⇒ 两侧都堵住才是闭环，同上面 C3b-A 那两条）。
+    $registeredUnionPoly = @($cases | Where-Object { $script:UnionPolyCaseNames -contains $_.Name })
+    Assert-Condition -Condition ($registeredUnionPoly.Count -eq $script:UnionPolyCaseNames.Count) -Message (
+        "C3h-3 roster has " + $script:UnionPolyCaseNames.Count + " name(s), but " + $registeredUnionPoly.Count +
+        " case(s) got registered")
 }
 
-# ── C3k：两半之并 == 拆分前的全量（本刀承重判据，只在 Mode=full 启用）───────────────
-# 三份名单一律由脚本自己导：full = 当前 $cases 里 Mode=full 注册进来的全部用例名，
-# checks/overlay = 每条用例注册时打的组标。手抄一份名单进脚本等于没写这条判据
-# （本仓出过"手抄名单漂移 ⇒ 新条目不被断言"的事故），所以这里不写任何名单字面量。
-# WHY 两半各自都算完整的三份：注册永远是全量，所以任何一半单独跑都能判出"档被拆坏了"。
+# ── C3k：各分组之并 == 拆分前的全量（本刀承重判据，只在 Mode=full 启用）───────────────
+# 名单一律由脚本自己导：full = 当前 $cases 里 Mode=full 注册进来的全部用例名，
+# checks/overlay/union_poly = 每条用例注册时打的组标。手抄一份名单进脚本等于没写这条判据
+# （本仓出过"手抄名单漂移 ⇒ 新条目不被断言"的事故），所以这里不写任何组内名单字面量。
+# WHY 各档各自都算完整的全套：注册永远是全量，所以任何一半单独跑都能判出"档被拆坏了"。
 if ($Mode -eq "full") {
+    # 组名只写这一处：ValidateSet（param 里那份）之外，下面的导名单、判红消息都从这个数组来，
+    # 加第四档时不必再逐条改判据（C3h-3 就是把两两交集换成"按重数数"的同一条式子才做到的）。
+    $rosterGroupNames = @("checks", "overlay", "union_poly")
     $rosterFull = @($cases | ForEach-Object { $_.Name })
     $rosterChecks = @($cases | Where-Object { $_.Group -eq "checks" } | ForEach-Object { $_.Name })
     $rosterOverlay = @($cases | Where-Object { $_.Group -eq "overlay" } | ForEach-Object { $_.Name })
-    $rosterUngrouped = @($cases | Where-Object { $_.Group -ne "checks" -and $_.Group -ne "overlay" } |
+    $rosterUnionPoly = @($cases | Where-Object { $_.Group -eq "union_poly" } | ForEach-Object { $_.Name })
+    $rosterUngrouped = @($cases | Where-Object { $rosterGroupNames -cnotcontains $_.Group } |
         ForEach-Object { $_.Name + " (Group=[" + [string]$_.Group + "])" })
-    $rosterBoth = @($rosterChecks | Where-Object { $rosterOverlay -contains $_ })
+    # 不重：同一条腿被两个组同时认领 ⇒ 在"三组之并"里数重数（对任意档数都成立，不必两两求交集）。
+    $rosterTaggedAll = @($rosterChecks + $rosterOverlay + $rosterUnionPoly)
+    $rosterBoth = @($rosterTaggedAll | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { [string]$_.Name })
     $rosterFullSorted = @($rosterFull | Sort-Object)
     $rosterChecksSorted = @($rosterChecks | Sort-Object)
     $rosterOverlaySorted = @($rosterOverlay | Sort-Object)
-    $rosterUnionSorted = @(($rosterChecksSorted + $rosterOverlaySorted) | Sort-Object)
+    $rosterUnionPolySorted = @($rosterUnionPoly | Sort-Object)
+    $rosterUnionSorted = @(($rosterChecksSorted + $rosterOverlaySorted + $rosterUnionPolySorted) | Sort-Object)
 
-    # 第 4 条：无论成败先打三行机器可取的名单 ⇒ 判红那一轮也拿得到名单（键名与组名同为 ASCII）。
+    # 第 4 条：无论成败先打四行机器可取的名单 ⇒ 判红那一轮也拿得到名单（键名与组名同为 ASCII）。
     Write-Host ("GIS_CASE_ROSTER[full]: " + ($rosterFullSorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[checks]: " + ($rosterChecksSorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[overlay]: " + ($rosterOverlaySorted -join ","))
+    Write-Host ("GIS_CASE_ROSTER[union_poly]: " + ($rosterUnionPolySorted -join ","))
 
-    # 第 1 条：Group 缺失（或取了 checks/overlay 之外的值）的 full 用例 ⇒ 点名判红。
+    # 第 1 条：Group 缺失（或取了 $rosterGroupNames 之外的值）的 full 用例 ⇒ 点名判红。
     Assert-Condition -Condition ($rosterUngrouped.Count -eq 0) -Message (
         "C3k group invariant: " + $rosterUngrouped.Count + " Mode=full case(s) carry no valid Group " +
-        "(each case must be tagged checks or overlay): " + ($rosterUngrouped -join "; "))
+        "(each case must be tagged one of " + ($rosterGroupNames -join "/") + "): " + ($rosterUngrouped -join "; "))
 
-    # 第 2 条：同一名字同时进两半 ⇒ 判红。
+    # 第 2 条：同一名字同时进两个及以上分组 ⇒ 判红。
     Assert-Condition -Condition ($rosterBoth.Count -eq 0) -Message (
-        "C3k group invariant: " + $rosterBoth.Count + " case name(s) got tagged into both halves: " +
+        "C3k group invariant: " + $rosterBoth.Count + " case name(s) got tagged into more than one group: " +
         ($rosterBoth -join ","))
 
-    # 第 3 条：两半之并与全量逐名不等 ⇒ 判红，消息里带三个名单与三个条数。
+    # 第 3 条：三组之并与全量逐名不等 ⇒ 判红，消息里带四个名单与四个条数。
     $rosterDiff = @()
     $rosterSlots = [Math]::Max($rosterUnionSorted.Count, $rosterFullSorted.Count)
     for ($i = 0; $i -lt $rosterSlots; $i++) {
@@ -2576,14 +2982,15 @@ if ($Mode -eq "full") {
         }
     }
     Assert-Condition -Condition ($rosterDiff.Count -eq 0) -Message (
-        "C3k group invariant: sort(checks)+sort(overlay) != sort(full) at " + $rosterDiff.Count +
+        "C3k group invariant: sort(checks)+sort(overlay)+sort(union_poly) != sort(full) at " + $rosterDiff.Count +
         " name slot(s): " + ($rosterDiff -join " | ") +
         " || full(" + $rosterFullSorted.Count + "): " + ($rosterFullSorted -join ",") +
         " || checks(" + $rosterChecksSorted.Count + "): " + ($rosterChecksSorted -join ",") +
-        " || overlay(" + $rosterOverlaySorted.Count + "): " + ($rosterOverlaySorted -join ","))
+        " || overlay(" + $rosterOverlaySorted.Count + "): " + ($rosterOverlaySorted -join ",") +
+        " || union_poly(" + $rosterUnionPolySorted.Count + "): " + ($rosterUnionPolySorted -join ","))
 
     # 本刀自己加的第 5 条：上面三条都抓不到"把某条 checks 腿的 Group 改成 overlay"——改档不动
-    # 两半之并，第 1/2/3 条会照样绿（工单 §5 要求的正是这种破坏必须红）。checks 这一半的成员
+    # 各分组之并，第 1/2/3 条会照样绿（工单 §5 要求的正是这种破坏必须红）。checks 这一档的成员
     # 就是既有的 C3b-A 名单 $script:TopologyCheckCaseNames（它同时是判据分发的门禁，不是本轮
     # 新抄的名单），所以组标必须与它逐名相等，多一条少一条都红。
     $rosterChecksExtra = @($rosterChecksSorted | Where-Object { $script:TopologyCheckCaseNames -notcontains $_ })
@@ -2593,15 +3000,29 @@ if ($Mode -eq "full") {
         "from roster: " + ($rosterChecksExtra -join ",") + " || in roster but not tagged checks: " +
         ($rosterChecksMissing -join ",") + " || roster(" + $script:TopologyCheckCaseNames.Count + "): " +
         (($script:TopologyCheckCaseNames | Sort-Object) -join ","))
+
+    # C3h-3 加的第 6 条：第 5 条只钉得住 checks 那一档，第三条腿必须有同形的钉，否则
+    # "把 union_poly_focus 的 Group 改成 overlay"改不动三组之并 ⇒ 第 1/2/3/5 条全部照样绿，
+    # 而这条腿的真实覆盖已经静默丢失（工单 §4.3 要求的正是这种破坏必须红并点名缺口）。
+    # 名单同样不手抄第二份：$script:UnionPolyCaseNames 既是注册名单也是判据分发的门禁。
+    $rosterUnionPolyExtra = @($rosterUnionPolySorted | Where-Object { $script:UnionPolyCaseNames -notcontains $_ })
+    $rosterUnionPolyMissing = @($script:UnionPolyCaseNames | Where-Object { $rosterUnionPolySorted -notcontains $_ })
+    Assert-Condition -Condition ($rosterUnionPolyExtra.Count -eq 0 -and $rosterUnionPolyMissing.Count -eq 0) -Message (
+        "C3h-3 group invariant: Group=union_poly disagrees with the C3h-3 roster || tagged union_poly but " +
+        "absent from roster: " + ($rosterUnionPolyExtra -join ",") + " || in roster but not tagged union_poly: " +
+        ($rosterUnionPolyMissing -join ",") + " || roster(" + $script:UnionPolyCaseNames.Count + "): " +
+        (($script:UnionPolyCaseNames | Sort-Object) -join ",") + " || tagged union_poly(" +
+        $rosterUnionPolySorted.Count + "): " + ($rosterUnionPolySorted -join ","))
 }
 
 # 本档不消费的派生件没有真的造出来 ⇒ 传给判据的 refs 置 $null（而不是"有路径、没现读属性"的
-# 半成品对象）：某条腿被归错档却真跑起来时，红在下面那三处同形的 null 判据上，
+# 半成品对象）：某条腿被归错档却真跑起来时，红在下面那四处同形的 null 判据上，
 # 而不是拿 $null 的属性比较蒙成绿。
 if (-not $buildOverlayInputs) { $derivedRefs = $null }
 if (-not $buildCheckInputs) { $topologyRefs = $null }
+if (-not $buildUnionPolyInputs) { $unionPolyRefs = $null }
 
-# 按档过滤：只决定"跑哪些"，不决定"注册哪些"（上面那三份名单要从全量注册里导）。
+# 按档过滤：只决定"跑哪些"，不决定"注册哪些"（上面那几份名单要从全量注册里导）。
 $runCases = @($cases)
 if ($Group -ne "all") {
     $runCases = @($cases | Where-Object { $_.Group -eq $Group })
@@ -2612,13 +3033,14 @@ Assert-Condition -Condition ($runCases.Count -gt 0) -Message (
 $results = @()
 foreach ($case in $runCases) {
     $result = Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
-    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs
+    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs -UnionPolyRefs $unionPolyRefs
     $results += $result
 }
 
 # summary_* 的落名：Group=all 时与拆分前逐字相同（summary_quick.* / summary_full.*，
 # 那两个文件名是 real_vector_regression / real_vector_regression_full 两个 custom target 的产物）；
-# 两条新腿各写自己那一份，免得后跑的一半顶着同一个文件名把前一半的用时记录覆盖掉。
+# 各分组腿各写自己那一份（summary_full_checks / _overlay / C3h-3 起的 _union_poly），免得后跑的档
+# 顶着同一个文件名把前一档的用时记录覆盖掉。
 $summaryTag = $Mode
 if ($Group -ne "all") { $summaryTag = $Mode + "_" + $Group }
 $summaryJsonPath = Join-Path $ResolvedOutputRoot ("summary_" + $summaryTag + ".json")
