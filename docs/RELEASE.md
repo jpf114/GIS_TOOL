@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 730 / Release 728**（2026-10-23 批次 C C3l 收口轮现读；上一档 724 / 722 是同日 C3h-2/C3h-1b，再上一档 723 / 721 是 N122，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 731 / Release 729**（2026-10-23 批次 C C3h-3 收口轮现读；上一档 730 / 728 是同日 C3l，再上一档 724 / 722 是 C3h-2/C3h-1b，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,10 +297,9 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 730 / Release 728**（2026-10-23 批次 C C3l 收口轮现读；相比上一档 724 / 722 **+6** = C3l 的六条
-  `PluginTest.Vector{Buffer,Clip,Dissolve,Union,Difference,Intersect}GpkgSpatialIndexIsPopulated`（逐名比对，删除 0 条，
-  两树名单差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空，快照 `build/tmp/c3l2_names_{debug,release}.txt`）；
-  上一档 724 / 722 是 C3h-2 收口轮（C3h-1b 复验同值——那一刀只翻登记表一行的状态列，不增删用例）；
+- **现行基线**：`ctest -N` 注册数 **Debug 731 / Release 729**（2026-10-23 批次 C C3h-3 收口轮现读；相比上一档 730 / 728 **+1** = C3h-3 的 `real_data_vector_union_poly`
+  （逐名比对，删除 0 条；两树差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空，快照 `build/tmp/c3h3_final_names_{debug,release}.txt`）；
+  上一档 730 / 728 是 C3l（+6 = 六条 `PluginTest.Vector*GpkgSpatialIndexIsPopulated`）；再上一档 724 / 722 是 C3h-2 收口轮（C3h-1b 复验同值——那一刀只翻登记表一行的状态列，不增删用例）；
   相比再上一档 723 / 721 **+1** = C3h-2 的 `PluginTest.VectorUnionMixedDimensionCarriesAttributesPerPiece`；再上一档 722 / 720 的 +1 = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
   由两刀合成：C3k 把一条 `real_data_vector_full` 换成 `checks`/`overlay` 两条（−1+2 = **+1**），
   C3i 新增 `PluginTest.VectorBufferRejectsMissingSrs` 与 `PluginTest.VectorDissolveRejectsMissingSrs`（**+2**）。
@@ -382,8 +381,8 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **730** | **939.02 s**（批次 C C3l 收口轮现跑，`build/tmp/c3l2_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 730 条**首档**；同一批用例在 C3l 首轮（含 `param_guard` 一红）是 **982.18 s**（`build/tmp/c3l_close_dbg.log`，729/730）；再往前十二档（697~724 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 / 875.64 / 865.12 s** | 最慢 `real_data_vector_overlay` **244.04 s** ⇒ 670 ÷ 244.04 = **2.75×**；次 `real_data_vector_quick` **215.11 s** ⇒ 720 ÷ 215.11 = **3.35×**；`real_data_vector_checks` **35.72 s** ⇒ 100 ÷ 35.72 = **2.80×**；`source_mojibake_guard` **12.74 s** ⇒ 300 ÷ 12.74 = **23.5×**（上界取 `GIS_TEST_TIMEOUT`，`tests/CMakeLists.txt:157`） |
-| Release | **728** | **436.46 s**（同一轮紧随其后跑，`build/tmp/c3l2_close_rel.log`；**728/728 全绿**） | 728 条**首档**；C3l 首轮（含 `param_guard` 一红）是 **479.64 s**（727/728）；再往前十一档（695~722 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 / 449.02 / 463.39 s** | 最慢 `real_data_vector_overlay` **99.54 s** ⇒ 670 ÷ 99.54 = **6.73×**；`real_data_vector_quick` **87.34 s** ⇒ 720 ÷ 87.34 = **8.24×**；`real_data_vector_checks` **19.21 s** ⇒ 100 ÷ 19.21 = **5.21×**；`source_mojibake_guard` **12.30 s** ⇒ **24.4×** |
+| Debug | **731** | **1083.87 s**（批次 C C3h-3 收口轮现跑，`build/tmp/c3h3_final_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 731 条**首档**；再往前十三档（697~730 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 / 875.64 / 865.12 / 939.02 s**（730 那一档另有 982.18 s 的一红轮） | 最慢 `real_data_vector_quick` **264.41 s** ⇒ 720 ÷ 264.41 = **2.72×**；次 `real_data_vector_overlay` **231.12 s** ⇒ 670 ÷ 231.12 = **2.90×**；新腿 `real_data_vector_union_poly` **138.05 s** ⇒ 600 ÷ 138.05 = **4.35×**；`real_data_vector_checks` **32.09 s** ⇒ 100 ÷ 32.09 = **3.12×**；`source_mojibake_guard` **12.82 s** ⇒ 300 ÷ 12.82 = **23.4×**（上界取 `GIS_TEST_TIMEOUT`，`tests/CMakeLists.txt:157`） |
+| Release | **729** | **436.88 s**（同一轮紧随其后跑，`build/tmp/c3h3_final_rel.log`；**729/729 全绿**） | 729 条**首档**；再往前十二档（695~728 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 / 449.02 / 463.39 / 436.46 s** | 最慢 `real_data_vector_overlay` **100.41 s** ⇒ 670 ÷ 100.41 = **6.67×**；`real_data_vector_quick` **93.26 s** ⇒ 720 ÷ 93.26 = **7.72×**；新腿 `real_data_vector_union_poly` **22.38 s** ⇒ 600 ÷ 22.38 = **26.8×**；`real_data_vector_checks` **17.71 s** ⇒ **5.65×** |
 ⚠ **`overlay` 那一半的"在涨"已经证否——同码双读拿到了**：C3h-1b 与 C3h-2 之间**代码一行没改**（只翻了登记表状态列），
 于是这一档天然成了"同码双跑"：Debug overlay 242.12 → **242.40 s**（差 0.28 s，很紧），
 Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）；同轮 quick Release 116.95 → 115.76、checks 17.12 → 17.66。
@@ -465,7 +464,7 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     两棵树各 **30/30** 绿。全量：Debug `100% tests passed, 0 tests failed out of 722`（**916.43 s**，全绿）；
     Release **719/720**——唯一红是 `runtime_dll_cross_config_audit`（**N136**，见下面挂账），与 C3i 代码路径无关。
     注册数 720→722 / 718→720。
-  - **批次 C N122 收口轮**（本表现值，产品修复 N122）：树上多了 `10fe182`（helper + 8 内联 + 24 处扩展名判定
+  - **批次 C N122 收口轮**（当时那一档，产品修复 N122）：树上多了 `10fe182`（helper + 8 内联 + 24 处扩展名判定
     全部改 `fs::u8path`；新增中文路径边车用例）。全量：Debug `100% tests passed, 0 tests failed out of 723`
     （**861.11 s**）；Release 首轮 **720/721**（唯一红 = N136）→ 隔离 26 个 Debug 配置残留后重跑 **721/721（562.99 s）**。
     注册数 722→723 / 720→721（+1）。真实腿余量：Debug 2.91× / 2.99× / 3.62×，Release 4.36× / 4.23× / 4.90×。
@@ -492,7 +491,7 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     注册数 **724 / 722 不变**（本刀不增删用例，`-N` 现读 + 名单逐名比对复验：`comm -23` 仍恰为那两条 Debug 轻量闸门、
     `comm -13` 空；名单快照 `build/tmp/c3h1b_names_{debug,release}.txt` 不入库）。
     真实腿余量 Debug **2.76× / 3.06× / 3.43×**、Release 5.20× / 5.66× / 6.22× ⇒ 最低一档 2.76×，仍在 2.5× 之上，**不触发拆腿**。
-  - **批次 C C3l 收口轮**（本表现值，产品修复 N138）：树上多了 `d583c9b`（六个 `.gpkg` 写出路径把索引交给驱动 +
+  - **批次 C C3l 收口轮**（当时那一档，产品修复 N138）：树上多了 `d583c9b`（六个 `.gpkg` 写出路径把索引交给驱动 +
     删 `addSpatialIndexIfNeeded`/`ensureGpkgExtensionsTable`/`escapeSqlLiteral` 三个零引用 helper + 六条新用例）、
     `382ed71`（并集.md 引号统一）、`f0b0d0e`（控制器自改形：行内块注释换成两个具名 builder）。实现者 `c3l-implementer`
     （后台一棒）按任务书未跑双树全量，收口门由控制器跑。
@@ -504,6 +503,28 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     Release 6.73× / 5.21× / 8.24× ⇒ 最低 2.75×，仍不触发拆腿。
     本轮 `Passed <N> sec` 单行配对仍 100%（Debug 730 行求和 938.40 s vs 墙钟 939.02 s）。
     `find data -newermt "2026-10-23 08:44" -type f` = **0 命中**（本会话含两次双树全量都没写过 `data/`）。
+  - **批次 C C3h-3 收口轮**（本表现值，补 union 路径 A 的真实数据覆盖）：树上多了 `381500b`（新腿
+    `real_data_vector_union_poly` + 分组 `union_poly` + 第 6 条名单不变量）、`35f578e`（评审席两条必须修 + 我自己造的静默空跑）。
+    实现者 `c3h3-implementer` **撞 150 回合上限**（最后一拍"把第三跑现读并入 TIMEOUT"只落到注释、没落到属性），
+    未提交且未写反向对照那一节 ⇒ 控制器按快照接手：复核 diff、把 `TIMEOUT` 从 580 改成注释算出的 **600**
+    （同步 `tests/CMakeLists.txt` 复算行与 `real_data_matrix.txt` 的旧值）、补做反向臂、再提交（commit message 里声明分工）。
+    ⚠ **接手时我自己造了一次更严重的静默假绿**：修评审席 M2 时把判据分发从"按用例名"改成"按 `$Case.Group`"，
+    而 `Invoke-Case` 的结果对象**没有 Group 字段** ⇒ 那条 `if` 永远为假、命名分支又已被我删掉 ⇒
+    整条腿 128.14 s 跑完、ctest **Passed**、四档名单全绿、**实际零条判据执行**。
+    抓到它靠的是评审席 prescribed 的反向臂（往名单塞一条假用例看会不会红）。修法：结果对象带上 `Group`；
+    新增**第 7 条不变量**「跑过的 union_poly 用例数 == `Assert-UnionPolyCase` 被调用次数」；
+    双向复验＝注入 `union_poly_dummy` 必红（消息点名 `stdout count: pattern 'Union completed: …' matched nothing`）、
+    撤销注入必绿（而"绿"本身就证明 `executed == asserted == 1`）。
+    ⚠ 同批更正：注释与台账里"源层含面 ⇒ 必然落路径 A"不成立（Unknown 层的有效类型取**第一个非空要素**，
+    省层现读前四要素 `MP/MP/MLine/MP` ⇒ 今天落 A 是数据顺序）⇒ 改为断言 `FirstNonEmptyGeometryType` 是面；
+    另修 `Test-GeoJsonGeometryNonEmpty` 遇字符串叶子无限递归（PS `foreach` 过 `[string]` 给整串，`CallDepthOverflow`
+    已复现）并删掉"全组轮更慢是锁排队"这条被我自己 143.22 s 读数否证的因果。
+    全量现读：Debug **731/731（1083.87 s）**、Release **729/729（436.88 s）**，两树 `Not Run/Skip/***` 都是 0，
+    `Passed <N> sec` 单行配对 731/731 与 729/729（求和 1083.31 / 436.24 s vs 墙钟差 0.56 / 0.64 s）；
+    注册数 730→731 / 728→729（+1/+1，逐名比对，差集仍恰为两条 Debug 轻量闸门）。
+    真实腿余量 Debug **2.72×（quick）/ 2.90×（overlay）/ 3.12×（checks）/ 4.35×（新腿）**、
+    Release 6.67× / 7.72× / 5.65× / 26.8× ⇒ 最低 2.72× 仍在 2.5× 之上，**不触发拆腿**。
+    `find data -newermt "2026-10-23 11:20:54" -type f` = **0 命中**。
     评审席 `c3l-reviewer`（只读、禁止构建）**两轴均通过、必须修清单为空**，并独立复核了两处：
     六个期望数与六个过滤包框逐条对撞产物 rtree 包框（非自指）、两棵树"无 rtree"名单逐字相同且恰是那 11 条路径
     （补上了实现者缺口 3——Release 侧的逐字名单当时被 `head -8` 截断）。
@@ -1009,8 +1030,14 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   + 只在 >0 出现的 `union_skipped_overlay_pieces`）。
   ⚠ **`union` 的 GOLD 登记已落地**（C3h-1b `7a9edf8`：判别取证通过 ⇒ `vector,union` PENDING→GOLD，
   证据用例 `PluginTest.VectorUnionSplitsIntoThreePieceClasses`，`kPendingCeiling 61→60`）；
-  **但路径 A 的真实数据腿仍然没有**：现有 `union_focus` 是线 × 面 ⇒ 走路径 B，路径 A 在真实回归里仍是 0 覆盖
-  ⇒ 排在 C3h-3（面 × 面真实腿，挂 `overlay` 那一半）。
+  **路径 A 的真实数据腿已在 C3h-3 补上**（`381500b` + `35f578e`：新注册用例 `real_data_vector_union_poly`，
+  源 `data/vector/中国_省.geojson` × 叠加 `data/vector/中国_市.geojson`，两侧都是"面 + 线"混合层、同 EPSG:4490；
+  产物 641 行 = 三类分块 `input 4 + both 628 + overlay 9`，`source` 词表与整表属性一起落地）；
+  ⚠ 归属判据不是"源层含面"（那是评审席 M1 判掉的假前提）：Unknown 层的有效几何类型取**第一个非空要素**的类型，
+  省层现读前四个要素是 `MultiPolygon/MultiPolygon/MultiLineString/MultiPolygon` ⇒ 今天落路径 A 是**数据顺序**决定的，
+  因此该腿把"首个非空要素是面"写成断言、并由哨兵 `union_overlay_pieces >= 1` 在产物侧兜住退回路径 B 的情况。
+  ⇒ 口径仍然成立但含义更新了：**GOLD ≠ 真实数据覆盖**这条现在两条都齐了，但两者是**不同性质的凭据**，
+  合成夹具钉语义、真实腿钉"这份数据真能走通"，谁也不许顶替谁。
   ⚠ 口径写死在这里防止误读：**GOLD ≠ 真实数据覆盖**——这一行的凭据全在合成夹具与插件单测里，
   真实数据那条腿是空的；两者是不同的缺口，不许互相顶替。
 - 挂账 **N137**（GPKG 写出路径的 FID 与失败回滚，**独立立案，不由 C3h-2 承担**）：评审席在变异体 MU-C 下抓到
@@ -1035,7 +1062,15 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   `OGR_SQLITE: BEGIN Transaction` → `GPKG: exec(CREATE TABLE "union" …)` → `COMMIT` ⇒
   建表 DDL 确实落在事务里（GDAL 的延迟建表 `RunDeferredCreationIfNecessary` 在首次写入时才 exec），
   因此"第一条片段就写失败 ⇒ `RollbackTransaction()` 连表一起撤销 ⇒ 产物只剩一个没有要素表的 `.gpkg`"成立；
-  而输出文件在动作开头就被 `drv->Create()` 截断 ⇒ **失败时旧产物已经没了，新产物又不可用**。这是契约问题，要裁定不是补断言就能了。
+  而输出文件在动作开头就被 `drv->Create()` 截断 ⇒ **失败时旧产物已经没了，新产物又不可用**（这才是要裁的契约点）。
+  ⚠ 已裁定（2026-10-23，用户）：**改成"先写同目录临时件 → 全部成功 → 原子改名替换"**，
+  失败时旧产物原样存活、不留下半截新产物 ⇒ 排 **C3n**（Task #110），范围**先限 vector 的 17 个写出点**（raster 的失败形态与
+  测试覆盖是另一套，混在一刀里会把证据链拉太长）。三条附带条件写进工单：① Shapefile 是多文件集，
+  诚实说法只能是"旧产物在新件完工前一直完好、最后逐文件替换"，要真原子得搬临时目录，代价另计；
+  ② 临时件必须与目标同目录同卷（跨卷 `fs::rename` 会失败/退化），不许放 `build/tmp/`；
+  ③ 必须有一条能红的判据：造一个完好旧产物 + 注入一次中途失败 ⇒ 旧产物字节不变、新产物不存在、无残留临时件。
+  顺带一条本条未查到的保护：**没找到任何动作拒绝 `output == input`**（今天的实现会把输入截断）
+  ⇒ 改成临时件后这个场景自然变安全，但要单独立一条判据而不是顺手带过。
 - 挂账 **N138**（GPKG 空间索引写成"声明了但是空的"，**用户可见级**）——**已销 `d583c9b` + `f0b0d0e`（批次 C C3l）**：
   **射程 5 个动作**（`clip`/`dissolve`/`union`/`difference`/`intersect`）产出的 `.gpkg` 带一个 **0 行的 rtree**，
   而 `gpkg_extensions` 里已登记 `gpkg_rtree_index` ⇒ 任何按包框查的读端拿到 **0 个要素**（表里明明有 N 行）。
@@ -1065,6 +1100,8 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   事务批量化一字未动 ⇒ **批量写与索引正确性不冲突**。另外 11 个不建索引的调用点源码与产物形态逐字不变
   （boundary/centroid/convex_hull/endpoints_extract/envelope/filter/interior_point/midpoints_extract/singlepart/
   sliver_remove/vertices_extract；改前改后"无 rtree"的图层名单一致）。
+  ⚠ 这句"11 个不建索引、产物形态不变"只在 C3l 这一档成立：**2026-10-23 用户裁定这 11 条也要带索引**
+  ⇒ 由 C3m 改掉（见本条目末尾"已裁定"那一行），届时"没有 rtree"的图层应当归零。
   判据是六条 `PluginTest.Vector*GpkgSpatialIndexIsPopulated`，按**读端性质**写：主判据 =
   `SetSpatialFilterRect(夹具全 extent)` 后 `GetFeatureCount()` == 由夹具坐标手算的期望数
   （buffer 200 / clip 1 / dissolve 1 / union 3 / difference 1 / intersect 1），索引行数只作解释性判据；
@@ -1090,7 +1127,9 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   `WHEN new."geom" NOT NULL AND NOT ST_IsEmpty(new."geom")`，实测
   `e2e_singlepart_input`（3 行含 1 个 NULL ⇒ 索引 2）与 `t20_empty_point_input`（4 行含 2 个空点 ⇒ 索引 2）
   都是**正确状态** ⇒ 比的是"非空几何数"，不是行数；否则会把合规产物读成缺陷（我自己差点把它记成第 2、3 条红）。
-  ⚠ 仍待裁（不在本刀）：要不要给那 11 条路径也配索引——今天是"合法但无索引"，读端靠全表扫描，慢但结果对。
+  ⚠ 已裁定（2026-10-23，用户）：**那 11 条也要带索引** ⇒ 排 **C3m**（Task #109），17 个写出点统一交给驱动建索引、
+  并加一条"源码里 `SPATIAL_INDEX` 出现 0 次"的反回潮守卫；成本已实测到可忽略（22 855 要素补索引
+  = 文件 5 582 848 → 8 085 504 B、CLI 墙钟 134.18 → 135.20 s），代价改到"必须重测四条腿余量"这一头。
 - 挂账 **N135**（`vector union` 路径 A 的三条"GEOS 返回失败"分支，**今天无判据**，由 `ff86362` 复审席点名）：
   ① 已写面积累加时某次 `Union` 返回 nullptr ⇒ 减法基少一块 ⇒ 源独有块会把已写相交面积再算进去（不计数）；
   ② 逐条差集只减动部分候选 ⇒ 写出的叠加独有块与没减动那条源几何重叠（不计数）；
