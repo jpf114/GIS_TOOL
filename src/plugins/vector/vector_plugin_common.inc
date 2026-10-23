@@ -324,34 +324,6 @@ static std::vector<const OverlayGeometryEntry*> collectCandidateOverlayEntries(
     return candidates;
 }
 
-static void removeExistingVectorOutput(const std::string& output, const std::string& format) {
-    // ⚠ C3n-2c 收口后本函数**已无调用者**：最后 5 个非 overlay 点（buffer/clip/dissolve/
-    // polygonize/convert）迁进 VectorStagedOutput，剩下 3 个 overlay 点用的是各自函数里的
-    // 内联"按 stem 删边车"循环、从来没用过这个 helper。保留它是因为下一步（C3n-2d）要么
-    // 把 overlay 三点一并迁走（那时它仍然没人用、应与内联循环一起删），要么先把内联循环
-    // 收拢到这里。在那之前它是一段死代码，登记在 task-C3n2c-report.md 的缺口里。
-    namespace fs = std::filesystem;
-    // N122：窄串构造 fs::path 在 Windows 按 ANSI 解，而这里的 output 是 UTF-8 ⇒ 中文路径下
-    // exists / directory_iterator / remove 三件事全部静默失效（判成"不存在"），旧产物的
-    // .dbf/.shx/.prj 边车不会被删，GDAL 再按 UTF-8 写出新 .shp ⇒ 用户拿到"新几何 + 旧属性表"。
-    // 同文件的 ensureParentDirectoryForFile 早就是这个写法（fs::u8path），这里对齐它。
-    const fs::path outputPath = fs::u8path(output);
-    if (!fs::exists(outputPath)) {
-        return;
-    }
-
-    if (format == "ESRI Shapefile") {
-        for (const auto& entry : fs::directory_iterator(outputPath.parent_path())) {
-            if (entry.path().stem() == outputPath.stem()) {
-                fs::remove(entry.path());
-            }
-        }
-        return;
-    }
-
-    fs::remove(outputPath);
-}
-
 static void ensureParentDirectoryForFile(const std::string& output) {
     const fs::path outputPath = fs::u8path(output);
     if (!outputPath.has_parent_path()) {
@@ -374,17 +346,17 @@ static void ensureParentDirectoryForFile(const std::string& output) {
 //   ④ 任何中途失败或异常展开 ⇒ 析构函数把临时件族删干净 ⇒ 旧产物原样存活、不留半截新产物。
 // ⚠ 清理义务跟着**对象生命周期**走，不跟着某个 return 语句走（工单 §2.4：24 个点、多点返回，
 //   手写清理必漏）。动作里那些 CancelledException 展开也走同一个析构。
-// ⚠ 现读已接 21 个写出点（C3n-1 的 boundary / centroid / vertices_extract，C3n-2a 的 8 个
+// ⚠ 现读已接 24 个写出点（C3n-1 的 boundary / centroid / vertices_extract，C3n-2a 的 8 个
 //   "无事务 + 单输出"点：convex_hull / envelope / endpoints_extract / midpoints_extract /
 //   interior_point / singlepart / sliver_remove / filter，C3n-2b 的 geom_metrics / nearest /
-//   spatial_join / repair / simplify，以及 C3n-2c 的 buffer / clip / dissolve / polygonize /
-//   convert），其余 3 个（overlay 的 union / difference / intersect）仍在直接写目标。
-//   "现在是半迁移态"这件事由用例侧的结构守卫承重（J5：已迁移 == 21 / 待迁移名单 == 3 逐条点名），
-//   所以这里不许写成"矢量输出已全部按契约走"那种会被当成收口结论的话。
-// ⚠ 迁移进本类的点**不再**调 removeExistingVectorOutput：旧代码那一句"在建数据集之前先把旧产物
-//   与同 stem 边车删掉"的对应物是 commit 末尾的 removeStaleOldSidecars ⇒ 删除被挪到新件全部
-//   落地之后（反过来就会交出".shp 是新的、.dbf 没了"这种比旧态更坏的产物）。
-//   其余 3 个点由 C3n-2d 逐点搬。
+//   spatial_join / repair / simplify，C3n-2c 的 buffer / clip / dissolve / polygonize /
+//   convert，以及 C3n-2d 的 overlay 三点 union / difference / intersect）⇒ 矢量写出点已全部
+//   按本契约走，J5 的待迁移名单为空。新增写出点必须自己接进本类，否则 J5 的
+//   "扫到的 (文件,函数) 总数 == 24" 与"名单外命中"会同时红。
+// ⚠ 迁移进本类的点不再沿用旧 helper（那个"按 stem 删旧产物"的公共函数）的"在建数据集之前
+//   先把旧产物与同 stem 边车删掉"：对应物是 commit 末尾的 removeStaleOldSidecars ⇒ 删除被
+//   挪到新件全部落地之后（反过来就会交出".shp 是新的、.dbf 没了"这种比旧态更坏的产物）。
+//   那个旧 helper 本身在 C3n-2d 已删（调用点 0；overlay 三点从来没调用过它）。
 class VectorStagedOutput {
 public:
     VectorStagedOutput() = default;

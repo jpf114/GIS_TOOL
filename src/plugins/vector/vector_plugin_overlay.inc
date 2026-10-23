@@ -56,16 +56,16 @@ gis::framework::Result VectorPlugin::doUnion(
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) { return gis::framework::Result::fail("Cannot get driver"); }
 
-    // 窄串构造 fs::path 在 Windows 按 ANSI 解 ⇒ UTF-8 中文路径会被判成"不存在"，旧产物边车永远删不掉（N122）。
-    const fs::path outputPath = fs::u8path(output);
-    if (outFormat == "ESRI Shapefile" && fs::exists(outputPath)) {
-        for (const auto& entry : fs::directory_iterator(outputPath.parent_path())) {
-            if (entry.path().stem() == outputPath.stem()) fs::remove(entry.path());
-        }
+    // 失败契约的入口闸（等价判定"输出不得覆盖输入"）走在任何建目录/建文件之前。双输入动作：
+    // union 的 --overlay_vector 指到输出同样会毁数据 ⇒ 两个输入都进保护清单。
+    // 旧版那段内联"按 stem 删 .shp 边车"已去掉：它的对应物是 commit 末尾的
+    // removeStaleOldSidecars（删除只许发生在新件全部落地之后）。
+    VectorStagedOutput staged;
+    std::string stageError;
+    if (!staged.start(output, outFormat, { input, overlayVector }, drv, stageError)) {
+        return gis::framework::Result::fail(stageError);
     }
-
-    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
-    if (!dstDS) { return gis::framework::Result::fail("Cannot create output"); }
+    GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const auto outputGeomType = usePracticalMixedUnion
@@ -512,6 +512,14 @@ gis::framework::Result VectorPlugin::doUnion(
     }
     delete srcSRS;
     progress.throwIfCancelled();
+
+    // 工单 §2：事务必须在 commit() 之前收口 —— commit 的第一件事是 dataset_.reset()，
+    // 事务还开着就关数据集会被 GDAL 在关闭时回滚 ⇒ "产物已替换但内容半截"的假绿。
+    std::string commitError;
+    if (!staged.commit(commitError)) {
+        return gis::framework::Result::fail(commitError);
+    }
+
     progress.onProgress(1.0);
 
     // 成功消息串逐字不许改：真实数据回归腿按正则 "Union completed: (\d+) features" 取数。
@@ -588,16 +596,14 @@ gis::framework::Result VectorPlugin::doDifference(
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) { return gis::framework::Result::fail("Cannot get driver"); }
 
-    // 窄串构造 fs::path 在 Windows 按 ANSI 解 ⇒ UTF-8 中文路径会被判成"不存在"，旧产物边车永远删不掉（N122）。
-    const fs::path outputPath = fs::u8path(output);
-    if (outFormat == "ESRI Shapefile" && fs::exists(outputPath)) {
-        for (const auto& entry : fs::directory_iterator(outputPath.parent_path())) {
-            if (entry.path().stem() == outputPath.stem()) fs::remove(entry.path());
-        }
+    // 失败契约的入口闸（等价判定"输出不得覆盖输入"）走在任何建目录/建文件之前。双输入动作：
+    // difference 的 --overlay_vector 指到输出同样会毁数据 ⇒ 两个输入都进保护清单。
+    VectorStagedOutput staged;
+    std::string stageError;
+    if (!staged.start(output, outFormat, { input, overlayVector }, drv, stageError)) {
+        return gis::framework::Result::fail(stageError);
     }
-
-    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
-    if (!dstDS) { return gis::framework::Result::fail("Cannot create output"); }
+    GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
@@ -637,12 +643,21 @@ gis::framework::Result VectorPlugin::doDifference(
             if (useLinearPolygonSegmentation) {
                 const auto candidates = collectCandidateOverlayEntries(overlayEntries, geom);
                 if (candidates.empty()) {
-                    if (writeFeatureWithCopiedFields(dstLayer, feat, geom->clone(), &fieldMap)) {
-                        count++;
-                        if (useTransactions && count % transactionBatchSize == 0) {
-                            dstLayer->CommitTransaction();
-                            dstLayer->StartTransaction();
+                    // N139（结构修，用户 2026-10-23 裁定不引入失败注入缝）：写失败不许吞成
+                    // "少写一条仍报成功"。与 doClip 的两条写支同形 —— 在事务里先回滚，再硬失败返回
+                    // （临时件族由 staged 析构兜住，旧产物不动）。
+                    if (!writeFeatureWithCopiedFields(dstLayer, feat, geom->clone(), &fieldMap)) {
+                        OGRFeature::DestroyFeature(feat);
+                        if (useTransactions) {
+                            dstLayer->RollbackTransaction();
                         }
+                        delete srcSRS;
+                        return gis::framework::Result::fail("Failed to write difference feature");
+                    }
+                    count++;
+                    if (useTransactions && count % transactionBatchSize == 0) {
+                        dstLayer->CommitTransaction();
+                        dstLayer->StartTransaction();
                     }
                     OGRFeature::DestroyFeature(feat);
                     continue;
@@ -655,12 +670,19 @@ gis::framework::Result VectorPlugin::doDifference(
                 }
 
                 if (diffGeom && !diffGeom->IsEmpty()) {
-                    if (writeFeatureWithCopiedFields(dstLayer, feat, diffGeom.get(), &fieldMap)) {
-                        count++;
-                        if (useTransactions && count % transactionBatchSize == 0) {
-                            dstLayer->CommitTransaction();
-                            dstLayer->StartTransaction();
+                    // N139：同文件三条写支统一成硬失败（见上面 candidates.empty() 分支的注释）。
+                    if (!writeFeatureWithCopiedFields(dstLayer, feat, diffGeom.get(), &fieldMap)) {
+                        OGRFeature::DestroyFeature(feat);
+                        if (useTransactions) {
+                            dstLayer->RollbackTransaction();
                         }
+                        delete srcSRS;
+                        return gis::framework::Result::fail("Failed to write difference feature");
+                    }
+                    count++;
+                    if (useTransactions && count % transactionBatchSize == 0) {
+                        dstLayer->CommitTransaction();
+                        dstLayer->StartTransaction();
                     }
                 }
                 OGRFeature::DestroyFeature(feat);
@@ -681,8 +703,17 @@ gis::framework::Result VectorPlugin::doDifference(
             } else if (!overlayGeometry->Contains(geom)) {
                 diffGeom.reset(geom->Difference(overlayGeometry));
             }
-            if (diffGeom && !diffGeom->IsEmpty() &&
-                writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(diffGeom), &fieldMap)) {
+            if (diffGeom && !diffGeom->IsEmpty()) {
+                // N139：写失败 ⇒ 若在事务里先回滚 ⇒ 硬失败返回。writeFeatureWithCopiedFieldsOwned
+                // 无论成功失败都接管几何所有权，所以失败后只销毁源要素，不得再碰 diffGeom。
+                if (!writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(diffGeom), &fieldMap)) {
+                    OGRFeature::DestroyFeature(feat);
+                    if (useTransactions) {
+                        dstLayer->RollbackTransaction();
+                    }
+                    delete srcSRS;
+                    return gis::framework::Result::fail("Failed to write difference feature");
+                }
                 count++;
                 if (useTransactions && count % transactionBatchSize == 0) {
                     dstLayer->CommitTransaction();
@@ -698,6 +729,13 @@ gis::framework::Result VectorPlugin::doDifference(
     }
     delete srcSRS;
     progress.throwIfCancelled();
+
+    // 工单 §2：事务必须在 commit() 之前收口（理由同 doUnion）。
+    std::string commitError;
+    if (!staged.commit(commitError)) {
+        return gis::framework::Result::fail(commitError);
+    }
+
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
@@ -762,16 +800,14 @@ gis::framework::Result VectorPlugin::doIntersect(
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) { return gis::framework::Result::fail("Cannot get driver"); }
 
-    // 窄串构造 fs::path 在 Windows 按 ANSI 解 ⇒ UTF-8 中文路径会被判成"不存在"，旧产物边车永远删不掉（N122）。
-    const fs::path outputPath = fs::u8path(output);
-    if (outFormat == "ESRI Shapefile" && fs::exists(outputPath)) {
-        for (const auto& entry : fs::directory_iterator(outputPath.parent_path())) {
-            if (entry.path().stem() == outputPath.stem()) fs::remove(entry.path());
-        }
+    // 失败契约的入口闸（等价判定"输出不得覆盖输入"）走在任何建目录/建文件之前。双输入动作：
+    // intersect 的 --overlay_vector 指到输出同样会毁数据 ⇒ 两个输入都进保护清单。
+    VectorStagedOutput staged;
+    std::string stageError;
+    if (!staged.start(output, outFormat, { input, overlayVector }, drv, stageError)) {
+        return gis::framework::Result::fail(stageError);
     }
-
-    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
-    if (!dstDS) { return gis::framework::Result::fail("Cannot create output"); }
+    GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
@@ -822,12 +858,21 @@ gis::framework::Result VectorPlugin::doIntersect(
                 }
 
                 if (intersectGeom && !intersectGeom->IsEmpty()) {
-                    if (writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(intersectGeom), &fieldMap)) {
-                        count++;
-                        if (useTransactions && count % transactionBatchSize == 0) {
-                            dstLayer->CommitTransaction();
-                            dstLayer->StartTransaction();
+                    // N139（结构修，用户 2026-10-23 裁定不引入失败注入缝）：写失败不许吞成
+                    // "少写一条仍报成功"。与 doClip 的两条写支同形 —— 在事务里先回滚，再硬失败返回。
+                    // writeFeatureWithCopiedFieldsOwned 无论成败都接管几何所有权 ⇒ 失败后只销毁源要素。
+                    if (!writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(intersectGeom), &fieldMap)) {
+                        OGRFeature::DestroyFeature(feat);
+                        if (useTransactions) {
+                            dstLayer->RollbackTransaction();
                         }
+                        delete srcSRS;
+                        return gis::framework::Result::fail("Failed to write intersect feature");
+                    }
+                    count++;
+                    if (useTransactions && count % transactionBatchSize == 0) {
+                        dstLayer->CommitTransaction();
+                        dstLayer->StartTransaction();
                     }
                 }
                 OGRFeature::DestroyFeature(feat);
@@ -843,12 +888,19 @@ gis::framework::Result VectorPlugin::doIntersect(
             if (overlayGeometry && geom->Intersects(overlayGeometry)) {
                 std::unique_ptr<OGRGeometry> intersectGeom(geom->Intersection(overlayGeometry));
                 if (intersectGeom && !intersectGeom->IsEmpty()) {
-                    if (writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(intersectGeom), &fieldMap)) {
-                        count++;
-                        if (useTransactions && count % transactionBatchSize == 0) {
-                            dstLayer->CommitTransaction();
-                            dstLayer->StartTransaction();
+                    // N139：同 doIntersect 的线性分支 —— 写失败 ⇒ 回滚（若在事务里）⇒ 硬失败返回。
+                    if (!writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(intersectGeom), &fieldMap)) {
+                        OGRFeature::DestroyFeature(feat);
+                        if (useTransactions) {
+                            dstLayer->RollbackTransaction();
                         }
+                        delete srcSRS;
+                        return gis::framework::Result::fail("Failed to write intersect feature");
+                    }
+                    count++;
+                    if (useTransactions && count % transactionBatchSize == 0) {
+                        dstLayer->CommitTransaction();
+                        dstLayer->StartTransaction();
                     }
                 }
             }
@@ -861,6 +913,13 @@ gis::framework::Result VectorPlugin::doIntersect(
     }
     delete srcSRS;
     progress.throwIfCancelled();
+
+    // 工单 §2：事务必须在 commit() 之前收口（理由同 doUnion）。
+    std::string commitError;
+    if (!staged.commit(commitError)) {
+        return gis::framework::Result::fail(commitError);
+    }
+
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
