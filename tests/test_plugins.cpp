@@ -6822,9 +6822,32 @@ TEST_F(PluginTest, VectorClipKeepsOnlyLinearOverlapSegments) {
 
 // ── N138：六个动作写出的 .gpkg 带一个"已登记但 0 行"的 rtree ⇒ 按包框查的读端拿到 0 个要素 ──
 // 四条判据按读端真实用法写（顺序即工单 §3）：① 动作成功 ② 无过滤要素数 == 夹具期望数
-// ③ rtree_<层名>_geom 行数 == 要素数（解释性）④ 夹具包框过滤后要素数 == 夹具期望数（主判据）。
+// ③ rtree_<层名>_geom 行数 == **非空几何要素数**（解释性）
+//    ④ 夹具包框过滤后要素数 == 夹具期望数（主判据）。
+// ③ 的比较对象在 C3m 从"要素数"改成"非空几何数"：GDAL 自己建索引的触发器条件是
+//    geom IS NOT NULL AND NOT ST_IsEmpty(geom) ⇒ 含 NULL 或空几何的图层**本来就该**少几行，
+//    拿要素数去比会把合规产物判成红（本仓现读：e2e_singlepart_input 3 行含 1 个 NULL ⇒ 索引 2 行
+//    是合规状态；t20_empty_point_input 4 行含 2 个空点 ⇒ 索引 2 行同样是合规状态）。
+//    非空几何数由本层自己遍历产物数出来（GetGeometryRef() 非空且 !IsEmpty()），不从别处借。
 // 层名从产物自己取（六个动作各写各的层名：union/difference/intersect/dissolved/源层名），
 // 要素数与过滤包框一律由各用例按夹具坐标手算写死，不拿产物比产物（N108 那一族自指期望）。
+
+// 走一遍图层，数出"几何存在且不空"的要素数 —— 与 GDAL 建索引的触发器条件同判据。
+// 只读游标，进出各 ResetReading 一次，不留 Reading 状态给下面的包框判据。
+static long long countGpkgNonEmptyGeometries(OGRLayer* layer) {
+    long long nonEmpty = 0;
+    layer->ResetReading();
+    while (OGRFeature* feat = layer->GetNextFeature()) {
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (geom != nullptr && !geom->IsEmpty()) {
+            ++nonEmpty;
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+    layer->ResetReading();
+    return nonEmpty;
+}
+
 static void expectGpkgSpatialIndexUsable(OGRLayer* outLayer,
                                          long long expectedFeatureCount,
                                          double filterMinX,
@@ -6834,6 +6857,8 @@ static void expectGpkgSpatialIndexUsable(OGRLayer* outLayer,
                                          const std::string& output) {
     EXPECT_EQ(outLayer->GetFeatureCount(TRUE), expectedFeatureCount)
         << "无过滤要素数与夹具期望不符，后面的索引判据失去意义：" << output;
+
+    const long long nonEmptyGeoms = countGpkgNonEmptyGeometries(outLayer);
 
     const std::string rtreeTable = std::string("rtree_") + outLayer->GetName() + "_geom";
     GDALDataset* parentDs = outLayer->GetDataset();
@@ -6847,8 +6872,10 @@ static void expectGpkgSpatialIndexUsable(OGRLayer* outLayer,
         }
         parentDs->ReleaseResultSet(countLayer);
     }
-    EXPECT_EQ(rtreeRows, expectedFeatureCount)
-        << "空间索引表 " << rtreeTable << " 的行数与要素数不符";
+    EXPECT_EQ(rtreeRows, nonEmptyGeoms)
+        << "空间索引表 " << rtreeTable << " 的行数与非空几何要素数不符（要素数 "
+        << expectedFeatureCount << "、非空几何数 " << nonEmptyGeoms << "、索引行数 " << rtreeRows
+        << "；NULL 与空几何本来就不进索引，所以这里比的是非空几何数而不是要素数）：" << output;
 
     outLayer->SetSpatialFilterRect(filterMinX, filterMinY, filterMaxX, filterMaxY);
     outLayer->ResetReading();
@@ -7205,6 +7232,82 @@ TEST_F(PluginTest, VectorIntersectGpkgSpatialIndexIsPopulated) {
     ASSERT_NE(outLayer, nullptr);
     expectGpkgSpatialIndexUsable(outLayer, 1, 50.0, 50.0, 100.0, 100.0, output);
     GDALClose(outDs);
+}
+
+// ── C3m 反回潮守卫：src/plugins 里 "SPATIAL_INDEX" 这个子串必须一次都不出现 ──────────────
+// 算式：把 ${GIS_SOURCE_DIR}/src/plugins 递归下来的每个 *.inc 与 *.cpp **全文**读进来，
+//       数子串 SPATIAL_INDEX 的出现次数，断言 == 0；命中时逐条点名 "文件:行号"。
+// 扫描范围：src/plugins/**/*.inc 与 src/plugins/**/*.cpp（开工现读 42 个文件，其中 vector 目录 30 个），
+//       注释行与字符串字面量一起算，**不做任何"排除注释"的行过滤**。
+// WHY 连注释也数：这条要防的是"有人又把驱动建索引关掉"，而写回去的人多半会顺手留一句解释为什么
+//       关掉的注释 ⇒ 只数代码行的话，那处回潮会被它自己的注释洗成"设计结论的文档"。
+// ⚠ 0 命中**不是性能结论**：索引开销的量级在 N138 的取证里已经现读过（22 855 要素多约 1 s、
+//   文件多约 2.5 MB）。这条是 N138 那条设计结论的守门 —— 产物形态由 expectGpkgSpatialIndexUsable
+//   判，本条只判"写法不许回潮"。
+// 判据自带的三道"不许空跑"闸：扫描根不存在 ⇒ 红；扫到的文件数 < 30 ⇒ 红；
+//   没扫到 vector_plugin_common.inc（= 射程没真正够到那 17 个写出点所在目录）⇒ 红。
+#ifndef GIS_SOURCE_DIR
+#define GIS_SOURCE_DIR "."
+#endif
+
+TEST_F(PluginTest, VectorSourceNeverDisablesGpkgSpatialIndex) {
+    const std::string needle = "SPATIAL_INDEX";
+    const fs::path pluginsDir = fs::u8path(std::string(GIS_SOURCE_DIR) + "/src/plugins");
+    ASSERT_TRUE(fs::exists(pluginsDir))
+        << "扫描根不存在 ⇒ 这条守卫没在扫任何东西，判红而不是放过：" << pluginsDir.u8string();
+
+    std::size_t scannedFiles = 0;
+    bool sawCommonInc = false;
+    std::size_t hits = 0;
+    std::string offenderList;
+
+    std::error_code ec;
+    fs::recursive_directory_iterator it(pluginsDir, fs::directory_options::skip_permission_denied, ec);
+    const fs::recursive_directory_iterator end;
+    for (; !ec && it != end; it.increment(ec)) {
+        const fs::directory_entry entry = *it;
+        std::error_code secer;
+        if (!entry.is_regular_file(secer) || secer) {
+            continue;
+        }
+        const fs::path path = entry.path();
+        const std::string ext = path.extension().u8string();
+        if (ext != ".inc" && ext != ".cpp") {
+            continue;
+        }
+        ++scannedFiles;
+        if (path.filename().u8string() == "vector_plugin_common.inc") {
+            sawCommonInc = true;
+        }
+
+        std::ifstream in(path, std::ios::binary);
+        ASSERT_TRUE(in.is_open()) << "扫描射程内的文件读不开，判据无法覆盖它：" << path.u8string();
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        std::size_t pos = 0;
+        while ((pos = text.find(needle, pos)) != std::string::npos) {
+            ++hits;
+            const std::size_t line =
+                1 + static_cast<std::size_t>(std::count(text.begin(), text.begin() + pos, '\n'));
+            offenderList += "\n  " + path.u8string() + ":" + std::to_string(line);
+            pos += needle.size();
+        }
+    }
+    EXPECT_FALSE(bool(ec)) << "目录递归中断于：" << ec.message();
+
+    ASSERT_GE(scannedFiles, 30u)
+        << "只扫到 " << scannedFiles << " 个 *.inc|*.cpp ⇒ 判据在空跑（开工现读是 42 个），"
+        << "扫描根是：" << pluginsDir.u8string();
+    EXPECT_TRUE(sawCommonInc)
+        << "扫描集合里没有 vector_plugin_common.inc ⇒ 射程没够到那 17 个 .gpkg 写出点所在的目录，"
+        << "这条守卫等于没写；扫描根是：" << pluginsDir.u8string();
+
+    EXPECT_EQ(hits, 0u)
+        << "在 src/plugins 全文（含注释与字符串字面量）里数到 " << hits << " 处 " << needle
+            << " ⇒ 有人又把 GeoPackage 的空间索引从驱动手里关掉了。17 个 .gpkg 写出点必须一律发零个图层选项、"
+               "让 GDAL 在 FlushCache 里延迟建索引并一次性回填（N138：先关索引批量写、写完再补的那条路径"
+               "交出的必是『扩展项已登记、rtree 0 行』的产物，任何按包框查的读端拿到 0 个要素）。"
+               "回潮点：" << offenderList;
 }
 
 TEST_F(PluginTest, VectorConvertExecution) {
@@ -9028,6 +9131,141 @@ TEST_F(PluginTest, VectorBoundaryExecution) {
     OGRFeature* featB = outLayer->GetNextFeature();
     assertBoundaryOf(featB, "B", {{20.0, 0.0}, {24.0, 0.0}, {24.0, 2.0}, {20.0, 2.0}}, 12.0);
     OGRFeature::DestroyFeature(featB);
+    GDALClose(outDs);
+}
+
+// ── C3m：三条"此前根本不建索引"的动作各一条，把三种几何类别补齐 ──────────────────────
+// centroid 出**点**、boundary 出**线**、convex_hull 出**面**；三条都只加"索引可用性"这一层断言，
+// 夹具一律复用上面那条同名执行用例的（不新造数据），期望数与包框按夹具坐标手算写死。
+// WHY 输出另起一个 .gpkg 名：与 buffer/clip 那六条同口径 —— 与本刀的执行用例共用产物名会把两条
+//   用例变成"谁后跑谁决定产物"（VectorBufferGpkgSpatialIndexIsPopulated 上面那段 WHY 定过的判断）。
+// WHY 三条而不是抽查一条：驱动建索引在点/线/面三类几何上的回填路径不同（触发器只有一条，但
+//   rtree 的 MBR 由几何自己算），只验一类的话另外两类回潮无人拦。
+
+TEST_F(PluginTest, VectorCentroidGpkgSpatialIndexIsPopulated) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_centroid_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_centroid_index_output.gpkg");
+
+    // 夹具与 VectorCentroidExecution 逐字同形：一只不对称 L 形面
+    //（(0,0)-(12,0)-(12,3)-(4,3)-(4,8)-(0,8)，EPSG:3857，层名 shapes，字段 name=A）。
+    // 同一只 L 也是 writeTwoPolygonFixture 的要素 A ⇒ 这里不引入任何新几何。
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(0, 0);
+        ring.addPoint(12, 0);
+        ring.addPoint(12, 3);
+        ring.addPoint(4, 3);
+        ring.addPoint(4, 8);
+        ring.addPoint(0, 8);
+        ring.addPoint(0, 0);
+        poly.addRing(&ring);
+
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetField("name", "A");
+        feat->SetGeometry(&poly);
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("centroid");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Centroid failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    // 期望 1 个要素；包框取输入面的包框 (0,0,12,8) —— 形心 (32/7, 41/14) 必在其中，
+    // 这条算式来自上面夹具的顶点集合，不从产物回填。
+    expectGpkgSpatialIndexUsable(outLayer, 1, 0.0, 0.0, 12.0, 8.0, output);
+    GDALClose(outDs);
+}
+
+TEST_F(PluginTest, VectorBoundaryGpkgSpatialIndexIsPopulated) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_boundary_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_boundary_index_output.gpkg");
+
+    // 复用 VectorBoundaryExecution 的夹具（面类三条共用的两要素夹具）。
+    ASSERT_TRUE(writeTwoPolygonFixture(input));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("boundary");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Boundary failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    // 期望 2 条边界线；包框 = 夹具两只面的极值并集：A 的 x∈[0,12] y∈[0,8] ∪ B 的 x∈[20,24] y∈[0,2]
+    //   ⇒ (0, 0, 24, 8)。边界是输入环自身的顶点，不会跑到输入包框之外。
+    expectGpkgSpatialIndexUsable(outLayer, 2, 0.0, 0.0, 24.0, 8.0, output);
+    GDALClose(outDs);
+}
+
+TEST_F(PluginTest, VectorConvexHullGpkgSpatialIndexIsPopulated) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_convex_hull_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "e2e_convex_hull_index_output.gpkg");
+
+    // 复用 VectorConvexHullExecution 的夹具（与 boundary 同一份两要素夹具）。
+    ASSERT_TRUE(writeTwoPolygonFixture(input));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("convex_hull");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Convex hull failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    // 期望 2 个面（派生不增删要素）；凸包不超出输入包框 ⇒ 包框同 boundary 那条 (0, 0, 24, 8)。
+    expectGpkgSpatialIndexUsable(outLayer, 2, 0.0, 0.0, 24.0, 8.0, output);
     GDALClose(outDs);
 }
 
