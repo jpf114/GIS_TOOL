@@ -72,7 +72,8 @@ gis::framework::Result VectorPlugin::doUnion(
         ? resultLayerGeometryType(srcEffectiveType)
         : wkbUnknown;
     const bool useTransactions = outFormat == "GPKG";
-    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<std::string> layerOptionStorage =
+        buildGpkgFastWriteLayerOptions(useTransactions, /*spatialIndexFromDriver=*/true);
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "union",
@@ -509,7 +510,6 @@ gis::framework::Result VectorPlugin::doUnion(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, "union");
     }
     delete srcSRS;
     progress.throwIfCancelled();
@@ -602,7 +602,8 @@ gis::framework::Result VectorPlugin::doDifference(
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
-    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<std::string> layerOptionStorage =
+        buildGpkgFastWriteLayerOptions(useTransactions, /*spatialIndexFromDriver=*/true);
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "difference",
@@ -696,7 +697,6 @@ gis::framework::Result VectorPlugin::doDifference(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, "difference");
     }
     delete srcSRS;
     progress.throwIfCancelled();
@@ -777,7 +777,8 @@ gis::framework::Result VectorPlugin::doIntersect(
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
-    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<std::string> layerOptionStorage =
+        buildGpkgFastWriteLayerOptions(useTransactions, /*spatialIndexFromDriver=*/true);
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "intersect",
@@ -860,7 +861,6 @@ gis::framework::Result VectorPlugin::doIntersect(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, "intersect");
     }
     delete srcSRS;
     progress.throwIfCancelled();

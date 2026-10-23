@@ -356,21 +356,12 @@ static void ensureParentDirectoryForFile(const std::string& output) {
     fs::create_directories(outputPath.parent_path());
 }
 
-static std::string escapeSqlLiteral(const std::string& value) {
-    std::string escaped;
-    escaped.reserve(value.size());
-    for (char ch : value) {
-        escaped.push_back(ch);
-        if (ch == '\'') {
-            escaped.push_back('\'');
-        }
-    }
-    return escaped;
-}
-
-static std::vector<std::string> buildGpkgFastWriteLayerOptions(bool useTransactions) {
+// WHY 多一维"索引交给驱动"：GPKG 的 gpkgAddSpatialIndex 只建 rtree 表和触发器、不回填既有行，
+// 所以"先 SPATIAL_INDEX=NO 批量写、写完再补索引"交出的必是空索引；要索引就一路都不关。
+static std::vector<std::string> buildGpkgFastWriteLayerOptions(
+    bool useTransactions, bool spatialIndexFromDriver = false) {
     std::vector<std::string> options;
-    if (useTransactions) {
+    if (useTransactions && !spatialIndexFromDriver) {
         options.emplace_back("SPATIAL_INDEX=NO");
     }
     return options;
@@ -383,46 +374,6 @@ static std::vector<char*> buildLayerOptionPointers(std::vector<std::string>& opt
     }
     pointers.push_back(nullptr);
     return pointers;
-}
-
-static void ensureGpkgExtensionsTable(GDALDataset* dataset) {
-    if (!dataset) {
-        return;
-    }
-
-    const char* createExtensionsSql =
-        "CREATE TABLE IF NOT EXISTS gpkg_extensions ("
-        "table_name TEXT,"
-        "column_name TEXT,"
-        "extension_name TEXT NOT NULL,"
-        "definition TEXT NOT NULL,"
-        "scope TEXT NOT NULL,"
-        "CONSTRAINT ge_tce UNIQUE (table_name, column_name, extension_name)"
-        ")";
-    if (OGRLayer* sqlResult = dataset->ExecuteSQL(createExtensionsSql, nullptr, "SQLITE")) {
-        dataset->ReleaseResultSet(sqlResult);
-    }
-}
-
-static void addSpatialIndexIfNeeded(
-    GDALDataset* dataset,
-    OGRLayer* layer,
-    bool useTransactions,
-    const std::string& layerName) {
-    if (!dataset || !layer || !useTransactions) {
-        return;
-    }
-
-    const char* geometryColumn = layer->GetGeometryColumn();
-    const std::string geometryColumnName =
-        (geometryColumn && *geometryColumn) ? geometryColumn : "geom";
-    ensureGpkgExtensionsTable(dataset);
-    const std::string addSpatialIndexSql =
-        "SELECT gpkgAddSpatialIndex('" + escapeSqlLiteral(layerName) +
-        "', '" + escapeSqlLiteral(geometryColumnName) + "')";
-    if (OGRLayer* sqlResult = dataset->ExecuteSQL(addSpatialIndexSql.c_str(), nullptr, "SQLITE")) {
-        dataset->ReleaseResultSet(sqlResult);
-    }
 }
 
 static OGRwkbGeometryType resultLayerGeometryType(OGRwkbGeometryType srcType) {

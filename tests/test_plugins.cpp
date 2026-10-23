@@ -6820,6 +6820,393 @@ TEST_F(PluginTest, VectorClipKeepsOnlyLinearOverlapSegments) {
     GDALClose(outDs);
 }
 
+// ── N138：六个动作写出的 .gpkg 带一个"已登记但 0 行"的 rtree ⇒ 按包框查的读端拿到 0 个要素 ──
+// 四条判据按读端真实用法写（顺序即工单 §3）：① 动作成功 ② 无过滤要素数 == 夹具期望数
+// ③ rtree_<层名>_geom 行数 == 要素数（解释性）④ 夹具包框过滤后要素数 == 夹具期望数（主判据）。
+// 层名从产物自己取（六个动作各写各的层名：union/difference/intersect/dissolved/源层名），
+// 要素数与过滤包框一律由各用例按夹具坐标手算写死，不拿产物比产物（N108 那一族自指期望）。
+static void expectGpkgSpatialIndexUsable(OGRLayer* outLayer,
+                                         long long expectedFeatureCount,
+                                         double filterMinX,
+                                         double filterMinY,
+                                         double filterMaxX,
+                                         double filterMaxY,
+                                         const std::string& output) {
+    EXPECT_EQ(outLayer->GetFeatureCount(TRUE), expectedFeatureCount)
+        << "无过滤要素数与夹具期望不符，后面的索引判据失去意义：" << output;
+
+    const std::string rtreeTable = std::string("rtree_") + outLayer->GetName() + "_geom";
+    GDALDataset* parentDs = outLayer->GetDataset();
+    long long rtreeRows = -1;   // -1 = 索引表根本不存在（ExecuteSQL 的失败形态之一）
+    const std::string countSql = "SELECT COUNT(*) FROM \"" + rtreeTable + "\"";
+    if (OGRLayer* countLayer = parentDs->ExecuteSQL(countSql.c_str(), nullptr, "SQLITE")) {
+        OGRFeature* countFeat = countLayer->GetNextFeature();
+        if (countFeat) {
+            rtreeRows = countFeat->GetFieldAsInteger(0);
+            OGRFeature::DestroyFeature(countFeat);
+        }
+        parentDs->ReleaseResultSet(countLayer);
+    }
+    EXPECT_EQ(rtreeRows, expectedFeatureCount)
+        << "空间索引表 " << rtreeTable << " 的行数与要素数不符";
+
+    outLayer->SetSpatialFilterRect(filterMinX, filterMinY, filterMaxX, filterMaxY);
+    outLayer->ResetReading();
+    const long long filtered = outLayer->GetFeatureCount(TRUE);
+    EXPECT_EQ(filtered, expectedFeatureCount)
+        << "按夹具包框 (" << filterMinX << ", " << filterMinY << ", " << filterMaxX << ", "
+        << filterMaxY << ") 过滤后只拿到 " << filtered << " 个要素，期望 "
+        << expectedFeatureCount << " ⇒ 这就是 N138 的用户可见症状：" << output;
+    outLayer->SetSpatialFilter(nullptr);
+}
+
+// 夹具复用 VectorBufferExecutionReportsMetadata 那份 200 条线（EPSG:3857）：
+// x 从 12940000 起每 20 递增、最右点 12940030+199*20=12944010，y 落在 4852000..4852200，
+// distance=25 ⇒ 期望 200 个要素、包框 = 极值 ±25 = (12939975, 4851975, 12944035, 4852225)。
+// WHY 输出另起一个 .gpkg 名：本用例自己重建同名夹具输入，与那条元数据用例共用产物名
+// 会把两条用例变成"谁后跑谁决定产物"的顺序依赖。
+TEST_F(PluginTest, VectorBufferGpkgSpatialIndexIsPopulated) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    std::string shpPath = (getTestDir() / "e2e_buffer_input.shp").string();
+    std::string output = (getTestDir() / "e2e_buffer_index_output.gpkg").string();
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(shpPath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("buffer_test", srs.get(), wkbLineString);
+        ASSERT_NE(layer, nullptr);
+
+        OGRFieldDefn fieldDefn("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&fieldDefn), OGRERR_NONE);
+
+        auto* featDefn = layer->GetLayerDefn();
+        for (int i = 0; i < 200; ++i) {
+            auto* feat = OGRFeature::CreateFeature(featDefn);
+            OGRLineString line;
+            line.addPoint(12940000 + i * 20, 4852000);
+            line.addPoint(12940010 + i * 20, 4852100);
+            line.addPoint(12940030 + i * 20, 4852200);
+            feat->SetGeometry(&line);
+            feat->SetField("name", "road");
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("buffer");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["distance"] = 25.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Buffer failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    expectGpkgSpatialIndexUsable(outLayer, 200, 12939975.0, 4851975.0, 12944035.0, 4852225.0,
+                                 output);
+    GDALClose(outDs);
+}
+
+// 夹具复用 VectorClipKeepsOnlyLinearOverlapSegments：1 条 (0,0)-(200,0) 的线被
+// [80,120]×[-20,20] 的裁剪面切出 1 个要素 ⇒ 期望 1；包框直接取裁剪面的包框（结果必在其中）。
+TEST_F(PluginTest, VectorClipGpkgSpatialIndexIsPopulated) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    std::string input = (getTestDir() / "e2e_clip_line_input.shp").string();
+    std::string clip = (getTestDir() / "e2e_clip_line_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_clip_index_output.gpkg").string();
+
+    auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    ASSERT_NE(driver, nullptr);
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+
+    {
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto* layer1 = ds1->CreateLayer("input", srs.get(), wkbLineString);
+        ASSERT_NE(layer1, nullptr);
+        auto* feat1 = OGRFeature::CreateFeature(layer1->GetLayerDefn());
+        OGRLineString line;
+        line.addPoint(0, 0);
+        line.addPoint(200, 0);
+        feat1->SetGeometry(&line);
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+    }
+    {
+        auto* ds2 = driver->Create(clip.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto* layer2 = ds2->CreateLayer("clip", srs.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* feat2 = OGRFeature::CreateFeature(layer2->GetLayerDefn());
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(80, -20);
+        ring.addPoint(120, -20);
+        ring.addPoint(120, 20);
+        ring.addPoint(80, 20);
+        ring.addPoint(80, -20);
+        poly.addRing(&ring);
+        feat2->SetGeometry(&poly);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = input;
+    params["clip_vector"] = clip;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Clip failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    expectGpkgSpatialIndexUsable(outLayer, 1, 80.0, -20.0, 120.0, 20.0, output);
+    GDALClose(outDs);
+}
+
+// 夹具复用 buildDissolveTypeFixture（两个共边正方形 [0,100]²、[100,200]²，type 都是 'A'）：
+// 同组 ⇒ 融合成 1 个 MULTIPOLYGON ⇒ 期望 1；包框 = 两个夹具正方形并集的包框 (0,0,200,100)。
+TEST_F(PluginTest, VectorDissolveGpkgSpatialIndexIsPopulated) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const std::string shpPath = buildDissolveTypeFixture("e2e_dissolve_index_input.shp");
+    const std::string output = (getTestDir() / "e2e_dissolve_index_output.gpkg").string();
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("dissolve");
+    params["input"] = shpPath;
+    params["output"] = output;
+    params["dissolve_field"] = std::string("type");
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Dissolve failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    expectGpkgSpatialIndexUsable(outLayer, 1, 0.0, 0.0, 200.0, 100.0, output);
+    GDALClose(outDs);
+}
+
+// 夹具复用 T2（VectorUnionSplitsIntoThreePieceClasses）那一对坐标：
+// A=[0,10]×[0,4]、B=[6,16]×[2,12] ⇒ input-only / both / overlay-only 三条分块 ⇒ 期望 3；
+// 包框 = A 与 B 并集的包框 (0,0,16,12)。
+TEST_F(PluginTest, VectorUnionGpkgSpatialIndexIsPopulated) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_union_true_overlap_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_union_true_overlap_overlay.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_union_index_output.gpkg");
+
+    UnionFixtureFeature srcA;
+    srcA.minX = 0.0; srcA.minY = 0.0; srcA.maxX = 10.0; srcA.maxY = 4.0; srcA.name = "src1";
+    ASSERT_TRUE(writeUnionPolygonLayer(inputPath, {srcA}));
+
+    UnionFixtureFeature ovlB;
+    ovlB.minX = 6.0; ovlB.minY = 2.0; ovlB.maxX = 16.0; ovlB.maxY = 12.0; ovlB.pop = 7;
+    ASSERT_TRUE(writeUnionPolygonLayer(overlayPath, {ovlB}));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Union failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    expectGpkgSpatialIndexUsable(outLayer, 3, 0.0, 0.0, 16.0, 12.0, output);
+    GDALClose(outDs);
+}
+
+// 夹具复用 VectorDifferenceKeepsLinearGeometryOutput：线 (0,0)-(200,0) 减去 [80,120]×[-20,20]
+// ⇒ 一条 MULTILINESTRING（两段，仍是一个输入要素的差集）⇒ 期望 1；
+// 包框 = 源线的包框在 y 方向按裁剪面半高外扩 (0,-20,200,20)。
+TEST_F(PluginTest, VectorDifferenceGpkgSpatialIndexIsPopulated) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    std::string input = (getTestDir() / "e2e_difference_line_input.shp").string();
+    std::string overlay = (getTestDir() / "e2e_difference_line_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_difference_index_output.gpkg").string();
+
+    auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    ASSERT_NE(driver, nullptr);
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+
+    {
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto* layer1 = ds1->CreateLayer("input", srs.get(), wkbLineString);
+        ASSERT_NE(layer1, nullptr);
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer1->CreateField(&nameField), OGRERR_NONE);
+        auto* feat1 = OGRFeature::CreateFeature(layer1->GetLayerDefn());
+        OGRLineString line;
+        line.addPoint(0, 0);
+        line.addPoint(200, 0);
+        feat1->SetGeometry(&line);
+        feat1->SetField("name", "road");
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+    }
+    {
+        auto* ds2 = driver->Create(overlay.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto* layer2 = ds2->CreateLayer("overlay", srs.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* feat2 = OGRFeature::CreateFeature(layer2->GetLayerDefn());
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(80, -20);
+        ring.addPoint(120, -20);
+        ring.addPoint(120, 20);
+        ring.addPoint(80, 20);
+        ring.addPoint(80, -20);
+        poly.addRing(&ring);
+        feat2->SetGeometry(&poly);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("difference");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Difference failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    expectGpkgSpatialIndexUsable(outLayer, 1, 0.0, -20.0, 200.0, 20.0, output);
+    GDALClose(outDs);
+}
+
+// 夹具复用 VectorIntersectOutputsOverlappedPolygon：[0,100]² ∩ [50,150]²
+// ⇒ 1 个要素、结果包框正是两夹具正方形的交 (50,50,100,100)。
+TEST_F(PluginTest, VectorIntersectGpkgSpatialIndexIsPopulated) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    std::string input = (getTestDir() / "e2e_intersect_polygon_input.shp").string();
+    std::string overlay = (getTestDir() / "e2e_intersect_polygon_overlay.shp").string();
+    std::string output = (getTestDir() / "e2e_intersect_index_output.gpkg").string();
+
+    auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    ASSERT_NE(driver, nullptr);
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+
+    {
+        auto* ds1 = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds1, nullptr);
+        auto* layer1 = ds1->CreateLayer("input", srs.get(), wkbPolygon);
+        ASSERT_NE(layer1, nullptr);
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer1->CreateField(&nameField), OGRERR_NONE);
+        auto* feat1 = OGRFeature::CreateFeature(layer1->GetLayerDefn());
+        OGRPolygon poly1;
+        OGRLinearRing ring1;
+        ring1.addPoint(0, 0); ring1.addPoint(100, 0); ring1.addPoint(100, 100);
+        ring1.addPoint(0, 100); ring1.addPoint(0, 0);
+        poly1.addRing(&ring1);
+        feat1->SetGeometry(&poly1);
+        feat1->SetField("name", "zone_a");
+        ASSERT_EQ(layer1->CreateFeature(feat1), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat1);
+        GDALClose(ds1);
+    }
+    {
+        auto* ds2 = driver->Create(overlay.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds2, nullptr);
+        auto* layer2 = ds2->CreateLayer("overlay", srs.get(), wkbPolygon);
+        ASSERT_NE(layer2, nullptr);
+        auto* feat2 = OGRFeature::CreateFeature(layer2->GetLayerDefn());
+        OGRPolygon poly2;
+        OGRLinearRing ring2;
+        ring2.addPoint(50, 50); ring2.addPoint(150, 50); ring2.addPoint(150, 150);
+        ring2.addPoint(50, 150); ring2.addPoint(50, 50);
+        poly2.addRing(&ring2);
+        feat2->SetGeometry(&poly2);
+        ASSERT_EQ(layer2->CreateFeature(feat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat2);
+        GDALClose(ds2);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("intersect");
+    params["input"] = input;
+    params["overlay_vector"] = overlay;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "Intersect failed: " << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    expectGpkgSpatialIndexUsable(outLayer, 1, 50.0, 50.0, 100.0, 100.0, output);
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, VectorConvertExecution) {
     auto* p = mgr_.find("vector");
     if (!p) {

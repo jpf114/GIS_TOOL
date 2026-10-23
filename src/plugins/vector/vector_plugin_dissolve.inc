@@ -89,7 +89,8 @@ gis::framework::Result VectorPlugin::doDissolve(
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
-    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<std::string> layerOptionStorage =
+        buildGpkgFastWriteLayerOptions(useTransactions, /*spatialIndexFromDriver=*/true);
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "dissolved",
@@ -161,7 +162,6 @@ gis::framework::Result VectorPlugin::doDissolve(
 
     if (useTransactions) {
         dstLayer->CommitTransaction();
-        addSpatialIndexIfNeeded(dstDS.get(), dstLayer, useTransactions, "dissolved");
     }
     delete srcSRS;
     progress.throwIfCancelled();
