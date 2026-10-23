@@ -369,13 +369,15 @@ static void ensureParentDirectoryForFile(const std::string& output) {
 //   ④ 任何中途失败或异常展开 ⇒ 析构函数把临时件族删干净 ⇒ 旧产物原样存活、不留半截新产物。
 // ⚠ 清理义务跟着**对象生命周期**走，不跟着某个 return 语句走（工单 §2.4：24 个点、多点返回，
 //   手写清理必漏）。动作里那些 CancelledException 展开也走同一个析构。
-// ⚠ 本刀只接了 boundary / centroid / vertices_extract 三个写出点，其余 21 个仍在直接写目标。
-//   "现在是半迁移态"这件事由用例侧的结构守卫承重（J5：已迁移 == 3 / 待迁移名单 == 21 逐条点名），
+// ⚠ 现读已接 11 个写出点（C3n-1 的 boundary / centroid / vertices_extract，加上 C3n-2a 的 8 个
+//   "无事务 + 单输出"点：convex_hull / envelope / endpoints_extract / midpoints_extract /
+//   interior_point / singlepart / sliver_remove / filter），其余 13 个仍在直接写目标。
+//   "现在是半迁移态"这件事由用例侧的结构守卫承重（J5：已迁移 == 11 / 待迁移名单 == 13 逐条点名），
 //   所以这里不许写成"矢量输出已全部按契约走"那种会被当成收口结论的话。
 // ⚠ 迁移进本类的点**不再**调 removeExistingVectorOutput：旧代码那一句"在建数据集之前先把旧产物
 //   与同 stem 边车删掉"的对应物是 commit 末尾的 removeStaleOldSidecars ⇒ 删除被挪到新件全部
 //   落地之后（反过来就会交出".shp 是新的、.dbf 没了"这种比旧态更坏的产物）。
-//   其余 21 个点（16 个调它 + 8 个内联同形代码）由 C3n-2 逐点搬，本刀一个字不动它们。
+//   其余 13 个点由 C3n-2b..e 逐点搬。
 class VectorStagedOutput {
 public:
     VectorStagedOutput() = default;
@@ -386,9 +388,9 @@ public:
     // 建临时件、把它交给驱动建数据集。
     // protectedInputs 是"绝不许被输出覆盖掉"的输入清单。**等价闸走在任何建目录/建文件之前**
     //（工单 §3 J4：命中的时点是"删除/创建之前"，不是"删完了再道歉"）。
-    // 三个已迁移动作都是单输入 ⇒ 传一个；C3n-2 铺到 union / clip / difference / intersect /
+    // 已迁移的 11 个动作都是单输入 ⇒ 传一个；C3n-2 铺到 union / clip / difference / intersect /
     // nearest / spatial_join 那批双输入动作时要**两个都传**（工单 J4 的双输入臂因此要等那一批
-    // 迁移完才谈得上 —— 本刀不许越界去动那 21 个点，那一臂登记为缺口）。
+    // 迁移完才谈得上 —— 本刀不许越界去动那 13 个点，那一臂登记为缺口）。
     // 返回 false 时 error 是一句能直接给用户的失败原因（口径随同插件既有的硬失败写法）。
     bool start(const std::string& output, const std::string& format,
                const std::vector<std::string>& protectedInputs, GDALDriver* drv,

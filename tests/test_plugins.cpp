@@ -17812,6 +17812,55 @@ TEST_F(PluginTest, VectorBoundaryMidFailureKeepsOldProductAndLeavesNoTempFile) {
     }
 }
 
+// ── J1 的同形第二臂（C3n-2a）：载体换成 convex_hull ──────────────────────────────────
+// 工单 C3n-2a §3 要"先判据、后实现"：这条在**未迁移**的 doConvexHull 上必须先红，迁完之后转绿。
+// 除动作名与产物名外逐字照抄 J1：同一个取消式 reporter（第 3 次进度回调后置取消）、同一份
+// 双面 GPKG 夹具、同一组"旧产物字节不变 + 清单不变 + 无 *.gis-tmp-*"三段期望。
+// WHY 只给这一个点打臂：本刀要迁的 8 个点全是同一种形状（单输入、无事务、单输出、同一个
+// removeExistingVectorOutput 前删），逐个重打臂在 C3n-1 已经撞过一次回合上限；其余 7 个点的
+// 红态由这一条 + J5 名单承重代证（工单 §3 明许）。
+TEST_F(PluginTest, VectorConvexHullMidFailureKeepsOldProductAndLeavesNoTempFile) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr) << "plugin not loaded: vector";
+
+    for (const char* ext : {".gpkg", ".shp"}) {
+        const std::string tag = std::string("j1_convex_hull_") + c3n1ExtName(ext);
+        const fs::path dir = c3n1FreshDir(tag);
+        ASSERT_TRUE(fs::exists(dir)) << "夹具目录建不出来：" << dir.u8string();
+
+        const std::string input = utf8PathString(dir / "shapes.gpkg");
+        ASSERT_TRUE(c3n1WriteTwoPolygonGpkg(input)) << "夹具写入失败：" << input;
+
+        const fs::path target = dir / fs::u8path(std::string("convex_hull_out") + ext);
+        const std::string targetPath = utf8PathString(target);
+
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("convex_hull");
+        params["input"] = input;
+        params["output"] = targetPath;
+
+        // ① 先跑一次不取消的，把"改前就存在的完好旧产物"做出来。
+        const auto first = p->execute(params, progress_);
+        ASSERT_TRUE(first.success)
+            << ext << "：前置产物没做出来，本臂无从谈起：" << first.message;
+        ASSERT_TRUE(fs::exists(target)) << ext << "：前置产物文件不存在：" << targetPath;
+
+        const auto beforeNames = c3n1ListFiles(dir);
+        const auto beforeBytes = c3n1CollectBytes(dir);
+        ASSERT_GE(beforeBytes.size(), 1u) << ext << "：前置产物目录是空的，夹具没生效";
+
+        // ② 再跑同一次动作，这次中途被取消（convex_hull 的三个固定进度点与 boundary 同形：
+        // 0.1 / 0.2 / 0.35 都在建数据集之后 ⇒ 抛出点落在要素写循环里，目标已被截断/新建）。
+        const std::string whatStr = std::string("J1-convex_hull[") + ext + "] 中途取消";
+        T17CancellableProgress cancelling(3);
+        EXPECT_THROW(p->execute(params, cancelling), gis::core::CancelledException)
+            << whatStr << "：动作没有按取消抛出 CancelledException ⇒ 取消缝没打到写循环";
+
+        // ③④ 旧产物逐字节不变、目录前后一致、没有 *.gis-tmp-* 残留。
+        c3n1ExpectDirectoryUntouched(dir, beforeNames, beforeBytes, whatStr.c_str());
+    }
+}
+
 // ── J4：output == input 必须硬失败，而且输入要完好无损 ─────────────────────────────
 // 工单 §1 的说法是"16 个点在 drv->Create 之前 fs::remove(outputPath) ⇒ 输入文件被删掉"。
 // 现读复核（见 task-C3n1-report.md）：**删除动作确实在 Create 之前对着输入路径发**，但今天
@@ -18110,37 +18159,41 @@ TEST_F(PluginTest, VectorStagedOutputLeavesNoJournalSidecar) {
 // ── J5：结构守卫 ──「现在是半迁移态」必须承重 ──────────────────────────────────────
 // 半迁移态最坏的结局不是"某个点还没改"，而是**大家以为契约已经全覆盖了**。所以名单必须承重，
 // 而且双向可红（工单 §4：改分发/路由类机制必须配一条双向可红的断言）：
-//   ① 已迁移点数 == 写死的"已迁移名单"条数（== 3；不是"≥1"，≥1 会让 C3n-2 做完也测不出东西）；
-//   ② 待迁移名单 == 21 条、逐条点名，每条都要在源码里真的数到一处直接写 output 的建数据集；
+//   ① 已迁移点数 == 写死的"已迁移名单"条数（== 11；不是"≥1"，≥1 会让后面几刀做完也测不出东西）；
+//   ② 待迁移名单 == 13 条、逐条点名，每条都要在源码里真的数到一处直接写 output 的建数据集；
 //   ③ 名单**外**若出现任何一处仍以 output 直接建数据集 ⇒ 红（新写的点、或别人绕开名单改的点）；
 //   ④ 名单**里**的点如果被迁移完了而名单没减 ⇒ 也红（防名单变死条目）；
-//   ⑤ 全目录 drv->Create 的总数也要对上账（1 处 helper + 21 处待迁 + 1 处论域外 = 23），
+//   ⑤ 全目录 drv->Create 的总数也要对上账（1 处 helper + 13 处待迁 + 1 处论域外 = 15），
 //      这样"新加一个写出点却不进任何名单"同样会红。
-// 论域现读（工单 §1，本刀开工时复核过）：`grep -rn "drv->Create(" src/plugins/vector/` = 25 处，
-//   本刀迁走 3 处、helper 里新增 1 处 ⇒ 23。doRasterize（写的是栅格）按用户裁定留在射程之外，
+// 论域现读（C3n-2a 迁移后复核）：`grep -rn "drv->Create(" src/plugins/vector/` = 15 处
+//   ＝ helper 1 处 + 直接写 output 14 处（13 处待迁 + 论域外 doRasterize 1 处）。
+//   账的来路：C3n-1 开工时是 25，迁走 3 处、helper 新增 1 处 ⇒ 23；C3n-2a 再迁走 8 处 ⇒ 15。
+//   doRasterize（写的是栅格）按用户裁定留在射程之外，
 //   但它仍然是一个"直接写 output 的建数据集点"，所以**单独点名登记**在这一支里，
 //   免得它被 ③ 当成名单外命中，也免得它被误当成已覆盖。
 // 判据的形：只认 (文件, 动作函数) 这一对**函数级**坐标，不认行号（行号会随任何一次改动漂移）。
 // （GIS_SOURCE_DIR 这个编译宏由 tests/CMakeLists.txt 发，本文件上面 C3m 那条源码守卫也用同一个。）
 TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
-    // 已迁移动作（本刀射程 = 第一段，工单 §4）。
+    // 已迁移动作（第一段 3 个 + C3n-2a 的 8 个 = 11）。
     static const std::vector<std::pair<std::string, std::string>> kStagedActions = {
         { "vector_plugin_boundary.inc", "doBoundary" },
         { "vector_plugin_centroid.inc", "doCentroid" },
-        { "vector_plugin_vertices_extract.inc", "doVerticesExtract" },
-    };
-    // 待迁移名单：24 个矢量写出点里扣掉上面 3 个 ⇒ 21 条，逐条点名（C3n-2 一条一条划掉）。
-    static const std::vector<std::pair<std::string, std::string>> kPendingActions = {
-        { "vector_plugin_buffer_clip.inc", "doBuffer" },
-        { "vector_plugin_buffer_clip.inc", "doClip" },
         { "vector_plugin_convex_hull.inc", "doConvexHull" },
-        { "vector_plugin_dissolve.inc", "doDissolve" },
         { "vector_plugin_endpoints_extract.inc", "doEndpointsExtract" },
         { "vector_plugin_envelope.inc", "doEnvelope" },
-        { "vector_plugin_geom_metrics.inc", "doGeomMetrics" },
         { "vector_plugin_info_filter.inc", "doFilter" },
         { "vector_plugin_interior_point.inc", "doInteriorPoint" },
         { "vector_plugin_midpoints_extract.inc", "doMidpointsExtract" },
+        { "vector_plugin_singlepart.inc", "doSinglepart" },
+        { "vector_plugin_sliver_remove.inc", "doSliverRemove" },
+        { "vector_plugin_vertices_extract.inc", "doVerticesExtract" },
+    };
+    // 待迁移名单：24 个矢量写出点里扣掉上面 11 个 ⇒ 13 条，逐条点名（后续几刀一条一条划掉）。
+    static const std::vector<std::pair<std::string, std::string>> kPendingActions = {
+        { "vector_plugin_buffer_clip.inc", "doBuffer" },
+        { "vector_plugin_buffer_clip.inc", "doClip" },
+        { "vector_plugin_dissolve.inc", "doDissolve" },
+        { "vector_plugin_geom_metrics.inc", "doGeomMetrics" },
         { "vector_plugin_nearest.inc", "doNearest" },
         { "vector_plugin_overlay.inc", "doUnion" },
         { "vector_plugin_overlay.inc", "doDifference" },
@@ -18149,8 +18202,6 @@ TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
         { "vector_plugin_raster_convert.inc", "doConvert" },
         { "vector_plugin_repair.inc", "doRepair" },
         { "vector_plugin_simplify.inc", "doSimplify" },
-        { "vector_plugin_singlepart.inc", "doSinglepart" },
-        { "vector_plugin_sliver_remove.inc", "doSliverRemove" },
         { "vector_plugin_spatial_join.inc", "doSpatialJoin" },
     };
     // 论域之外但**仍是直接写 output** 的那一个点（写栅格，用户裁定"先限 vector 的矢量输出"）。
@@ -18158,8 +18209,8 @@ TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
         "vector_plugin_raster_convert.inc", "doRasterize",
     };
 
-    EXPECT_EQ(kPendingActions.size(), 21u)
-        << "待迁移名单本身不是 21 条 ⇒ 这条守卫的账先就错了（本刀射程 24 = 已迁 3 + 待迁 21）";
+    EXPECT_EQ(kPendingActions.size(), 13u)
+        << "待迁移名单本身不是 13 条 ⇒ 这条守卫的账先就错了（射程 24 = 已迁 11 + 待迁 13）";
 
     const fs::path dir = fs::u8path(std::string(GIS_SOURCE_DIR) + "/src/plugins/vector");
     ASSERT_TRUE(fs::exists(dir))
@@ -18313,7 +18364,7 @@ TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
         << " ⇒ 要么是新加的写出点没进名单，要么是有人绕开机制自己写";
     EXPECT_EQ(directTotal, kPendingActions.size() + 1u)
         << "直接写 output 的建数据集点总数对不上账（数到 " << directTotal
-        << "，期望 21 个待迁移 + 1 个论域外的 doRasterize = 22）";
+        << "，期望 13 个待迁移 + 1 个论域外的 doRasterize = 14）";
     EXPECT_EQ(totalCreates, directTotal + 1u)
         << "drv->Create( 的总数对不上账（数到 " << totalCreates << "，期望 "
         << directTotal + 1u << "）⇒ 有新的写出点没被任何名单接住";
