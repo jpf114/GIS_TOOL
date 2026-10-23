@@ -301,6 +301,8 @@ cmake --install build/release --config Release --prefix install
   `PluginTest.Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated` + 一条反回潮守卫
   `PluginTest.VectorSourceNeverDisablesGpkgSpatialIndex`（逐名比对，删除 0 条；两树差集仍恰为下面那两条 Debug 轻量闸门、
   `comm -13` 空，快照 `build/tmp/c3m_names_{debug,release}.txt`）；
+  ⚠ 紧随其后的 **C3m 评审席修复轮不动注册数**（守卫改的是匹配逻辑与 token 名单，两条都是注释/判据成形改动，
+  没有增删用例）⇒ 现读仍是 **735 / 733**，那一轮的墙钟与"为什么不能拿它判余量"见第 2 节"C3m 评审席修复轮"；
   上一档 731 / 729 是 C3h-3（+1 = `real_data_vector_union_poly`）；再上一档 730 / 728 是 C3l（+6 = 六条 `PluginTest.Vector*GpkgSpatialIndexIsPopulated`）；再上一档 724 / 722 是 C3h-2 收口轮（C3h-1b 复验同值——那一刀只翻登记表一行的状态列，不增删用例）；
   相比再上一档 723 / 721 **+1** = C3h-2 的 `PluginTest.VectorUnionMixedDimensionCarriesAttributesPerPiece`；再上一档 722 / 720 的 +1 = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
   由两刀合成：C3k 把一条 `real_data_vector_full` 换成 `checks`/`overlay` 两条（−1+2 = **+1**），
@@ -539,7 +541,7 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     真实腿余量 Debug **2.72×（quick）/ 2.90×（overlay）/ 3.12×（checks）/ 4.35×（新腿）**、
     Release 6.67× / 7.72× / 5.65× / 26.8× ⇒ 最低 2.72× 仍在 2.5× 之上，**不触发拆腿**。
     `find data -newermt "2026-10-23 11:20:54" -type f` = **0 命中**。
-  - **批次 C C3m 收口轮**（本表现值，落地用户裁定"那 11 条也要带索引"）：树上多了 `a7fb866`（17 个 `.gpkg` 写出点
+  - **批次 C C3m 收口轮**（本表现值，落地用户裁定"那 11 条也要带索引"）：树上多了 `a7fb866`（vector 里 **17 个显式发图层选项的调用点**
     统一走 `buildGpkgDriverIndexedLayerOptions()`、图层选项 `SPATIAL_INDEX=NO` 整体删除、C3l 那两个具名 builder 并成这一个）、
     `fb40ca4`（判据 ③ 的比较对象从"要素数"改成"非空几何数" + 三条新审计用例 + 反回潮守卫
     `PluginTest.VectorSourceNeverDisablesGpkgSpatialIndex`）、`f339f45`（六条真实腿两棵树两跑现读入测量表）。
@@ -566,31 +568,58 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     那条腿不会重写这个文件；文件里连 `gpkg_extensions` 都没有 ⇒ 是"根本没登记"的自洽空件，不是 N138 那种"登记了但 0 行"）。
     按 mtime 只数开批之后新写出的产物：Debug 104 个 / Release 104 个 ⇒ **缺索引的活产物归零**
     （⚠ 这条"归零"靠的是上面那把全目录扫描 + mtime 过滤两条一起成立，单看 mtime 数不出"缺不缺"）。
-    反回潮守卫的**必须先能红**（R-B16 同变异旧绿新红，**这一段是实现者的现读、控制器未复跑该变异**——
-    复跑要重编 `plugin_vector.dll`，而控制器的两条独立证据是收口时自己跑的 `grep -rn 'SPATIAL_INDEX' src/` = 0
-    与双树全量 735/733、733/733 全绿）：实现者把 `vector_plugin_boundary.inc` **一个**调用点改回带 `SPATIAL_INDEX=NO`，
+    反回潮守卫的**必须先能红**（R-B16 同变异旧绿新红，**这一段是实现者的现读**；控制器当时没复跑该变异，
+    只跑了自己那两条独立证据：`grep -rn 'SPATIAL_INDEX' src/` = 0 与双树全量 735/733、733/733 全绿；
+    ⚠ 旧版这里写的"复跑要重编 `plugin_vector.dll`"**对守卫本身不成立**——守卫是运行期读源码的，
+    下面"评审席 M 项补硬"那一节控制器就是**不重编**直接把两臂打红的）：
+    实现者把 `vector_plugin_boundary.inc` **一个**调用点改回带 `SPATIAL_INDEX=NO`，
     `ctest -R "GpkgSpatialIndexIsPopulated|VectorSourceNeverDisables…|C3mProbe…"` 选中 11 条 ⇒ **3 条红**：
     守卫红并点名 `src/plugins\vector\vector_plugin_boundary.inc:59`、`VectorBoundaryGpkgSpatialIndexIsPopulated` 红、
     临时演示用例红；产物侧对撞是 `no such table: "rtree_shapes_geom"`
     ⇒ 那条选项一旦回到任何调用点，审计的 ③ 与 ④ 一起红。
     还原一律 cp（未用 `git checkout`/`reset`/`stash`），实现者附 `cmp` + 演示前后 `md5sum` 同值证明，
-    其复验现读：`grep -rn 'C3M-REDDEMO' src/ tests/ docs/` = 0；控制器同批复跑 `grep -rn 'SPATIAL_INDEX' src/` = **0 命中**。
+    其复验现读：`grep -rn 'C3M-REDDEMO' src/ tests/` = 0 命中（⚠ 论域**不含 docs**——本台账下面这句
+    "复验现读"本身就带着这个串，把它算进去会得到 1 个假命中；这是"为解释某事写的文字污染数那件事的 grep"的第 N 次应验）。
+    控制器同批复跑 `grep -rn 'SPATIAL_INDEX' src/` = **0 命中**。
     ⚠ 守卫论域是 `src/plugins/**/*.inc|*.cpp`（42 个文件，含注释与字符串字面量一起数、不做排除注释的行过滤），
-    `tests/`（守卫自己那句 `needle = "SPATIAL_INDEX"`）与 `docs/算法说明/矢量数据处理/并集.md:68`（N138 的历史说明）
-    里出现该 token **不算回潮** ⇒ "全库 0 命中"是假说法，`src/` 0 命中才是本仓口径。
+    `tests/`（守卫自己的 token 名单）与 `docs/算法说明/矢量数据处理/并集.md:68`（N138 的历史说明）里出现该 token
+    **不算回潮** ⇒ 口径只能写"`src/plugins` 0 命中"，写"全库 0 命中"是假说法（本台账 574 行旧版就写错过一次）。
+    ⚠ **评审席 M 项把这条判成有洞，已按现读补硬**（`fb40ca4` 之后由控制器直接改，证据链如下）：
+    旧守卫只数大写形 `SPATIAL_INDEX`，而 GDAL 取图层选项名走 `CSLFetchNameValue`（**大小写不敏感**，
+    现读 `ogrgeopackagedatasource.cpp:6722` 的 `bCreateSpatialIndex = (pszSI == nullptr || CPLTestBool(pszSI))`）
+    ⇒ 写回 `spatial_index=no` 一字之差就能既关掉索引又躲过守卫；另外那条"写完再补建索引"的老路
+    （GDAL 的 SQL 函数 `gpkgAddSpatialIndex`，C3l 删掉的就是它）**根本不带图层选项** ⇒ 单靠选项 token 看不见。
+    现在守卫在 **ASCII 大小写折叠后的副本**上数**两个** token：`spatial_index` 与 `gpkgaddspatialindex`，
+    命中时点名"文件:行号 + 命中的是哪个 token"。两臂红态由控制器现跑（**不用重编**：守卫是运行期读源码，
+    台账旧版那句"复跑要重编 `plugin_vector.dll`"对守卫本身不成立，只对产物侧那 9 条成立）：
+    往 `vector_plugin_boundary.inc` 追加一行含小写 `spatial_index=no` 的注释 ⇒ 大写 needle 现读数到 **0**、
+    折叠后读到 **1**、守卫 **Failed** 并点名 `…vector_plugin_boundary.inc:129 （命中 token: spatial_index）`；
+    换成 `gpkgAddSpatialIndex` 一行 ⇒ 同样 **Failed** 且点名 `（命中 token: gpkgaddspatialindex）`；
+    两臂都 `cp` 还原 + `md5sum` 前后同值（`ffe7f0d4…`），还原后两棵树 10/10 绿（9 条审计 + 1 条守卫，
+    Debug 5.84 s / Release 4.06 s）。守卫仍拦不住的：自己拼 SQL 建 rtree 而不提这两个名字 ⇒ 产物侧还得靠 ③④ 两条。
     判据 ③ 的"旧写法会假红"演示（**同属实现者现读**，临时用例、跑完即删）：同一函数里旧臂（rtree 行数 == 要素数）
     在既有夹具 `e2e_singlepart_input`（3 要素含 1 个 NULL）上报 `2 != 3`、新臂（== 非空几何数，2 == 2）不报
     ⇒ 读的是既有产物、没新造缺陷。
-    同轮顺带把 C3l 评审席那条 **S3 销掉**（③ 与本台账空几何规则的冲突已按新口径改正），
-    并现读判定 **S1 不再成立**：`tests/test_plugins.cpp:6823` 那句"六个动作"讲的是 C3l 那六条各自的层名、
-    C3m 三条另有块头（`:9137`）；论域现读＝`src/`+`tests/` 扫"不建索引 / FastWrite / 快速写"只剩 `:9137` 一处、
-    `docs/`（除本台账自己）0 处 ⇒ 本台账那句"另外 11 个不建索引"的旧表述在下面 N138 条目里更新掉。
-    （⚠ 又是"为解释某事写的注释会污染数那件事的 grep"这条老事实：**上面这两行本身就带着这三个词** ⇒ 计数论域必须排掉 docs/RELEASE.md。）
-    ⚠ **新登记一条射程缺口（本刀不自行扩范围）**：17 个写出点里只有 **9 个**有具名审计用例
-    （buffer/clip/dissolve/union/difference/intersect + C3m 的 centroid/boundary/convex_hull），
-    另 **8 个**（endpoints_extract/envelope/filter/interior_point/midpoints_extract/singlepart/sliver_remove/vertices_extract）
-    今天只由"源码里 `SPATIAL_INDEX` 0 命中"这条**负向**守卫覆盖 ⇒ 产物扫描脚本在 `build/tmp/` 不入库、不是常驻判据，
-    而这 8 条路径的产物**恰好是 C3l 之前从未被审计过的那批**。留作后续审计批（与 S4/S5 同批处理）。
+    同轮顺带把 C3l 评审席那条 **S3 销掉**（③ 与本台账空几何规则的冲突已按新口径改正）。
+    ⚠ **但本台账先前判"S1 不再成立"是错的，现按评审席更正**：`tests/test_plugins.cpp:6823` 那句
+    说的是"**六个动作**写出的 `.gpkg` 带一个 0 行 rtree"（缺陷射程，不是层名），而 N138 的射程早已改判为
+    **五个动作**（buffer 自 `f18164a` 起就没关过索引）⇒ 那句头注释确实是陈的，且 `fb40ca4` 改过同一个注释块
+    （加了 ③ 的六行）却没跟上——正是"改注释的人不动相邻的旧断言"这一族。本轮已把块头改成"五个动作 + buffer 是对照"、
+    层名那行改成"六个动作各写各的层名，共五类"（`tests/test_plugins.cpp:6823-6827`/`:6835`，评审席 S1 就此销账）。
+    ⚠ **新登记一条射程缺口（本刀不自行扩范围）**——并按评审席 M1 把论域算对：
+    GPKG 写出点的真实论域**不是 17**。控制器现读 `CreateLayer(` 在 `src/` 共 **25** 处 =
+    vector 插件 24 处（**17 处走 builder** + **7 处从来就发 `nullptr`**：geom_metrics/nearest/
+    raster_convert 的 polygonize 与 convert/repair/simplify/spatial_join）+ `classification_plugin.cpp:1012` 1 处（`nullptr`）；
+    另有 projection 插件走 `GDALVectorTranslate`（`projection_plugin.cpp:284`），**根本不经过 `CreateLayer`**、
+    不在上面这套计数里。
+    产品侧**没有**缺口：GDAL 的判据是"选项缺省即建索引"（`bCreateSpatialIndex = (pszSI == nullptr || CPLTestBool(pszSI))`），
+    而上面那把全目录扫描的口径覆盖所有这些路径的产物 ⇒ "缺索引的活产物"归零；我另直读了
+    `e2e_simplify_output.gpkg`/`e2e_repair_output.gpkg`/`projection_vector_output.gpkg` 三个非 builder 产物，rtree 表都在且有行。
+    ⇒ 被更正的是**覆盖算术**：具名审计用例只覆盖 **9 个动作**，
+    在 25 个 `CreateLayer` 点里其余 **16 处**今天只由"token 0 命中"这条**负向**守卫覆盖
+    （守卫论域 `src/plugins` ⇒ classification 那 1 处在论域内），而 projection 那条 translate 路径
+    **既无具名用例、也在守卫论域之外** ⇒ 今天对它没有任何索引判据。
+    产物扫描脚本在 `build/tmp/` 不入库、不是常驻判据。留作后续审计批（与 S4/S5 同批处理）。
     ⚠ 实现者如实登记的两条缺口（不是我的裁定，是它自己写进报告的）：
     ③ 那条"旧写法假红"演示是**临时用例**、已随还原删除 ⇒ 仓库里现在**没有常驻用例**守"含 NULL/空几何图层的行数判据"
     （三条新用例的夹具都不含 NULL ⇒ 把 ③ 改回旧写法不会被任何常驻用例抓到，只有产物扫描看得出）；
@@ -605,6 +634,28 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     这三个原本就带索引选项的文件里，且这三处的 `useTransactions` 一个没删（12 / 5 / 25 处）；
     差异在此如实登记。
     `find data -newermt "2026-10-23 14:25:17" -type f` = **0 命中**（含本会话两次双树全量）。
+  - **批次 C C3m 评审席修复轮**（本表现值，同计数 735 / 733，**不增删用例**）：评审席 `c3m-reviewer` 判
+    **标准轴通过 / 规格轴不通过、必须修 2 条**，两条我逐条独立复验后都成立（M1 论域算术、M2 测试块头注释的
+    "六个动作"是陈值而我先前判"S1 不再成立"是误判），另按 S-E 把反回潮守卫补硬（大小写折叠 + 两个 token）。
+    改动 = `src/plugins/vector/vector_plugin_common.inc`（块头注释）+ `tests/test_plugins.cpp`（块头注释 + 守卫）
+    + 本台账；两棵树 `gis_tests`+`plugin_vector` 重建 **0 warning**，复跑点名族 Debug **10/10（5.84 s）**、
+    Release **10/10（4.06 s）**，判据族 `(CoverageMeta|CoverageMetaJudge)\..*` Release **19/19**。
+    ⚠ 证据链的时序要说清：上面那轮双树全量（1236.86 / 478.89 s）跑的是 17:43 那批二进制；
+    之后我又改了一次**注释**（守卫的"拦不住"那两行措辞），18:41/18:42 重编两棵树的 `gis_tests`（仍 0 warning）
+    并复跑点名族 Debug **10/10（5.75 s）**、Release **10/10（2.56 s）** ⇒ 全量那一档的"绿"对应的二进制与最终提交
+    之间只差注释，**我没有为重编后的二进制再跑一次全量**，这一档留给下一刀的收口门顺带核。
+    ⚠ **本轮双树全量的墙钟比上一档高约 15%，但那是机器状态、不是这一刀的改动**：
+    Debug **735/735 = 1236.86 s**（上一档同计数 1074.54 s）、Release **733/733 = 478.89 s**（452.24 s），
+    普涨出现在**互不相关的用例上**（`source_mojibake_guard` 15.26→17.00、`install_closure` 11.32→14.83、
+    GUI 一堆 3.8→4.5），`Passed` 单行配对仍 735/735 与 733/733（求和 1235.93 / 478.21 s）。
+    ⇒ 全量轮里 overlay 那条读到 **281.66 s ⇒ 670 ÷ 281.66 = 2.38×**，**看着像跌破 2.5× 触发线**；
+    我在安静态把六条腿逐条单跑复测：overlay **238.95 / 236.35** ⇒ 2.80×、quick **223.95** ⇒ 3.22×、
+    union_poly **151.59** ⇒ 3.96×、checks **31.60** ⇒ 3.16×、raster **10.41** ⇒ 5.76×、matching **1.70** ⇒ 35.3×
+    ⇒ 全部回到历史区间 ⇒ **判定是机器状态污染了那一轮全量，不拆腿、不抬 TIMEOUT**。
+    成因**没证明**（候选：新构建的 `gis_tests.exe`/`plugin_vector.dll` 被杀软实时扫描；本轮没有并发子代理或构建，
+    跑前硬门控 = 0）⇒ 按"同一条腿本机散布就是这个量级"处理，**只登记读数与结论，不登记因果**。
+    ⚠ 由此加一条操作口径：**余量必须按安静态逐条单跑的读数判**，全量轮内的读数只能当对照——
+    否则一次机器状态异常就会把我推去拆一条本来健康的腿。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -1132,13 +1183,33 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   因此"第一条片段就写失败 ⇒ `RollbackTransaction()` 连表一起撤销 ⇒ 产物只剩一个没有要素表的 `.gpkg`"成立；
   而输出文件在动作开头就被 `drv->Create()` 截断 ⇒ **失败时旧产物已经没了，新产物又不可用**（这才是要裁的契约点）。
   ⚠ 已裁定（2026-10-23，用户）：**改成"先写同目录临时件 → 全部成功 → 原子改名替换"**，
-  失败时旧产物原样存活、不留下半截新产物 ⇒ 排 **C3n**（Task #110），范围**先限 vector 的 17 个写出点**（raster 的失败形态与
-  测试覆盖是另一套，混在一刀里会把证据链拉太长）。三条附带条件写进工单：① Shapefile 是多文件集，
-  诚实说法只能是"旧产物在新件完工前一直完好、最后逐文件替换"，要真原子得搬临时目录，代价另计；
-  ② 临时件必须与目标同目录同卷（跨卷 `fs::rename` 会失败/退化），不许放 `build/tmp/`；
-  ③ 必须有一条能红的判据：造一个完好旧产物 + 注入一次中途失败 ⇒ 旧产物字节不变、新产物不存在、无残留临时件。
-  顺带一条本条未查到的保护：**没找到任何动作拒绝 `output == input`**（今天的实现会把输入截断）
-  ⇒ 改成临时件后这个场景自然变安全，但要单独立一条判据而不是顺手带过。
+  失败时旧产物原样存活、不留下半截新产物 ⇒ 排 **C3n**（Task #110）。
+  ⚠ **射程更正（控制器 17:5x 现读，先前写的"17 个写出点"是错的口径）**：截断这件事的论域是
+  `drv->Create(` 的 **25 处**（`grep -rn "drv->Create(" src/plugins/vector/` = 25，分布 20 个文件：
+  `buffer_clip` 2、`overlay` 3、`raster_convert` 3，其余各 1）。17 只是"显式发图层选项的调用点"数
+  （索引那一刀的口径），两者不是一回事。**而且 17 与 25 之差没有语义**：
+  `buildGpkgDriverIndexedLayerOptions()` 的函数体就是 `return {};` ⇒ 走 builder 的点和从来就发 `nullptr` 的点
+  交出去的是同一个空选项。
+  ⚠ **旧产物处理其实有三套并存**（取证席现读、控制器复核）：
+  ① **16 个点**调 `removeExistingVectorOutput(output, outFormat)`（`vector_plugin_common.inc:327`）——
+  Shapefile 按同 stem 删边车、**其余格式 `fs::remove(outputPath)` 整个删掉**；
+  ② **8 个点**内联一个只在 `format == "ESRI Shapefile"` 时才遍历删边车的循环（GPKG 根本不删，靠 GDAL 覆盖）；
+  ③ `doRasterize` 什么都不删。⇒ C3n 要统一的是这三套，不是只加临时件改名。
+  ⚠ **附带条件② 的字面说法要更正**：本机 MSVC STL（工具集 14.44.35207，`crt/src/stl/filesystem.cpp:722`）
+  把 `std::filesystem::rename` 实现成 `MoveFileExW(..., MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING)` ⇒
+  目标已存在是**覆盖成功不报错**（这一点正是"旧产物被替换"要的），但带着 `COPY_ALLOWED` ⇒
+  跨卷时**悄悄退化成 copy+delete**，不是失败 ⇒ "原子改名"这个承诺 `fs::rename` 兑不了，
+  实现必须直接用不带 `COPY_ALLOWED` 的 `MoveFileExW`（跨卷就让它失败），或者诚实改名叫"覆盖替换"。
+  ⚠ **附带条件③ 的载体已找到、且不欠产品代码**：命令行造不出中途失败（`CliProgress::isCancelled()` 恒 false），
+  但本仓已有的 `T17CancellableProgress` 式 reporter 可以在用例里数到第 N 次就抛 `CancelledException` ⇒
+  `vector boundary` + 两面输入即可；因全插件 **0 处显式 `Close()`**（`grep GDALClose src/plugins/vector` = 0）、
+  `dstDS` 析构才走 `GDALClose` ⇒ 异常展开时半截产物必落盘。这条覆盖 16 个点（`doDissolve` 的 throw 在循环外、
+  `doUnion` 在两个写循环之间，那两处够不到）。**取消缝解不了 N135**（那三条要的是"第 N 次几何运算返回失败"，不是"第 N 次被取消"）。
+  顺带那条保护现在**必须有**而不是"自然变安全"：今天 16 个点在 `drv->Create` **之前**就 `fs::remove(outputPath)` ⇒
+  `output == input` 时**输入文件本身被删掉**（不是截断，是删）；改成临时件后这次删除推迟到结尾的改名，
+  对用户反而更坏（跑到一半才失败）。全仓零保护（`grep -rn "output == input\|fs::equivalent" src/` 里两处
+  `equivalent` 都是输入 vs 输入）⇒ 实现要在入口用 `fs::equivalent(input, output)` **硬失败**，
+  口径参照同插件 `spatial_join` 对"字段不存在"的硬失败（N129 那次对齐）。
 - 挂账 **N138**（GPKG 空间索引写成"声明了但是空的"，**用户可见级**）——**已销 `d583c9b` + `f0b0d0e`（批次 C C3l）**：
   **射程 5 个动作**（`clip`/`dissolve`/`union`/`difference`/`intersect`）产出的 `.gpkg` 带一个 **0 行的 rtree**，
   而 `gpkg_extensions` 里已登记 `gpkg_rtree_index` ⇒ 任何按包框查的读端拿到 **0 个要素**（表里明明有 N 行）。
@@ -1181,7 +1252,11 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   加 `VectorSourceNeverDisablesGpkgSpatialIndex`），注册数现值 **735 / 733**。
   **真实数据侧的收口证明**：`tmp/vector_regression/union_focus.gpkg` 由 C3l 收口轮重跑生成，
   表 **22 855** 行 / rtree **22 855** 行（文件从 5 582 848 B 增至 8 085 504 B，多出的就是索引），
-  官方 `ogrinfo -so -spat <全 extent>` 读回 **22 855** 个要素（改前该产物索引 0 行）。
+  官方 `ogrinfo -so -al -spat <覆盖整层 extent 的包框>` 读回 **22 855** 个要素（改前该产物索引 0 行）。
+  ⚠ 复算命令的字面形要记对：**`-so` 不给 `-al`（或不给层名）时只打印一行层名，既没有 `Feature Count`
+  也没有 `Extent`** ⇒ 本台账旧版写的"`ogrinfo -so -spat`"是转录失真（数字可复现，命令行不可复算）。
+  控制器 17:4x 重跑现读：`-so -al` 无过滤 22 855；`-so -al -spat 115.418507 39.443683 117.450919 41.057989`
+  （= 该层 `Extent` 本身）⇒ `Feature Count: 22855`，文件 8 085 504 B。
   ⚠ **评审席把这条做宽了**：磁盘上同时留着改前（`build/tmp/c3a/legtest`，10-21）与改后（`tmp/vector_regression`，10-23）
   两轮真实腿产物 ⇒ **5 个动作都有同腿 A/B**（union 22 855 行，其余量级 15 077 / 22 836 一类）；
   本条最硬的证据是这张 5 动作表，不是上面任何单条。评审席同时判定**"对照②与对照③同机理、属重复"**、
@@ -1190,8 +1265,14 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   ⚠ 评审席另给一条**比本刀论证更强的机制事实**：GDAL 的延迟建索引把"回填 / 登记扩展项 / 装触发器"放在同一段执行、
   任一步失败整段回滚 ⇒ 走驱动这条路**结构上不可能**再产出"登记了但是空的"rtree（旧写法是三段分开，才会留下半截状态）。
   **buffer 那条的证据折扣已销**（免构建复验，控制器 11:15 现跑）：复制改后产物 `e2e_buffer_index_output.gpkg`、
-  `DELETE FROM "rtree_e2e_buffer_input_buffer_geom"` 清空索引 ⇒ `ogrinfo -so -spat <全 extent>` 读 **0**、
+  `DELETE FROM "rtree_e2e_buffer_input_buffer_geom"` 清空索引 ⇒ `ogrinfo -so -al -spat <该层 Extent 本身>` 读 **0**、
   不加过滤读 **200** ⇒ 主判据④在 buffer 上有自己的红态，不必再等"旧态红"。
+  ⚠ 这条 17:5x 由控制器**重做并加了对照**（评审席曾反证"迭代读端拿到全量 200"，我复现不出来，查下来是**包框没盖住数据**）：
+  该产物是投影坐标、`Extent = (12939975.000319, 4851975.000319) - (12944034.998187, 4852224.998187)`，
+  拿地理值域 `±180/±90` 去框它，**改前改后都读 0**（那是我的框错，不是索引的状态）；改用该层自身 Extent ⇒
+  坏索引产物 `-so -al` 与 `-al -spat`（逐条迭代）**双双读 0**、完好产物同框读 200。
+  ⇒ 结论："按包框查的读端拿到 0 个要素"**同时成立于计数与迭代两条路径**，但复算前必须先打印 `Extent` 证明框盖得住数据
+  （本仓这条已经错过两次，都错过在同一处：拿地理值域框投影坐标）。
   ⚠ **本条最该沉淀的方法**：31 个产物、两棵树几百条用例连续几周全绿，缺陷却在每一个受影响的 `.gpkg` 里——
   因为所有断言都是"我们写什么就读什么"（要素数、面积、字段名），**没有一条按读端会怎么用这个文件去查**。
   这次是靠引入仓库外的第二个客户端（vcpkg 的官方 `ogr2ogr`/`ogrinfo`）才打出来的；
@@ -1203,10 +1284,35 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   ⇒ **这条口径已由 C3m 落进判据 ③**（`fb40ca4`：helper `countGpkgNonEmptyGeometries` 自己遍历产物数非空几何，
   比较对象从"要素数"改成"非空几何数"；旧臂/新臂并排演示＝既有夹具 `e2e_singlepart_input` 上旧臂报 `2 != 3`、新臂不报）。
   ⚠ 已裁定并**已落地**（2026-10-23，用户）：**那 11 条也要带索引** ⇒ **C3m**（Task #109，`a7fb866`/`fb40ca4`/`f339f45`）
-  把 17 个写出点统一交给驱动建索引、并加一条"源码里 `SPATIAL_INDEX` 出现 0 次"的反回潮守卫；
+  把 17 个写出点（**= "显式发图层选项的调用点"数**，索引论域的真值是 25 个 `CreateLayer` 点，见上面 C3m 那条的论域更正）
+  统一交给驱动建索引、并加一条反回潮守卫（口径现值：在 `src/plugins` 全文做 ASCII 大小写折叠后数
+  `spatial_index` 与 `gpkgaddspatialindex` 两个 token，合计必须 0 次）；
   成本再次实测到可忽略（22 855 要素补索引 = 文件 5 582 848 → 8 085 504 B、CLI 墙钟 134.18 → 135.20 s），
   代价改到"必须重测真实腿余量"这一头——**现值六条腿**（立案时写"四条"，C3h-3 之后多了 `union_poly` 与拆腿后的分组，
   名单以 `tests/CMakeLists.txt` 的 `GIS_REAL_DATA_TEST_NAMES` 为准）两棵树各两跑，最低余量 2.66×、未拆腿未抬 TIMEOUT。
+- 挂账 **N139**（`vector clip` / `difference` / `intersect` **把写失败吞成"少写一条"**，**今天无判据**，
+  由 C3n-0 取证席立案、控制器逐点现读复核）：这三个动作的写循环只在 `if (write…)` 为真时 `count++`，
+  **为假时既不报错也不中断**，末了照常 `CommitTransaction`/返回 `Result::ok` ⇒
+  产物少要素、stdout 的计数也跟着少，而**动作报成功**（现读 `vector_plugin_buffer_clip.inc:264`/`:291`、
+  `vector_plugin_overlay.inc:640`/`:685`/`:825`/`:846`）。
+  同一插件里 `buffer`（`buffer_clip.inc:106` 报 `Failed to write buffer feature`）、`dissolve`
+  （`dissolve.inc:125`/`:146`）、`union`（`overlay.inc:270`/`384`/`421`/`491`）都是**回滚 + 硬失败**
+  ⇒ 同类错误两种行为，与 N129（`dissolve` vs `spatial_join` 对"字段不存在"）同一族。
+  可达性：写失败要的是"第 N 次 `CreateFeature` 返回非 `OGRERR_NONE`"，命令行与真实数据都造不出来——
+  类型不兼容被 `promoteGeometryToLayerType`（定义在 `overlay_support.inc:11`，写点 `:61`/`:81` 都先升维再写）挡掉、
+  `SetField` 全不检查返回值、
+  `SetFID` 10/10 是 `OGRNullFID` ⇒ 没有任何自然的写失败入口
+  （**判据与 N135 共用同一把钥匙**：一个"第 N 次写/几何运算注入失败"的测试缝，两案一起裁）。
+  修法方向已定：三点对齐 buffer/dissolve 的硬失败形态（回滚 + `Result::fail`）。
+- 挂账 **N140**（`.kml` 输出**是一条被声明却从未被走过一次的路**，低优先，C3n 实现前顺手定口径）：
+  `grep -rn 'ext == ".kml"' src/` 现读 **17 处**（vector 插件 16 处 + `projection_plugin.cpp` 1 处）⇒
+  十六个矢量动作把 `.kml` 后缀接进格式分派；而 `find build -name "*.kml"` = **0 个**、
+  `tests/` 里提到 `.kml` 的 3 处全在 GUI 保存框字符串断言（`test_gui_support.cpp:581`/`:587`/`:592`）
+  ⇒ **没有任何一条用例真的写出过一个 KML**。驱动是有的（本机 vcpkg GDAL：`ogrinfo --formats` 现读
+  `KML -vector- (rw+v)` 与 `LIBKML -vector- (rw+uv)`），所以这不是"驱动缺失"而是"能力被分派、没被判据覆盖"。
+  需要判的三件事（都不在本刀）：① KML 驱动只允许单图层、图层名是它自己定的 ⇒ `CreateLayer(srcLayer->GetName(), …)`
+  在这条路上会不会静默改名；② KML 要求 CRS 为 WGS84 ⇒ 投影坐标写出去是坐标原样落进 `<coordinates>` 还是被 GDAL 拒；
+  ③ KML 是单文件还是 `kmz` 多文件集（关系到 N137/C3n 的"旧产物处理"口径）。
 - 挂账 **N135**（`vector union` 路径 A 的三条"GEOS 返回失败"分支，**今天无判据**，由 `ff86362` 复审席点名）：
   ① 已写面积累加时某次 `Union` 返回 nullptr ⇒ 减法基少一块 ⇒ 源独有块会把已写相交面积再算进去（不计数）；
   ② 逐条差集只减动部分候选 ⇒ 写出的叠加独有块与没减动那条源几何重叠（不计数）；
