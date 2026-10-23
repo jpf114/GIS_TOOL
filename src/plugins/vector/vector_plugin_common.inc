@@ -325,6 +325,11 @@ static std::vector<const OverlayGeometryEntry*> collectCandidateOverlayEntries(
 }
 
 static void removeExistingVectorOutput(const std::string& output, const std::string& format) {
+    // ⚠ C3n-2c 收口后本函数**已无调用者**：最后 5 个非 overlay 点（buffer/clip/dissolve/
+    // polygonize/convert）迁进 VectorStagedOutput，剩下 3 个 overlay 点用的是各自函数里的
+    // 内联"按 stem 删边车"循环、从来没用过这个 helper。保留它是因为下一步（C3n-2d）要么
+    // 把 overlay 三点一并迁走（那时它仍然没人用、应与内联循环一起删），要么先把内联循环
+    // 收拢到这里。在那之前它是一段死代码，登记在 task-C3n2c-report.md 的缺口里。
     namespace fs = std::filesystem;
     // N122：窄串构造 fs::path 在 Windows 按 ANSI 解，而这里的 output 是 UTF-8 ⇒ 中文路径下
     // exists / directory_iterator / remove 三件事全部静默失效（判成"不存在"），旧产物的
@@ -369,16 +374,17 @@ static void ensureParentDirectoryForFile(const std::string& output) {
 //   ④ 任何中途失败或异常展开 ⇒ 析构函数把临时件族删干净 ⇒ 旧产物原样存活、不留半截新产物。
 // ⚠ 清理义务跟着**对象生命周期**走，不跟着某个 return 语句走（工单 §2.4：24 个点、多点返回，
 //   手写清理必漏）。动作里那些 CancelledException 展开也走同一个析构。
-// ⚠ 现读已接 16 个写出点（C3n-1 的 boundary / centroid / vertices_extract，C3n-2a 的 8 个
+// ⚠ 现读已接 21 个写出点（C3n-1 的 boundary / centroid / vertices_extract，C3n-2a 的 8 个
 //   "无事务 + 单输出"点：convex_hull / envelope / endpoints_extract / midpoints_extract /
-//   interior_point / singlepart / sliver_remove / filter，以及 C3n-2b 的 geom_metrics / nearest /
-//   spatial_join / repair / simplify），其余 8 个仍在直接写目标。
-//   "现在是半迁移态"这件事由用例侧的结构守卫承重（J5：已迁移 == 16 / 待迁移名单 == 8 逐条点名），
+//   interior_point / singlepart / sliver_remove / filter，C3n-2b 的 geom_metrics / nearest /
+//   spatial_join / repair / simplify，以及 C3n-2c 的 buffer / clip / dissolve / polygonize /
+//   convert），其余 3 个（overlay 的 union / difference / intersect）仍在直接写目标。
+//   "现在是半迁移态"这件事由用例侧的结构守卫承重（J5：已迁移 == 21 / 待迁移名单 == 3 逐条点名），
 //   所以这里不许写成"矢量输出已全部按契约走"那种会被当成收口结论的话。
 // ⚠ 迁移进本类的点**不再**调 removeExistingVectorOutput：旧代码那一句"在建数据集之前先把旧产物
 //   与同 stem 边车删掉"的对应物是 commit 末尾的 removeStaleOldSidecars ⇒ 删除被挪到新件全部
 //   落地之后（反过来就会交出".shp 是新的、.dbf 没了"这种比旧态更坏的产物）。
-//   其余 8 个点由 C3n-2b..e 逐点搬。
+//   其余 3 个点由 C3n-2d 逐点搬。
 class VectorStagedOutput {
 public:
     VectorStagedOutput() = default;
@@ -389,10 +395,10 @@ public:
     // 建临时件、把它交给驱动建数据集。
     // protectedInputs 是"绝不许被输出覆盖掉"的输入清单。**等价闸走在任何建目录/建文件之前**
     //（工单 §3 J4：命中的时点是"删除/创建之前"，不是"删完了再道歉"）。
-    // 已迁移的 16 个动作里 14 个是单输入 ⇒ 传一个；nearest / spatial_join 是双输入
-    // （C3n-2b 已接线，两个输入都进保护清单 ⇒ 用例 VectorDoubleInputOutputMustNotOverwriteSecondInput
-    // 专打"输出 == 第二个输入"）。后续铺到 union / clip / difference / intersect 那批双输入动作时
-    // 同样要**两个都传**。
+    // 已迁移的 21 个动作里 18 个是单输入 ⇒ 传一个；nearest / spatial_join / clip 是双输入
+    // （nearest 与 spatial_join 在 C3n-2b 接线、clip 在 C3n-2c 接线，两个输入都进保护清单 ⇒
+    // 用例 VectorDoubleInputOutputMustNotOverwriteSecondInput 专打"输出 == 第二个输入"）。
+    // 后续铺到 union / difference / intersect 那批双输入动作时同样要**两个都传**。
     // 返回 false 时 error 是一句能直接给用户的失败原因（口径随同插件既有的硬失败写法）。
     bool start(const std::string& output, const std::string& format,
                const std::vector<std::string>& protectedInputs, GDALDriver* drv,

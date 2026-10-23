@@ -76,16 +76,16 @@ gis::framework::Result VectorPlugin::doDissolve(
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(outFormat.c_str());
     if (!drv) { return gis::framework::Result::fail("Cannot get driver"); }
 
-    // 窄串构造 fs::path 在 Windows 按 ANSI 解 ⇒ UTF-8 中文路径会被判成"不存在"，旧产物边车永远删不掉（N122）。
-    const fs::path outputPath = fs::u8path(output);
-    if (outFormat == "ESRI Shapefile" && fs::exists(outputPath)) {
-        for (const auto& entry : fs::directory_iterator(outputPath.parent_path())) {
-            if (entry.path().stem() == outputPath.stem()) fs::remove(entry.path());
-        }
+    // 失败契约的入口闸（等价判定"输出不得覆盖输入"）走在任何建目录/建文件之前：建目录归
+    // staged.start 自己做，所以这里不再先动文件系统。旧产物的前置删除（含 Shapefile 同 stem
+    // 边车循环，N122 那条）同样已去掉 —— 它的对应物是 commit 末尾的 removeStaleOldSidecars，
+    // 删除只许发生在新件全部落地之后。
+    VectorStagedOutput staged;
+    std::string stageError;
+    if (!staged.start(output, outFormat, { input }, drv, stageError)) {
+        return gis::framework::Result::fail(stageError);
     }
-
-    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
-    if (!dstDS) { return gis::framework::Result::fail("Cannot create output"); }
+    GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
@@ -164,6 +164,15 @@ gis::framework::Result VectorPlugin::doDissolve(
     }
     delete srcSRS;
     progress.throwIfCancelled();
+
+    // 工单 §2：事务必须在 commit() 之前收口 —— commit 的第一件事就是 dataset_.reset()，
+    // 事务还开着就关数据集会被 GDAL 在关闭时回滚 ⇒ "产物已替换但内容半截"的假绿。
+    // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
+    std::string commitError;
+    if (!staged.commit(commitError)) {
+        return gis::framework::Result::fail(commitError);
+    }
+
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(

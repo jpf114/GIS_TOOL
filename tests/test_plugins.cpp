@@ -7447,16 +7447,20 @@ static std::string a0MakeClipPolygonLayer(const std::string& name) {
     return path;
 }
 
-// 目标图层拒绝写入时，clip 不得二次释放已移交写者的几何。
+// 目标图层拒绝写入时，clip 不得二次释放已移交写者的几何；且写失败必须**硬失败**。
 //
 // 本用例的前提（必须成立才有覆盖价值）：输出图层被 resultLayerGeometryType(wkbPoint)
-// 声明为 MULTIPOINT（vector_plugin_common.inc:389-392），clip 对点图层产出的是 POINT，
-// 而 promoteGeometryToLayerType（vector_plugin_overlay_support.inc:14-29）不提升 Point
-// → Shapefile 驱动拒绝写入 → 写出要素数为 0，正好命中"移交后不再 delete"的释放分支。
+// 声明为 MULTIPOINT（vector_plugin_common.inc），clip 对点图层产出的是 POINT，
+// 而 promoteGeometryToLayerType（vector_plugin_overlay_support.inc）不提升 Point
+// ⇒ Shapefile 驱动拒绝写入，正好命中"移交后不再 delete"的释放分支。
 //
-// ⚠ Task 20 修正 resultLayerGeometryType(wkbPoint) 之后本用例前提消失，届时写入会成功
-// （written == 1、不再有驱动写失败消息），下面的两条前提断言会红——那时必须把它们
-// 改成正向断言，而不是删掉断言让用例静默空跑。
+// C3n-2c 的现读变化（N139 结构修，用户 2026-10-23 裁定）：改前驱动拒绝被吞成
+// "写出 0 条、动作仍 success=true"；改后 doClip 与 doBuffer 同形 —— 写失败 ⇒ 在事务里
+// RollbackTransaction() 并返回 Result::fail("Failed to write clip feature")。
+// ⇒ 原头注释里"Task 20 修正后把两条前提断言改成正向断言"的出口在这里兑现（不是删断言）：
+//   ① 动作必须失败；② 失败消息点名写失败；③ 失败不留半成品（staged 契约；本臂输出原本不存在）；
+//   ④ 驱动拒绝写入的日志仍被捕获（证明红/绿来自这条分支，而不是"因为别的原因失败"）；
+//   ⑤ 同一动作再跑一遍仍是同一句干净失败（堆与文件句柄都还健康 —— 这才是本用例的原意）。
 TEST_F(PluginTest, VectorClipRejectedFeatureWriteDoesNotCorruptHeap) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
@@ -7464,6 +7468,22 @@ TEST_F(PluginTest, VectorClipRejectedFeatureWriteDoesNotCorruptHeap) {
     const std::string input = a0MakePointLayer("a0_clip_reject_input.gpkg", 100.0, 100.0);
     const std::string clip = a0MakeClipPolygonLayer("a0_clip_reject_overlay.gpkg");
     const std::string output = utf8PathString(getTestDir() / "a0_clip_reject_output.shp");
+
+    // 旧契约时代这条路径会留下一份 0 要素产物（.shp/.shx/.dbf/.prj）⇒ 先按 stem 清干净，
+    // 否则"失败不留半成品"会拿到上一轮的假红（与 N129 那批夹具的清理口径一致）。
+    {
+        const fs::path outputPath = fs::u8path(output);
+        std::error_code ec;
+        for (fs::directory_iterator it(outputPath.parent_path(),
+                 fs::directory_options::skip_permission_denied, ec), end;
+             !ec && it != end; it.increment(ec)) {
+            std::error_code secer;
+            if (it->is_regular_file(secer) && !secer && it->path().stem() == outputPath.stem()) {
+                std::error_code rmec;
+                fs::remove(it->path(), rmec);
+            }
+        }
+    }
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("clip");
@@ -7479,9 +7499,19 @@ TEST_F(PluginTest, VectorClipRejectedFeatureWriteDoesNotCorruptHeap) {
     CPLPushErrorHandler(captureGdalWarning);
     const auto result = p->execute(params, progress_);
     CPLPopErrorHandler();
-    EXPECT_TRUE(result.success) << "Clip failed: " << result.message;
-    ASSERT_TRUE(fs::exists(output));
 
+    // ③ 失败不留半成品：本臂的输出原本不存在，写失败后也不得冒出来。
+    EXPECT_FALSE(fs::exists(output))
+        << "N139：写失败后不许留下半成品（旧契约是交出 0 条要素的产物）";
+
+    // ① + ② 写失败必须硬失败，且消息点名是"写 clip 要素"失败。
+    EXPECT_FALSE(result.success)
+        << "N139：驱动拒绝写入被吞成了 success=true（消息 = " << result.message << "）";
+    EXPECT_NE(result.message.find("Failed to write clip feature"), std::string::npos)
+        << "N139：失败消息必须点名写失败（与 doBuffer 的 Failed to write buffer feature 同族），"
+           "实际 message = " << result.message;
+
+    // ④ 前提锁：红/绿必须来自"驱动拒绝写入"这条分支。
     bool rejectedWrite = false;
     {
         std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
@@ -7494,36 +7524,20 @@ TEST_F(PluginTest, VectorClipRejectedFeatureWriteDoesNotCorruptHeap) {
     }
     EXPECT_TRUE(rejectedWrite)
         << "前提已消失：没有捕获到驱动拒绝把 POINT 写入 MULTIPOINT 图层的错误，"
-           "本用例不再覆盖失败释放分支，须改成正向断言（见用例头注释）";
+           "本用例不再覆盖写失败分支，须重新找一条能让驱动拒绝写入的夹具（见用例头注释）";
 
-    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
-        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
-    ASSERT_NE(outDs, nullptr);
-    OGRLayer* outLayer = outDs->GetLayer(0);
-    ASSERT_NE(outLayer, nullptr);
-    const GIntBig written = outLayer->GetFeatureCount(FALSE);
-    EXPECT_EQ(written, 0) << "前提已消失：POINT 被 MULTIPOINT 图层拒绝时写出数必须是 0，"
-                             "改成正向断言请同步更新用例头注释";
-    outLayer->ResetReading();
-    OGRFeature* outFeat = nullptr;
-    while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
-        OGRGeometry* outGeom = outFeat->GetGeometryRef();
-        if (outGeom == nullptr) {
-            // 不能用 ASSERT_*：它会直接结束整个用例，跳过 DestroyFeature 与 GDALClose，
-            // .shp 保持打开 → 紧随其后的第二轮 execute 因文件占用再挂一次，
-            // 把"1 个几何为空"放大成两个失败且原因难读。
-            OGRFeature::DestroyFeature(outFeat);
-            ADD_FAILURE() << "Clip 输出要素缺少几何，结果不自洽";
-            break;
-        }
-        EXPECT_TRUE(outGeom->IsValid());
-        OGRFeature::DestroyFeature(outFeat);
+    // ⑤ 堆若已被破坏（例如移交后二次释放），第二次执行通常在这里暴露。
+    {
+        std::lock_guard<std::mutex> lock(g_gdalWarningMutex);
+        g_gdalErrors.clear();
     }
-    GDALClose(outDs);
-
-    // 堆若已被破坏，后续 GDAL/GEOS 分配释放通常在此处才暴露，因此再跑一轮。
+    CPLPushErrorHandler(captureGdalWarning);
     const auto again = p->execute(params, progress_);
-    EXPECT_TRUE(again.success) << "Second clip pass failed: " << again.message;
+    CPLPopErrorHandler();
+    EXPECT_FALSE(again.success) << "Second clip pass unexpectedly succeeded: " << again.message;
+    EXPECT_NE(again.message.find("Failed to write clip feature"), std::string::npos)
+        << "Second clip pass failed for another reason: " << again.message;
+    EXPECT_FALSE(fs::exists(output)) << "第二轮之后也不许留下半成品：" << output;
 }
 
 // 同样的所有权移交路径：difference 在写入被拒绝时不得二次释放。
@@ -17468,18 +17482,18 @@ TEST_F(PluginTest, TileAlphaMaskFilterAppliesToEveryBand) {
 // C3n-1：矢量输出的失败契约「先写同目录临时件 → 全部成功 → 显式关闭 → 替换目标」
 // ════════════════════════════════════════════════════════════════════════════════════
 // 契约出处：用户 2026-10-23 的裁定，原文登记在 docs/RELEASE.md 的 N137 条目。要治的病是
-// 今天矢量动作的失败形态：输出文件在动作开头就被 drv->Create() 截断（16 个点还在 Create
+// 今天矢量动作的失败形态：输出文件在动作开头就被 drv->Create() 截断（未迁移的点还在 Create
 // 之前 fs::remove 掉整个目标）⇒ 写出失败时**旧产物已经没了，新产物又不可用**。
-// C3n-2b 收口时已迁 16 个动作，其余 8 个写出点由后续刀铺开
+// C3n-2c 收口时已迁 21 个动作，其余 3 个（overlay 的 union / difference / intersect）由 C3n-2d 铺开
 // ⇒ "现在是半迁移态"这件事由 J5 那条结构守卫承重。
-// 论域现读（C3n-2b 收口）：已迁 **16** 个动作、待迁 **8** 个；`drv->Create(` 全目录 **10** 处
-// （helper 1 + 待迁 8 + 论域外 doRasterize 1）。
+// 论域现读（C3n-2c 收口）：已迁 **21** 个动作、待迁 **3** 个；`drv->Create(` 全目录 **5** 处
+// （helper 1 + 待迁 3 + 论域外 doRasterize 1）。
 // 四条判据的分工（J5 是结构守卫，合计五条）：
 //   J1 VectorBoundaryMidFailureKeepsOldProductAndLeavesNoTempFile —— 中途失败 ⇒ 旧产物逐字节不变 + 不留临时件
-//   J2 VectorStagedOutputKeepsProductForm                        —— 成功路径的产物形态一个字没变
-//   J3 VectorStagedOutputLeavesNoJournalSidecar                   —— 替换之前真的关闭过数据集（无 -wal/-journal 边车）
+//   J2 VectorStagedOutputKeepsProductForm                        —— 成功路径的产物形态一个字没变（8 个动作）
+//   J3 VectorStagedOutputLeavesNoJournalSidecar                   —— 替换之前真的关闭过数据集（无 -wal/-journal 边车，8 个动作）
 //   J4 VectorOutputMustNotOverwriteInput                         —— output == input 硬失败且输入完好
-//   J5 VectorVectorWritePointsAreStagedOrListed                  —— 半迁移态的承重名单（已迁移 == 16 / 待迁移 == 8）
+//   J5 VectorVectorWritePointsAreStagedOrListed                  —— 半迁移态的承重名单（已迁移 == 21 / 待迁移 == 3）
 
 namespace {
 
@@ -17742,6 +17756,81 @@ bool c3n1WriteThreePointLineGpkg(const std::string& path) {
     auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
     feat->SetField("name", "A");
     feat->SetGeometry(&line);
+    const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+    OGRFeature::DestroyFeature(feat);
+    GDALClose(ds);
+    return ok;
+}
+
+// 两值栅格夹具（polygonize 用）：10×10 Byte，左半列 1 / 右半列 2，四连通下每个等值区各成
+// 一个面 ⇒ 产物**手算恰好 2 个面**、包框 = 栅格范围 (100,190)-(110,200)。不设 NoData：
+// GDALPolygonize 的掩膜只看 NoData 与 alpha，设了 0 当 NoData 也不影响本例（没有 0 像元），
+// 但留空少一层前提。真值 1/2 让两条面各自可辨（DN 字段的两种取值）。
+bool c3n1WriteTwoValueRaster(const std::string& path) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        return false;
+    }
+    auto* ds = driver->Create(path.c_str(), 10, 10, 1, GDT_Byte, nullptr);
+    if (!ds) {
+        return false;
+    }
+    double gt[6] = { 100.0, 1.0, 0.0, 200.0, 0.0, -1.0 };
+    ds->SetGeoTransform(gt);
+    // 与 J2 其它臂同一个坐标系：polygonize 会把栅格投影抄进产物（srs 来自 GetProjectionRef），
+    // 不设投影时产物没有 CRS，"产物 CRS 是 EPSG:3857"那条会红成夹具缺陷而不是产品缺陷。
+    {
+        OGRSpatialReference srs;
+        srs.importFromEPSG(3857);
+        char* wkt = nullptr;
+        if (srs.exportToWkt(&wkt) == OGRERR_NONE && wkt) {
+            ds->SetProjection(wkt);
+            CPLFree(wkt);
+        }
+    }
+    std::vector<uint8_t> data(100, 0);
+    for (int y = 0; y < 10; ++y) {
+        for (int x = 0; x < 10; ++x) {
+            data[static_cast<size_t>(y) * 10 + static_cast<size_t>(x)] = (x < 5) ? 1 : 2;
+        }
+    }
+    auto* band = ds->GetRasterBand(1);
+    const bool ok = band->RasterIO(GF_Write, 0, 0, 10, 10, data.data(), 10, 10, GDT_Byte, 0, 0)
+        == CE_None;
+    GDALClose(ds);
+    return ok;
+}
+
+// clip 的叠加层夹具：只盖住两多边形夹具里的 A（A 的外包框 (0,0)-(12,8) 那个方框），
+// 与 B (20,0)-(24,2) 不相交 ⇒ clip 产物**手算恰好 1 个要素**、包框 (0,0)-(12,8)。
+// A 整体落在方框内（与方框左/底边重合）⇒ 走的是 Contains 那条"原样 clone"支，
+// 几何不做布尔运算 ⇒ 期望值不依赖 GEOS 的取整行为。
+bool c3n1WriteClipOverlayGpkg(const std::string& path) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("overlay", srs.get(), wkbPolygon, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    OGRPolygon poly;
+    OGRLinearRing ring;
+    ring.addPoint(0.0, 0.0);
+    ring.addPoint(12.0, 0.0);
+    ring.addPoint(12.0, 8.0);
+    ring.addPoint(0.0, 8.0);
+    ring.addPoint(0.0, 0.0);
+    poly.addRing(&ring);
+    auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    feat->SetGeometry(&poly);
     const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
     OGRFeature::DestroyFeature(feat);
     GDALClose(ds);
@@ -18113,8 +18202,11 @@ TEST_F(PluginTest, VectorDoubleInputOutputMustNotOverwriteSecondInput) {
 // 要素数与几何看起来都对，但用户拿到的是一份开不了/属性表缺失的产物。
 // 判据比的是**产物本身**（层名、要素数、字段、CRS、rtree 可用性、目录里应有的那几个文件），
 // 不比"我们写了什么"（exercised ≠ conformant）。
-// 夹具一律复用同动作既有执行用例的那份（面类两条 = writeTwoPolygonFixture 的 A/B，
-// 折线一条 = VectorVerticesExtractExecution 的三点折线），期望数全部按夹具坐标手算写死。
+// 夹具一律复用同动作既有执行用例的那份（面类 = writeTwoPolygonFixture 的 A/B，
+// 折线 = VectorVerticesExtractExecution 的三点折线），期望数全部按夹具坐标手算写死。
+// C3n-2c 把动作数组从 3 个扩到 **8** 个（追加 buffer / clip / dissolve / polygonize / convert），
+// 每个新动作只取 GPKG 一条臂（见 cases 上方注释）。C3n-2a/2b 的 13 个已迁移动作仍**没有**
+// J2 覆盖 —— 那是"判据扩面批"的活，登记在 task-C3n2c-report.md 的缺口里。
 TEST_F(PluginTest, VectorStagedOutputKeepsProductForm) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr) << "plugin not loaded: vector";
@@ -18122,32 +18214,71 @@ TEST_F(PluginTest, VectorStagedOutputKeepsProductForm) {
     struct Case {
         const char* action;
         const char* ext;
+        const char* inputName;        // 夹具名：面类 shapes.gpkg / 折线 shapes.gpkg / 栅格 shapes.tif
         const char* outputName;
         long long expectedFeatures;
         double filterMinX;
         double filterMinY;
         double filterMaxX;
         double filterMaxY;
+        const char* expectedLayer;    // 仅 GPKG 臂用；.shp 臂的层名由目标文件名推
+        OGRwkbGeometryType expectedType;
+        std::vector<const char*> fields;
+        double distance;              // buffer 的距离；<= 0 ⇒ 不传（其它动作也不传）
+        const char* dissolveField;    // dissolve 的字段；nullptr ⇒ 不传
+        const char* overlayName;      // clip 的叠加层；nullptr ⇒ 本动作不需要第二个输入
     };
-    // 三条动作都跑 GPKG；boundary 与 vertices_extract 各再跑一条 Shapefile 臂
-    //（Shapefile 是**多文件集** ⇒ 边车落点这一层只有 .shp 臂能判）。
+    // C3n-1/2a/2b 的 3 个动作（boundary / centroid / vertices_extract）保持原臂，其中 boundary 与
+    // vertices_extract 各再跑一条 Shapefile 臂（Shapefile 是**多文件集** ⇒ 边车落点这一层只有
+    // .shp 臂能判）。C3n-2c 追加本刀 5 个动作（buffer / clip / dissolve / polygonize / convert），
+    // 每个动作先只取 GPKG 格式（工单 §5 的降规模口径：> 30 s 才降，这里直接按最低规模铺，
+    // 省下的是"再跑一遍 .shp 边车"的重复面）⇒ 覆盖动作数 3 → **8**。
+    // 每个新动作的参数按它自己的语义给全（不许"无参数调用然后断言失败"）：
+    //   buffer 要 distance、clip 要第二个输入 clip_vector、dissolve 要 dissolve_field、
+    //   polygonize 要栅格输入、convert 要 format（它的驱动是按参数选的，不看扩展名）。
     const Case cases[] = {
-        { "boundary", ".gpkg", "form_boundary.gpkg", 2, 0.0, 0.0, 24.0, 8.0 },
-        { "centroid", ".gpkg", "form_centroid.gpkg", 2, 0.0, 0.0, 24.0, 8.0 },
-        { "vertices_extract", ".gpkg", "form_vertices.gpkg", 3, 0.0, 0.0, 10.0, 5.0 },
-        { "boundary", ".shp", "form_boundary.shp", 2, 0.0, 0.0, 24.0, 8.0 },
-        { "vertices_extract", ".shp", "form_vertices.shp", 3, 0.0, 0.0, 10.0, 5.0 },
+        { "boundary", ".gpkg", "shapes.gpkg", "form_boundary.gpkg", 2, 0.0, 0.0, 24.0, 8.0,
+          "shapes", wkbMultiLineString, { "name" }, 0.0, nullptr, nullptr },
+        { "centroid", ".gpkg", "shapes.gpkg", "form_centroid.gpkg", 2, 0.0, 0.0, 24.0, 8.0,
+          "shapes", wkbPoint, { "name" }, 0.0, nullptr, nullptr },
+        { "vertices_extract", ".gpkg", "shapes.gpkg", "form_vertices.gpkg", 3, 0.0, 0.0, 10.0, 5.0,
+          "shapes", wkbPoint, { "name", "source_fid", "vertex_idx" }, 0.0, nullptr, nullptr },
+        { "boundary", ".shp", "shapes.gpkg", "form_boundary.shp", 2, 0.0, 0.0, 24.0, 8.0,
+          "", wkbLineString, { "name" }, 0.0, nullptr, nullptr },
+        { "vertices_extract", ".shp", "shapes.gpkg", "form_vertices.shp", 3, 0.0, 0.0, 10.0, 5.0,
+          "", wkbPoint, { "name", "source_fid", "vertex_idx" }, 0.0, nullptr, nullptr },
+        // 本刀 5 个动作（GPKG）。期望值全部按夹具坐标手算：
+        //   buffer    两只面各外扩 5 ⇒ 2 个 MultiPolygon，包框 (-5,-5)-(29,13)，层名 <源层名>+"_buffer"；
+        //   clip      A 被 (0,0)-(12,8) 方框整体包含（clone 支）、B 不与方框相交 ⇒ **1 个**要素；
+        //   dissolve  按 name 分两组（A / B 各一条）⇒ **2 个** MultiPolygon，层名 "dissolved"；
+        //   polygonize 10×10 两值栅格 ⇒ 左半 1 / 右半 2 两个等值区 ⇒ **2 个**面，层名 "polygonized"；
+        //   convert   照抄两只面到 GPKG ⇒ **2 个** Polygon，层名 "shapes"（源层名）。
+        { "buffer", ".gpkg", "shapes.gpkg", "form_buffer.gpkg", 2, -6.0, -6.0, 30.0, 14.0,
+          "shapes_buffer", wkbMultiPolygon, { "name" }, 5.0, nullptr, nullptr },
+        { "clip", ".gpkg", "shapes.gpkg", "form_clip.gpkg", 1, 0.0, 0.0, 12.0, 8.0,
+          "shapes", wkbMultiPolygon, { "name" }, 0.0, nullptr, "overlay.gpkg" },
+        { "dissolve", ".gpkg", "shapes.gpkg", "form_dissolve.gpkg", 2, 0.0, 0.0, 24.0, 8.0,
+          "dissolved", wkbMultiPolygon, { "name" }, 0.0, "name", nullptr },
+        { "polygonize", ".gpkg", "shapes.tif", "form_polygonize.gpkg", 2, 100.0, 190.0, 110.0, 200.0,
+          "polygonized", wkbPolygon, { "DN" }, 0.0, nullptr, nullptr },
+        { "convert", ".gpkg", "shapes.gpkg", "form_convert.gpkg", 2, 0.0, 0.0, 24.0, 8.0,
+          "shapes", wkbPolygon, { "name" }, 0.0, nullptr, nullptr },
     };
+    ASSERT_EQ(sizeof(cases) / sizeof(cases[0]), 10u)
+        << "J2 的臂数必须与本刀收口后的射程一致（3 个既有动作的 5 臂 + 本刀 5 个动作的 5 臂）";
 
     for (const auto& item : cases) {
         const std::string tag = std::string("j2_") + item.action + "_" + c3n1ExtName(item.ext) + "_form";
         const fs::path dir = c3n1FreshDir(tag);
         ASSERT_TRUE(fs::exists(dir)) << dir.u8string();
 
-        // 输入：面类两条用两只面，vertices_extract 用三点折线（与既有执行用例同一份数据）。
-        const std::string input = utf8PathString(dir / "shapes.gpkg");
+        // 输入三类：面类两只面 / vertices_extract 的三点折线 / polygonize 的两值栅格
+        //（都复用或对齐同动作既有执行用例的那份数据）。
+        const std::string input = utf8PathString(dir / item.inputName);
         if (std::string(item.action) == "vertices_extract") {
             ASSERT_TRUE(c3n1WriteThreePointLineGpkg(input)) << input;
+        } else if (std::string(item.action) == "polygonize") {
+            ASSERT_TRUE(c3n1WriteTwoValueRaster(input)) << input;
         } else {
             ASSERT_TRUE(c3n1WriteTwoPolygonGpkg(input)) << input;
         }
@@ -18157,6 +18288,22 @@ TEST_F(PluginTest, VectorStagedOutputKeepsProductForm) {
         params["action"] = std::string(item.action);
         params["input"] = input;
         params["output"] = utf8PathString(output);
+        if (item.distance > 0.0) {
+            params["distance"] = item.distance;
+        }
+        if (item.dissolveField) {
+            params["dissolve_field"] = std::string(item.dissolveField);
+        }
+        if (std::string(item.action) == "convert") {
+            // doConvert 的驱动由 format 参数选（不是从扩展名推）：不给它就会拿 GeoJSON 驱动
+            // 写一个 .gpkg 名的 GeoJSON，产物形态判据会以"打不开"的形式红。
+            params["format"] = std::string("GPKG");
+        }
+        if (item.overlayName) {
+            const std::string overlay = utf8PathString(dir / item.overlayName);
+            ASSERT_TRUE(c3n1WriteClipOverlayGpkg(overlay)) << overlay;
+            params["clip_vector"] = overlay;
+        }
 
         const std::string what = std::string("J2[") + item.action + item.ext + "]";
         const C3n1Run run = c3n1RunAction(p, params, progress_);
@@ -18165,7 +18312,11 @@ TEST_F(PluginTest, VectorStagedOutputKeepsProductForm) {
         ASSERT_TRUE(fs::exists(output)) << what << "：产物不存在 " << output.u8string();
 
         // 目录里只应留下"夹具 + 本轮产物"这一组文件：任何 *.gis-tmp-* 或 SQLite 附属件都算外物。
-        std::vector<std::string> expectedNames{ "shapes.gpkg" };
+        // 夹具名不再写死 shapes.gpkg：polygonize 的输入是 shapes.tif，clip 另有 overlay.gpkg。
+        std::vector<std::string> expectedNames{ item.inputName };
+        if (item.overlayName) {
+            expectedNames.push_back(item.overlayName);
+        }
         const std::string outputName{ item.outputName };
         if (std::string(item.ext) == ".gpkg") {
             expectedNames.push_back(outputName);
@@ -18191,15 +18342,16 @@ TEST_F(PluginTest, VectorStagedOutputKeepsProductForm) {
         ASSERT_NE(outLayer, nullptr) << what << "：产物里没有图层";
 
         // 层名的两种形状都要判，而且**两边不一样**：
-        //   GPKG ⇒ 动作把源层名（夹具里的 "shapes"）原样传给 CreateLayer ⇒ 产物层名就该是 "shapes"；
+        //   GPKG ⇒ 动作按各自动作的层名规则建层（多数是源层名 "shapes"；buffer 是 "shapes_buffer"、
+        //     dissolve 是 "dissolved"、polygonize 是 "polygonized"）⇒ 期望值逐动作写死在 cases 里；
         //   Shapefile ⇒ OGR 在**打开时**按文件名推层名（本机实测：boundary_out.shp 的
         //     `ogrinfo -so -al` 报 `Layer name: boundary_out`）⇒ 换名之后读到的必须是目标名。
-        // 这一条就是把"临时件的名字漏进产物"钉死的地方：GPKG 那侧漏进来会是 "shapes" 变了，
+        // 这一条就是把"临时件的名字漏进产物"钉死的地方：GPKG 那侧漏进来会是层名变了，
         // Shapefile 那侧漏进来会是 "boundary_out.gis-tmp-<pid>-<seq>"。
         const std::string outputStem = std::string(item.outputName).substr(
             0, std::string(item.outputName).find_last_of('.'));
         const std::string expectedLayerName =
-            std::string(item.ext) == ".gpkg" ? std::string("shapes") : outputStem;
+            std::string(item.ext) == ".gpkg" ? std::string(item.expectedLayer) : outputStem;
         EXPECT_STREQ(outLayer->GetName(), expectedLayerName.c_str())
             << what << "：产物层名不是期望值（期望 " << expectedLayerName
             << "，临时件机制把名字写歪了就是这一条红）";
@@ -18220,7 +18372,8 @@ TEST_F(PluginTest, VectorStagedOutputKeepsProductForm) {
                 utf8PathString(output));
         }
 
-        // 字段集合：三个动作都是"照抄源字段"，vertices_extract 另加 source_fid / vertex_idx。
+        // 字段集合逐动作写死在 cases 里（照抄源字段的 6 个动作是 {"name"}；vertices_extract 另加
+        // source_fid / vertex_idx；polygonize 只有它自己建的 DN）。
         {
             const auto* defn = outLayer->GetLayerDefn();
             std::vector<std::string> fields;
@@ -18228,25 +18381,17 @@ TEST_F(PluginTest, VectorStagedOutputKeepsProductForm) {
                 fields.push_back(defn->GetFieldDefn(i)->GetNameRef());
             }
             std::sort(fields.begin(), fields.end());
-            std::vector<std::string> expectedFields{ "name" };
-            if (std::string(item.action) == "vertices_extract") {
-                expectedFields.push_back("source_fid");
-                expectedFields.push_back("vertex_idx");
-            }
+            std::vector<std::string> expectedFields(item.fields.begin(), item.fields.end());
             std::sort(expectedFields.begin(), expectedFields.end());
             EXPECT_EQ(fields, expectedFields)
                 << what << "：产物字段集合不符（Shapefile 截断到 10 字符是既有事实，这里两边同源）";
         }
 
-        // 几何类别：boundary 出线、centroid 出点、vertices_extract 出点。
+        // 几何类别逐动作写死（含 Shapefile 的既有拍平事实：MultiLineString ⇒ LineString）。
         // ⚠ Shapefile 那一侧驱动会把 MultiLineString 拍平成 LineString（改前改后同形：
         //   本机实测旧码产物 c3n1_j1_boundary_shp/boundary_out.shp 的 `ogrinfo -so -al` 报
         //   `Geometry: Line String`）⇒ 期望值必须按**格式的既有事实**给，不许拿声明类型硬要。
-        OGRwkbGeometryType expectedType =
-            std::string(item.action) == "boundary" ? wkbMultiLineString : wkbPoint;
-        if (std::string(item.ext) == ".shp" && expectedType == wkbMultiLineString) {
-            expectedType = wkbLineString;
-        }
+        const OGRwkbGeometryType expectedType = item.expectedType;
         EXPECT_EQ(wkbFlatten(outLayer->GetLayerDefn()->GetGeomType()), expectedType)
             << what << "：产物几何类别不符";
         outLayer->ResetReading();
@@ -18264,20 +18409,45 @@ TEST_F(PluginTest, VectorStagedOutputKeepsProductForm) {
 // ⇒ "写完就改名"会撞在 GDAL 还握着句柄的时刻。本条判的是**结果合规**：
 //   ① GPKG 产物旁边不许有 -wal / -journal / -shm（没关闭就没收日志）；
 //   ② 产物能被独立打开并读到全部要素。
+// C3n-2c 把动作数组从 3 个扩到 **8** 个（追加 buffer / clip / dissolve / polygonize / convert），
+// 与 J2 同射程。参数按各动作自己的语义给全（clip 要第二个输入、buffer 要 distance、
+// dissolve 要字段、polygonize 要栅格、convert 要 format）。
 // ⚠ 顺序本身的可证伪性在报告里做（反证臂：把 commit 里那句 close 删掉 ⇒ 替换在 Windows 上
 //   直接撞 ERROR_ACCESS_DENIED，动作报失败而不是假成功）。本用例只兜结果形态。
 TEST_F(PluginTest, VectorStagedOutputLeavesNoJournalSidecar) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr) << "plugin not loaded: vector";
 
-    const char* const actions[] = { "boundary", "centroid", "vertices_extract" };
-    for (const char* action : actions) {
+    struct Action {
+        const char* action;
+        const char* inputName;       // shapes.gpkg / shapes.tif（polygonize）
+        const char* overlayName;     // clip 的叠加层；nullptr ⇒ 不需要
+        double distance;             // buffer 的距离；<= 0 ⇒ 不传
+        const char* dissolveField;   // dissolve 的字段；nullptr ⇒ 不传
+    };
+    const Action actions[] = {
+        { "boundary", "shapes.gpkg", nullptr, 0.0, nullptr },
+        { "centroid", "shapes.gpkg", nullptr, 0.0, nullptr },
+        { "vertices_extract", "shapes.gpkg", nullptr, 0.0, nullptr },
+        { "buffer", "shapes.gpkg", nullptr, 5.0, nullptr },
+        { "clip", "shapes.gpkg", "overlay.gpkg", 0.0, nullptr },
+        { "dissolve", "shapes.gpkg", nullptr, 0.0, "name" },
+        { "polygonize", "shapes.tif", nullptr, 0.0, nullptr },
+        { "convert", "shapes.gpkg", nullptr, 0.0, nullptr },
+    };
+    ASSERT_EQ(sizeof(actions) / sizeof(actions[0]), 8u)
+        << "J3 的动作数组必须覆盖 8 个动作（3 个既有 + 本刀 5 个）；少一条就是射程缩水";
+
+    for (const auto& item : actions) {
+        const char* action = item.action;
         const fs::path dir = c3n1FreshDir(std::string("j3_") + action);
         ASSERT_TRUE(fs::exists(dir)) << dir.u8string();
 
-        const std::string input = utf8PathString(dir / "shapes.gpkg");
+        const std::string input = utf8PathString(dir / item.inputName);
         if (std::string(action) == "vertices_extract") {
             ASSERT_TRUE(c3n1WriteThreePointLineGpkg(input)) << input;
+        } else if (std::string(action) == "polygonize") {
+            ASSERT_TRUE(c3n1WriteTwoValueRaster(input)) << input;
         } else {
             ASSERT_TRUE(c3n1WriteTwoPolygonGpkg(input)) << input;
         }
@@ -18288,6 +18458,20 @@ TEST_F(PluginTest, VectorStagedOutputLeavesNoJournalSidecar) {
         params["action"] = std::string(action);
         params["input"] = input;
         params["output"] = output;
+        if (item.distance > 0.0) {
+            params["distance"] = item.distance;
+        }
+        if (item.dissolveField) {
+            params["dissolve_field"] = std::string(item.dissolveField);
+        }
+        if (std::string(action) == "convert") {
+            params["format"] = std::string("GPKG");
+        }
+        if (item.overlayName) {
+            const std::string overlay = utf8PathString(dir / item.overlayName);
+            ASSERT_TRUE(c3n1WriteClipOverlayGpkg(overlay)) << overlay;
+            params["clip_vector"] = overlay;
+        }
 
         const C3n1Run run = c3n1RunAction(p, params, progress_);
         ASSERT_FALSE(run.threw) << action << "：" << run.outcome();
@@ -18325,27 +18509,30 @@ TEST_F(PluginTest, VectorStagedOutputLeavesNoJournalSidecar) {
 // ── J5：结构守卫 ──「现在是半迁移态」必须承重 ──────────────────────────────────────
 // 半迁移态最坏的结局不是"某个点还没改"，而是**大家以为契约已经全覆盖了**。所以名单必须承重，
 // 而且双向可红（工单 §4：改分发/路由类机制必须配一条双向可红的断言）：
-//   ① 已迁移点数 == 写死的"已迁移名单"条数（== 16；不是"≥1"，≥1 会让后面几刀做完也测不出东西）；
-//   ② 待迁移名单 == 8 条、逐条点名，每条都要在源码里真的数到一处直接写 output 的建数据集；
+//   ① 已迁移点数 == 写死的"已迁移名单"条数（== 21；不是"≥1"，≥1 会让后面几刀做完也测不出东西）；
+//   ② 待迁移名单 == 3 条、逐条点名，每条都要在源码里真的数到一处直接写 output 的建数据集；
 //   ③ 名单**外**若出现任何一处仍以 output 直接建数据集 ⇒ 红（新写的点、或别人绕开名单改的点）；
 //   ④ 名单**里**的点如果被迁移完了而名单没减 ⇒ 也红（防名单变死条目）；
-//   ⑤ 全目录 drv->Create 的总数也要对上账（1 处 helper + 8 处待迁 + 1 处论域外 = 10），
+//   ⑤ 全目录 drv->Create 的总数也要对上账（1 处 helper + 3 处待迁 + 1 处论域外 = 5），
 //      这样"新加一个写出点却不进任何名单"同样会红。
-// 论域现读（C3n-2b 迁移后复核）：`grep -rn "drv->Create(" src/plugins/vector/` = 10 处
-//   ＝ helper 1 处 + 直接写 output 9 处（8 处待迁 + 论域外 doRasterize 1 处）。
+// 论域现读（C3n-2c 迁移后复核）：`grep -rn "drv->Create(" src/plugins/vector/` = 5 处
+//   ＝ helper 1 处 + 直接写 output 4 处（3 处待迁 + 论域外 doRasterize 1 处）。
 //   账的来路：C3n-1 开工时是 25，迁走 3 处、helper 新增 1 处 ⇒ 23；C3n-2a 再迁走 8 处 ⇒ 15；
-//   C3n-2b 再迁走 5 处 ⇒ 10。
+//   C3n-2b 再迁走 5 处 ⇒ 10；C3n-2c 再迁走 5 处 ⇒ 5。
 //   doRasterize（写的是栅格）按用户裁定留在射程之外，
 //   但它仍然是一个"直接写 output 的建数据集点"，所以**单独点名登记**在这一支里，
 //   免得它被 ③ 当成名单外命中，也免得它被误当成已覆盖。
 // 判据的形：只认 (文件, 动作函数) 这一对**函数级**坐标，不认行号（行号会随任何一次改动漂移）。
 // （GIS_SOURCE_DIR 这个编译宏由 tests/CMakeLists.txt 发，本文件上面 C3m 那条源码守卫也用同一个。）
 TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
-    // 已迁移动作（C3n-1 的 3 个 + C3n-2a 的 8 个 + C3n-2b 的 5 个 = 16）。
+    // 已迁移动作（C3n-1 的 3 个 + C3n-2a 的 8 个 + C3n-2b 的 5 个 + C3n-2c 的 5 个 = 21）。
     static const std::vector<std::pair<std::string, std::string>> kStagedActions = {
         { "vector_plugin_boundary.inc", "doBoundary" },
+        { "vector_plugin_buffer_clip.inc", "doBuffer" },
+        { "vector_plugin_buffer_clip.inc", "doClip" },
         { "vector_plugin_centroid.inc", "doCentroid" },
         { "vector_plugin_convex_hull.inc", "doConvexHull" },
+        { "vector_plugin_dissolve.inc", "doDissolve" },
         { "vector_plugin_endpoints_extract.inc", "doEndpointsExtract" },
         { "vector_plugin_envelope.inc", "doEnvelope" },
         { "vector_plugin_geom_metrics.inc", "doGeomMetrics" },
@@ -18353,6 +18540,8 @@ TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
         { "vector_plugin_interior_point.inc", "doInteriorPoint" },
         { "vector_plugin_midpoints_extract.inc", "doMidpointsExtract" },
         { "vector_plugin_nearest.inc", "doNearest" },
+        { "vector_plugin_raster_convert.inc", "doConvert" },
+        { "vector_plugin_raster_convert.inc", "doPolygonize" },
         { "vector_plugin_repair.inc", "doRepair" },
         { "vector_plugin_simplify.inc", "doSimplify" },
         { "vector_plugin_singlepart.inc", "doSinglepart" },
@@ -18360,24 +18549,19 @@ TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
         { "vector_plugin_spatial_join.inc", "doSpatialJoin" },
         { "vector_plugin_vertices_extract.inc", "doVerticesExtract" },
     };
-    // 待迁移名单：24 个矢量写出点里扣掉上面 16 个 ⇒ 8 条，逐条点名（后续几刀一条一条划掉）。
+    // 待迁移名单：24 个矢量写出点里扣掉上面 21 个 ⇒ 3 条，逐条点名（C3n-2d 一条一条划掉）。
     static const std::vector<std::pair<std::string, std::string>> kPendingActions = {
-        { "vector_plugin_buffer_clip.inc", "doBuffer" },
-        { "vector_plugin_buffer_clip.inc", "doClip" },
-        { "vector_plugin_dissolve.inc", "doDissolve" },
         { "vector_plugin_overlay.inc", "doUnion" },
         { "vector_plugin_overlay.inc", "doDifference" },
         { "vector_plugin_overlay.inc", "doIntersect" },
-        { "vector_plugin_raster_convert.inc", "doPolygonize" },
-        { "vector_plugin_raster_convert.inc", "doConvert" },
     };
     // 论域之外但**仍是直接写 output** 的那一个点（写栅格，用户裁定"先限 vector 的矢量输出"）。
     static const std::pair<std::string, std::string> kOutsideDomain = {
         "vector_plugin_raster_convert.inc", "doRasterize",
     };
 
-    EXPECT_EQ(kPendingActions.size(), 8u)
-        << "待迁移名单本身不是 8 条 ⇒ 这条守卫的账先就错了（射程 24 = 已迁 16 + 待迁 8）";
+    EXPECT_EQ(kPendingActions.size(), 3u)
+        << "待迁移名单本身不是 3 条 ⇒ 这条守卫的账先就错了（射程 24 = 已迁 21 + 待迁 3）";
 
     const fs::path dir = fs::u8path(std::string(GIS_SOURCE_DIR) + "/src/plugins/vector");
     ASSERT_TRUE(fs::exists(dir))
@@ -18470,7 +18654,7 @@ TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
         << "没在 vector_plugin_common.inc 里扫到 VectorStagedOutput::start 里的 drv->Create "
         << "⇒ helper 没进射程，①②③④⑤ 全是假绿";
 
-    // ① 已迁移点数 == 名单条数（== 3），且必须是**点名**命中而不是"扫到了就叫"。
+    // ① 已迁移点数 == 名单条数（== 21），且必须是**点名**命中而不是"扫到了就叫"。
     std::size_t stagedCount = 0;
     for (const auto& entry : stagedDeclarations) {
         stagedCount += static_cast<std::size_t>(entry.second);
@@ -18531,7 +18715,7 @@ TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
         << " ⇒ 要么是新加的写出点没进名单，要么是有人绕开机制自己写";
     EXPECT_EQ(directTotal, kPendingActions.size() + 1u)
         << "直接写 output 的建数据集点总数对不上账（数到 " << directTotal
-        << "，期望 8 个待迁移 + 1 个论域外的 doRasterize = 9）";
+        << "，期望 3 个待迁移 + 1 个论域外的 doRasterize = 4）";
     EXPECT_EQ(totalCreates, directTotal + 1u)
         << "drv->Create( 的总数对不上账（数到 " << totalCreates << "，期望 "
         << directTotal + 1u << "）⇒ 有新的写出点没被任何名单接住";

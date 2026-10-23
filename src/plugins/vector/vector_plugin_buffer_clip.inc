@@ -41,12 +41,15 @@ gis::framework::Result VectorPlugin::doBuffer(
     if (!drv) { return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
-    ensureParentDirectoryForFile(output);
-    removeExistingVectorOutput(output, outFormat);
-
-    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
-    if (!dstDS) { return gis::framework::Result::fail("Cannot create output file: " + output);
+    // 失败契约的入口闸（等价判定"输出不得覆盖输入"）走在任何建目录/建文件之前：建目录归
+    // staged.start 自己做，所以这里不再先动文件系统。旧产物的前置删除同样已去掉 —— 它的
+    // 对应物是 commit 末尾的 removeStaleOldSidecars，删除只许发生在新件全部落地之后。
+    VectorStagedOutput staged;
+    std::string stageError;
+    if (!staged.start(output, outFormat, { input }, drv, stageError)) {
+        return gis::framework::Result::fail(stageError);
     }
+    GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
     // Buffer output is user-facing analysis data; prefer the driver's native
@@ -132,6 +135,15 @@ gis::framework::Result VectorPlugin::doBuffer(
     dstLayer->SyncToDisk();
     delete srcSRS;
     progress.throwIfCancelled();
+
+    // 工单 §2：事务必须在 commit() 之前收口 —— commit 的第一件事就是 dataset_.reset()，
+    // 事务还开着就关数据集会被 GDAL 在关闭时回滚 ⇒ "产物已替换但内容半截"的假绿。
+    // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
+    std::string commitError;
+    if (!staged.commit(commitError)) {
+        return gis::framework::Result::fail(commitError);
+    }
+
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(
@@ -212,12 +224,16 @@ gis::framework::Result VectorPlugin::doClip(
     if (!drv) { return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
-    ensureParentDirectoryForFile(output);
-    removeExistingVectorOutput(output, outFormat);
-
-    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
-    if (!dstDS) { return gis::framework::Result::fail("Cannot create output file: " + output);
+    // 失败契约的入口闸（等价判定"输出不得覆盖输入"）走在任何建目录/建文件之前：建目录归
+    // staged.start 自己做，所以这里不再先动文件系统。旧产物的前置删除同样已去掉 —— 它的
+    // 对应物是 commit 末尾的 removeStaleOldSidecars，删除只许发生在新件全部落地之后。
+    // 双输入：`--clip_vector` 指到输出同样会毁数据 ⇒ 两个输入都进保护清单。
+    VectorStagedOutput staged;
+    std::string stageError;
+    if (!staged.start(output, outFormat, { input, clipVector }, drv, stageError)) {
+        return gis::framework::Result::fail(stageError);
     }
+    GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
@@ -262,12 +278,21 @@ gis::framework::Result VectorPlugin::doClip(
             }
 
             if (clippedGeom && !clippedGeom->IsEmpty()) {
-                if (writeFeatureWithCopiedFields(dstLayer, feat, clippedGeom.get(), &fieldMap)) {
-                    count++;
-                    if (useTransactions && count % transactionBatchSize == 0) {
-                        dstLayer->CommitTransaction();
-                        dstLayer->StartTransaction();
+                // N139（结构修，用户 2026-10-23 裁定不引入失败注入缝）：写失败不许吞成
+                // "少写一条仍报成功"。与 doBuffer 的 `CreateFeature != OGRERR_NONE` 同形 ——
+                // 在事务里先回滚，再硬失败返回（临时件族由 staged 析构兜住，旧产物不动）。
+                if (!writeFeatureWithCopiedFields(dstLayer, feat, clippedGeom.get(), &fieldMap)) {
+                    OGRFeature::DestroyFeature(feat);
+                    if (useTransactions) {
+                        dstLayer->RollbackTransaction();
                     }
+                    delete srcSRS;
+                    return gis::framework::Result::fail("Failed to write clip feature");
+                }
+                count++;
+                if (useTransactions && count % transactionBatchSize == 0) {
+                    dstLayer->CommitTransaction();
+                    dstLayer->StartTransaction();
                 }
             }
             OGRFeature::DestroyFeature(feat);
@@ -287,8 +312,18 @@ gis::framework::Result VectorPlugin::doClip(
             std::unique_ptr<OGRGeometry> clipped(overlayGeometry->Contains(geom)
                 ? geom->clone()
                 : geom->Intersection(overlayGeometry));
-            if (clipped && !clipped->IsEmpty() &&
-                writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(clipped), &fieldMap)) {
+            if (clipped && !clipped->IsEmpty()) {
+                // N139（结构修，用户 2026-10-23 裁定不引入失败注入缝）：同 doBuffer —— 写失败
+                // ⇒ 事务里先回滚，再硬失败返回。writeFeatureWithCopiedFieldsOwned 无论成功失败
+                // 都接管几何所有权，所以失败后只销毁源要素，不得再碰 clipped。
+                if (!writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(clipped), &fieldMap)) {
+                    OGRFeature::DestroyFeature(feat);
+                    if (useTransactions) {
+                        dstLayer->RollbackTransaction();
+                    }
+                    delete srcSRS;
+                    return gis::framework::Result::fail("Failed to write clip feature");
+                }
                 count++;
                 if (useTransactions && count % transactionBatchSize == 0) {
                     dstLayer->CommitTransaction();
@@ -304,6 +339,14 @@ gis::framework::Result VectorPlugin::doClip(
     }
     delete srcSRS;
     progress.throwIfCancelled();
+
+    // 工单 §2：事务必须在 commit() 之前收口（理由同 doBuffer）。全部写完 ⇒ 关闭数据集 →
+    // 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
+    std::string commitError;
+    if (!staged.commit(commitError)) {
+        return gis::framework::Result::fail(commitError);
+    }
+
     progress.onProgress(1.0);
 
     return gis::framework::Result::ok(
