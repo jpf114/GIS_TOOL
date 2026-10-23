@@ -356,12 +356,17 @@ static void ensureParentDirectoryForFile(const std::string& output) {
     fs::create_directories(outputPath.parent_path());
 }
 
-// WHY 多一维"索引交给驱动"：GPKG 的 gpkgAddSpatialIndex 只建 rtree 表和触发器、不回填既有行，
-// 所以"先 SPATIAL_INDEX=NO 批量写、写完再补索引"交出的必是空索引；要索引就一路都不关。
-static std::vector<std::string> buildGpkgFastWriteLayerOptions(
-    bool useTransactions, bool spatialIndexFromDriver = false) {
+// WHY 两个 builder 分开、不用一个布尔位：调用点必须自己说清"空间索引归谁建"。
+// 交给驱动那一路一个图层选项都不发 ⇒ GDAL 走它自己的延迟建索引，在 FlushCache 里建 rtree
+// 并把已经在表里的行一次性回填；"先关索引批量写、写完再用 gpkgAddSpatialIndex 补"交出的必是
+// 0 行的索引（那个函数只建 rtree 表和触发器、不回填既有行），按包框查的读端会拿到 0 个要素（N138）。
+static std::vector<std::string> buildGpkgDriverIndexedLayerOptions() {
+    return {};
+}
+
+static std::vector<std::string> buildGpkgFastWriteLayerOptions(bool useTransactions) {
     std::vector<std::string> options;
-    if (useTransactions && !spatialIndexFromDriver) {
+    if (useTransactions) {
         options.emplace_back("SPATIAL_INDEX=NO");
     }
     return options;

@@ -52,8 +52,7 @@ gis::framework::Result VectorPlugin::doBuffer(
     // Buffer output is user-facing analysis data; prefer the driver's native
     // GeoPackage spatial index creation path over the fragile deferred SQL path.
     const bool useTransactions = false;
-    std::vector<std::string> layerOptionStorage =
-        buildGpkgFastWriteLayerOptions(useTransactions, /*spatialIndexFromDriver=*/true);
+    std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
 
     const std::string outputLayerName = std::string(srcLayer->GetName()) + "_buffer";
@@ -222,8 +221,7 @@ gis::framework::Result VectorPlugin::doClip(
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     const bool useTransactions = outFormat == "GPKG";
-    std::vector<std::string> layerOptionStorage =
-        buildGpkgFastWriteLayerOptions(useTransactions, /*spatialIndexFromDriver=*/true);
+    std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         srcLayer->GetName(),
