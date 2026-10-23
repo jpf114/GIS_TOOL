@@ -26,11 +26,15 @@
 #   批次 C C3h-3 现读事实（2026-10-23）：vector,union 的两条实现路径各有真实腿 ⇒
 #   Group=overlay 的 union_focus 是**线 × 面**（路径 B，只写 input/both 两类块），
 #   Group=union_poly 的 union_poly_focus 是**面 × 面**（路径 A，三类互不重叠分块 input/both/overlay）；
-#   ctest 用例名 real_data_vector_union_poly（TIMEOUT 600 s = ceil(148.97×4/10)×10，
-#   148.97 是这条腿三跑里的最大现读＝全组轮那一跑，见 tests/CMakeLists.txt 的 C3h-3 测量栏）。
+#   ctest 用例名 real_data_vector_union_poly（TIMEOUT 600 s = ceil(148.97×4/10)×10；148.97 是这条腿
+#   四跑里的最大现读，四跑为 143.39 / 144.46 单跑、148.97 与 143.22 全组轮 ⇒ "在全组里就更慢"这个说法
+#   被 143.22 那一跑否证，取最大值只是取最慢一跑，成因未证，见 tests/CMakeLists.txt 的 C3h-3 测量栏）。
 #   选材现读：data/vector/中国_省.geojson 42 要素（34 MultiPolygon + 8 MultiLineString）为源、
-#   data/vector/中国_市.geojson 388 要素（375 MultiPolygon + 13 MultiLineString）为叠加，同 EPSG:4490
-#   ⇒ 源层含面 ⇒ 走路径 A。复制件落 build/tmp/c3h3/，data/ 只被复制读。
+#   data/vector/中国_市.geojson 388 要素（375 MultiPolygon + 13 MultiLineString）为叠加，同 EPSG:4490。
+#   ⚠ 路径归属不是"源层含面"推出来的：两侧都是声明 Unknown 的混合层，实现取的是**第一个非空要素**的类型
+#   （vector_plugin_common.inc:421-444），省层现读首要素是 MultiPolygon（首条线在 index 2）⇒ 今天落路径 A；
+#   本腿因此把"首个非空要素是面"写成断言，另由哨兵⑥（union_overlay_pieces>=1）在产物侧兜住。复制件落
+#   build/tmp/c3h3/，data/ 只被复制读。
 #   GIS_CASE_ROSTER 从三份名单变四份（full + checks + overlay + union_poly），三组之并 == full 且
 #   各档组标各自与自己的名单逐名相等（新增的第 6 条钉住 union_poly 那一档 ⇒ "把这条腿错归到别的档"必红）。
 classification,feature_stats,raster,not-consumed,real_regression,relation,C9,腿走合成兜底

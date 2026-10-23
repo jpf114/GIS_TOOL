@@ -132,6 +132,9 @@ function Invoke-Case {
 
     $result = [pscustomobject]@{
         Name = $Case.Name
+        # Group 必须带进结果对象：Validate-CaseOutputs 的 union_poly 分发按组标走（不按用例名），
+        #   少了这一行那条分发永远不成立 ⇒ 整条腿"跑了但没人判"，而名单不变量照样绿（本刀实测踩过）。
+        Group = $Case.Group
         ExitCode = $code
         Seconds = [Math]::Round($watch.Elapsed.TotalSeconds, 2)
         Output = ($output | Out-String).Trim()
@@ -1791,7 +1794,11 @@ function Assert-ChineseAttributeFilterCase {
 #   usePracticalMixedUnion 为真 ⇒ 落路径 B；而路径 B 按契约不产出叠加面（同文件 210 行注释原文
 #   "union_overlay_pieces 在这一路恒为 0，那是契约不是缺陷"）⇒ 三类互不重叠分块的那条路径 A
 #   在真实数据回归里是 0 覆盖，只由合成夹具钉住（GOLD != 真实数据覆盖，口径见 docs/RELEASE.md N128）。
-# 本条腿的源层含面 ⇒ isLinearGeometryType(源) 为假 ⇒ 按同一条式子必然落路径 A。
+# 本条腿落路径 A 的**实际**依据（评审席 M1 更正）：实现取的是源层 effectiveLayerGeometryType()
+#   （vector_plugin_common.inc:421-444）—— 声明类型有维度就直接用，Unknown 层则取**第一个非空要素**的类型。
+#   两个混合层喂进来时省层声明 Unknown ⇒ 路径归属由"首个非空要素是不是面"决定，而不是由"层里含不含面"决定；
+#   本档因此现读并断言 FirstNonEmptyGeometryType 是面类型（Ensure-UnionPolyInputs 里那条），
+#   另有哨兵 ⑥（union_overlay_pieces >= 1）在产物侧兜住"哪天首个要素变成线就退回路径 B"。
 # 选材现读（两侧都是混合维度、同 EPSG:4490）：data/vector/中国_省 42 要素（34 MultiPolygon + 8
 #   MultiLineString）、data/vector/中国_市 388 要素（375 MultiPolygon + 13 MultiLineString）。
 #   喂给 CLI 的是 build/tmp/c3h3/ 里的复制件，data/ 全程只读（N115：边车只可能长在临时区）。
@@ -1829,6 +1836,10 @@ function Test-GeoJsonGeometryNonEmpty {
     if ($Node -is [int] -or $Node -is [long] -or $Node -is [double] -or $Node -is [single] -or $Node -is [decimal]) {
         return $true
     }
+    # [string] 也满足 IEnumerable，但 PS 的 foreach 过一个字符串给出的是**它自己**（不是逐字符）
+    #   ⇒ 少了这一条，"坐标叶子是字符串"这种坏 GeoJSON 会让递归原地自调直到 CallDepthOverflow
+    #   （评审席实测触发过）。字符串叶子一律按"不是坐标"处理。
+    if ($Node -is [string]) { return $false }
     if ($Node -is [System.Collections.IEnumerable]) {
         foreach ($child in $Node) {
             if (Test-GeoJsonGeometryNonEmpty -Node $child) { return $true }
@@ -1870,6 +1881,7 @@ function Get-GeoJsonGeometryHistogram {
     $pointCount = 0
     $otherCount = 0
     $nullGeomCount = 0
+    $firstNonEmptyType = $null
     $typeNames = @()
     foreach ($feature in @($doc.features)) {
         $featureCount++
@@ -1885,7 +1897,12 @@ function Get-GeoJsonGeometryHistogram {
         elseif ($typeName -match "LineString") { $linearCount++ }
         elseif ($typeName -match "Point") { $pointCount++ }
         else { $otherCount++ }
-        if (Test-GeoJsonGeometryNonEmpty -Node $geometry) { $nonEmptyCount++ }
+        # 记下**第一个非空要素**的类型：实现给 Unknown 层定有效几何类型时取的就是它
+        #   （vector_plugin_common.inc:431-441），所以"这条腿到底走路径 A 还是 B"由它决定，不由"层里含不含面"决定。
+        if (Test-GeoJsonGeometryNonEmpty -Node $geometry) {
+            $nonEmptyCount++
+            if ($null -eq $firstNonEmptyType) { $firstNonEmptyType = $typeName }
+        }
     }
 
     Assert-Condition -Condition ($featureCount -gt 0) -Message (
@@ -1903,6 +1920,7 @@ function Get-GeoJsonGeometryHistogram {
         PointCount = $pointCount
         OtherCount = $otherCount
         NullGeometryCount = $nullGeomCount
+        FirstNonEmptyGeometryType = $firstNonEmptyType
         TypeHistogram = (($typeNames | Sort-Object) -join ",")
     }
 }
@@ -1992,11 +2010,19 @@ function Ensure-UnionPolyInputs {
     Assert-Condition -Condition ($histogram.NonEmptyGeometryCount -ge 1) -Message (
         "union poly-poly leg: source side has " + $histogram.NonEmptyGeometryCount + " feature(s) with a " +
         "non-empty geometry (types [" + $histogram.TypeHistogram + "]), so the lower bound is vacuous")
-    # 路径 A 的**前提**（不是结论）：源层含面 ⇒ effectiveLayerGeometryType 不是线类型 ⇒ 34-35 行的式子落 A。
+    # 路径归属的**真前提**（评审席 M1）：Unknown 层的有效几何类型 = 第一个非空要素的类型，所以这条腿走的
+    #   是不是路径 A 由它决定。它不是面 ⇒ 源层被判成线类型，叠加侧全为面时就落路径 B ⇒ 本腿名义上在跑、
+    #   实际覆盖的是 union_focus 已经覆盖过的那条路 ⇒ 当场红，而不是静默换个路径继续绿。
+    Assert-Condition -Condition ($null -ne $histogram.FirstNonEmptyGeometryType -and
+        $histogram.FirstNonEmptyGeometryType -match "Polygon") -Message (
+        "union poly-poly leg: the first non-empty source feature is [" + $histogram.FirstNonEmptyGeometryType +
+        "], and effectiveLayerGeometryType() (vector_plugin_common.inc:421-444) takes exactly that type for a " +
+        "layer declared Unknown => the implementation would not be on path A. Path coverage here is positional, " +
+        "not a property of the layer as a whole; re-choose the input pair, do not delete this assertion")
+    # 两侧有面才谈得上"叠加独有块"（ArealCount 不再被当作路径判据，只是这条不变式的载体）。
     Assert-Condition -Condition ($histogram.ArealCount -ge 1) -Message (
         "union poly-poly leg: source side has no areal geometry (types [" + $histogram.TypeHistogram +
-        "]), so isLinearGeometryType could be true and this leg would silently fall through path B " +
-        "instead of covering path A")
+        "]), so path A could not leave any overlay-only piece to read back")
     Assert-Condition -Condition ($overlayStats.FeatureCount -ge 1) -Message (
         "union poly-poly leg: overlay side exposes Features: " + $overlayStats.FeatureCount)
     # 判据 ⑤ 的两个加数都要在场：vector info 不打印 Fields 行时 FieldCount 是 null，
@@ -2035,12 +2061,18 @@ function Ensure-UnionPolyInputs {
     }
 }
 
-# C3h-3 这一档的用例名单：注册、判据分发与 GIS_CASE_ROSTER 的第 6 条不变量共用同一份名单
-# ⇒ "进了一条没有判据分支的用例"与"把这条腿错归到别的档"都会当场红（同 $script:TopologyCheckCaseNames
-# 那条机制）。名单只有这一处，别处不抄第二份。
+# C3h-3 这一档的用例名单：注册、判据分发与 GIS_CASE_ROSTER 的第 6 条不变量共用同一份名单。
+# 两道闸分工写清（评审席 M2 更正）：
+#   "把这条腿错归到别的档"由第 6 条不变量红（三组之并 == full 吃不住这一臂，所以第 6 条必须存在）；
+#   "新增一条 union_poly 用例却忘了写判据分支"由 Validate-CaseOutputs 里**按组标分发**那条红
+#   —— 那条不认名字，只认 -Group union_poly ⇒ 新用例自动走 Assert-UnionPolyCase，
+#     而它内部再核名字是否在本名单里 ⇒ 名单与分发哪个漏了都会点名，不存在"注册了但没人判"的静默通道
+#     （原来这个 switch 没有 default，光靠名字分支是会静默全绿的）。名单只有这一处，别处不抄第二份。
 $script:UnionPolyCaseNames = @(
     "union_poly_focus"
 )
+# 判据覆盖计数：Assert-UnionPolyCase 每被调用一次 +1，由第 7 条不变量与"实际跑过的 union_poly 用例数"对撞。
+$script:UnionPolyAssertedCount = 0
 
 function Assert-UnionPolyCase {
     param(
@@ -2054,6 +2086,7 @@ function Assert-UnionPolyCase {
         "(Ensure-UnionPolyInputs did not run for this Group) => every expectation would be vacuous")
     Assert-Condition -Condition ($script:UnionPolyCaseNames -ccontains $Case.Name) -Message (
         "Assert-UnionPolyCase got an unexpected case name: " + $Case.Name)
+    $script:UnionPolyAssertedCount++
 
     # ① 第一段：stdout 自报数 == 元数据 union_total_pieces（键取不到即红，整行锚定不吃前缀）。
     $reported = Get-ReportedCount -Text $Case.Output -Pattern "Union completed: (\d+) features" `
@@ -2162,6 +2195,14 @@ function Validate-CaseOutputs {
     # WHY：本脚本自 2026-04-27 起优先用 data/vector 里的真实道路（现 22836 要素），
     # 而旧常量按 3 要素合成样本标定 ⇒ clip/union/intersect/spatial_join 长期红，
     # buffer_quick 则因 "feature_count: 2" 恰是 "feature_count: 22836" 的前缀而假绿。
+    # WHY 按**组标**分发而不是按用例名（评审席 M2）：下面那个 switch 没有 default，"New-Case 打了
+    #   -Group union_poly、名字也进了 $script:UnionPolyCaseNames，却忘了加判据分支"过去会静默全绿
+    #   ⇒ 这条腿的判据覆盖面必须由组标保证，名字只当"这条腿该有什么"的门禁（名单对撞在第 6 条不变量里）。
+    if ($Case.Group -eq "union_poly") {
+        Assert-UnionPolyCase -Case $Case -ResolvedCliPath $ResolvedCliPath -Refs $UnionPolyRefs | Out-Null
+        return
+    }
+
     switch ($Case.Name) {
         "buffer_quick" {
             Assert-CountEquals -Text $Case.Output -Pattern "feature_count: (\d+)" -Expected $InputFeatureCount -Label "buffer_quick"
@@ -2183,11 +2224,6 @@ function Validate-CaseOutputs {
         "union_focus" {
             $unionCount = Get-ReportedCount -Text $Case.Output -Pattern "Union completed: (\d+) features" -Label "union_focus"
             Assert-Condition -Condition ($unionCount -ge $InputFeatureCount) -Message ("union_focus: reported " + $unionCount + ", expected at least " + $InputFeatureCount)
-        }
-        # ── C3h-3：union 路径 A（面 × 面）的真实数据腿（判据与下界推导见 Assert-UnionPolyCase 上方注释块）──
-        # 与上面的 union_focus 同名单不同判据：union_focus 是线 × 面（路径 B），这条是面 × 面（路径 A）。
-        "union_poly_focus" {
-            Assert-UnionPolyCase -Case $Case -ResolvedCliPath $ResolvedCliPath -Refs $UnionPolyRefs | Out-Null
         }
         "clip_far" {
             Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected 0 -Label "clip_far"
@@ -3036,6 +3072,15 @@ foreach ($case in $runCases) {
     Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs -UnionPolyRefs $unionPolyRefs
     $results += $result
 }
+
+# C3h-3 第 7 条（评审席 M2 的兜底）：**跑过**的 union_poly 用例数必须等于**被 Assert-UnionPolyCase 判过**的用例数。
+# 那条分发按组标走，组标来自 Invoke-Case 带进结果对象的 Group 字段 ⇒ 谁摘掉分发、或谁把 Group 字段从结果对象里
+# 弄丢（本刀就是这样静默全绿过一次：整腿 128 s 跑完、零条判据执行、名单四档全部照绿），只有这条会红。
+$executedUnionPoly = @($results | Where-Object { $_.Group -eq "union_poly" })
+Assert-Condition -Condition ($executedUnionPoly.Count -eq $script:UnionPolyAssertedCount) -Message (
+    "C3h-3 judge-coverage invariant: " + $executedUnionPoly.Count + " union_poly case(s) ran but " +
+    $script:UnionPolyAssertedCount + " were judged by Assert-UnionPolyCase => the group dispatch is not " +
+    "firing, so this leg produced no verdict at all while every roster check still passed")
 
 # summary_* 的落名：Group=all 时与拆分前逐字相同（summary_quick.* / summary_full.*，
 # 那两个文件名是 real_vector_regression / real_vector_regression_full 两个 custom target 的产物）；
