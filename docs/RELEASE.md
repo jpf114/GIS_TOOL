@@ -980,6 +980,51 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   （`SetFID(OGRNullFID)` 三处自 `99d9c91` 起就有），且 `VectorClipRepairsInvalidOverlayGeometry` 已为**同族**症状
   专门钉过"`UNIQUE constraint failed` 不得出现"，union 这条腿却没有等价断言。
   定位实验：MU-D（保留 covered-by、强制归属取 `overlayFeatures.front()`）与 MU-E（老用例输出换 `.geojson`）。
+  ⚠ **2026-10-23 控制器现读（不靠变异就能复现，HEAD `f67e724` 的产物即证据）**："FID 起点不同"不是随机噪声，
+  而是**跟着输入格式走**：扫 `build/debug/tests/Debug/test_e2e_output/` 全部 103 个 `.gpkg` 的落盘 fid 首值 ⇒
+  **4 个从 0 起、99 个从 1 起，且那 4 个的输入都是 `.shp`**（`e2e_clip_invalid_output` / `e2e_clip_line_output` /
+  `e2e_difference_no_overlap_output` / `e2e_union_line_output`），输入是 `.gpkg` 的没有一例从 0 起。
+  ⇒ 与"源要素的 FID 漏进了目标要素"这条直觉相容，但**代码读下来不成立**：`writeGeometryFeature`
+  （`vector_plugin_overlay_support.inc:63`）在 `CreateFeature` 前显式 `SetFID(OGRNullFID)`，全仓也没有任何
+  "从源要素取 FID 写进目标"的赋值点（`grep -rn "SetFID(" src/` 现读 **10 处，实参全是 `OGRNullFID`**，
+  分布在 endpoints/midpoints/nearest/spatial_join/vertices_extract 与 `overlay_support` 的 5 个写出helper）。
+  ⚠ 所以这一半**仍是未解**：`fid` 首值 0 需要 `INSERT` 里显式带 fid 才可能出现（表是
+  `fid INTEGER PRIMARY KEY AUTOINCREMENT`，`sqlite_sequence.seq` 记的是最大值 2 ⇒ 0 不是自动分配的结果），
+  下一步要么在写出前打印 `dstFeat->GetFID()`，要么按 GDAL 侧 `m_bInsertStatementWithFID` 那条语句缓存分支查。
+  **另半边（回滚删表）机制已确认**：`CPL_DEBUG=1` 下 union 老用例的日志顺序是
+  `OGR_SQLITE: BEGIN Transaction` → `GPKG: exec(CREATE TABLE "union" …)` → `COMMIT` ⇒
+  建表 DDL 确实落在事务里（GDAL 的延迟建表 `RunDeferredCreationIfNecessary` 在首次写入时才 exec），
+  因此"第一条片段就写失败 ⇒ `RollbackTransaction()` 连表一起撤销 ⇒ 产物只剩一个没有要素表的 `.gpkg`"成立；
+  而输出文件在动作开头就被 `drv->Create()` 截断 ⇒ **失败时旧产物已经没了，新产物又不可用**。这是契约问题，要裁定不是补断言就能了。
+- 挂账 **N138**（GPKG 空间索引写成"声明了但是空的"，**用户可见级**，2026-10-23 控制器现读定位）：
+  六个会建索引的矢量动作（`buffer`/`clip`/`dissolve`/`union`/`difference`/`intersect`）产出的 `.gpkg`
+  **一律带一个 0 行的 rtree**，而 `gpkg_extensions` 里已经登记了 `gpkg_rtree_index` ⇒ 任何按包框查的读端拿到 **0 个要素**。
+  现读：`build/debug/tests/Debug/test_e2e_output/` 里 **31 个产物**是"表有 N 行、`rtree_<层>_geom` 0 行"，
+  含真实数据腿 `build/tmp/probe/union_focus.gpkg`（**表 22 855 行 / 索引 0 行**）；
+  对照实验（同一份 GDAL 3.12.4，`ogrinfo -so -spat`）：
+  ① 插件写的 union 产物 `Feature Count` 无过滤 3、加包框 **0**；② 测试夹具自己写的 `a0_chain_input.gpkg`（索引有 3 行）
+  无过滤 3 / 加包框 **3**；③ 不建索引的产物 `e2e_boundary_output.gpkg`（根本没有 rtree）无过滤 2 / 加包框 **2** ⇒
+  **"没有索引"是对的，"有索引但是空的"才是错的**，读端按 GDAL 源码 `ogrgeopackagetablelayer.cpp:5143-5159`
+  只看 `rtree_*` 表在不在就认定有索引（唯一的"坏索引"启发式要 ≥100 000 要素才触发，见
+  `OGR_GPKG_THRESHOLD_DETECT_BROKEN_RTREE`，本仓最大产物 22 855 行 ⇒ 够不着）。
+  **机制已用官方工具单独复现（不需要改一行代码）**：`ogr2ogr -lco SPATIAL_INDEX=NO` 写一份 → 建 `gpkg_extensions` 表 →
+  `SELECT gpkgAddSpatialIndex('union','geom')` ⇒ 得到与产物**完全相同**的状态：rtree 表建了、6 个触发器建了、
+  扩展项登记了、**回填 0 行**，包框查询 0 个要素；而 `gpkgAddSpatialIndex` 在**没有** `gpkg_extensions` 表时报
+  `no such table: gpkg_extensions`、在索引已存在时报 `trigger "rtree_*_insert" already exists` ⇒ 这个函数
+  **只装触发器不回填既有行**，所以"先关掉索引批量写、写完再补索引"这个设计本身不成立。
+  另一条独立证据：`addSpatialIndexIfNeeded`（`vector_plugin_common.inc:407-426`）把 `ExecuteSQL` 的返回值当布尔用，
+  **失败既不报告也不计数** ⇒ 上一段那三种失败形态在测试里全是静默的（本仓"没检查长得像检查通过"这一族的又一例）。
+  **修法（已在同一份 GDAL 上验证可行，未落地）**：去掉这六个路径的 `SPATIAL_INDEX=NO`，让 GDAL 用它自己的
+  延迟建索引（`ogrgeopackagedatasource.cpp:3457-3461` 在 `FlushCache` 里 `CreateSpatialIndexIfNecessary()`，
+  建完一次性回填），同时删掉 `addSpatialIndexIfNeeded` 这条假路径 ⇒ 对照实验 `ogr2ogr -f GPKG -gt 100000`
+  （同样走 `StartTransaction/CommitTransaction`，与本插件同一套批量语义）产物为 rows=3 / rtree=3 / 包框查询 3 ⇒
+  **性能优化与索引正确性不冲突**。验收判据必须是"读端可见性质"而不是"函数调用成功"：
+  六个动作各一条用例，写 `.gpkg` 后断言 `rtree_<层>_geom` 行数 == 要素数，**且** `SetSpatialFilter(全 extent)` 后
+  `GetFeatureCount()` == 要素数；本刀在 HEAD 上天然红（上面的现读就是旧态），符合 R-B16 的"旧绿新红"要求。
+  ⚠ 范围纪律：`buildGpkgFastWriteLayerOptions(useTransactions)` 现读共 **17 个调用点**，其中只有上面 6 个
+  会在写完后补索引；**另外 11 个（boundary、centroid、convex_hull、endpoints_extract、envelope、filter、
+  interior_point、midpoints_extract、singlepart、sliver_remove、vertices_extract）今天就是"不建索引"，
+  读端正确**，本刀不动它们的产物形态；"要不要给所有 GPKG 输出都配索引"是另一个问题，登记在下面待裁。
   **路径 A 已修 `8ed6b75` + 复审回收 `ff86362`**（六条用例 T1–T6，两棵树 `VectorUnion*|CoverageMeta*|CoverageMetaJudge*`
   选择器 28/28，三条老用例 3/3 单跑通过）：三条分块 `input`/`both`/`overlay` 互不重叠且面积可加，
   两侧字段整表合并（**撞名时让位的是我们附加的标记列 `source`→`source_2`，用户数据列名逐字保留**——
