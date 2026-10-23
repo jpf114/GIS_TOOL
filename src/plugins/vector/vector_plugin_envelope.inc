@@ -70,8 +70,7 @@ gis::framework::Result VectorPlugin::doEnvelope(
     }
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    const bool useTransactions = outFormat == "GPKG";
-    std::vector<std::string> layerOptionStorage = buildGpkgFastWriteLayerOptions(useTransactions);
+    std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         srcLayer->GetName(),
