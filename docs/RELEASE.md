@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 731 / Release 729**（2026-10-23 批次 C C3h-3 收口轮现读；上一档 730 / 728 是同日 C3l，再上一档 724 / 722 是 C3h-2/C3h-1b，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 735 / Release 733**（2026-10-23 批次 C C3m 收口轮现读；上一档 731 / 729 是同日 C3h-3，再上一档 730 / 728 是 C3l，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,9 +297,11 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 731 / Release 729**（2026-10-23 批次 C C3h-3 收口轮现读；相比上一档 730 / 728 **+1** = C3h-3 的 `real_data_vector_union_poly`
-  （逐名比对，删除 0 条；两树差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空，快照 `build/tmp/c3h3_final_names_{debug,release}.txt`）；
-  上一档 730 / 728 是 C3l（+6 = 六条 `PluginTest.Vector*GpkgSpatialIndexIsPopulated`）；再上一档 724 / 722 是 C3h-2 收口轮（C3h-1b 复验同值——那一刀只翻登记表一行的状态列，不增删用例）；
+- **现行基线**：`ctest -N` 注册数 **Debug 735 / Release 733**（2026-10-23 批次 C C3m 收口轮现读；相比上一档 731 / 729 **+4** = C3m 的三条新审计用例
+  `PluginTest.Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated` + 一条反回潮守卫
+  `PluginTest.VectorSourceNeverDisablesGpkgSpatialIndex`（逐名比对，删除 0 条；两树差集仍恰为下面那两条 Debug 轻量闸门、
+  `comm -13` 空，快照 `build/tmp/c3m_names_{debug,release}.txt`）；
+  上一档 731 / 729 是 C3h-3（+1 = `real_data_vector_union_poly`）；再上一档 730 / 728 是 C3l（+6 = 六条 `PluginTest.Vector*GpkgSpatialIndexIsPopulated`）；再上一档 724 / 722 是 C3h-2 收口轮（C3h-1b 复验同值——那一刀只翻登记表一行的状态列，不增删用例）；
   相比再上一档 723 / 721 **+1** = C3h-2 的 `PluginTest.VectorUnionMixedDimensionCarriesAttributesPerPiece`；再上一档 722 / 720 的 +1 = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
   由两刀合成：C3k 把一条 `real_data_vector_full` 换成 `checks`/`overlay` 两条（−1+2 = **+1**），
   C3i 新增 `PluginTest.VectorBufferRejectsMissingSrs` 与 `PluginTest.VectorDissolveRejectsMissingSrs`（**+2**）。
@@ -381,8 +383,8 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **731** | **1083.87 s**（批次 C C3h-3 收口轮现跑，`build/tmp/c3h3_final_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 731 条**首档**；再往前十三档（697~730 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 / 875.64 / 865.12 / 939.02 s**（730 那一档另有 982.18 s 的一红轮） | 最慢 `real_data_vector_quick` **264.41 s** ⇒ 720 ÷ 264.41 = **2.72×**；次 `real_data_vector_overlay` **231.12 s** ⇒ 670 ÷ 231.12 = **2.90×**；新腿 `real_data_vector_union_poly` **138.05 s** ⇒ 600 ÷ 138.05 = **4.35×**；`real_data_vector_checks` **32.09 s** ⇒ 100 ÷ 32.09 = **3.12×**；`source_mojibake_guard` **12.82 s** ⇒ 300 ÷ 12.82 = **23.4×**（上界取 `GIS_TEST_TIMEOUT`，`tests/CMakeLists.txt:157`） |
-| Release | **729** | **436.88 s**（同一轮紧随其后跑，`build/tmp/c3h3_final_rel.log`；**729/729 全绿**） | 729 条**首档**；再往前十二档（695~728 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 / 449.02 / 463.39 / 436.46 s** | 最慢 `real_data_vector_overlay` **100.41 s** ⇒ 670 ÷ 100.41 = **6.67×**；`real_data_vector_quick` **93.26 s** ⇒ 720 ÷ 93.26 = **7.72×**；新腿 `real_data_vector_union_poly` **22.38 s** ⇒ 600 ÷ 22.38 = **26.8×**；`real_data_vector_checks` **17.71 s** ⇒ **5.65×** |
+| Debug | **735** | **1074.54 s**（批次 C C3m 收口轮现跑，`build/tmp/c3m_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 735 条**首档**；再往前十四档（697~731 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 / 875.64 / 865.12 / 939.02 / 1083.87 s**（730 那一档另有 982.18 s 的一红轮） | 最慢 `real_data_vector_overlay` **236.75 s** ⇒ 670 ÷ 236.75 = **2.83×**；次 `real_data_vector_quick` **214.78 s** ⇒ 720 ÷ 214.78 = **3.35×**；新腿 `real_data_vector_union_poly` **145.45 s** ⇒ 600 ÷ 145.45 = **4.12×**；`real_data_vector_checks` **33.55 s** ⇒ 100 ÷ 33.55 = **2.98×**；`real_data_raster` **13.07 s** ⇒ 60 ÷ 13.07 = **4.59×**；`source_mojibake_guard` **13.54 s** ⇒ **22.2×**（上界取 `GIS_TEST_TIMEOUT`，`tests/CMakeLists.txt:157`） |
+| Release | **733** | **452.24 s**（同一轮紧随其后跑，`build/tmp/c3m_close_rel.log`；**733/733 全绿**） | 733 条**首档**；再往前十三档（695~731 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 / 449.02 / 463.39 / 436.46 / 436.88 s** | 最慢 `real_data_vector_overlay` **97.46 s** ⇒ 670 ÷ 97.46 = **6.87×**；`real_data_vector_quick` **92.87 s** ⇒ 720 ÷ 92.87 = **7.75×**；新腿 `real_data_vector_union_poly` **21.97 s** ⇒ 600 ÷ 21.97 = **27.3×**；`real_data_vector_checks` **17.60 s** ⇒ **5.68×** |
 ⚠ **`overlay` 那一半的"在涨"已经证否——同码双读拿到了**：C3h-1b 与 C3h-2 之间**代码一行没改**（只翻了登记表状态列），
 于是这一档天然成了"同码双跑"：Debug overlay 242.12 → **242.40 s**（差 0.28 s，很紧），
 Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）；同轮 quick Release 116.95 → 115.76、checks 17.12 → 17.66。
@@ -503,7 +505,19 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     Release 6.73× / 5.21× / 8.24× ⇒ 最低 2.75×，仍不触发拆腿。
     本轮 `Passed <N> sec` 单行配对仍 100%（Debug 730 行求和 938.40 s vs 墙钟 939.02 s）。
     `find data -newermt "2026-10-23 08:44" -type f` = **0 命中**（本会话含两次双树全量都没写过 `data/`）。
-  - **批次 C C3h-3 收口轮**（本表现值，补 union 路径 A 的真实数据覆盖）：树上多了 `381500b`（新腿
+    评审席 `c3l-reviewer`（只读、禁止构建）**两轴均通过、必须修清单为空**，并独立复核了两处：
+    六个期望数与六个过滤包框逐条对撞产物 rtree 包框（非自指）、两棵树"无 rtree"名单逐字相同且恰是那 11 条路径
+    （补上了实现者缺口 3——Release 侧的逐字名单当时被 `head -8` 截断）。
+    **登记给下一批的建议（不在本刀做）**：S1 测试块头注释仍写"六个动作"（与改判冲突）、
+    S2 `buffer_clip.inc` 里为旧设计辩护的英文注释已悬空（`useTransactions=false` 自 `f18164a` 起就在那里）、
+    S3 **判据③"索引行数 == 要素数"与本条目刚写进台账的空几何规则冲突**（将来含 NULL/空几何的夹具会假红），
+    S4 几何列名 `geom` 硬编在 `rtree_<层>_geom` 拼装里、S5 四处夹具复制且共用同名输入文件。
+    ⚠ 另记一条**部署面**的观察（不在本刀射程，留阶段二核）：`build/{debug,release}/src/gui/{Debug,Release}/plugins/plugin_vector.dll`
+    停在 10-22 15:43 / 16:05、`gis-gui.exe` 停在 10-21 15:16，而 ctest 的 GUI 腿是把 `src/gui/*.cpp` **编进 `gis_tests.exe`**
+    （`tests/CMakeLists.txt:15-34`）、插件按 exe 目录向上解析到 `build/<树>/plugins/`（本轮 10:18 新鲜）⇒
+    本轮收口的 GUI 腿**没有**跑陈旧副本；但独立构建 `gis-gui.exe` 那份插件副本不会被 `--target gis_tests` 刷新，
+    阶段二打包前必须**全目标重建**再 `cmake --install`（与本轮 `--target gis_tests` 不刷新 GUI 侧插件副本同一族问题）。
+  - **批次 C C3h-3 收口轮**（当时那一档，补 union 路径 A 的真实数据覆盖）：树上多了 `381500b`（新腿
     `real_data_vector_union_poly` + 分组 `union_poly` + 第 6 条名单不变量）、`35f578e`（评审席两条必须修 + 我自己造的静默空跑）。
     实现者 `c3h3-implementer` **撞 150 回合上限**（最后一拍"把第三跑现读并入 TIMEOUT"只落到注释、没落到属性），
     未提交且未写反向对照那一节 ⇒ 控制器按快照接手：复核 diff、把 `TIMEOUT` 从 580 改成注释算出的 **600**
@@ -525,18 +539,72 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     真实腿余量 Debug **2.72×（quick）/ 2.90×（overlay）/ 3.12×（checks）/ 4.35×（新腿）**、
     Release 6.67× / 7.72× / 5.65× / 26.8× ⇒ 最低 2.72× 仍在 2.5× 之上，**不触发拆腿**。
     `find data -newermt "2026-10-23 11:20:54" -type f` = **0 命中**。
-    评审席 `c3l-reviewer`（只读、禁止构建）**两轴均通过、必须修清单为空**，并独立复核了两处：
-    六个期望数与六个过滤包框逐条对撞产物 rtree 包框（非自指）、两棵树"无 rtree"名单逐字相同且恰是那 11 条路径
-    （补上了实现者缺口 3——Release 侧的逐字名单当时被 `head -8` 截断）。
-    **登记给下一批的建议（不在本刀做）**：S1 测试块头注释仍写"六个动作"（与改判冲突）、
-    S2 `buffer_clip.inc` 里为旧设计辩护的英文注释已悬空（`useTransactions=false` 自 `f18164a` 起就在那里）、
-    S3 **判据③"索引行数 == 要素数"与本条目刚写进台账的空几何规则冲突**（将来含 NULL/空几何的夹具会假红），
-    S4 几何列名 `geom` 硬编在 `rtree_<层>_geom` 拼装里、S5 四处夹具复制且共用同名输入文件。
-    ⚠ 另记一条**部署面**的观察（不在本刀射程，留阶段二核）：`build/{debug,release}/src/gui/{Debug,Release}/plugins/plugin_vector.dll`
-    停在 10-22 15:43 / 16:05、`gis-gui.exe` 停在 10-21 15:16，而 ctest 的 GUI 腿是把 `src/gui/*.cpp` **编进 `gis_tests.exe`**
-    （`tests/CMakeLists.txt:15-34`）、插件按 exe 目录向上解析到 `build/<树>/plugins/`（本轮 10:18 新鲜）⇒
-    本轮收口的 GUI 腿**没有**跑陈旧副本；但独立构建 `gis-gui.exe` 那份插件副本不会被 `--target gis_tests` 刷新，
-    阶段二打包前必须**全目标重建**再 `cmake --install`（与本轮 `--target gis_tests` 不刷新 GUI 侧插件副本同一族问题）。
+  - **批次 C C3m 收口轮**（本表现值，落地用户裁定"那 11 条也要带索引"）：树上多了 `a7fb866`（17 个 `.gpkg` 写出点
+    统一走 `buildGpkgDriverIndexedLayerOptions()`、图层选项 `SPATIAL_INDEX=NO` 整体删除、C3l 那两个具名 builder 并成这一个）、
+    `fb40ca4`（判据 ③ 的比较对象从"要素数"改成"非空几何数" + 三条新审计用例 + 反回潮守卫
+    `PluginTest.VectorSourceNeverDisablesGpkgSpatialIndex`）、`f339f45`（六条真实腿两棵树两跑现读入测量表）。
+    实现者 `c3m-implementer` 按任务书未跑双树全量，收口门由控制器跑。
+    全量现读：Debug **735/735（1074.54 s）**、Release **733/733（452.24 s）**，两树 `Not Run/Skip/***` 都是 0；
+    `Passed <N> sec` 单行配对 **735/735** 与 **733/733**（逐条求和 1073.88 / 451.62 s，与整轮墙钟各差 0.66 / 0.62 s，
+    纯 ctest 调度开销）；注册数 731→735 / 729→733（各 +4、删除 0，逐名比对：与 C3h-3 快照的差集恰是那四个新用例名、
+    `comm -23` 仍恰为两条 Debug 轻量闸门、`comm -13` 空；快照 `build/tmp/c3m_names_{debug,release}.txt` 不入库）。
+    真实腿余量**两个口径都得记**（本刀改了产物形态 ⇒ 任务书点名必须重测六条腿）：
+    ① 控制器**全量轮内**读数——Debug overlay **236.75 s ⇒ 2.83×**、quick 214.78 ⇒ 3.35×、checks 33.55 ⇒ 2.98×、
+      union_poly 145.45 ⇒ 4.12×、raster 13.07 ⇒ 4.59×；Release 97.46 ⇒ 6.87×、92.87 ⇒ 7.75×、17.60 ⇒ 5.68×、
+      21.97 ⇒ 27.3×、7.62 ⇒ 7.87×；② 实现者**六条腿单独串行组**读数（`tests/CMakeLists.txt:1691-1711`）——
+      最紧 overlay **2.66×** 与 checks **2.82×**。⇒ 两口径的最低值 2.66× 仍在 2.5× 触发线之上，
+      **没拆腿、六个 TIMEOUT 一个字没抬**。
+    ⚠ 补索引的成本在本轮再次实测为可忽略，且**不许读成趋势**：quick 从改前 236.47 读到改后 215.32、
+    overlay 的 Release 两跑 103.72 / 127.42 差 22.8% —— 同一条腿本机散布就是这个量级（那条注释已把此口径写死）。
+    产物形态收口证明（口径 = `build/tmp/c3mprobe/scan_gpkg_index.py`，纯标准库 sqlite3、`mode=ro` 只读打开；
+    控制器收口时复跑、与实现者读数逐字同值）：Debug 树 112 个 `.gpkg` / 114 个要素图层 ⇒
+    `index ok 112` / `MISMATCH 1` / **`NO-RTREE 1`**（改前 13）；Release 树 107 个 / 109 个图层 ⇒
+    `index ok 109` / `MISMATCH 0` / **`NO-RTREE 0`**（改前 12）。
+    Debug 残留两条都**不是活产物**、mtime 现读均早于本刀开批（14:25:17）：`a0_probe_diff_point_out.gpkg`
+    （10-14 17:34，`grep -rn a0_probe_diff_point_out tests/ src/` ⇒ 0 命中 ⇒ N138 取证期的孤儿探针件）与
+    `e2e_filter_where_reject_output.gpkg`（10-22 07:54，生产它的用例按设计**不该写出产物**——WHERE 被拒 ⇒ 动作失败 ⇒
+    那条腿不会重写这个文件；文件里连 `gpkg_extensions` 都没有 ⇒ 是"根本没登记"的自洽空件，不是 N138 那种"登记了但 0 行"）。
+    按 mtime 只数开批之后新写出的产物：Debug 104 个 / Release 104 个 ⇒ **缺索引的活产物归零**
+    （⚠ 这条"归零"靠的是上面那把全目录扫描 + mtime 过滤两条一起成立，单看 mtime 数不出"缺不缺"）。
+    反回潮守卫的**必须先能红**（R-B16 同变异旧绿新红，**这一段是实现者的现读、控制器未复跑该变异**——
+    复跑要重编 `plugin_vector.dll`，而控制器的两条独立证据是收口时自己跑的 `grep -rn 'SPATIAL_INDEX' src/` = 0
+    与双树全量 735/733、733/733 全绿）：实现者把 `vector_plugin_boundary.inc` **一个**调用点改回带 `SPATIAL_INDEX=NO`，
+    `ctest -R "GpkgSpatialIndexIsPopulated|VectorSourceNeverDisables…|C3mProbe…"` 选中 11 条 ⇒ **3 条红**：
+    守卫红并点名 `src/plugins\vector\vector_plugin_boundary.inc:59`、`VectorBoundaryGpkgSpatialIndexIsPopulated` 红、
+    临时演示用例红；产物侧对撞是 `no such table: "rtree_shapes_geom"`
+    ⇒ 那条选项一旦回到任何调用点，审计的 ③ 与 ④ 一起红。
+    还原一律 cp（未用 `git checkout`/`reset`/`stash`），实现者附 `cmp` + 演示前后 `md5sum` 同值证明，
+    其复验现读：`grep -rn 'C3M-REDDEMO' src/ tests/ docs/` = 0；控制器同批复跑 `grep -rn 'SPATIAL_INDEX' src/` = **0 命中**。
+    ⚠ 守卫论域是 `src/plugins/**/*.inc|*.cpp`（42 个文件，含注释与字符串字面量一起数、不做排除注释的行过滤），
+    `tests/`（守卫自己那句 `needle = "SPATIAL_INDEX"`）与 `docs/算法说明/矢量数据处理/并集.md:68`（N138 的历史说明）
+    里出现该 token **不算回潮** ⇒ "全库 0 命中"是假说法，`src/` 0 命中才是本仓口径。
+    判据 ③ 的"旧写法会假红"演示（**同属实现者现读**，临时用例、跑完即删）：同一函数里旧臂（rtree 行数 == 要素数）
+    在既有夹具 `e2e_singlepart_input`（3 要素含 1 个 NULL）上报 `2 != 3`、新臂（== 非空几何数，2 == 2）不报
+    ⇒ 读的是既有产物、没新造缺陷。
+    同轮顺带把 C3l 评审席那条 **S3 销掉**（③ 与本台账空几何规则的冲突已按新口径改正），
+    并现读判定 **S1 不再成立**：`tests/test_plugins.cpp:6823` 那句"六个动作"讲的是 C3l 那六条各自的层名、
+    C3m 三条另有块头（`:9137`）；论域现读＝`src/`+`tests/` 扫"不建索引 / FastWrite / 快速写"只剩 `:9137` 一处、
+    `docs/`（除本台账自己）0 处 ⇒ 本台账那句"另外 11 个不建索引"的旧表述在下面 N138 条目里更新掉。
+    （⚠ 又是"为解释某事写的注释会污染数那件事的 grep"这条老事实：**上面这两行本身就带着这三个词** ⇒ 计数论域必须排掉 docs/RELEASE.md。）
+    ⚠ **新登记一条射程缺口（本刀不自行扩范围）**：17 个写出点里只有 **9 个**有具名审计用例
+    （buffer/clip/dissolve/union/difference/intersect + C3m 的 centroid/boundary/convex_hull），
+    另 **8 个**（endpoints_extract/envelope/filter/interior_point/midpoints_extract/singlepart/sliver_remove/vertices_extract）
+    今天只由"源码里 `SPATIAL_INDEX` 0 命中"这条**负向**守卫覆盖 ⇒ 产物扫描脚本在 `build/tmp/` 不入库、不是常驻判据，
+    而这 8 条路径的产物**恰好是 C3l 之前从未被审计过的那批**。留作后续审计批（与 S4/S5 同批处理）。
+    ⚠ 实现者如实登记的两条缺口（不是我的裁定，是它自己写进报告的）：
+    ③ 那条"旧写法假红"演示是**临时用例**、已随还原删除 ⇒ 仓库里现在**没有常驻用例**守"含 NULL/空几何图层的行数判据"
+    （三条新用例的夹具都不含 NULL ⇒ 把 ③ 改回旧写法不会被任何常驻用例抓到，只有产物扫描看得出）；
+    以及**文档改动 0 个文件**——11 篇动作文档现读都没写过索引相关的句子（`外包矩形.md:61` 那句讲的是下游拿外包矩形做预筛选，
+    不是对产物索引形态的断言），按任务书"没写就不必各加一段"执行。
+    ⚠ 一处**范围偏离留评审席判**：那 11 个点上的 `const bool useTransactions = outFormat == "GPKG";` 被删掉了。
+    删的依据是现读：这 11 个文件里 `StartTransaction`/`CommitTransaction` **0 处**（事务只在 `buffer_clip`/`dissolve`/`overlay`
+    三个文件、也就是原本那 6 个 DriverIndexed 点所在文件里）⇒ 那行变量**只喂给图层选项、根本不控制事务**
+    （"FastWrite"这个名字把两件事混为一谈），留着就是触发 C4189、又会让下一个读代码的人以为这里批量提交过的死变量。
+    任务书 §2.1 的字面口径是"事务批量化一字不许动"，事务本体确实一字未动——控制器收口现读：那 11 个文件的
+    `Start/Commit/RollbackTransaction` 全为 **0 处**，事务只活在 `buffer_clip`（11 处）/`dissolve`（4 处）/`overlay`（28 处）
+    这三个原本就带索引选项的文件里，且这三处的 `useTransactions` 一个没删（12 / 5 / 25 处）；
+    差异在此如实登记。
+    `find data -newermt "2026-10-23 14:25:17" -type f` = **0 命中**（含本会话两次双树全量）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -1097,15 +1165,20 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   **修法（已落地）**：6 个调用点改走 `buildGpkgDriverIndexedLayerOptions()`（一个图层选项都不发 ⇒
   GDAL 在 `FlushCache` 里延迟建索引并一次性回填，`ogrgeopackagedatasource.cpp:3457-3461`），
   `addSpatialIndexIfNeeded`/`ensureGpkgExtensionsTable`/`escapeSqlLiteral` 删调用后零引用 ⇒ 整体删除；
-  事务批量化一字未动 ⇒ **批量写与索引正确性不冲突**。另外 11 个不建索引的调用点源码与产物形态逐字不变
+  事务批量化一字未动 ⇒ **批量写与索引正确性不冲突**。另外 11 个不建索引的调用点
   （boundary/centroid/convex_hull/endpoints_extract/envelope/filter/interior_point/midpoints_extract/singlepart/
-  sliver_remove/vertices_extract；改前改后"无 rtree"的图层名单一致）。
-  ⚠ 这句"11 个不建索引、产物形态不变"只在 C3l 这一档成立：**2026-10-23 用户裁定这 11 条也要带索引**
-  ⇒ 由 C3m 改掉（见本条目末尾"已裁定"那一行），届时"没有 rtree"的图层应当归零。
-  判据是六条 `PluginTest.Vector*GpkgSpatialIndexIsPopulated`，按**读端性质**写：主判据 =
+  sliver_remove/vertices_extract）在 **C3l 这一档**源码与产物形态逐字不变（改前改后"无 rtree"的图层名单一致）。
+  ⚠ 上面那句"11 个不建索引、产物形态不变"**只在 C3l 这一档成立**：**2026-10-23 用户裁定这 11 条也要带索引 ⇒ 已由 C3m 落地**
+  （`a7fb866` + `fb40ca4` + `f339f45`，逐条读数见第 2 节"批次 C C3m 收口轮"那一条）⇒ 现在 17 个 `.gpkg` 写出点
+  共用同一个 `buildGpkgDriverIndexedLayerOptions()`、产物侧"没有 rtree 的活图层"归零
+  （NO-RTREE Debug 13→1 / Release 12→0，Debug 残留那条是 10-22 的孤儿件、生产它的用例按设计不写产物），
+  源码侧 `SPATIAL_INDEX` 在 `src/` **0 命中**且由常驻守卫守着。
+  判据（C3l 当时）是六条 `PluginTest.Vector*GpkgSpatialIndexIsPopulated`，按**读端性质**写：主判据 =
   `SetSpatialFilterRect(夹具全 extent)` 后 `GetFeatureCount()` == 由夹具坐标手算的期望数
   （buffer 200 / clip 1 / dissolve 1 / union 3 / difference 1 / intersect 1），索引行数只作解释性判据；
   旧态 5 条红、新态 6 条绿（两棵树），注册数 730 / 728。
+  ⇒ **C3m 把这一族扩到 9 条 + 一条负向守卫**（新增 centroid 点 / boundary 线 / convex_hull 面三类几何各一条，
+  加 `VectorSourceNeverDisablesGpkgSpatialIndex`），注册数现值 **735 / 733**。
   **真实数据侧的收口证明**：`tmp/vector_regression/union_focus.gpkg` 由 C3l 收口轮重跑生成，
   表 **22 855** 行 / rtree **22 855** 行（文件从 5 582 848 B 增至 8 085 504 B，多出的就是索引），
   官方 `ogrinfo -so -spat <全 extent>` 读回 **22 855** 个要素（改前该产物索引 0 行）。
@@ -1127,9 +1200,13 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   `WHEN new."geom" NOT NULL AND NOT ST_IsEmpty(new."geom")`，实测
   `e2e_singlepart_input`（3 行含 1 个 NULL ⇒ 索引 2）与 `t20_empty_point_input`（4 行含 2 个空点 ⇒ 索引 2）
   都是**正确状态** ⇒ 比的是"非空几何数"，不是行数；否则会把合规产物读成缺陷（我自己差点把它记成第 2、3 条红）。
-  ⚠ 已裁定（2026-10-23，用户）：**那 11 条也要带索引** ⇒ 排 **C3m**（Task #109），17 个写出点统一交给驱动建索引、
-  并加一条"源码里 `SPATIAL_INDEX` 出现 0 次"的反回潮守卫；成本已实测到可忽略（22 855 要素补索引
-  = 文件 5 582 848 → 8 085 504 B、CLI 墙钟 134.18 → 135.20 s），代价改到"必须重测四条腿余量"这一头。
+  ⇒ **这条口径已由 C3m 落进判据 ③**（`fb40ca4`：helper `countGpkgNonEmptyGeometries` 自己遍历产物数非空几何，
+  比较对象从"要素数"改成"非空几何数"；旧臂/新臂并排演示＝既有夹具 `e2e_singlepart_input` 上旧臂报 `2 != 3`、新臂不报）。
+  ⚠ 已裁定并**已落地**（2026-10-23，用户）：**那 11 条也要带索引** ⇒ **C3m**（Task #109，`a7fb866`/`fb40ca4`/`f339f45`）
+  把 17 个写出点统一交给驱动建索引、并加一条"源码里 `SPATIAL_INDEX` 出现 0 次"的反回潮守卫；
+  成本再次实测到可忽略（22 855 要素补索引 = 文件 5 582 848 → 8 085 504 B、CLI 墙钟 134.18 → 135.20 s），
+  代价改到"必须重测真实腿余量"这一头——**现值六条腿**（立案时写"四条"，C3h-3 之后多了 `union_poly` 与拆腿后的分组，
+  名单以 `tests/CMakeLists.txt` 的 `GIS_REAL_DATA_TEST_NAMES` 为准）两棵树各两跑，最低余量 2.66×、未拆腿未抬 TIMEOUT。
 - 挂账 **N135**（`vector union` 路径 A 的三条"GEOS 返回失败"分支，**今天无判据**，由 `ff86362` 复审席点名）：
   ① 已写面积累加时某次 `Union` 返回 nullptr ⇒ 减法基少一块 ⇒ 源独有块会把已写相交面积再算进去（不计数）；
   ② 逐条差集只减动部分候选 ⇒ 写出的叠加独有块与没减动那条源几何重叠（不计数）；
