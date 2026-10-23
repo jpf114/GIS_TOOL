@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 724 / Release 722**（2026-10-23 批次 C C3h-2 收口轮现读，C3h-1b 收口轮现读复验同值——那一刀只翻登记表状态列、不增删用例；上一档 723 / 721 是同日 N122，再上一档 722 / 720 是 C3i，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 730 / Release 728**（2026-10-23 批次 C C3l 收口轮现读；上一档 724 / 722 是同日 C3h-2/C3h-1b，再上一档 723 / 721 是 N122，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,7 +297,11 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 724 / Release 722**（2026-10-23 批次 C C3h-2 收口轮现读，**C3h-1b 收口轮 `-N` 现读复验同值**——那一刀只翻登记表一行的状态列，不增删用例；相比上一档 723 / 721 **+1** = C3h-2 的 `PluginTest.VectorUnionMixedDimensionCarriesAttributesPerPiece`；再上一档 722 / 720 的 +1 = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
+- **现行基线**：`ctest -N` 注册数 **Debug 730 / Release 728**（2026-10-23 批次 C C3l 收口轮现读；相比上一档 724 / 722 **+6** = C3l 的六条
+  `PluginTest.Vector{Buffer,Clip,Dissolve,Union,Difference,Intersect}GpkgSpatialIndexIsPopulated`（逐名比对，删除 0 条，
+  两树名单差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空，快照 `build/tmp/c3l2_names_{debug,release}.txt`）；
+  上一档 724 / 722 是 C3h-2 收口轮（C3h-1b 复验同值——那一刀只翻登记表一行的状态列，不增删用例）；
+  相比再上一档 723 / 721 **+1** = C3h-2 的 `PluginTest.VectorUnionMixedDimensionCarriesAttributesPerPiece`；再上一档 722 / 720 的 +1 = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
   由两刀合成：C3k 把一条 `real_data_vector_full` 换成 `checks`/`overlay` 两条（−1+2 = **+1**），
   C3i 新增 `PluginTest.VectorBufferRejectsMissingSrs` 与 `PluginTest.VectorDissolveRejectsMissingSrs`（**+2**）。
   上一档 719 / 717 是同日 C3h-1 收口轮（+6 = `PluginTest.VectorUnion*` 六条，逐名比对得出）；再上一档 713 / 711 是同日 C3j（+8 = N132/N133/N134 三刀的
@@ -378,8 +382,8 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **724** | **865.12 s**（批次 C C3h-1b 收口轮现跑，`build/tmp/c3h1b_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 724 条现在**两读**：**875.64 s**（C3h-2 轮）/ **865.12 s**（C3h-1b 轮 = 本行现值）。⚠ 这两轮之间**代码与用例集都没动**（C3h-1b 只把登记表里 `vector,union` 一行的状态列翻成 GOLD、并同步四处计数），所以这 10.52 s 差是**同一套用例的纯噪声样本**——正是"跨轮差值一律不作证据"那条纪律要保护的那种差；再往前十一档（697~723 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 s** | 最慢 `real_data_vector_overlay` **242.40 s** ⇒ 670 ÷ 242.40 = **2.76×**；次 `real_data_vector_quick` **210.04 s** ⇒ 720 ÷ 210.04 = **3.43×**；`real_data_vector_checks` **32.67 s** ⇒ 100 ÷ 32.67 = **3.06×**；`source_mojibake_guard` **10.86 s** ⇒ 300 ÷ 10.86 = **27.6×**（上界取 `GIS_TEST_TIMEOUT`，`tests/CMakeLists.txt:157`） |
-| Release | **722** | **463.39 s**（同一轮紧随其后跑，`build/tmp/c3h1b_close_rel.log`；**722/722 全绿**） | 722 条现在**两读**：**449.02 s**（C3h-2）/ **463.39 s**（C3h-1b = 本行现值，同一套用例差 14.37 s）；再往前十档（695~721 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 s** | 最慢 `real_data_vector_overlay` **128.96 s** ⇒ 670 ÷ 128.96 = **5.20×**；`real_data_vector_quick` **115.76 s** ⇒ 720 ÷ 115.76 = **6.22×**；`real_data_vector_checks` **17.66 s** ⇒ 100 ÷ 17.66 = **5.66×**；`source_mojibake_guard` **10.73 s** ⇒ **28.0×** |
+| Debug | **730** | **939.02 s**（批次 C C3l 收口轮现跑，`build/tmp/c3l2_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 730 条**首档**；同一批用例在 C3l 首轮（含 `param_guard` 一红）是 **982.18 s**（`build/tmp/c3l_close_dbg.log`，729/730）；再往前十二档（697~724 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 / 875.64 / 865.12 s** | 最慢 `real_data_vector_overlay` **244.04 s** ⇒ 670 ÷ 244.04 = **2.75×**；次 `real_data_vector_quick` **215.11 s** ⇒ 720 ÷ 215.11 = **3.35×**；`real_data_vector_checks` **35.72 s** ⇒ 100 ÷ 35.72 = **2.80×**；`source_mojibake_guard` **12.74 s** ⇒ 300 ÷ 12.74 = **23.5×**（上界取 `GIS_TEST_TIMEOUT`，`tests/CMakeLists.txt:157`） |
+| Release | **728** | **436.46 s**（同一轮紧随其后跑，`build/tmp/c3l2_close_rel.log`；**728/728 全绿**） | 728 条**首档**；C3l 首轮（含 `param_guard` 一红）是 **479.64 s**（727/728）；再往前十一档（695~722 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 / 449.02 / 463.39 s** | 最慢 `real_data_vector_overlay` **99.54 s** ⇒ 670 ÷ 99.54 = **6.73×**；`real_data_vector_quick` **87.34 s** ⇒ 720 ÷ 87.34 = **8.24×**；`real_data_vector_checks` **19.21 s** ⇒ 100 ÷ 19.21 = **5.21×**；`source_mojibake_guard` **12.30 s** ⇒ **24.4×** |
 ⚠ **`overlay` 那一半的"在涨"已经证否——同码双读拿到了**：C3h-1b 与 C3h-2 之间**代码一行没改**（只翻了登记表状态列），
 于是这一档天然成了"同码双跑"：Debug overlay 242.12 → **242.40 s**（差 0.28 s，很紧），
 Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）；同轮 quick Release 116.95 → 115.76、checks 17.12 → 17.66。
@@ -470,7 +474,7 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     控制器自验两树 `VectorUnion*|判据族` 29/29、评审席两轴通过且无必须修。
     全量：Debug **724/724（875.64 s）**、Release **722/722（449.02 s）**，两树 `Not Run/Skip/***` 都是 0；
     注册数 723→724 / 721→722（+1）。真实腿余量 Debug **2.77× / 3.04× / 3.35×**、Release 6.05× / 5.84× / 6.16×。
-  - **批次 C C3h-1b 收口轮**（本表现值，判别取证 + 登记晋升；**控制器自跑，未派下级**）：树上多了 `7a9edf8`
+  - **批次 C C3h-1b 收口轮**（当时那一档，判别取证 + 登记晋升；**控制器自跑，未派下级**）：树上多了 `7a9edf8`
     （`vector,union` PENDING→GOLD + 头部四处 COUNT 同步 + `kPendingCeiling 61→60`）。
     ⚠ 这条 SHA 是 **amend 后**的：原先落的是 `df7f3fc`，subject 从我上一刀（拆腿）复制过来没改，与本刀内容不符；
     该提交只在本地、未 push，经用户同意后 `git commit --amend` 改了标题 ⇒ **内容一字未动**：
@@ -488,6 +492,18 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     注册数 **724 / 722 不变**（本刀不增删用例，`-N` 现读 + 名单逐名比对复验：`comm -23` 仍恰为那两条 Debug 轻量闸门、
     `comm -13` 空；名单快照 `build/tmp/c3h1b_names_{debug,release}.txt` 不入库）。
     真实腿余量 Debug **2.76× / 3.06× / 3.43×**、Release 5.20× / 5.66× / 6.22× ⇒ 最低一档 2.76×，仍在 2.5× 之上，**不触发拆腿**。
+  - **批次 C C3l 收口轮**（本表现值，产品修复 N138）：树上多了 `d583c9b`（六个 `.gpkg` 写出路径把索引交给驱动 +
+    删 `addSpatialIndexIfNeeded`/`ensureGpkgExtensionsTable`/`escapeSqlLiteral` 三个零引用 helper + 六条新用例）、
+    `382ed71`（并集.md 引号统一）、`f0b0d0e`（控制器自改形：行内块注释换成两个具名 builder）。实现者 `c3l-implementer`
+    （后台一棒）按任务书未跑双树全量，收口门由控制器跑。
+    ⚠ **首轮全量各 1 红**（Debug 729/730 = 982.18 s、Release 727/728 = 479.64 s），唯一红是
+    `param_guard_visible_keys_all_read`：新写的行内块注释 `/*spatialIndexFromDriver=*/` 撞上该守卫的注释模型哨兵
+    （论域 `src/plugins`，前提写在 `tests/check_action_visible_keys_read.cmake:392-398`）⇒ 控制器改形后重跑双树全量。
+    收口现读：Debug **730/730（939.02 s）**、Release **728/728（436.46 s）**，两树 `Not Run/Skip/***` 都是 0；
+    注册数 724→730 / 722→728（各 +6、删除 0，逐名比对）；真实腿余量 Debug **2.75× / 2.80× / 3.35×**、
+    Release 6.73× / 5.21× / 8.24× ⇒ 最低 2.75×，仍不触发拆腿。
+    本轮 `Passed <N> sec` 单行配对仍 100%（Debug 730 行求和 938.40 s vs 墙钟 939.02 s）。
+    `find data -newermt "2026-10-23 08:44" -type f` = **0 命中**（本会话含两次双树全量都没写过 `data/`）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -973,6 +989,18 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   三条"面外"片段对相邻面 `Intersects` 全为真（实现者与本席各自用 GEOS 复算过，
   但注意 shapely 用的 GEOS 与本仓 vendored 3.15.0 **不是同一份**，所以真正的证据是自建构件上的 MU-A/B/C 红绿）；
   落点改用"差集为空 = 被盖住"（等价 covered-by，允许贴边界），并已写进代码注释与文档。
+  **路径 A 已修 `8ed6b75` + 复审回收 `ff86362`**（六条用例 T1–T6，两棵树 `VectorUnion*|CoverageMeta*|CoverageMetaJudge*`
+  选择器 28/28，三条老用例 3/3 单跑通过）：三条分块 `input`/`both`/`overlay` 互不重叠且面积可加，
+  两侧字段整表合并（**撞名时让位的是我们附加的标记列 `source`→`source_2`，用户数据列名逐字保留**——
+  评审席推荐反过来，控制器否决：改用户列名会让下游按原名取值的代码静默拿不到值，正是 N128 这一族缺陷的镜像），
+  元数据 5 键（`union_input_pieces`/`union_overlap_pieces`/`union_overlay_pieces`/`union_total_pieces`
+  + 只在 >0 出现的 `union_skipped_overlay_pieces`）。
+  ⚠ **`union` 的 GOLD 登记已落地**（C3h-1b `7a9edf8`：判别取证通过 ⇒ `vector,union` PENDING→GOLD，
+  证据用例 `PluginTest.VectorUnionSplitsIntoThreePieceClasses`，`kPendingCeiling 61→60`）；
+  **但路径 A 的真实数据腿仍然没有**：现有 `union_focus` 是线 × 面 ⇒ 走路径 B，路径 A 在真实回归里仍是 0 覆盖
+  ⇒ 排在 C3h-3（面 × 面真实腿，挂 `overlay` 那一半）。
+  ⚠ 口径写死在这里防止误读：**GOLD ≠ 真实数据覆盖**——这一行的凭据全在合成夹具与插件单测里，
+  真实数据那条腿是空的；两者是不同的缺口，不许互相顶替。
 - 挂账 **N137**（GPKG 写出路径的 FID 与失败回滚，**独立立案，不由 C3h-2 承担**）：评审席在变异体 MU-C 下抓到
   `UNIQUE constraint failed: union.fid`，且**同一条代码路径在两个夹具下 FID 起点不同**（老用例产物 fid 从 0 起、
   新用例从 1 起）⇒ 驱动分配的 FID 序列不可期望；另有"写出失败即 `RollbackTransaction()` 把刚建的表一起回滚"
@@ -996,47 +1024,51 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   建表 DDL 确实落在事务里（GDAL 的延迟建表 `RunDeferredCreationIfNecessary` 在首次写入时才 exec），
   因此"第一条片段就写失败 ⇒ `RollbackTransaction()` 连表一起撤销 ⇒ 产物只剩一个没有要素表的 `.gpkg`"成立；
   而输出文件在动作开头就被 `drv->Create()` 截断 ⇒ **失败时旧产物已经没了，新产物又不可用**。这是契约问题，要裁定不是补断言就能了。
-- 挂账 **N138**（GPKG 空间索引写成"声明了但是空的"，**用户可见级**，2026-10-23 控制器现读定位）：
-  六个会建索引的矢量动作（`buffer`/`clip`/`dissolve`/`union`/`difference`/`intersect`）产出的 `.gpkg`
-  **一律带一个 0 行的 rtree**，而 `gpkg_extensions` 里已经登记了 `gpkg_rtree_index` ⇒ 任何按包框查的读端拿到 **0 个要素**。
-  现读：`build/debug/tests/Debug/test_e2e_output/` 里 **31 个产物**是"表有 N 行、`rtree_<层>_geom` 0 行"，
-  含真实数据腿 `build/tmp/probe/union_focus.gpkg`（**表 22 855 行 / 索引 0 行**）；
-  对照实验（同一份 GDAL 3.12.4，`ogrinfo -so -spat`）：
-  ① 插件写的 union 产物 `Feature Count` 无过滤 3、加包框 **0**；② 测试夹具自己写的 `a0_chain_input.gpkg`（索引有 3 行）
-  无过滤 3 / 加包框 **3**；③ 不建索引的产物 `e2e_boundary_output.gpkg`（根本没有 rtree）无过滤 2 / 加包框 **2** ⇒
-  **"没有索引"是对的，"有索引但是空的"才是错的**，读端按 GDAL 源码 `ogrgeopackagetablelayer.cpp:5143-5159`
-  只看 `rtree_*` 表在不在就认定有索引（唯一的"坏索引"启发式要 ≥100 000 要素才触发，见
-  `OGR_GPKG_THRESHOLD_DETECT_BROKEN_RTREE`，本仓最大产物 22 855 行 ⇒ 够不着）。
-  **机制已用官方工具单独复现（不需要改一行代码）**：`ogr2ogr -lco SPATIAL_INDEX=NO` 写一份 → 建 `gpkg_extensions` 表 →
-  `SELECT gpkgAddSpatialIndex('union','geom')` ⇒ 得到与产物**完全相同**的状态：rtree 表建了、6 个触发器建了、
-  扩展项登记了、**回填 0 行**，包框查询 0 个要素；而 `gpkgAddSpatialIndex` 在**没有** `gpkg_extensions` 表时报
-  `no such table: gpkg_extensions`、在索引已存在时报 `trigger "rtree_*_insert" already exists` ⇒ 这个函数
-  **只装触发器不回填既有行**，所以"先关掉索引批量写、写完再补索引"这个设计本身不成立。
-  另一条独立证据：`addSpatialIndexIfNeeded`（`vector_plugin_common.inc:407-426`）把 `ExecuteSQL` 的返回值当布尔用，
-  **失败既不报告也不计数** ⇒ 上一段那三种失败形态在测试里全是静默的（本仓"没检查长得像检查通过"这一族的又一例）。
-  **修法（已在同一份 GDAL 上验证可行，未落地）**：去掉这六个路径的 `SPATIAL_INDEX=NO`，让 GDAL 用它自己的
-  延迟建索引（`ogrgeopackagedatasource.cpp:3457-3461` 在 `FlushCache` 里 `CreateSpatialIndexIfNecessary()`，
-  建完一次性回填），同时删掉 `addSpatialIndexIfNeeded` 这条假路径 ⇒ 对照实验 `ogr2ogr -f GPKG -gt 100000`
-  （同样走 `StartTransaction/CommitTransaction`，与本插件同一套批量语义）产物为 rows=3 / rtree=3 / 包框查询 3 ⇒
-  **性能优化与索引正确性不冲突**。验收判据必须是"读端可见性质"而不是"函数调用成功"：
-  六个动作各一条用例，写 `.gpkg` 后断言 `rtree_<层>_geom` 行数 == 要素数，**且** `SetSpatialFilter(全 extent)` 后
-  `GetFeatureCount()` == 要素数；本刀在 HEAD 上天然红（上面的现读就是旧态），符合 R-B16 的"旧绿新红"要求。
-  ⚠ 范围纪律：`buildGpkgFastWriteLayerOptions(useTransactions)` 现读共 **17 个调用点**，其中只有上面 6 个
-  会在写完后补索引；**另外 11 个（boundary、centroid、convex_hull、endpoints_extract、envelope、filter、
-  interior_point、midpoints_extract、singlepart、sliver_remove、vertices_extract）今天就是"不建索引"，
-  读端正确**，本刀不动它们的产物形态；"要不要给所有 GPKG 输出都配索引"是另一个问题，登记在下面待裁。
-  **路径 A 已修 `8ed6b75` + 复审回收 `ff86362`**（六条用例 T1–T6，两棵树 `VectorUnion*|CoverageMeta*|CoverageMetaJudge*`
-  选择器 28/28，三条老用例 3/3 单跑通过）：三条分块 `input`/`both`/`overlay` 互不重叠且面积可加，
-  两侧字段整表合并（**撞名时让位的是我们附加的标记列 `source`→`source_2`，用户数据列名逐字保留**——
-  评审席推荐反过来，控制器否决：改用户列名会让下游按原名取值的代码静默拿不到值，正是 N128 这一族缺陷的镜像），
-  元数据 5 键（`union_input_pieces`/`union_overlap_pieces`/`union_overlay_pieces`/`union_total_pieces`
-  + 只在 >0 出现的 `union_skipped_overlay_pieces`）。
-  ⚠ **`union` 的 GOLD 登记已落地**（C3h-1b `7a9edf8`：判别取证通过 ⇒ `vector,union` PENDING→GOLD，
-  证据用例 `PluginTest.VectorUnionSplitsIntoThreePieceClasses`，`kPendingCeiling 61→60`）；
-  **但路径 A 的真实数据腿仍然没有**：现有 `union_focus` 是线 × 面 ⇒ 走路径 B，路径 A 在真实回归里仍是 0 覆盖
-  ⇒ 排在 C3h-3（面 × 面真实腿，挂 `overlay` 那一半）。
-  ⚠ 口径写死在这里防止误读：**GOLD ≠ 真实数据覆盖**——这一行的凭据全在合成夹具与插件单测里，
-  真实数据那条腿是空的；两者是不同的缺口，不许互相顶替。
+- 挂账 **N138**（GPKG 空间索引写成"声明了但是空的"，**用户可见级**）——**已销 `d583c9b` + `f0b0d0e`（批次 C C3l）**：
+  **射程 5 个动作**（`clip`/`dissolve`/`union`/`difference`/`intersect`）产出的 `.gpkg` 带一个 **0 行的 rtree**，
+  而 `gpkg_extensions` 里已登记 `gpkg_rtree_index` ⇒ 任何按包框查的读端拿到 **0 个要素**（表里明明有 N 行）。
+  ⚠ **立案时我把范围写成"六个"是错的**：`vector_plugin_buffer_clip.inc:54` 写的是
+  `const bool useTransactions = false;`（旁注 "prefer the driver's native spatial index creation path"）
+  ⇒ buffer 既不关索引，那条补索引调用也被外层 `if (useTransactions)` 挡死（本就是死代码），它的产物索引一直回填过。
+  实现者按现读把偏差摆出来（工单要"6 条全红"，实测 **5 红 + buffer 绿**），控制器裁定为**改判射程**而不是砍判据。
+  旧态现读：`test_e2e_output/` 103 个 `.gpkg` 里 Debug 树 **16 个图层**"表有 N 行、`rtree_<层>_geom` 0 行"
+  （Release 树 15 个）；立案句里那个"**31**"是**两棵树相加**，不是单棵树。
+  ⚠ **立案句的"对照①"是一条假证据，此处更正**：当时用的 `-spat -1 -6 31 6` 是照用例坐标猜的包框，
+  而那份产物的真实 extent 是 `(0,50)-(100,50)` ⇒ 包框**不与任何要素相交**，"加包框 0 个要素"是**正确的查询结果**，
+  它证明不了缺陷。换成三条能承线的证据：
+  ① **同一份 parcels 数据的 A/B**：`ogr2ogr -lco SPATIAL_INDEX=NO` + 建 `gpkg_extensions` + `gpkgAddSpatialIndex`
+  ⇒ 索引 0 行 ⇒ `-spat ±1000` 得 **0**；`ogr2ogr -gt 100000`（驱动自己建）⇒ 索引 3 行 ⇒ 同一包框得 **3**；
+  ② 旧产物 `e2e_dissolve_invalid_output.gpkg`：extent `(0,0)-(120,100)` 落在 `±1000` 内，表 1 行 / 索引 0 ⇒ 查询 **0**；
+  ③ **同一份 union 夹具数据改前/改后 A/B**：改前 rows=3 / rtree=0 / `-spat -1 -1 101 51` ⇒ **0**；
+  改后 rows=3 / rtree=3 / 同一包框 ⇒ **3**。
+  ⇒ "**没有索引**"是合法状态（读端退回全表扫描，实测 `e2e_boundary_output.gpkg` 无过滤 2 / 加包框 2），
+  "有索引但是空的"才是缺陷；GDAL 只看 `rtree_*` 表在不在就认定有索引（`ogrgeopackagetablelayer.cpp:5143-5159`），
+  唯一的坏索引启发式要 ≥100 000 要素（`OGR_GPKG_THRESHOLD_DETECT_BROKEN_RTREE`），本仓最大产物 22 855 行够不着。
+  根因：`gpkgAddSpatialIndex` **只建 rtree 表和 6 个触发器、不回填已经在表里的行** ⇒
+  "先关掉索引批量写、写完再补索引"必然交出空索引；且 `addSpatialIndexIfNeeded` 把 `ExecuteSQL` 的返回值当布尔用，
+  三种失败形态全部静默（本仓"没检查长得像检查通过"这一族的又一例）。
+  **修法（已落地）**：6 个调用点改走 `buildGpkgDriverIndexedLayerOptions()`（一个图层选项都不发 ⇒
+  GDAL 在 `FlushCache` 里延迟建索引并一次性回填，`ogrgeopackagedatasource.cpp:3457-3461`），
+  `addSpatialIndexIfNeeded`/`ensureGpkgExtensionsTable`/`escapeSqlLiteral` 删调用后零引用 ⇒ 整体删除；
+  事务批量化一字未动 ⇒ **批量写与索引正确性不冲突**。另外 11 个不建索引的调用点源码与产物形态逐字不变
+  （boundary/centroid/convex_hull/endpoints_extract/envelope/filter/interior_point/midpoints_extract/singlepart/
+  sliver_remove/vertices_extract；改前改后"无 rtree"的图层名单一致）。
+  判据是六条 `PluginTest.Vector*GpkgSpatialIndexIsPopulated`，按**读端性质**写：主判据 =
+  `SetSpatialFilterRect(夹具全 extent)` 后 `GetFeatureCount()` == 由夹具坐标手算的期望数
+  （buffer 200 / clip 1 / dissolve 1 / union 3 / difference 1 / intersect 1），索引行数只作解释性判据；
+  旧态 5 条红、新态 6 条绿（两棵树），注册数 730 / 728。
+  **真实数据侧的收口证明**：`tmp/vector_regression/union_focus.gpkg` 由 C3l 收口轮重跑生成，
+  表 **22 855** 行 / rtree **22 855** 行（文件从 5 582 848 B 增至 8 085 504 B，多出的就是索引），
+  官方 `ogrinfo -so -spat <全 extent>` 读回 **22 855** 个要素（改前该产物索引 0 行）。
+  ⚠ **本条最该沉淀的方法**：31 个产物、两棵树几百条用例连续几周全绿，缺陷却在每一个受影响的 `.gpkg` 里——
+  因为所有断言都是"我们写什么就读什么"（要素数、面积、字段名），**没有一条按读端会怎么用这个文件去查**。
+  这次是靠引入仓库外的第二个客户端（vcpkg 的官方 `ogr2ogr`/`ogrinfo`）才打出来的；
+  以后"产物格式合规"类判据一律配一个独立客户端，别再加第十条自产自读的断言。
+  ⚠ 顺带修正一条扫描口径：**"索引行数 == 要素数"对含 NULL/空几何的图层天然不成立**——GDAL 触发器的条件是
+  `WHEN new."geom" NOT NULL AND NOT ST_IsEmpty(new."geom")`，实测
+  `e2e_singlepart_input`（3 行含 1 个 NULL ⇒ 索引 2）与 `t20_empty_point_input`（4 行含 2 个空点 ⇒ 索引 2）
+  都是**正确状态** ⇒ 比的是"非空几何数"，不是行数；否则会把合规产物读成缺陷（我自己差点把它记成第 2、3 条红）。
+  ⚠ 仍待裁（不在本刀）：要不要给那 11 条路径也配索引——今天是"合法但无索引"，读端靠全表扫描，慢但结果对。
 - 挂账 **N135**（`vector union` 路径 A 的三条"GEOS 返回失败"分支，**今天无判据**，由 `ff86362` 复审席点名）：
   ① 已写面积累加时某次 `Union` 返回 nullptr ⇒ 减法基少一块 ⇒ 源独有块会把已写相交面积再算进去（不计数）；
   ② 逐条差集只减动部分候选 ⇒ 写出的叠加独有块与没减动那条源几何重叠（不计数）；
