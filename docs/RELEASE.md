@@ -36,7 +36,7 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 724 / Release 722**（2026-10-23 批次 C C3h-2 收口轮现读；上一档 723 / 721 是同日 N122，再上一档 722 / 720 是 C3i，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 724 / Release 722**（2026-10-23 批次 C C3h-2 收口轮现读，C3h-1b 收口轮现读复验同值——那一刀只翻登记表状态列、不增删用例；上一档 723 / 721 是同日 N122，再上一档 722 / 720 是 C3i，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,7 +297,7 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 724 / Release 722**（2026-10-23 批次 C C3h-2 收口轮现读；相比上一档 723 / 721 **+1** = C3h-2 的 `PluginTest.VectorUnionMixedDimensionCarriesAttributesPerPiece`；再上一档 722 / 720 的 +1 = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
+- **现行基线**：`ctest -N` 注册数 **Debug 724 / Release 722**（2026-10-23 批次 C C3h-2 收口轮现读，**C3h-1b 收口轮 `-N` 现读复验同值**——那一刀只翻登记表一行的状态列，不增删用例；相比上一档 723 / 721 **+1** = C3h-2 的 `PluginTest.VectorUnionMixedDimensionCarriesAttributesPerPiece`；再上一档 722 / 720 的 +1 = N122 的 `PluginTest.VectorRemoveStaleShapefileSidecarsUnderNonAsciiPath`；再往上一档 719 / 717 的 **净 +3**，
   由两刀合成：C3k 把一条 `real_data_vector_full` 换成 `checks`/`overlay` 两条（−1+2 = **+1**），
   C3i 新增 `PluginTest.VectorBufferRejectsMissingSrs` 与 `PluginTest.VectorDissolveRejectsMissingSrs`（**+2**）。
   上一档 719 / 717 是同日 C3h-1 收口轮（+6 = `PluginTest.VectorUnion*` 六条，逐名比对得出）；再上一档 713 / 711 是同日 C3j（+8 = N132/N133/N134 三刀的
@@ -314,15 +314,26 @@ cmake --install build/release --config Release --prefix install
   Release `100% tests passed, 0 tests failed out of 633`（188.41 s）；
   两棵树的构建日志均 **0 warning / 0 error**；日志 `build/t21D_build_debug.log`、`build/t21D_build_release.log`、
   `build/t21D_ctest_debug_full.log`、`build/t21D_ctest_release_full.log`。
-- **凡引用 `GOLD` 覆盖数，必须带 N90 限定。** 登记表的判据 `blockHasNumericAssertion`
-  （`tests/test_coverage_meta.cpp:284-291`）是**子串匹配**，块体**注释里**出现 `EXPECT_NEAR` 字样也会被算作"有数值断言"
-  ⇒ 在判据修好之前，"GOLD 覆盖 N 个 action"这类句子**不代表 N 个 action 真被数值钉住**。
-  引用时请写成**登记表自报口径**：`tests/action_gold_cases.txt` 126 个数据行自报 **GOLD 52 / PENDING 74**（文件另有 23 行注释，`wc -l` 得 149）。
-  计数请用 `grep -c ',PENDING$'`（=74）与"排除注释行后再数 `,GOLD`"（=52）；直接 `grep -c ',GOLD'` 会得 **53**（第 2 行注释含 `,GOLD`）。
-  上限断言现值 `EXPECT_LE(pending, 74)`（`tests/test_coverage_meta.cpp:402`），只允许下降。N90 归批次 B。
+- **凡引用 `GOLD` 覆盖数，必须带两条限定：N90 已销、N108 未销。**
+  N90（"块体注释里写一句 `EXPECT_NEAR` 就能顶替被删掉的真断言"）**已由批次 B 的 B8 关闭**：判据
+  `blockHasNumericAssertion`（`tests/test_coverage_meta.cpp:517-524`）不再扫块体原文，而是读 `lexCppViews`
+  同一趟产出的 `blanked` 视图（注释字符与字面量内容都已抹掉，两份视图等长、下标可互换）；
+  这一形状由四条机器判据钉住（`CoverageMetaJudge.LineCommentOnlyNumericAssertionIsNotCounted` /
+  `BlockCommentOnlyNumericAssertionIsNotCounted` / `AssertionNameOnlyInsideStringLiteralIsNotNumericEvidence` /
+  `AuditStripsCommentsOnBothCriteriaEndToEnd`，提交 `fb26cd7` → `57fcf3a` → `65df19e`）。
+  ⚠ **但 GOLD 数仍不等于"N 个 action 的数值口径已被独立钉住"**：N108（期望侧的值取自被测产物 = 自指期望）
+  到今天没有任何一臂在守，见下面挂账——所以限定句从"判据可被注释满足"换成"判据不吃自指期望"。
+  引用时请写成**登记表自报口径**：`tests/action_gold_cases.txt` 126 个数据行自报 **GOLD 66 / PENDING 60**（文件另有 51 行注释、0 空行，`wc -l` 得 177）。
+  计数请用"排除注释行后再数 `[,]GOLD`"（=66）与"排除注释行后再数 `[,]PENDING`"（=60，与 `grep -c ',PENDING$'` 同值）；
+  直接 `grep -c ',GOLD'` 会得 **67**（第 2 行的格式说明含 `,GOLD`，本表新写的注释一律改写成 `[:]GOLD` 来避开这个字面量）。
+  上限断言现值 `constexpr int kPendingCeiling = 60`（`tests/test_coverage_meta.cpp:245`，断言落在
+  `CoverageMeta.PendingCountDoesNotGrow` 的 `EXPECT_LE(pending, kPendingCeiling)` `:863`），
+  且头部 `COUNT pending_rows` 与这个常量由 `CoverageMeta.RegistryHeaderCountsMatchData`（`:873`，对撞段 `:945-951`）
+  钉成同一个数 ⇒ "改表忘改上限"这个唯一的静默放宽方向已经红得出来。只允许下降。
 - **冻结清单复核结论（21-D，只核不改）**：批次 A 全程 `tests/action_gold_cases.txt` 只有 Task 3 的两个提交动过它
   （`f1bb676` 建档、`987eaa9` fix round 1 只**加第 4 列证据用例名**）；
-  两版的 GOLD/PENDING 都是 **52 / 74**，`diff` 只显示列数变化 ⇒ **没有任何 action 从 PENDING 变 GOLD**（"不反向扩标"守住了），
+  两版的 GOLD/PENDING 都是 **52 / 74**（**那是批次 A 当时的数**，与上面那条现值 66 / 60 不是同一档，别混读），
+  `diff` 只显示列数变化 ⇒ **没有任何 action 从 PENDING 变 GOLD**（"不反向扩标"守住了），
   **不需要动上限断言**。另核：`EXPECT_LE(pending, 96)` 那一版从未进过代码
   （`git log -S'EXPECT_LE(pending, 96)' -- tests/test_coverage_meta.cpp` 零命中），96 只是计划期的估算。
 
@@ -367,12 +378,13 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
-| Debug | **724** | **875.64 s**（批次 C C3h-2 收口轮现跑，`build/tmp/c3h2_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 724 条**首档**；往前十一档（697~723 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 s** | 最慢 `real_data_vector_overlay` **242.12 s** ⇒ 670 ÷ 242.12 = **2.77×**；次 `real_data_vector_quick` **214.81 s** ⇒ 720 ÷ 214.81 = **3.35×**；`real_data_vector_checks` **32.88 s** ⇒ 100 ÷ 32.88 = **3.04×**；`source_mojibake_guard` 10.34 s ⇒ **29.0×** |
-| Release | **722** | **449.02 s**（同一轮紧随其后跑，`build/tmp/c3h2_close_rel.log`；**722/722 全绿**） | 722 条**首档**；往前十档（695~721 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 s** | 最慢 `real_data_vector_overlay` **110.66 s** ⇒ 670 ÷ 110.66 = **6.05×**；`real_data_vector_quick` **116.95 s** ⇒ 6.16×；`real_data_vector_checks` **17.12 s** ⇒ 5.84× |
-⚠ **`overlay` 那一半在涨，但只有一轮对照**：Debug 230.41 → **242.12 s**（+11.71 s），Release 153.72 → **110.66 s**（−43 s）——
-同一档两边一涨一跌 ⇒ 拿它论证"路径 B 每条片段多做至多 N 次 `Difference` 所以变慢"是不成立的；
-本轮 C3h-2 确实给路径 B 加了每次分块的归属查找（真实腿 `union_focus` 走的就是路径 B），
-但**要证明是它带来的**得等下一轮现读，或做一次同码双跑。按本文件纪律：这一栏只现读、不外推。
+| Debug | **724** | **865.12 s**（批次 C C3h-1b 收口轮现跑，`build/tmp/c3h1b_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 724 条现在**两读**：**875.64 s**（C3h-2 轮）/ **865.12 s**（C3h-1b 轮 = 本行现值）。⚠ 这两轮之间**代码与用例集都没动**（C3h-1b 只把登记表里 `vector,union` 一行的状态列翻成 GOLD、并同步四处计数），所以这 10.52 s 差是**同一套用例的纯噪声样本**——正是"跨轮差值一律不作证据"那条纪律要保护的那种差；再往前十一档（697~723 各计数）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 s** | 最慢 `real_data_vector_overlay` **242.40 s** ⇒ 670 ÷ 242.40 = **2.76×**；次 `real_data_vector_quick` **210.04 s** ⇒ 720 ÷ 210.04 = **3.43×**；`real_data_vector_checks` **32.67 s** ⇒ 100 ÷ 32.67 = **3.06×**；`source_mojibake_guard` **10.86 s** ⇒ 300 ÷ 10.86 = **27.6×**（上界取 `GIS_TEST_TIMEOUT`，`tests/CMakeLists.txt:157`） |
+| Release | **722** | **463.39 s**（同一轮紧随其后跑，`build/tmp/c3h1b_close_rel.log`；**722/722 全绿**） | 722 条现在**两读**：**449.02 s**（C3h-2）/ **463.39 s**（C3h-1b = 本行现值，同一套用例差 14.37 s）；再往前十档（695~721 各计数）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 s** | 最慢 `real_data_vector_overlay` **128.96 s** ⇒ 670 ÷ 128.96 = **5.20×**；`real_data_vector_quick` **115.76 s** ⇒ 720 ÷ 115.76 = **6.22×**；`real_data_vector_checks` **17.66 s** ⇒ 100 ÷ 17.66 = **5.66×**；`source_mojibake_guard` **10.73 s** ⇒ **28.0×** |
+⚠ **`overlay` 那一半的"在涨"已经证否——同码双读拿到了**：C3h-1b 与 C3h-2 之间**代码一行没改**（只翻了登记表状态列），
+于是这一档天然成了"同码双跑"：Debug overlay 242.12 → **242.40 s**（差 0.28 s，很紧），
+Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）；同轮 quick Release 116.95 → 115.76、checks 17.12 → 17.66。
+⇒ 上一版那句"Debug +11.71 s / Release −43 s，两边一涨一跌所以不能归因于路径 B"现在有了更硬的版本：
+**同码都能摆 18 s**，那 "+11.71 s" 从来没资格当证据。按本文件纪律：这一栏只现读、不外推。
 
 **触发线（我自己给自己下的规则）——已处置完毕，现在的口径按"半条腿"算**：2026-10-22 拆腿前
 `real_data_vector_full` 的 Debug 余量掉到 **2.06×**（378.52 s，单跑复核 376.63 s）⇒ 触发。
@@ -453,11 +465,29 @@ cmake --install build/release --config Release --prefix install
     全部改 `fs::u8path`；新增中文路径边车用例）。全量：Debug `100% tests passed, 0 tests failed out of 723`
     （**861.11 s**）；Release 首轮 **720/721**（唯一红 = N136）→ 隔离 26 个 Debug 配置残留后重跑 **721/721（562.99 s）**。
     注册数 722→723 / 720→721（+1）。真实腿余量：Debug 2.91× / 2.99× / 3.62×，Release 4.36× / 4.23× / 4.90×。
-  - **批次 C C3h-2 收口轮**（本表现值，N128 后半）：树上多了 `cb443fb`（线×面路径补两侧整表属性、
+  - **批次 C C3h-2 收口轮**（当时那一档，N128 后半）：树上多了 `cb443fb`（线×面路径补两侧整表属性、
     `split` 退役收敛为 `input`/`both`、T7 + 就地更新老用例）。实现者撞 150 回合上限但**上限前已提交**，
     控制器自验两树 `VectorUnion*|判据族` 29/29、评审席两轴通过且无必须修。
     全量：Debug **724/724（875.64 s）**、Release **722/722（449.02 s）**，两树 `Not Run/Skip/***` 都是 0；
     注册数 723→724 / 721→722（+1）。真实腿余量 Debug **2.77× / 3.04× / 3.35×**、Release 6.05× / 5.84× / 6.16×。
+  - **批次 C C3h-1b 收口轮**（本表现值，判别取证 + 登记晋升；**控制器自跑，未派下级**）：树上多了 `7a9edf8`
+    （`vector,union` PENDING→GOLD + 头部四处 COUNT 同步 + `kPendingCeiling 61→60`）。
+    ⚠ 这条 SHA 是 **amend 后**的：原先落的是 `df7f3fc`，subject 从我上一刀（拆腿）复制过来没改，与本刀内容不符；
+    该提交只在本地、未 push，经用户同意后 `git commit --amend` 改了标题 ⇒ **内容一字未动**：
+    两棵 tree 对象同一个哈希 `git rev-parse df7f3fc^{tree} 7a9edf8^{tree}` = `d1d20284f9669bf9fc791c730caa382da1370ddb`，
+    旧 SHA 已不在任何分支上（`git log --all --oneline | grep df7f3fc` 无命中，只剩本地 reflog）。**教训**：`git commit -m` 复用上一条
+    message 模板时 subject 必须重写并核对——commit log 也是文档，漂了就是一条假线索。
+    判别取证（**唯一一条我自己跑的变异**，因为它是"晋升"这个动作的前提而不是产品缺陷）：
+    把 `both` 分块的"减掉本轮已写面积"去掉（`piece(intersection->clone());  // C3H1B-MUT`）⇒ 重建 Debug ⇒
+    10 条 `PluginTest.VectorUnion*` 里**恰好只有** `VectorUnionDeduplicatesOverlappingOverlayPolygons` 红、其余 9 条绿；
+    `cp` 快照还原后 `cmp` 无输出、md5 `02f2566849647a8bb8cf4fe327158ad1`、标记 0 命中
+    （⚠ 扫描范围写死 `grep -rn C3H1B-MUT src tests`：本行刚把这个字面量抄进文档，"全库 0 命中"当场就成假话——
+    这是本仓那条"为解释某事写的注释会污染数那件事的 grep"的又一次应验，判据范围要排除 docs）。
+    ⇒ union 的分块三条、归属判据、词表、元数据求和、面积读数至此各有独立红态（C3h-1/R1 的 M-A…M-E + C3h-2 的 MU-A…MU-C + 本刀）。
+    全量：Debug **724/724（865.12 s）**、Release **722/722（463.39 s）**，两树 `Not Run/Skip/***` 都是 0；
+    注册数 **724 / 722 不变**（本刀不增删用例，`-N` 现读 + 名单逐名比对复验：`comm -23` 仍恰为那两条 Debug 轻量闸门、
+    `comm -13` 空；名单快照 `build/tmp/c3h1b_names_{debug,release}.txt` 不入库）。
+    真实腿余量 Debug **2.76× / 3.06× / 3.43×**、Release 5.20× / 5.66× / 6.22× ⇒ 最低一档 2.76×，仍在 2.5× 之上，**不触发拆腿**。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
@@ -469,6 +499,9 @@ cmake --install build/release --config Release --prefix install
   最慢值 22.31 s 是全库最慢，不是子集最慢。但**名字与用时的配对**只成功 594/693 条
   （其余断在两行），所以"最慢的是哪一条"要单独核：本轮最大值 22.31 s 恰在配对成功的那批里，
   与 `source_mojibake_guard` 同一行 ⇒ 这一条成立；以后若最大值落在没配上的 99 条里就得手工认领。
+  ⇒ **C3h-1b 轮这一栏不需要手工认领**：`Passed <N> sec` 单行抓到 **724/724**（Debug）与 **722/722**（Release）条、
+  逐条求和 864.67 / 462.95 s，与整轮墙钟 865.12 / 463.39 s 各差 **0.45 s**（纯 ctest 调度开销）⇒
+  上表四个"最慢"就是全库最慢，且名字与用时**逐条成对**，不用再走上面那条手工认领。
   ⚠ 还有一轮 **371.56 s**（B17 修复后那次全量）**没有**进上表，因为当时四个终审评审席正在并发读盘
   ⇒ 按本文件"全量耗时会被并发活动污染"那条纪律，它只能算**下限样本**，不能当安静值引用。
   三条脚本类用例的同轮现跑：`source_mojibake_guard` **22.31 s（Debug）/ 18.33 s（Release）**、
@@ -532,7 +565,9 @@ cmake --install build/release --config Release --prefix install
   跑到 300 s 超时被杀，不是干净红）。修法（未做）：配置期对派生结果做**存在性断言**——
   release 名单逐项 `EXISTS ${GIS_VCPKG_RELEASE_BIN_DIR}/<名>`、debug 名单逐项查 `debug/bin`，
   缺项就 `FATAL_ERROR` 点名（名单是派生的、不是手抄，所以这条闸本身不引入新的真源）。
-- **N90**：`blockHasNumericAssertion` 可被注释满足（见上面"GOLD 限定"）。
+- **N90**（~~可被注释满足~~ **已销**，批次 B 的 B8 三连 `fb26cd7` → `57fcf3a` → `65df19e`）：
+  判据现读 `blanked` 视图，注释与字面量内容都不再能充当数值断言；口径与四条机器判据见上面"GOLD 覆盖数的两条限定"。
+  ⚠ 本条销的是"注释能顶替断言"这一型，**不等于 GOLD 已免疫自指期望**——那是 N108，仍未销。
 - **N108（终审席 3 H1，静态取证，未实测红）**：数值断言的判据只认断言宏名，所以
   "期望侧的值取自被测产物"这一型（批次 A 之后、B11 刚修过的那类自指）**没有任何一臂在守**。
   评审给出的静态变异是把 `tests/test_plugins.cpp:8656` 的字面量参数改回
@@ -951,8 +986,12 @@ C3b 建账时的只读调研产出四条产品侧缺口（**本批只记账、�
   评审席推荐反过来，控制器否决：改用户列名会让下游按原名取值的代码静默拿不到值，正是 N128 这一族缺陷的镜像），
   元数据 5 键（`union_input_pieces`/`union_overlap_pieces`/`union_overlay_pieces`/`union_total_pieces`
   + 只在 >0 出现的 `union_skipped_overlay_pieces`）。
-  ⚠ **`union` 的 GOLD 登记与路径 A 的真实数据腿都还没有**：现有 `union_focus` 是线 × 面 ⇒ 走路径 B，
-  路径 A 在真实回归里是 0 覆盖。两件事分别排在 C3h-1b（变异取证 + 晋升）与 C3h-3（面 × 面真实腿）。
+  ⚠ **`union` 的 GOLD 登记已落地**（C3h-1b `7a9edf8`：判别取证通过 ⇒ `vector,union` PENDING→GOLD，
+  证据用例 `PluginTest.VectorUnionSplitsIntoThreePieceClasses`，`kPendingCeiling 61→60`）；
+  **但路径 A 的真实数据腿仍然没有**：现有 `union_focus` 是线 × 面 ⇒ 走路径 B，路径 A 在真实回归里仍是 0 覆盖
+  ⇒ 排在 C3h-3（面 × 面真实腿，挂 `overlay` 那一半）。
+  ⚠ 口径写死在这里防止误读：**GOLD ≠ 真实数据覆盖**——这一行的凭据全在合成夹具与插件单测里，
+  真实数据那条腿是空的；两者是不同的缺口，不许互相顶替。
 - 挂账 **N135**（`vector union` 路径 A 的三条"GEOS 返回失败"分支，**今天无判据**，由 `ff86362` 复审席点名）：
   ① 已写面积累加时某次 `Union` 返回 nullptr ⇒ 减法基少一块 ⇒ 源独有块会把已写相交面积再算进去（不计数）；
   ② 逐条差集只减动部分候选 ⇒ 写出的叠加独有块与没减动那条源几何重叠（不计数）；
