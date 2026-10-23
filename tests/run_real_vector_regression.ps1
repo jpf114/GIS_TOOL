@@ -19,7 +19,7 @@ if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Error
     $PSNativeCommandUseErrorActionPreference = $false
 }
 
-# quick 档不分档（24 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/overlay_ops/
+# quick 档不分档（27 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/overlay_ops/
 # union_poly 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先判红。放在最顶上是为了在碰 data/ 与
 # tmp/ 之前就红（同 tests/run_real_vector_regression.cmake 里"参数写错要在绑定期红"那条口径）。
 if ($Mode -eq "quick" -and $Group -ne "all") {
@@ -311,6 +311,78 @@ function Get-LayerStats {
         MaxX = [double]$extent.Groups[3].Value
         MaxY = [double]$extent.Groups[4].Value
     }
+}
+
+# ── C3c-A：info 输出的结构化解析（Driver / 层数 / 层名 / 几何 / CRS / 要素数 / 字段名与顺序 / Extent）──
+# Get-LayerStats 只带要素数/字段数/几何/包框；C3c-A 的 info 腿要按"整层形状"判，
+# 所以另立一个解析器，而**不**扩宽既有 helper 的返回对象（那条被十几条腿消费，加属性要逐个复核）。
+# 数字一律走与 Get-LayerStats 相同的整行锚定正则（禁止 Contains 判数字，历史假绿见那边的注释）。
+function Get-LayerInfoSummary {
+    param(
+        [string]$Text,
+        [string]$Label
+    )
+
+    $number = "-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
+    $driver = [regex]::Match($Text, "(?m)^\s*Driver:\s+(.+?)\s*$")
+    Assert-Condition -Condition ($driver.Success) -Message ($Label + ": no Driver line in info output: " + $Text)
+    $layers = [regex]::Match($Text, "(?m)^\s*Layers:\s+(\d+)\s*$")
+    Assert-Condition -Condition ($layers.Success) -Message ($Label + ": no Layers line in info output: " + $Text)
+    $layerName = [regex]::Match($Text, "(?m)^\s*Layer \[\d+\]:\s+(.+?)\s*$")
+    Assert-Condition -Condition ($layerName.Success) -Message ($Label + ": no 'Layer [i]: name' line in info output: " + $Text)
+    $geometry = [regex]::Match($Text, "(?m)^\s*Geometry:\s+(\S+)\s*$")
+    Assert-Condition -Condition ($geometry.Success) -Message ($Label + ": no Geometry line in info output: " + $Text)
+    $crs = [regex]::Match($Text, "(?m)^\s*CRS:\s+(.+?)\s*$")
+    Assert-Condition -Condition ($crs.Success) -Message ($Label + ": no CRS line in info output: " + $Text)
+    $features = [regex]::Match($Text, "(?m)^\s*Features:\s+(\d+)\s*$")
+    Assert-Condition -Condition ($features.Success) -Message ($Label + ": no Features line in info output: " + $Text)
+    $extent = [regex]::Match($Text, ("(?m)^\s*Extent:\s+(" + $number + "),\s*(" + $number + ")\s+-\s*(" + $number + "),\s*(" + $number + ")\s*$"))
+    Assert-Condition -Condition ($extent.Success) -Message ($Label + ": no Extent line in info output: " + $Text)
+    $fieldCount = [regex]::Match($Text, "(?m)^\s*Fields:\s+(\d+)\s*$")
+    Assert-Condition -Condition ($fieldCount.Success) -Message ($Label + ": no Fields line in info output: " + $Text)
+    $fieldMatches = [regex]::Matches($Text, "(?m)^\s*\[(\d+)\]\s+(.+?)\s+\(([^)]+)\)\s*$")
+    $fieldNames = @()
+    $fieldTypes = @()
+    foreach ($m in $fieldMatches) {
+        $fieldNames += $m.Groups[2].Value
+        $fieldTypes += $m.Groups[3].Value
+    }
+    Assert-Condition -Condition ($fieldNames.Count -eq [int]$fieldCount.Groups[1].Value) -Message (
+        $Label + ": info says Fields: " + $fieldCount.Groups[1].Value + " but parsed " + $fieldNames.Count + " field line(s)")
+
+    return [pscustomobject]@{
+        Driver = $driver.Groups[1].Value
+        LayerCount = [int]$layers.Groups[1].Value
+        LayerName = $layerName.Groups[1].Value
+        Geometry = $geometry.Groups[1].Value
+        Crs = $crs.Groups[1].Value
+        FeatureCount = [int]$features.Groups[1].Value
+        FieldCount = [int]$fieldCount.Groups[1].Value
+        FieldNames = $fieldNames
+        FieldTypes = $fieldTypes
+        MinX = [double]$extent.Groups[1].Value
+        MinY = [double]$extent.Groups[2].Value
+        MaxX = [double]$extent.Groups[3].Value
+        MaxY = [double]$extent.Groups[4].Value
+    }
+}
+
+# 对**文件**跑一次 vector info 再解析。D1 未销账：info 仍被插件级 output 必填挡着，
+# 所以带一个不会落盘的占位输出（doInfo 不写文件）。
+function Get-LayerInfoForPath {
+    param(
+        [string]$ResolvedCliPath,
+        [string]$Path,
+        [string]$ScratchDir,
+        [string]$Label
+    )
+
+    $text = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+        "vector", "info",
+        ("--input=" + $Path),
+        ("--output=" + (Join-Path $ScratchDir ("info_" + $Label + "_placeholder.gpkg")))
+    )
+    return Get-LayerInfoSummary -Text $text -Label $Label
 }
 
 function Format-Extent {
@@ -1791,6 +1863,244 @@ function Assert-ChineseAttributeFilterCase {
     return $read
 }
 
+# ── C3c-A：info / repair 的真实数据 quick 腿；convert 已有 convert_roads_geojson，只增强判据 ──
+# 两份输入都先复制到 build/tmp/c3cA/ 再喂 CLI（N115：info 会在 GPKG 输入旁写 .aux.xml，
+# 本刀 §0.2 已现读复现）。province 的期望值全部从 GeoJSON 自己现读（要素数/字段顺序/
+# 几何类型种类/CRS/extent），roads 的 22836 要素与 9 个字段是该基准件的**数据契约**
+# （bj_roads_core 由 data/vector 最小 shapefile 派生，见 Ensure-BenchmarkData）。
+function Ensure-C3cARealInputs {
+    param(
+        [string]$ResolvedWorkspaceRoot
+    )
+
+    $scratchRoot = Join-Path $ResolvedWorkspaceRoot "build\tmp\c3cA"
+    New-Item -ItemType Directory -Force -Path $scratchRoot | Out-Null
+
+    $vectorDataRoot = Join-Path $ResolvedWorkspaceRoot "data\vector"
+    $provinceRaw = Resolve-ProvinceVectorInput -VectorDataRoot $vectorDataRoot -Label "C3c-A info/repair legs"
+    $provinceCopy = Join-Path $scratchRoot "china_provinces.geojson"
+    Copy-Item $provinceRaw $provinceCopy -Force
+
+    $roadsBenchmark = Join-Path $ResolvedWorkspaceRoot "tmp\vector_benchmark\bj_roads_core_3857.gpkg"
+    Require-Path -Path $roadsBenchmark -Label "C3c-A roads benchmark"
+    $roadsCopy = Join-Path $scratchRoot "bj_roads_core_3857.gpkg"
+    Copy-Item $roadsBenchmark $roadsCopy -Force
+    # 上一轮留下的边车不许替本轮"证明 info 会写 .aux.xml"——先删，本轮跑完再由 info_roads 的判据要求它在场。
+    Remove-Item ($roadsCopy + ".aux.xml") -Force -ErrorAction SilentlyContinue
+
+    # PS 5.1 的 Get-Content 不带 -Encoding 按 ANSI 解码，UTF-8 的中文属性值会被读坏 ⇒ 必须 UTF8。
+    $jsonText = Get-Content -Path $provinceCopy -Raw -Encoding UTF8
+    Assert-Condition -Condition ($null -ne $jsonText -and $jsonText.Length -gt 0) -Message (
+        "C3c-A: province copy read back empty: " + $provinceCopy)
+    $doc = $jsonText | ConvertFrom-Json
+    $features = @($doc.features)
+    Assert-Condition -Condition ($features.Count -ge 2) -Message (
+        "C3c-A: province copy has " + $features.Count + " feature(s), expected a real layer")
+    $provinceExtent = Get-FeaturesExtentStats -Features $features -Label "C3c-A province copy"
+
+    $fieldNames = @()
+    foreach ($feature in $features) {
+        $current = @($feature.properties.PSObject.Properties | ForEach-Object { $_.Name })
+        if ($fieldNames.Count -eq 0) { $fieldNames = $current }
+        Assert-Condition -Condition (($current -join ",") -ceq ($fieldNames -join ",")) -Message (
+            "C3c-A: a province feature's property list differs from the first feature's (" +
+            ($current -join ",") + " vs " + ($fieldNames -join ",") + "); info cannot derive a single field-list expectation from this input")
+    }
+    Assert-Condition -Condition ($fieldNames.Count -ge 1) -Message ("C3c-A: province copy carries no property")
+
+    $geomTypes = @($features | ForEach-Object { [string]$_.geometry.type } | Sort-Object -Unique)
+    $provinceGeometryKind = if ($geomTypes.Count -eq 1) { [string]$geomTypes[0] } else { "Unknown" }
+
+    $crsName = ""
+    if ($null -ne $doc.crs -and $null -ne $doc.crs.properties) { $crsName = [string]$doc.crs.properties.name }
+    $provinceCrs = ""
+    if ($crsName -match 'EPSG:{1,2}(\d+)') { $provinceCrs = "EPSG:" + $Matches[1] }
+    Assert-Condition -Condition ($provinceCrs -ne "") -Message (
+        "C3c-A: cannot derive an EPSG code from the GeoJSON crs name '" + $crsName + "'")
+
+    $largestAbs = 0.0
+    foreach ($v in @($provinceExtent.MinX, $provinceExtent.MaxX, $provinceExtent.MinY, $provinceExtent.MaxY)) {
+        if ([Math]::Abs([double]$v) -gt $largestAbs) { $largestAbs = [Math]::Abs([double]$v) }
+    }
+    $extentTolerance = [Math]::Max($largestAbs * $script:C3fExtentRelativeTolerance, 1e-9)
+
+    Write-Host ("  c3c-A inputs: province=" + $features.Count + " feature(s), geometry=" + ($geomTypes -join "+") +
+        ", crs=" + $provinceCrs + "; roads copy=" + $roadsCopy)
+
+    return [pscustomobject]@{
+        ScratchRoot = $scratchRoot
+        ProvinceCopy = $provinceCopy
+        ProvinceLayerName = [System.IO.Path]::GetFileNameWithoutExtension($provinceCopy)
+        ProvinceFeatureCount = $features.Count
+        ProvinceFieldNames = $fieldNames
+        ProvinceGeometryKind = $provinceGeometryKind
+        ProvinceCrs = $provinceCrs
+        ProvinceExtent = $provinceExtent
+        ProvinceExtentTolerance = $extentTolerance
+        RoadsCopy = $roadsCopy
+    }
+}
+
+function Assert-C3cAInfoProvinceCase {
+    param(
+        [pscustomobject]$Case,
+        [object]$Refs
+    )
+
+    Assert-Condition -Condition ($null -ne $Refs) -Message (
+        $Case.Name + ": C3c-A refs missing (Ensure-C3cARealInputs did not run) => expectations would be vacuous")
+    Assert-Condition -Condition ($Case.Name -eq "info_province") -Message (
+        "Assert-C3cAInfoProvinceCase got '" + $Case.Name + "'")
+
+    $info = Get-LayerInfoSummary -Text $Case.Output -Label $Case.Name
+    Assert-Condition -Condition ($info.Driver -eq "GeoJSON") -Message (
+        $Case.Name + ": Driver=" + $info.Driver + ", expected GeoJSON")
+    Assert-Condition -Condition ($info.LayerCount -eq 1) -Message (
+        $Case.Name + ": Layers=" + $info.LayerCount + ", expected 1")
+    Assert-Condition -Condition ($info.LayerName -ceq $Refs.ProvinceLayerName) -Message (
+        $Case.Name + ": LayerName='" + $info.LayerName + "', expected '" + $Refs.ProvinceLayerName + "'")
+    Assert-Condition -Condition ($info.Geometry -ceq $Refs.ProvinceGeometryKind) -Message (
+        $Case.Name + ": Geometry='" + $info.Geometry + "', input side derives '" + $Refs.ProvinceGeometryKind + "'")
+    Assert-Condition -Condition ($info.Crs -ceq $Refs.ProvinceCrs) -Message (
+        $Case.Name + ": CRS='" + $info.Crs + "', input GeoJSON says '" + $Refs.ProvinceCrs + "'")
+    Assert-Condition -Condition ($info.FeatureCount -eq $Refs.ProvinceFeatureCount) -Message (
+        $Case.Name + ": Features=" + $info.FeatureCount + ", input JSON has " + $Refs.ProvinceFeatureCount)
+    Assert-Condition -Condition ($info.FieldCount -eq @($Refs.ProvinceFieldNames).Count) -Message (
+        $Case.Name + ": Fields=" + $info.FieldCount + ", input JSON has " + @($Refs.ProvinceFieldNames).Count + " property name(s)")
+    Assert-Condition -Condition (($info.FieldNames -join ",") -ceq (@($Refs.ProvinceFieldNames) -join ",")) -Message (
+        $Case.Name + ": field list/order '" + ($info.FieldNames -join ",") + "' != input JSON property order '" +
+        (@($Refs.ProvinceFieldNames) -join ",") + "'")
+    Assert-ExtentEqualTo -Expected $Refs.ProvinceExtent -Actual $info `
+        -Tolerance $Refs.ProvinceExtentTolerance -Label $Case.Name
+    $script:C3cAAssertedCount = $script:C3cAAssertedCount + 1
+    return $info
+}
+
+function Assert-C3cAInfoRoadsCase {
+    param(
+        [pscustomobject]$Case,
+        [object]$Refs,
+        [int]$ExpectedFeatureCount
+    )
+
+    Assert-Condition -Condition ($null -ne $Refs) -Message (
+        $Case.Name + ": C3c-A refs missing (Ensure-C3cARealInputs did not run)")
+    Assert-Condition -Condition ($Case.Name -eq "info_roads") -Message (
+        "Assert-C3cAInfoRoadsCase got '" + $Case.Name + "'")
+
+    $info = Get-LayerInfoSummary -Text $Case.Output -Label $Case.Name
+    Assert-Condition -Condition ($info.Driver -eq "GPKG") -Message ($Case.Name + ": Driver=" + $info.Driver + ", expected GPKG")
+    Assert-Condition -Condition ($info.LayerCount -eq 1) -Message ($Case.Name + ": Layers=" + $info.LayerCount + ", expected 1")
+    Assert-Condition -Condition ($info.LayerName -ceq "input") -Message ($Case.Name + ": LayerName='" + $info.LayerName + "', expected 'input'")
+    Assert-Condition -Condition ($info.Geometry -ceq "MultiLineString") -Message ($Case.Name + ": Geometry='" + $info.Geometry + "', expected MultiLineString")
+    Assert-Condition -Condition ($info.Crs -ceq "EPSG:3857") -Message ($Case.Name + ": CRS='" + $info.Crs + "', expected EPSG:3857")
+    Assert-Condition -Condition ($info.FeatureCount -eq $ExpectedFeatureCount) -Message (
+        $Case.Name + ": Features=" + $info.FeatureCount + ", roads core reports " + $ExpectedFeatureCount)
+    $expectedFields = @("fclass", "fclass_CN", "name", "ref", "oneway", "maxspeed", "layer", "bridge", "tunnel")
+    Assert-Condition -Condition ($info.FieldCount -eq $expectedFields.Count) -Message (
+        $Case.Name + ": Fields=" + $info.FieldCount + ", expected " + $expectedFields.Count)
+    Assert-Condition -Condition (($info.FieldNames -join ",") -ceq ($expectedFields -join ",")) -Message (
+        $Case.Name + ": field list/order '" + ($info.FieldNames -join ",") + "' != '" + ($expectedFields -join ",") + "'")
+    # N115 实证：info 在 GPKG 复制件旁写边车 —— 边车只许落在 build/tmp/c3cA/，data/ 侧由 find 证明为 0。
+    Assert-Condition -Condition (Test-Path ($Refs.RoadsCopy + ".aux.xml")) -Message (
+        $Case.Name + ": expected the .aux.xml sidecar next to the copied GPKG (" + $Refs.RoadsCopy + ".aux.xml)")
+    $script:C3cAAssertedCount = $script:C3cAAssertedCount + 1
+    return $info
+}
+
+function Assert-C3cARepairCase {
+    param(
+        [pscustomobject]$Case,
+        [string]$ResolvedCliPath,
+        [string]$ResolvedOutputRoot,
+        [object]$Refs
+    )
+
+    Assert-Condition -Condition ($null -ne $Refs) -Message (
+        $Case.Name + ": C3c-A refs missing (Ensure-C3cARealInputs did not run)")
+    Assert-Condition -Condition ($Case.Name -eq "repair_province") -Message (
+        "Assert-C3cARepairCase got '" + $Case.Name + "'")
+
+    $reported = Get-ReportedCount -Text $Case.Output -Pattern "Repair completed: (\d+) features" -Label ($Case.Name + " reported count")
+    Assert-Condition -Condition ($reported -eq $Refs.ProvinceFeatureCount) -Message (
+        $Case.Name + ": CLI reports " + $reported + " repaired, input JSON has " + $Refs.ProvinceFeatureCount)
+    $repaired = Get-ReportedMetadataCount -Text $Case.Output -Key "repaired_count" -Label ($Case.Name + " repaired_count")
+    Assert-Condition -Condition ($repaired -eq $Refs.ProvinceFeatureCount) -Message (
+        $Case.Name + ": repaired_count=" + $repaired + ", expected " + $Refs.ProvinceFeatureCount)
+    $skipped = Get-ReportedMetadataCount -Text $Case.Output -Key "skipped_count" -Label ($Case.Name + " skipped_count")
+    Assert-Condition -Condition ($skipped -eq 0) -Message (
+        $Case.Name + ": skipped_count=" + $skipped + "; every province geometry is valid, repair must not drop any")
+
+    $outputPath = Join-Path $ResolvedOutputRoot "repair_province.gpkg"
+    $read = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $outputPath `
+        -ScratchDir $Refs.ScratchRoot -Label "repair_province_output"
+    Assert-Condition -Condition ($read.FeatureCount -eq $Refs.ProvinceFeatureCount) -Message (
+        $Case.Name + ": output has " + $read.FeatureCount + " feature(s), input has " + $Refs.ProvinceFeatureCount)
+    Assert-Condition -Condition (($read.FieldNames -join ",") -ceq (@($Refs.ProvinceFieldNames) -join ",")) -Message (
+        $Case.Name + ": output fields '" + ($read.FieldNames -join ",") + "' != input '" + (@($Refs.ProvinceFieldNames) -join ",") + "'")
+    Assert-Condition -Condition ($read.LayerName -ceq $Refs.ProvinceLayerName) -Message (
+        $Case.Name + ": output LayerName='" + $read.LayerName + "', expected '" + $Refs.ProvinceLayerName + "'")
+    Assert-Condition -Condition ($read.Geometry -ceq $Refs.ProvinceGeometryKind) -Message (
+        $Case.Name + ": output Geometry='" + $read.Geometry + "', input is '" + $Refs.ProvinceGeometryKind + "'")
+    Assert-Condition -Condition ($read.Crs -ceq $Refs.ProvinceCrs) -Message (
+        $Case.Name + ": output CRS='" + $read.Crs + "', input is '" + $Refs.ProvinceCrs + "'")
+    # repair 对合法几何是恒等（SRS/坐标原样克隆）⇒ 输出包框必须等于输入 JSON 手推包框。
+    Assert-ExtentEqualTo -Expected $Refs.ProvinceExtent -Actual $read `
+        -Tolerance $Refs.ProvinceExtentTolerance -Label $Case.Name
+    $script:C3cAAssertedCount = $script:C3cAAssertedCount + 1
+    return $read
+}
+
+function Assert-C3cAConvertCase {
+    param(
+        [pscustomobject]$Case,
+        [string]$ResolvedCliPath,
+        [string]$ResolvedOutputRoot,
+        [object]$Refs,
+        [int]$ExpectedFeatureCount
+    )
+
+    Assert-Condition -Condition ($null -ne $Refs) -Message (
+        $Case.Name + ": C3c-A refs missing (Ensure-C3cARealInputs did not run)")
+    Assert-Condition -Condition ($Case.Name -eq "convert_roads_geojson") -Message (
+        "Assert-C3cAConvertCase got '" + $Case.Name + "'")
+
+    $geojsonPath = Join-Path $ResolvedOutputRoot "roads_core.geojson"
+    $head = (@(Get-Content -Path $geojsonPath -TotalCount 3 -Encoding UTF8) -join " ")
+    Assert-Condition -Condition ($head.Contains('"FeatureCollection"')) -Message (
+        $Case.Name + ": header is not a FeatureCollection, got: " + $head)
+
+    $inputInfo = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $Refs.RoadsCopy `
+        -ScratchDir $Refs.ScratchRoot -Label "convert_input_roads"
+    $outputInfo = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $geojsonPath `
+        -ScratchDir $Refs.ScratchRoot -Label "convert_output_roads"
+
+    Assert-Condition -Condition ($outputInfo.FeatureCount -eq $ExpectedFeatureCount) -Message (
+        $Case.Name + ": output has " + $outputInfo.FeatureCount + " feature(s), roads core reports " + $ExpectedFeatureCount)
+    Assert-Condition -Condition ($outputInfo.FeatureCount -eq $inputInfo.FeatureCount) -Message (
+        $Case.Name + ": output " + $outputInfo.FeatureCount + " feature(s) != input " + $inputInfo.FeatureCount)
+    Assert-Condition -Condition ($outputInfo.FieldCount -eq $inputInfo.FieldCount) -Message (
+        $Case.Name + ": output has " + $outputInfo.FieldCount + " field(s), input has " + $inputInfo.FieldCount)
+    Assert-Condition -Condition (($outputInfo.FieldNames -join ",") -ceq ($inputInfo.FieldNames -join ",")) -Message (
+        $Case.Name + ": field list/order '" + ($outputInfo.FieldNames -join ",") + "' != input '" + ($inputInfo.FieldNames -join ",") + "'")
+    Assert-Condition -Condition ($outputInfo.LayerName -ceq $inputInfo.LayerName) -Message (
+        $Case.Name + ": output LayerName='" + $outputInfo.LayerName + "', input '" + $inputInfo.LayerName + "'")
+    # 几何类型这一条**不比层声明**：GeoJSON 驱动的层类型恒为 Unknown（可装任意几何），
+    # 输入 GPKG 是 MultiLineString ⇒ 两个 info 读出来的层声明天然不同，比它等于比格式而非比转换。
+    # 逐要素几何的保真由单测 VectorConvertExecution 逐点钉住；真实腿这一层比要素数/字段/CRS/extent。
+    Assert-Condition -Condition ($outputInfo.Crs -ceq $inputInfo.Crs) -Message (
+        $Case.Name + ": output CRS='" + $outputInfo.Crs + "', input '" + $inputInfo.Crs + "'")
+
+    $largestAbs = 0.0
+    foreach ($v in @($inputInfo.MinX, $inputInfo.MaxX, $inputInfo.MinY, $inputInfo.MaxY)) {
+        if ([Math]::Abs([double]$v) -gt $largestAbs) { $largestAbs = [Math]::Abs([double]$v) }
+    }
+    $tolerance = [Math]::Max($largestAbs * $script:C3fExtentRelativeTolerance, 1e-9)
+    Assert-ExtentEqualTo -Expected $inputInfo -Actual $outputInfo -Tolerance $tolerance -Label $Case.Name
+    $script:C3cAAssertedCount = $script:C3cAAssertedCount + 1
+    return $outputInfo
+}
+
 # ── C3h-3：union 路径 A（面 × 面）的真实数据腿 ──────────────────────────────────
 # 既有 union_focus 是线 × 面：源层为线、叠加侧全为面 ⇒ vector_plugin_overlay.inc:34-35 的
 #   usePracticalMixedUnion 为真 ⇒ 落路径 B；而路径 B 按契约不产出叠加面（同文件 210 行注释原文
@@ -2191,7 +2501,8 @@ function Validate-CaseOutputs {
         [object]$DerivedRefs,
         [object]$TopologyRefs,
         [object]$ChineseFilterRefs,
-        [object]$UnionPolyRefs
+        [object]$UnionPolyRefs,
+        [object]$C3cARefs
     )
 
     # 期望值一律由输入图层自己的要素数推出，不写死常量。
@@ -2252,15 +2563,15 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $Case.Output -Expected "Dissolve completed: 1 features" -Message "dissolve_bbox feature count mismatch"
         }
         "convert_roads_geojson" {
+            # 判据从"头三行 + 要素数"增强到关系级：输入/输出两边的层名、字段名与顺序、
+            # CRS、extent 逐项对撞（输入是 build/tmp/c3cA/ 里的 roads 复制件）。层声明类型不比：
+            # GeoJSON 恒为 Unknown，见 Assert-C3cAConvertCase 里的说明。
             # 不用 ConvertFrom-Json 整读：PS 5.1 的 Get-Content 默认按 ANSI 代码页解码，
             # 这份 12 MB / 22836 要素的 UTF-8 GeoJSON 里中文属性值会被读坏，
-            # 报的是"JSON 语法无效 (position 230)"这种假产品缺陷。
-            # 改判两件事：文件头是 FeatureCollection、且转出的图层能被读回同样的要素数。
-            $geojsonPath = Join-Path $ResolvedOutputRoot "roads_core.geojson"
-            $head = (@(Get-Content -Path $geojsonPath -TotalCount 3 -Encoding UTF8) -join " ")
-            Assert-Condition -Condition ($head.Contains('"FeatureCollection"')) -Message ("convert_roads_geojson: header is not a FeatureCollection, got: " + $head)
-            $converted = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $geojsonPath -ScratchDir $ResolvedOutputRoot
-            Assert-Condition -Condition ($converted.FeatureCount -eq $InputFeatureCount) -Message ("convert_roads_geojson feature count " + $converted.FeatureCount + " != input " + $InputFeatureCount)
+            # 报的是"JSON 语法无效 (position 230)"这种假产品缺陷。这里只用 info 解析器。
+            Assert-C3cAConvertCase -Case $Case -ResolvedCliPath $ResolvedCliPath `
+                -ResolvedOutputRoot $ResolvedOutputRoot -Refs $C3cARefs `
+                -ExpectedFeatureCount $InputFeatureCount | Out-Null
         }
         "rasterize_bbox" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -2335,6 +2646,18 @@ function Validate-CaseOutputs {
         "filter_cn_attribute" {
             Assert-ChineseAttributeFilterCase -Case $Case -ResolvedCliPath $ResolvedCliPath `
                 -Refs $ChineseFilterRefs | Out-Null
+        }
+        # ── C3c-A：info / repair 的真实数据腿（判据见各 Assert-C3cA* 函数头）──
+        "info_province" {
+            Assert-C3cAInfoProvinceCase -Case $Case -Refs $C3cARefs | Out-Null
+        }
+        "info_roads" {
+            Assert-C3cAInfoRoadsCase -Case $Case -Refs $C3cARefs `
+                -ExpectedFeatureCount $InputFeatureCount | Out-Null
+        }
+        "repair_province" {
+            Assert-C3cARepairCase -Case $Case -ResolvedCliPath $ResolvedCliPath `
+                -ResolvedOutputRoot $ResolvedOutputRoot -Refs $C3cARefs | Out-Null
         }
         "clip_stress" {
             Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected $InputFeatureCount -Label "clip_stress"
@@ -2603,6 +2926,9 @@ Require-Path -Path $roadsCore3857 -Label "roads core 3857"
 Require-Path -Path $chinaBbox -Label "china bbox"
 Require-Path -Path $chinaBbox3857 -Label "china bbox 3857"
 
+# ── C3c-A：两份真实输入先复制到 build/tmp/c3cA/（N115），输入侧事实一次算齐 ──
+$script:C3cARefs = Ensure-C3cARealInputs -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot
+
 # 三个窗口按输入图层自己的范围生成，因此对"合成样本"和"data/vector 真实道路"都成立：
 #   all     —— 外扩 20%，必须完全覆盖输入 ⇒ clip/intersect/ spatial_join 是恒等、difference 是空；
 #   far     —— 整块挪出范围之外 ⇒ 三个叠加动作必须一个都不留 / 一个都不少；
@@ -2645,7 +2971,7 @@ Write-BboxGeojson -Path $partialWindow -Box $partialBox -Label "win_partial"
 # 只消费 build/tmp/c3h3/ 里那两个省/市复制件。
 # 各档都**照常注册全部用例**（名单不变量要从完整 $cases 导全量，见下面 GIS_CASE_ROSTER 那段），
 # 过滤只发生在派发那一步。
-# quick 档不分档（24 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/overlay_ops/
+# quick 档不分档（27 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/overlay_ops/
 # union_poly 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先把它判红。
 if ($Mode -eq "quick" -and $Group -ne "all") {
     throw ("Mode=quick has no group split: pass -Group all (got Mode=" + $Mode + " Group=" + $Group + ")")
@@ -2660,7 +2986,8 @@ $cases = @()
 # ── C3k-2：原 overlay 一档按"重活一分为二"拆成两条腿（只挪组标，判据一字不动）─────────────
 # 分组依据是 2026-10-23 收口轮 tmp/vector_regression/summary_full_overlay.csv 的逐用例现读
 # （26 条合计 256.93 s）：
-#   overlay_buffer_join（15 条，现读合计 152.53 s）= buffer_quick 64.54 + spatial_join_focus 55.66
+#   overlay_buffer_join（C3k-2 时 15 条，现读合计 152.53 s；C3c-A 加 info_province / info_roads /
+#     repair_province 三条后为 18 条）= buffer_quick 64.54 + spatial_join_focus 55.66
 #     + 所有 <=5 s 的几何派生/转换小用例 17.70 + vertices_line 14.63；
 #   overlay_ops（11 条，现读合计 104.40 s）= clip/difference/union/intersect 的 focus/far/partial/stress。
 # 两条腿都消费 roadsCore/allWindow 与 C3a 派生件 ⇒ $buildOverlayInputs 对两组建真（见上面的闸）。
@@ -2761,7 +3088,7 @@ $cases += New-Case -Name "dissolve_bbox" -Group "overlay_buffer_join" -CaseArgs 
 )
 $cases += New-Case -Name "convert_roads_geojson" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "convert",
-    ("--input=" + $roadsCore),
+    ("--input=" + $script:C3cARefs.RoadsCopy),
     ("--output=" + (Join-Path $ResolvedOutputRoot "roads_core.geojson")),
     "--format=GeoJSON"
 ) -ExpectedOutputs @(
@@ -2844,6 +3171,26 @@ $cases += New-Case -Name "filter_cn_attribute" -Group "overlay_buffer_join" -Cas
     ("--where=" + $script:ChineseFilterRefs.Where)
 ) -ExpectedOutputs @(
     $script:ChineseFilterRefs.OutputPath
+)
+
+# ── C3c-A：info（省层 + 道路层）与 repair（省层）的真实数据 quick 用例 ──────────────
+# info 不写产物，但 D1 未销账时插件级 output 仍必填 ⇒ 带一个不会落盘的占位输出（同 Get-LayerStats）。
+$cases += New-Case -Name "info_province" -Group "overlay_buffer_join" -CaseArgs @(
+    "vector", "info",
+    ("--input=" + $script:C3cARefs.ProvinceCopy),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "info_province_placeholder.gpkg"))
+) -ExpectedOutputs @()
+$cases += New-Case -Name "info_roads" -Group "overlay_buffer_join" -CaseArgs @(
+    "vector", "info",
+    ("--input=" + $script:C3cARefs.RoadsCopy),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "info_roads_placeholder.gpkg"))
+) -ExpectedOutputs @()
+$cases += New-Case -Name "repair_province" -Group "overlay_buffer_join" -CaseArgs @(
+    "vector", "repair",
+    ("--input=" + $script:C3cARefs.ProvinceCopy),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "repair_province.gpkg"))
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "repair_province.gpkg")
 )
 
 # quick 档整批不注册这批腿、overlay 两条腿也不消费它（工单：11 个动作 18 条腿归 real_data_vector_checks
@@ -2959,6 +3306,9 @@ $script:C3baOverlapProvRelations = -1
 $script:C3baAdjacencyProvRelations = -1
 $script:C3baDanglingWindowIssue = -1
 $script:C3baSliverLowFeatures = -1
+# C3c-A 的"跑过数 == 判过数"计数器：四个断言函数各 +1，主循环后与真实跑过的用例名对撞。
+# 与 union_poly 的第 7 条同形 —— 分发按用例名走，漏掉一个 case 分支时"跑了但没人判"必须红。
+$script:C3cAAssertedCount = 0
 
 # 名单与注册表对撞（正向）：名单里的每一条都必须真的注册成用例；quick 档整批不注册 ⇒ 只在 full 档核条数。
 # 反向的"进了名单却没有判据分支"由 Assert-TopologyCheckCase 的 default 负责，两侧都堵住才是闭环。
@@ -3086,7 +3436,7 @@ Assert-Condition -Condition ($runCases.Count -gt 0) -Message (
 $results = @()
 foreach ($case in $runCases) {
     $result = Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
-    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs -UnionPolyRefs $unionPolyRefs
+    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs -UnionPolyRefs $unionPolyRefs -C3cARefs $script:C3cARefs
     $results += $result
 }
 
@@ -3098,6 +3448,15 @@ Assert-Condition -Condition ($executedUnionPoly.Count -eq $script:UnionPolyAsser
     "C3h-3 judge-coverage invariant: " + $executedUnionPoly.Count + " union_poly case(s) ran but " +
     $script:UnionPolyAssertedCount + " were judged by Assert-UnionPolyCase => the group dispatch is not " +
     "firing, so this leg produced no verdict at all while every roster check still passed")
+
+# C3c-A 同形（按用例名分发）：这四条的名字与 Validate-CaseOutputs 里的四个分支逐字相同。
+# 任何一条跑过却没被判（分支被删/名字拼错）都在这里当场红，而不是"整条腿 Passed、零判据"。
+$c3cACaseNames = @("info_province", "info_roads", "repair_province", "convert_roads_geojson")
+$executedC3cA = @($results | Where-Object { $c3cACaseNames -contains $_.Name })
+Assert-Condition -Condition ($executedC3cA.Count -eq $script:C3cAAssertedCount) -Message (
+    "C3c-A judge-coverage invariant: " + $executedC3cA.Count + " case(s) ran but " +
+    $script:C3cAAssertedCount + " were judged by Assert-C3cA* => the name dispatch is not firing " +
+    "(ran: " + (($executedC3cA | ForEach-Object { $_.Name }) -join ",") + ")")
 
 # summary_* 的落名：Group=all 时与拆分前逐字相同（summary_quick.* / summary_full.*，
 # 那两个文件名是 real_vector_regression / real_vector_regression_full 两个 custom target 的产物）；

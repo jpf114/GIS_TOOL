@@ -3356,6 +3356,14 @@ TEST_F(PluginTest, ProjectionAssignSrsExecution) {
     EXPECT_FALSE(gis::core::getSRSWKT(ds.get()).empty());
 }
 
+// C3c-A（info 的 A 半边）：整串相等 + 手算 extent 数值。
+// 夹具坐标 116.00/116.04 与 40.00/40.04 是下面手写的；info 的 message 是**唯一**产物
+// （doInfo 只回文本、不写文件），所以这里的期望值一律按夹具手推，不从产物回填：
+//   层数 1、层名 e2e_vector_test（shapefile 的层名 = 文件 stem）、Geometry Point、CRS EPSG:4326、
+//   Features 5、三个字段的**名字与顺序**、
+//   Extent 四边。默认 ostream 精度 6 位有效数字 ⇒ 116.04 / 40.04 正好是整串里的写法。
+// N115 现读：info 只在 GPKG 输入旁写 .aux.xml；本夹具是 shapefile（实测不产边车），
+//   且输入本来就在 build/ 的测试目录里 —— 不碰 data/ 的纪律不受影响。
 TEST_F(PluginTest, VectorInfoExecution) {
     auto* p = mgr_.find("vector");
     if (!p) {
@@ -3372,11 +3380,22 @@ TEST_F(PluginTest, VectorInfoExecution) {
         srs->importFromEPSG(4326);
         auto* layer = ds->CreateLayer("test", srs.get(), wkbPoint);
         ASSERT_NE(layer, nullptr);
+        // 字段名与顺序是 info 契约的一部分：三个类型各一，回读时顺序必须与创建顺序一致。
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+        OGRFieldDefn codeField("code", OFTInteger);
+        ASSERT_EQ(layer->CreateField(&codeField), OGRERR_NONE);
+        OGRFieldDefn ratioField("ratio", OFTReal);
+        ASSERT_EQ(layer->CreateField(&ratioField), OGRERR_NONE);
         auto* featDefn = layer->GetLayerDefn();
         for (int i = 0; i < 5; ++i) {
             auto* feat = OGRFeature::CreateFeature(featDefn);
             OGRPoint pt(116.0 + i * 0.01, 40.0 + i * 0.01);
             feat->SetGeometry(&pt);
+            const std::string name = "p" + std::to_string(i);
+            feat->SetField("name", name.c_str());
+            feat->SetField("code", i + 1);
+            feat->SetField("ratio", 0.25 * (i + 1));
             layer->CreateFeature(feat);
             OGRFeature::DestroyFeature(feat);
         }
@@ -3388,7 +3407,38 @@ TEST_F(PluginTest, VectorInfoExecution) {
     params["input"] = shpPath;
 
     auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "Vector info failed: " << result.message;
+    ASSERT_TRUE(result.success) << "Vector info failed: " << result.message;
+
+    // 整串相等：层数、层名、几何类型、extent 的打印形态、CRS、要素数、字段名/顺序/类型。
+    const std::string expected =
+        "Vector Info: " + shpPath + "\n"
+        "  Driver: ESRI Shapefile\n"
+        "  Layers: 1\n"
+        "\n"
+        "  Layer [0]: e2e_vector_test\n"
+        "    Geometry: Point\n"
+        "    Extent:  116, 40 - 116.04, 40.04\n"
+        "    CRS:     EPSG:4326\n"
+        "    Features: 5\n"
+        "    Fields:  3\n"
+        "      [0] name (String)\n"
+        "      [1] code (Integer)\n"
+        "      [2] ratio (Real)\n";
+    EXPECT_EQ(result.message, expected);
+
+    // 数值层单独钉一次（GOLD gate 要求块体里有 EXPECT_DOUBLE_EQ/NEAR/FLOAT_EQ；
+    // 这里把 extent 行解析成四个 double 再与手算值比，失败时能直接看见是哪条边）。
+    const std::string extentMarker = "    Extent:  ";
+    const std::size_t at = result.message.find(extentMarker);
+    ASSERT_NE(at, std::string::npos) << "info 文本里找不到 extent 行: " << result.message;
+    double minX = 0.0, minY = 0.0, maxX = 0.0, maxY = 0.0;
+    const int parsed = std::sscanf(result.message.c_str() + at + extentMarker.size(),
+                                   "%lf, %lf - %lf, %lf", &minX, &minY, &maxX, &maxY);
+    ASSERT_EQ(parsed, 4) << "extent 行解析失败: " << result.message.substr(at);
+    EXPECT_DOUBLE_EQ(minX, 116.0);
+    EXPECT_DOUBLE_EQ(minY, 40.0);
+    EXPECT_DOUBLE_EQ(maxX, 116.04);
+    EXPECT_DOUBLE_EQ(maxY, 40.04);
 }
 
 TEST_F(PluginTest, VectorBufferExecutionReportsMetadata) {
@@ -6108,13 +6158,18 @@ TEST_F(PluginTest, VectorFilterWhereClauseAcceptsChineseAttributeValue) {
     //   keptName 是唯一该被 --where 留下的要素，droppedName 必须整条消失；
     //   code 与 ringPoints 是 name↔几何 的配对锚 —— 只断 name 的话，
     //   "留下对的字段但把两条几何写反"这种产物照样绿，所以配对要一起钉。
-    //   这两条都是整数断言：filter 的 GOLD 凭据（数值容差断言）不在本刀范围内，见工单"不许动登记表"。
+    //   C3c-A 把 filter 晋升 GOLD：外环逐点坐标与面积都按夹具手算写死（EXPECT_DOUBLE_EQ），
+    //   夹具矩形取 900×400（不是正方形）⇒ x↔y 转置不再是不变量，转置产物会逐点红。
     const std::string keptName = "北京";
     const std::string droppedName = "上海";
+    const std::string absentName = "广州";  // 输入里不存在 ⇒ 否定臂必须 0 条
     const int keptCode = 1;
     const int droppedCode = 2;
     const int keptRingPoints = 5;     // 四边形闭合 ⇒ 5 个点
     const int droppedRingPoints = 4;  // 三角形闭合 ⇒ 4 个点
+    const double keptX[5] = {0.0, 900.0, 900.0, 0.0, 0.0};
+    const double keptY[5] = {0.0, 0.0, 400.0, 400.0, 0.0};
+    const double keptArea = 360000.0;  // 900 × 400
 
     {
         std::error_code ec;
@@ -6140,9 +6195,9 @@ TEST_F(PluginTest, VectorFilterWhereClauseAcceptsChineseAttributeValue) {
         OGRPolygon poly;
         OGRLinearRing ring;
         ring.addPoint(0, 0);
-        ring.addPoint(1000, 0);
-        ring.addPoint(1000, 1000);
-        ring.addPoint(0, 1000);
+        ring.addPoint(900, 0);
+        ring.addPoint(900, 400);
+        ring.addPoint(0, 400);
         ring.closeRings();
         poly.addRing(&ring);
         polys.addGeometry(&poly);
@@ -6217,10 +6272,40 @@ TEST_F(PluginTest, VectorFilterWhereClauseAcceptsChineseAttributeValue) {
         EXPECT_EQ(outPoly->getExteriorRing()->getNumPoints(), keptRingPoints)
             << "name↔几何 配对断了：留下的字段配上了另一条要素的几何";
         EXPECT_NE(outPoly->getExteriorRing()->getNumPoints(), droppedRingPoints);
+        for (int i = 0; i < keptRingPoints; ++i) {
+            EXPECT_DOUBLE_EQ(outPoly->getExteriorRing()->getX(i), keptX[i])
+                << "第 " << i << " 个顶点的 x 与输入侧手算值不等（x↔y 转置在这里红）";
+            EXPECT_DOUBLE_EQ(outPoly->getExteriorRing()->getY(i), keptY[i])
+                << "第 " << i << " 个顶点的 y 与输入侧手算值不等";
+        }
+        EXPECT_DOUBLE_EQ(outPoly->get_Area(), keptArea)
+            << "保留要素的面积与 900×400 手算值不等";
         OGRFeature::DestroyFeature(outFeat);
     }
     EXPECT_EQ(readBack, 1) << "输出层逐条数出来的要素数与自报数不一致";
     GDALClose(outDs);
+
+    // 否定臂（C3c-A）：同一条中文谓词换成一个输入里不存在的中文省名 ⇒ 必须 0 条。
+    // 与正面臂成对：正面臂证明"中文值真能命中且几何是那一条"，这一臂证明"谓词真的在筛"。
+    const std::string emptyOutput =
+        utf8PathString(getTestDir() / "e2e_filter_where_cn_empty_output.gpkg");
+    std::map<std::string, gis::framework::ParamValue> missParams;
+    missParams["action"] = std::string("filter");
+    missParams["input"] = input;
+    missParams["output"] = emptyOutput;
+    missParams["where"] = "name='" + absentName + "'";
+
+    const auto miss = p->execute(missParams, progress_);
+    ASSERT_TRUE(miss.success) << "中文否定臂失败: " << miss.message;
+    EXPECT_EQ(miss.message, "Filter completed: 0 features written");
+
+    GDALDataset* missDs = static_cast<GDALDataset*>(GDALOpenEx(
+        emptyOutput.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(missDs, nullptr);
+    OGRLayer* missLayer = missDs->GetLayer(0);
+    ASSERT_NE(missLayer, nullptr);
+    EXPECT_EQ(missLayer->GetFeatureCount(FALSE), 0);
+    GDALClose(missDs);
 }
 
 TEST_F(PluginTest, VectorFilterWhereClauseStillRejectsInjectionAndBrokenUtf8) {
@@ -7336,6 +7421,10 @@ TEST_F(PluginTest, VectorSourceNeverDisablesGpkgSpatialIndex) {
                "回潮点：" << offenderList;
 }
 
+// C3c-A（convert 的 A 半边）：输出格式/层名/要素数/字段保真/几何坐标逐点相等。
+// 期望值全部按夹具手推：字段名与顺序 name→code→ratio、code=1..3、ratio=0.25/0.5/0.75、
+// 坐标 (116.00,40.00)/(116.01,40.02)/(116.03,40.01)。三个点不关于 y=x 对称
+// ⇒ "把 x 与 y 写反"这种转置产物会逐点红（只比面积或包框抓不到）。
 TEST_F(PluginTest, VectorConvertExecution) {
     auto* p = mgr_.find("vector");
     if (!p) {
@@ -7353,11 +7442,23 @@ TEST_F(PluginTest, VectorConvertExecution) {
         srs->importFromEPSG(4326);
         auto* layer = ds->CreateLayer("test", srs.get(), wkbPoint);
         ASSERT_NE(layer, nullptr);
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+        OGRFieldDefn codeField("code", OFTInteger);
+        ASSERT_EQ(layer->CreateField(&codeField), OGRERR_NONE);
+        OGRFieldDefn ratioField("ratio", OFTReal);
+        ASSERT_EQ(layer->CreateField(&ratioField), OGRERR_NONE);
+        const double fixtureX[3] = {116.0, 116.01, 116.03};
+        const double fixtureY[3] = {40.0, 40.02, 40.01};
         auto* featDefn = layer->GetLayerDefn();
         for (int i = 0; i < 3; ++i) {
             auto* feat = OGRFeature::CreateFeature(featDefn);
-            OGRPoint pt(116.0 + i * 0.01, 40.0 + i * 0.01);
+            OGRPoint pt(fixtureX[i], fixtureY[i]);
             feat->SetGeometry(&pt);
+            const std::string name = "p" + std::to_string(i);
+            feat->SetField("name", name.c_str());
+            feat->SetField("code", i + 1);
+            feat->SetField("ratio", 0.25 * (i + 1));
             layer->CreateFeature(feat);
             OGRFeature::DestroyFeature(feat);
         }
@@ -7371,7 +7472,62 @@ TEST_F(PluginTest, VectorConvertExecution) {
     params["format"] = std::string("GeoJSON");
 
     auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "Convert failed: " << result.message;
+    ASSERT_TRUE(result.success) << "Convert failed: " << result.message;
+    EXPECT_EQ(result.message, "Convert completed: 3 features converted to GeoJSON");
+    ASSERT_EQ(result.metadata.at("feature_count"), "3");
+    ASSERT_EQ(result.metadata.at("output_format"), "GeoJSON");
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    ASSERT_NE(outDs->GetDriver(), nullptr);
+    EXPECT_STREQ(outDs->GetDriver()->GetDescription(), "GeoJSON");
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    // convert 把源层名原样带进输出；本夹具的源是 shapefile，层名 = 输入文件 stem。
+    EXPECT_STREQ(outLayer->GetName(), "e2e_convert_input");
+    EXPECT_EQ(outLayer->GetFeatureCount(FALSE), 3);
+
+    OGRFeatureDefn* outDefn = outLayer->GetLayerDefn();
+    ASSERT_EQ(outDefn->GetFieldCount(), 3);
+    EXPECT_STREQ(outDefn->GetFieldDefn(0)->GetNameRef(), "name");
+    EXPECT_STREQ(outDefn->GetFieldDefn(1)->GetNameRef(), "code");
+    EXPECT_STREQ(outDefn->GetFieldDefn(2)->GetNameRef(), "ratio");
+
+    const char* expectedName[3] = {"p0", "p1", "p2"};
+    const double expectedX[3] = {116.0, 116.01, 116.03};
+    const double expectedY[3] = {40.0, 40.02, 40.01};
+    const double expectedRatio[3] = {0.25, 0.5, 0.75};
+
+    std::set<int> seenCodes;
+    outLayer->ResetReading();
+    OGRFeature* outFeat = nullptr;
+    while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
+        const int code = outFeat->GetFieldAsInteger("code");
+        ASSERT_GE(code, 1) << "code 越界: " << code;
+        ASSERT_LE(code, 3) << "code 越界: " << code;
+        EXPECT_TRUE(seenCodes.insert(code).second) << "code 重复: " << code;
+        EXPECT_EQ(std::string(outFeat->GetFieldAsString("name")), expectedName[code - 1]);
+        EXPECT_DOUBLE_EQ(outFeat->GetFieldAsDouble("ratio"), expectedRatio[code - 1]);
+        OGRGeometry* geom = outFeat->GetGeometryRef();
+        ASSERT_NE(geom, nullptr);
+        ASSERT_EQ(wkbFlatten(geom->getGeometryType()), wkbPoint);
+        OGRPoint* pt = geom->toPoint();
+        ASSERT_NE(pt, nullptr);
+        EXPECT_DOUBLE_EQ(pt->getX(), expectedX[code - 1]) << "code=" << code << " 的 x 被写反/搬移";
+        EXPECT_DOUBLE_EQ(pt->getY(), expectedY[code - 1]) << "code=" << code << " 的 y 被写反/搬移";
+        OGRFeature::DestroyFeature(outFeat);
+    }
+    EXPECT_EQ(seenCodes.size(), 3u) << "输出的 code 集合不是 {1,2,3}";
+
+    OGREnvelope outExtent;
+    ASSERT_EQ(outLayer->GetExtent(&outExtent, TRUE), OGRERR_NONE);
+    EXPECT_DOUBLE_EQ(outExtent.MinX, 116.0);
+    EXPECT_DOUBLE_EQ(outExtent.MinY, 40.0);
+    EXPECT_DOUBLE_EQ(outExtent.MaxX, 116.03);
+    EXPECT_DOUBLE_EQ(outExtent.MaxY, 40.02);
+
+    GDALClose(outDs);
 }
 
 // --- Task A0：矢量几何所有权/释放路径的回归用例 -------------------------------
@@ -7960,22 +8116,59 @@ TEST_F(PluginTest, VectorRepairExecution) {
     params["output"] = output;
 
     const auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(result.success) << result.message;
     ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.message, "Repair completed: 1 features");
     EXPECT_EQ(result.metadata.at("repaired_count"), "1");
+    EXPECT_EQ(result.metadata.at("skipped_count"), "0");
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
     ASSERT_NE(outDs, nullptr);
     OGRLayer* outLayer = outDs->GetLayer(0);
     ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(outLayer->GetFeatureCount(FALSE), 1);
     OGRFeature* outFeat = outLayer->GetNextFeature();
     ASSERT_NE(outFeat, nullptr);
     EXPECT_STREQ(outFeat->GetFieldAsString("name"), "invalid");
     OGRGeometry* outGeom = outFeat->GetGeometryRef();
     ASSERT_NE(outGeom, nullptr);
+    // IsValid 单独一条：它是"坏几何已修"的必要条件，不是修复后真值。
     EXPECT_TRUE(outGeom->IsValid());
     EXPECT_FALSE(outGeom->IsEmpty());
+
+    // C3c-A：修复后的真值按夹具手算。
+    //   输入蝴蝶结 (0,0)→(50,50)→(50,0)→(0,50)→(0,0) 自交于 (25,25)，鞋带面积为 0；
+    //   MakeValid 把它拆成两个三角形 (0,0)/(25,25)/(0,50) 与 (25,25)/(50,0)/(50,50)，
+    //   每个面积 625、合计 1250；每个外环 4 个点（三角形闭合）。
+    //   顶点集合按**无序去重**比：MakeValid 的起始点/环方向不是契约，坐标与面积才是。
+    ASSERT_EQ(wkbFlatten(outGeom->getGeometryType()), wkbMultiPolygon)
+        << "修复产物不是 MultiPolygon: " << OGRGeometryTypeToName(outGeom->getGeometryType());
+    OGRMultiPolygon* repaired = outGeom->toMultiPolygon();
+    ASSERT_NE(repaired, nullptr);
+    EXPECT_EQ(repaired->getNumGeometries(), 2);
+    EXPECT_DOUBLE_EQ(repaired->get_Area(), 1250.0);
+
+    std::set<std::pair<double, double>> vertices;
+    for (int i = 0; i < repaired->getNumGeometries(); ++i) {
+        OGRPolygon* part = repaired->getGeometryRef(i)->toPolygon();
+        ASSERT_NE(part, nullptr) << "第 " << i << " 个部件不是 Polygon";
+        ASSERT_NE(part->getExteriorRing(), nullptr);
+        EXPECT_EQ(part->getExteriorRing()->getNumPoints(), 4)
+            << "第 " << i << " 个部件的外环不是闭合三角形";
+        EXPECT_DOUBLE_EQ(part->get_Area(), 625.0);
+        for (int j = 0; j < part->getExteriorRing()->getNumPoints(); ++j) {
+            vertices.emplace(part->getExteriorRing()->getX(j), part->getExteriorRing()->getY(j));
+        }
+    }
+    const std::vector<std::pair<double, double>> expectedVertices = {
+        {0.0, 0.0}, {0.0, 50.0}, {25.0, 25.0}, {50.0, 0.0}, {50.0, 50.0}};
+    ASSERT_EQ(vertices.size(), expectedVertices.size()) << "修复后顶点集合大小不是 5";
+    for (const auto& expected : expectedVertices) {
+        EXPECT_TRUE(vertices.count(expected) == 1)
+            << "缺少手算顶点 (" << expected.first << ", " << expected.second << ")";
+    }
+
     OGRFeature::DestroyFeature(outFeat);
     GDALClose(outDs);
 }

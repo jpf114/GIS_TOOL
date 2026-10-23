@@ -1731,10 +1731,22 @@ endif()
 #       本刀没有抬 quick/checks/union_poly/raster/matching 任何一条的上界。
 #     ⚠ 用例数对撞：拆前 `grep -c 'Group "overlay"'` = 26，拆后 = 0；两条新组标 15 + 11 = 26。
 #       `grep -c 'New-Case'` 不能当计数（它把 function New-Case 与 New-DerivedCase 内部那两行也算进来 = 23）。
-#     ⚠ 名单不变量第 1/2/3 条在两条新腿里都按"四组之并 == full"判绿：full 45 条 = checks 18 +
-#       overlay_buffer_join 15 + overlay_ops 11 + union_poly 1；第 6 条（组标 vs union_poly 名单）
+#     ⚠ 名单不变量第 1/2/3 条在两条新腿里都按"四组之并 == full"判绿：C3k-2 时 full 45 条 =
+#       checks 18 + overlay_buffer_join 15 + overlay_ops 11 + union_poly 1；C3c-A 加 info_province /
+#       info_roads / repair_province 三条后 full 48 = checks 18 + overlay_buffer_join 18 +
+#       overlay_ops 11 + union_poly 1；第 6 条（组标 vs union_poly 名单）
 #       在两条新腿里照旧判 1 == 1（注册是全量的），第 7 条（跑过数 == 判过数）在两腿里判 0 == 0、
 #       在 union_poly 腿里判 1 == 1。
+#   ── C3c-A 在 overlay_buffer_join 上新增 info_province / info_roads / repair_province（2026-10-24）──
+#     改动：overlay_buffer_join 15 → 18 条，full 45 → 48 条，quick 24 → 27 条；TIMEOUT **不动**（630）。
+#     读数（按工单 §3"真实腿若新增，跑一次记读数即可"，只跑了 Debug 一次）：
+#       `ctest --test-dir build/debug -C Debug -R "^real_data_vector_overlay_buffer_join$" -V`
+#       ⇒ **Passed 188.07 s**（整条腿墙钟，含包装、Sync-PluginDlls 与派生件生成）。
+#       用例内计时：info_province 0.44 / info_roads 0.14 / repair_province 1.10；
+#       convert_roads_geojson 4.23（输入换成 build/tmp/c3cA/ 复制件并加 info 输入/输出对撞后，
+#       原先 0.5 s 级的纯文本判据变成 4.23 s）。
+#     余量：630 ÷ 188.07 = 3.35×（> 2.5× 拆腿触发线；C3k-2 时的旧最大读数是 155.30 s，留作对照）。
+#     ⚠ 只跑了这一遍（最终版 runner），不把 188.07 与旧的 155.30 读成趋势（同腿散布几十秒级）。
 # WHY 命令里用 $<TARGET_FILE:gis-cli> 而不写死 build/<树>/… 路径：与既有全部 configure-time 用例同形态，
 #   代价也是那条已知事实 —— `ctest -N` 不带 `-C` 时它展开成空串（docs/RELEASE.md 第 1 节有实测原文）。
 #   本批按预检裁定 R-C2c **不加兜底**，只在发布前验证清单里点明"这一批也必须带 -C"。
@@ -1837,7 +1849,7 @@ set_tests_properties(real_data_vector_checks PROPERTIES
 # WHY 拆：2026-10-23 收口轮 overlay 现读 Debug 273.20 / 265.40 s ⇒ 670 ÷ 273.20 = 2.45×，跌破本仓
 #   2.5× 的拆腿触发线；规矩是"不许抬 TIMEOUT、拆腿"，所以按逐用例现读把 26 条一分为二：
 #   overlay_buffer_join = buffer_quick(64.54) + spatial_join_focus(55.66) + 所有 <=5 s 的几何派生/
-#     转换小用例(17.70) + vertices_line(14.63)，15 条现读合计 152.53 s；
+#     转换小用例(17.70) + vertices_line(14.63)，15 条现读合计 152.53 s（C3c-A 再加 3 条 ⇒ 18 条）；
 #   overlay_ops = clip/difference/union/intersect 的 focus/far/partial/stress，11 条现读合计 104.40 s。
 #   两条腿都消费 roadsCore/allWindow 与 C3a 派生件（.ps1 的 $buildOverlayInputs 对两组建真），
 #   判据内容一字不动，只挪组标；两半之并由脚本内的名单不变量对撞。
