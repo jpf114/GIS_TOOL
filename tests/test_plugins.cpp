@@ -17470,16 +17470,16 @@ TEST_F(PluginTest, TileAlphaMaskFilterAppliesToEveryBand) {
 // 契约出处：用户 2026-10-23 的裁定，原文登记在 docs/RELEASE.md 的 N137 条目。要治的病是
 // 今天矢量动作的失败形态：输出文件在动作开头就被 drv->Create() 截断（16 个点还在 Create
 // 之前 fs::remove 掉整个目标）⇒ 写出失败时**旧产物已经没了，新产物又不可用**。
-// 本刀只迁 3 个动作（boundary / centroid / vertices_extract），其余 21 个写出点由 C3n-2 铺开
+// C3n-2b 收口时已迁 16 个动作，其余 8 个写出点由后续刀铺开
 // ⇒ "现在是半迁移态"这件事由 J5 那条结构守卫承重。
-// 论域现读：`grep -rn "drv->Create(" src/plugins/vector/` = 25 处 / 20 个文件；射程 24
-// （doRasterize 写的是栅格，按用户裁定留在 raster 那一侧，本刀只登记不动它）。
+// 论域现读（C3n-2b 收口）：已迁 **16** 个动作、待迁 **8** 个；`drv->Create(` 全目录 **10** 处
+// （helper 1 + 待迁 8 + 论域外 doRasterize 1）。
 // 四条判据的分工（J5 是结构守卫，合计五条）：
 //   J1 VectorBoundaryMidFailureKeepsOldProductAndLeavesNoTempFile —— 中途失败 ⇒ 旧产物逐字节不变 + 不留临时件
 //   J2 VectorStagedOutputKeepsProductForm                        —— 成功路径的产物形态一个字没变
-//   J3 VectorStagedOutputClosesBeforeReplace                     —— 替换之前真的关闭过数据集
+//   J3 VectorStagedOutputLeavesNoJournalSidecar                   —— 替换之前真的关闭过数据集（无 -wal/-journal 边车）
 //   J4 VectorOutputMustNotOverwriteInput                         —— output == input 硬失败且输入完好
-//   J5 VectorVectorWritePointsAreStagedOrListed                  —— 半迁移态的承重名单（已迁移 == 3 / 待迁移 == 21）
+//   J5 VectorVectorWritePointsAreStagedOrListed                  —— 半迁移态的承重名单（已迁移 == 16 / 待迁移 == 8）
 
 namespace {
 
@@ -17672,6 +17672,42 @@ bool c3n1WritePolygonShapefile(const std::string& path) {
     bool ok = addPolygon("A", {{0.0, 0.0}, {12.0, 0.0}, {12.0, 3.0},
                                {4.0, 3.0}, {4.0, 8.0}, {0.0, 8.0}});
     ok = addPolygon("B", {{20.0, 0.0}, {24.0, 0.0}, {24.0, 2.0}, {20.0, 2.0}}) && ok;
+    GDALClose(ds);
+    return ok;
+}
+
+// 三点折线的 Shapefile 版（endpoints_extract / midpoints_extract 只收折线层；J4 的 .shp 臂
+// 要在这两个动作上同样能造出"输入就是多文件集"的形态）。
+bool c3n1WriteLineShapefile(const std::string& path) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    if (!driver) {
+        return false;
+    }
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("shapes", srs.get(), wkbLineString, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    OGRFieldDefn nameField("name", OFTString);
+    if (layer->CreateField(&nameField) != OGRERR_NONE) {
+        GDALClose(ds);
+        return false;
+    }
+    OGRLineString line;
+    line.addPoint(0, 0);
+    line.addPoint(5, 5);
+    line.addPoint(10, 0);
+    auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    feat->SetField("name", "A");
+    feat->SetGeometry(&line);
+    const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+    OGRFeature::DestroyFeature(feat);
     GDALClose(ds);
     return ok;
 }
@@ -17879,9 +17915,44 @@ TEST_F(PluginTest, VectorOutputMustNotOverwriteInput) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr) << "plugin not loaded: vector";
 
-    const char* const actions[] = { "boundary", "centroid", "vertices_extract" };
+    // 16 个已迁移动作：射程与 J5 的 kStagedActions 相同（J5 认"文件+函数"，这里认 CLI 动作名）。
+    // 每项带上让动作能走到 staged.start 入口闸的最小参数/夹具形态：
+    //   lineLayer   —— endpoints_extract / midpoints_extract 只收折线层；
+    //   secondKey   —— nearest / spatial_join 的第二个输入（必须与 input 分开成两个夹具文件）；
+    //   where       —— filter 要求 --where 或 --extent 至少给一个。
+    struct ActionArm {
+        const char* action;
+        bool lineLayer;
+        const char* secondKey;
+        const char* where;
+    };
+    const ActionArm actions[] = {
+        { "boundary", false, nullptr, nullptr },
+        { "centroid", false, nullptr, nullptr },
+        { "convex_hull", false, nullptr, nullptr },
+        { "endpoints_extract", true, nullptr, nullptr },
+        { "envelope", false, nullptr, nullptr },
+        { "filter", false, nullptr, "name = 'A'" },
+        { "geom_metrics", false, nullptr, nullptr },
+        { "interior_point", false, nullptr, nullptr },
+        { "midpoints_extract", true, nullptr, nullptr },
+        { "nearest", false, "nearest_vector", nullptr },
+        { "repair", false, nullptr, nullptr },
+        { "simplify", false, nullptr, nullptr },
+        { "singlepart", false, nullptr, nullptr },
+        { "sliver_remove", false, nullptr, nullptr },
+        { "spatial_join", false, "join_vector", nullptr },
+        { "vertices_extract", false, nullptr, nullptr },
+    };
 
-    for (const char* action : actions) {
+    // 动作数组本身也要承重：少一条不是"少跑一条"，而是"射程缩水"（J5 认 16 条，这条认 16 条，
+    // 两边各数各的，任何一边掉队都红）。
+    ASSERT_EQ(sizeof(actions) / sizeof(actions[0]), 16u)
+        << "J4 的动作数组必须覆盖全部 16 个已迁移动作；少一条就是射程缩水";
+
+    for (const auto& item : actions) {
+        const char* action = item.action;
+        const bool lineLayer = item.lineLayer;
         for (const char* ext : {".gpkg", ".shp"}) {
             for (int spelling = 0; spelling < 2; ++spelling) {
                 const std::string tag =
@@ -17893,9 +17964,21 @@ TEST_F(PluginTest, VectorOutputMustNotOverwriteInput) {
                 const fs::path work = dir / fs::u8path(std::string("work") + ext);
                 const std::string workPath = utf8PathString(work);
                 const bool fixtureOk = (std::string(ext) == ".gpkg")
-                    ? c3n1WriteTwoPolygonGpkg(workPath)
-                    : c3n1WritePolygonShapefile(workPath);
+                    ? (lineLayer ? c3n1WriteThreePointLineGpkg(workPath)
+                                 : c3n1WriteTwoPolygonGpkg(workPath))
+                    : (lineLayer ? c3n1WriteLineShapefile(workPath)
+                                 : c3n1WritePolygonShapefile(workPath));
                 ASSERT_TRUE(fixtureOk) << "夹具写入失败：" << workPath;
+
+                std::string secondPath;
+                if (item.secondKey) {
+                    const fs::path second = dir / fs::u8path(std::string("probe") + ext);
+                    secondPath = utf8PathString(second);
+                    const bool secondOk = (std::string(ext) == ".gpkg")
+                        ? c3n1WriteTwoPolygonGpkg(secondPath)
+                        : c3n1WritePolygonShapefile(secondPath);
+                    ASSERT_TRUE(secondOk) << "第二个输入夹具写入失败：" << secondPath;
+                }
 
                 // output 的两种拼法：逐字同一个路径，或指向同一个文件的 dir\.\work<ext>。
                 // 第二条臂的意义在于"字符串不同、文件相同"⇒ 它专打"用 == 比字符串"那种假闸；
@@ -17914,6 +17997,12 @@ TEST_F(PluginTest, VectorOutputMustNotOverwriteInput) {
                 params["action"] = std::string(action);
                 params["input"] = workPath;
                 params["output"] = output;
+                if (item.secondKey) {
+                    params[item.secondKey] = secondPath;
+                }
+                if (item.where) {
+                    params["where"] = std::string(item.where);
+                }
 
                 const std::string what = std::string("J4[") + action + ext +
                     (spelling == 0 ? "/same]" : "/dotslash]");
@@ -17933,6 +18022,83 @@ TEST_F(PluginTest, VectorOutputMustNotOverwriteInput) {
                     EXPECT_NE(run.result.message.find("same file as input"), std::string::npos)
                         << what << "：失败消息没有点名『输出不能覆盖输入』这条规则，实际 message = "
                         << run.result.message;
+                }
+
+                c3n1ExpectDirectoryUntouched(dir, beforeNames, beforeBytes, what.c_str());
+            }
+        }
+    }
+}
+
+// ── J4 双输入臂：output == 第二个输入 同样必须硬失败，两个输入都要完好 ───────────────
+// nearest / spatial_join 的 `fs::equivalent(input, secondInput)` 判的是"输入 vs 输入"，
+// 从来不是"输出 vs 输入"：把 --nearest_vector / --join_vector 指到输出路径，今天就会拿
+// 第二个输入当目标重写。staged.start 的保护清单必须**两个输入都收**；只收 input 的实现在
+// 这条臂上要么在 commit 换名时才失败（消息不点名规则），要么直接把第二个输入换掉。
+// 形状与 J4 同：两格式 × 两拼法（逐字同一个路径 / dir\.\probe<ext>）。
+TEST_F(PluginTest, VectorDoubleInputOutputMustNotOverwriteSecondInput) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr) << "plugin not loaded: vector";
+
+    struct Case {
+        const char* action;
+        const char* secondKey;
+    };
+    const Case cases[] = {
+        { "nearest", "nearest_vector" },
+        { "spatial_join", "join_vector" },
+    };
+
+    for (const auto& item : cases) {
+        for (const char* ext : {".gpkg", ".shp"}) {
+            for (int spelling = 0; spelling < 2; ++spelling) {
+                const std::string tag = std::string("j4_second_") + item.action + "_" +
+                    c3n1ExtName(ext) + (spelling == 0 ? "_same" : "_dotslash");
+                const fs::path dir = c3n1FreshDir(tag);
+                ASSERT_TRUE(fs::exists(dir)) << dir.u8string();
+
+                const fs::path inputFile = dir / fs::u8path(std::string("work") + ext);
+                const fs::path secondFile = dir / fs::u8path(std::string("probe") + ext);
+                const std::string inputPath = utf8PathString(inputFile);
+                const std::string secondPath = utf8PathString(secondFile);
+                const bool fixturesOk = (std::string(ext) == ".gpkg")
+                    ? (c3n1WriteTwoPolygonGpkg(inputPath) && c3n1WriteTwoPolygonGpkg(secondPath))
+                    : (c3n1WritePolygonShapefile(inputPath) && c3n1WritePolygonShapefile(secondPath));
+                ASSERT_TRUE(fixturesOk) << "夹具写入失败：" << inputPath << " / " << secondPath;
+
+                std::string output = secondPath;
+                if (spelling == 1) {
+                    output = utf8PathString(dir / "." / fs::u8path(std::string("probe") + ext));
+                    ASSERT_NE(output, secondPath) << "拼法没造出差异，等价臂退化成同串臂";
+                }
+
+                const auto beforeNames = c3n1ListFiles(dir);
+                const auto beforeBytes = c3n1CollectBytes(dir);
+                ASSERT_GE(beforeBytes.size(), 2u) << "夹具目录里不足两个输入：" << dir.u8string();
+
+                std::map<std::string, gis::framework::ParamValue> params;
+                params["action"] = std::string(item.action);
+                params["input"] = inputPath;
+                params["output"] = output;
+                params[item.secondKey] = secondPath;
+
+                const std::string what = std::string("J4-second[") + item.action + ext +
+                    (spelling == 0 ? "/same]" : "/dotslash]");
+
+                const C3n1Run run = c3n1RunAction(p, params, progress_);
+
+                EXPECT_FALSE(run.threw)
+                    << what << "：动作没有干净失败而是**抛出了**异常（" << run.outcome()
+                    << "）⇒ 输出 == 第二个输入没有被入口闸拦住";
+
+                EXPECT_FALSE(run.result.success)
+                    << what << "：输出指向第二个输入这件事没有被硬失败拦下来（返回 success，"
+                    << "outcome = " << run.outcome() << "）";
+
+                if (!run.threw && !run.result.success) {
+                    EXPECT_NE(run.result.message.find("same file as input"), std::string::npos)
+                        << what << "：失败消息没有点名『输出不能覆盖输入』这条规则（多半是等到 commit "
+                        << "换名时才失败的），实际 message = " << run.result.message;
                 }
 
                 c3n1ExpectDirectoryUntouched(dir, beforeNames, beforeBytes, what.c_str());
@@ -18159,58 +18325,59 @@ TEST_F(PluginTest, VectorStagedOutputLeavesNoJournalSidecar) {
 // ── J5：结构守卫 ──「现在是半迁移态」必须承重 ──────────────────────────────────────
 // 半迁移态最坏的结局不是"某个点还没改"，而是**大家以为契约已经全覆盖了**。所以名单必须承重，
 // 而且双向可红（工单 §4：改分发/路由类机制必须配一条双向可红的断言）：
-//   ① 已迁移点数 == 写死的"已迁移名单"条数（== 11；不是"≥1"，≥1 会让后面几刀做完也测不出东西）；
-//   ② 待迁移名单 == 13 条、逐条点名，每条都要在源码里真的数到一处直接写 output 的建数据集；
+//   ① 已迁移点数 == 写死的"已迁移名单"条数（== 16；不是"≥1"，≥1 会让后面几刀做完也测不出东西）；
+//   ② 待迁移名单 == 8 条、逐条点名，每条都要在源码里真的数到一处直接写 output 的建数据集；
 //   ③ 名单**外**若出现任何一处仍以 output 直接建数据集 ⇒ 红（新写的点、或别人绕开名单改的点）；
 //   ④ 名单**里**的点如果被迁移完了而名单没减 ⇒ 也红（防名单变死条目）；
-//   ⑤ 全目录 drv->Create 的总数也要对上账（1 处 helper + 13 处待迁 + 1 处论域外 = 15），
+//   ⑤ 全目录 drv->Create 的总数也要对上账（1 处 helper + 8 处待迁 + 1 处论域外 = 10），
 //      这样"新加一个写出点却不进任何名单"同样会红。
-// 论域现读（C3n-2a 迁移后复核）：`grep -rn "drv->Create(" src/plugins/vector/` = 15 处
-//   ＝ helper 1 处 + 直接写 output 14 处（13 处待迁 + 论域外 doRasterize 1 处）。
-//   账的来路：C3n-1 开工时是 25，迁走 3 处、helper 新增 1 处 ⇒ 23；C3n-2a 再迁走 8 处 ⇒ 15。
+// 论域现读（C3n-2b 迁移后复核）：`grep -rn "drv->Create(" src/plugins/vector/` = 10 处
+//   ＝ helper 1 处 + 直接写 output 9 处（8 处待迁 + 论域外 doRasterize 1 处）。
+//   账的来路：C3n-1 开工时是 25，迁走 3 处、helper 新增 1 处 ⇒ 23；C3n-2a 再迁走 8 处 ⇒ 15；
+//   C3n-2b 再迁走 5 处 ⇒ 10。
 //   doRasterize（写的是栅格）按用户裁定留在射程之外，
 //   但它仍然是一个"直接写 output 的建数据集点"，所以**单独点名登记**在这一支里，
 //   免得它被 ③ 当成名单外命中，也免得它被误当成已覆盖。
 // 判据的形：只认 (文件, 动作函数) 这一对**函数级**坐标，不认行号（行号会随任何一次改动漂移）。
 // （GIS_SOURCE_DIR 这个编译宏由 tests/CMakeLists.txt 发，本文件上面 C3m 那条源码守卫也用同一个。）
 TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
-    // 已迁移动作（第一段 3 个 + C3n-2a 的 8 个 = 11）。
+    // 已迁移动作（C3n-1 的 3 个 + C3n-2a 的 8 个 + C3n-2b 的 5 个 = 16）。
     static const std::vector<std::pair<std::string, std::string>> kStagedActions = {
         { "vector_plugin_boundary.inc", "doBoundary" },
         { "vector_plugin_centroid.inc", "doCentroid" },
         { "vector_plugin_convex_hull.inc", "doConvexHull" },
         { "vector_plugin_endpoints_extract.inc", "doEndpointsExtract" },
         { "vector_plugin_envelope.inc", "doEnvelope" },
+        { "vector_plugin_geom_metrics.inc", "doGeomMetrics" },
         { "vector_plugin_info_filter.inc", "doFilter" },
         { "vector_plugin_interior_point.inc", "doInteriorPoint" },
         { "vector_plugin_midpoints_extract.inc", "doMidpointsExtract" },
+        { "vector_plugin_nearest.inc", "doNearest" },
+        { "vector_plugin_repair.inc", "doRepair" },
+        { "vector_plugin_simplify.inc", "doSimplify" },
         { "vector_plugin_singlepart.inc", "doSinglepart" },
         { "vector_plugin_sliver_remove.inc", "doSliverRemove" },
+        { "vector_plugin_spatial_join.inc", "doSpatialJoin" },
         { "vector_plugin_vertices_extract.inc", "doVerticesExtract" },
     };
-    // 待迁移名单：24 个矢量写出点里扣掉上面 11 个 ⇒ 13 条，逐条点名（后续几刀一条一条划掉）。
+    // 待迁移名单：24 个矢量写出点里扣掉上面 16 个 ⇒ 8 条，逐条点名（后续几刀一条一条划掉）。
     static const std::vector<std::pair<std::string, std::string>> kPendingActions = {
         { "vector_plugin_buffer_clip.inc", "doBuffer" },
         { "vector_plugin_buffer_clip.inc", "doClip" },
         { "vector_plugin_dissolve.inc", "doDissolve" },
-        { "vector_plugin_geom_metrics.inc", "doGeomMetrics" },
-        { "vector_plugin_nearest.inc", "doNearest" },
         { "vector_plugin_overlay.inc", "doUnion" },
         { "vector_plugin_overlay.inc", "doDifference" },
         { "vector_plugin_overlay.inc", "doIntersect" },
         { "vector_plugin_raster_convert.inc", "doPolygonize" },
         { "vector_plugin_raster_convert.inc", "doConvert" },
-        { "vector_plugin_repair.inc", "doRepair" },
-        { "vector_plugin_simplify.inc", "doSimplify" },
-        { "vector_plugin_spatial_join.inc", "doSpatialJoin" },
     };
     // 论域之外但**仍是直接写 output** 的那一个点（写栅格，用户裁定"先限 vector 的矢量输出"）。
     static const std::pair<std::string, std::string> kOutsideDomain = {
         "vector_plugin_raster_convert.inc", "doRasterize",
     };
 
-    EXPECT_EQ(kPendingActions.size(), 13u)
-        << "待迁移名单本身不是 13 条 ⇒ 这条守卫的账先就错了（射程 24 = 已迁 11 + 待迁 13）";
+    EXPECT_EQ(kPendingActions.size(), 8u)
+        << "待迁移名单本身不是 8 条 ⇒ 这条守卫的账先就错了（射程 24 = 已迁 16 + 待迁 8）";
 
     const fs::path dir = fs::u8path(std::string(GIS_SOURCE_DIR) + "/src/plugins/vector");
     ASSERT_TRUE(fs::exists(dir))
@@ -18364,7 +18531,7 @@ TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
         << " ⇒ 要么是新加的写出点没进名单，要么是有人绕开机制自己写";
     EXPECT_EQ(directTotal, kPendingActions.size() + 1u)
         << "直接写 output 的建数据集点总数对不上账（数到 " << directTotal
-        << "，期望 13 个待迁移 + 1 个论域外的 doRasterize = 14）";
+        << "，期望 8 个待迁移 + 1 个论域外的 doRasterize = 9）";
     EXPECT_EQ(totalCreates, directTotal + 1u)
         << "drv->Create( 的总数对不上账（数到 " << totalCreates << "，期望 "
         << directTotal + 1u << "）⇒ 有新的写出点没被任何名单接住";

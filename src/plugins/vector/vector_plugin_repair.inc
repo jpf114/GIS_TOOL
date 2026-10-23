@@ -37,19 +37,15 @@ gis::framework::Result VectorPlugin::doRepair(
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
-    // 窄串构造 fs::path 在 Windows 按 ANSI 解 ⇒ UTF-8 中文路径会被判成"不存在"，旧产物边车永远删不掉（N122）。
-    const fs::path outputPath = fs::u8path(output);
-    if (outFormat == "ESRI Shapefile" && fs::exists(outputPath)) {
-        for (const auto& entry : fs::directory_iterator(outputPath.parent_path())) {
-            if (entry.path().stem() == outputPath.stem()) fs::remove(entry.path());
-        }
+    // 失败契约的入口闸（等价判定"输出不得覆盖输入"）走在任何建目录/建文件之前：建目录归
+    // staged.start 自己做，所以这里不再先动文件系统。旧产物的前置删除同样已去掉 —— 它的
+    // 对应物是 commit 末尾的 removeStaleOldSidecars，删除只许发生在新件全部落地之后。
+    VectorStagedOutput staged;
+    std::string stageError;
+    if (!staged.start(output, outFormat, { input }, drv, stageError)) {
+        return gis::framework::Result::fail(stageError);
     }
-
-    ensureParentDirectoryForFile(output);
-    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
-    if (!dstDS) {
-        return gis::framework::Result::fail("Cannot create output file: " + output);
-    }
+    GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
@@ -108,6 +104,14 @@ gis::framework::Result VectorPlugin::doRepair(
 
     delete srcSRS;
     progress.throwIfCancelled();
+
+    // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
+    // 替换失败就报失败：此时旧产物仍在场，本轮临时件由 staged 的析构删干净。
+    std::string commitError;
+    if (!staged.commit(commitError)) {
+        return gis::framework::Result::fail(commitError);
+    }
+
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(
