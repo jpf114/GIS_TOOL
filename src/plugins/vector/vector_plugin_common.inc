@@ -356,6 +356,321 @@ static void ensureParentDirectoryForFile(const std::string& output) {
     fs::create_directories(outputPath.parent_path());
 }
 
+// ── C3n-1：矢量输出的失败契约载体「同目录临时件 → 全部成功 → 显式关闭 → 替换目标」────────
+// 契约出处：用户 2026-10-23 的裁定，原文登记在 docs/RELEASE.md 的 N137 条目。
+// 要治的病：矢量动作今天**先截断目标再写**（16 个写出点甚至在驱动建数据集之前就把整个目标
+// fs::remove 掉），于是"写到一半失败"交出去的是"旧产物已经没了 + 新产物又不可用"。
+// 本类把成功与失败两条路径都改成：
+//   ① 只往**同目录**临时件写：<目标目录>/<目标 stem>.gis-tmp-<进程号>-<进程内自增序号><目标扩展名>
+//     （不放 build/tmp、不放 %TEMP% ⇒ 那些地方一跨卷，替换就退化成复制，见机制②）；
+//   ② 全部写完 ⇒ **先显式关闭数据集**（释放句柄、让驱动把 rtree 与日志收干净）；
+//   ③ 再把临时件族逐个替换到目标名（Shapefile 是**逐文件**替换 ⇒ 这一步非原子，见 commit 里
+//     那句"诚实说法"，台账里不许写成"Shapefile 原子改名"）；
+//   ④ 任何中途失败或异常展开 ⇒ 析构函数把临时件族删干净 ⇒ 旧产物原样存活、不留半截新产物。
+// ⚠ 清理义务跟着**对象生命周期**走，不跟着某个 return 语句走（工单 §2.4：24 个点、多点返回，
+//   手写清理必漏）。动作里那些 CancelledException 展开也走同一个析构。
+// ⚠ 本刀只接了 boundary / centroid / vertices_extract 三个写出点，其余 21 个仍在直接写目标。
+//   "现在是半迁移态"这件事由用例侧的结构守卫承重（J5：已迁移 == 3 / 待迁移名单 == 21 逐条点名），
+//   所以这里不许写成"矢量输出已全部按契约走"那种会被当成收口结论的话。
+// ⚠ 迁移进本类的点**不再**调 removeExistingVectorOutput：旧代码那一句"在建数据集之前先把旧产物
+//   与同 stem 边车删掉"的对应物是 commit 末尾的 removeStaleOldSidecars ⇒ 删除被挪到新件全部
+//   落地之后（反过来就会交出".shp 是新的、.dbf 没了"这种比旧态更坏的产物）。
+//   其余 21 个点（16 个调它 + 8 个内联同形代码）由 C3n-2 逐点搬，本刀一个字不动它们。
+class VectorStagedOutput {
+public:
+    VectorStagedOutput() = default;
+    VectorStagedOutput(const VectorStagedOutput&) = delete;
+    VectorStagedOutput& operator=(const VectorStagedOutput&) = delete;
+    ~VectorStagedOutput() { discardStagedFiles(); }
+
+    // 建临时件、把它交给驱动建数据集。
+    // protectedInputs 是"绝不许被输出覆盖掉"的输入清单。**等价闸走在任何建目录/建文件之前**
+    //（工单 §3 J4：命中的时点是"删除/创建之前"，不是"删完了再道歉"）。
+    // 三个已迁移动作都是单输入 ⇒ 传一个；C3n-2 铺到 union / clip / difference / intersect /
+    // nearest / spatial_join 那批双输入动作时要**两个都传**（工单 J4 的双输入臂因此要等那一批
+    // 迁移完才谈得上 —— 本刀不许越界去动那 21 个点，那一臂登记为缺口）。
+    // 返回 false 时 error 是一句能直接给用户的失败原因（口径随同插件既有的硬失败写法）。
+    bool start(const std::string& output, const std::string& format,
+               const std::vector<std::string>& protectedInputs, GDALDriver* drv,
+               std::string& error) {
+        format_ = format;
+        target_ = fs::u8path(output);
+        protectedInputs_.clear();
+        for (const auto& input : protectedInputs) {
+            if (!input.empty()) {
+                protectedInputs_.push_back(fs::u8path(input));
+            }
+        }
+        if (target_.empty() || target_.filename().empty()) {
+            error = "output is required";
+            return false;
+        }
+
+        for (const auto& input : protectedInputs_) {
+            std::error_code ec;
+            // 判"同一个文件"要用**等价**而不是字符串相等：`dir\.\x.gpkg` 与 `dir\x.gpkg` 是
+            // 同一个文件，Windows 上大小写不同的拼法也是同一个文件 ⇒ 拿 `==` 当闸会漏
+            //（J4 的 dotslash 臂专打这一点）。输出本来不存在时 equivalent 走 ec 分支返回 false
+            // ⇒ 不会误伤"输出还没建"这条常规路径。
+            if (fs::equivalent(input, target_, ec)) {
+                error = "Output must not be the same file as input: " + output +
+                    " (input: " + input.u8string() + ")";
+                return false;
+            }
+        }
+
+        ensureParentDirectoryForFile(output);
+
+        // 进程号挡跨进程撞名，进程内自增序号挡同进程两个动作撞名（GUI 的任务队列与测试
+        // 都会在一个进程里并发跑多个动作）。
+        static std::atomic<unsigned long> sequence{ 0 };
+        const unsigned long seq = sequence.fetch_add(1) + 1;
+        stagedPrefix_ = target_.filename().stem().u8string() + ".gis-tmp-" +
+            stagedProcessTag() + "-" + std::to_string(seq);
+        const std::string stagedName = stagedPrefix_ + target_.extension().u8string();
+        staged_ = targetDir() / fs::u8path(stagedName);
+
+        // 上次崩溃留的同前缀孤儿件先清掉 ⇒ 否则 commit 会把别人的残骸当成本轮产物搬进目标名。
+        // （前缀含进程号 + 序号，正常路径本来就是空的；只有进程重启且序号重上才算得上。）
+        for (const auto& orphan : listStagedFamily()) {
+            std::error_code ec;
+            fs::remove(orphan, ec);
+        }
+
+        const std::string stagedUtf8 = staged_.u8string();
+        dataset_ = gis::core::GdalDatasetPtr(
+            drv->Create(stagedUtf8.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
+        if (!dataset_) {
+            error = "Cannot create output file: " + output;
+            discardStagedFiles();
+            return false;
+        }
+        return true;
+    }
+
+    // 动作写的那个数据集：裸指针，所有权在本对象（析构负责关闭）。
+    GDALDataset* dataset() const { return dataset_.get(); }
+
+    // 成功路径的收口：**关闭数据集 → 逐文件替换 → 清旧边车**。
+    // 返回 false ⇒ 调用方必须把这次动作报成失败；此时旧产物仍在场，临时件族由析构兜住。
+    bool commit(std::string& error) {
+        // 这一行是本刀最容易做错的地方（工单 §2.3）。今天全插件 0 处显式 Close()，数据集本来
+        // 要靠作用域结束才 GDALClose ⇒ 若在还握着句柄时改名，Windows 上替换会撞
+        // ERROR_ACCESS_DENIED，GPKG 的 -wal/-journal 也还没收（J3 判的就是产物里不许有它们）。
+        dataset_.reset();
+
+        std::vector<std::string> landedExtensions;
+        for (const auto& stagedFile : listStagedFamily()) {
+            const fs::path landing = landingPathFor(stagedFile);
+            if (landing.empty()) {
+                continue;   // 同前缀的附属件（例如 SQLite 的 -wal）不是产物，留到下面统一删
+            }
+            if (!replaceStagedFile(stagedFile, landing, error)) {
+                // ⚠ 诚实说法（工单 §2.5）：Shapefile 的替换是**逐文件**的 ⇒ 这一支可能在"已经
+                // 搬走几个边车"的中途停下，留下混合态。契约能保证的是"新件完工之前旧产物一直完好"，
+                // 不能保证"替换段本身原子"。
+                return false;
+            }
+            landedExtensions.push_back(lowerExtension(stagedFile));
+        }
+
+        if (landedExtensions.empty()) {
+            error = "Output was not produced: " + target_.u8string();
+            return false;
+        }
+
+        // 替换完成后同前缀还剩下的文件一律是本轮临时件的附属残骸（GPKG 的 -wal/-journal/-shm
+        // 正常已被上面的 close 收掉；还在就说明驱动没收干净）⇒ 删，绝不留给用户。
+        for (const auto& leftover : listStagedFamily()) {
+            std::error_code ec;
+            fs::remove(leftover, ec);
+        }
+
+        // 旧边车的清理**只能发生在新件全部完工之后**（工单 §2.5）。这一支就是旧代码里
+        // "按同 stem 遍历删边车"那句的对应物，只是搬到了终点。
+        removeStaleOldSidecars(landedExtensions);
+        return true;
+    }
+
+private:
+    // 输出所在目录（相对路径 `x.gpkg` 的 parent 是空 path ⇒ 归一成 "."，否则清单扫描会空转）。
+    fs::path targetDir() const {
+        const fs::path parent = target_.parent_path();
+        return parent.empty() ? fs::path(".") : parent;
+    }
+
+    static std::string stagedProcessTag() {
+#ifdef _WIN32
+        return std::to_string(static_cast<unsigned long>(GetCurrentProcessId()));
+#else
+        return std::to_string(static_cast<unsigned long>(::getpid()));
+#endif
+    }
+
+    static std::string lowerExtension(const fs::path& path) {
+        std::string ext = path.extension().u8string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return ext;
+    }
+
+    // 临时件族 = 目标目录里**文件名以本轮前缀打头**的那些普通文件。
+    // WHY 按前缀而不是按 stem 相等：Shapefile 的边车是 <前缀>.shp/.shx/.dbf/.prj（stem 相同），
+    // 而 GPKG 的 SQLite 附属件是 <前缀>.gpkg-wal / ...-journal（stem 不同，中间多了一段 .gpkg）
+    // ⇒ 只按 stem 收会漏掉附属件，于是清理与替换都只完成一半。
+    std::vector<fs::path> listStagedFamily() const {
+        std::vector<fs::path> found;
+        if (stagedPrefix_.empty()) {
+            return found;
+        }
+        const fs::path dir = targetDir();
+        std::error_code ec;
+        if (!fs::exists(dir, ec) || ec) {
+            return found;
+        }
+        for (fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+             !ec && it != end; it.increment(ec)) {
+            std::error_code secer;
+            if (!it->is_regular_file(secer) || secer) {
+                continue;
+            }
+            const std::string name = it->path().filename().u8string();
+            if (name.size() >= stagedPrefix_.size() &&
+                name.compare(0, stagedPrefix_.size(), stagedPrefix_) == 0) {
+                found.push_back(it->path());
+            }
+        }
+        std::sort(found.begin(), found.end());
+        return found;
+    }
+
+    // 本轮临时件族里某个文件该落到目标目录的哪个名字；空 path = "它不是产物，不许落"。
+    // 交给驱动的那个文件（扩展名与目标一致）永远落到目标名；ESRI Shapefile 的其它同前缀边车
+    // 按"<目标 stem> + 各自的扩展名"落（.shp/.shx/.dbf/.prj/... 一一对应）。
+    fs::path landingPathFor(const fs::path& stagedFile) const {
+        const std::string name = stagedFile.filename().u8string();
+        if (name == staged_.filename().u8string()) {
+            return target_;
+        }
+        if (format_ != "ESRI Shapefile") {
+            return fs::path();
+        }
+        return targetDir() / fs::u8path(
+            target_.filename().stem().u8string() + stagedFile.extension().u8string());
+    }
+
+    // 同卷替换。**这里不走 std::filesystem::rename**：本机 MSVC STL（工具集 14.44.35207，
+    // crt/src/stl/filesystem.cpp:722）把它实现成
+    //   MoveFileExW(_Source, _Target, MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING)
+    // ⇒ "目标已存在"确实是覆盖成功不报错（这正是替换语义），但带着 COPY_ALLOWED 后
+    // **跨卷会悄悄退化成 copy+delete**，"同卷原子替换"就兑不了 ⇒ 自己发一次不带
+    // COPY_ALLOWED 的 MoveFileExW：跨卷直接失败，而不是半路变成复制。
+    // 非 Windows 分支跟着本仓既有的 #ifdef _WIN32 形态走，用 rename(2) 本身：POSIX 的 rename
+    // 同卷原子、跨卷报 EXDEV，本来就没有退化路径。
+    static bool replaceStagedFile(const fs::path& stagedFile, const fs::path& target,
+                                  std::string& error) {
+#ifdef _WIN32
+        const std::wstring stagedWide = utf8ToWide(stagedFile.u8string());
+        const std::wstring targetWide = utf8ToWide(target.u8string());
+        if (stagedWide.empty() || targetWide.empty()) {
+            error = "Cannot encode staged output path: " + stagedFile.u8string();
+            return false;
+        }
+        if (MoveFileExW(stagedWide.c_str(), targetWide.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            return true;
+        }
+        error = "Cannot replace output " + target.u8string() + " with the staged file " +
+            stagedFile.u8string() + " (Win32 error " +
+            std::to_string(static_cast<unsigned long>(GetLastError())) + ")";
+        return false;
+#else
+        std::error_code ec;
+        fs::rename(stagedFile, target, ec);
+        if (!ec) {
+            return true;
+        }
+        error = "Cannot replace output " + target.u8string() + " with the staged file " +
+            stagedFile.u8string() + "：" + ec.message();
+        return false;
+#endif
+    }
+
+    // 新件全部落地之后，把**旧产物**留下的、这一轮没产出的同名边车清掉。
+    // Shapefile：同 stem 但扩展名不在本轮落地集合里的那些（例：旧的 .prj，而这轮没写 .prj）。
+    // GPKG：换名之后还能看见 <目标>.gpkg-wal / -journal / -shm，就说明它们属于**上一份产物**
+    //（本轮那份是关闭干净才换名的）⇒ 一并清掉，否则用户拿到"新库 + 旧日志"的混合体。
+    // 两种形状都不许碰受保护的输入：输出与某个输入"同 stem 不同扩展名"（nearest /
+    // spatial_join 那批就有这种拼法）时，按 stem 遍历会把输入自己的边车扫进去 ⇒ 先等价挡一次。
+    void removeStaleOldSidecars(const std::vector<std::string>& landedExtensions) {
+        if (format_ == "ESRI Shapefile") {
+            const fs::path dir = targetDir();
+            std::error_code ec;
+            if (!fs::exists(dir, ec) || ec) {
+                return;
+            }
+            for (fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+                 !ec && it != end; it.increment(ec)) {
+                std::error_code secer;
+                if (!it->is_regular_file(secer) || secer) {
+                    continue;
+                }
+                const fs::path path = it->path();
+                if (path.stem() != target_.stem()) {
+                    continue;
+                }
+                const std::string ext = lowerExtension(path);
+                if (std::find(landedExtensions.begin(), landedExtensions.end(), ext) !=
+                    landedExtensions.end()) {
+                    continue;
+                }
+                if (isProtectedInput(path)) {
+                    continue;
+                }
+                std::error_code rmec;
+                fs::remove(path, rmec);
+            }
+            return;
+        }
+
+        if (format_ == "GPKG") {
+            const std::string base = target_.u8string();
+            for (const char* suffix : { "-wal", "-journal", "-shm" }) {
+                std::error_code rmec;
+                fs::remove(fs::u8path(base + suffix), rmec);
+            }
+        }
+    }
+
+    bool isProtectedInput(const fs::path& path) const {
+        std::error_code ec;
+        for (const auto& input : protectedInputs_) {
+            if (fs::equivalent(input, path, ec)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 失败/异常展开路径的兜底：**先关数据集再删文件**（Windows 上还开着句柄的文件删不掉），
+    // 然后把本轮临时件族删干净。已 commit 的调用点走不到这里也执行一遍 —— 它删的是"替换后
+    // 仍然挂着的前缀残骸"，与 commit 末尾那条是同一支幂等收尾。
+    void discardStagedFiles() {
+        dataset_.reset();
+        for (const auto& stagedFile : listStagedFamily()) {
+            std::error_code ec;
+            fs::remove(stagedFile, ec);
+        }
+    }
+
+    std::string format_;
+    std::string stagedPrefix_;
+    fs::path target_;
+    fs::path staged_;
+    std::vector<fs::path> protectedInputs_;
+    gis::core::GdalDatasetPtr dataset_;
+};
+
 // WHY vector 的 24 个 CreateLayer 点里，这 17 个共用这一个 builder、且它一个图层选项都不发：
 // 不发选项 ⇒ GDAL 走它自己的延迟建索引，在 FlushCache 里建 rtree 并把已经在表里的行一次性回填
 // （GDAL 侧的判据就是"选项缺省即建"，`bCreateSpatialIndex = (pszSI == nullptr || CPLTestBool(pszSI))`）。

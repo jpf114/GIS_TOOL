@@ -17463,3 +17463,863 @@ TEST_F(PluginTest, TileAlphaMaskFilterAppliesToEveryBand) {
                       "推导见本用例头注释里'判别波段为什么必须是 band 3'那一段");
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// C3n-1：矢量输出的失败契约「先写同目录临时件 → 全部成功 → 显式关闭 → 替换目标」
+// ════════════════════════════════════════════════════════════════════════════════════
+// 契约出处：用户 2026-10-23 的裁定，原文登记在 docs/RELEASE.md 的 N137 条目。要治的病是
+// 今天矢量动作的失败形态：输出文件在动作开头就被 drv->Create() 截断（16 个点还在 Create
+// 之前 fs::remove 掉整个目标）⇒ 写出失败时**旧产物已经没了，新产物又不可用**。
+// 本刀只迁 3 个动作（boundary / centroid / vertices_extract），其余 21 个写出点由 C3n-2 铺开
+// ⇒ "现在是半迁移态"这件事由 J5 那条结构守卫承重。
+// 论域现读：`grep -rn "drv->Create(" src/plugins/vector/` = 25 处 / 20 个文件；射程 24
+// （doRasterize 写的是栅格，按用户裁定留在 raster 那一侧，本刀只登记不动它）。
+// 四条判据的分工（J5 是结构守卫，合计五条）：
+//   J1 VectorBoundaryMidFailureKeepsOldProductAndLeavesNoTempFile —— 中途失败 ⇒ 旧产物逐字节不变 + 不留临时件
+//   J2 VectorStagedOutputKeepsProductForm                        —— 成功路径的产物形态一个字没变
+//   J3 VectorStagedOutputClosesBeforeReplace                     —— 替换之前真的关闭过数据集
+//   J4 VectorOutputMustNotOverwriteInput                         —— output == input 硬失败且输入完好
+//   J5 VectorVectorWritePointsAreStagedOrListed                  —— 半迁移态的承重名单（已迁移 == 3 / 待迁移 == 21）
+
+namespace {
+
+// 目标目录里的**普通文件**清单（升序）；目录不存在返回空。
+// WHY 列清单而不是 exists(某个名)：工单 J1 明确"不要只 exists() 一个名"——临时件机制最坏的
+// 泄漏形态是"多出一个谁都不认识的文件"，只有前后对撞整份清单才看得见它。
+std::vector<std::string> c3n1ListFiles(const fs::path& dir) {
+    std::vector<std::string> names;
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || ec) {
+        return names;
+    }
+    for (fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        std::error_code secer;
+        if (it->is_regular_file(secer) && !secer) {
+            names.push_back(it->path().filename().u8string());
+        }
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+std::string c3n1ReadWholeFile(const fs::path& path) {
+    std::ifstream ifs(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+}
+
+// 目录内每个文件的**全部字节**（文件名 → 内容）。工单说"记 md5 再比"，这里直接比字节：
+// md5 只是字节的代理，全字节比较是它的严格上界，且红了能顺带报出差异位置。
+std::map<std::string, std::string> c3n1CollectBytes(const fs::path& dir) {
+    std::map<std::string, std::string> out;
+    for (const auto& name : c3n1ListFiles(dir)) {
+        out[name] = c3n1ReadWholeFile(dir / fs::u8path(name));
+    }
+    return out;
+}
+
+// 两段字节的差异描述（空串 = 完全相同）。不打印内容本身：栅格/二进制产物动辄几十 KB，
+// 把整段吐进 gtest 日志既读不了，也会把真正的判点淹没。
+std::string c3n1ByteDiff(const std::string& expected, const std::string& actual) {
+    if (expected == actual) {
+        return {};
+    }
+    std::size_t pos = 0;
+    const std::size_t common = std::min(expected.size(), actual.size());
+    while (pos < common && expected[pos] == actual[pos]) {
+        ++pos;
+    }
+    return "首个不等字节 @ " + std::to_string(pos) + "（改前 " + std::to_string(expected.size()) +
+        " 字节 / 改后 " + std::to_string(actual.size()) + " 字节）";
+}
+
+std::string c3n1JoinNames(const std::vector<std::string>& names) {
+    std::string out;
+    for (const auto& name : names) {
+        out += " " + name;
+    }
+    return out;
+}
+
+// 把"旧产物逐字节不变 + 目录里不多一个文件 + 没有 *.gis-tmp-* 残留"三件事一次说完。
+// J1 与 J4 共用：两者的差别只在"这一次为什么会失败"，违约形态是同一族。
+void c3n1ExpectDirectoryUntouched(const fs::path& dir,
+                                  const std::vector<std::string>& beforeNames,
+                                  const std::map<std::string, std::string>& beforeBytes,
+                                  const char* what) {
+    const auto afterNames = c3n1ListFiles(dir);
+    const auto afterBytes = c3n1CollectBytes(dir);
+
+    std::string residue;
+    for (const auto& name : afterNames) {
+        if (name.find(".gis-tmp-") != std::string::npos) {
+            residue += " " + name;
+        }
+    }
+    EXPECT_TRUE(residue.empty())
+        << what << "：目标目录里残留了临时件（*.gis-tmp-*）：" << residue
+        << "；目录 = " << dir.u8string();
+
+    EXPECT_EQ(afterNames, beforeNames)
+        << what << "：目标目录的文件清单前后不一致"
+        << "；改前 =" << c3n1JoinNames(beforeNames)
+        << "；改后 =" << c3n1JoinNames(afterNames)
+        << "；目录 = " << dir.u8string();
+
+    for (const auto& [name, bytes] : beforeBytes) {
+        const auto after = afterBytes.find(name);
+        if (after == afterBytes.end()) {
+            ADD_FAILURE() << what << "：改前存在的文件不见了 —— " << name
+                          << "（" << bytes.size() << " 字节）；目录 = " << dir.u8string();
+            continue;
+        }
+        const std::string diff = c3n1ByteDiff(bytes, after->second);
+        EXPECT_TRUE(diff.empty())
+            << what << "：产物 " << name << " 的字节被改动 " << diff
+            << "；目录 = " << dir.u8string();
+    }
+}
+
+// 两只面的 GPKG 夹具 —— 与上面 writeTwoPolygonFixture 同一几何（非对称 L + 小矩形），
+// 但落到用例自己的目录里（不与其它用例共享产物， remove_all 才敢整目录对撞）。
+bool c3n1WriteTwoPolygonGpkg(const std::string& path) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    OGRFieldDefn nameField("name", OFTString);
+    if (layer->CreateField(&nameField) != OGRERR_NONE) {
+        GDALClose(ds);
+        return false;
+    }
+
+    auto addPolygon = [&](const char* name,
+                          const std::vector<std::pair<double, double>>& ring) {
+        OGRPolygon poly;
+        OGRLinearRing linearRing;
+        for (const auto& point : ring) {
+            linearRing.addPoint(point.first, point.second);
+        }
+        linearRing.addPoint(ring.front().first, ring.front().second);
+        poly.addRing(&linearRing);
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetField("name", name);
+        feat->SetGeometry(&poly);
+        const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+        return ok;
+    };
+
+    bool ok = addPolygon("A", {{0.0, 0.0}, {12.0, 0.0}, {12.0, 3.0},
+                               {4.0, 3.0}, {4.0, 8.0}, {0.0, 8.0}});
+    ok = addPolygon("B", {{20.0, 0.0}, {24.0, 0.0}, {24.0, 2.0}, {20.0, 2.0}}) && ok;
+    GDALClose(ds);
+    return ok;
+}
+
+// 同一只 L + 同一只小矩形的 Shapefile 版（J4 的 .shp 臂要的是"输入就是那个多文件集本身"，
+// 只有真 Shapefile 输入才能把"输出覆盖输入"这条打到 .shp + 边车上）。
+bool c3n1WritePolygonShapefile(const std::string& path) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    if (!driver) {
+        return false;
+    }
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    OGRFieldDefn nameField("name", OFTString);
+    if (layer->CreateField(&nameField) != OGRERR_NONE) {
+        GDALClose(ds);
+        return false;
+    }
+
+    auto addPolygon = [&](const char* name,
+                          const std::vector<std::pair<double, double>>& ring) {
+        OGRPolygon poly;
+        OGRLinearRing linearRing;
+        for (const auto& point : ring) {
+            linearRing.addPoint(point.first, point.second);
+        }
+        linearRing.addPoint(ring.front().first, ring.front().second);
+        poly.addRing(&linearRing);
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetField("name", name);
+        feat->SetGeometry(&poly);
+        const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+        return ok;
+    };
+
+    bool ok = addPolygon("A", {{0.0, 0.0}, {12.0, 0.0}, {12.0, 3.0},
+                               {4.0, 3.0}, {4.0, 8.0}, {0.0, 8.0}});
+    ok = addPolygon("B", {{20.0, 0.0}, {24.0, 0.0}, {24.0, 2.0}, {20.0, 2.0}}) && ok;
+    GDALClose(ds);
+    return ok;
+}
+
+// 三只点的折线 GPKG 夹具（vertices_extract 的既有执行用例 VectorVerticesExtractExecution
+// 用的就是这条 (0,0)-(5,5)-(10,0) ⇒ 这里复用同一份数据，期望 3 个顶点、包框 (0,0,10,5)）。
+bool c3n1WriteThreePointLineGpkg(const std::string& path) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("shapes", srs.get(), wkbLineString, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    OGRFieldDefn nameField("name", OFTString);
+    if (layer->CreateField(&nameField) != OGRERR_NONE) {
+        GDALClose(ds);
+        return false;
+    }
+    OGRLineString line;
+    line.addPoint(0, 0);
+    line.addPoint(5, 5);
+    line.addPoint(10, 0);
+    auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    feat->SetField("name", "A");
+    feat->SetGeometry(&line);
+    const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+    OGRFeature::DestroyFeature(feat);
+    GDALClose(ds);
+    return ok;
+}
+
+fs::path c3n1FreshDir(const std::string& tag) {
+    const fs::path dir = getTestDir() / fs::u8path("c3n1_" + tag);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    ec.clear();
+    fs::create_directories(dir, ec);
+    return dir;
+}
+
+// ".gpkg" → "gpkg"：夹具目录名里不要带点（点名目录带点会让 Windows 把它认成扩展名的一部分）。
+std::string c3n1ExtName(const char* ext) {
+    return std::string(ext + 1);
+}
+
+// 一次动作的结局，按"能否让用户拿到一句可读的失败"摊平成同一种形状。
+// WHY 要把"抛出"单独记下来而不让它掀掉整条用例：J4 要判的是"动作必须在任何删除/创建**之前**
+// 干净失败"，而今天（未迁移的实现）这条路径上抛的是 `fs::remove` 的 filesystem_error
+//（Windows 共享冲突：输入还开着就被删）——**掀桌子本身就是要抓的违约**，但它会顺带把
+// 同一条用例剩下的臂全部跳过 ⇒ 拿不到逐臂证据。摊平后每条臂都能给出自己的红/绿，
+// "抛了" 与 "没拦下来" 与 "拦下来了但消息没点名" 三种形态在日志里是可区分的。
+struct C3n1Run {
+    bool threw = false;
+    std::string throwMessage;
+    gis::framework::Result result;
+
+    std::string outcome() const {
+        if (threw) {
+            return "threw: " + throwMessage;
+        }
+        return (result.success ? "success: " : "fail: ") + result.message;
+    }
+};
+
+C3n1Run c3n1RunAction(gis::framework::IGisPlugin* plugin,
+                      const std::map<std::string, gis::framework::ParamValue>& params,
+                      gis::core::ProgressReporter& progress) {
+    C3n1Run run;
+    try {
+        run.result = plugin->execute(params, progress);
+    } catch (const std::exception& e) {
+        run.threw = true;
+        run.throwMessage = e.what();
+    }
+    return run;
+}
+
+} // namespace
+
+// ── J1：中途失败 ⇒ 旧产物逐字节不变 + 一个临时件都不留 ─────────────────────────────
+// 载体是取消式 reporter（本文件上面 T17 那一段的 T17CancellableProgress，同一个 TU 内直接复用，
+// 不需要产品代码里开任何测试缝）：第 3 次 onProgress 之后 isCancelled() 置真，
+// 下一次 throwIfCancelled() 抛 gis::core::CancelledException。boundary 的三个固定进度点
+//（0.1 / 0.2 / 0.35）都在 drv->Create 之后，抛出点落在要素写循环里（boundary 的循环体内
+// 就有 throwIfCancelled，见 vector_plugin_boundary.inc 循环里那三处）⇒ 此刻目标已经被打开、
+// 并且已经写进了至少一条要素，这正是"半截新产物"最容易落盘的时刻。
+// 两条格式臂：GPKG 是单文件产物；ESRI Shapefile 是多文件集 ⇒ "边车逐个替换 + 旧边车要等
+// 新件全部完工之后才清"这条（工单 §2.5）只有 .shp 臂能打到。
+// ⚠ 本条在**未迁移的实现**上必红：旧代码在 drv->Create 之前就把目标整个 fs::remove 掉
+//（16 个点走 removeExistingVectorOutput），且写的是真目标而不是临时件。
+TEST_F(PluginTest, VectorBoundaryMidFailureKeepsOldProductAndLeavesNoTempFile) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr) << "plugin not loaded: vector";
+
+    for (const char* ext : {".gpkg", ".shp"}) {
+        const std::string tag = std::string("j1_boundary_") + c3n1ExtName(ext);
+        const fs::path dir = c3n1FreshDir(tag);
+        ASSERT_TRUE(fs::exists(dir)) << "夹具目录建不出来：" << dir.u8string();
+
+        const std::string input = utf8PathString(dir / "shapes.gpkg");
+        ASSERT_TRUE(c3n1WriteTwoPolygonGpkg(input)) << "夹具写入失败：" << input;
+
+        const fs::path target = dir / fs::u8path(std::string("boundary_out") + ext);
+        const std::string targetPath = utf8PathString(target);
+
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("boundary");
+        params["input"] = input;
+        params["output"] = targetPath;
+
+        // ① 先跑一次不取消的，把"改前就存在的完好旧产物"做出来。
+        const auto first = p->execute(params, progress_);
+        ASSERT_TRUE(first.success)
+            << ext << "：前置产物没做出来，J1 无从谈起：" << first.message;
+        ASSERT_TRUE(fs::exists(target)) << ext << "：前置产物文件不存在：" << targetPath;
+
+        const auto beforeNames = c3n1ListFiles(dir);
+        const auto beforeBytes = c3n1CollectBytes(dir);
+        ASSERT_GE(beforeBytes.size(), 1u) << ext << "：前置产物目录是空的，夹具没生效";
+
+        // ② 再跑同一次动作，这次中途被取消。
+        const std::string whatStr = std::string("J1[") + ext + "] 中途取消";
+        T17CancellableProgress cancelling(3);
+        EXPECT_THROW(p->execute(params, cancelling), gis::core::CancelledException)
+            << whatStr << "：动作没有按取消抛出 CancelledException ⇒ 取消缝没打到写循环";
+
+        // ③④ 旧产物逐字节不变、目录前后一致、没有 *.gis-tmp-* 残留。
+        c3n1ExpectDirectoryUntouched(dir, beforeNames, beforeBytes, whatStr.c_str());
+    }
+}
+
+// ── J4：output == input 必须硬失败，而且输入要完好无损 ─────────────────────────────
+// 工单 §1 的说法是"16 个点在 drv->Create 之前 fs::remove(outputPath) ⇒ 输入文件被删掉"。
+// 现读复核（见 task-C3n1-report.md）：**删除动作确实在 Create 之前对着输入路径发**，但今天
+// 在这三个单输入动作上它的实际结局不是"输入没了"，而是 **fs::remove 抛出 filesystem_error**
+//（Windows 共享冲突：输入此刻还被本动作的 openVector(input, readOnly) 握在手里，而 GDAL 的
+// VSI 打开不带 FILE_SHARE_DELETE）⇒ 异常从 plugin->execute 一路甩出去（CLI 侧由 executeGuarded
+// 兜成 Result::fail + rc=1，插件 API 侧无人兜）。两种结局都违反"干净失败"这条契约。
+// 全仓零保护（`grep -rn "fs::equivalent|output == input" src/` 现读只有 nearest / spatial_join
+// 那两处，且都是输入 vs 输入）⇒ 本条在未迁移的实现上必红。
+// 两种拼法都要打：逐字同一个路径，以及指向同一个文件的 dir\.\work<ext> 拼法
+//（后者专打"拿字符串 == 当闸"那种假实现：字符串不同、文件相同，只有等价判定才拦得住）。
+// .shp 臂 additionally 钉"输入本身是多文件集"的形态（删边车会连 .dbf/.prj 一起删）。
+// 口径参照同插件 spatial_join 对"字段不存在"那条硬失败（Result::fail + 消息点名是哪件事），
+// 不自创第三种说法。
+TEST_F(PluginTest, VectorOutputMustNotOverwriteInput) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr) << "plugin not loaded: vector";
+
+    const char* const actions[] = { "boundary", "centroid", "vertices_extract" };
+
+    for (const char* action : actions) {
+        for (const char* ext : {".gpkg", ".shp"}) {
+            for (int spelling = 0; spelling < 2; ++spelling) {
+                const std::string tag =
+                    std::string("j4_") + action + "_" + c3n1ExtName(ext) +
+                    (spelling == 0 ? "_same" : "_dotslash");
+                const fs::path dir = c3n1FreshDir(tag);
+                ASSERT_TRUE(fs::exists(dir)) << dir.u8string();
+
+                const fs::path work = dir / fs::u8path(std::string("work") + ext);
+                const std::string workPath = utf8PathString(work);
+                const bool fixtureOk = (std::string(ext) == ".gpkg")
+                    ? c3n1WriteTwoPolygonGpkg(workPath)
+                    : c3n1WritePolygonShapefile(workPath);
+                ASSERT_TRUE(fixtureOk) << "夹具写入失败：" << workPath;
+
+                // output 的两种拼法：逐字同一个路径，或指向同一个文件的 dir\.\work<ext>。
+                // 第二条臂的意义在于"字符串不同、文件相同"⇒ 它专打"用 == 比字符串"那种假闸；
+                // 所以先钉住前提：两个串确实不等，否则这条臂会悄悄退化成第一条。
+                std::string output = workPath;
+                if (spelling == 1) {
+                    output = utf8PathString(dir / "." / fs::u8path(std::string("work") + ext));
+                    ASSERT_NE(output, workPath) << "拼法没造出差异，等价臂退化成同串臂";
+                }
+
+                const auto beforeNames = c3n1ListFiles(dir);
+                const auto beforeBytes = c3n1CollectBytes(dir);
+                ASSERT_GE(beforeBytes.size(), 1u) << "夹具目录是空的：" << dir.u8string();
+
+                std::map<std::string, gis::framework::ParamValue> params;
+                params["action"] = std::string(action);
+                params["input"] = workPath;
+                params["output"] = output;
+
+                const std::string what = std::string("J4[") + action + ext +
+                    (spelling == 0 ? "/same]" : "/dotslash]");
+
+                const C3n1Run run = c3n1RunAction(p, params, progress_);
+
+                EXPECT_FALSE(run.threw)
+                    << what << "：动作没有干净失败而是**抛出了**异常（" << run.outcome()
+                    << "）⇒ 删除/创建已经发生在本该拦住它的闸之前；契约要的是返回一个点名规则的"
+                    << "失败结果，而不是把 filesystem_error 甩给调用方";
+
+                EXPECT_FALSE(run.result.success)
+                    << what << "：输出覆盖输入这件事没有被硬失败拦下来（返回 success，"
+                    << "outcome = " << run.outcome() << "）";
+
+                if (!run.threw && !run.result.success) {
+                    EXPECT_NE(run.result.message.find("same file as input"), std::string::npos)
+                        << what << "：失败消息没有点名『输出不能覆盖输入』这条规则，实际 message = "
+                        << run.result.message;
+                }
+
+                c3n1ExpectDirectoryUntouched(dir, beforeNames, beforeBytes, what.c_str());
+            }
+        }
+    }
+}
+
+// ── J2：成功路径的产物形态一个字没变 ────────────────────────────────────────────────
+// 这条防的是"临时件机制把产物名搞错 / 把边车落错"：机制改的是**写到哪儿**，一旦 commit 的落点
+// 算错（例如 Shapefile 的 .dbf 落成了 .shp、或 GPKG 换名后 .gpkg-wal 留在目录里），
+// 要素数与几何看起来都对，但用户拿到的是一份开不了/属性表缺失的产物。
+// 判据比的是**产物本身**（层名、要素数、字段、CRS、rtree 可用性、目录里应有的那几个文件），
+// 不比"我们写了什么"（exercised ≠ conformant）。
+// 夹具一律复用同动作既有执行用例的那份（面类两条 = writeTwoPolygonFixture 的 A/B，
+// 折线一条 = VectorVerticesExtractExecution 的三点折线），期望数全部按夹具坐标手算写死。
+TEST_F(PluginTest, VectorStagedOutputKeepsProductForm) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr) << "plugin not loaded: vector";
+
+    struct Case {
+        const char* action;
+        const char* ext;
+        const char* outputName;
+        long long expectedFeatures;
+        double filterMinX;
+        double filterMinY;
+        double filterMaxX;
+        double filterMaxY;
+    };
+    // 三条动作都跑 GPKG；boundary 与 vertices_extract 各再跑一条 Shapefile 臂
+    //（Shapefile 是**多文件集** ⇒ 边车落点这一层只有 .shp 臂能判）。
+    const Case cases[] = {
+        { "boundary", ".gpkg", "form_boundary.gpkg", 2, 0.0, 0.0, 24.0, 8.0 },
+        { "centroid", ".gpkg", "form_centroid.gpkg", 2, 0.0, 0.0, 24.0, 8.0 },
+        { "vertices_extract", ".gpkg", "form_vertices.gpkg", 3, 0.0, 0.0, 10.0, 5.0 },
+        { "boundary", ".shp", "form_boundary.shp", 2, 0.0, 0.0, 24.0, 8.0 },
+        { "vertices_extract", ".shp", "form_vertices.shp", 3, 0.0, 0.0, 10.0, 5.0 },
+    };
+
+    for (const auto& item : cases) {
+        const std::string tag = std::string("j2_") + item.action + "_" + c3n1ExtName(item.ext) + "_form";
+        const fs::path dir = c3n1FreshDir(tag);
+        ASSERT_TRUE(fs::exists(dir)) << dir.u8string();
+
+        // 输入：面类两条用两只面，vertices_extract 用三点折线（与既有执行用例同一份数据）。
+        const std::string input = utf8PathString(dir / "shapes.gpkg");
+        if (std::string(item.action) == "vertices_extract") {
+            ASSERT_TRUE(c3n1WriteThreePointLineGpkg(input)) << input;
+        } else {
+            ASSERT_TRUE(c3n1WriteTwoPolygonGpkg(input)) << input;
+        }
+
+        const fs::path output = dir / fs::u8path(item.outputName);
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string(item.action);
+        params["input"] = input;
+        params["output"] = utf8PathString(output);
+
+        const std::string what = std::string("J2[") + item.action + item.ext + "]";
+        const C3n1Run run = c3n1RunAction(p, params, progress_);
+        ASSERT_FALSE(run.threw) << what << "：" << run.outcome();
+        ASSERT_TRUE(run.result.success) << what << "：" << run.result.message;
+        ASSERT_TRUE(fs::exists(output)) << what << "：产物不存在 " << output.u8string();
+
+        // 目录里只应留下"夹具 + 本轮产物"这一组文件：任何 *.gis-tmp-* 或 SQLite 附属件都算外物。
+        std::vector<std::string> expectedNames{ "shapes.gpkg" };
+        const std::string outputName{ item.outputName };
+        if (std::string(item.ext) == ".gpkg") {
+            expectedNames.push_back(outputName);
+        } else {
+            const std::string stem = outputName.substr(0, outputName.size() - 4);
+            expectedNames.push_back(stem + ".dbf");
+            expectedNames.push_back(stem + ".prj");
+            expectedNames.push_back(stem + ".shp");
+            expectedNames.push_back(stem + ".shx");
+        }
+        std::sort(expectedNames.begin(), expectedNames.end());
+        const auto actualNames = c3n1ListFiles(dir);
+        EXPECT_EQ(actualNames, expectedNames)
+            << what << "：目录里的文件集合不是『夹具 + 应有产物』这一组"
+            << "；实际 =" << c3n1JoinNames(actualNames)
+            << "；期望 =" << c3n1JoinNames(expectedNames)
+            << "；目录 = " << dir.u8string();
+
+        GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+            output.u8string().c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        ASSERT_NE(outDs, nullptr) << what << "：产物打不开（临时件换名后形态不对）";
+        OGRLayer* outLayer = outDs->GetLayer(0);
+        ASSERT_NE(outLayer, nullptr) << what << "：产物里没有图层";
+
+        // 层名的两种形状都要判，而且**两边不一样**：
+        //   GPKG ⇒ 动作把源层名（夹具里的 "shapes"）原样传给 CreateLayer ⇒ 产物层名就该是 "shapes"；
+        //   Shapefile ⇒ OGR 在**打开时**按文件名推层名（本机实测：boundary_out.shp 的
+        //     `ogrinfo -so -al` 报 `Layer name: boundary_out`）⇒ 换名之后读到的必须是目标名。
+        // 这一条就是把"临时件的名字漏进产物"钉死的地方：GPKG 那侧漏进来会是 "shapes" 变了，
+        // Shapefile 那侧漏进来会是 "boundary_out.gis-tmp-<pid>-<seq>"。
+        const std::string outputStem = std::string(item.outputName).substr(
+            0, std::string(item.outputName).find_last_of('.'));
+        const std::string expectedLayerName =
+            std::string(item.ext) == ".gpkg" ? std::string("shapes") : outputStem;
+        EXPECT_STREQ(outLayer->GetName(), expectedLayerName.c_str())
+            << what << "：产物层名不是期望值（期望 " << expectedLayerName
+            << "，临时件机制把名字写歪了就是这一条红）";
+
+        EXPECT_EQ(outLayer->GetFeatureCount(TRUE), item.expectedFeatures)
+            << what << "：产物要素数与夹具手算期望不符";
+
+        const OGRSpatialReference* outSrs = outLayer->GetSpatialRef();
+        ASSERT_NE(outSrs, nullptr) << what << "：产物没有 CRS（夹具是 EPSG:3857，.prj/gpkg_srs 都要在）";
+        const char* authority = outSrs->GetAuthorityCode(nullptr);
+        ASSERT_NE(authority, nullptr);
+        EXPECT_STREQ(authority, "3857") << what << "：产物 CRS 不是 EPSG:3857";
+
+        if (std::string(item.ext) == ".gpkg") {
+            // rtree 可用性沿用 C3m 那三条审计用例的同一支判据（行数 == 非空几何数 + 按包框查得到）。
+            expectGpkgSpatialIndexUsable(outLayer, item.expectedFeatures,
+                item.filterMinX, item.filterMinY, item.filterMaxX, item.filterMaxY,
+                utf8PathString(output));
+        }
+
+        // 字段集合：三个动作都是"照抄源字段"，vertices_extract 另加 source_fid / vertex_idx。
+        {
+            const auto* defn = outLayer->GetLayerDefn();
+            std::vector<std::string> fields;
+            for (int i = 0; i < defn->GetFieldCount(); ++i) {
+                fields.push_back(defn->GetFieldDefn(i)->GetNameRef());
+            }
+            std::sort(fields.begin(), fields.end());
+            std::vector<std::string> expectedFields{ "name" };
+            if (std::string(item.action) == "vertices_extract") {
+                expectedFields.push_back("source_fid");
+                expectedFields.push_back("vertex_idx");
+            }
+            std::sort(expectedFields.begin(), expectedFields.end());
+            EXPECT_EQ(fields, expectedFields)
+                << what << "：产物字段集合不符（Shapefile 截断到 10 字符是既有事实，这里两边同源）";
+        }
+
+        // 几何类别：boundary 出线、centroid 出点、vertices_extract 出点。
+        // ⚠ Shapefile 那一侧驱动会把 MultiLineString 拍平成 LineString（改前改后同形：
+        //   本机实测旧码产物 c3n1_j1_boundary_shp/boundary_out.shp 的 `ogrinfo -so -al` 报
+        //   `Geometry: Line String`）⇒ 期望值必须按**格式的既有事实**给，不许拿声明类型硬要。
+        OGRwkbGeometryType expectedType =
+            std::string(item.action) == "boundary" ? wkbMultiLineString : wkbPoint;
+        if (std::string(item.ext) == ".shp" && expectedType == wkbMultiLineString) {
+            expectedType = wkbLineString;
+        }
+        EXPECT_EQ(wkbFlatten(outLayer->GetLayerDefn()->GetGeomType()), expectedType)
+            << what << "：产物几何类别不符";
+        outLayer->ResetReading();
+        if (OGRFeature* feat = outLayer->GetNextFeature()) {
+            EXPECT_EQ(wkbFlatten(feat->GetGeometryRef()->getGeometryType()), expectedType)
+                << what << "：落盘要素的几何类别与图层声明不一致";
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(outDs);
+    }
+}
+
+// ── J3：替换之前真的关闭过数据集 ────────────────────────────────────────────────────
+// 工单 §2.3 把这条单独立一档：全插件今天 0 处显式 Close()，dstDS 靠作用域析构才 GDALClose
+// ⇒ "写完就改名"会撞在 GDAL 还握着句柄的时刻。本条判的是**结果合规**：
+//   ① GPKG 产物旁边不许有 -wal / -journal / -shm（没关闭就没收日志）；
+//   ② 产物能被独立打开并读到全部要素。
+// ⚠ 顺序本身的可证伪性在报告里做（反证臂：把 commit 里那句 close 删掉 ⇒ 替换在 Windows 上
+//   直接撞 ERROR_ACCESS_DENIED，动作报失败而不是假成功）。本用例只兜结果形态。
+TEST_F(PluginTest, VectorStagedOutputLeavesNoJournalSidecar) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr) << "plugin not loaded: vector";
+
+    const char* const actions[] = { "boundary", "centroid", "vertices_extract" };
+    for (const char* action : actions) {
+        const fs::path dir = c3n1FreshDir(std::string("j3_") + action);
+        ASSERT_TRUE(fs::exists(dir)) << dir.u8string();
+
+        const std::string input = utf8PathString(dir / "shapes.gpkg");
+        if (std::string(action) == "vertices_extract") {
+            ASSERT_TRUE(c3n1WriteThreePointLineGpkg(input)) << input;
+        } else {
+            ASSERT_TRUE(c3n1WriteTwoPolygonGpkg(input)) << input;
+        }
+
+        const std::string output = utf8PathString(dir / fs::u8path(
+            std::string("out_") + action + ".gpkg"));
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string(action);
+        params["input"] = input;
+        params["output"] = output;
+
+        const C3n1Run run = c3n1RunAction(p, params, progress_);
+        ASSERT_FALSE(run.threw) << action << "：" << run.outcome();
+        ASSERT_TRUE(run.result.success) << action << "：" << run.result.message;
+
+        const std::string base = output;
+        for (const char* suffix : { "-wal", "-journal", "-shm" }) {
+            const std::string sidecar = base + suffix;
+            EXPECT_FALSE(fs::exists(fs::u8path(sidecar)))
+                << "J3[" << action << "]：产物旁边留着 SQLite 附属件 " << sidecar
+                << " ⇒ 数据集没有在替换之前被真正关闭（或者旧产物的日志被留在了新产物旁边）";
+        }
+
+        const auto names = c3n1ListFiles(dir);
+        std::string residue;
+        for (const auto& name : names) {
+            if (name.find(".gis-tmp-") != std::string::npos) {
+                residue += " " + name;
+            }
+        }
+        EXPECT_TRUE(residue.empty())
+            << "J3[" << action << "]：成功路径之后目录里还有临时件" << residue;
+
+        // 独立打开一次并读到全部要素（"产物可用"而不是"我们自报写完"）。
+        GDALDataset* ds = static_cast<GDALDataset*>(GDALOpenEx(
+            output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        ASSERT_NE(ds, nullptr) << "J3[" << action << "]：产物打不开";
+        OGRLayer* layer = ds->GetLayer(0);
+        ASSERT_NE(layer, nullptr);
+        EXPECT_GT(layer->GetFeatureCount(TRUE), 0) << "J3[" << action << "]：产物里 0 个要素";
+        GDALClose(ds);
+    }
+}
+
+// ── J5：结构守卫 ──「现在是半迁移态」必须承重 ──────────────────────────────────────
+// 半迁移态最坏的结局不是"某个点还没改"，而是**大家以为契约已经全覆盖了**。所以名单必须承重，
+// 而且双向可红（工单 §4：改分发/路由类机制必须配一条双向可红的断言）：
+//   ① 已迁移点数 == 写死的"已迁移名单"条数（== 3；不是"≥1"，≥1 会让 C3n-2 做完也测不出东西）；
+//   ② 待迁移名单 == 21 条、逐条点名，每条都要在源码里真的数到一处直接写 output 的建数据集；
+//   ③ 名单**外**若出现任何一处仍以 output 直接建数据集 ⇒ 红（新写的点、或别人绕开名单改的点）；
+//   ④ 名单**里**的点如果被迁移完了而名单没减 ⇒ 也红（防名单变死条目）；
+//   ⑤ 全目录 drv->Create 的总数也要对上账（1 处 helper + 21 处待迁 + 1 处论域外 = 23），
+//      这样"新加一个写出点却不进任何名单"同样会红。
+// 论域现读（工单 §1，本刀开工时复核过）：`grep -rn "drv->Create(" src/plugins/vector/` = 25 处，
+//   本刀迁走 3 处、helper 里新增 1 处 ⇒ 23。doRasterize（写的是栅格）按用户裁定留在射程之外，
+//   但它仍然是一个"直接写 output 的建数据集点"，所以**单独点名登记**在这一支里，
+//   免得它被 ③ 当成名单外命中，也免得它被误当成已覆盖。
+// 判据的形：只认 (文件, 动作函数) 这一对**函数级**坐标，不认行号（行号会随任何一次改动漂移）。
+// （GIS_SOURCE_DIR 这个编译宏由 tests/CMakeLists.txt 发，本文件上面 C3m 那条源码守卫也用同一个。）
+TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
+    // 已迁移动作（本刀射程 = 第一段，工单 §4）。
+    static const std::vector<std::pair<std::string, std::string>> kStagedActions = {
+        { "vector_plugin_boundary.inc", "doBoundary" },
+        { "vector_plugin_centroid.inc", "doCentroid" },
+        { "vector_plugin_vertices_extract.inc", "doVerticesExtract" },
+    };
+    // 待迁移名单：24 个矢量写出点里扣掉上面 3 个 ⇒ 21 条，逐条点名（C3n-2 一条一条划掉）。
+    static const std::vector<std::pair<std::string, std::string>> kPendingActions = {
+        { "vector_plugin_buffer_clip.inc", "doBuffer" },
+        { "vector_plugin_buffer_clip.inc", "doClip" },
+        { "vector_plugin_convex_hull.inc", "doConvexHull" },
+        { "vector_plugin_dissolve.inc", "doDissolve" },
+        { "vector_plugin_endpoints_extract.inc", "doEndpointsExtract" },
+        { "vector_plugin_envelope.inc", "doEnvelope" },
+        { "vector_plugin_geom_metrics.inc", "doGeomMetrics" },
+        { "vector_plugin_info_filter.inc", "doFilter" },
+        { "vector_plugin_interior_point.inc", "doInteriorPoint" },
+        { "vector_plugin_midpoints_extract.inc", "doMidpointsExtract" },
+        { "vector_plugin_nearest.inc", "doNearest" },
+        { "vector_plugin_overlay.inc", "doUnion" },
+        { "vector_plugin_overlay.inc", "doDifference" },
+        { "vector_plugin_overlay.inc", "doIntersect" },
+        { "vector_plugin_raster_convert.inc", "doPolygonize" },
+        { "vector_plugin_raster_convert.inc", "doConvert" },
+        { "vector_plugin_repair.inc", "doRepair" },
+        { "vector_plugin_simplify.inc", "doSimplify" },
+        { "vector_plugin_singlepart.inc", "doSinglepart" },
+        { "vector_plugin_sliver_remove.inc", "doSliverRemove" },
+        { "vector_plugin_spatial_join.inc", "doSpatialJoin" },
+    };
+    // 论域之外但**仍是直接写 output** 的那一个点（写栅格，用户裁定"先限 vector 的矢量输出"）。
+    static const std::pair<std::string, std::string> kOutsideDomain = {
+        "vector_plugin_raster_convert.inc", "doRasterize",
+    };
+
+    EXPECT_EQ(kPendingActions.size(), 21u)
+        << "待迁移名单本身不是 21 条 ⇒ 这条守卫的账先就错了（本刀射程 24 = 已迁 3 + 待迁 21）";
+
+    const fs::path dir = fs::u8path(std::string(GIS_SOURCE_DIR) + "/src/plugins/vector");
+    ASSERT_TRUE(fs::exists(dir))
+        << "扫描根不存在 ⇒ 这条守卫没在扫任何东西，判红而不是放过：" << dir.u8string();
+
+    // (文件, 函数) → 该函数体内 drv->Create( 的第一实参清单
+    std::map<std::pair<std::string, std::string>, std::vector<std::string>> createArgs;
+    std::map<std::pair<std::string, std::string>, int> stagedDeclarations;
+    std::size_t scannedFiles = 0;
+    std::size_t totalCreates = 0;
+    bool sawHelper = false;
+
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        std::error_code secer;
+        if (!it->is_regular_file(secer) || secer) {
+            continue;
+        }
+        const fs::path path = it->path();
+        const std::string filename = path.filename().u8string();
+        const std::string ext = path.extension().u8string();
+        if (ext != ".inc" && ext != ".cpp") {
+            continue;
+        }
+        ++scannedFiles;
+        std::ifstream in(path, std::ios::binary);
+        ASSERT_TRUE(in.is_open()) << "射程内的文件读不开，判据无法覆盖它：" << path.u8string();
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+        // 按源码文本切函数： Gis 插件的 .inc 里每个动作都是一个
+        // `gis::framework::Result VectorPlugin::doXxx(` 开头，helper 那一个在 common.inc 的类里。
+        std::string currentFunction;
+        std::size_t pos = 0;
+        while (pos < text.size()) {
+            const std::size_t eol = text.find('\n', pos);
+            const std::size_t stop = (eol == std::string::npos) ? text.size() : eol;
+            const std::string line = text.substr(pos, stop - pos);
+            pos = stop + 1;
+
+            const std::size_t fnAt = line.find("gis::framework::Result VectorPlugin::");
+            if (fnAt != std::string::npos) {
+                const std::size_t marker = line.find("VectorPlugin::");
+                currentFunction = line.substr(marker + 14);
+                const std::size_t paren = currentFunction.find('(');
+                if (paren != std::string::npos) {
+                    currentFunction = currentFunction.substr(0, paren);
+                }
+                continue;
+            }
+            if (line.find("bool start(const std::string& output") != std::string::npos) {
+                currentFunction = "VectorStagedOutput::start";
+                continue;
+            }
+            // 注释行一律不参与计数：WHY 注释里会提"drv->Create""VectorStagedOutput"这些名字
+            //（本仓已经吃过一次"为解释某事写的注释污染了数那件事的 grep"）。
+            std::size_t indent = 0;
+            while (indent < line.size() && (line[indent] == ' ' || line[indent] == '\t')) {
+                ++indent;
+            }
+            if (line.compare(indent, 2, "//") == 0) {
+                continue;
+            }
+
+            const std::size_t createAt = line.find("drv->Create(");
+            if (createAt != std::string::npos && !currentFunction.empty()) {
+                const std::size_t argStart = createAt + 12;
+                const std::size_t comma = line.find(',', argStart);
+                const std::size_t argStop = (comma == std::string::npos) ? line.size() : comma;
+                createArgs[{ filename, currentFunction }].push_back(
+                    line.substr(argStart, argStop - argStart));
+                ++totalCreates;
+                if (currentFunction == "VectorStagedOutput::start") {
+                    sawHelper = true;
+                }
+            }
+
+            const std::size_t stagedAt = line.find("VectorStagedOutput staged");
+            if (stagedAt != std::string::npos && !currentFunction.empty()) {
+                ++stagedDeclarations[{ filename, currentFunction }];
+            }
+        }
+    }
+    EXPECT_FALSE(bool(ec)) << "目录扫描中断于：" << ec.message();
+
+    // 三道"不许空跑"闸（本仓同族守卫都带；少了它们，扫描根写错就能让全部判点假绿）。
+    ASSERT_GE(scannedFiles, 30u)
+        << "只扫到 " << scannedFiles << " 个 *.inc|*.cpp ⇒ 判据在空跑，扫描根是：" << dir.u8string();
+    EXPECT_TRUE(sawHelper)
+        << "没在 vector_plugin_common.inc 里扫到 VectorStagedOutput::start 里的 drv->Create "
+        << "⇒ helper 没进射程，①②③④⑤ 全是假绿";
+
+    // ① 已迁移点数 == 名单条数（== 3），且必须是**点名**命中而不是"扫到了就叫"。
+    std::size_t stagedCount = 0;
+    for (const auto& entry : stagedDeclarations) {
+        stagedCount += static_cast<std::size_t>(entry.second);
+    }
+    EXPECT_EQ(stagedCount, kStagedActions.size())
+        << "已迁移点数与'已迁移名单'条数不符（实际数到 " << stagedCount
+        << "，名单写的是 " << kStagedActions.size()
+        << "）⇒ 本刀的第一段要么多迁了、要么少迁了，名单必须一起改";
+    for (const auto& entry : kStagedActions) {
+        EXPECT_GT(stagedDeclarations[entry], 0)
+            << "已迁移名单里的 " << entry.first << "::" << entry.second
+            << " 在源码里数不到 VectorStagedOutput ⇒ 名单变死条目";
+        // 迁进临时件机制之后，这个函数体内**不该再有**直接写 output 的建数据集点。
+        EXPECT_EQ(createArgs[entry].size(), 0u)
+            << "已迁移的 " << entry.first << "::" << entry.second
+            << " 里还留着直接建到 output 的写出点 ⇒ 契约在这个点上没生效";
+    }
+
+    // ② 待迁移名单逐条点名：每条都要真的数到一处 `output.c_str()`。
+    for (const auto& entry : kPendingActions) {
+        const auto it = createArgs.find(entry);
+        ASSERT_NE(it, createArgs.end())
+            << "待迁移名单里的 " << entry.first << "::" << entry.second
+            << " 在源码里已经数不到 drv->Create ⇒ 它已经被迁走了，名单必须减（工单 §4④）";
+        int direct = 0;
+        for (const auto& arg : it->second) {
+            if (arg.find("output.c_str()") != std::string::npos) {
+                ++direct;
+            }
+        }
+        EXPECT_GE(direct, 1)
+            << entry.first << "::" << entry.second << " 的 drv->Create 第一实参不是 output.c_str()："
+            << "要么已被迁移（名单要减），要么写成了第三种形态";
+    }
+
+    // ③ + ⑤ 名单外不许出现直接写 output 的点；总账也要对上。
+    std::string offenders;
+    std::size_t directTotal = 0;
+    for (const auto& entry : createArgs) {
+        if (entry.first.second == "VectorStagedOutput::start") {
+            continue;   // helper 自己那处发的就是临时件路径
+        }
+        for (const auto& arg : entry.second) {
+            if (arg.find("output.c_str()") == std::string::npos) {
+                continue;
+            }
+            ++directTotal;
+            const bool listed = std::find(kPendingActions.begin(), kPendingActions.end(), entry.first)
+                != kPendingActions.end();
+            const bool outside = (entry.first == kOutsideDomain);
+            if (!listed && !outside) {
+                offenders += "\n  " + entry.first.first + "::" + entry.first.second;
+            }
+        }
+    }
+    EXPECT_TRUE(offenders.empty())
+        << "名单外出现了仍以 output 直接建数据集的矢量写出点：" << offenders
+        << " ⇒ 要么是新加的写出点没进名单，要么是有人绕开机制自己写";
+    EXPECT_EQ(directTotal, kPendingActions.size() + 1u)
+        << "直接写 output 的建数据集点总数对不上账（数到 " << directTotal
+        << "，期望 21 个待迁移 + 1 个论域外的 doRasterize = 22）";
+    EXPECT_EQ(totalCreates, directTotal + 1u)
+        << "drv->Create( 的总数对不上账（数到 " << totalCreates << "，期望 "
+        << directTotal + 1u << "）⇒ 有新的写出点没被任何名单接住";
+
+    // ⑥ 已迁移的三个点必须**真的用上**替换收口，而不是只 new 了个对象放着。
+    for (const auto& entry : kStagedActions) {
+        EXPECT_GT(stagedDeclarations[entry], 0) << entry.first << "::" << entry.second;
+    }
+}

@@ -27,7 +27,16 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+// 失败契约载体（vector_plugin_common.inc 的 VectorStagedOutput）在临时件名里要带进程号：
+// Windows 走上面那个 <windows.h> 的 GetCurrentProcessId()，其余平台走 getpid()。
+// 本仓现规是跟着 #ifdef _WIN32 的既有形态走（vector_plugin.cpp / runtime_env.cpp /
+// framework/plugin_manager.cpp 那批都是这个形状），不自创一套平台宏。
+#include <unistd.h>
 #endif
+
+// 临时件序号的进程内自增计数器（同一进程两个动作同时写同一个目标名也不许撞临时件名）。
+#include <atomic>
 
 namespace gis::plugins {
 

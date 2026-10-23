@@ -38,13 +38,14 @@ gis::framework::Result VectorPlugin::doCentroid(
         return gis::framework::Result::fail("Cannot get driver for format: " + outFormat);
     }
 
-    ensureParentDirectoryForFile(output);
-    removeExistingVectorOutput(output, outFormat);
-
-    auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
-    if (!dstDS) {
-        return gis::framework::Result::fail("Cannot create output file: " + output);
+    // 失败契约的入口闸（等价判定"输出不得覆盖输入"）走在任何建目录/建文件之前，
+    // 所以 ensureParentDirectoryForFile 这件事也归 staged.start 自己做，不在这里先动文件系统。
+    VectorStagedOutput staged;
+    std::string stageError;
+    if (!staged.start(output, outFormat, { input }, drv, stageError)) {
+        return gis::framework::Result::fail(stageError);
     }
+    GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
     std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
@@ -112,6 +113,13 @@ gis::framework::Result VectorPlugin::doCentroid(
 
     delete srcSRS;
     progress.throwIfCancelled();
+
+    // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
+    std::string commitError;
+    if (!staged.commit(commitError)) {
+        return gis::framework::Result::fail(commitError);
+    }
+
     progress.onProgress(1.0);
 
     auto result = gis::framework::Result::ok(
