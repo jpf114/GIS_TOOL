@@ -6366,6 +6366,25 @@ TEST_F(PluginTest, VectorSpatialJoinWritesJoinCountAndValue) {
         joinFeat->SetGeometry(&joinPoly);
         ASSERT_EQ(joinLayer->CreateFeature(joinFeat), OGRERR_NONE);
         OGRFeature::DestroyFeature(joinFeat);
+
+        // 第二条只与 src_a 相交、值不同；第三条也与 src_a 相交但**值与第一条重**。
+        // 三条合起来钉的是实现里两条不同口径（现读 vector_plugin_spatial_join.inc:135-160）：
+        //   join_count 数**所有**相交的 join 要素（不去重）⇒ src_a = 3；
+        //   join_value 只拼**去重后**的值、按 encounter order（join 层的读取序 = 插入序）⇒ "join_a;join_b"。
+        // 只有一条 join 时这两条口径长得一模一样（都是 1 / "join_a"），谁都分不清 ⇒ 必须三条并存。
+        auto* joinFeat2 = OGRFeature::CreateFeature(joinLayer->GetLayerDefn());
+        joinFeat2->SetField("label", "join_b");
+        OGRPolygon joinPoly2 = makeRect(0, 0, 50, 50);
+        joinFeat2->SetGeometry(&joinPoly2);
+        ASSERT_EQ(joinLayer->CreateFeature(joinFeat2), OGRERR_NONE);
+        OGRFeature::DestroyFeature(joinFeat2);
+
+        auto* joinFeat3 = OGRFeature::CreateFeature(joinLayer->GetLayerDefn());
+        joinFeat3->SetField("label", "join_a");
+        OGRPolygon joinPoly3 = makeRect(60, 60, 90, 90);
+        joinFeat3->SetGeometry(&joinPoly3);
+        ASSERT_EQ(joinLayer->CreateFeature(joinFeat3), OGRERR_NONE);
+        OGRFeature::DestroyFeature(joinFeat3);
         GDALClose(joinDs);
     }
 
@@ -6389,6 +6408,8 @@ TEST_F(PluginTest, VectorSpatialJoinWritesJoinCountAndValue) {
     EXPECT_EQ(outLayer->GetFeatureCount(FALSE), 2);
 
     std::map<std::string, std::pair<int, std::string>> actual;
+    struct PreservedGeom { double area; double minX; double minY; double maxX; double maxY; };
+    std::map<std::string, PreservedGeom> geom;
     outLayer->ResetReading();
     OGRFeature* outFeat = nullptr;
     while ((outFeat = outLayer->GetNextFeature()) != nullptr) {
@@ -6396,14 +6417,48 @@ TEST_F(PluginTest, VectorSpatialJoinWritesJoinCountAndValue) {
             outFeat->GetFieldAsInteger("join_count"),
             outFeat->GetFieldAsString("join_value")
         };
+        // 空间连接**只加字段、不动几何**（实现里 dstFeat->SetGeometry(srcGeom)，
+        // vector_plugin_spatial_join.inc:150）⇒ 每条源要素的面积与包框必须逐字不变。
+        // 这一组断言钉的是"把 join 做成交集/并集"那一族坏法：那种实现下 src_a 的几何会缩成
+        // 与 join_a 的重叠块，join_count/join_value 却照样算得对，上面四条一个都发现不了。
+        const OGRGeometry* outGeom = outFeat->GetGeometryRef();
+        ASSERT_NE(outGeom, nullptr);
+        PreservedGeom pg{};
+        if (const OGRSurface* surface = dynamic_cast<const OGRSurface*>(outGeom)) {
+            pg.area = surface->get_Area();
+        } else if (const OGRGeometryCollection* collection =
+                       dynamic_cast<const OGRGeometryCollection*>(outGeom)) {
+            pg.area = collection->get_Area();
+        }
+        OGREnvelope outEnv;
+        outGeom->getEnvelope(&outEnv);
+        pg.minX = outEnv.MinX;
+        pg.minY = outEnv.MinY;
+        pg.maxX = outEnv.MaxX;
+        pg.maxY = outEnv.MaxY;
+        geom[outFeat->GetFieldAsString("name")] = pg;
         OGRFeature::DestroyFeature(outFeat);
     }
 
     ASSERT_EQ(actual.size(), 2u);
-    EXPECT_EQ(actual["src_a"].first, 1);
-    EXPECT_EQ(actual["src_a"].second, "join_a");
+    EXPECT_EQ(actual["src_a"].first, 3);
+    EXPECT_STREQ(actual["src_a"].second.c_str(), "join_a;join_b");
     EXPECT_EQ(actual["src_b"].first, 0);
     EXPECT_TRUE(actual["src_b"].second.empty());
+
+    // 夹具里两块源面都是 100×100 ⇒ 面积各自恰好 10 000，包框就是写入时那两个矩形。
+    ASSERT_EQ(geom.count("src_a"), 1u);
+    EXPECT_NEAR(geom["src_a"].area, 10000.0, 1e-9);
+    EXPECT_NEAR(geom["src_a"].minX, 0.0, 1e-9);
+    EXPECT_NEAR(geom["src_a"].minY, 0.0, 1e-9);
+    EXPECT_NEAR(geom["src_a"].maxX, 100.0, 1e-9);
+    EXPECT_NEAR(geom["src_a"].maxY, 100.0, 1e-9);
+    ASSERT_EQ(geom.count("src_b"), 1u);
+    EXPECT_NEAR(geom["src_b"].area, 10000.0, 1e-9);
+    EXPECT_NEAR(geom["src_b"].minX, 150.0, 1e-9);
+    EXPECT_NEAR(geom["src_b"].minY, 0.0, 1e-9);
+    EXPECT_NEAR(geom["src_b"].maxX, 250.0, 1e-9);
+    EXPECT_NEAR(geom["src_b"].maxY, 100.0, 1e-9);
     GDALClose(outDs);
 }
 

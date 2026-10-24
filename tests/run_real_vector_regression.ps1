@@ -2650,6 +2650,36 @@ function Validate-CaseOutputs {
         "spatial_join_focus" {
             Assert-CountEquals -Text $Case.Output -Pattern "Spatial join completed: (\d+) features" -Expected $InputFeatureCount -Label "spatial_join_focus"
             Assert-Condition -Condition (Test-Path (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")) -Message "spatial_join_focus output missing"
+            # C3c-C2：这条腿此前只判"CLI 自报的要素数 + 文件在场"。补三条**产物侧**判据，钉的是
+            # doSpatialJoin 的三条输出契约（现读 vector_plugin_spatial_join.inc:75-97 与 :150）：
+            #   层名 = **源层名原样**（不是重命名）、字段 = 输入 9 个 + join_count（本用例没点 join_field
+            #   ⇒ 按契约不该有 join_value，这一条同时挡住"无条件加两个字段"的坏实现）、
+            #   **几何不许动**（实现里 dstFeat->SetGeometry(srcGeom)）⇒ 产物包框必须与输入现读的包框逐边相等。
+            # 期望来源全是输入侧：要素数 = $InputFeatureCount（由 $roadsStats 现读）、包框 = $roadsStats、
+            # 字段名单 = $script:RoadsCoreFieldNames（单点定义，与 info_roads/buffer_quick 同一份）。
+            $joinOutPath = Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg"
+            $joinInfo = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $joinOutPath `
+                -ScratchDir $ResolvedOutputRoot -Label "spatial_join_focus_output"
+            Assert-Condition -Condition ($joinInfo.FeatureCount -eq $InputFeatureCount) -Message (
+                "spatial_join_focus: output has " + $joinInfo.FeatureCount + " feature(s), input has " + $InputFeatureCount)
+            Assert-Condition -Condition ($joinInfo.LayerName -ceq $script:RoadsCoreLayerName) -Message (
+                "spatial_join_focus: LayerName='" + $joinInfo.LayerName + "', expected source name '" +
+                $script:RoadsCoreLayerName + "'")
+            $expectedJoinFields = @($script:RoadsCoreFieldNames + @("join_count"))
+            Assert-Condition -Condition (($joinInfo.FieldNames -join ",") -ceq ($expectedJoinFields -join ",")) -Message (
+                "spatial_join_focus: fields '" + ($joinInfo.FieldNames -join ",") + "' != input 9 + join_count '" +
+                ($expectedJoinFields -join ",") + "' (this case passes no join_field, so join_value must be absent)")
+            Assert-Condition -Condition ($joinInfo.Geometry -ceq "MultiLineString") -Message (
+                "spatial_join_focus: Geometry='" + $joinInfo.Geometry + "', expected MultiLineString")
+            Assert-Condition -Condition ($joinInfo.Crs -ceq "EPSG:4326") -Message (
+                "spatial_join_focus: CRS='" + $joinInfo.Crs + "', expected EPSG:4326 (bj_roads_core is a geographic-CRS layer)")
+            $joinLargestAbs = 0.0
+            foreach ($v in @($roadsStats.MinX, $roadsStats.MaxX, $roadsStats.MinY, $roadsStats.MaxY)) {
+                if ([Math]::Abs([double]$v) -gt $joinLargestAbs) { $joinLargestAbs = [Math]::Abs([double]$v) }
+            }
+            Assert-ExtentEqualTo -Expected $roadsStats -Actual $joinInfo `
+                -Tolerance ([Math]::Max($joinLargestAbs * $script:C3fExtentRelativeTolerance, 1e-9)) `
+                -Label "spatial_join_focus"
         }
         "union_focus" {
             $unionCount = Get-ReportedCount -Text $Case.Output -Pattern "Union completed: (\d+) features" -Label "union_focus"

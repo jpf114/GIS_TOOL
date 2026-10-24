@@ -895,6 +895,40 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     - 本片缺口：`difference` 的三条真实腿（`difference_focus` / `_far` / `_stress`）仍只判**消息里的要素数**，
       层名与几何类族契约在 22 836 要素的量级上没判 —— 与 buffer 那条同为"结构判据在合成夹具承重、
       真实腿判数量级"的分工；面积侧真实腿无从手算（省界不是可手推的坐标），保持不判。
+  - **批次 C C3c-C2（spatial_join 两条口径 + "几何不许动"）**：
+    - **夹具从 1 条 join 加到 3 条**（join_a 与 src_a 角部重叠、join_b 与 src_a 另一角重叠、第三条与 src_a 重叠但
+      **值和第一条重**）。WHY 必须三条：实现里 `join_count` 数**所有**相交要素、`join_value` 只拼**去重后**的值
+      且按 encounter order（现读 `vector_plugin_spatial_join.inc:135-160`）⇒ 只有一条 join 时这两条口径
+      **长得一模一样**（1 / "join_a"），"计数也去重"和"值不去重"两种坏法都无法判。三条并存的期望是手推的：
+      `src_a.join_count == 3`、`src_a.join_value == "join_a;join_b"`、`src_b` 全零。
+    - **新增"几何不许动"这一半**：`doSpatialJoin` 里 `dstFeat->SetGeometry(srcGeom)` ⇒ 每条源要素的面积与包框
+      必须逐字不变（两块 100×100 ⇒ 面积各 10 000、包框各 (0,0)-(100,100) 与 (150,0)-(250,100)）。
+      这一组断言的存在理由很具体：**把连接做成交集/缓冲那一族坏法，join_count 与 join_value 照样算得对**，
+      上面那些一个都发现不了。
+    - **判别取证**：F1 `++joinCount` 挪进去重分支 ⇒ 红 :6444（2 vs 3）；F2 摘掉 `seenValues` 判重 ⇒ 红 :6445
+      （"join_a;join_b;join_a"）；F3 把 `SetGeometry(srcGeom)` 换成 `SetGeometry(srcGeom->Buffer(1.0))` ⇒
+      **只有新数值臂红**（:6451-6461，面积差 403.14016、四边各差 1），`join_count`/`join_value` 两条全绿。
+      顺带第三次独立验证了那套圆头模型：100×100 面外扩 1 的锐角面积 10 404 减去四角补的 `(4−π)·1²`
+      = **10 403.14016**，实测 **10 403.1401574**。
+    - **真实腿 `spatial_join_focus` 补五条产物侧判据**（原来只有"CLI 自报要素数 + 文件在场"）：层名 = **源层名原样**
+      （`CreateLayer(srcLayer->GetName(), …)`，不是重命名）、字段 = 输入 9 个 + `join_count`
+      （本用例没点 `join_field` ⇒ 按契约**不该**有 `join_value`，这一条同时挡住"无条件加两个字段"）、
+      几何类族 `MultiLineString`、CRS `EPSG:4326`、**包框与输入现读逐边相等**。期望来源全是输入侧
+      （`$InputFeatureCount` / `$roadsStats` / `$script:RoadsCoreFieldNames` 单点名单）。
+      同一变异 F3b 在这一跑红在包框那条：`worst boundary offset 1 > tolerance 0.00117451`；恢复后整腿
+      192.72 / 196.45 s ⇒ 630 ÷ 196.45 = **3.21×**，**没抬 TIMEOUT**。
+    - **我当场违反的一条老规矩**（登记防复发）：我往 `.ps1` 的**字符串字面量**里写了中文与 `⇒`，
+      PS 5.1 按 ANSI 解无 BOM 的 UTF-8 ⇒ 某个字节序列被解成裸引号，整脚本 `ParseErrors=34`（ParserError，
+      整条腿 2 s 就红）。改成 ASCII 字面量后 `ParseErrors=0`，且现扫我这一带 2650-2690 行**只剩 ASCII 字面量**
+      （文件里 7 处历史非 ASCII 字面量不是我这次引入的，也没被这次改动碰到）。
+      抓它的正是每次改 runner 后都要跑的那条 `Parser::ParseFile` 检查 ⇒ **这条检查不能省**。
+    - **登记**：`vector,spatial_join` PENDING→GOLD（证据用例 `PluginTest.VectorSpatialJoinWritesJoinCountAndValue`），
+      `kPendingCeiling` **51 → 50**，头部 COUNT 按声明行自带命令重跑（data_rows 126 / gold_rows 76 /
+      pending_rows 50 / all_lines 77 / table_driven 15 ⇒ literal_slot 61）。覆盖族 + 乱码守卫 + 两条
+      `VectorSpatialJoin*` **22/22** 绿。**注册数 747 不变**（本片只撑大既有用例的块体与夹具，没加 `TEST_F` ——
+      这次是先跑了 `-N` 再写这句）。vector 侧只剩 **1** 行 PENDING：`polygonize`。
+    - 本片缺口：真实腿不判 `join_count` 的**分布**（要逐要素求和，runner 这一层没有属性求和读数）；
+      `spatial_join` 的多值拼接顺序依赖 join 层读取序，这一点由合成夹具钉住、真实腿不钉。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
