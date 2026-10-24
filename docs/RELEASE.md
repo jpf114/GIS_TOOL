@@ -834,6 +834,21 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       **按组标分发**的（加第二条用例得先改分发结构，风险大于收益）⇒ 挂到 C3c-C 一起裁。(2) `doDissolve`
       写出段那三处 `result = nullptr; … delete result;`（同一变量先置空再 delete 的空转，不是缺陷但读起来
       像 use-after-free）留给 C3h-2b 冗余/一致性批。(3) `dissolve` 的 GEOS 失败分支按用户裁定无判据（N135 家族）。
+  - **批次 C C3c-C0（rasterize 那行是陈旧状态，翻行不改代码）**：C3j 修 N132/N133/N134 时给
+    `PluginTest.VectorRasterizeBurnsAttributeFieldAndReportsMetadata` 写了**手算逐像元**判据
+    （4×4 夹具里 A 只盖 (i=0,j=3) 一个像元、B 盖 (2,0)(3,0) 两个 ⇒ `EXPECT_NEAR(sum, 13.0, 1e-4)` 加
+    三条逐位置 `EXPECT_EQ` 与"值集合 ⊆ {0,3,5}"），但登记表的 `vector,rasterize` 一直没翻 ⇒
+    那一行是**登记面的漂移**，不是覆盖面的缺口。本轮按块体现读全部 7 个
+    `Vector{Difference,SpatialJoin}*` 用例块（含 Srs 拒绝臂、GPKG 索引臂与 N139 拒写臂，块边界由括号配对导出、
+    判宏前先剥行注释）⇒ **没有一块**含 `EXPECT_NEAR` / `EXPECT_DOUBLE_EQ` / `EXPECT_FLOAT_EQ`；
+    `polygonize` 根本没有专属执行用例（只在 J4/J5 的临时件表驱动里作为动作名出现）
+    ⇒ 这三行是真缺，归 C3c-C1~C3 补。
+    翻行后 `kPendingCeiling` **53 → 52**、头部 COUNT 按声明行自带命令重跑
+    （data_rows 126 / gold_rows 74 / pending_rows 52 / all_lines 75 / table_driven 15 ⇒ literal_slot 59）；
+    覆盖族 **19/19 绿**就是这次翻行的机器级凭据 —— `CoverageMeta.GoldEvidenceIsAuditable` 会剥掉注释后
+    回读第 4 列那个块体，核"同一个块里既有 `"vector"` 又有把 `"rasterize"` 送进动作槽的形状、且仍有数值断言"，
+    所以这不是我给自己发的合格章。注册数**不变 745 / 743**。真实腿 `rasterize_bbox` 早在 C3b-A 就在场
+    （0.11 s 级，归 overlay_buffer_join）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
