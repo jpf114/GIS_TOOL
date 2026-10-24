@@ -36,7 +36,9 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 744 / Release 742**（2026-10-24 批次 C C3k-2 拆腿轮现读；上一档 743 / 741 是 C3n-2d，再上一档 742 / 740 是 C3n-2b、741 / 739 是 C3n-2a、740 / 738 是 C3n-1，两棵树各跑
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 745 / Release 743**（2026-10-24 批次 C C3c-B 第一片现读，
+**+1** = 新增 ctest 用例 `real_data_vector_derive_heavy`（simplify 的真实数据腿单独成档）；上一档 744 / 742 是
+C3k-2 拆腿轮，再上一档 743 / 741 是 C3n-2d，再上一档 742 / 740 是 C3n-2b、741 / 739 是 C3n-2a、740 / 738 是 C3n-1，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
   与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
@@ -297,12 +299,16 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 744 / Release 742**（2026-10-24 批次 C C3k-2 拆腿轮现读）。
+- **现行基线**：`ctest -N` 注册数 **Debug 745 / Release 743**（2026-10-24 批次 C C3c-B 第一片现读；
+  两棵树各由 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1` 现读，Release 侧在 release 树
+  重新 configure 之后读到 743）。
   逐档账：C3m 收口 735 / 733（那一档 **+4** = 三条 `Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated`
   + 一条反回潮守卫 `VectorSourceNeverDisablesGpkgSpatialIndex`，详见第 2 节）⇒ C3n 系列 **+8**（C3n-1 +5、C3n-2a/2b/2c/2d +3：`VectorConvexHullMidFailure…`、
   `VectorDoubleInputOutputMustNotOverwriteSecondInput`、`VectorIntersectRejectedFeatureWrite…`；C3n-2c 是把既有
   clip 失败用例的断言翻契约，不增用例）⇒ 743 / 741 ⇒ C3k-2 拆腿 **净 +1**（删 `real_data_vector_overlay`、加
-  `real_data_vector_overlay_buffer_join` 与 `real_data_vector_overlay_ops` 两条）⇒ **744 / 742**。
+  `real_data_vector_overlay_buffer_join` 与 `real_data_vector_overlay_ops` 两条）⇒ 744 / 742 ⇒ C3c-A 与 C3c-B 第一片
+  的**单元侧**判据改动都不增删注册（真实腿是组内用例，不是新 ctest 名），但 C3c-B 把 `simplify_roads` 单独成档
+  **加一条** `real_data_vector_derive_heavy` ⇒ **745 / 743**。
   两树差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空；快照 `build/tmp/c3k2_names_{debug,release}.txt`。
   ⚠ 紧随其后的 **C3m 评审席修复轮不动注册数**（守卫改的是匹配逻辑与 token 名单，两条都是注释/判据成形改动，
   没有增删用例）⇒ 735 / 733 那一档的墙钟与"为什么不能拿它判余量"见第 2 节"C3m 评审席修复轮"；
@@ -690,6 +696,69 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     `real_data_vector_overlay_ops`（11 条，Debug 105.25/103.55 ⇒ TIMEOUT **430** = 4.09×），
     两条新腿按 ≥4× 定值；26 条用例一个没丢（15 + 11），"四组之并 == 全量 / 无重名 / 无未归组"三条名单不变量
     现读通过。注册数 743 / 741 → **744 / 742**。
+  - **批次 C C3c-A**（`d814e1d`，**本条是补记** —— 那一刀提交当时漏了这一节）：`info` / `filter` / `convert` /
+    `repair` 四个执行用例把"成功 + 产物存在"级别的断言换成手算写死的整串/数值断言（info 的 extent 四边、
+    filter 的 900×400 外环逐点与面积 + 中文否定臂、convert 的格式/层名/字段/逐点坐标、repair 修复后
+    MultiPolygon 双三角形面积 1250 与顶点集合）。判别取证（A 半边）：四处实现**同时**改坏 ⇒ 四条用例全红并各自
+    点名数值差异，恢复后 4/4 绿。真实腿（B 半边）：`overlay_buffer_join` 15 → 18 条（新增 `info_province` /
+    `info_roads` / `repair_province`，输入先复制到 `build/tmp/c3cA/` 以避 N115 的 `.aux.xml` 串证），
+    `convert_roads_geojson` 增强为输入/输出两侧对撞；该腿 Debug 三个现读 **188.07 / 199.20 / 192.16 s** ⇒
+    630 ÷ 188.07 = **3.35×**（按最慢那一跑 199.20 算是 3.16×），`real_data_vector_quick` 因为三条新用例也注册在
+    quick 里降到 **256.03 s** ⇒ 720 ÷ 256.03 = **2.81×**（两处都仍 >2.5× 触发线，登记为"再涨就拆"）。
+    登记四行 PENDING→GOLD、`kPendingCeiling` **60 → 56**。收口门双树全量 Debug **744/744（1195.05 s）**、
+    Release **742/742（660.45 s）**，`find data -newermt <开批时刻>` = 0。
+    那一刀自己登记的缺口（我认可、并延续到下面）：B 半边没做变异红臂（工单只要求 A 半边）；
+    `repair_province` 的省层 42 条全有效 ⇒ 真实腿判的是恒等关系，坏几何真值只由单测承重；
+    `info` 的 D1 旧口径（`--output` 占位、`doInfo` 不落盘）仍在；`convert_roads_geojson` 是"增强"不是"新增"。
+  - **批次 C C3c-B 第一片（simplify）**（控制器自跑；起因是 C3c-B 实现者在 37 次工具后撞**当日对话额度**，
+    我按"丢实现还是丢证据"复验过树：HEAD 未动、工作树干净、登记表与上限原样 ⇒ 只是没干活，不是丢工作）：
+    - **单元侧**：`PluginTest.VectorSimplifyExecution` 原来只有一条 `EXPECT_LT(outLine->getNumPoints(), 5)`
+      —— 那是"少一个点就通过"的弱判据 ⇒ 换成五点夹具（(0,0)(10,0.5)(20,-0.5)(30,0.4)(40,0)，EPSG:3857，
+      三个中间点到弦的距离就是各自 |y| ≤ 0.5）在 `tolerance = 2.0` 下的**手算整串**期望：两点线
+      (0,0)/(40,0)、长度 40、层名 `roads`、CRS 3857、属性 `main_road`；再加第二条容差臂 `tolerance = 0.1`
+      （小于全部中间点偏移）⇒ **原样五点线整串**。长度读数走 `toLineString()` 的判类下转，不拿基类
+      `get_Length()`（它不挂在 `OGRGeometry` 上，同 :4553 那条理由）。
+    - **变异取证（R-B16，旧判据 / 新判据）**：MUT-S1 `tolerance` 不生效恒用 10.0 ⇒ 旧**绿** / 新红
+      （`kept.size()` 2 vs 5）；MUT-S2 `CreateLayer` 传 `nullptr` SRS ⇒ 旧**绿** / 新红（`outSrs` NULL）；
+      MUT-S3 层名改写 `simplified` ⇒ 旧**绿** / 新红（`"simplified"` vs `"roads"`）；MUT-S4 完全不简化
+      （`clone()` 顶掉 `SimplifyPreserveTopology`）⇒ 旧**也红**（`getNumPoints() < 5`，5 vs 5）/ 新红 ——
+      诚实登记：这一条旧判据本来就抓得住，它红在新判据把"该剩哪两个点"也钉死了。旧判据那一臂是用
+      `git show HEAD:tests/test_plugins.cpp` 另编一个 `gis_tests` 可执行文件**真的跑**出来的，不是推理。
+      每次只重建 `plugin_vector`，恢复一律 `cp` + `cmp`，红→绿闭环复跑通过。
+    - **真实腿**：新增 ctest 用例 `real_data_vector_derive_heavy`（`-DMODE=full -DGROUP=derive_heavy`、
+      TIMEOUT **350**、`RESOURCE_LOCK real_data_regression`）里的一条 `simplify_roads`（roads core 3857
+      的 `build/tmp/c3cB/` 复制件，22 836 条线，`tolerance = 2.0` m）。判据 = **三方对撞**（CLI 报的完成数、
+      metadata `feature_count`、产物回读要素数都 == **输入**现读的要素数）+ 层名 / 几何类族 / CRS / 字段名与顺序
+      四项保真 + **包框被输入包住**（Douglas-Peucker 只删顶点 ⇒ `Assert-ExtentInsideOf` 容差 0）+
+      **产物晚于本腿开跑时刻**（`Refs.StartUtc`，防"上一轮同名件在场"顶替本轮产物）。期望全部由输入侧现读导出，
+      不写样本标定常量。MUT-S5（层声明降级成 `wkbLineString`）**单元侧绿、真实腿红**
+      （`output Geometry='LineString', input 'MultiLineString'`）⇒ 这条腿有自己独有的牙。
+    - **名单机器扩到五档**：`$rosterGroupNames` 加 `derive_heavy`、`GIS_CASE_ROSTER[derive_heavy]` 打印行、
+      第 3 条的式子与消息一起改；新增第 8 条（组标 == `$script:C3cBCaseNames`，与第 5/6 条同形）、
+      "名单 vs 注册"正向对撞、"跑过数 == 判过数"不变量。三条反向臂**实测**：改档 ⇒ 红在
+      `C3c-B group invariant: Group=derive_heavy disagrees with the C3c-B roster`；分发标签拼错 ⇒ 红在
+      `1 case(s) ran but 0 were judged by Assert-C3cB*`；MUT-S5 ⇒ 红在 Geometry 判据。造件按档闸
+      `$buildDeriveHeavyInputs`（只在 full +（all|derive_heavy）为真），其余四档不付这份 7.5 MB 复制与一次
+      22 836 要素的 info 现读。
+    - **为什么单独成档而不是挂进 `overlay_buffer_join`**：`simplify_roads` 用例内计时 **54.22 s**，先挂进去
+      那一跑**实测整腿 250.11 s** ⇒ 630 ÷ 250.11 = **2.52×**，贴着 2.5× 的拆腿触发线；规矩是"不许抬 TIMEOUT、
+      跌破就拆"⇒ 挪出来单独成条，新档 Debug 三跑 **85.84 / 86.69 / 84.47 s** ⇒ TIMEOUT **350** = **4.04×**。
+    - **一条实测事实（不是判据）**：同一份 roads 复制件在 `tolerance = 2.0` 下顶点 **215 154 → 129 287**
+      （各用 `vertices_extract` 数一遍，取动作自报数），产物 7 565 312 → 6 008 832 字节。记下它是为了说明
+      真实腿那几条结构判据今天在真实数据上不是空转；真实腿**不**判顶点数 —— runner 这一层没有顶点计数读数，
+      而为它加两次 `vertices_extract` 实测要 441.7 s + 271.5 s。
+    - **登记**：`vector,simplify` PENDING→GOLD（证据用例 `PluginTest.VectorSimplifyExecution`），
+      `kPendingCeiling` **56 → 55**；登记表头部 COUNT 按声明行自带的现读命令逐条重跑
+      （data_rows 126 / gold_rows 71 / pending_rows 55 / gold_rows_all_lines 72 / table_driven 15 / literal_slot 56）。
+      覆盖族 `(CoverageMeta|CoverageMetaJudge)\.` **19/19** 绿、`PluginTest.Vector*` + `source_mojibake_guard`
+      **92/92** 绿（Debug 树）。注册数 744 / 742 → **745 / 743**。
+    - 本片**未验收**的四条：(1) 这条新腿的 Release 侧没有现读（release 树要收口轮全目标重建才配得上；
+      按 union_poly 那栏的量级差 Release 更快，350 对它只会更宽）；(2) 745 / 743 的双树全量还没跑（收口门归我）；
+      (3) C3c-B 还剩 `buffer` / `dissolve` 两片，`kPendingCeiling` 的目标 53 因此还差 2；
+      (4) `simplify` 的 GEOS 失败分支按用户裁定**无判据**（N135 家族，产品二进制里不放注入缝）。
+    - 我自己的一次过程错误，记下来防复发：第一条反向臂（A1）我当时用 `sed -i` 改档，它把这个 **CRLF** 文件
+      整文件归一成 LF ⇒ powershell 直接 `ParserError` ⇒ 那一跑的"红"是**假红**、不作证据；改用 Edit 重做才拿到
+      预期的红。本仓早已登记"`sed -i` 归一行尾而 `git status` 看不见"，这是它第一次真的废掉一条臂。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
