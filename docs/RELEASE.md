@@ -755,7 +755,7 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     - 本片**未验收**的四条：(1) 这条新腿的 Release 侧没有现读（release 树要收口轮全目标重建才配得上；
       按 union_poly 那栏的量级差 Release 更快，350 对它只会更宽）；(2) 745 / 743 的双树全量还没跑（收口门归我）；
       (3) C3c-B 还剩 `buffer` / `dissolve` 两片，`kPendingCeiling` 的目标 53 因此还差 2
-      （**buffer 已在下一条结案** ⇒ 实际只剩 dissolve，上限现值 54）；
+      （**这两片已在下面两条里结案** ⇒ 上限现值就是 53，本行只留作当片的现场记录）；
       (4) `simplify` 的 GEOS 失败分支按用户裁定**无判据**（N135 家族，产品二进制里不放注入缝）。
     - 我自己的一次过程错误，记下来防复发：第一条反向臂（A1）我当时用 `sed -i` 改档，它把这个 **CRLF** 文件
       整文件归一成 LF ⇒ powershell 直接 `ParserError` ⇒ 那一跑的"红"是**假红**、不作证据；改用 Edit 重做才拿到
@@ -799,6 +799,41 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     - 本片未验收：`buffer` 的真实腿仍**不**判面积（`vector info` 的 Extent 只印 6 位有效数字 ⇒ 在
       1.28e7 的坐标上是 ±50 m 的粒度，比不了 100 m 的缓冲量级；要判就得对 22 836 个面跑 `geom_metrics`，
       那已经不是"一条 quick 腿"的量）。面积/圆头形状这一半由合成夹具的两条容差臂承重。
+  - **批次 C C3c-B 第三片（dissolve）**（控制器自跑，C3c-B 到此三片齐全）：
+    - **单元侧**把 `PluginTest.VectorDissolveExecution` 从"只有一句 `EXPECT_TRUE(result.success)`"补成两臂手算。
+      臂 1 是两个 100×100 共边（x=100）的正方形、都写 `type='A'` ⇒ 融合体必是 (0,0)-(200,100) 这个矩形：
+      面积 20 000、包框逐边手推、**且面积恰好等于包框面积** —— 这一条同时排掉"留了缝""把内边当成洞"
+      "多出一块"三种坏法，而**不必**去数顶点（GEOS 保不保留 (100,0)/(100,100) 那两个共线顶点是实现细节，
+      钉它等于把判据钉在 GEOS 的版本行为上）；再钉 `doDissolve` 写死的两条输出契约：层名 `dissolved`、
+      字段就一个且名字就是用户点名的 `type`。臂 2 多加一块**离散**的 `type='B'` ⇒
+      "分组丢失"交 1 个要素（面积 30 000）、"根本不融合"交 3 个要素、"分组键取错"面积/包框对不上
+      —— 三种坏法各撞不同断言；WHY 必须有这条：臂 1 只有一组，"把所有几何并成一个"在臂 1 上看不出来。
+    - **判别取证（R-B16）**：四条变异 ⇒ D1 分组键写死成 `"all"`、D2 只写第一块几何不做真融合、
+      D3 分组键没写对（写 `"X"`）、D4 层名少一个 `d`。四条都是**新用例红、既有六条 `PluginTest.VectorDissolve*`
+      全绿**（红点行号：D1 :4258/"all" + :4329/:4330/:4337；D2 :4262 面积差 10 000 + :4267 包框差 100；
+      D3 :4360 点名 `unexpected group key: 'X'`；D4 :4251 层名）。D1 那一跑里连本用例自己那句
+      `EXPECT_TRUE(result.success)` 都没红 ⇒ 旧判据确实一个都抓不到。恢复一律 `cp` + `cmp`，恢复后
+      7/7 绿、全 vector 族 + 覆盖族 + 乱码守卫 **112/112** 绿。
+    - **真实腿 `dissolve_bbox` 从"抠消息"补到落地读产物**：它过去唯一的判据是 `Assert-TextContains
+      "Dissolve completed: 1 features"` ⇒ 产物层名/几何类族/CRS/字段/要素数整批丢掉也整腿绿。现在六条：
+      要素数 == 1（不点名分组字段就是"整体融合"的契约）、`LayerName == "dissolved"`、
+      `Geometry == MultiPolygon`（`CreateLayer` 写死的声明）、`Crs == EPSG:3857`、`FieldCount == 0`、
+      **包框与输入逐边相等**（并集不改外包框 ⇒ 比的是"输入侧现读"与产物，不是拿产物比产物）。
+      容差走 C3f 那条相对式子（1e-5 × 坐标最大绝对值 ≈ 128 m）—— `info` 的 Extent 在 1.28e7 这一档只印
+      6 位有效数字，拿 0 去比会被印数精度判红，那不是缺陷。**D4 那一跑整腿红在 `LayerName='dissolve'`**
+      ⇒ 这五条承重（用例内计时 dissolve_bbox 0.20 s，比补判据前的 0.19 s 只多一次小层 info 读）。
+    - 该腿用时：`real_data_vector_overlay_buffer_join` 补完两片的判据后 Debug 单跑 **195.69 s**
+      （buffer 片那一跑 188.16、C3c-A 那轮 188.07）⇒ 630 ÷ 195.69 = **3.22×**，三次散布 188~196 s；
+      仍 >2.5× 触发线 ⇒ **没有抬任何 TIMEOUT**，登记为"这条腿再涨就拆"。
+    - **登记**：`vector,dissolve` PENDING→GOLD（证据用例 `PluginTest.VectorDissolveExecution`），
+      `kPendingCeiling` **54 → 53**（工单给 C3c-B 定的目标值 53 到此达成），头部 COUNT 按声明行自带命令重跑
+      （data_rows 126 / gold_rows 73 / pending_rows 53 / all_lines 74 / table_driven 15 ⇒ literal_slot 58）。
+      注册数**不变 745 / 743**。vector 侧剩 4 行 PENDING：`rasterize` / `polygonize` / `difference` / `spatial_join`。
+    - 本片缺口（如实登记）：(1) **分组语义在真实数据上仍是 0 覆盖** —— 唯一那条真实腿的输入是单个面、
+      且不点名分组字段 ⇒ 走的是"整体融合"分支；多组真实数据要补进 `union_poly` 那一档，而那一档的判据是
+      **按组标分发**的（加第二条用例得先改分发结构，风险大于收益）⇒ 挂到 C3c-C 一起裁。(2) `doDissolve`
+      写出段那三处 `result = nullptr; … delete result;`（同一变量先置空再 delete 的空转，不是缺陷但读起来
+      像 use-after-free）留给 C3h-2b 冗余/一致性批。(3) `dissolve` 的 GEOS 失败分支按用户裁定无判据（N135 家族）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。

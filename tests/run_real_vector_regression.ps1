@@ -2677,6 +2677,39 @@ function Validate-CaseOutputs {
         }
         "dissolve_bbox" {
             Assert-TextContains -Text $Case.Output -Expected "Dissolve completed: 1 features" -Message "dissolve_bbox feature count mismatch"
+            # C3c-B：这条腿原来只抠 CLI 消息里那句 "1 features"，一个都没落地读产物。
+            # 输入 china_bbox_3857 是**单个**面、且没点名 dissolve_field ⇒ 走"整体融合"分支，
+            # 于是能独立成立（不依赖样本标定常量）的判据是这几条：
+            #   产物要素数 == 1（无字段融合的契约就是并成一个）、层名 == doDissolve 写死的 "dissolved"、
+            #   几何类族 == MultiPolygon（CreateLayer 写死的声明）、CRS 原样 EPSG:3857、
+            #   字段数 == 0（不点名就没有分组键可写）、
+            #   **包框与输入逐边相等**（并集不改变点集的外包框 ⇒ 这是关系式，不是拿产物比产物：
+            #   比的是"输入侧现读的包框"与"产物包框"）。粒度限制见下面容差的来历。
+            $dissolveOutPath = Join-Path $ResolvedOutputRoot "dissolve_bbox.gpkg"
+            $dissolveIn = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $chinaBbox3857 `
+                -ScratchDir $ResolvedOutputRoot -Label "dissolve_bbox_input"
+            $dissolveOut = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $dissolveOutPath `
+                -ScratchDir $ResolvedOutputRoot -Label "dissolve_bbox_output"
+            Assert-Condition -Condition ($dissolveOut.FeatureCount -eq 1) -Message (
+                "dissolve_bbox: output has " + $dissolveOut.FeatureCount + " feature(s), expected 1 (no dissolve_field merges all)")
+            Assert-Condition -Condition ($dissolveOut.LayerName -ceq "dissolved") -Message (
+                "dissolve_bbox: LayerName='" + $dissolveOut.LayerName + "', expected 'dissolved'")
+            Assert-Condition -Condition ($dissolveOut.Geometry -ceq "MultiPolygon") -Message (
+                "dissolve_bbox: Geometry='" + $dissolveOut.Geometry + "', expected MultiPolygon")
+            Assert-Condition -Condition ($dissolveOut.Crs -ceq "EPSG:3857") -Message (
+                "dissolve_bbox: CRS='" + $dissolveOut.Crs + "', expected EPSG:3857")
+            Assert-Condition -Condition ($dissolveOut.FieldCount -eq 0) -Message (
+                "dissolve_bbox: Fields=" + $dissolveOut.FieldCount + ", expected 0 (no dissolve_field given)")
+            # 包框相等用**相对**容差：vector info 的 Extent 只印 6 位有效数字，在 1.28e7 这一档坐标上
+            # 粒度就是 ±50 m ⇒ 拿 0 去比会被打印精度判红，那不是缺陷。取坐标量级的 1e-6（≈13 m）以下
+            # 无意义，这里用 C3f 那条同族式子（1e-5 × 最大绝对值 ≈ 128 m），够包住印数误差。
+            $bboxLargestAbs = 0.0
+            foreach ($v in @($dissolveIn.MinX, $dissolveIn.MaxX, $dissolveIn.MinY, $dissolveIn.MaxY)) {
+                if ([Math]::Abs([double]$v) -gt $bboxLargestAbs) { $bboxLargestAbs = [Math]::Abs([double]$v) }
+            }
+            Assert-ExtentEqualTo -Expected $dissolveIn -Actual $dissolveOut `
+                -Tolerance ([Math]::Max($bboxLargestAbs * $script:C3fExtentRelativeTolerance, 1e-9)) `
+                -Label "dissolve_bbox"
         }
         "convert_roads_geojson" {
             # 判据从"头三行 + 要素数"增强到关系级：输入/输出两边的层名、字段名与顺序、

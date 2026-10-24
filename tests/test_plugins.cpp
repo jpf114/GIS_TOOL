@@ -4220,6 +4220,150 @@ TEST_F(PluginTest, VectorDissolveExecution) {
 
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Dissolve failed: " << result.message;
+
+    // ── 臂 1：两条 type='A' 的共边面 ⇒ 期望是**手算**的 ─────────────────────────────
+    // 夹具是两个 100×100 的正方形、共用 x=100 那条边 ⇒ 融合后必须恰好是 (0,0)-(200,100) 这个矩形：
+    //   面积 20 000、包框 200×100 ⇒ **且面积恰好等于包框面积**，这一条同时排掉"留了缝"（面积偏小）、
+    //   "把内边当洞"（面积偏小）、"多出一块"（面积偏大）三种坏法，而不必去数顶点（GEOS 保不保留
+    //   (100,0)/(100,100) 那两个共线顶点是实现细节，钉它等于把判据钉在 GEOS 的版本行为上）。
+    // 包框用的是 200/100 这一组整数米坐标 ⇒ 它同时否证"偷偷重投影"：真转成 4326 会是 0.0x 量级。
+    // 这条用例改前只有 `EXPECT_TRUE(result.success)` ⇒ 上面这些一个都不判（登记表因此记 PENDING）。
+    EXPECT_EQ(result.metadata.at("feature_count"), "1");
+    EXPECT_EQ(result.message, "Dissolve completed: 1 features");
+
+    auto areaOf = [](const OGRGeometry* geom) {
+        if (const OGRSurface* surface = dynamic_cast<const OGRSurface*>(geom)) {
+            return surface->get_Area();
+        }
+        if (const OGRGeometryCollection* collection = dynamic_cast<const OGRGeometryCollection*>(geom)) {
+            return collection->get_Area();
+        }
+        return -1.0;
+    };
+
+    {
+        GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+            output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        ASSERT_NE(outDs, nullptr);
+        OGRLayer* outLayer = outDs->GetLayer(0);
+        ASSERT_NE(outLayer, nullptr);
+        // 层名与字段名是 doDissolve 写死的输出契约（"dissolved" + 用户点名的那个字段）。
+        EXPECT_STREQ(outLayer->GetName(), "dissolved");
+        ASSERT_EQ(outLayer->GetLayerDefn()->GetFieldCount(), 1);
+        EXPECT_STREQ(outLayer->GetLayerDefn()->GetFieldDefn(0)->GetNameRef(), "type");
+        EXPECT_EQ(outLayer->GetFeatureCount(), 1);
+
+        OGRFeature* feat = outLayer->GetNextFeature();
+        ASSERT_NE(feat, nullptr);
+        EXPECT_STREQ(feat->GetFieldAsString("type"), "A");
+        const OGRGeometry* geom = feat->GetGeometryRef();
+        ASSERT_NE(geom, nullptr);
+        const double area = areaOf(geom);
+        EXPECT_NEAR(area, 20000.0, 1e-9);
+        OGREnvelope env;
+        geom->getEnvelope(&env);
+        EXPECT_NEAR(env.MinX, 0.0, 1e-9);
+        EXPECT_NEAR(env.MinY, 0.0, 1e-9);
+        EXPECT_NEAR(env.MaxX, 200.0, 1e-9);
+        EXPECT_NEAR(env.MaxY, 100.0, 1e-9);
+        EXPECT_NEAR(area, (env.MaxX - env.MinX) * (env.MaxY - env.MinY), 1e-9)
+            << "融合体面积必须恰好填满自己的包框 ⇒ 否则要么留了缝，要么把内边当成了洞";
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(outDs);
+    }
+
+    // ── 臂 2：再加一条离散的 type='B' 面 ⇒ 分组必须生效，产出 2 个要素 ──────────────
+    // WHY 要这条：臂 1 只有一条 "A"，"根本不分组、把所有几何并成一个要素"这种坏法在臂 1 上是**看不出来**的
+    // （两条共边面全并也还是那一个矩形）。这里 B 与 A 那两块**不相交** ⇒
+    //   分组丢失 ⇒ 1 个要素（MultiPolygon，面积 30 000）；不做融合 ⇒ 3 个要素；
+    //   分组键取错（比如按几何而非字段）⇒ 两个要素的面积/包框对不上。三种坏法各撞不同断言。
+    const std::string threePath = (getTestDir() / "e2e_dissolve_three_input.shp").string();
+    const std::string threeOutput = (getTestDir() / "e2e_dissolve_three_output.geojson").string();
+    {
+        std::error_code ignored;
+        for (const auto& entry : fs::directory_iterator(getTestDir())) {
+            if (entry.path().stem() == fs::path(threePath).stem()) {
+                fs::remove(entry.path(), ignored);
+            }
+        }
+        auto* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(threePath.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("test", srs.get(), wkbPolygon);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn fieldDefn("type", OFTString);
+        ASSERT_EQ(layer->CreateField(&fieldDefn), OGRERR_NONE);
+
+        auto addSquare = [&](double x0, double y0, double side, const char* type) {
+            auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            OGRPolygon poly;
+            OGRLinearRing ring;
+            ring.addPoint(x0, y0);
+            ring.addPoint(x0 + side, y0);
+            ring.addPoint(x0 + side, y0 + side);
+            ring.addPoint(x0, y0 + side);
+            ring.addPoint(x0, y0);
+            poly.addRing(&ring);
+            feat->SetGeometry(&poly);
+            feat->SetField("type", type);
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        };
+        addSquare(0.0, 0.0, 100.0, "A");
+        addSquare(100.0, 0.0, 100.0, "A");
+        addSquare(300.0, 0.0, 100.0, "B");
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> threeParams;
+    threeParams["action"] = std::string("dissolve");
+    threeParams["input"] = threePath;
+    threeParams["output"] = threeOutput;
+    threeParams["dissolve_field"] = std::string("type");
+
+    const auto threeResult = p->execute(threeParams, progress_);
+    ASSERT_TRUE(threeResult.success) << threeResult.message;
+    EXPECT_EQ(threeResult.metadata.at("feature_count"), "2");
+    EXPECT_EQ(threeResult.message, "Dissolve completed: 2 features");
+
+    GDALDataset* threeDs = static_cast<GDALDataset*>(GDALOpenEx(
+        threeOutput.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(threeDs, nullptr);
+    OGRLayer* threeLayer = threeDs->GetLayer(0);
+    ASSERT_NE(threeLayer, nullptr);
+    ASSERT_EQ(threeLayer->GetFeatureCount(), 2);
+    threeLayer->ResetReading();
+    int seen = 0;
+    while (OGRFeature* feat = threeLayer->GetNextFeature()) {
+        const OGRGeometry* geom = feat->GetGeometryRef();
+        const std::string type = feat->GetFieldAsString("type");
+        ASSERT_NE(geom, nullptr);
+        const double area = areaOf(geom);
+        OGREnvelope env;
+        geom->getEnvelope(&env);
+        if (type == "A") {
+            EXPECT_NEAR(area, 20000.0, 1e-9);
+            EXPECT_NEAR(env.MinX, 0.0, 1e-9);
+            EXPECT_NEAR(env.MaxX, 200.0, 1e-9);
+            EXPECT_NEAR(env.MinY, 0.0, 1e-9);
+            EXPECT_NEAR(env.MaxY, 100.0, 1e-9);
+        } else if (type == "B") {
+            EXPECT_NEAR(area, 10000.0, 1e-9);
+            EXPECT_NEAR(env.MinX, 300.0, 1e-9);
+            EXPECT_NEAR(env.MaxX, 400.0, 1e-9);
+            EXPECT_NEAR(env.MinY, 0.0, 1e-9);
+            EXPECT_NEAR(env.MaxY, 100.0, 1e-9);
+        } else {
+            ADD_FAILURE() << "dissolve produced an unexpected group key: '" << type << "'";
+        }
+        ++seen;
+        OGRFeature::DestroyFeature(feat);
+    }
+    EXPECT_EQ(seen, 2);
+    GDALClose(threeDs);
 }
 
 // ── N129：dissolve_field 写错 ⇒ 硬失败（旧实现不报错，静默交出一张 0 要素的空图层）────
