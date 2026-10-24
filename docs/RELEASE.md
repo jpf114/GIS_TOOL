@@ -36,8 +36,12 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 745 / Release 743**（2026-10-24 批次 C C3c-B 第一片现读，
-**+1** = 新增 ctest 用例 `real_data_vector_derive_heavy`（simplify 的真实数据腿单独成档）；上一档 744 / 742 是
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 747**（2026-10-24 批次 C C3c-C1 现读；**Release 此刻 `-N` 仍读 743**，
+原因是 release 树的 `gis_tests` 未重编、gtest 的 PRE_TEST 发现缓存没刷新 ⇒ Release 的 745 要等收口轮全目标重建后现读，
+登记为未验收。这一档 **+2** = `PluginTest.VectorBufferRoundCapStadiumMatchesHandComputed`（C3c-B 第二片）与
+`PluginTest.VectorDifferenceSubtractsOverlayGeometry`（C3c-C1），两条都是新增 `TEST_F`；
+⚠ 上一版这里写 745 / 743，是我在 buffer 那一刀把"没新增 `add_test`"错当成"注册数不变"——
+`ctest -N` 的计数含每一条 gtest 用例，加一条 `TEST_F` 就加一条注册）。上一档 744 / 742 是
 C3k-2 拆腿轮，再上一档 743 / 741 是 C3n-2d，再上一档 742 / 740 是 C3n-2b、741 / 739 是 C3n-2a、740 / 738 是 C3n-1，两棵树各跑
 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
 "全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
@@ -299,16 +303,19 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 745 / Release 743**（2026-10-24 批次 C C3c-B 第一片现读；
-  两棵树各由 `ctest --test-dir build/<树> -C <Config> -N | tail -n 1` 现读，Release 侧在 release 树
-  重新 configure 之后读到 743）。
+- **现行基线**：`ctest -N` 注册数 **Debug 747**（2026-10-24 批次 C C3c-C1 现读；Release 侧此刻仍读 743，
+  因为 release 树的 `gis_tests` 没重编、gtest PRE_TEST 发现缓存未刷新 ⇒ 预期 745，收口轮全目标重建后现读，
+  登记为未验收）。
   逐档账：C3m 收口 735 / 733（那一档 **+4** = 三条 `Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated`
   + 一条反回潮守卫 `VectorSourceNeverDisablesGpkgSpatialIndex`，详见第 2 节）⇒ C3n 系列 **+8**（C3n-1 +5、C3n-2a/2b/2c/2d +3：`VectorConvexHullMidFailure…`、
   `VectorDoubleInputOutputMustNotOverwriteSecondInput`、`VectorIntersectRejectedFeatureWrite…`；C3n-2c 是把既有
   clip 失败用例的断言翻契约，不增用例）⇒ 743 / 741 ⇒ C3k-2 拆腿 **净 +1**（删 `real_data_vector_overlay`、加
   `real_data_vector_overlay_buffer_join` 与 `real_data_vector_overlay_ops` 两条）⇒ 744 / 742 ⇒ C3c-A 与 C3c-B 第一片
-  的**单元侧**判据改动都不增删注册（真实腿是组内用例，不是新 ctest 名），但 C3c-B 把 `simplify_roads` 单独成档
-  **加一条** `real_data_vector_derive_heavy` ⇒ **745 / 743**。
+  的**单元侧**判据改动都不增删注册（真实腿是组内用例，不是新 ctest 名；第一片也没加 `TEST_F`，只把既有用例撑大），
+  但 C3c-B 把 `simplify_roads` 单独成档 **加一条 `add_test`** `real_data_vector_derive_heavy` ⇒ 745 / 743；
+  之后 **C3c-B 第二片 +1**（`VectorBufferRoundCapStadiumMatchesHandComputed`，我当时误记为"不变"，已在该条正文更正）、
+  **第三片 +0**（dissolve 只撑大既有块）、**C3c-C0 +0**（只翻登记表一行）、**C3c-C1 +1**
+  （`VectorDifferenceSubtractsOverlayGeometry`）⇒ **Debug 747**。
   两树差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空；快照 `build/tmp/c3k2_names_{debug,release}.txt`。
   ⚠ 紧随其后的 **C3m 评审席修复轮不动注册数**（守卫改的是匹配逻辑与 token 名单，两条都是注释/判据成形改动，
   没有增删用例）⇒ 735 / 733 那一档的墙钟与"为什么不能拿它判余量"见第 2 节"C3m 评审席修复轮"；
@@ -794,8 +801,11 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       ⇒ 630 ÷ 188.16 = **3.35×**，新增的那次 `info` 读产物落在噪声里（约 0.1 s）。**没有抬任何 TIMEOUT**。
     - **登记**：`vector,buffer` PENDING→GOLD（证据用例就是新那条），`kPendingCeiling` **55 → 54**，
       头部 COUNT 按声明行自带命令重跑（data_rows 126 / gold_rows 72 / pending_rows 54 / all_lines 73 /
-      table_driven 15 ⇒ literal_slot 57）；覆盖族 + 乱码守卫 **20/20** 绿。注册数**不变 745 / 743**
-      （本片的真实腿是既有档里的用例增强，没有新增 `add_test`）。
+      table_driven 15 ⇒ literal_slot 57）；覆盖族 + 乱码守卫 **20/20** 绿。
+      **注册数 745 → 746 / 743 → 744**（本片新增一条 `TEST_F` ⇒ `ctest -N` 就多一条；
+      本行第一版写的是"不变 745 / 743"，那是**我数错了** —— 当时只看了"没新增 `add_test`"，
+      忘了 gtest 发现模式是 PRE_TEST、每条新 `TEST_F` 本身就是一条注册；现值由 C3c-C1 那一跑的
+      `-N` 现读反推更正，Release 侧的 744 要等收口轮重编才读得到）。
     - 本片未验收：`buffer` 的真实腿仍**不**判面积（`vector info` 的 Extent 只印 6 位有效数字 ⇒ 在
       1.28e7 的坐标上是 ±50 m 的粒度，比不了 100 m 的缓冲量级；要判就得对 22 836 个面跑 `geom_metrics`，
       那已经不是"一条 quick 腿"的量）。面积/圆头形状这一半由合成夹具的两条容差臂承重。
@@ -828,7 +838,9 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     - **登记**：`vector,dissolve` PENDING→GOLD（证据用例 `PluginTest.VectorDissolveExecution`），
       `kPendingCeiling` **54 → 53**（工单给 C3c-B 定的目标值 53 到此达成），头部 COUNT 按声明行自带命令重跑
       （data_rows 126 / gold_rows 73 / pending_rows 53 / all_lines 74 / table_driven 15 ⇒ literal_slot 58）。
-      注册数**不变 745 / 743**。vector 侧剩 4 行 PENDING：`rasterize` / `polygonize` / `difference` / `spatial_join`。
+      **注册数不变**（本片只把既有 `VectorDissolveExecution` 的块体撑大、没有新增 `TEST_F` 或 `add_test`）——
+      本行第一版写的"不变 745 / 743"里的**数**是错的（上一条 buffer 已经把它推到 746 / 744），"不变"这个判断本身对。
+      vector 侧剩 4 行 PENDING：`rasterize` / `polygonize` / `difference` / `spatial_join`。
     - 本片缺口（如实登记）：(1) **分组语义在真实数据上仍是 0 覆盖** —— 唯一那条真实腿的输入是单个面、
       且不点名分组字段 ⇒ 走的是"整体融合"分支；多组真实数据要补进 `union_poly` 那一档，而那一档的判据是
       **按组标分发**的（加第二条用例得先改分发结构，风险大于收益）⇒ 挂到 C3c-C 一起裁。(2) `doDissolve`
@@ -847,8 +859,42 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     （data_rows 126 / gold_rows 74 / pending_rows 52 / all_lines 75 / table_driven 15 ⇒ literal_slot 59）；
     覆盖族 **19/19 绿**就是这次翻行的机器级凭据 —— `CoverageMeta.GoldEvidenceIsAuditable` 会剥掉注释后
     回读第 4 列那个块体，核"同一个块里既有 `"vector"` 又有把 `"rasterize"` 送进动作槽的形状、且仍有数值断言"，
-    所以这不是我给自己发的合格章。注册数**不变 745 / 743**。真实腿 `rasterize_bbox` 早在 C3b-A 就在场
-    （0.11 s 级，归 overlay_buffer_join）。
+    所以这不是我给自己发的合格章。**注册数不变**（本片只翻登记表一行、改一个常量，既不新增 `TEST_F` 也不新增
+    `add_test`；那一版写的"不变 745 / 743"同样带上了上一条留下的错数，正确现值是 746 / 744，见 C3c-C1 的 `-N` 逐名核对）。
+    真实腿 `rasterize_bbox` 早在 C3b-A 就在场（0.11 s 级，归 overlay_buffer_join）。
+  - **批次 C C3c-C1（difference 三臂手算形状判据）**：新增 `PluginTest.VectorDifferenceSubtractsOverlayGeometry`
+    —— 此前 5 条既有 `VectorDifference*`（含 Srs 拒绝臂、GPKG 索引臂、N139 拒写臂）**没有一条**含
+    `EXPECT_NEAR`/`EXPECT_DOUBLE_EQ`/`EXPECT_FLOAT_EQ`（按块体现读、判宏前先剥行注释）。三臂各压实现里一条不同分支：
+    臂 A 线 × 面（`useLinearPolygonSegmentation` 那条**不走 GEOS Difference** 的路径）期望两段
+    `[0,80]` 与 `[120,200]`、总长恰好 160、层名 `difference`、CRS 3857、属性 `road` 保真；
+    臂 B 面 × 面（100×100 挖掉 50×50 的一半）期望面积 7 500、包框 (0,0)-(100,100)；
+    臂 C 被完全覆盖期望"整条丢掉 ⇒ 报 0 features、产物 0 个要素"。
+    - **判别取证**：E1 `buildMergedSegmentGeometry(segments, false)` 翻成 `true`（取落在叠盖**里面**的那一段）
+      ⇒ 新用例红在 :5911/:5927/:5928（段数 1 vs 2、总长差 120），**5 条既有用例全绿**；
+      E2 面路径 `Difference` 改成 `Intersection` ⇒ 红 :5968（面积 2 500 vs 7 500）+ 包框两边，5 条既有用例全绿；
+      E3b 把写出段的挡位改成 `if (true)`（没有差集结果也记账）⇒ 臂 C 红在"Difference completed: 1 features"，5 条全绿；
+      E4 层名 `difference` 改成 `diff` ⇒ 红 :5898，5 条全绿。
+    - **我写错的一条注释被变异否证并当场改正**：E3（只把 `!IsEmpty()` 挡位摘掉 ⇒ `if (diffGeom)`）
+      我原以为臂 C 会红，实测**不红** —— 因为"被完全覆盖"这一支里 `diffGeom` 本来就是 null，那条挡位根本没被用到；
+      要把臂 C 判红必须连记账一起改（E3b）。⇒ 用例注释里"臂 C 钉的是空几何污染产物"那句是错的，
+      已按实测改成"钉的是记账口径：一条都没留下必须报 0"。**这就是"为解释判据而写的注释"自己也需要一条红臂**。
+    - **新挂账 N143（本刀发现，未修）**：`doDifference` 与 `doIntersect` 两个动作的 `Result::ok`
+      **一个 metadata 键都不发**（只回一句 "… completed: N features"），而同插件 17 个动作都发 `feature_count`
+      ⇒ 真实腿与 GUI 只能从消息字符串里抠数（runner 现在正是用正则抠）。这与 C3g 当年给 `dissolve`
+      补齐 `mergeStandardRunMetadata` + `feature_count` 是同一族（那次顺手修了一个，这次剩两个）。
+      归 **C3h-2b 冗余/一致性批**（本刀不扩射程：改产品输出键要同步 GUI/spec 白名单与真实腿抠数逻辑，
+      且加键属于产品行为变更，与"补判据"这一刀不同类）。
+    - **登记**：`vector,difference` PENDING→GOLD（证据用例即新那条），`kPendingCeiling` **52 → 51**，
+      头部 COUNT 按声明行自带命令重跑（data_rows 126 / gold_rows 75 / pending_rows 51 / all_lines 76 /
+      table_driven 15 ⇒ literal_slot 60）；覆盖族 + 乱码守卫 + 6 条 `VectorDifference*` **26/26** 绿，
+      全部 `PluginTest.Vector*` **93/93** 绿。
+    - **注册数 746 → 747 / 744 → 745**（本刀新增一条 `TEST_F`；Release 侧此刻 `-N` 仍读 743，
+      因为 release 树的 `gis_tests` 还没重编、gtest 的发现缓存没刷新 ⇒ 745 要等收口轮全目标重建后现读，
+      登记为未验收）。`ctest -N` 逐名比对确认新增恰为 `PluginTest.VectorDifferenceSubtractsOverlayGeometry`
+      与 `PluginTest.VectorBufferRoundCapStadiumMatchesHandComputed`（上一条漏记的那一条）。
+    - 本片缺口：`difference` 的三条真实腿（`difference_focus` / `_far` / `_stress`）仍只判**消息里的要素数**，
+      层名与几何类族契约在 22 836 要素的量级上没判 —— 与 buffer 那条同为"结构判据在合成夹具承重、
+      真实腿判数量级"的分工；面积侧真实腿无从手算（省界不是可手推的坐标），保持不判。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。

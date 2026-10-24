@@ -242,7 +242,7 @@ ComputedCounts computeRegistryCounts(const std::vector<std::string>& lines) {
 // PENDING 的真实数量"，字面量抄两处就会出现"改了表、忘了改上限"这种没人红的漂移。
 // CoverageMeta.RegistryHeaderCountsMatchData 把它与登记表头部的 COUNT pending_rows 对撞，
 // 于是"表 / 上限 / 头部"三者要么一起改，要么当场红。
-constexpr int kPendingCeiling = 52;
+constexpr int kPendingCeiling = 51;
 
 // ---------------------------------------------------------------- 词法（R-B11a 收口后全仓只有这一份）
 //

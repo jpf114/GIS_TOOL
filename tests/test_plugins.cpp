@@ -5806,6 +5806,205 @@ TEST_F(PluginTest, VectorDifferenceKeepsLinearGeometryOutput) {
     GDALClose(outDs);
 }
 
+// difference 的**形状侧**判据（登记表此前记 PENDING：本轮按块体现读全部 5 条既有
+// VectorDifference* —— 含 Srs 拒绝臂、GPKG 索引臂与 N139 拒写臂 —— 没有一条含
+// EXPECT_NEAR / EXPECT_DOUBLE_EQ / EXPECT_FLOAT_EQ；判据是剥注释后核的，见 CoverageMeta.GoldEvidenceIsAuditable）。
+// 三臂的期望全是手推的坐标算术，且分别走实现里**不同**的分支：
+//   臂 A 线 × 面 ⇒ useLinearPolygonSegmentation（splitLineByOverlayEntries + buildMergedSegmentGeometry，
+//     这是本动作唯一不用 GEOS Difference 的路径，也是最需要独立期望的一条）；
+//   臂 B 面 × 面相交 ⇒ geom->Difference(overlay)；
+//   臂 C 面被**完全覆盖** ⇒ !Contains 判假 ⇒ diffGeom 为空 ⇒ 整条要素被丢掉（不是写一条空几何）。
+// WHY 臂 C 也要（这一条的措辞是**变异跑出来的**，不是推理写的）：把写出段的
+//   `if (diffGeom && !diffGeom->IsEmpty())` 改成只挡空指针 `if (diffGeom)` —— 臂 C **不红**，
+//   因为"被完全覆盖"这一支里 diffGeom 本来就是 null，那条挡位在这种坏法下没被用到；
+//   改成 `if (true)`（连没有差集结果也走写入与记账）才把臂 C 判红在
+//   "Difference completed: 1 features"（期望 0）。所以臂 C 钉的是**记账口径**：
+//   "一条都没留下"必须报 0，而不是把没写成的要素也记进 count。
+TEST_F(PluginTest, VectorDifferenceSubtractsOverlayGeometry) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    auto* shpDriver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    ASSERT_NE(shpDriver, nullptr);
+
+    auto makeShp = [&](const std::string& path, const char* layerName, OGRwkbGeometryType kind,
+                       const std::vector<std::pair<std::vector<std::pair<double, double>>, const char*>>& shapes) {
+        const fs::path stem = fs::path(path).stem();
+        std::error_code ignored;
+        for (const auto& entry : fs::directory_iterator(getTestDir())) {
+            if (entry.path().stem() == stem) {
+                fs::remove(entry.path(), ignored);
+            }
+        }
+        auto* ds = shpDriver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        OGRLayer* layer = ds->CreateLayer(layerName, srs.get(), kind);
+        ASSERT_NE(layer, nullptr);
+        if (kind == wkbLineString) {
+            OGRFieldDefn nameField("name", OFTString);
+            ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+        }
+        for (const auto& [points, label] : shapes) {
+            OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            if (kind == wkbLineString) {
+                OGRLineString line;
+                for (const auto& [x, y] : points) {
+                    line.addPoint(x, y);
+                }
+                feat->SetGeometry(&line);
+                feat->SetField("name", label);
+            } else {
+                OGRPolygon poly;
+                OGRLinearRing ring;
+                for (const auto& [x, y] : points) {
+                    ring.addPoint(x, y);
+                }
+                ring.closeRings();
+                poly.addRing(&ring);
+                feat->SetGeometry(&poly);
+            }
+            ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(ds);
+    };
+
+    auto runDifference = [&](const std::string& input, const std::string& overlay,
+                             const std::string& output) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("difference");
+        params["input"] = input;
+        params["overlay_vector"] = overlay;
+        params["output"] = output;
+        return p->execute(params, progress_);
+    };
+
+    // ── 臂 A：线 (0,0)-(200,0) 挖掉面 x∈[80,120], y∈[-20,20] ─────────────────────────
+    // 剩下两段 [0,80] 与 [120,200] ⇒ 总长恰好 160，两段各自的包框也手推得出。
+    {
+        const std::string input = (getTestDir() / "e2e_diff_shape_line_input.shp").string();
+        makeShp(input, "input", wkbLineString, {{{{0.0, 0.0}, {200.0, 0.0}}, "road"}});
+        const std::string overlay = (getTestDir() / "e2e_diff_shape_line_overlay.shp").string();
+        makeShp(overlay, "overlay", wkbPolygon,
+                {{{{80.0, -20.0}, {120.0, -20.0}, {120.0, 20.0}, {80.0, 20.0}, {80.0, -20.0}}, ""}});
+        const std::string output = (getTestDir() / "e2e_diff_shape_line_output.gpkg").string();
+
+        const auto result = runDifference(input, overlay, output);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_EQ(result.message, "Difference completed: 1 features");
+
+        GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+            output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        ASSERT_NE(outDs, nullptr);
+        OGRLayer* outLayer = outDs->GetLayer(0);
+        ASSERT_NE(outLayer, nullptr);
+        EXPECT_STREQ(outLayer->GetName(), "difference");
+        EXPECT_EQ(outLayer->GetFeatureCount(), 1);
+        const OGRSpatialReference* outSrs = outLayer->GetSpatialRef();
+        ASSERT_NE(outSrs, nullptr);
+        EXPECT_STREQ(outSrs->GetAuthorityCode(nullptr), "3857");
+
+        OGRFeature* feat = outLayer->GetNextFeature();
+        ASSERT_NE(feat, nullptr);
+        EXPECT_STREQ(feat->GetFieldAsString("name"), "road");
+        const OGRGeometry* geom = feat->GetGeometryRef();
+        ASSERT_NE(geom, nullptr);
+        const auto* parts = dynamic_cast<const OGRGeometryCollection*>(geom);
+        ASSERT_NE(parts, nullptr) << "线 × 面挖出来的两段应是一个几何集合";
+        EXPECT_EQ(parts->getNumGeometries(), 2);
+        double totalLength = 0.0;
+        std::vector<std::pair<double, double>> xRanges;
+        for (int i = 0; i < parts->getNumGeometries(); ++i) {
+            const OGRGeometry* part = parts->getGeometryRef(i);
+            if (const OGRCurve* curve = dynamic_cast<const OGRCurve*>(part)) {
+                totalLength += curve->get_Length();
+            } else if (const OGRGeometryCollection* inner =
+                           dynamic_cast<const OGRGeometryCollection*>(part)) {
+                totalLength += inner->get_Length();
+            }
+            OGREnvelope partEnv;
+            part->getEnvelope(&partEnv);
+            xRanges.emplace_back(partEnv.MinX, partEnv.MaxX);
+        }
+        std::sort(xRanges.begin(), xRanges.end());
+        EXPECT_NEAR(totalLength, 160.0, 1e-9) << "两段 [0,80] 与 [120,200] 之和必为 160";
+        ASSERT_EQ(xRanges.size(), 2u);
+        EXPECT_NEAR(xRanges[0].first, 0.0, 1e-9);
+        EXPECT_NEAR(xRanges[0].second, 80.0, 1e-9);
+        EXPECT_NEAR(xRanges[1].first, 120.0, 1e-9);
+        EXPECT_NEAR(xRanges[1].second, 200.0, 1e-9);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(outDs);
+    }
+
+    // ── 臂 B：面 (0,0)-(100,100) 挖掉面 (50,0)-(150,50) ⇒ 面积 10 000 − 2 500 = 7 500 ──
+    {
+        const std::string input = (getTestDir() / "e2e_diff_shape_poly_input.shp").string();
+        makeShp(input, "input", wkbPolygon,
+                {{{{0.0, 0.0}, {100.0, 0.0}, {100.0, 100.0}, {0.0, 100.0}, {0.0, 0.0}}, ""}});
+        const std::string overlay = (getTestDir() / "e2e_diff_shape_poly_overlay.shp").string();
+        makeShp(overlay, "overlay", wkbPolygon,
+                {{{{50.0, 0.0}, {150.0, 0.0}, {150.0, 50.0}, {50.0, 50.0}, {50.0, 0.0}}, ""}});
+        const std::string output = (getTestDir() / "e2e_diff_shape_poly_output.gpkg").string();
+
+        const auto result = runDifference(input, overlay, output);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_EQ(result.message, "Difference completed: 1 features");
+
+        GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+            output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        ASSERT_NE(outDs, nullptr);
+        OGRLayer* outLayer = outDs->GetLayer(0);
+        ASSERT_NE(outLayer, nullptr);
+        ASSERT_EQ(outLayer->GetFeatureCount(), 1);
+        OGRFeature* feat = outLayer->GetNextFeature();
+        ASSERT_NE(feat, nullptr);
+        const OGRGeometry* geom = feat->GetGeometryRef();
+        ASSERT_NE(geom, nullptr);
+        double area = -1.0;
+        if (const OGRSurface* surface = dynamic_cast<const OGRSurface*>(geom)) {
+            area = surface->get_Area();
+        } else if (const OGRGeometryCollection* collection =
+                       dynamic_cast<const OGRGeometryCollection*>(geom)) {
+            area = collection->get_Area();
+        }
+        EXPECT_NEAR(area, 7500.0, 1e-9) << "10 000 减去重叠的 2 500；写成 2 500 就是把 difference 做成了 intersect";
+        OGREnvelope env;
+        geom->getEnvelope(&env);
+        EXPECT_NEAR(env.MinX, 0.0, 1e-9);
+        EXPECT_NEAR(env.MaxX, 100.0, 1e-9);
+        EXPECT_NEAR(env.MinY, 0.0, 1e-9);
+        EXPECT_NEAR(env.MaxY, 100.0, 1e-9);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(outDs);
+    }
+
+    // ── 臂 C：小面被大面**完全覆盖** ⇒ 要素整条丢掉，产物 0 个要素 ────────────────────
+    {
+        const std::string input = (getTestDir() / "e2e_diff_shape_covered_input.shp").string();
+        makeShp(input, "input", wkbPolygon,
+                {{{{0.0, 0.0}, {10.0, 0.0}, {10.0, 10.0}, {0.0, 10.0}, {0.0, 0.0}}, ""}});
+        const std::string overlay = (getTestDir() / "e2e_diff_shape_covered_overlay.shp").string();
+        makeShp(overlay, "overlay", wkbPolygon,
+                {{{{-10.0, -10.0}, {20.0, -10.0}, {20.0, 20.0}, {-10.0, 20.0}, {-10.0, -10.0}}, ""}});
+        const std::string output = (getTestDir() / "e2e_diff_shape_covered_output.gpkg").string();
+
+        const auto result = runDifference(input, overlay, output);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_EQ(result.message, "Difference completed: 0 features");
+
+        GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+            output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        ASSERT_NE(outDs, nullptr);
+        OGRLayer* outLayer = outDs->GetLayer(0);
+        ASSERT_NE(outLayer, nullptr);
+        EXPECT_EQ(outLayer->GetFeatureCount(), 0) << "被完全覆盖的要素不得写成空几何占位";
+        GDALClose(outDs);
+    }
+}
+
 TEST_F(PluginTest, VectorDifferenceWithoutOverlapAvoidsMultiGeometryWarning) {
     auto* p = mgr_.find("vector");
     if (!p) {
