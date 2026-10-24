@@ -8059,19 +8059,93 @@ TEST_F(PluginTest, VectorSimplifyExecution) {
     ASSERT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("feature_count"), "1");
 
-    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
-        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
-    ASSERT_NE(outDs, nullptr);
-    OGRLayer* outLayer = outDs->GetLayer(0);
-    ASSERT_NE(outLayer, nullptr);
-    OGRFeature* outFeat = outLayer->GetNextFeature();
-    ASSERT_NE(outFeat, nullptr);
-    EXPECT_STREQ(outFeat->GetFieldAsString("name"), "main_road");
-    auto* outLine = outFeat->GetGeometryRef()->toLineString();
-    ASSERT_NE(outLine, nullptr);
-    EXPECT_LT(outLine->getNumPoints(), 5);
-    OGRFeature::DestroyFeature(outFeat);
-    GDALClose(outDs);
+    // 夹具是 (0,0)-(10,0.5)-(20,-0.5)-(30,0.4)-(40,0) 这条五点折线，三个中间点到弦 (0,0)-(40,0)
+    // 的距离就是各自的 |y| ≤ 0.5。tolerance = 2.0 ⇒ 按 Douglas-Peucker 三个中间点全该被去掉，
+    // 期望是**手算写死**的两点线 (0,0)-(40,0)、长度 40：原来这里只有 `getNumPoints() < 5`，
+    // 那是一条"少一个点就通过"的弱判据 ⇒ 换成整串级的顶点坐标与长度断言。
+    auto readOutputLine = [](const std::string& path) {
+        GDALDataset* ds = static_cast<GDALDataset*>(GDALOpenEx(
+            path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        EXPECT_NE(ds, nullptr);
+        if (!ds) {
+            return std::vector<OGRPoint>{};
+        }
+        OGRLayer* layer = ds->GetLayer(0);
+        EXPECT_NE(layer, nullptr);
+        std::vector<OGRPoint> pts;
+        if (layer) {
+            OGRFeature* feat = layer->GetNextFeature();
+            if (feat) {
+                const OGRGeometry* geom = feat->GetGeometryRef();
+                const OGRLineString* line = geom ? geom->toLineString() : nullptr;
+                if (line) {
+                    pts.reserve(static_cast<size_t>(line->getNumPoints()));
+                    for (int i = 0; i < line->getNumPoints(); ++i) {
+                        OGRPoint pt;
+                        line->getPoint(i, &pt);
+                        pts.push_back(pt);
+                    }
+                }
+                OGRFeature::DestroyFeature(feat);
+            }
+        }
+        GDALClose(ds);
+        return pts;
+    };
+
+    const std::vector<OGRPoint> simplified = readOutputLine(output);
+    ASSERT_EQ(simplified.size(), 2u) << "tolerance=2.0 应把三个中间点全部去掉";
+    EXPECT_DOUBLE_EQ(simplified[0].getX(), 0.0);
+    EXPECT_DOUBLE_EQ(simplified[0].getY(), 0.0);
+    EXPECT_DOUBLE_EQ(simplified[1].getX(), 40.0);
+    EXPECT_DOUBLE_EQ(simplified[1].getY(), 0.0);
+
+    {
+        GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+            output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        ASSERT_NE(outDs, nullptr);
+        OGRLayer* outLayer = outDs->GetLayer(0);
+        ASSERT_NE(outLayer, nullptr);
+        // 层名与 CRS 是"转换是否保真"这一半：simplify 不改层名、不改 CRS。
+        EXPECT_STREQ(outLayer->GetName(), "roads");
+        const OGRSpatialReference* outSrs = outLayer->GetSpatialRef();
+        ASSERT_NE(outSrs, nullptr);
+        const char* authCode = outSrs->GetAuthorityCode(nullptr);
+        EXPECT_STREQ(authCode, "3857");
+        const double expectedLength = 40.0;
+        OGRFeature* outFeat = outLayer->GetNextFeature();
+        ASSERT_NE(outFeat, nullptr);
+        EXPECT_STREQ(outFeat->GetFieldAsString("name"), "main_road");
+        // get_Length() 不挂在 OGRGeometry 基类上（同 :4553 那条理由）⇒ 长度要走判类下转再读。
+        const OGRGeometry* outGeom = outFeat->GetGeometryRef();
+        const OGRLineString* outLine = outGeom ? outGeom->toLineString() : nullptr;
+        ASSERT_NE(outLine, nullptr) << "simplify 的产物必须是 LineString，否则长度判据无从读起";
+        EXPECT_NEAR(outLine->get_Length(), expectedLength, 1e-9);
+        OGRFeature::DestroyFeature(outFeat);
+        GDALClose(outDs);
+    }
+
+    // 第二条容差臂：tolerance = 0.1 比三个中间点的偏移（0.5/0.5/0.4）都小 ⇒ 输出必是**原样的五点线**。
+    // WHY 要这条：只有一条"容差很大"的臂时，"根本不做简化（原样 clone）"这种坏实现会**恰好**被上面那条
+    // 抓住，但"把 tolerance 当成常数放大/缩小"这类坏实现不会改变 2.0 那臂的结果；两点合起来才同时
+    // 抓住"没简化"和"容差不生效"两种坏法（判别结果见本刀报告）。
+    const std::string tinyOutput = utf8PathString(getTestDir() / "e2e_simplify_tinytol_output.gpkg");
+    std::map<std::string, gis::framework::ParamValue> tinyParams;
+    tinyParams["action"] = std::string("simplify");
+    tinyParams["input"] = input;
+    tinyParams["output"] = tinyOutput;
+    tinyParams["tolerance"] = 0.1;
+    const auto tinyResult = p->execute(tinyParams, progress_);
+    EXPECT_TRUE(tinyResult.success) << tinyResult.message;
+    EXPECT_EQ(tinyResult.metadata.at("feature_count"), "1");
+    const std::vector<OGRPoint> kept = readOutputLine(tinyOutput);
+    ASSERT_EQ(kept.size(), 5u) << "tolerance=0.1 小于所有中间点偏移 ⇒ 五点必须全留";
+    const double expectKeptX[5] = {0.0, 10.0, 20.0, 30.0, 40.0};
+    const double expectKeptY[5] = {0.0, 0.5, -0.5, 0.4, 0.0};
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_DOUBLE_EQ(kept[static_cast<size_t>(i)].getX(), expectKeptX[i]);
+        EXPECT_DOUBLE_EQ(kept[static_cast<size_t>(i)].getY(), expectKeptY[i]);
+    }
 }
 
 TEST_F(PluginTest, VectorRepairExecution) {

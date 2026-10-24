@@ -4,13 +4,14 @@ param(
     [string]$OutputRoot = "",
     [ValidateSet("quick", "full")]
     [string]$Mode = "quick",
-    # Group 按"消费哪批派生件"划分四条真实腿（见 GIS_CASE_ROSTER 那段注释）：
+    # Group 按"消费哪批派生件"划分五条真实腿（见 GIS_CASE_ROSTER 那段注释）：
     # checks = C3b-A 的拓扑/检查批；overlay_buffer_join = buffer / spatial_join / 几何派生与转换小用例；
     # overlay_ops = clip/difference/intersect/union 的 focus/far/partial/stress 全族；
-    # union_poly = C3h-3 的 union 路径 A 腿（C3k-2 把原 overlay 一档按"重活一分为二"拆成前两组）。
+    # union_poly = C3h-3 的 union 路径 A 腿（C3k-2 把原 overlay 一档按"重活一分为二"拆成前两组）；
+    # derive_heavy = C3c-B 起的"单条就几十秒"的几何派生重活档（现只有 simplify_roads）。
     # 取 ValidateSet 而不是自由字符串：-GROUP 写错时要在参数绑定期就红，
     # 不许顺着下面的注册走到"一组都没匹配上 => 0 条用例 => 退出码 0"的假绿。
-    [ValidateSet("all", "checks", "overlay_buffer_join", "overlay_ops", "union_poly")]
+    [ValidateSet("all", "checks", "overlay_buffer_join", "overlay_ops", "union_poly", "derive_heavy")]
     [string]$Group = "all"
 )
 
@@ -20,7 +21,7 @@ if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Error
 }
 
 # quick 档不分档（27 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/overlay_ops/
-# union_poly 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先判红。放在最顶上是为了在碰 data/ 与
+# union_poly/derive_heavy 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先判红。放在最顶上是为了在碰 data/ 与
 # tmp/ 之前就红（同 tests/run_real_vector_regression.cmake 里"参数写错要在绑定期红"那条口径）。
 if ($Mode -eq "quick" -and $Group -ne "all") {
     throw ("Mode=quick has no group split: pass -Group all (got Mode=" + $Mode + " Group=" + $Group + ")")
@@ -2101,6 +2102,101 @@ function Assert-C3cAConvertCase {
     return $outputInfo
 }
 
+# ── C3c-B：simplify 的真实数据腿（roads core 3857，投影线层，两万级要素）────────────
+# 输入复制到自己的 scratch 目录再喂 CLI。WHY 不复用 c3cA 那份 roads 复制件：本刀的输入侧期望也是
+# 用 vector info 现读的，而 info 会在 GPKG 输入旁边落一个 .aux.xml（N115）⇒ 两份共用的话，
+# info_roads 那条"边车必须在场"的判据会被我这次读取代劳，跨用例串证。
+function Ensure-C3cBRealInputs {
+    param(
+        [string]$ResolvedWorkspaceRoot,
+        [string]$ResolvedCliPath
+    )
+
+    $scratchRoot = Join-Path $ResolvedWorkspaceRoot "build\tmp\c3cB"
+    New-Item -ItemType Directory -Force -Path $scratchRoot | Out-Null
+
+    $roadsBenchmark = Join-Path $ResolvedWorkspaceRoot "tmp\vector_benchmark\bj_roads_core_3857.gpkg"
+    Require-Path -Path $roadsBenchmark -Label "C3c-B roads benchmark"
+    $roadsCopy = Join-Path $scratchRoot "simplify_roads_input.gpkg"
+    Copy-Item $roadsBenchmark $roadsCopy -Force
+    Remove-Item ($roadsCopy + ".aux.xml") -Force -ErrorAction SilentlyContinue
+
+    # 输入侧期望一次读齐（要素数 / 字段名与顺序 / 层名 / 几何类族 / CRS / 包框）。读的是复制件自己，
+    # 不是任何动作的产物 ⇒ 与 N108 那条"不拿产物比产物"不冲突。
+    $inputInfo = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $roadsCopy `
+        -ScratchDir $scratchRoot -Label "simplify_input_roads"
+    Assert-Condition -Condition ($inputInfo.FeatureCount -ge 2) -Message (
+        "C3c-B: roads copy carries " + $inputInfo.FeatureCount + " feature(s), expected a real layer")
+    Assert-Condition -Condition ($inputInfo.Crs -ceq "EPSG:3857") -Message (
+        "C3c-B: roads copy CRS is '" + $inputInfo.Crs + "', simplify only accepts a projected layer")
+
+    Write-Host ("  c3c-B inputs: roads copy=" + $inputInfo.FeatureCount + " feature(s), crs=" +
+        $inputInfo.Crs + ", fields=" + (@($inputInfo.FieldNames) -join ","))
+
+    return [pscustomobject]@{
+        ScratchRoot = $scratchRoot
+        RoadsCopy = $roadsCopy
+        InputInfo = $inputInfo
+        # 本腿的开跑下界：造复制件的时刻一定早于任何一次 CLI 调用 ⇒ 产物只有在**本轮**被写过，
+        # 它的 LastWriteTimeUtc 才会不早于这个时刻（tmp/vector_regression 的产物跨轮留存，
+        # "文件在场"本身不证明这一轮真的写了 —— 本仓吃过"旧件在场、判据全绿"的亏）。
+        StartUtc = (Get-Date).ToUniversalTime()
+    }
+}
+
+function Assert-C3cBSimplifyCase {
+    param(
+        [pscustomobject]$Case,
+        [string]$ResolvedCliPath,
+        [string]$ResolvedOutputRoot,
+        [object]$Refs
+    )
+
+    Assert-Condition -Condition ($null -ne $Refs) -Message (
+        $Case.Name + ": C3c-B refs missing (Ensure-C3cBRealInputs did not run) => expectations would be vacuous")
+    Assert-Condition -Condition ($Case.Name -eq "simplify_roads") -Message (
+        "Assert-C3cBSimplifyCase got '" + $Case.Name + "'")
+
+    $expected = $Refs.InputInfo
+    # 三方对撞：CLI 报的完成数、metadata 的 feature_count、产物回读的要素数，三个都必须等于**输入**要素数。
+    # simplify 是要素级恒等映射（一条不许多、一条不许少），所以"与输入相等"是关系式而不是样本常量。
+    $reported = Get-ReportedCount -Text $Case.Output -Pattern "Simplify completed: (\d+) features" `
+        -Label ($Case.Name + " reported count")
+    Assert-Condition -Condition ($reported -eq $expected.FeatureCount) -Message (
+        $Case.Name + ": CLI reports " + $reported + " simplified, input has " + $expected.FeatureCount)
+    $featureCount = Get-ReportedMetadataCount -Text $Case.Output -Key "feature_count" -Label ($Case.Name + " feature_count")
+    Assert-Condition -Condition ($featureCount -eq $expected.FeatureCount) -Message (
+        $Case.Name + ": feature_count=" + $featureCount + ", input has " + $expected.FeatureCount)
+
+    $outputPath = Join-Path $ResolvedOutputRoot "simplify_roads.gpkg"
+    # 产物必须晚于本腿开跑时刻（下界由 Refs.StartUtc 给）：上一轮留下的同名文件会让"在场 + 回读"
+    # 两条判据一起变成对旧件的取证。红的时候报出两个时刻，不用重跑就知道差了多少。
+    $writtenUtc = (Get-Item $outputPath).LastWriteTimeUtc
+    Assert-Condition -Condition ($writtenUtc -ge $Refs.StartUtc) -Message (
+        $Case.Name + ": output was last written " + $writtenUtc.ToString("o") + ", before this leg started at " +
+        $Refs.StartUtc.ToString("o") + " => the file on disk is a leftover, not this run's product")
+    $read = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $outputPath `
+        -ScratchDir $Refs.ScratchRoot -Label "simplify_roads_output"
+    Assert-Condition -Condition ($read.FeatureCount -eq $expected.FeatureCount) -Message (
+        $Case.Name + ": output has " + $read.FeatureCount + " feature(s), input has " + $expected.FeatureCount)
+    Assert-Condition -Condition (($read.FieldNames -join ",") -ceq (@($expected.FieldNames) -join ",")) -Message (
+        $Case.Name + ": output fields '" + ($read.FieldNames -join ",") + "' != input '" +
+        (@($expected.FieldNames) -join ",") + "'")
+    Assert-Condition -Condition ($read.LayerName -ceq $expected.LayerName) -Message (
+        $Case.Name + ": output LayerName='" + $read.LayerName + "', input '" + $expected.LayerName + "'")
+    Assert-Condition -Condition ($read.Geometry -ceq $expected.Geometry) -Message (
+        $Case.Name + ": output Geometry='" + $read.Geometry + "', input '" + $expected.Geometry + "'")
+    Assert-Condition -Condition ($read.Crs -ceq $expected.Crs) -Message (
+        $Case.Name + ": output CRS='" + $read.Crs + "', input '" + $expected.Crs + "'")
+    # 形状侧唯一一条独立成立的判据：Douglas-Peucker 只**删**顶点、不新增 ⇒ 产物包框必被输入包框包住
+    # （容差 0，四边哪一条越界、越了多少由 Assert-ExtentInsideOf 报出来）。
+    # ⚠ 本腿不判"顶点数确实变少"：runner 这层的读数只到图层声明，没有顶点计数；那半边由合成夹具
+    #   VectorSimplifyExecution 的两条容差臂钉住（大容差整串等于两点线、小容差整串等于原五点线）。
+    Assert-ExtentInsideOf -Outer $expected -Inner $read -Tolerance 0.0 -Label $Case.Name
+    $script:C3cBAssertedCount = $script:C3cBAssertedCount + 1
+    return $read
+}
+
 # ── C3h-3：union 路径 A（面 × 面）的真实数据腿 ──────────────────────────────────
 # 既有 union_focus 是线 × 面：源层为线、叠加侧全为面 ⇒ vector_plugin_overlay.inc:34-35 的
 #   usePracticalMixedUnion 为真 ⇒ 落路径 B；而路径 B 按契约不产出叠加面（同文件 210 行注释原文
@@ -2502,7 +2598,8 @@ function Validate-CaseOutputs {
         [object]$TopologyRefs,
         [object]$ChineseFilterRefs,
         [object]$UnionPolyRefs,
-        [object]$C3cARefs
+        [object]$C3cARefs,
+        [object]$C3cBRefs
     )
 
     # 期望值一律由输入图层自己的要素数推出，不写死常量。
@@ -2658,6 +2755,11 @@ function Validate-CaseOutputs {
         "repair_province" {
             Assert-C3cARepairCase -Case $Case -ResolvedCliPath $ResolvedCliPath `
                 -ResolvedOutputRoot $ResolvedOutputRoot -Refs $C3cARefs | Out-Null
+        }
+        # ── C3c-B：simplify 的真实数据腿（判据见 Assert-C3cBSimplifyCase 函数头）──
+        "simplify_roads" {
+            Assert-C3cBSimplifyCase -Case $Case -ResolvedCliPath $ResolvedCliPath `
+                -ResolvedOutputRoot $ResolvedOutputRoot -Refs $C3cBRefs | Out-Null
         }
         "clip_stress" {
             Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected $InputFeatureCount -Label "clip_stress"
@@ -2929,6 +3031,18 @@ Require-Path -Path $chinaBbox3857 -Label "china bbox 3857"
 # ── C3c-A：两份真实输入先复制到 build/tmp/c3cA/（N115），输入侧事实一次算齐 ──
 $script:C3cARefs = Ensure-C3cARealInputs -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot
 
+# ── C3c-B：simplify 的输入复制件（build/tmp/c3cB/），输入侧事实一次算齐 ──
+# 只在真会跑 derive_heavy 那一档（或手工 all）时才造复制件并现读输入：其余四档不付这份
+# 7.5 MB 复制 + 一次 22 836 要素 info 现读的钱（与 $buildUnionPolyInputs 那条闸同口径）。
+$buildDeriveHeavyInputs = ($Mode -eq "full") -and ($Group -eq "all" -or $Group -eq "derive_heavy")
+if ($buildDeriveHeavyInputs) {
+    $script:C3cBRefs = Ensure-C3cBRealInputs -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -ResolvedCliPath $ResolvedCliPath
+} else {
+    # 置 $null 而不是"有路径、没现读属性"的半成品：某条腿被归错档却真跑起来时，红在
+    # Assert-C3cBSimplifyCase 开头那条 null 判据上，而不是拿 $null 的属性比较蒙成绿。
+    $script:C3cBRefs = $null
+}
+
 # 三个窗口按输入图层自己的范围生成，因此对"合成样本"和"data/vector 真实道路"都成立：
 #   all     —— 外扩 20%，必须完全覆盖输入 ⇒ clip/intersect/ spatial_join 是恒等、difference 是空；
 #   far     —— 整块挪出范围之外 ⇒ 三个叠加动作必须一个都不留 / 一个都不少；
@@ -2972,7 +3086,7 @@ Write-BboxGeojson -Path $partialWindow -Box $partialBox -Label "win_partial"
 # 各档都**照常注册全部用例**（名单不变量要从完整 $cases 导全量，见下面 GIS_CASE_ROSTER 那段），
 # 过滤只发生在派发那一步。
 # quick 档不分档（27 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/overlay_ops/
-# union_poly 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先把它判红。
+# union_poly/derive_heavy 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先把它判红。
 if ($Mode -eq "quick" -and $Group -ne "all") {
     throw ("Mode=quick has no group split: pass -Group all (got Mode=" + $Mode + " Group=" + $Group + ")")
 }
@@ -3202,6 +3316,22 @@ $topologyRefs = $null
 $unionPolyRefs = $null
 
 if ($Mode -eq "full") {
+    # C3c-B 的名单：注册、判据分发与下面两条不变量（正向对撞 + 组标门禁）共用这一份，不手抄第二遍
+    # （本仓出过"手抄名单漂移 ⇒ 新条目不被断言"的事故）。
+    $script:C3cBCaseNames = @("simplify_roads")
+    # ── C3c-B：simplify 的真实数据腿（roads core 3857 复制件，两万级要素逐条走 GEOS）──────
+    # 单独成档（derive_heavy）而不是挂进 overlay_buffer_join：现读整腿 250.11 s ÷ TIMEOUT 630 = 2.52×，
+    # 贴着本仓 2.5× 的拆腿触发线（同腿 Debug 散布几十秒级 ⇒ 再有一次就可能跌破），而抬 TIMEOUT
+    # 不是选项（TIMEOUT 是本仓唯一的挂起执法者）。规矩是"新腿按 >=4× 起步、跌破就拆"。
+    # quick 档也不挂：real_data_vector_quick 现读余量 2.81×，同样压不起这条 54.22 s 的用例。
+    $cases += New-Case -Name "simplify_roads" -Group "derive_heavy" -CaseArgs @(
+        "vector", "simplify",
+        ("--input=" + $script:C3cBRefs.RoadsCopy),
+        ("--output=" + (Join-Path $ResolvedOutputRoot "simplify_roads.gpkg")),
+        "--tolerance=2.0"
+    ) -ExpectedOutputs @(
+        (Join-Path $ResolvedOutputRoot "simplify_roads.gpkg")
+    )
     $cases += New-Case -Name "clip_stress" -Group "overlay_ops" -CaseArgs @(
         "vector", "clip",
         ("--input=" + $roadsCore),
@@ -3309,6 +3439,8 @@ $script:C3baSliverLowFeatures = -1
 # C3c-A 的"跑过数 == 判过数"计数器：四个断言函数各 +1，主循环后与真实跑过的用例名对撞。
 # 与 union_poly 的第 7 条同形 —— 分发按用例名走，漏掉一个 case 分支时"跑了但没人判"必须红。
 $script:C3cAAssertedCount = 0
+# C3c-B 同形计数器（跑过数 == 判过数）。
+$script:C3cBAssertedCount = 0
 
 # 名单与注册表对撞（正向）：名单里的每一条都必须真的注册成用例；quick 档整批不注册 ⇒ 只在 full 档核条数。
 # 反向的"进了名单却没有判据分支"由 Assert-TopologyCheckCase 的 default 负责，两侧都堵住才是闭环。
@@ -3325,41 +3457,52 @@ if ($Mode -eq "full") {
     Assert-Condition -Condition ($registeredUnionPoly.Count -eq $script:UnionPolyCaseNames.Count) -Message (
         "C3h-3 roster has " + $script:UnionPolyCaseNames.Count + " name(s), but " + $registeredUnionPoly.Count +
         " case(s) got registered")
+
+    # C3c-B 同形的正向对撞：derive_heavy 名单里的每一条都必须真的注册成用例
+    # （反向的"注册了却没被判"由跑过数==判过数那条，"注册了但组标错"由下面的组标门禁）。
+    $registeredC3cB = @($cases | Where-Object { $script:C3cBCaseNames -contains $_.Name })
+    Assert-Condition -Condition ($registeredC3cB.Count -eq $script:C3cBCaseNames.Count) -Message (
+        "C3c-B roster has " + $script:C3cBCaseNames.Count + " name(s), but " + $registeredC3cB.Count +
+        " case(s) got registered")
 }
 
 # ── C3k：各分组之并 == 拆分前的全量（本刀承重判据，只在 Mode=full 启用）───────────────
 # 名单一律由脚本自己导：full = 当前 $cases 里 Mode=full 注册进来的全部用例名，
-# checks/overlay_buffer_join/overlay_ops/union_poly = 每条用例注册时打的组标。手抄一份名单进脚本等于没写这条判据
+# checks/overlay_buffer_join/overlay_ops/union_poly/derive_heavy = 每条用例注册时打的组标。手抄一份名单进脚本等于没写这条判据
 # （本仓出过"手抄名单漂移 ⇒ 新条目不被断言"的事故），所以这里不写任何组内名单字面量。
 # WHY 各档各自都算完整的全套：注册永远是全量，所以任何一半单独跑都能判出"档被拆坏了"。
 if ($Mode -eq "full") {
     # 组名只写这一处：ValidateSet（param 里那份）之外，下面的导名单、判红消息都从这个数组来，
     # 加档时不必再逐条改判据（C3h-3 就是把两两交集换成"按重数数"的同一条式子才做到的；C3k-2 把
     # overlay 一分为二时，这里只加两个名字与两条导名单）。
-    $rosterGroupNames = @("checks", "overlay_buffer_join", "overlay_ops", "union_poly")
+    $rosterGroupNames = @("checks", "overlay_buffer_join", "overlay_ops", "union_poly", "derive_heavy")
     $rosterFull = @($cases | ForEach-Object { $_.Name })
     $rosterChecks = @($cases | Where-Object { $_.Group -eq "checks" } | ForEach-Object { $_.Name })
     $rosterBufferJoin = @($cases | Where-Object { $_.Group -eq "overlay_buffer_join" } | ForEach-Object { $_.Name })
     $rosterOps = @($cases | Where-Object { $_.Group -eq "overlay_ops" } | ForEach-Object { $_.Name })
     $rosterUnionPoly = @($cases | Where-Object { $_.Group -eq "union_poly" } | ForEach-Object { $_.Name })
+    $rosterDeriveHeavy = @($cases | Where-Object { $_.Group -eq "derive_heavy" } | ForEach-Object { $_.Name })
     $rosterUngrouped = @($cases | Where-Object { $rosterGroupNames -cnotcontains $_.Group } |
         ForEach-Object { $_.Name + " (Group=[" + [string]$_.Group + "])" })
-    # 不重：同一条腿被两个组同时认领 ⇒ 在"四组之并"里数重数（对任意档数都成立，不必两两求交集）。
-    $rosterTaggedAll = @($rosterChecks + $rosterBufferJoin + $rosterOps + $rosterUnionPoly)
+    # 不重：同一条腿被两个组同时认领 ⇒ 在"五组之并"里数重数（对任意档数都成立，不必两两求交集）。
+    $rosterTaggedAll = @($rosterChecks + $rosterBufferJoin + $rosterOps + $rosterUnionPoly + $rosterDeriveHeavy)
     $rosterBoth = @($rosterTaggedAll | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { [string]$_.Name })
     $rosterFullSorted = @($rosterFull | Sort-Object)
     $rosterChecksSorted = @($rosterChecks | Sort-Object)
     $rosterBufferJoinSorted = @($rosterBufferJoin | Sort-Object)
     $rosterOpsSorted = @($rosterOps | Sort-Object)
     $rosterUnionPolySorted = @($rosterUnionPoly | Sort-Object)
-    $rosterUnionSorted = @(($rosterChecksSorted + $rosterBufferJoinSorted + $rosterOpsSorted + $rosterUnionPolySorted) | Sort-Object)
+    $rosterDeriveHeavySorted = @($rosterDeriveHeavy | Sort-Object)
+    $rosterUnionSorted = @(($rosterChecksSorted + $rosterBufferJoinSorted + $rosterOpsSorted + $rosterUnionPolySorted +
+        $rosterDeriveHeavySorted) | Sort-Object)
 
-    # 第 4 条：无论成败先打五行机器可取的名单 ⇒ 判红那一轮也拿得到名单（键名与组名同为 ASCII）。
+    # 第 4 条：无论成败先打六行机器可取的名单 ⇒ 判红那一轮也拿得到名单（键名与组名同为 ASCII）。
     Write-Host ("GIS_CASE_ROSTER[full]: " + ($rosterFullSorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[checks]: " + ($rosterChecksSorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[overlay_buffer_join]: " + ($rosterBufferJoinSorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[overlay_ops]: " + ($rosterOpsSorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[union_poly]: " + ($rosterUnionPolySorted -join ","))
+    Write-Host ("GIS_CASE_ROSTER[derive_heavy]: " + ($rosterDeriveHeavySorted -join ","))
 
     # 第 1 条：Group 缺失（或取了 $rosterGroupNames 之外的值）的 full 用例 ⇒ 点名判红。
     Assert-Condition -Condition ($rosterUngrouped.Count -eq 0) -Message (
@@ -3371,7 +3514,7 @@ if ($Mode -eq "full") {
         "C3k group invariant: " + $rosterBoth.Count + " case name(s) got tagged into more than one group: " +
         ($rosterBoth -join ","))
 
-    # 第 3 条：四组之并与全量逐名不等 ⇒ 判红，消息里带五个名单与五个条数。
+    # 第 3 条：五组之并与全量逐名不等 ⇒ 判红，消息里带六个名单与六个条数。
     $rosterDiff = @()
     $rosterSlots = [Math]::Max($rosterUnionSorted.Count, $rosterFullSorted.Count)
     for ($i = 0; $i -lt $rosterSlots; $i++) {
@@ -3384,13 +3527,14 @@ if ($Mode -eq "full") {
         }
     }
     Assert-Condition -Condition ($rosterDiff.Count -eq 0) -Message (
-        "C3k group invariant: sort(checks)+sort(overlay_buffer_join)+sort(overlay_ops)+sort(union_poly) != sort(full) at " + $rosterDiff.Count +
+        "C3k group invariant: sort(checks)+sort(overlay_buffer_join)+sort(overlay_ops)+sort(union_poly)+sort(derive_heavy) != sort(full) at " + $rosterDiff.Count +
         " name slot(s): " + ($rosterDiff -join " | ") +
         " || full(" + $rosterFullSorted.Count + "): " + ($rosterFullSorted -join ",") +
         " || checks(" + $rosterChecksSorted.Count + "): " + ($rosterChecksSorted -join ",") +
         " || overlay_buffer_join(" + $rosterBufferJoinSorted.Count + "): " + ($rosterBufferJoinSorted -join ",") +
         " || overlay_ops(" + $rosterOpsSorted.Count + "): " + ($rosterOpsSorted -join ",") +
-        " || union_poly(" + $rosterUnionPolySorted.Count + "): " + ($rosterUnionPolySorted -join ","))
+        " || union_poly(" + $rosterUnionPolySorted.Count + "): " + ($rosterUnionPolySorted -join ",") +
+        " || derive_heavy(" + $rosterDeriveHeavySorted.Count + "): " + ($rosterDeriveHeavySorted -join ","))
 
     # 本刀自己加的第 5 条：上面三条都抓不到"把某条 checks 腿的 Group 改成 overlay_buffer_join/overlay_ops"——改档不动
     # 各分组之并，第 1/2/3 条会照样绿（工单 §5 要求的正是这种破坏必须红）。checks 这一档的成员
@@ -3416,6 +3560,18 @@ if ($Mode -eq "full") {
         ($rosterUnionPolyMissing -join ",") + " || roster(" + $script:UnionPolyCaseNames.Count + "): " +
         (($script:UnionPolyCaseNames | Sort-Object) -join ",") + " || tagged union_poly(" +
         $rosterUnionPolySorted.Count + "): " + ($rosterUnionPolySorted -join ","))
+
+    # C3c-B 加的第 8 条：与第 5/6 条同形，钉住 derive_heavy 这一档的成员名单。
+    # 缺它的话"把 simplify_roads 的 Group 改成 overlay_buffer_join"这种改档动不了五组之并
+    # （第 1/2/3 条照绿），而这条腿的真实覆盖已经静默丢失 —— 同一件事在 C3h-3 那一档踩过一次。
+    $rosterDeriveHeavyExtra = @($rosterDeriveHeavySorted | Where-Object { $script:C3cBCaseNames -notcontains $_ })
+    $rosterDeriveHeavyMissing = @($script:C3cBCaseNames | Where-Object { $rosterDeriveHeavySorted -notcontains $_ })
+    Assert-Condition -Condition ($rosterDeriveHeavyExtra.Count -eq 0 -and $rosterDeriveHeavyMissing.Count -eq 0) -Message (
+        "C3c-B group invariant: Group=derive_heavy disagrees with the C3c-B roster || tagged derive_heavy but " +
+        "absent from roster: " + ($rosterDeriveHeavyExtra -join ",") + " || in roster but not tagged derive_heavy: " +
+        ($rosterDeriveHeavyMissing -join ",") + " || roster(" + $script:C3cBCaseNames.Count + "): " +
+        (($script:C3cBCaseNames | Sort-Object) -join ",") + " || tagged derive_heavy(" +
+        $rosterDeriveHeavySorted.Count + "): " + ($rosterDeriveHeavySorted -join ","))
 }
 
 # 本档不消费的派生件没有真的造出来 ⇒ 传给判据的 refs 置 $null（而不是"有路径、没现读属性"的
@@ -3436,7 +3592,7 @@ Assert-Condition -Condition ($runCases.Count -gt 0) -Message (
 $results = @()
 foreach ($case in $runCases) {
     $result = Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
-    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs -UnionPolyRefs $unionPolyRefs -C3cARefs $script:C3cARefs
+    Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs -UnionPolyRefs $unionPolyRefs -C3cARefs $script:C3cARefs -C3cBRefs $script:C3cBRefs
     $results += $result
 }
 
@@ -3457,6 +3613,15 @@ Assert-Condition -Condition ($executedC3cA.Count -eq $script:C3cAAssertedCount) 
     "C3c-A judge-coverage invariant: " + $executedC3cA.Count + " case(s) ran but " +
     $script:C3cAAssertedCount + " were judged by Assert-C3cA* => the name dispatch is not firing " +
     "(ran: " + (($executedC3cA | ForEach-Object { $_.Name }) -join ",") + ")")
+
+# C3c-B 同形：simplify 那条腿的"跑过数 == 判过数"。名单用 $script:C3cBCaseNames（与注册、组标门禁
+# 同一份），名字与 Validate-CaseOutputs 里那个分支逐字相同 ⇒ 分支被删/名字拼错时这里当场红，
+# 而不是"整条腿 Passed、零判据"。
+$executedC3cB = @($results | Where-Object { $script:C3cBCaseNames -contains $_.Name })
+Assert-Condition -Condition ($executedC3cB.Count -eq $script:C3cBAssertedCount) -Message (
+    "C3c-B judge-coverage invariant: " + $executedC3cB.Count + " case(s) ran but " +
+    $script:C3cBAssertedCount + " were judged by Assert-C3cB* => the name dispatch is not firing " +
+    "(ran: " + (($executedC3cB | ForEach-Object { $_.Name }) -join ",") + ")")
 
 # summary_* 的落名：Group=all 时与拆分前逐字相同（summary_quick.* / summary_full.*，
 # 那两个文件名是 real_vector_regression / real_vector_regression_full 两个 custom target 的产物）；

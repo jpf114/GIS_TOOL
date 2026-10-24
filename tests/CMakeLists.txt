@@ -1747,6 +1747,19 @@ endif()
 #       原先 0.5 s 级的纯文本判据变成 4.23 s）。
 #     余量：630 ÷ 188.07 = 3.35×（> 2.5× 拆腿触发线；C3k-2 时的旧最大读数是 155.30 s，留作对照）。
 #     ⚠ 只跑了这一遍（最终版 runner），不把 188.07 与旧的 155.30 读成趋势（同腿散布几十秒级）。
+#   ── C3c-B 新增 derive_heavy 一档（simplify 的真实数据腿，2026-10-24）──────────────────
+#     改动：overlay_buffer_join 18 → 18（simplify_roads 一度挂进来、实测后挪走），
+#       full 48 → 49（checks 18 + overlay_buffer_join 18 + overlay_ops 11 + union_poly 1 + derive_heavy 1），
+#       quick 27 → 27；c3cA 那条腿的 TIMEOUT **不动**（630）。
+#     读数（`ctest --test-dir build/debug -C Debug -R "^real_data_vector_derive_heavy$" -V`，Debug 三跑）：
+#       **85.84 / 86.69 / 84.47 s** ⇒ 取值 ceil(86.69 × 4 / 10) × 10 = ceil(34.676) × 10 = 35 × 10 = **350** ⇒ 350 ÷ 86.69 = 4.04×。
+#       用例内计时 simplify_roads 54.22 s（同一条用例在 buffer_join 里那一跑的现读）；其余约 32 s 是
+#       包装开销（Sync-PluginDlls + Ensure-C3cA/C3cB 三份复制件与两次 info 现读）。
+#     ⚠ Release 侧本刀**没有现读**：Release 树要到收口轮全目标重建才配得上这条新档（CMakeLists 变了 ⇒
+#       必须重新 configure）。按 C3h-3 那栏的量级差（同一条腿 Debug 140 s / Release 22 s）估 Release 更快，
+#       350 对 Release 是 >=4× 的更宽上界；收口轮现读后回填。
+#     为什么单独成档而不是挂进 buffer_join：**实测**挂进去那一跑整腿 250.11 s ⇒ 630 ÷ 250.11 = 2.52×，
+#       贴着 2.5× 的拆腿触发线 ⇒ 按"跌破就拆、不抬 TIMEOUT"挪出来单独成条。
 # WHY 命令里用 $<TARGET_FILE:gis-cli> 而不写死 build/<树>/… 路径：与既有全部 configure-time 用例同形态，
 #   代价也是那条已知事实 —— `ctest -N` 不带 `-C` 时它展开成空串（docs/RELEASE.md 第 1 节有实测原文）。
 #   本批按预检裁定 R-C2c **不加兜底**，只在发布前验证清单里点明"这一批也必须带 -C"。
@@ -1765,6 +1778,7 @@ set(GIS_REAL_DATA_TEST_NAMES
     real_data_vector_overlay_buffer_join
     real_data_vector_overlay_ops
     real_data_vector_union_poly
+    real_data_vector_derive_heavy
 )
 
 add_test(
@@ -1915,6 +1929,34 @@ set_tests_properties(real_data_vector_union_poly PROPERTIES
     SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
 )
 
+# ── 批次 C C3c-B：单条就几十秒的几何派生重活单独成档（derive_heavy）──────────────────
+# WHY 不挂进 real_data_vector_overlay_buffer_join：C3c-A 收口轮那条腿现读 Debug 188.07 s，加上
+#   simplify_roads 用例内计时 54.22 s 后**实测整腿 250.11 s**（2026-10-24 现读，见下面测量表）
+#   ⇒ 630 ÷ 250.11 = 2.52×，贴着 2.5× 的拆腿触发线；同腿 Debug 散布几十秒级，再有一次就跌破。
+# WHY 也不挂进 overlay_ops / quick：overlay_ops 现读 105.25 s ⇒ 加这条 159 s ⇒ 430 ÷ 159 = 2.70×；
+#   quick 现读余量 2.81×，同样压不起。抬 TIMEOUT 不是选项（TIMEOUT 是本仓唯一的挂起执法者，
+#   PROCESS_TIMEOUT 无效已证），规矩是"新腿按 >=4× 起步、跌破就拆"⇒ 单独成条。
+# WHY 分组名 derive_heavy：与 checks/overlay_*/union_poly 同形状按"消费哪批派生件"分档 —— 这条腿
+#   只消费 build/tmp/c3cB/ 里那份 roads 复制件，与另三批派生件互不相干。
+# RESOURCE_LOCK real_data_regression：与另三条 vector 腿同一把锁（同样写 <仓库根>/tmp/vector_regression、
+#   同样经 Sync-PluginDlls 覆盖 gis-cli 旁边的 plugin_*.dll ⇒ 并发跑就是两个进程同时改同一批耗材）。
+# 门控口径与既有 vector 腿逐字同形（tests/run_real_vector_regression.cmake）：缺解释器 = 红，缺 data/vector = Skip。
+add_test(
+    NAME real_data_vector_derive_heavy
+    COMMAND ${CMAKE_COMMAND}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+        -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
+        -DMODE=full
+        -DGROUP=derive_heavy
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
+)
+set_tests_properties(real_data_vector_derive_heavy PROPERTIES
+    TIMEOUT 350
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
+)
+
 # ── Task B21 / B17：源码乱码守卫落成用例（用户 2026-10-21 拍板：四规则全带）──────────
 # WHY 判据不在 CMake 里写：四规则里 R1（GBK roundtrip）要 CP936 编解码器，CMake 没有编解码器
 #   （同族限制："CMake 无 zlib ⇒ 像素级独立判定不可行"）。R2-R4 只比码点，但**不能**因为
@@ -1950,11 +1992,11 @@ get_property(GIS_TIMED_TEST_NAMES DIRECTORY PROPERTY TESTS)
 # gui_smoke_startup already has the tighter 60s bound set above; the blanket value must not
 # overwrite it, so it is excluded here instead of being re-set afterwards.
 # GIS_REAL_DATA_TEST_NAMES（Task C2 / N112 那批 real_data_*，C3k 拆腿后 5 条、C3h-3 再加 union_poly
-#   那条腿、C3k-2 再拆 overlay 之后 7 条）是同一个坑的反方向：它们按
+#   那条腿、C3k-2 再拆 overlay 之后 7 条、C3c-B 再加 derive_heavy 之后 8 条）是同一个坑的反方向：它们按
 #   "实测墙钟 × 余量倍数"算出的上界**高于** 300（vector 那条最重的腿现读 Debug 265.29 s ⇒ 300 ÷ 265.29 = 1.13×），
 #   blanket 会把那几个写好的数悄悄改回 300 ⇒ 注释里的算式当场作废、上界失真。名单走变量
 #   GIS_REAL_DATA_TEST_NAMES 传进来，不在这里手抄第二遍名字（两处各改各的正是本文件反复在防的漂移）。
-#   复算（现值 60/60/720/100/630/430/600）。⚠ 必须读**生成物**而不是读源码：源码侧那条
+#   复算（现值 60/60/720/100/630/430/600/350，按上面名单里 real_data_* 的书写顺序）。⚠ 必须读**生成物**而不是读源码：源码侧那条
 #     grep -A3 "set_tests_properties(real_data" tests/CMakeLists.txt | grep TIMEOUT
 #   即使有人把豁免名单 GIS_REAL_DATA_TEST_NAMES 里的名字删掉、blanket 把值改回 300，它照样打印那几个数。
 #     grep 'TIMEOUT "300"' build/debug/tests/CTestTestfile.cmake | grep -c real_data   ⇒ 必须为 0
