@@ -1992,12 +1992,13 @@ function Assert-C3cAInfoRoadsCase {
     $info = Get-LayerInfoSummary -Text $Case.Output -Label $Case.Name
     Assert-Condition -Condition ($info.Driver -eq "GPKG") -Message ($Case.Name + ": Driver=" + $info.Driver + ", expected GPKG")
     Assert-Condition -Condition ($info.LayerCount -eq 1) -Message ($Case.Name + ": Layers=" + $info.LayerCount + ", expected 1")
-    Assert-Condition -Condition ($info.LayerName -ceq "input") -Message ($Case.Name + ": LayerName='" + $info.LayerName + "', expected 'input'")
+    Assert-Condition -Condition ($info.LayerName -ceq $script:RoadsCoreLayerName) -Message (
+        $Case.Name + ": LayerName='" + $info.LayerName + "', expected '" + $script:RoadsCoreLayerName + "'")
     Assert-Condition -Condition ($info.Geometry -ceq "MultiLineString") -Message ($Case.Name + ": Geometry='" + $info.Geometry + "', expected MultiLineString")
     Assert-Condition -Condition ($info.Crs -ceq "EPSG:3857") -Message ($Case.Name + ": CRS='" + $info.Crs + "', expected EPSG:3857")
     Assert-Condition -Condition ($info.FeatureCount -eq $ExpectedFeatureCount) -Message (
         $Case.Name + ": Features=" + $info.FeatureCount + ", roads core reports " + $ExpectedFeatureCount)
-    $expectedFields = @("fclass", "fclass_CN", "name", "ref", "oneway", "maxspeed", "layer", "bridge", "tunnel")
+    $expectedFields = $script:RoadsCoreFieldNames
     Assert-Condition -Condition ($info.FieldCount -eq $expectedFields.Count) -Message (
         $Case.Name + ": Fields=" + $info.FieldCount + ", expected " + $expectedFields.Count)
     Assert-Condition -Condition (($info.FieldNames -join ",") -ceq ($expectedFields -join ",")) -Message (
@@ -2618,6 +2619,24 @@ function Validate-CaseOutputs {
         "buffer_quick" {
             Assert-CountEquals -Text $Case.Output -Pattern "feature_count: (\d+)" -Expected $InputFeatureCount -Label "buffer_quick"
             Assert-TextContains -Text $Case.Output -Expected "srs_type: projected" -Message "buffer_quick srs_type mismatch"
+            # C3c-B：这条腿原来只比对 CLI 自报的两个数，一个都没落地读产物 ⇒ 层名/几何类族/CRS/字段
+            # 整批丢掉也能整腿绿。现在把"产物侧的层契约"钉住：要素数与输入对撞（独立读端，不是自报数），
+            # 层名 = 源层名 + "_buffer"（doBuffer 的 outputLayerName 契约），缓冲后必是 MultiPolygon，
+            # CRS 与 9 个字段名及顺序 = 基准件的数据契约（名单见 $script:RoadsCoreFieldNames，只写一处）。
+            $bufferOutPath = Join-Path $ResolvedOutputRoot "buffer_quick.gpkg"
+            $bufferInfo = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $bufferOutPath `
+                -ScratchDir $ResolvedOutputRoot -Label "buffer_quick_output"
+            Assert-Condition -Condition ($bufferInfo.FeatureCount -eq $InputFeatureCount) -Message (
+                "buffer_quick: output has " + $bufferInfo.FeatureCount + " feature(s), input has " + $InputFeatureCount)
+            Assert-Condition -Condition ($bufferInfo.LayerName -ceq ($script:RoadsCoreLayerName + "_buffer")) -Message (
+                "buffer_quick: LayerName='" + $bufferInfo.LayerName + "', expected '" + $script:RoadsCoreLayerName + "_buffer'")
+            Assert-Condition -Condition ($bufferInfo.Geometry -ceq "MultiPolygon") -Message (
+                "buffer_quick: Geometry='" + $bufferInfo.Geometry + "', expected MultiPolygon")
+            Assert-Condition -Condition ($bufferInfo.Crs -ceq "EPSG:3857") -Message (
+                "buffer_quick: CRS='" + $bufferInfo.Crs + "', expected EPSG:3857")
+            Assert-Condition -Condition (($bufferInfo.FieldNames -join ",") -ceq ($script:RoadsCoreFieldNames -join ",")) -Message (
+                "buffer_quick: field list/order '" + ($bufferInfo.FieldNames -join ",") + "' != contract '" +
+                ($script:RoadsCoreFieldNames -join ",") + "'")
         }
         "clip_focus" {
             Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected $InputFeatureCount -Label "clip_focus"
@@ -3049,6 +3068,10 @@ if ($buildDeriveHeavyInputs) {
 #   partial —— 取范围中间的 25%~75% ⇒ 真正会切到几何，用来钉住 clip 与 intersect 的一致性。
 $roadsStats = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $roadsCore -ScratchDir $ResolvedOutputRoot
 $InputFeatureCount = $roadsStats.FeatureCount
+# bj_roads_core_3857 那份基准件的**数据契约**（层名 input、9 个字段与顺序、EPSG:3857）：名单只写这一处，
+# info_roads 与 buffer_quick 两条腿各自对撞它 —— 两处各抄一份正是本仓反复在防的"手抄名单漂移"。
+$script:RoadsCoreLayerName = "input"
+$script:RoadsCoreFieldNames = @("fclass", "fclass_CN", "name", "ref", "oneway", "maxspeed", "layer", "bridge", "tunnel")
 $spanX = [Math]::Max($roadsStats.MaxX - $roadsStats.MinX, 0.001)
 $spanY = [Math]::Max($roadsStats.MaxY - $roadsStats.MinY, 0.001)
 

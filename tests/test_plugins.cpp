@@ -3647,6 +3647,133 @@ TEST_F(PluginTest, VectorBufferAvoidsMultiPolygonWarning) {
     GDALClose(outDs);
 }
 
+// buffer 的**几何侧**判据。WHY 另开一条而不是往 VectorBufferExecutionReportsMetadata 里加：
+// 那条夹具是 200 条三点斜线（它是为"两万级要素 + 别触发 gpkg_extensions 报错"服务的），形状不可手算；
+// 它今天的判据只到 metadata 与一个属性值，面积/包框一个都没读 ⇒ 登记表一直把它记在 PENDING。
+// 本条夹具是一条 (0,0)-(100,0) 的两点线 ⇒ 产物是"运动场"形（中间 2d×L 的矩形 + 两端各一个半圆），
+// 四个量都能手推：
+//   面积上界 = 2dL + πd²（GEOS 的圆头是**内接**折线，弦在圆弧内侧 ⇒ 不可能超过理想圆）；
+//   面积下界 = 2dL + (n/2)·d²·sin(2π/n) 取 n = 32（象限段最小 8 ⇒ 两个半圆合成一整圆、至少 32 段；
+//     本仓 vcpkg 现读 ogr_geometry.h:565 `Buffer(double dfDist, int nQuadSegs = 30)` ⇒ 实际是 120 段，
+//     落在两条界之间）。下界写 n=32 而不是 n=120，是为了不把判据钉在 GDAL 的缺省段数上 —— 段数是上游
+//     可调常量，把它写死等于"上游改个缺省值就红"，而那不该是缺陷。
+//   包框四边 = (-d,-d)-(L+d,d)，容差 0.1 也是手推的：极值若落在相邻两段之间，误差上界
+//     d·(1−cos(180/n/2))，n=32、d=50 时 = 50·(1−cos(2.8125°)) = 0.060 ⇒ 0.1 有约 1.7× 余量；
+//     写 0 会被圆头相位差判红，那不是缺陷。
+// 两条容差臂（25 与 50）都要跑：只有一条臂时，"distance 不生效、恒用缺省 100"这类坏法会同时躲过
+// 面积与包框（它的产物只是"比期望大"，而一条臂的期望恰好也允许这种比例误差 —— 判别结果见发布台账）。
+TEST_F(PluginTest, VectorBufferRoundCapStadiumMatchesHandComputed) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "e2e_buffer_stadium_input.gpkg");
+    const double lineLength = 100.0;
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("stadium_line", srs.get(), wkbLineString, nullptr);
+        ASSERT_NE(layer, nullptr);
+
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRLineString line;
+        line.addPoint(0.0, 0.0);
+        line.addPoint(lineLength, 0.0);
+        feat->SetGeometry(&line);
+        feat->SetField("name", "trunk");
+        ASSERT_EQ(layer->CreateFeature(feat), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    }
+
+    auto expectStadium = [&](const std::string& path, double distance) {
+        GDALDataset* ds = static_cast<GDALDataset*>(GDALOpenEx(
+            path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        if (!ds) {
+            ADD_FAILURE() << "cannot open buffer output: " << path;
+            return;
+        }
+        OGRLayer* layer = ds->GetLayer(0);
+        if (!layer) {
+            ADD_FAILURE() << "buffer output has no layer: " << path;
+            GDALClose(ds);
+            return;
+        }
+        // 层名 = 源层名 + "_buffer"（doBuffer 里 outputLayerName 那条契约）；CRS 与层声明也不许漂。
+        EXPECT_STREQ(layer->GetName(), "stadium_line_buffer");
+        const OGRSpatialReference* outSrs = layer->GetSpatialRef();
+        ASSERT_NE(outSrs, nullptr);
+        EXPECT_STREQ(outSrs ? outSrs->GetAuthorityCode(nullptr) : "", "3857");
+        EXPECT_EQ(wkbFlatten(layer->GetGeomType()), wkbMultiPolygon);
+
+        OGRFeature* feat = layer->GetNextFeature();
+        if (!feat) {
+            ADD_FAILURE() << "buffer output has no feature: " << path;
+            GDALClose(ds);
+            return;
+        }
+        const OGRGeometry* geom = feat->GetGeometryRef();
+        EXPECT_STREQ(feat->GetFieldAsString("name"), "trunk");
+
+        const double rectArea = 2.0 * distance * lineLength;
+        constexpr int kMinCircleSegments = 32;
+        const double lowerArea = rectArea +
+            (kMinCircleSegments / 2.0) * distance * distance * std::sin(2.0 * M_PI / kMinCircleSegments);
+        const double upperArea = rectArea + M_PI * distance * distance;
+        // get_Area() 不在 OGRGeometry 基类上（同 :4553 那条理由）⇒ 走 OGRGeometryCollection 那一支读。
+        const auto* collection = dynamic_cast<const OGRGeometryCollection*>(geom);
+        ASSERT_NE(collection, nullptr);
+        const double area = collection ? collection->get_Area() : -1.0;
+        EXPECT_GE(area, lowerArea) << "distance=" << distance << " area=" << area
+                                   << " 低于手推下界 " << lowerArea << " ⇒ 圆头被削/没缓冲";
+        EXPECT_LE(area, upperArea) << "distance=" << distance << " area=" << area
+                                   << " 超过手推上界 " << upperArea << " ⇒ 距离或单位弄错";
+
+        OGREnvelope env;
+        if (geom) {
+            geom->getEnvelope(&env);
+        }
+        EXPECT_NEAR(env.MinX, -distance, 0.1);
+        EXPECT_NEAR(env.MaxX, lineLength + distance, 0.1);
+        EXPECT_NEAR(env.MinY, -distance, 0.1);
+        EXPECT_NEAR(env.MaxY, distance, 0.1);
+
+        OGRFeature::DestroyFeature(feat);
+        GDALClose(ds);
+    };
+
+    const std::string nearOutput = utf8PathString(getTestDir() / "e2e_buffer_stadium_d25.gpkg");
+    std::map<std::string, gis::framework::ParamValue> nearParams;
+    nearParams["action"] = std::string("buffer");
+    nearParams["input"] = input;
+    nearParams["output"] = nearOutput;
+    nearParams["distance"] = 25.0;
+    const auto nearResult = p->execute(nearParams, progress_);
+    ASSERT_TRUE(nearResult.success) << nearResult.message;
+    EXPECT_EQ(nearResult.metadata.at("feature_count"), "1");
+    // 记账与实际生效值是两件事：metadata 里那个 distance 只是把入参回显，坏实现照样把它写得漂漂亮亮。
+    EXPECT_EQ(nearResult.metadata.at("distance"), "25");
+    expectStadium(nearOutput, 25.0);
+
+    const std::string farOutput = utf8PathString(getTestDir() / "e2e_buffer_stadium_d50.gpkg");
+    std::map<std::string, gis::framework::ParamValue> farParams;
+    farParams["action"] = std::string("buffer");
+    farParams["input"] = input;
+    farParams["output"] = farOutput;
+    farParams["distance"] = 50.0;
+    const auto farResult = p->execute(farParams, progress_);
+    ASSERT_TRUE(farResult.success) << farResult.message;
+    EXPECT_EQ(farResult.metadata.at("feature_count"), "1");
+    EXPECT_EQ(farResult.metadata.at("distance"), "50");
+    expectStadium(farOutput, 50.0);
+}
+
 TEST_F(PluginTest, ProcessingHoughExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);

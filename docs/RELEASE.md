@@ -754,11 +754,51 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       **92/92** 绿（Debug 树）。注册数 744 / 742 → **745 / 743**。
     - 本片**未验收**的四条：(1) 这条新腿的 Release 侧没有现读（release 树要收口轮全目标重建才配得上；
       按 union_poly 那栏的量级差 Release 更快，350 对它只会更宽）；(2) 745 / 743 的双树全量还没跑（收口门归我）；
-      (3) C3c-B 还剩 `buffer` / `dissolve` 两片，`kPendingCeiling` 的目标 53 因此还差 2；
+      (3) C3c-B 还剩 `buffer` / `dissolve` 两片，`kPendingCeiling` 的目标 53 因此还差 2
+      （**buffer 已在下一条结案** ⇒ 实际只剩 dissolve，上限现值 54）；
       (4) `simplify` 的 GEOS 失败分支按用户裁定**无判据**（N135 家族，产品二进制里不放注入缝）。
     - 我自己的一次过程错误，记下来防复发：第一条反向臂（A1）我当时用 `sed -i` 改档，它把这个 **CRLF** 文件
       整文件归一成 LF ⇒ powershell 直接 `ParserError` ⇒ 那一跑的"红"是**假红**、不作证据；改用 Edit 重做才拿到
       预期的红。本仓早已登记"`sed -i` 归一行尾而 `git status` 看不见"，这是它第一次真的废掉一条臂。
+  - **批次 C C3c-B 第二片（buffer）**（控制器自跑，接上一条同一节奏）：
+    - **单元侧新开一条** `PluginTest.VectorBufferRoundCapStadiumMatchesHandComputed`，不动
+      `VectorBufferExecutionReportsMetadata`（那条夹具是 200 条三点斜线，是给"两万级要素 + 别触发
+      gpkg_extensions 报错"用的，形状不可手算）。新夹具是一条 (0,0)-(100,0) 的两点线 ⇒ 产物是"运动场"形，
+      四条判据全部手推、不照抄产物：**面积带** [2dL + (n/2)d²sin(2π/n)|n=32, 2dL + πd²]
+      （GEOS 圆头是**内接**折线 ⇒ 上界是理想圆；下界取 n=32 而不是实际 n=120，是为了不把判据钉在
+      GDAL 的缺省象限段上 —— 本仓 vcpkg 现读 `ogr_geometry.h:565 Buffer(double dfDist, int nQuadSegs = 30)`）；
+      **包框四边** (-d,-d)-(L+d,d) 容差 0.1（极值落在相邻两段之间时误差上界 d·(1−cos(2.8125°)) = 0.060 @ d=50
+      ⇒ 0.1 有约 1.7× 余量；写 0 会被圆头相位差判红，那不是缺陷）；**层名** = 源层名 + `_buffer`；
+      **CRS / 属性 / 要素数** 保真。**两条容差臂**（25 与 50）都跑。
+    - **手推模型被变异轮独立验证**：MUT-B1（恒用 100）实测面积 **51401.573745766305**，模型预测
+      2·100·100 + 60·100²·sin(3°) = **51401.58**；MUT-B2（象限段=1）实测 **6250 / 15000**，模型预测
+      2dL + 2d² = **6250 / 15000** ⇒ 带的形状与位置不是拿产物倒推出来的。
+    - **判别取证（R-B16）**：四条变异都是"旧判据绿、新判据红"，而且"旧"不是改造出来的旧版本 ——
+      是**现有的 `PluginTest.VectorBuffer*` 用例**在变异下照过：B1 那一轮跑了四条 4/4 通过，
+      B2 与 B3 各跑了其中两条 2/2 通过（**没有**给 B4 重跑单元侧旧臂，见下一句）；
+      B4 的"旧臂仍绿"证据来自真实腿自己那一跑 —— `buffer_quick` 里前面两条旧判据（自报 `feature_count`
+      与 `srs_type`）先通过，才红在我新加的层名判据上。
+      B1 `distance` 不生效恒 100 ⇒ 新红（面积超上界 + 四边各差 75/50）；
+      B2 象限段写死 1 ⇒ 新红（面积低于下界 6250 vs 6950.90）；
+      B3 缓冲后 `swapXY()` ⇒ 新红只在**两条 max 边**（各差 100），面积与两条 min 边**不动**
+      —— 这正是本仓那条老规矩的现场版：面积/包框面积是 x↔y 反射不变量，抓不到写反，**必须逐边比**；
+      B4 层名不再加 `_buffer` ⇒ 新红（层名整串）。恢复一律 `cp` + `cmp`，恢复后 53 条 `PluginTest.Vector*` 全绿。
+    - **真实腿 `buffer_quick` 补判据**：它过去只比对 CLI 自报的 `feature_count` 与 `srs_type` 两个数，
+      一个都没落地读产物 ⇒ 层名/几何类族/CRS/字段整批丢掉也能整腿绿。现在加五条：产物要素数与**输入**对撞
+      （独立读端）、`LayerName == "input_buffer"`、`Geometry == MultiPolygon`、`Crs == EPSG:3857`、
+      9 个字段名与顺序 == 基准件契约。**MUT-B4 同时把真实腿判红**（`buffer_quick: LayerName='input',
+      expected 'input_buffer'`，整腿 96.02 s 处红）⇒ 这五条不是装饰。
+      顺手把 roads core 的层名与字段名单**收成一处**（`$script:RoadsCoreLayerName` /
+      `$script:RoadsCoreFieldNames`，`info_roads` 与 `buffer_quick` 共用），消掉两处各抄一份的漂移面。
+    - 该腿用时：`real_data_vector_overlay_buffer_join` 恢复后 Debug 单跑 **188.16 s**（C3c-A 那轮 188.07 s）
+      ⇒ 630 ÷ 188.16 = **3.35×**，新增的那次 `info` 读产物落在噪声里（约 0.1 s）。**没有抬任何 TIMEOUT**。
+    - **登记**：`vector,buffer` PENDING→GOLD（证据用例就是新那条），`kPendingCeiling` **55 → 54**，
+      头部 COUNT 按声明行自带命令重跑（data_rows 126 / gold_rows 72 / pending_rows 54 / all_lines 73 /
+      table_driven 15 ⇒ literal_slot 57）；覆盖族 + 乱码守卫 **20/20** 绿。注册数**不变 745 / 743**
+      （本片的真实腿是既有档里的用例增强，没有新增 `add_test`）。
+    - 本片未验收：`buffer` 的真实腿仍**不**判面积（`vector info` 的 Extent 只印 6 位有效数字 ⇒ 在
+      1.28e7 的坐标上是 ±50 m 的粒度，比不了 100 m 的缓冲量级；要判就得对 22 836 个面跑 `geom_metrics`，
+      那已经不是"一条 quick 腿"的量）。面积/圆头形状这一半由合成夹具的两条容差臂承重。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
