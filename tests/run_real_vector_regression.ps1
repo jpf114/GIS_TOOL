@@ -2762,6 +2762,24 @@ function Validate-CaseOutputs {
         }
         "polygonize_bbox_raster" {
             Assert-TextContains -Text $Case.Output -Expected "Polygonize completed: 1 polygons" -Message "polygonize_bbox_raster polygon count mismatch"
+            # C3c-C3：这条腿此前只抠 CLI 消息里那句 "1 polygons"，产物一个字节都没读。
+            # 补四条落地契约（期望来源是 doPolygonize 写死的输出契约，不是样本标定常量）：
+            # 层名 polygonized、字段恰好一个且叫 DN、层声明是 Polygon（不是 MultiPolygon/Unknown）、
+            # 要素数由**独立读端**再数一遍（与自报的那个 1 对撞 ⇒ 自报数与落盘不一致时红在这里）。
+            # ⚠ 输入是 rasterize_bbox 那一步的产物（栅格⇒矢量的链路本来就串在产品里），
+            #   所以这里**不**拿"输入包框"当期望（那是拿产物比产物）；包框方向的判据由合成夹具承重，
+            #   那里两个波段是不同的手推划分，能判出 band 被忽略与 CRS 漏抄（判别见发布台账）。
+            $polygonizeOutPath = Join-Path $ResolvedOutputRoot "bbox_polygonized.gpkg"
+            $polygonizeInfo = Get-LayerInfoForPath -ResolvedCliPath $ResolvedCliPath -Path $polygonizeOutPath `
+                -ScratchDir $ResolvedOutputRoot -Label "polygonize_bbox_raster_output"
+            Assert-Condition -Condition ($polygonizeInfo.LayerName -ceq "polygonized") -Message (
+                "polygonize_bbox_raster: LayerName='" + $polygonizeInfo.LayerName + "', expected 'polygonized'")
+            Assert-Condition -Condition ($polygonizeInfo.Geometry -ceq "Polygon") -Message (
+                "polygonize_bbox_raster: Geometry='" + $polygonizeInfo.Geometry + "', expected Polygon")
+            Assert-Condition -Condition (($polygonizeInfo.FieldNames -join ",") -ceq "DN") -Message (
+                "polygonize_bbox_raster: fields '" + ($polygonizeInfo.FieldNames -join ",") + "', expected exactly 'DN'")
+            Assert-Condition -Condition ($polygonizeInfo.FeatureCount -eq 1) -Message (
+                "polygonize_bbox_raster: read-back Features=" + $polygonizeInfo.FeatureCount + ", CLI reports 1")
         }
         # ── C3a 几何派生 8 条：判据全部由输入图层自己的现读属性推导 ──
         "hull_polygon" {

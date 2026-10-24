@@ -6462,6 +6462,252 @@ TEST_F(PluginTest, VectorSpatialJoinWritesJoinCountAndValue) {
     GDALClose(outDs);
 }
 
+// polygonize 的**形状侧**判据。此前这个动作没有专属执行用例（只在 J4/J5 的临时件表驱动里作为动作名出现，
+// 那一层判的是"产物在场 + 要素数 + 层名/字段"，几何本身一个都没读），登记表因此记 PENDING。
+// 两臂的期望全是手推的像元算术：GT = {100,1,0,200,0,-1} ⇒ 每个像元是世界坐标 1×1 的方块，
+// 栅格覆盖世界范围 (100,190)-(110,200)：
+//   臂 1 左半 5 列 = 1、右半 5 列 = 2 ⇒ **恰好 2 个面**，DN=1 覆盖 (100,190)-(105,200)、
+//     DN=2 覆盖 (105,190)-(110,200)，面积各 5×10 = 50；两者面积之和 = 栅格总面积 100（守恒式）。
+//   臂 2 在左半内部再放一个单像元的第三种值 3（col=2、row=5 ⇒ 世界 (102,194)-(103,195)）⇒
+//     **恰好 3 个面**：DN=1 带**一个内环**、面积 50−1 = 49；DN=2 仍 50；DN=3 面积 1；总和仍 100。
+//   WHY 臂 2 必须单独存在：把洞当成独立面而不套内环（内环数 0）、或等值区判定用成了" >= "之类
+//   的错比较，都只在有第三种值时才会暴露；臂 1 两种值时这些坏法的面积/总数可能照样对。
+TEST_F(PluginTest, VectorPolygonizeExecutionCarvesEqualValueRegions) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    struct RegionRead {
+        double area = -1.0;
+        double minX = 0.0;
+        double minY = 0.0;
+        double maxX = 0.0;
+        double maxY = 0.0;
+        int interiorRings = -1;
+    };
+
+    // 10×10 Byte 两值栅格：左半 1 / 右半 2；holeCol < 0 时不挖，否则把 (col,row) 那个像元改成 3。
+    auto writeTwoValueRaster = [&](const std::string& path, int holeCol, int holeRow) {
+        std::error_code ignored;
+        fs::remove(fs::u8path(path), ignored);
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(path.c_str(), 10, 10, 1, GDT_Byte, nullptr);
+        ASSERT_NE(ds, nullptr);
+        double gt[6] = { 100.0, 1.0, 0.0, 200.0, 0.0, -1.0 };
+        ASSERT_EQ(ds->SetGeoTransform(gt), CE_None);
+        // 不设投影时产物就没有 CRS ⇒ "产物 CRS 是 EPSG:3857"那条会红成夹具缺陷而不是产品缺陷。
+        OGRSpatialReference srs;
+        srs.importFromEPSG(3857);
+        char* wkt = nullptr;
+        ASSERT_EQ(srs.exportToWkt(&wkt), OGRERR_NONE);
+        ASSERT_NE(wkt, nullptr);
+        ds->SetProjection(wkt);
+        CPLFree(wkt);
+        std::vector<uint8_t> data(100, 0);
+        for (int y = 0; y < 10; ++y) {
+            for (int x = 0; x < 10; ++x) {
+                data[static_cast<size_t>(y) * 10 + static_cast<size_t>(x)] = (x < 5) ? 1 : 2;
+            }
+        }
+        if (holeCol >= 0) {
+            data[static_cast<size_t>(holeRow) * 10 + static_cast<size_t>(holeCol)] = 3;
+        }
+        auto* band = ds->GetRasterBand(1);
+        ASSERT_NE(band, nullptr);
+        ASSERT_EQ(band->RasterIO(GF_Write, 0, 0, 10, 10, data.data(), 10, 10, GDT_Byte, 0, 0), CE_None);
+        GDALClose(ds);
+    };
+
+    // 按 DN 取值归并读产物：每条面的面积、包框与内环数（两臂的 DN 都互不相同 ⇒ 按 DN 建索引即可）。
+    auto readRegions = [&](const std::string& path) {
+        std::map<int, RegionRead> regions;
+        GDALDataset* ds = static_cast<GDALDataset*>(GDALOpenEx(
+            path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        if (!ds) {
+            ADD_FAILURE() << "cannot open polygonize output: " << path;
+            return regions;
+        }
+        OGRLayer* layer = ds->GetLayer(0);
+        if (!layer) {
+            ADD_FAILURE() << "polygonize output has no layer: " << path;
+            GDALClose(ds);
+            return regions;
+        }
+        EXPECT_STREQ(layer->GetName(), "polygonized");
+        const OGRSpatialReference* outSrs = layer->GetSpatialRef();
+        EXPECT_STREQ(outSrs ? outSrs->GetAuthorityCode(nullptr) : "", "3857");
+        EXPECT_EQ(layer->GetLayerDefn()->GetFieldCount(), 1);
+        EXPECT_STREQ(layer->GetLayerDefn()->GetFieldDefn(0)->GetNameRef(), "DN");
+        layer->ResetReading();
+        OGRFeature* feat = nullptr;
+        while ((feat = layer->GetNextFeature()) != nullptr) {
+            const int dn = feat->GetFieldAsInteger("DN");
+            const OGRGeometry* geom = feat->GetGeometryRef();
+            if (!geom) {
+                ADD_FAILURE() << "polygonize wrote a feature without geometry (DN=" << dn << ")";
+                OGRFeature::DestroyFeature(feat);
+                continue;
+            }
+            RegionRead read;
+            // get_Area() 不在 OGRGeometry 基类上（同 :4553 那条理由）⇒ 面这一支走 OGRSurface 读。
+            const OGRSurface* surface = dynamic_cast<const OGRSurface*>(geom);
+            if (!surface) {
+                ADD_FAILURE() << "polygonize output is not a surface: "
+                              << OGRGeometryTypeToName(geom->getGeometryType());
+            } else {
+                read.area = surface->get_Area();
+                const OGRPolygon* polygon = dynamic_cast<const OGRPolygon*>(geom);
+                read.interiorRings = polygon ? polygon->getNumInteriorRings() : -1;
+            }
+            OGREnvelope env;
+            geom->getEnvelope(&env);
+            read.minX = env.MinX;
+            read.minY = env.MinY;
+            read.maxX = env.MaxX;
+            read.maxY = env.MaxY;
+            regions[dn] = read;
+            OGRFeature::DestroyFeature(feat);
+        }
+        GDALClose(ds);
+        return regions;
+    };
+
+    auto runPolygonize = [&](const std::string& input, const std::string& output) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("polygonize");
+        params["input"] = input;
+        params["output"] = output;
+        return p->execute(params, progress_);
+    };
+
+    // ── 臂 1：两值栅格 ⇒ 2 个面、面积各 50 ────────────────────────────────────────
+    {
+        const std::string input = utf8PathString(getTestDir() / "e2e_polygonize_two_value.tif");
+        writeTwoValueRaster(input, -1, 0);
+        const std::string output = utf8PathString(getTestDir() / "e2e_polygonize_two_value_output.gpkg");
+
+        const auto result = runPolygonize(input, output);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_EQ(result.message, "Polygonize completed: 2 polygons");
+
+        const auto regions = readRegions(output);
+        ASSERT_EQ(regions.size(), 2u);
+        ASSERT_EQ(regions.count(1), 1u);
+        ASSERT_EQ(regions.count(2), 1u);
+        EXPECT_NEAR(regions.at(1).area, 50.0, 1e-9);
+        EXPECT_NEAR(regions.at(1).minX, 100.0, 1e-9);
+        EXPECT_NEAR(regions.at(1).minY, 190.0, 1e-9);
+        EXPECT_NEAR(regions.at(1).maxX, 105.0, 1e-9);
+        EXPECT_NEAR(regions.at(1).maxY, 200.0, 1e-9);
+        EXPECT_EQ(regions.at(1).interiorRings, 0);
+        EXPECT_NEAR(regions.at(2).area, 50.0, 1e-9);
+        EXPECT_NEAR(regions.at(2).minX, 105.0, 1e-9);
+        EXPECT_NEAR(regions.at(2).minY, 190.0, 1e-9);
+        EXPECT_NEAR(regions.at(2).maxX, 110.0, 1e-9);
+        EXPECT_NEAR(regions.at(2).maxY, 200.0, 1e-9);
+        EXPECT_EQ(regions.at(2).interiorRings, 0);
+        EXPECT_NEAR(regions.at(1).area + regions.at(2).area, 100.0, 1e-9)
+            << "等值区必须不重不漏地铺满整张栅格（总面积 10×10 = 100）";
+    }
+
+    // ── 臂 2：左半里放一个单像元的第三种值 ⇒ DN=1 带一个内环、3 个面 ────────────────
+    {
+        const std::string input = utf8PathString(getTestDir() / "e2e_polygonize_hole_value.tif");
+        writeTwoValueRaster(input, 2, 5);
+        const std::string output = utf8PathString(getTestDir() / "e2e_polygonize_hole_output.gpkg");
+
+        const auto result = runPolygonize(input, output);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_EQ(result.message, "Polygonize completed: 3 polygons");
+
+        const auto regions = readRegions(output);
+        ASSERT_EQ(regions.size(), 3u);
+        ASSERT_EQ(regions.count(1), 1u);
+        ASSERT_EQ(regions.count(2), 1u);
+        ASSERT_EQ(regions.count(3), 1u);
+        EXPECT_NEAR(regions.at(1).area, 49.0, 1e-9) << "50 减掉被 3 占去的那个像元";
+        EXPECT_EQ(regions.at(1).interiorRings, 1)
+            << "那个单像元等值区必须套成 DN=1 的内环，而不是把 DN=1 撕成几块或把洞漏成独立面";
+        EXPECT_NEAR(regions.at(2).area, 50.0, 1e-9);
+        EXPECT_NEAR(regions.at(3).area, 1.0, 1e-9);
+        // 像元 (col=2,row=5) 的世界范围：x∈[102,103]；y 从顶部 200 往下数 5..6 行 ⇒ [194,195]。
+        EXPECT_NEAR(regions.at(3).minX, 102.0, 1e-9);
+        EXPECT_NEAR(regions.at(3).maxX, 103.0, 1e-9);
+        EXPECT_NEAR(regions.at(3).minY, 194.0, 1e-9);
+        EXPECT_NEAR(regions.at(3).maxY, 195.0, 1e-9);
+        EXPECT_NEAR(regions.at(1).area + regions.at(2).area + regions.at(3).area, 100.0, 1e-9)
+            << "三个等值区的面积之和必须仍然是整张栅格的面积";
+    }
+
+    // ── 臂 3：双波段栅格，`band=2` 必须真的取第二个波段 ────────────────────────────
+    // WHY：`band` 是本动作唯一的取值型参数，此前没有任何判据碰它（实现里就一句
+    // `srcDS->GetRasterBand(band)`）⇒ "把 band 写死成 1"这种坏法在两臂里都看不出来，因为两臂都是单波段。
+    // 这一臂把两个波段做成**不同的划分**：band 1 左右各半（值 1/2），band 2 上下各半（值 1/2）⇒
+    // 期望按 band 2 手推：两个面各 10×5 = 50，但包框是**横着切**的
+    // （DN=1 覆盖 y∈[195,200] 即上半、DN=2 覆盖 y∈[190,195] 即下半）。
+    // 取错波段的话：面积照样各 50（这正是本臂要避开的假绿）⇒ 判据落在**包框方向**上，不在面积上。
+    {
+        const std::string input = utf8PathString(getTestDir() / "e2e_polygonize_two_band.tif");
+        std::error_code ignored;
+        fs::remove(fs::u8path(input), ignored);
+        {
+            auto* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+            ASSERT_NE(driver, nullptr);
+            auto* ds = driver->Create(input.c_str(), 10, 10, 2, GDT_Byte, nullptr);
+            ASSERT_NE(ds, nullptr);
+            double gt[6] = { 100.0, 1.0, 0.0, 200.0, 0.0, -1.0 };
+            ASSERT_EQ(ds->SetGeoTransform(gt), CE_None);
+            OGRSpatialReference srs;
+            srs.importFromEPSG(3857);
+            char* wkt = nullptr;
+            ASSERT_EQ(srs.exportToWkt(&wkt), OGRERR_NONE);
+            ASSERT_NE(wkt, nullptr);
+            ds->SetProjection(wkt);
+            CPLFree(wkt);
+            std::vector<uint8_t> first(100, 0);
+            std::vector<uint8_t> second(100, 0);
+            for (int y = 0; y < 10; ++y) {
+                for (int x = 0; x < 10; ++x) {
+                    first[static_cast<size_t>(y) * 10 + static_cast<size_t>(x)] = (x < 5) ? 1 : 2;
+                    second[static_cast<size_t>(y) * 10 + static_cast<size_t>(x)] = (y < 5) ? 1 : 2;
+                }
+            }
+            ASSERT_EQ(ds->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, 10, 10, first.data(), 10, 10, GDT_Byte, 0, 0),
+                      CE_None);
+            ASSERT_EQ(ds->GetRasterBand(2)->RasterIO(GF_Write, 0, 0, 10, 10, second.data(), 10, 10, GDT_Byte, 0, 0),
+                      CE_None);
+            GDALClose(ds);
+        }
+        const std::string output = utf8PathString(getTestDir() / "e2e_polygonize_two_band_output.gpkg");
+
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("polygonize");
+        params["input"] = input;
+        params["output"] = output;
+        params["band"] = 2;
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_EQ(result.message, "Polygonize completed: 2 polygons");
+
+        const auto regions = readRegions(output);
+        ASSERT_EQ(regions.size(), 2u);
+        ASSERT_EQ(regions.count(1), 1u);
+        ASSERT_EQ(regions.count(2), 1u);
+        EXPECT_NEAR(regions.at(1).area, 50.0, 1e-9);
+        EXPECT_NEAR(regions.at(2).area, 50.0, 1e-9);
+        // 方向判据：band 2 是上下切 ⇒ DN=1 的 y 落在上半 [195,200]，DN=2 落在下半 [190,195]，
+        // 而 x 方向必须铺满整幅 [100,110]（写成左右切的话这四条会同时红）。
+        EXPECT_NEAR(regions.at(1).minX, 100.0, 1e-9);
+        EXPECT_NEAR(regions.at(1).maxX, 110.0, 1e-9);
+        EXPECT_NEAR(regions.at(1).minY, 195.0, 1e-9);
+        EXPECT_NEAR(regions.at(1).maxY, 200.0, 1e-9);
+        EXPECT_NEAR(regions.at(2).minY, 190.0, 1e-9);
+        EXPECT_NEAR(regions.at(2).maxY, 195.0, 1e-9);
+        EXPECT_NEAR(regions.at(2).minX, 100.0, 1e-9);
+        EXPECT_NEAR(regions.at(2).maxX, 110.0, 1e-9);
+    }
+}
+
 TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
     auto* p = mgr_.find("vector");
     if (!p) {

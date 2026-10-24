@@ -36,10 +36,11 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 747**（2026-10-24 批次 C C3c-C1 现读；**Release 此刻 `-N` 仍读 743**，
-原因是 release 树的 `gis_tests` 未重编、gtest 的 PRE_TEST 发现缓存没刷新 ⇒ Release 的 745 要等收口轮全目标重建后现读，
-登记为未验收。这一档 **+2** = `PluginTest.VectorBufferRoundCapStadiumMatchesHandComputed`（C3c-B 第二片）与
-`PluginTest.VectorDifferenceSubtractsOverlayGeometry`（C3c-C1），两条都是新增 `TEST_F`；
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 748**（2026-10-24 批次 C C3c-C3 现读；**Release 此刻 `-N` 仍读 743**，
+原因是 release 树的 `gis_tests` 未重编、gtest 的 PRE_TEST 发现缓存没刷新 ⇒ Release 的现值要等收口轮全目标重建后现读，
+登记为未验收。从 745 起这一档的 **+3** 依次是 `PluginTest.VectorBufferRoundCapStadiumMatchesHandComputed`（C3c-B 第二片）、
+`PluginTest.VectorDifferenceSubtractsOverlayGeometry`（C3c-C1）与
+`PluginTest.VectorPolygonizeExecutionCarvesEqualValueRegions`（C3c-C3），三条都是新增 `TEST_F`；
 ⚠ 上一版这里写 745 / 743，是我在 buffer 那一刀把"没新增 `add_test`"错当成"注册数不变"——
 `ctest -N` 的计数含每一条 gtest 用例，加一条 `TEST_F` 就加一条注册）。上一档 744 / 742 是
 C3k-2 拆腿轮，再上一档 743 / 741 是 C3n-2d，再上一档 742 / 740 是 C3n-2b、741 / 739 是 C3n-2a、740 / 738 是 C3n-1，两棵树各跑
@@ -303,9 +304,8 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 747**（2026-10-24 批次 C C3c-C1 现读；Release 侧此刻仍读 743，
-  因为 release 树的 `gis_tests` 没重编、gtest PRE_TEST 发现缓存未刷新 ⇒ 预期 745，收口轮全目标重建后现读，
-  登记为未验收）。
+- **现行基线**：`ctest -N` 注册数 **Debug 748**（2026-10-24 批次 C C3c-C3 现读；Release 侧此刻仍读 743，
+  因为 release 树的 `gis_tests` 没重编、gtest PRE_TEST 发现缓存未刷新 ⇒ 收口轮全目标重建后再现读，登记为未验收）。
   逐档账：C3m 收口 735 / 733（那一档 **+4** = 三条 `Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated`
   + 一条反回潮守卫 `VectorSourceNeverDisablesGpkgSpatialIndex`，详见第 2 节）⇒ C3n 系列 **+8**（C3n-1 +5、C3n-2a/2b/2c/2d +3：`VectorConvexHullMidFailure…`、
   `VectorDoubleInputOutputMustNotOverwriteSecondInput`、`VectorIntersectRejectedFeatureWrite…`；C3n-2c 是把既有
@@ -315,7 +315,8 @@ cmake --install build/release --config Release --prefix install
   但 C3c-B 把 `simplify_roads` 单独成档 **加一条 `add_test`** `real_data_vector_derive_heavy` ⇒ 745 / 743；
   之后 **C3c-B 第二片 +1**（`VectorBufferRoundCapStadiumMatchesHandComputed`，我当时误记为"不变"，已在该条正文更正）、
   **第三片 +0**（dissolve 只撑大既有块）、**C3c-C0 +0**（只翻登记表一行）、**C3c-C1 +1**
-  （`VectorDifferenceSubtractsOverlayGeometry`）⇒ **Debug 747**。
+  （`VectorDifferenceSubtractsOverlayGeometry`）、**C3c-C2 +0**（撑大既有 join 用例与夹具）、
+  **C3c-C3 +1**（`VectorPolygonizeExecutionCarvesEqualValueRegions`）⇒ **Debug 748**。
   两树差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空；快照 `build/tmp/c3k2_names_{debug,release}.txt`。
   ⚠ 紧随其后的 **C3m 评审席修复轮不动注册数**（守卫改的是匹配逻辑与 token 名单，两条都是注释/判据成形改动，
   没有增删用例）⇒ 735 / 733 那一档的墙钟与"为什么不能拿它判余量"见第 2 节"C3m 评审席修复轮"；
@@ -878,7 +879,8 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       我原以为臂 C 会红，实测**不红** —— 因为"被完全覆盖"这一支里 `diffGeom` 本来就是 null，那条挡位根本没被用到；
       要把臂 C 判红必须连记账一起改（E3b）。⇒ 用例注释里"臂 C 钉的是空几何污染产物"那句是错的，
       已按实测改成"钉的是记账口径：一条都没留下必须报 0"。**这就是"为解释判据而写的注释"自己也需要一条红臂**。
-    - **新挂账 N143（本刀发现，未修）**：`doDifference` 与 `doIntersect` 两个动作的 `Result::ok`
+    - **新挂账 N143（本刀发现，未修）**：`doDifference`、`doIntersect` 与 `doPolygonize` 三个动作的 `Result::ok`
+      （C3c-C3 复核时把同一文件里的 `doPolygonize` 也数了一遍：函数体内 `metadata` 出现 **0** 次）
       **一个 metadata 键都不发**（只回一句 "… completed: N features"），而同插件 17 个动作都发 `feature_count`
       ⇒ 真实腿与 GUI 只能从消息字符串里抠数（runner 现在正是用正则抠）。这与 C3g 当年给 `dissolve`
       补齐 `mergeStandardRunMetadata` + `feature_count` 是同一族（那次顺手修了一个，这次剩两个）。
@@ -929,6 +931,38 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       这次是先跑了 `-N` 再写这句）。vector 侧只剩 **1** 行 PENDING：`polygonize`。
     - 本片缺口：真实腿不判 `join_count` 的**分布**（要逐要素求和，runner 这一层没有属性求和读数）；
       `spatial_join` 的多值拼接顺序依赖 join 层读取序，这一点由合成夹具钉住、真实腿不钉。
+  - **批次 C C3c-C3（polygonize 三臂 + vector 侧 PENDING 归零）**：新增
+    `PluginTest.VectorPolygonizeExecutionCarvesEqualValueRegions` —— 这个动作此前**没有专属执行用例**
+    （只在 J4/J5 的临时件表驱动里作为动作名出现，那一层判"产物在场 + 要素数 + 层名/字段"，几何一个没读）。
+    - 三臂期望全是**像元算术**（GT = `{100,1,0,200,0,-1}` ⇒ 每像元是世界 1×1 方块，整幅覆盖
+      (100,190)-(110,200)）：臂 1 两值左右分 ⇒ 2 个面、DN=1 (100,190)-(105,200)、DN=2 (105,190)-(110,200)、
+      面积各 50、**两者之和 = 100 = 整幅面积**（守恒式，等值区必须不重不漏）；臂 2 在左半放一个单像元第三种值 3
+      ⇒ 3 个面、DN=1 面积 49 且**带一个内环**、DN=3 面积 1 且包框恰是那个像元 (102,194)-(103,195)、三者和仍 100；
+      臂 3 双波段（band 1 左右切 / band 2 上下切）带 `band=2` ⇒ 期望面积仍各 50，但**包框方向必须变成横切**。
+    - **判别取证三条**：G1 `GetRasterBand(band)` 写死成 1 ⇒ **只有臂 3 红**，而且红的确实是两条方向断言
+      （`maxX`/`minY` 各差 5），面积断言照样过 ⇒ 当初"取错波段时面积仍各 50，判据必须落在包框方向上"
+      那句设计判断是被这一跑证实的，不是事后解释；G2 栅格投影没抄进产物 ⇒ 三臂全红在 CRS 断言（:6538）；
+      G3 输出层名 `polygonized` 改成 `poly` ⇒ 单元侧红 + **真实腿同一条变异红**
+      （`polygonize_bbox_raster: LayerName='poly', expected 'polygonized'`）。恢复一律 `cp` + `cmp`，
+      恢复后单元 1/1 绿、真实腿 191.86 s 绿。
+    - **真实腿 `polygonize_bbox_raster` 从一句抠文本补到五条落地判据**：层名 `polygonized`、层声明 `Polygon`、
+      字段恰好 `DN` 一个、要素数由**独立读端**再数一遍与自报的 1 对撞。⚠ 这一腿的输入是 `rasterize_bbox`
+      那一步的产物（栅格链路本来就串在产品里）⇒ **不拿"输入包框"当期望**（那是拿产物比产物），
+      包框与波段选择的判据由合成夹具承重。
+    - **登记**：`vector,polygonize` PENDING→GOLD，`kPendingCeiling` **50 → 49**，头部 COUNT 按声明行自带命令
+      重跑（data_rows 126 / gold_rows 77 / pending_rows 49 / all_lines 78 / table_driven 15 ⇒ literal_slot 62）。
+      **vector 侧 PENDING 归零**：`grep -c '^vector,'` = 33、`grep -c '^vector,.*,GOLD'` = 33，
+      且 `CoverageMeta.EveryActionIsRegistered` 是双向钉（漏登记红、陈旧行也红）现读通过 ⇒
+      这个 0 是由覆盖全部 33 行的那条规则数出来的，不是窄规则的 0。覆盖族 + 乱码守卫 **20/20** 绿。
+      注册数 **747 → 748**（新增一条 `TEST_F`；这句是写完 `-N` 现读之后才落笔的，上一轮同类错误已登记在 C3c-C1）。
+      Release 侧仍是"未重编 ⇒ 读不到新注册"，收口轮现读。
+    - 全表余量（三个数都是 `git show <提交>:tests/action_gold_cases.txt | grep -c` 现读，不是回忆）：
+      批次 C 开工那一次覆盖矩阵提交 `c225d8b` 是 **PENDING 72 / 其中 vector 23**；
+      到 C3f 那一档 `fc68e12` 是 **61 / 12**；本轮 C3c 收尾后是 **49 / 0**。
+      四拍板里"72 条 PENDING 全晋升"仍未完成，剩下的 49 条全在**非 vector** 插件。
+    - 本片缺口：`polygonize` 的真实腿仍不判面积/包框（输入是产物）；`band` 参数只在合成夹具的双波段臂上有判据；
+      `CONNECTEDNESS`（4/8 邻接）本刀没碰 —— 两臂的等值区在两种邻接下划分相同，不构成可判差异，
+      留作后续若要钉该语义时的设计前提（不要拿现在的夹具硬造一个"看起来不同"的期望）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
