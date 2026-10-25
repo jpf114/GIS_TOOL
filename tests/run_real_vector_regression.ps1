@@ -1879,20 +1879,42 @@ function Assert-ChineseAttributeFilterCase {
 # （bj_roads_core 由 data/vector 最小 shapefile 派生，见 Ensure-BenchmarkData）。
 function Ensure-C3cARealInputs {
     param(
-        [string]$ResolvedWorkspaceRoot
+        [string]$ResolvedWorkspaceRoot,
+        # 不消费这批输入的分档（checks / overlay_ops / union_poly / derive_heavy）只要路径，不要现读事实：
+        # 四条用例在所有档都得**登记**（名单不变量从注册段取路径），但注册段用的只是这两个路径字符串。
+        # 路径构造只留这一处，禁止再抄第二份 —— 分档形态与实跑形态必须是同一个路径。
+        [switch]$PathsOnly
     )
 
     $scratchRoot = Join-Path $ResolvedWorkspaceRoot "build\tmp\c3cA"
-    New-Item -ItemType Directory -Force -Path $scratchRoot | Out-Null
 
     $vectorDataRoot = Join-Path $ResolvedWorkspaceRoot "data\vector"
     $provinceRaw = Resolve-ProvinceVectorInput -VectorDataRoot $vectorDataRoot -Label "C3c-A info/repair legs"
     $provinceCopy = Join-Path $scratchRoot "china_provinces.geojson"
+    $roadsBenchmark = Join-Path $ResolvedWorkspaceRoot "tmp\vector_benchmark\bj_roads_core_3857.gpkg"
+    $roadsCopy = Join-Path $scratchRoot "bj_roads_core_3857.gpkg"
+
+    if ($PathsOnly) {
+        # 键集与实跑分支逐字相同、事实一律 $null：归错档却真跑起来时红在 Assert-C3cARefsBuilt
+        # 那条"事实为 null"的判据上（旧的 $null -ne $Refs 判不出"对象在、事实没读"）。
+        return [pscustomobject]@{
+            ScratchRoot = $scratchRoot
+            ProvinceCopy = $provinceCopy
+            ProvinceLayerName = $null
+            ProvinceFeatureCount = $null
+            ProvinceFieldNames = $null
+            ProvinceGeometryKind = $null
+            ProvinceCrs = $null
+            ProvinceExtent = $null
+            ProvinceExtentTolerance = $null
+            RoadsCopy = $roadsCopy
+        }
+    }
+
+    New-Item -ItemType Directory -Force -Path $scratchRoot | Out-Null
     Copy-Item $provinceRaw $provinceCopy -Force
 
-    $roadsBenchmark = Join-Path $ResolvedWorkspaceRoot "tmp\vector_benchmark\bj_roads_core_3857.gpkg"
     Require-Path -Path $roadsBenchmark -Label "C3c-A roads benchmark"
-    $roadsCopy = Join-Path $scratchRoot "bj_roads_core_3857.gpkg"
     Copy-Item $roadsBenchmark $roadsCopy -Force
     # 上一轮留下的边车不许替本轮"证明 info 会写 .aux.xml"——先删，本轮跑完再由 info_roads 的判据要求它在场。
     Remove-Item ($roadsCopy + ".aux.xml") -Force -ErrorAction SilentlyContinue
@@ -1950,14 +1972,29 @@ function Ensure-C3cARealInputs {
     }
 }
 
+# C3h-2b 第二片的"这一档到底有没有现读过"判据。旧的 $null -ne $Refs 只挡得住"对象没建"，
+# 挡不住加了档闸之后的新形态：**对象在、路径在、事实全是 $null**（path-only 分支）。
+# 那条形态如果放进判据里跑，比较会退化成"既不满足也不报错"⇒ 整条腿绿着把期望蒙过去（本仓反复踩过）。
+function Assert-C3cARefsBuilt {
+    param(
+        [object]$Refs,
+        [string]$Label
+    )
+
+    Assert-Condition -Condition ($null -ne $Refs) -Message (
+        $Label + ": C3c-A refs missing (Ensure-C3cARealInputs did not run) => expectations would be vacuous")
+    Assert-Condition -Condition ($null -ne $Refs.ProvinceFeatureCount) -Message (
+        $Label + ": C3c-A refs are path-only (this Group was gated by $buildC3cAInputs), so its" +
+        " expectations would be compared against nothing")
+}
+
 function Assert-C3cAInfoProvinceCase {
     param(
         [pscustomobject]$Case,
         [object]$Refs
     )
 
-    Assert-Condition -Condition ($null -ne $Refs) -Message (
-        $Case.Name + ": C3c-A refs missing (Ensure-C3cARealInputs did not run) => expectations would be vacuous")
+    Assert-C3cARefsBuilt -Refs $Refs -Label $Case.Name
     Assert-Condition -Condition ($Case.Name -eq "info_province") -Message (
         "Assert-C3cAInfoProvinceCase got '" + $Case.Name + "'")
 
@@ -1992,8 +2029,7 @@ function Assert-C3cAInfoRoadsCase {
         [int]$ExpectedFeatureCount
     )
 
-    Assert-Condition -Condition ($null -ne $Refs) -Message (
-        $Case.Name + ": C3c-A refs missing (Ensure-C3cARealInputs did not run)")
+    Assert-C3cARefsBuilt -Refs $Refs -Label $Case.Name
     Assert-Condition -Condition ($Case.Name -eq "info_roads") -Message (
         "Assert-C3cAInfoRoadsCase got '" + $Case.Name + "'")
 
@@ -2026,8 +2062,7 @@ function Assert-C3cARepairCase {
         [object]$Refs
     )
 
-    Assert-Condition -Condition ($null -ne $Refs) -Message (
-        $Case.Name + ": C3c-A refs missing (Ensure-C3cARealInputs did not run)")
+    Assert-C3cARefsBuilt -Refs $Refs -Label $Case.Name
     Assert-Condition -Condition ($Case.Name -eq "repair_province") -Message (
         "Assert-C3cARepairCase got '" + $Case.Name + "'")
 
@@ -2070,8 +2105,7 @@ function Assert-C3cAConvertCase {
         [int]$ExpectedFeatureCount
     )
 
-    Assert-Condition -Condition ($null -ne $Refs) -Message (
-        $Case.Name + ": C3c-A refs missing (Ensure-C3cARealInputs did not run)")
+    Assert-C3cARefsBuilt -Refs $Refs -Label $Case.Name
     Assert-Condition -Condition ($Case.Name -eq "convert_roads_geojson") -Message (
         "Assert-C3cAConvertCase got '" + $Case.Name + "'")
 
@@ -3144,7 +3178,19 @@ Require-Path -Path $chinaBbox -Label "china bbox"
 Require-Path -Path $chinaBbox3857 -Label "china bbox 3857"
 
 # ── C3c-A：两份真实输入先复制到 build/tmp/c3cA/（N115），输入侧事实一次算齐 ──
-$script:C3cARefs = Ensure-C3cARealInputs -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot
+# C3h-2b 第二片（取数口统一之后的"取件口加闸"）。安静态在 runner 副本里打点（[Stopwatch]）跑 checks 一档现读：
+#   Ensure-BenchmarkData 0.07 s ⇒ Ensure-C3cARealInputs 39.14 s ⇒ 注册与其余准备 8.48 s
+#   ⇒ 18 条用例本体 23.23 s，整腿 70.92 s。
+# 也就是 checks 那 100 s 的 TIMEOUT 里有一半以上付给一份它**不消费**的现读（余量 1.52×，跌破本仓 2.5×
+# 拆腿触发线；历史读数 31.83 s 是这份现读还没进 checks 档时测的）。真凶也不是我一开始猜的
+# "GeoJSON 被解析两遍"（实测 copy 0.03 s + parse 0.21 s，假设当场作废），而是 province 那 42 个面的
+# 包框在 PS 里逐点遍历。⇒ 按 $buildDeriveHeavyInputs 同口径加档闸：不消费的分档只取路径。
+$buildC3cAInputs = ($Group -eq "all" -or $Group -eq "overlay_buffer_join")
+if ($buildC3cAInputs) {
+    $script:C3cARefs = Ensure-C3cARealInputs -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot
+} else {
+    $script:C3cARefs = Ensure-C3cARealInputs -ResolvedWorkspaceRoot $ResolvedWorkspaceRoot -PathsOnly
+}
 
 # ── C3c-B：simplify 的输入复制件（build/tmp/c3cB/），输入侧事实一次算齐 ──
 # 只在真会跑 derive_heavy 那一档（或手工 all）时才造复制件并现读输入：其余四档不付这份
