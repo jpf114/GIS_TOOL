@@ -1808,6 +1808,7 @@ set(GIS_REAL_DATA_TEST_NAMES
     real_data_vector_overlay_ops
     real_data_vector_union_poly
     real_data_vector_derive_heavy
+    real_data_vector_join_heavy
 )
 
 add_test(
@@ -1982,6 +1983,44 @@ add_test(
 )
 set_tests_properties(real_data_vector_derive_heavy PROPERTIES
     TIMEOUT 350
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
+)
+
+# ── 批次 C C3k-3：quick 档里最贵的两条重活单独成档（join_heavy）────────────────────────
+# 动因是阶段二双树全量轮的现读：Debug `real_data_vector_quick` **302.42 s**（安静态 257.17 / 267.03），
+#   TIMEOUT 720 ⇒ 302.42 那一跑算出 **2.38×**，跌破本仓 2.5× 拆腿触发线。quick 档自 C3c-A/B/C 起
+#   陆续加用例，27 条里 buffer_quick（约 57~76 s）与 spatial_join_focus（约 48~67 s）两条就占了小一半。
+# 拆法沿用 C3k/C3c-B 的形状：把这两条从 quick 档**挪出去**单独成条（同时也就从 overlay_buffer_join
+#   腿的名单里挪走 —— 那条腿实测因此从 227.04 s 掉到约 120 s 量级，余量反而更宽），
+#   **判据一个字没动**：Validate-CaseOutputs 对这两条按名字分发，不按组标。
+# ⚠ 这两条**只在 Mode=full 注册**（runner 里用 `if ($Mode -eq "full")` 包住注册段）：quick 档的成员名单
+#   就是"注册了哪些"，不收窄注册的话 Mode=quick 仍会把它们跑一遍，拆腿等于白拆。
+# 读数（Debug，2026-10-26）：
+#   安静态单跑（Phase-2 全量轮之后连续两跑；用例内计时同时记下）：
+#     00:23:53→00:26:06 = **133 s**（buffer_quick 68.48 / spatial_join_focus 61.64）
+#     00:28:36→00:31:02 = **146 s**（buffer_quick 75.73 / spatial_join_focus 67.02）
+#   改完注册后的**双树全量轮**（同一棵树上与另 748/746 条一起跑）：
+#     Debug **109.32 s**、Release **91.21 s**。
+#   ⇒ 取值 ceil(146 × 4 / 10) × 10 = ceil(58.4) × 10 = 59 × 10 = **590** ⇒ 590 ÷ 146 = **4.04×**
+#   （新腿按本仓"≥4× 起步"的规矩定值；三跑取最慢那一跑，即全量轮之外那两次安静态单跑里的 146）。
+# 拆后同轮读数对照（Debug / Release，TIMEOUT 取更慢的 Debug 树）：
+#   quick              151.22 / 63.84 ⇒ 720 ÷ 151.22 = **4.76×**（拆前 302.42 ⇒ 2.38×）
+#   overlay_buffer_join 72.83 / 57.09 ⇒ 630 ÷ 72.83  = **8.65×**（拆前 227.04 ⇒ 2.77×；两条重活挪走后反而更宽）
+#   整轮墙钟 1363.88 → **1099.05 s**（Debug）、714.97 → **515.48 s**（Release）。
+# ⚠ Release 的 join_heavy 现读 91.21 s ⇒ 590 ÷ 91.21 = 6.47×；同一个字面量对两棵树生效，按 Debug 的 146 定值。
+add_test(
+    NAME real_data_vector_join_heavy
+    COMMAND ${CMAKE_COMMAND}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DWORKSPACE_ROOT=${CMAKE_SOURCE_DIR}
+        -DPOWERSHELL_EXECUTABLE=${GIS_REAL_DATA_POWERSHELL}
+        -DMODE=full
+        -DGROUP=join_heavy
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_real_vector_regression.cmake
+)
+set_tests_properties(real_data_vector_join_heavy PROPERTIES
+    TIMEOUT 590
     RESOURCE_LOCK real_data_regression
     SKIP_REGULAR_EXPRESSION "GIS_SKIP_TESTDATA_ABSENT: "
 )

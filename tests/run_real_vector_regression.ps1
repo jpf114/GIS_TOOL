@@ -4,14 +4,15 @@ param(
     [string]$OutputRoot = "",
     [ValidateSet("quick", "full")]
     [string]$Mode = "quick",
-    # Group 按"消费哪批派生件"划分五条真实腿（见 GIS_CASE_ROSTER 那段注释）：
-    # checks = C3b-A 的拓扑/检查批；overlay_buffer_join = buffer / spatial_join / 几何派生与转换小用例；
+    # Group 按"消费哪批派生件"划分六条真实腿（见 GIS_CASE_ROSTER 那段注释）：
+    # checks = C3b-A 的拓扑/检查批；overlay_buffer_join = 几何派生与转换小用例（C3k-3 起不再含两条重活）；
     # overlay_ops = clip/difference/intersect/union 的 focus/far/partial/stress 全族；
     # union_poly = C3h-3 的 union 路径 A 腿（C3k-2 把原 overlay 一档按"重活一分为二"拆成前两组）；
-    # derive_heavy = C3c-B 起的"单条就几十秒"的几何派生重活档（现只有 simplify_roads）。
+    # derive_heavy = C3c-B 起的"单条就几十秒"的几何派生重活档（现只有 simplify_roads）；
+    # join_heavy = C3k-3 从 quick 档挪出来的两条重活（buffer_quick / spatial_join_focus，只在 Mode=full 注册）。
     # 取 ValidateSet 而不是自由字符串：-GROUP 写错时要在参数绑定期就红，
     # 不许顺着下面的注册走到"一组都没匹配上 => 0 条用例 => 退出码 0"的假绿。
-    [ValidateSet("all", "checks", "overlay_buffer_join", "overlay_ops", "union_poly", "derive_heavy")]
+    [ValidateSet("all", "checks", "overlay_buffer_join", "overlay_ops", "union_poly", "derive_heavy", "join_heavy")]
     [string]$Group = "all"
 )
 
@@ -20,9 +21,11 @@ if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Error
     $PSNativeCommandUseErrorActionPreference = $false
 }
 
-# quick 档不分档（27 条用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/overlay_ops/
-# union_poly/derive_heavy 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先判红。放在最顶上是为了在碰 data/ 与
+# quick 档不分档（**C3k-3 起 25 条**用例各档都跑，Group=all）：-GROUP 写成 checks/overlay_buffer_join/
+# overlay_ops/union_poly/derive_heavy/join_heavy 配 Mode=quick 会筛出 0 条用例 => 整条腿"退出码 0 但什么都没判"，所以这里先判红。放在最顶上是为了在碰 data/ 与
 # tmp/ 之前就红（同 tests/run_real_vector_regression.cmake 里"参数写错要在绑定期红"那条口径）。
+# C3k-3：原来 27 条里的 buffer_quick 与 spatial_join_focus 两条重活挪进 Group=join_heavy（**只在 Mode=full 注册**）
+# ⇒ quick 档瘦身到 25 条；两条用例的判据一个字没动，只是换了档（判据分发按名字匹配，不按组标）。
 if ($Mode -eq "quick" -and $Group -ne "all") {
     throw ("Mode=quick has no group split: pass -Group all (got Mode=" + $Mode + " Group=" + $Group + ")")
 }
@@ -2523,6 +2526,16 @@ function Ensure-UnionPolyInputs {
 $script:UnionPolyCaseNames = @(
     "union_poly_focus"
 )
+# C3k-3 这一档的用例名单（与上一条同形，第 9 条不变量用它钉住组标）：
+# 这两条**不是新增覆盖**，是从 quick 档挪出来的重活 —— 它们在 C3k-3 之前的归属：
+#   buffer_quick（Group 原为 overlay_buffer_join，27 条约 57 s）与 spatial_join_focus（同组，约 47.7 s）。
+# quick 腿在全量轮里读到 302.42 s、TIMEOUT 720 ⇒ 2.38×，跌破本仓 2.5× 拆腿触发线（安静态 257.17/267.03 ⇒ 2.80×）。
+# 归因不是"某条腿变慢"：这两条本身就是 quick 档里最贵的两条，而 quick 档自 C3c-A/B/C 起一路加了用例。
+# 判据一个字没动（Validate-CaseOutputs 里按**名字**匹配这两条，不按组标分发）⇒ 挪档只改"谁付这份墙钟"。
+$script:JoinHeavyCaseNames = @(
+    "buffer_quick",
+    "spatial_join_focus"
+)
 # 判据覆盖计数：Assert-UnionPolyCase 每被调用一次 +1，由第 7 条不变量与"实际跑过的 union_poly 用例数"对撞。
 $script:UnionPolyAssertedCount = 0
 
@@ -3270,14 +3283,19 @@ $cases = @()
 #     + 所有 <=5 s 的几何派生/转换小用例 17.70 + vertices_line 14.63；
 #   overlay_ops（11 条，现读合计 104.40 s）= clip/difference/union/intersect 的 focus/far/partial/stress。
 # 两条腿都消费 roadsCore/allWindow 与 C3a 派生件 ⇒ $buildOverlayInputs 对两组建真（见上面的闸）。
-$cases += New-Case -Name "buffer_quick" -Group "overlay_buffer_join" -CaseArgs @(
-    "vector", "buffer",
-    ("--input=" + $roadsCore3857),
-    ("--output=" + (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")),
-    "--distance=100"
-) -ExpectedOutputs @(
-    (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")
-)
+# C3k-3：这两条重活拆出独立一档（join_heavy），且**只在 Mode=full 注册** —— 注册段就是 quick 档的成员名单，
+# 不在这里收窄的话，Mode=quick + Group=all 会把它们照跑一遍，拆腿等于白拆（$runCases 只按 Group 过滤，
+# 而 quick 档从不按 Group 分）。
+if ($Mode -eq "full") {
+    $cases += New-Case -Name "buffer_quick" -Group "join_heavy" -CaseArgs @(
+        "vector", "buffer",
+        ("--input=" + $roadsCore3857),
+        ("--output=" + (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")),
+        "--distance=100"
+    ) -ExpectedOutputs @(
+        (Join-Path $ResolvedOutputRoot "buffer_quick.gpkg")
+    )
+}
 $cases += New-Case -Name "clip_focus" -Group "overlay_ops" -CaseArgs @(
     "vector", "clip",
     ("--input=" + $roadsCore),
@@ -3350,14 +3368,16 @@ $cases += New-Case -Name "intersect_partial" -Group "overlay_ops" -CaseArgs @(
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "intersect_partial.gpkg")
 )
-$cases += New-Case -Name "spatial_join_focus" -Group "overlay_buffer_join" -CaseArgs @(
-    "vector", "spatial_join",
-    ("--input=" + $roadsCore),
-    ("--join_vector=" + $allWindow),
-    ("--output=" + (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg"))
-) -ExpectedOutputs @(
-    (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")
-)
+if ($Mode -eq "full") {
+    $cases += New-Case -Name "spatial_join_focus" -Group "join_heavy" -CaseArgs @(
+        "vector", "spatial_join",
+        ("--input=" + $roadsCore),
+        ("--join_vector=" + $allWindow),
+        ("--output=" + (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg"))
+    ) -ExpectedOutputs @(
+        (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")
+    )
+}
 $cases += New-Case -Name "dissolve_bbox" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "dissolve",
     ("--input=" + $chinaBbox3857),
@@ -3640,17 +3660,21 @@ if ($Mode -eq "full") {
     # 组名只写这一处：ValidateSet（param 里那份）之外，下面的导名单、判红消息都从这个数组来，
     # 加档时不必再逐条改判据（C3h-3 就是把两两交集换成"按重数数"的同一条式子才做到的；C3k-2 把
     # overlay 一分为二时，这里只加两个名字与两条导名单）。
-    $rosterGroupNames = @("checks", "overlay_buffer_join", "overlay_ops", "union_poly", "derive_heavy")
+    $rosterGroupNames = @("checks", "overlay_buffer_join", "overlay_ops", "union_poly", "derive_heavy", "join_heavy")
     $rosterFull = @($cases | ForEach-Object { $_.Name })
     $rosterChecks = @($cases | Where-Object { $_.Group -eq "checks" } | ForEach-Object { $_.Name })
     $rosterBufferJoin = @($cases | Where-Object { $_.Group -eq "overlay_buffer_join" } | ForEach-Object { $_.Name })
     $rosterOps = @($cases | Where-Object { $_.Group -eq "overlay_ops" } | ForEach-Object { $_.Name })
     $rosterUnionPoly = @($cases | Where-Object { $_.Group -eq "union_poly" } | ForEach-Object { $_.Name })
     $rosterDeriveHeavy = @($cases | Where-Object { $_.Group -eq "derive_heavy" } | ForEach-Object { $_.Name })
+    # C3k-3：join_heavy 只在 Mode=full 注册 ⇒ Mode=quick 跑这条不变量时两组名单都是空的（0 == 0 空真）。
+    # 这不是漏洞而是**已知形状**：同 shape 的第 5/6/8 条在 quick 档同样空真，真正咬人的是各档 Mode=full 腿；
+    # quick 档自己的完整性由第 1/2/3 条对**已注册的 25 条**判（少注册两条不影响它们的成立）。
+    $rosterJoinHeavy = @($cases | Where-Object { $_.Group -eq "join_heavy" } | ForEach-Object { $_.Name })
     $rosterUngrouped = @($cases | Where-Object { $rosterGroupNames -cnotcontains $_.Group } |
         ForEach-Object { $_.Name + " (Group=[" + [string]$_.Group + "])" })
     # 不重：同一条腿被两个组同时认领 ⇒ 在"五组之并"里数重数（对任意档数都成立，不必两两求交集）。
-    $rosterTaggedAll = @($rosterChecks + $rosterBufferJoin + $rosterOps + $rosterUnionPoly + $rosterDeriveHeavy)
+    $rosterTaggedAll = @($rosterChecks + $rosterBufferJoin + $rosterOps + $rosterUnionPoly + $rosterDeriveHeavy + $rosterJoinHeavy)
     $rosterBoth = @($rosterTaggedAll | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { [string]$_.Name })
     $rosterFullSorted = @($rosterFull | Sort-Object)
     $rosterChecksSorted = @($rosterChecks | Sort-Object)
@@ -3658,8 +3682,9 @@ if ($Mode -eq "full") {
     $rosterOpsSorted = @($rosterOps | Sort-Object)
     $rosterUnionPolySorted = @($rosterUnionPoly | Sort-Object)
     $rosterDeriveHeavySorted = @($rosterDeriveHeavy | Sort-Object)
+    $rosterJoinHeavySorted = @($rosterJoinHeavy | Sort-Object)
     $rosterUnionSorted = @(($rosterChecksSorted + $rosterBufferJoinSorted + $rosterOpsSorted + $rosterUnionPolySorted +
-        $rosterDeriveHeavySorted) | Sort-Object)
+        $rosterDeriveHeavySorted + $rosterJoinHeavySorted) | Sort-Object)
 
     # 第 4 条：无论成败先打六行机器可取的名单 ⇒ 判红那一轮也拿得到名单（键名与组名同为 ASCII）。
     Write-Host ("GIS_CASE_ROSTER[full]: " + ($rosterFullSorted -join ","))
@@ -3668,6 +3693,7 @@ if ($Mode -eq "full") {
     Write-Host ("GIS_CASE_ROSTER[overlay_ops]: " + ($rosterOpsSorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[union_poly]: " + ($rosterUnionPolySorted -join ","))
     Write-Host ("GIS_CASE_ROSTER[derive_heavy]: " + ($rosterDeriveHeavySorted -join ","))
+    Write-Host ("GIS_CASE_ROSTER[join_heavy]: " + ($rosterJoinHeavySorted -join ","))
 
     # 第 1 条：Group 缺失（或取了 $rosterGroupNames 之外的值）的 full 用例 ⇒ 点名判红。
     Assert-Condition -Condition ($rosterUngrouped.Count -eq 0) -Message (
@@ -3692,14 +3718,15 @@ if ($Mode -eq "full") {
         }
     }
     Assert-Condition -Condition ($rosterDiff.Count -eq 0) -Message (
-        "C3k group invariant: sort(checks)+sort(overlay_buffer_join)+sort(overlay_ops)+sort(union_poly)+sort(derive_heavy) != sort(full) at " + $rosterDiff.Count +
+        "C3k group invariant: sort(checks)+sort(overlay_buffer_join)+sort(overlay_ops)+sort(union_poly)+sort(derive_heavy)+sort(join_heavy) != sort(full) at " + $rosterDiff.Count +
         " name slot(s): " + ($rosterDiff -join " | ") +
         " || full(" + $rosterFullSorted.Count + "): " + ($rosterFullSorted -join ",") +
         " || checks(" + $rosterChecksSorted.Count + "): " + ($rosterChecksSorted -join ",") +
         " || overlay_buffer_join(" + $rosterBufferJoinSorted.Count + "): " + ($rosterBufferJoinSorted -join ",") +
         " || overlay_ops(" + $rosterOpsSorted.Count + "): " + ($rosterOpsSorted -join ",") +
         " || union_poly(" + $rosterUnionPolySorted.Count + "): " + ($rosterUnionPolySorted -join ",") +
-        " || derive_heavy(" + $rosterDeriveHeavySorted.Count + "): " + ($rosterDeriveHeavySorted -join ","))
+        " || derive_heavy(" + $rosterDeriveHeavySorted.Count + "): " + ($rosterDeriveHeavySorted -join ",") +
+        " || join_heavy(" + $rosterJoinHeavySorted.Count + "): " + ($rosterJoinHeavySorted -join ","))
 
     # 本刀自己加的第 5 条：上面三条都抓不到"把某条 checks 腿的 Group 改成 overlay_buffer_join/overlay_ops"——改档不动
     # 各分组之并，第 1/2/3 条会照样绿（工单 §5 要求的正是这种破坏必须红）。checks 这一档的成员
@@ -3737,6 +3764,20 @@ if ($Mode -eq "full") {
         ($rosterDeriveHeavyMissing -join ",") + " || roster(" + $script:C3cBCaseNames.Count + "): " +
         (($script:C3cBCaseNames | Sort-Object) -join ",") + " || tagged derive_heavy(" +
         $rosterDeriveHeavySorted.Count + "): " + ($rosterDeriveHeavySorted -join ","))
+
+    # C3k-3 加的第 9 条：与第 5/6/8 条同形，钉住 join_heavy 这一档的成员名单。
+    # 这一档的成员**只在 Mode=full 注册** ⇒ Mode=quick 下两边都是空名单、这条判 0==0（空真）。
+    # 咬人的地方是四条 Mode=full 腿（它们各自都跑这段不变量）：把 buffer_quick 的 Group 改回
+    # overlay_buffer_join 或把 -Group 写错成别的档 ⇒ 第 9 条点名红（第 1/2/3 条不会红，因为
+    # 改档不动"六组之并 == 全量"）。名单单一来源 = $script:JoinHeavyCaseNames（注释与注册段共用）。
+    $rosterJoinHeavyExtra = @($rosterJoinHeavySorted | Where-Object { $script:JoinHeavyCaseNames -notcontains $_ })
+    $rosterJoinHeavyMissing = @($script:JoinHeavyCaseNames | Where-Object { $rosterJoinHeavySorted -notcontains $_ })
+    Assert-Condition -Condition ($rosterJoinHeavyExtra.Count -eq 0 -and $rosterJoinHeavyMissing.Count -eq 0) -Message (
+        "C3k-3 group invariant: Group=join_heavy disagrees with the C3k-3 roster || tagged join_heavy but " +
+        "absent from roster: " + ($rosterJoinHeavyExtra -join ",") + " || in roster but not tagged join_heavy: " +
+        ($rosterJoinHeavyMissing -join ",") + " || roster(" + $script:JoinHeavyCaseNames.Count + "): " +
+        (($script:JoinHeavyCaseNames | Sort-Object) -join ",") + " || tagged join_heavy(" +
+        $rosterJoinHeavySorted.Count + "): " + ($rosterJoinHeavySorted -join ","))
 }
 
 # 本档不消费的派生件没有真的造出来 ⇒ 传给判据的 refs 置 $null（而不是"有路径、没现读属性"的

@@ -36,9 +36,12 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 748**（2026-10-24 批次 C C3c-C3 现读；**Release 此刻 `-N` 仍读 743**，
-原因是 release 树的 `gis_tests` 未重编、gtest 的 PRE_TEST 发现缓存没刷新 ⇒ Release 的现值要等收口轮全目标重建后现读，
-登记为未验收。从 745 起这一档的 **+3** 依次是 `PluginTest.VectorBufferRoundCapStadiumMatchesHandComputed`（C3c-B 第二片）、
+跑全量前先用 `-N` 记注册数：**当前基线 Debug 749 / Release 747**（2026-10-26 批次 C C3k-3 双树全量轮现读；
+Release 侧这次是**全目标重建之后**现读的 —— 748/746 那一轮就是重建后取的，C3k-3 把 quick 档最贵的两条重活
+拆成新腿 `real_data_vector_join_heavy`（+1 条 `add_test`）⇒ 749/747；Release 恒比 Debug 少 2 条是既有的
+debug-only 用例，不是漏跑）。此前一档 **748 / 746**（C3c 收尾那三条 `TEST_F`；Release 那时刚从"未重编 ⇒ 读 743"
+补成重建后现读）。从 745 起 Debug 这一档的 **+3** 依次是
+`PluginTest.VectorBufferRoundCapStadiumMatchesHandComputed`（C3c-B 第二片）、
 `PluginTest.VectorDifferenceSubtractsOverlayGeometry`（C3c-C1）与
 `PluginTest.VectorPolygonizeExecutionCarvesEqualValueRegions`（C3c-C3），三条都是新增 `TEST_F`；
 ⚠ 上一版这里写 745 / 743，是我在 buffer 那一刀把"没新增 `add_test`"错当成"注册数不变"——
@@ -110,6 +113,13 @@ cmake --install build/release --config Release --prefix install
 # 步骤 2.2：装完必须用退出码判定，不要用"目录里有文件"判定
 install/bin/gis-cli.exe --list
 if ($LASTEXITCODE -ne 0) { throw "gis-cli.exe --list rc=$LASTEXITCODE（0xC0000135 = STATUS_DLL_NOT_FOUND ⇒ 包装不全）" }
+# ⚠ `--self-test` 会先过 N101/N102 守卫（src/gui/main.cpp:197-204）：GIS_TOOL_SETTINGS_INI 与
+#   GIS_CUSTOM_INDEX_PRESET_FILE 没注入时它**故意**返回 3（免得写真实用户配置）。文档旧版只写了
+#   `-platform offscreen --self-test`，照抄会拿到 rc=3 并被误读成"包装不全"⇒ 这里按 ctest 的注入口径补齐。
+$smokeDir = Join-Path $env:TEMP ("gis_gui_smoke_" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $smokeDir | Out-Null
+$env:GIS_TOOL_SETTINGS_INI = Join-Path $smokeDir "gis_gui_settings.ini"
+$env:GIS_CUSTOM_INDEX_PRESET_FILE = Join-Path $smokeDir "spindex_presets.json"
 install/bin/gis-gui.exe -platform offscreen --self-test
 if ($LASTEXITCODE -ne 0) { throw "gis-gui.exe --self-test rc=$LASTEXITCODE" }
 ```
@@ -304,8 +314,8 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 748**（2026-10-24 批次 C C3c-C3 现读；Release 侧此刻仍读 743，
-  因为 release 树的 `gis_tests` 没重编、gtest PRE_TEST 发现缓存未刷新 ⇒ 收口轮全目标重建后再现读，登记为未验收）。
+- **现行基线**：`ctest -N` 注册数 **Debug 749 / Release 747**（2026-10-26 批次 C C3k-3 双树现读，
+  两棵树都是**全目标重建之后**取的 —— Release 侧"未重编 ⇒ 读 743"那条未验收项到此清偿）。
   逐档账：C3m 收口 735 / 733（那一档 **+4** = 三条 `Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated`
   + 一条反回潮守卫 `VectorSourceNeverDisablesGpkgSpatialIndex`，详见第 2 节）⇒ C3n 系列 **+8**（C3n-1 +5、C3n-2a/2b/2c/2d +3：`VectorConvexHullMidFailure…`、
   `VectorDoubleInputOutputMustNotOverwriteSecondInput`、`VectorIntersectRejectedFeatureWrite…`；C3n-2c 是把既有
@@ -316,7 +326,10 @@ cmake --install build/release --config Release --prefix install
   之后 **C3c-B 第二片 +1**（`VectorBufferRoundCapStadiumMatchesHandComputed`，我当时误记为"不变"，已在该条正文更正）、
   **第三片 +0**（dissolve 只撑大既有块）、**C3c-C0 +0**（只翻登记表一行）、**C3c-C1 +1**
   （`VectorDifferenceSubtractsOverlayGeometry`）、**C3c-C2 +0**（撑大既有 join 用例与夹具）、
-  **C3c-C3 +1**（`VectorPolygonizeExecutionCarvesEqualValueRegions`）⇒ **Debug 748**。
+  **C3c-C3 +1**（`VectorPolygonizeExecutionCarvesEqualValueRegions`）⇒ **Debug 748** ⇒ 其后 C3h-2b 两片
+  **+0**（只往既有用例里加断言、没加 `TEST_F`；C3h-2b2 只改 runner 与档闸）⇒ **748 / 746**（Release 那次也是
+  全目标重建后现读，746 = 748 − 2 条 debug-only）⇒ **C3k-3 +1**（`real_data_vector_join_heavy` 一条新腿）
+  ⇒ **Debug 749 / Release 747**。
   两树差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空；快照 `build/tmp/c3k2_names_{debug,release}.txt`。
   ⚠ 紧随其后的 **C3m 评审席修复轮不动注册数**（守卫改的是匹配逻辑与 token 名单，两条都是注释/判据成形改动，
   没有增删用例）⇒ 735 / 733 那一档的墙钟与"为什么不能拿它判余量"见第 2 节"C3m 评审席修复轮"；
@@ -402,6 +415,8 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
+| Debug | **749** | **1099.05 s**（批次 C C3k-3 双树全量轮现跑，`build/tmp/c3k3_full.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 749 条**首档**；上一档 748（C3h-2b 两片）**1363.88 s**；再往前从下面 744 那一行起是历史 | 最慢 `real_data_vector_quick` **151.22 s** ⇒ 720 ÷ 151.22 = **4.76×**；`real_data_vector_union_poly` **129.78 s** ⇒ 600 ÷ 129.78 = **4.62×**；`real_data_vector_join_heavy` **109.32 s** ⇒ 590 ÷ 109.32 = **5.40×**；`real_data_vector_overlay_ops` **107.53 s** ⇒ 430 ÷ 107.53 = **4.00×**；`real_data_vector_overlay_buffer_join` **72.83 s** ⇒ 630 ÷ 72.83 = **8.65×**；`real_data_vector_derive_heavy` **53.41 s** ⇒ 350 ÷ 53.41 = **6.55×**；`real_data_vector_checks` **30.78 s** ⇒ 100 ÷ 30.78 = **3.25×** |
+| Release | **747** | **515.48 s**（同一轮紧随其后跑，`build/tmp/c3k3_full.log`；**747/747 全绿**） | 747 条**首档**；上一档 746（C3h-2b 两片）**714.97 s** | 最慢 `real_data_vector_join_heavy` **91.21 s** ⇒ 590 ÷ 91.21 = **6.47×**；`quick` **63.84 s** ⇒ 720 ÷ 63.84 = **11.28×**；`overlay_buffer_join` **57.09 s** ⇒ 630 ÷ 57.09 = **11.04×**；`derive_heavy` **46.37 s** ⇒ 350 ÷ 46.37 = **7.55×**；`union_poly` **20.30 s** ⇒ 600 ÷ 20.30 = **29.6×**；`checks` **15.25 s** ⇒ 100 ÷ 15.25 = **6.56×**；`overlay_ops` **14.19 s** ⇒ 430 ÷ 14.19 = **30.3×** |
 | Debug | **744** | **1017.64 s**（批次 C C3k-2 拆腿轮现跑，`build/tmp/c3k2_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 744 条**首档**；再往前五档（740~743 各计数）**988.45 / 1033.21 / 1033.42 / 1085.26 / 1081.68 s**；再往前十四档（697~735）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 / 875.64 / 865.12 / 939.02 / 1083.87 s**（730 那一档另有 982.18 s 的一红轮） | 最慢 `real_data_vector_quick` **216.27 s** ⇒ 720 ÷ 216.27 = **3.33×**；`real_data_vector_overlay_buffer_join` **154.74 s** ⇒ 630 ÷ 154.74 = **4.07×**；`real_data_vector_overlay_ops` **103.44 s** ⇒ 430 ÷ 103.44 = **4.16×**；`real_data_vector_union_poly` **125.38 s** ⇒ 600 ÷ 125.38 = **4.79×**；`real_data_vector_checks` **31.83 s** ⇒ 100 ÷ 31.83 = **3.14×**；`real_data_raster` **9.47 s** ⇒ 60 ÷ 9.47 = **6.34×** |
 | Release | **742** | **505.37 s**（同一轮紧随其后跑，`build/tmp/c3k2_close_rel.log`；**742/742 全绿**） | 742 条**首档**；再往前五档（738~741 各计数）**511.75 / 447.55 / 537.97 / 525.53 / 497.99 s**；再往前十三档（695~733）**392.67 / 367.32 / 361.72 / 372.09 / 365.34 / 471.77 / 420.27 / 737.79 / 469.43 / 562.99 / 449.02 / 463.39 / 436.46 / 436.88 s** | 最慢 `real_data_vector_overlay_buffer_join` **122.70 s** ⇒ 630 ÷ 122.70 = **5.13×**；`real_data_vector_overlay_ops` **14.73 s** ⇒ 430 ÷ 14.73 = **29.2×**；其余见历史行 |
 ⚠ **`overlay` 那一半的"在涨"已经证否——同码双读拿到了**：C3h-1b 与 C3h-2 之间**代码一行没改**（只翻了登记表状态列），
@@ -1083,6 +1098,35 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       （而原文件 CRLF 形态 `ParseErrors=0`）。原因是 PowerShell 按 ANSI 码页解码无 BOM 的 UTF-8 时，
       GBK 双字节的配对结果取决于 ASCII 字节的**奇偶与位置**，而行尾正是那批 ASCII 字节的一部分
       ⇒ **这份 runner 的行尾本身会影响它能不能解析**，"改完必跑 `Parser::ParseFile`"这条流程省不掉。
+  - **批次 C C3k-3（quick 档里最贵的两条重活拆成 join_heavy，2026-10-26）**（控制器自跑）：
+    - **触发**：阶段二双树全量轮现读 Debug `real_data_vector_quick` **302.42 s**，TIMEOUT 720 ⇒ **2.38×**，
+      跌破本仓 2.5× 拆腿触发线（同一配置安静态单跑是 257.17 / 267.03 ⇒ 2.80×）。按"抬 TIMEOUT 不是选项、
+      跌破就拆"的规矩处理；**不按"安静态没跌破"放过**——本仓的定值口径是"取两棵树里更慢那一棵的**最大现读**"，
+      302.42 是同一配置的实测值，不能因为另一跑更好看就丢掉。
+    - **归因**：quick 档 27 条里 buffer_quick（约 57~76 s）与 spatial_join_focus（约 48~67 s）两条占小一半；
+      其余 25 条加起来才百秒量级。不是"哪条腿变慢"，是 quick 档自 C3c-A/B/C 起一路加用例、没人回头量。
+    - **拆法**（沿用 C3k / C3c-B 的形状）：两条挪进新组 `join_heavy`，**只在 Mode=full 注册**
+      （quick 档的成员名单就是"注册了哪些"，不收窄注册的话 Mode=quick 仍会跑，拆腿等于白拆）；
+      判据一个字没动 —— `Validate-CaseOutputs` 对这两条按**名字**分发，不按组标。
+      组标机器同步扩到六组：`$rosterGroupNames` + `$rosterJoinHeavy` + 第 3 条消息 + 新增**第 9 条**
+      （join_heavy 成员名单 ↔ `$script:JoinHeavyCaseNames` 双向钉，名单单一来源）。
+    - **测量**（Debug）：安静态单跑 133 s / **146 s**（用例内 buffer_quick 68.48/75.73、spatial_join_focus 61.64/67.02）
+      ⇒ 新腿 TIMEOUT = ceil(146×4/10)×10 = **590**（4.04×，按"新腿 ≥4× 起步"）；拆后 quick 安静态 166.81 / 165.90 s
+      ⇒ 4.32×。
+    - **双树全量复跑（本刀收口门）**：**Debug 749/749（1099.05 s）、Release 747/747（515.48 s）**，
+      整轮墙钟对比改前 1363.88 / 714.97 s。逐腿现读（Debug / Release，TIMEOUT 取更慢的 Debug 树）：
+      quick 151.22 / 63.84 ⇒ **4.76×**、checks 30.78 / 15.25 ⇒ **3.25×**、overlay_buffer_join 72.83 / 57.09 ⇒ **8.65×**、
+      overlay_ops 107.53 / 14.19 ⇒ **4.00×**、union_poly 129.78 / 20.30 ⇒ **4.62×**、
+      derive_heavy 53.41 / 46.37 ⇒ **6.55×**、join_heavy 109.32 / 91.21 ⇒ **5.40×**。
+      ⇒ 七档全部 ≥3.25×，没有一条需要再拆；`overlay_buffer_join` 因为挪走两条重活，余量反而从 2.77× 升到 8.65×。
+    - **安装态冒烟（同轮现做）**：Release/Debug 两配置 `cmake --install` 到 `build/tmp/install_*` 均 rc=0；
+      `gis-cli.exe --list` rc=0 且 stdout **1852 字节 / 27 行**（与文档记载逐字节一致，按字节判）；
+      Release `bin/*.dll` = **78**；Debug `bin/platforms/` = `qwindowsd.dll` + `qoffscreend.dll`、
+      `bin/sqldrivers/` = `qsqlited.dll`；`install_closure` 用例在双树全量里绿。
+    - **顺带发现并当场改正的文档漂移**：`发布前验证 2.2` 那条 `gis-gui.exe -platform offscreen --self-test`
+      直接跑会 **rc=3**（不是崩溃：`src/gui/main.cpp:197-204` 的 N101/N102 守卫拒绝在
+      `GIS_TOOL_SETTINGS_INI` / `GIS_CUSTOM_INDEX_PRESET_FILE` 未注入时运行，免得写真实用户配置）。
+      按 ctest 的注入口径补上两个环境变量后两配置都 rc=0 ⇒ 文档已按此改写（见 2.2 那条）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。
