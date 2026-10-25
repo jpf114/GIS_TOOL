@@ -963,6 +963,88 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
     - 本片缺口：`polygonize` 的真实腿仍不判面积/包框（输入是产物）；`band` 参数只在合成夹具的双波段臂上有判据；
       `CONNECTEDNESS`（4/8 邻接）本刀没碰 —— 两臂的等值区在两种邻接下划分相同，不构成可判差异，
       留作后续若要钉该语义时的设计前提（不要拿现在的夹具硬造一个"看起来不同"的期望）。
+  - **批次 C C3h-2b（vector 冗余与一致性批 · 第一片：metadata 家族 + 死代码 + 取数口）**（控制器自跑）：
+    - **先复核我自己那份清单**（不信任旧登记）：`progress.md:823` 记的两条死代码
+      （`writeUnionFeature` / `writeUnionFeatureOwned`）与 N141 的 `gis::core::RasterBlockProcessor`
+      现读 `grep -rn ... src/ tests/` 均 **0 命中** ⇒ 已由 C3n-2d 那一刀 `be8b443` 连定义一起删掉，本刀无需再动；
+      `progress.md:960` 那条 param_guard 旁注漂移维持"叙述性引用、不参与比对 ⇒ 本刀不动"的原裁定。
+      ⇒ 清单三条里两条已结案、一条维持原判，本刀真正动手的是下面四项。
+    - **(d) doDissolve 的 Ownership 记账**：旧写法是 `OGRGeometry* result = unionGeometryList(geoms);`
+      紧跟 `writeGeometryFeatureOwned(dstLayer, std::unique_ptr<OGRGeometry>(result), …)`，
+      然后在四条路径上各写一次 `result = nullptr;` 再 `delete result;`。读 `unionGeometryRange` 现确认后
+      （base case 直接返回 `geoms[begin]` 这个别名；两侧都非空时 `left->Union(right)` 之后把 left/right 都 delete；
+      单侧为空则返回另一侧）⇒ 传进去的每个几何都由这条链消费，而 `writeGeometryFeatureOwned` 收的是
+      **值参 `unique_ptr`** ⇒ 那四处置空与其后的 `delete` 全是 `delete nullptr` 空转：不致 double free，
+      但读起来像 use-after-free，并把"谁拥有这块几何"这个唯一要紧的事实藏住了。改成
+      `std::unique_ptr<OGRGeometry> result(...)` + `std::move`，移交点在代码上可见。
+    - **(g) N143 补全，并且更正我立案时的普查**：用脚本对 **HEAD 树**与**工作树**各跑一遍
+      （`do*` 函数体为界，判三件事：有没有 `mergeStandardRunMetadata`、有没有 `metadata["feature_count"]`、还发哪些键）：
+      HEAD 里 33 个 `do*` 中 **17** 个发 `feature_count`、**5** 个走标准三键、标准键与计数键都有的只有 3 个
+      （buffer/convert/dissolve），而"**写出矢量产物却一个 metadata 键都不发**"的族是 **6** 个函数
+      （clip、difference、filter、info、intersect、polygonize）—— 我立案时写的是 3 个，**漏了 clip 与 filter**，
+      `info` 则是第 7 种情形（它的产物就是那段 info 文本：`Result::ok(oss.str())`，不写文件）⇒ 不算同族。
+      本刀把 **5 个写件动作**（difference/intersect/polygonize/clip/filter）全部补成
+      `mergeStandardRunMetadata(...) + feature_count`，工作树现读：`feature_count` **22** 个、标准三键 **10** 个、
+      零 metadata 只剩 `doInfo` 一个。代码里那句"同插件 17 个动作都发 feature_count"就是这次普查的 HEAD 侧数。
+      - **同数异名的两案裁定（不补键）**：`doUnion` 已有 `union_total_pieces`（就是同一个 `count`）、
+        `doRepair` 已有 `repaired_count`（写循环里每成功写一条自增一次，也就是消息里那个数）⇒
+        再发一个 `feature_count` 就是同一个数两个键，正是本批要清的冗余而不是要铺的口径。
+        把这条裁定同时写进了实现注释（`vector_plugin_overlay.inc` union 记账处）与真实腿
+        `union_focus` 的取数口注释里，避免下一个人为"对齐"再补一刀。
+      - **判键必判**：新增 10 条断言，全部落在既有用例里（注册数因此**不变**）——
+        difference 三臂（`action`=difference、feature_count 1/1/0）、intersect（action + count=1）、
+        polygonize 三臂（action + count=2/3/2）、clip（消息整串 + action + count=1）、filter 两臂（1 与否定臂 0）。
+        filter 那条"本动作**没有** feature_count"的辩护注释按 C3f 的旧实态作废，已改写并保留错因。
+      - **变异取证两轮**（恢复一律 `cp` + `git hash-object` 对基线 blob）：把三处 `feature_count` 写成 `count + 1`、
+        并把 `mergeStandardRunMetadata` 的 action 字面量换成同族另一个动作名 ⇒ difference 三臂 / intersect /
+        polygonize 三臂逐条红，红的是**键值差**（`Which is: "2"` 这类）而不是 `.at()` 抛异常；
+        再把 clip/filter 两处同样改形 ⇒ clip 两条 + filter 三条（含否定臂）红。恢复后 `PluginTest.Vector*` **94/94** 绿。
+    - **(e) doBuffer 的死事务支**：`const bool useTransactions = false` 挂着 5 处 `if (useTransactions)`
+      与一个恒取 5000 的 `transactionBatchSize`。追历史：`f18164a`（2026-04-25）先给它加上
+      `outFormat == "GPKG"`，两天后 `699429a`「修复缓冲区 GeoPackage 输出异常」把它钉成 `false`，
+      理由（当时的英文注释）是事务批量写会走 GDAL 的延迟 SQL 索引路径 ⇒ 产出"rtree 表登记了但一行不回填"的空索引，
+      正是 N138 那一族；buffer 因此一直是 N138 案发现场里的**对照件**。⇒ 这不是"漏了对齐"，是带理由的取舍，
+      所以本刀**不**把它改成与 clip/union 同形，而是删掉那 5 处永不执行的分支，并把裁定改写成中文注释留在原地；
+      同文件 doClip 那句"（理由同 doBuffer）"随所指对象消失，已改成自含说明。运行期逐字不变（空转消除）。
+    - **(h) J4 动作表的名字级去重闸**：`VectorOutputMustNotOverwriteInput` 原本只有一条
+      `ASSERT_EQ(sizeof(actions)/sizeof(actions[0]), 24u)`，它挡得住"掉队"挡不住"顶替"——
+      把一个动作名写两遍、另一个漏掉，数组仍是 24 条且每条都照样跑绿 ⇒ 射程静默缩水。
+      补一条 `std::set` 去重计数（仍须 24）。**判别取证**：把 `vertices_extract` 那一行改成重复的 `centroid` ⇒
+      24 条臂全部照跑、只有这条新闸红（`19232: 23 vs 24`），恢复后连同 `CoverageMeta.*` 与乱码守卫 **21/21** 绿。
+    - **真实腿取数口统一**（本批的"一致性"落点）：矢量腿此前从 CLI 的**散文消息**里抠要素数
+      （`Difference completed: (\d+) features` 这类），而插件早就把同一个数放进 metadata。
+      新增 `Assert-ReportedMetadataCountEquals`，把 **17 处**取数口换成整行锚定的 `feature_count` 键，
+      按原出口分三类数（`git diff` 现读逐条点过）：`Assert-CountEquals` 抠消息的 **10** 处
+      （buffer_quick、clip focus/far/partial/stress 4 处、difference focus/far/stress 3 处、
+      intersect focus/far/partial 3 处、spatial_join_focus 1 处 —— 其中 buffer_quick 原本是**未锚定**的
+      `feature_count: (\d+)`，正是本仓"短数字被长数字当前缀吃"那一族的暴露面）、
+      `Get-ReportedCount` 抠消息的 **5** 处（filter 三处：`filter_cn_attribute`、geom_metrics 分类对账、
+      nearest 的 sameDataset 否定臂；外加 clip_partial 与 intersect_partial 两处取数后还要交叉对账的），
+      以及 `Assert-TextContains` 整串比散文的 **2** 处（dissolve_bbox、polygonize_bbox_raster）。
+      10+5+2 = 17。`polygonize_bbox_raster` 的落盘读端另从写死 `-eq 1` 改成
+      **与自报数对撞**（自报数那边仍有一条 `= 1` 的闸 ⇒ 两侧不一致时能报出是哪一侧）。
+      `union_focus` / `union_poly` 两条**不**跟着换（理由见上面同数异名裁定），并在那儿写了注释。
+      helper `Assert-CountEquals` 改完后仓库内调用者归零（`grep -rn` 现读 0，只剩定义）⇒ 按死代码口径连定义删除。
+      ⚠ 这一族判据"换出口"不增加独立性（消息与键同源于同一个 `count`），它的价值是**取数口锚定**与
+      不再被文案改动连带红；真正独立的第二出口仍是既有那条"自报数 vs `vector info` 回读数"对撞。
+    - **验收状态（Debug 现读）**：`PluginTest.Vector*` **94/94**（47.60 s）；`CoverageMeta` 族 + J4 +
+      乱码守卫 **21/21**；六条矢量真实腿**全绿**（一轮串行 980.21 s）—— quick 292.87 / checks 73.34 /
+      overlay_buffer_join 202.97 / overlay_ops 158.62 / union_poly 170.32 / derive_heavy 82.02 s。
+      ⚠ **其中 quick 与 checks 两个读数是脏的**：同一时间窗里我自己跑了一条仓库级 `grep`（含 `.git/` 与 `data/`，
+      120 s 后才终止），属"全量耗时会被并行任务污染"的已知形态 ⇒ 不作数，安静态复测另记。
+      安静态复测把 checks 的真凶找到了（见下一条第二片）。
+      注册数 `ctest -N` 仍 **748**（本片只往既有用例里加断言，没有新 `TEST_F`、没动 `tests/CMakeLists.txt`），
+      Release 侧仍未重编 ⇒ 收口轮现读。`data/` 未被写入：`find data -newermt "2026-10-25 00:00:00" -type f` = **0**，
+      目录里最新 mtime 是 2026-10-21 20:50 的一批 `.aux.xml`。
+    - **新挂账**：**N144**（矢量插件 23 个 `do*` 函数把 `srcSRS` 建成裸指针克隆，取消路径各漏一个，
+      普查 54 个 `throwIfCancelled` 点，修法与射程见 `task-C3h-2b` 台账条目，单独一刀做机械 RAII 替换）；
+      **N145**（输出契约的一致性射程：14 个动作发 `feature_count` 却不走标准三键，另有 union/repair 两个"同数异名"键
+      ⇒ 要么把三键铺满要么把 `feature_count` 定为唯一计数口径，需要一个口径裁定而不是逐案补键）。
+    - 本片缺口：`clip`/`filter` 的新键只在**合成夹具**那一侧有判据（真实腿已改读键，但没为这两个动作新增产物侧断言）；
+      `union` 的 `union_total_pieces` 与"要素数"口径不同（它是分块数）⇒ 本刀没去动它的语义，只把"为什么没有
+      feature_count"写进注释。文档侧如实度已现读：`并集.md:115` 写的是 `union_total_pieces`＝"输出总条数"、
+      `修复.md:38` 写的是 `repaired_count`＝"成功写出到结果图层的要素数量" ⇒ 两篇都在描述**自己的**键，
+      缺的不是文档而是"这些键与 `feature_count` 是否同一口径"那层约定（N145 要裁的就是它）。
   ⚠ **不要把墙钟当刻度读**：本机同一套用例的历史分布本来就很宽 —— 692 条那两轮是
   **350.65 s 与 405.02 s**（差 54 s），690/691 条的 Release 是 **177.65 / 200.72 / 228.62 / 231.79 s**。
   所以本轮 Debug 374.46 → 429.86、Release 200.72 → 231.79 **不去找因果**，按机器波动处理。

@@ -295,6 +295,13 @@ gis::framework::Result VectorPlugin::doFilter(
 
     progress.onProgress(1.0);
 
-    return gis::framework::Result::ok(
+    auto result = gis::framework::Result::ok(
         "Filter completed: " + std::to_string(count) + " features written", output);
+    // N143 家族补全（普查现读见 docs/RELEASE.md 的 C3h-2b 条目）：filter 与 difference/
+    // intersect/polygonize/clip 是同一族"写出矢量产物但一个 metadata 键都不发"的动作，
+    // 计数只活在上面那句消息里 ⇒ 真实腿只能抠散文。这里 count 数的是**实际写入输出图层的
+    // 要素数**（doFilter 的写循环每 CreateFeature 成功一次自增一次），与消息里的数字同源。
+    mergeStandardRunMetadata(result, params, "filter");
+    result.metadata["feature_count"] = std::to_string(count);
+    return result;
 }

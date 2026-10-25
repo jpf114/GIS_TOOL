@@ -52,9 +52,13 @@ gis::framework::Result VectorPlugin::doBuffer(
     GDALDataset* dstDS = staged.dataset();
 
     OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
-    const bool useTransactions = false;
+    // 本动作**不开图层事务**（`699429a` 的裁定，原来这里挂着一整套 `useTransactions` 分支，
+    // 条件恒为假 ⇒ 已按 C3h-2b 的死代码口径删掉；下面那套图层选项与"不传选项"就是当时的取舍本身）。
+    // 不许"为与 clip/union 对齐"把它加回来：事务批量写会走 GDAL 的延迟 SQL 索引路径，
+    // 产出"rtree 表已登记但一行不回填"的空索引 ⇒ 包框查询返 0（N138 那一族，buffer 当时是
+    // 该缺陷的**对照件**：正因为不开事务，它的产物索引一直是回填过的）。
     // 这里不向 CreateLayer 传任何图层选项（buildGpkgDriverIndexedLayerOptions 恒返回空），
-    // GeoPackage 空间索引由驱动在 FlushCache 时自行创建。
+    // GeoPackage 空间索引由驱动在 FlushCache 时自行创建并回填。
     std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
 
@@ -86,12 +90,7 @@ gis::framework::Result VectorPlugin::doBuffer(
     int count = 0;
     int total = static_cast<int>(srcLayer->GetFeatureCount(FALSE));
     if (total <= 0) total = 1;
-    const int transactionBatchSize = useTransactions ? 20000 : 5000;
     constexpr int progressUpdateInterval = 1000;
-
-    if (useTransactions) {
-        dstLayer->StartTransaction();
-    }
 
     while ((feat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* geom = feat->GetGeometryRef();
@@ -108,9 +107,6 @@ gis::framework::Result VectorPlugin::doBuffer(
                 }
                 if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
                     OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
-                    if (useTransactions) {
-                        dstLayer->RollbackTransaction();
-                    }
                     delete srcSRS;
                     return gis::framework::Result::fail("Failed to write buffer feature");
                 }
@@ -119,26 +115,20 @@ gis::framework::Result VectorPlugin::doBuffer(
         }
         OGRFeature::DestroyFeature(feat);
         count++;
-        if (useTransactions && count % transactionBatchSize == 0) {
-            dstLayer->CommitTransaction();
-            dstLayer->StartTransaction();
-        }
         if (count % progressUpdateInterval == 0) {
             progress.throwIfCancelled();
             progress.onProgress(0.3 + 0.6 * static_cast<double>(count) / total);
         }
     }
 
-    if (useTransactions) {
-        dstLayer->CommitTransaction();
-    }
     dstLayer->SyncToDisk();
     delete srcSRS;
     progress.throwIfCancelled();
 
-    // 工单 §2：事务必须在 commit() 之前收口 —— commit 的第一件事就是 dataset_.reset()，
-    // 事务还开着就关数据集会被 GDAL 在关闭时回滚 ⇒ "产物已替换但内容半截"的假绿。
-    // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
+    // 工单 §2 的收口顺序：全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由
+    // VectorStagedOutput::commit 钉）。本动作今天没有图层事务（裁定见上面 srcSRS 那段），
+    // 但这条顺序照旧留着 —— 同族带事务的动作里"事务没收口就关数据集"会被 GDAL 关闭时回滚，
+    // 那是"产物已替换但内容半截"的假绿；下一个往这里加事务的人不必重新发现它。
     std::string commitError;
     if (!staged.commit(commitError)) {
         return gis::framework::Result::fail(commitError);
@@ -340,8 +330,9 @@ gis::framework::Result VectorPlugin::doClip(
     delete srcSRS;
     progress.throwIfCancelled();
 
-    // 工单 §2：事务必须在 commit() 之前收口（理由同 doBuffer）。全部写完 ⇒ 关闭数据集 →
-    // 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
+    // 工单 §2：事务必须在 commit() 之前收口 —— commit 的第一件事就是 dataset_.reset()，
+    // 事务还开着就关数据集会被 GDAL 在关闭时回滚 ⇒ "产物已替换但内容半截"的假绿。
+    // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
     std::string commitError;
     if (!staged.commit(commitError)) {
         return gis::framework::Result::fail(commitError);
@@ -349,6 +340,12 @@ gis::framework::Result VectorPlugin::doClip(
 
     progress.onProgress(1.0);
 
-    return gis::framework::Result::ok(
+    auto result = gis::framework::Result::ok(
         "Clip completed: " + std::to_string(count) + " features clipped", output);
+    // N143 家族补全：clip 与本插件差集/交集/面矢量化/空间过滤同族（写出矢量产物但零 metadata）。
+    // count 在上面两条写支里各成功一次自增一次 ⇒ 它是"写出的结果要素数"，与消息同源；
+    // 与输入要素数不等是正常语义（没命中的要素不落地），所以判据只能拿它与产物对撞。
+    mergeStandardRunMetadata(result, params, "clip");
+    result.metadata["feature_count"] = std::to_string(count);
+    return result;
 }

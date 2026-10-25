@@ -5894,6 +5894,10 @@ TEST_F(PluginTest, VectorDifferenceSubtractsOverlayGeometry) {
         const auto result = runDifference(input, overlay, output);
         ASSERT_TRUE(result.success) << result.message;
         EXPECT_EQ(result.message, "Difference completed: 1 features");
+        // N143：difference 此前一个 metadata 键都不发（真实腿只能正则抠上面那句消息）⇒
+        // 现在标准键与 feature_count 也要钉住，否则"只补键不判键"等于没修。
+        EXPECT_EQ(result.metadata.at("action"), "difference");
+        EXPECT_EQ(result.metadata.at("feature_count"), "1");
 
         GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
             output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
@@ -5952,6 +5956,7 @@ TEST_F(PluginTest, VectorDifferenceSubtractsOverlayGeometry) {
         const auto result = runDifference(input, overlay, output);
         ASSERT_TRUE(result.success) << result.message;
         EXPECT_EQ(result.message, "Difference completed: 1 features");
+        EXPECT_EQ(result.metadata.at("feature_count"), "1");
 
         GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
             output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
@@ -5994,6 +5999,7 @@ TEST_F(PluginTest, VectorDifferenceSubtractsOverlayGeometry) {
         const auto result = runDifference(input, overlay, output);
         ASSERT_TRUE(result.success) << result.message;
         EXPECT_EQ(result.message, "Difference completed: 0 features");
+        EXPECT_EQ(result.metadata.at("feature_count"), "0");
 
         GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
             output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
@@ -6202,6 +6208,10 @@ TEST_F(PluginTest, VectorIntersectOutputsOverlappedPolygon) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Intersect failed: " << result.message;
     EXPECT_NE(result.message.find("1 features"), std::string::npos);
+    // N143：intersect 此前零 metadata ⇒ 计数只能从消息里抠。补键后必须判键，
+    // 上一条 find("1 features") 连"是哪个动作、几个要素"都没钉死。
+    EXPECT_EQ(result.metadata.at("action"), "intersect");
+    EXPECT_EQ(result.metadata.at("feature_count"), "1");
     ASSERT_TRUE(fs::exists(output));
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
@@ -6589,6 +6599,11 @@ TEST_F(PluginTest, VectorPolygonizeExecutionCarvesEqualValueRegions) {
         const auto result = runPolygonize(input, output);
         ASSERT_TRUE(result.success) << result.message;
         EXPECT_EQ(result.message, "Polygonize completed: 2 polygons");
+        // N143：polygonize 此前零 metadata ⇒ 计数只活在消息里。补键后要判值：
+        // 这个 feature_count 记的是**重扫产物层**读回来的多边形数（见实现里的注释），
+        // 与上面按 DN 归并的 regions.size() 是两条独立出口，写成消息里的数字才对得上。
+        EXPECT_EQ(result.metadata.at("action"), "polygonize");
+        EXPECT_EQ(result.metadata.at("feature_count"), "2");
 
         const auto regions = readRegions(output);
         ASSERT_EQ(regions.size(), 2u);
@@ -6619,6 +6634,7 @@ TEST_F(PluginTest, VectorPolygonizeExecutionCarvesEqualValueRegions) {
         const auto result = runPolygonize(input, output);
         ASSERT_TRUE(result.success) << result.message;
         EXPECT_EQ(result.message, "Polygonize completed: 3 polygons");
+        EXPECT_EQ(result.metadata.at("feature_count"), "3");
 
         const auto regions = readRegions(output);
         ASSERT_EQ(regions.size(), 3u);
@@ -6688,6 +6704,8 @@ TEST_F(PluginTest, VectorPolygonizeExecutionCarvesEqualValueRegions) {
         const auto result = p->execute(params, progress_);
         ASSERT_TRUE(result.success) << result.message;
         EXPECT_EQ(result.message, "Polygonize completed: 2 polygons");
+        // 本臂的红落在下面的包框方向（band 取错时计数照样是 2）；这一条只是"补了键就要判键"的同族判据。
+        EXPECT_EQ(result.metadata.at("feature_count"), "2");
 
         const auto regions = readRegions(output);
         ASSERT_EQ(regions.size(), 2u);
@@ -7008,11 +7026,12 @@ TEST_F(PluginTest, VectorFilterWhereClauseAcceptsChineseAttributeValue) {
         << "N127：中文 --where 被 WHERE 白名单拒了，message = " << result.message;
     ASSERT_TRUE(fs::exists(output));
 
-    // filter **没有** feature_count 元数据（doFilter 只回消息与输出路径，见
-    // vector_plugin_info_filter.inc:237-238 与 docs/算法说明/矢量数据处理/空间过滤.md
-    // "返回消息中的数量是实际写入输出图层的要素数"）⇒ 自报数只能整串核对消息，
+    // filter 的 feature_count 是 N143 家族补全时补上的（此前 doFilter 零 metadata，
+    // 本用例只能整串核对消息 ⇒ 那条注释已随之作废）。现在两条出口都判：消息整串 + 键值，
     // 再用落盘侧的 GetFeatureCount 与它对撞（报数与产物不一致必须红）。
     EXPECT_EQ(result.message, "Filter completed: 1 features written");
+    EXPECT_EQ(result.metadata.at("action"), "filter");
+    EXPECT_EQ(result.metadata.at("feature_count"), "1");
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
         output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
@@ -7069,6 +7088,7 @@ TEST_F(PluginTest, VectorFilterWhereClauseAcceptsChineseAttributeValue) {
     const auto miss = p->execute(missParams, progress_);
     ASSERT_TRUE(miss.success) << "中文否定臂失败: " << miss.message;
     EXPECT_EQ(miss.message, "Filter completed: 0 features written");
+    EXPECT_EQ(miss.metadata.at("feature_count"), "0");
 
     GDALDataset* missDs = static_cast<GDALDataset*>(GDALOpenEx(
         emptyOutput.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
@@ -7646,6 +7666,11 @@ TEST_F(PluginTest, VectorClipKeepsOnlyLinearOverlapSegments) {
 
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Clip failed: " << result.message;
+    // N143 家族补全：clip 此前零 metadata ⇒ 计数只在消息里。补键后消息与键两条出口都要钉住
+    // （本用例的夹具是 1 条线 × 1 个窗口 ⇒ 写出 1 条，与下面逐几何读回的判据相互独立）。
+    EXPECT_EQ(result.message, "Clip completed: 1 features clipped");
+    EXPECT_EQ(result.metadata.at("action"), "clip");
+    EXPECT_EQ(result.metadata.at("feature_count"), "1");
     ASSERT_TRUE(fs::exists(output));
 
     GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
@@ -19195,6 +19220,18 @@ TEST_F(PluginTest, VectorOutputMustNotOverwriteInput) {
     // 两边各数各的，任何一边掉队都红）。
     ASSERT_EQ(sizeof(actions) / sizeof(actions[0]), 24u)
         << "J4 的动作数组必须覆盖全部 24 个已迁移动作；少一条就是射程缩水";
+
+    // 上一条只挡"掉队"，挡不住"顶替"：把 intersect 写两遍、把 union 漏掉，数组仍然是 24 条，
+    // 每一条也照样能跑绿 ⇒ 射程静默缩水。名字级去重把这条路也堵上（与 J5 的绝对计数闸同族，
+    // 但 J5 数的是源文件里的 (文件,函数) 声明点，这边数的是 CLI 动作名）。
+    {
+        std::set<std::string> distinctActions;
+        for (const auto& item : actions) {
+            distinctActions.insert(item.action);
+        }
+        EXPECT_EQ(distinctActions.size(), 24u)
+            << "J4 动作表里有重名 ⇒ 有已迁移的动作其实没被覆盖";
+    }
 
     for (const auto& item : actions) {
         const char* action = item.action;

@@ -287,8 +287,15 @@ gis::framework::Result VectorPlugin::doPolygonize(
 
     progress.onProgress(1.0);
 
-    return gis::framework::Result::ok(
+    auto result = gis::framework::Result::ok(
         "Polygonize completed: " + std::to_string(featureCount) + " polygons", output);
+    // N143：polygonize 与 difference/intersect 同族，此前零 metadata。这里的 feature_count 是上面
+    // 那段 while **重扫输出图层**数出来的面数（扫的是待提交的临时件图层本身，不是 GDALPolygonize
+    // 的返回码，也没有再开一次文件），所以它与产物同一体 ⇒ 真实腿可以直接读这个键，
+    // 不必再正则抠消息。
+    mergeStandardRunMetadata(result, params, "polygonize");
+    result.metadata["feature_count"] = std::to_string(featureCount);
+    return result;
 }
 
 gis::framework::Result VectorPlugin::doConvert(

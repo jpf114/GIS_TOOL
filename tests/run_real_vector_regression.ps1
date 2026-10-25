@@ -235,17 +235,10 @@ function Get-ReportedCount {
     return [int]$match.Groups[1].Value
 }
 
-function Assert-CountEquals {
-    param(
-        [string]$Text,
-        [string]$Pattern,
-        [int]$Expected,
-        [string]$Label
-    )
-
-    $actual = Get-ReportedCount -Text $Text -Pattern $Pattern -Label $Label
-    Assert-Condition -Condition ($actual -eq $Expected) -Message ($Label + ": reported " + $actual + ", expected " + $Expected)
-}
+# Assert-CountEquals 已随本刀的取数口统一消失：它的 10 个调用点全部改走
+# Assert-ReportedMetadataCountEquals / Get-ReportedMetadataCount（整行锚定的自报键），
+# 另有 dissolve_bbox 与 polygonize_bbox_raster 两条从 Assert-TextContains 的散文整串换成同一个键；
+# 仓库内再没有调用者 ⇒ 按 C3h-2b 的死代码口径直接删掉，不留"以后可能用"的空壳。
 
 function Format-Coord {
     param([double]$Value)
@@ -447,6 +440,21 @@ function Get-ReportedMetadataCount {
     # 整行锚定（^…$）+ 抓完整数字串：键前不许有别的单词字符、行尾不许有尾巴，
     # 于是 "source_count" 不会被 "feature_count" 的判据顺带满足，短数字也不会被长数字当前缀吃。
     return Get-ReportedCount -Text $Text -Pattern ("(?m)^\s*" + $Key + ":\s+(\d+)\s*$") -Label $Label
+}
+
+# N143 之后新立的取数口：矢量动作的要素数一律走自报的 metadata 键，不再抠 "X completed: N features"
+# 这类散文消息（抠散文时消息文案一改判据就红，而"报出来的数"本身反而没有整行锚定）。
+function Assert-ReportedMetadataCountEquals {
+    param(
+        [string]$Text,
+        [string]$Key,
+        [int]$Expected,
+        [string]$Label
+    )
+
+    $actual = Get-ReportedMetadataCount -Text $Text -Key $Key -Label $Label
+    Assert-Condition -Condition ($actual -eq $Expected) -Message (
+        $Label + ": reported " + $Key + " " + $actual + ", expected " + $Expected)
 }
 
 # ── C3a：几何派生批（convex_hull / centroid / envelope / boundary / 三个 extract / interior_point）──
@@ -1621,8 +1629,8 @@ function Assert-TopologyCheckCase {
                 ("--output=" + (Join-Path $TopologyRefs.ScratchRoot "nearest_self_match.gpkg")),
                 "--where=nearest_fid = fid"
             )
-            $selfCount = Get-ReportedCount -Text $selfText `
-                -Pattern "(?m)^Success: Filter completed: (\d+) features written" -Label ($Case.Name + "")
+            $selfCount = Get-ReportedMetadataCount -Text $selfText `
+                -Key "feature_count" -Label ($Case.Name + " nearest_self filter feature_count")
             Assert-Condition -Condition ($selfCount -eq 0) -Message (
                 $Case.Name + ":" + $selfCount + " nearest_fid == fid sameDataset FID")
         }
@@ -1833,8 +1841,8 @@ function Assert-ChineseAttributeFilterCase {
     Assert-Condition -Condition ($read.FeatureCount -ge 1) -Message (
         $Case.Name + ": output layer keeps " + $read.FeatureCount + " feature(s), expected at least 1")
     # ④ 三段等式：CLI 自报数 / 落盘现读数 / 输入侧手推数。
-    $reported = Get-ReportedCount -Text $Case.Output -Pattern "Filter completed: (\d+) features written" `
-        -Label ($Case.Name + " reported count")
+    $reported = Get-ReportedMetadataCount -Text $Case.Output -Key "feature_count" `
+        -Label ($Case.Name + " reported feature_count")
     Assert-Condition -Condition ($reported -eq $read.FeatureCount) -Message (
         $Case.Name + ": CLI says " + $reported + " but vector info reads back " + $read.FeatureCount +
         " (自报数与落盘数不一致)")
@@ -2560,9 +2568,9 @@ function Assert-UnionPolyCase {
             ("--output=" + $classPath),
             ("--where=source='" + $classValue + "'")
         )
-        $filterSelfReport = Get-ReportedCount -Text $filterText `
-            -Pattern "Filter completed: (\d+) features written" `
-            -Label ($Case.Name + " class " + $classValue + " filter self-report")
+        $filterSelfReport = Get-ReportedMetadataCount -Text $filterText `
+            -Key "feature_count" `
+            -Label ($Case.Name + " class " + $classValue + " filter feature_count")
         $diskCount = Get-LayerFeatureCount -ResolvedCliPath $ResolvedCliPath -Path $classPath `
             -ScratchDir $Refs.ScratchRoot
         Assert-Condition -Condition ($filterSelfReport -eq $diskCount) -Message (
@@ -2617,7 +2625,7 @@ function Validate-CaseOutputs {
 
     switch ($Case.Name) {
         "buffer_quick" {
-            Assert-CountEquals -Text $Case.Output -Pattern "feature_count: (\d+)" -Expected $InputFeatureCount -Label "buffer_quick"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "buffer_quick"
             Assert-TextContains -Text $Case.Output -Expected "srs_type: projected" -Message "buffer_quick srs_type mismatch"
             # C3c-B：这条腿原来只比对 CLI 自报的两个数，一个都没落地读产物 ⇒ 层名/几何类族/CRS/字段
             # 整批丢掉也能整腿绿。现在把"产物侧的层契约"钉住：要素数与输入对撞（独立读端，不是自报数），
@@ -2639,16 +2647,16 @@ function Validate-CaseOutputs {
                 ($script:RoadsCoreFieldNames -join ",") + "'")
         }
         "clip_focus" {
-            Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected $InputFeatureCount -Label "clip_focus"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "clip_focus"
         }
         "difference_focus" {
-            Assert-CountEquals -Text $Case.Output -Pattern "Difference completed: (\d+) features" -Expected 0 -Label "difference_focus"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 0 -Label "difference_focus"
         }
         "intersect_focus" {
-            Assert-CountEquals -Text $Case.Output -Pattern "Intersect completed: (\d+) features" -Expected $InputFeatureCount -Label "intersect_focus"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "intersect_focus"
         }
         "spatial_join_focus" {
-            Assert-CountEquals -Text $Case.Output -Pattern "Spatial join completed: (\d+) features" -Expected $InputFeatureCount -Label "spatial_join_focus"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "spatial_join_focus"
             Assert-Condition -Condition (Test-Path (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")) -Message "spatial_join_focus output missing"
             # C3c-C2：这条腿此前只判"CLI 自报的要素数 + 文件在场"。补三条**产物侧**判据，钉的是
             # doSpatialJoin 的三条输出契约（现读 vector_plugin_spatial_join.inc:75-97 与 :150）：
@@ -2682,31 +2690,34 @@ function Validate-CaseOutputs {
                 -Label "spatial_join_focus"
         }
         "union_focus" {
+            # 这条**不**跟着换成 feature_count：doUnion 的计数语义是"分块数"，它自己已经发了
+            # union_total_pieces（= 同一个 count，见 vector_plugin_overlay.inc 的 union_* 记账），
+            # 再补一个 feature_count 就是同一个数发两个键 ⇒ 正是本刀要清的冗余，不是要铺的口径。
             $unionCount = Get-ReportedCount -Text $Case.Output -Pattern "Union completed: (\d+) features" -Label "union_focus"
             Assert-Condition -Condition ($unionCount -ge $InputFeatureCount) -Message ("union_focus: reported " + $unionCount + ", expected at least " + $InputFeatureCount)
         }
         "clip_far" {
-            Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected 0 -Label "clip_far"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 0 -Label "clip_far"
         }
         "intersect_far" {
-            Assert-CountEquals -Text $Case.Output -Pattern "Intersect completed: (\d+) features" -Expected 0 -Label "intersect_far"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 0 -Label "intersect_far"
         }
         "difference_far" {
-            Assert-CountEquals -Text $Case.Output -Pattern "Difference completed: (\d+) features" -Expected $InputFeatureCount -Label "difference_far"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "difference_far"
         }
         "clip_partial" {
-            $partialCount = Get-ReportedCount -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Label "clip_partial"
+            $partialCount = Get-ReportedMetadataCount -Text $Case.Output -Key "feature_count" -Label "clip_partial"
             Assert-Condition -Condition ($partialCount -gt 0 -and $partialCount -le $InputFeatureCount) -Message ("clip_partial: reported " + $partialCount + ", expected in (0, " + $InputFeatureCount + "]")
             $script:ClipPartialCount = $partialCount
         }
         "intersect_partial" {
-            $partialCount = Get-ReportedCount -Text $Case.Output -Pattern "Intersect completed: (\d+) features" -Label "intersect_partial"
+            $partialCount = Get-ReportedMetadataCount -Text $Case.Output -Key "feature_count" -Label "intersect_partial"
             Assert-Condition -Condition ($partialCount -gt 0 -and $partialCount -le $InputFeatureCount) -Message ("intersect_partial: reported " + $partialCount + ", expected in (0, " + $InputFeatureCount + "]")
             Assert-Condition -Condition ($null -ne $script:ClipPartialCount) -Message "intersect_partial ran before clip_partial, cannot cross-check"
             Assert-Condition -Condition ($script:ClipPartialCount -eq $partialCount) -Message ("clip and intersect disagree on the same partial window: " + $script:ClipPartialCount + " vs " + $partialCount)
         }
         "dissolve_bbox" {
-            Assert-TextContains -Text $Case.Output -Expected "Dissolve completed: 1 features" -Message "dissolve_bbox feature count mismatch"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 1 -Label "dissolve_bbox"
             # C3c-B：这条腿原来只抠 CLI 消息里那句 "1 features"，一个都没落地读产物。
             # 输入 china_bbox_3857 是**单个**面、且没点名 dissolve_field ⇒ 走"整体融合"分支，
             # 于是能独立成立（不依赖样本标定常量）的判据是这几条：
@@ -2761,7 +2772,10 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   1" -Message "rasterize_bbox mean mismatch"
         }
         "polygonize_bbox_raster" {
-            Assert-TextContains -Text $Case.Output -Expected "Polygonize completed: 1 polygons" -Message "polygonize_bbox_raster polygon count mismatch"
+            $polygonizeReported = Get-ReportedMetadataCount -Text $Case.Output -Key "feature_count" `
+                -Label "polygonize_bbox_raster feature_count"
+            Assert-Condition -Condition ($polygonizeReported -eq 1) -Message (
+                "polygonize_bbox_raster: reported feature_count " + $polygonizeReported + ", expected 1")
             # C3c-C3：这条腿此前只抠 CLI 消息里那句 "1 polygons"，产物一个字节都没读。
             # 补四条落地契约（期望来源是 doPolygonize 写死的输出契约，不是样本标定常量）：
             # 层名 polygonized、字段恰好一个且叫 DN、层声明是 Polygon（不是 MultiPolygon/Unknown）、
@@ -2778,8 +2792,9 @@ function Validate-CaseOutputs {
                 "polygonize_bbox_raster: Geometry='" + $polygonizeInfo.Geometry + "', expected Polygon")
             Assert-Condition -Condition (($polygonizeInfo.FieldNames -join ",") -ceq "DN") -Message (
                 "polygonize_bbox_raster: fields '" + ($polygonizeInfo.FieldNames -join ",") + "', expected exactly 'DN'")
-            Assert-Condition -Condition ($polygonizeInfo.FeatureCount -eq 1) -Message (
-                "polygonize_bbox_raster: read-back Features=" + $polygonizeInfo.FeatureCount + ", CLI reports 1")
+            Assert-Condition -Condition ($polygonizeInfo.FeatureCount -eq $polygonizeReported) -Message (
+                "polygonize_bbox_raster: read-back Features=" + $polygonizeInfo.FeatureCount +
+                " != reported feature_count=" + $polygonizeReported)
         }
         # ── C3a 几何派生 8 条：判据全部由输入图层自己的现读属性推导 ──
         "hull_polygon" {
@@ -2862,10 +2877,10 @@ function Validate-CaseOutputs {
                 -ResolvedOutputRoot $ResolvedOutputRoot -Refs $C3cBRefs | Out-Null
         }
         "clip_stress" {
-            Assert-CountEquals -Text $Case.Output -Pattern "Clip completed: (\d+) features clipped" -Expected $InputFeatureCount -Label "clip_stress"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "clip_stress"
         }
         "difference_stress" {
-            Assert-CountEquals -Text $Case.Output -Pattern "Difference completed: (\d+) features" -Expected 0 -Label "difference_stress"
+            Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 0 -Label "difference_stress"
         }
     }
     # C3b-A 的腿判据走独立函数（同一批腿互相要用现读数；名单即门禁，见函数头）。

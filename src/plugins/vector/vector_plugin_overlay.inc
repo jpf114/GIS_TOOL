@@ -738,8 +738,13 @@ gis::framework::Result VectorPlugin::doDifference(
 
     progress.onProgress(1.0);
 
-    return gis::framework::Result::ok(
+    auto result = gis::framework::Result::ok(
         "Difference completed: " + std::to_string(count) + " features", output);
+    // N143：difference 此前一个 metadata 键都不发（同插件 17 个动作都发 feature_count），
+    // 结果"写出多少要素"只能从消息字符串里正则抠 ⇒ 与 C3g 给 dissolve 补齐的是同一族。
+    mergeStandardRunMetadata(result, params, "difference");
+    result.metadata["feature_count"] = std::to_string(count);
+    return result;
 }
 
 gis::framework::Result VectorPlugin::doIntersect(
@@ -922,6 +927,10 @@ gis::framework::Result VectorPlugin::doIntersect(
 
     progress.onProgress(1.0);
 
-    return gis::framework::Result::ok(
+    auto result = gis::framework::Result::ok(
         "Intersect completed: " + std::to_string(count) + " features", output);
+    // N143：同 doDifference，补齐标准键与 feature_count（真实腿不再靠抠消息取数）。
+    mergeStandardRunMetadata(result, params, "intersect");
+    result.metadata["feature_count"] = std::to_string(count);
+    return result;
 }

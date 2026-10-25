@@ -115,47 +115,46 @@ gis::framework::Result VectorPlugin::doDissolve(
         dstLayer->StartTransaction();
     }
 
+    // 所有权口径（读 unionGeometryRange 现确认后写下来的，不是猜的）：单元素那一组的 `result` 就是
+    // `geoms[0]` 本身（base case 返回 `geoms[begin]`，不做 clone），多元素那一组把 left/right 都 delete 掉
+    // ⇒ 传进来的每个几何都由这条链消费。而 writeGeometryFeatureOwned 收的是 `std::unique_ptr` 值参 ⇒
+    // 调用一旦发生，所有权就已移交（空几何早退那条由形参析构释放）。
+    // 所以旧代码那四处 `result = nullptr;` 与其后配套的 `delete result;` 全是空转（`delete nullptr`）：
+    // 它们不会造成 double free，但读起来像 use-after-free，且把"谁拥有这块几何"这条唯一的关键事实藏住了
+    // ⇒ 改成 unique_ptr + std::move，让移交点在代码上可见。
     if (!dissolveField.empty()) {
         for (auto& [key, geoms] : groups) {
             if (geoms.empty()) continue;
 
-            OGRGeometry* result = unionGeometryList(geoms);
+            std::unique_ptr<OGRGeometry> result(unionGeometryList(geoms));
 
             if (result && !result->IsEmpty()) {
-                if (!writeGeometryFeatureOwned(dstLayer, std::unique_ptr<OGRGeometry>(result), [&](OGRFeature* feature) {
+                if (!writeGeometryFeatureOwned(dstLayer, std::move(result), [&](OGRFeature* feature) {
                         feature->SetField(dissolveField.c_str(), key.c_str());
                     })) {
-                    result = nullptr;
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete result;
                     delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
-                result = nullptr;
                 count++;
             }
-            delete result;
         }
     } else {
         if (!allGeoms.empty()) {
-            OGRGeometry* result = unionGeometryList(allGeoms);
+            std::unique_ptr<OGRGeometry> result(unionGeometryList(allGeoms));
 
             if (result && !result->IsEmpty()) {
-                if (!writeGeometryFeatureOwned(dstLayer, std::unique_ptr<OGRGeometry>(result))) {
-                    result = nullptr;
+                if (!writeGeometryFeatureOwned(dstLayer, std::move(result))) {
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete result;
                     delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
-                result = nullptr;
                 count++;
             }
-            delete result;
         }
     }
 
