@@ -48,15 +48,23 @@
 #   GIS_CASE_ROSTER 从四份名单变五份（full + checks + overlay_buffer_join + overlay_ops + union_poly），
 #   四组之并 == full 且各档组标各自与自己的名单逐名相等（第 6 条钉住 union_poly 那一档 ⇒ "把这条腿错归到
 #   别的档"必红；第 7 条钉住"跑过数 == 判过数"）。
+#   批次 D D0-P0 现读事实（2026-10-26，代码态 5994a4e，Task 1 数据可达性普查）：上面对“可用真实输入”的清单在现产物上重跑过一遍，逐张 `gis-cli raster_inspect info` 现读，产物表落在 build/tmp/batchD/data_availability.txt（49 行 = 登记表 49 条 PENDING，逐名相等；full 47 / fixture-only 2）。三条更正、一条补充：
+#     (1) data/dem/datong 不是一张 2094 x 3308，而是 6 张分幅 + 1 张 TY_ 图：宽随经度分幅（2094 / 3601 / 2788）、高随纬度分幅（3308 / 2352），TY_ASTGTM2_N37E112 是 1132 x 960；波段数 1 不变。
+#     (2) N01 与 N20 两张 1:5 万单波段图**尺寸与 CRS 都不同**（N01 14377 x 18719 EPSG:32601 / N20 14607 x 18762 EPSG:32620）⇒ 上面那行按 *.tif 通配推广到 N20 是错的。
+#     (3) 头部清单漏记的真输入：data/image/2025/GF2_PMS1_E105.6_N29.0_RGB_20250324C.tif 40053 x 34426 x 4 EPSG:4490（与 2024 的 4 张 H48E01* 分幅**大面积真重叠**，是全仓唯一可用的真实重叠影像对来源）、data/dem/refas.tif 4048 x 1148 x 1 EPSG:3857、data/dem/utm_srtm_*.img（HFA，5 个）、data/dem/srtm_59_05_..._preview8.tiff 512 x 112 x 1（唯一小尺寸真图，探针主力）。
+#     (4) ⚠ **data/ 里没有任何带 NIR 语义波段的真影像**：全部 5 张 4 波段图的 Color 逐张现读为 Red/Green/Blue/Alpha（H48 系 band4 Alpha 恒 255，Min=Max=255、StdDev=0；GF2 band4 Alpha Mean 170.31 / StdDev 120.10）⇒ spindex 一族的 multispectral 输入仍按 not-consumed 处理（本批只有 spindex,ndvi 一条是 PENDING，定档 fixture-only，不建真实腿）。
+#   本次对齐动作：29 行 fixture 由 not-consumed 改为 data（判据 = 该动作在 build/tmp/batchD/probe/ 里的真实文件副本上实测 rc=0，逐条读数见 build/tmp/batchD/logs/<plugin>_<action>.log）；这些行的 note 仍写“腿走合成兜底”是真的 ⇒ 现在说的是“真实输入可达”，把腿真正接上去归批次 D 各刀。保持 not-consumed 的只有 spindex,ndvi 一条（见 (4)）；其余 not-consumed 行属于已 GOLD 的动作、不在批次 D 的 49 条射程，本轮未逐条实测 ⇒ 一律保持原样不动（63 行 not-consumed 数据行 ⇒ 改 29 留 34，其中 33 行是已 GOLD 的动作）。
+#   两条现读形态事实（写在这里省得每把刀重查）：matching 的 ecc_register 与 stitch 在 Debug 树被 lightweight 门硬挡（matching_plugin.cpp:551-553 / :771-773，全仓仅此两条）⇒ 真实腿只能挂 Release；projection,transform 无文件入口（只吃 --x/--y/--srs/--dst_srs，projection_plugin.cpp:463-468），projection,info 实现走 openRaster（:407）⇒ 矩阵这两行的 input_kind=vector 与现读不符，本轮不改字段只登记。
+#   processing,kmeans 现读 CLI 无 samples 入口（只有 --kmeans_k/--max_iter/--epsilon_kmeans/--kmeans_attempts），在真栅格上实测 rc=0 ⇒ 该行 input_kind=raster+samples / fixture=synthetic 与现读不符，同样只登记不改。
 classification,feature_stats,raster,not-consumed,real_regression,relation,C9,腿走合成兜底
 classification,svm_classify,raster+samples,synthetic,real_regression,relation,C9,夹具来源为启发式判定，开批前核对
 classification,random_forest_classify,raster+samples,synthetic,real_regression,relation,C9,夹具来源为启发式判定，开批前核对
 classification,max_likelihood_classify,raster+samples,synthetic,real_regression,relation,C9,夹具来源为启发式判定，开批前核对
 classification,accuracy_assessment,raster+samples,synthetic,none,relation,C9,夹具来源为启发式判定，开批前核对
-cutting,clip,raster,not-consumed,real_regression,gold,C7,腿走合成兜底
+cutting,clip,raster,data,real_regression,gold,C7,腿走合成兜底
 cutting,mosaic,raster,not-consumed,real_regression,relation,C7,腿走合成兜底
-cutting,split,raster,not-consumed,real_regression,gold,C7,腿走合成兜底
-cutting,merge_bands,raster,not-consumed,real_regression,gold,C7,腿走合成兜底
+cutting,split,raster,data,real_regression,gold,C7,腿走合成兜底
+cutting,merge_bands,raster,data,real_regression,gold,C7,腿走合成兜底
 cutting,tile,raster,data,none,gold,C7,夹具来源为启发式判定，开批前核对
 georef,dos_correction,raster,not-consumed,real_regression,relation,C13,腿走合成兜底
 georef,radiometric_calibration,raster,not-consumed,real_regression,relation,C13,腿走合成兜底
@@ -66,13 +74,13 @@ georef,minnaert_correction,raster,not-consumed,real_regression,relation,C13,腿�
 georef,c_correction,raster,not-consumed,real_regression,relation,C13,腿走合成兜底
 georef,percentile_stretch,raster,not-consumed,real_regression,relation,C13,腿走合成兜底
 georef,rpc_orthorectify,raster+rpc,synthetic,real_regression,relation,C13,夹具来源为启发式判定，开批前核对
-matching,detect,raster,not-consumed,real_regression,gold,C14,腿走合成兜底
-matching,match,image_pair,not-consumed,real_regression,gold,C14,腿走合成兜底
-matching,register,image_pair,not-consumed,real_regression,gold,C14,腿走合成兜底
+matching,detect,raster,data,real_regression,gold,C14,腿走合成兜底
+matching,match,image_pair,data,real_regression,gold,C14,腿走合成兜底
+matching,register,image_pair,data,real_regression,gold,C14,腿走合成兜底
 matching,change,image_pair,not-consumed,real_regression,relation,C14,腿走合成兜底
-matching,ecc_register,image_pair,not-consumed,real_regression,gold,C14,腿走合成兜底
-matching,corner,raster,not-consumed,real_regression,gold,C14,腿走合成兜底
-matching,stitch,image_pair,not-consumed,real_regression,gold,C14,腿走合成兜底
+matching,ecc_register,image_pair,data,real_regression,gold,C14,腿走合成兜底
+matching,corner,raster,data,real_regression,gold,C14,腿走合成兜底
+matching,stitch,image_pair,data,real_regression,gold,C14,腿走合成兜底
 processing,threshold,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
 processing,filter,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
 processing,enhance,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
@@ -80,30 +88,30 @@ processing,stats,raster,data,none,gold,C4,夹具来源为启发式判定，开�
 processing,edge,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
 processing,contour,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
 processing,template_match,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
-processing,pansharpen,raster,not-consumed,real_regression,gold,C4,腿走合成兜底
+processing,pansharpen,raster,data,real_regression,gold,C4,腿走合成兜底
 processing,hough,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
 processing,watershed,dem,data,none,gold,C4,夹具来源为启发式判定，开批前核对
-processing,skeleton,raster,not-consumed,real_regression,gold,C4,腿走合成兜底
-processing,gabor_filter,raster,not-consumed,real_regression,gold,C4,腿走合成兜底
-processing,glcm_texture,raster,not-consumed,real_regression,gold,C4,腿走合成兜底
-processing,mean_shift_filter,raster,not-consumed,real_regression,gold,C4,腿走合成兜底
-processing,connected_components,raster,not-consumed,real_regression,gold,C4,腿走合成兜底
+processing,skeleton,raster,data,real_regression,gold,C4,腿走合成兜底
+processing,gabor_filter,raster,data,real_regression,gold,C4,腿走合成兜底
+processing,glcm_texture,raster,data,real_regression,gold,C4,腿走合成兜底
+processing,mean_shift_filter,raster,data,real_regression,gold,C4,腿走合成兜底
+processing,connected_components,raster,data,real_regression,gold,C4,腿走合成兜底
 processing,kmeans,raster+samples,synthetic,none,gold,C4,夹具来源为启发式判定，开批前核对
 projection,reproject,vector,data,real_regression,gold,C12,
 projection,info,vector,data,real_regression,gold,C12,
 projection,transform,vector,data,real_regression,gold,C12,
 projection,assign_srs,vector,data,real_regression,gold,C12,
-raster_inspect,histogram,raster,not-consumed,real_regression,gold,C15,腿走合成兜底
-raster_inspect,info,raster,not-consumed,real_regression,gold,C15,腿走合成兜底
-raster_manage,overviews,raster,not-consumed,real_regression,gold,C5,腿走合成兜底
+raster_inspect,histogram,raster,data,real_regression,gold,C15,腿走合成兜底
+raster_inspect,info,raster,data,real_regression,gold,C15,腿走合成兜底
+raster_manage,overviews,raster,data,real_regression,gold,C5,腿走合成兜底
 raster_manage,nodata,raster,not-consumed,real_regression,relation,C5,腿走合成兜底
 raster_manage,cog,raster,data,none,gold,C5,夹具来源为启发式判定，开批前核对
 raster_manage,zonal_stats,raster,data,none,gold,C5,夹具来源为启发式判定，开批前核对
 raster_manage,proximity,raster,data,none,relation,C5,夹具来源为启发式判定，开批前核对
-raster_math,band_math,raster,not-consumed,real_regression,gold,C6,腿走合成兜底
+raster_math,band_math,raster,data,real_regression,gold,C6,腿走合成兜底
 raster_math,reclassify,raster,data,none,relation,C6,夹具来源为启发式判定，开批前核对
 raster_math,raster_overlay,raster,data,none,relation,C6,夹具来源为启发式判定，开批前核对
-raster_render,colormap,raster,not-consumed,real_regression,gold,C10,腿走合成兜底
+raster_render,colormap,raster,data,real_regression,gold,C10,腿走合成兜底
 raster_render,histogram_match,raster,data,none,gold,C10,夹具来源为启发式判定，开批前核对
 spindex,ndvi,multispectral,not-consumed,real_regression,gold,C8,腿走合成兜底
 spindex,ndmi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
@@ -122,21 +130,21 @@ spindex,awei,multispectral,not-consumed,real_regression,relation,C8,腿走合成
 spindex,ui,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
 spindex,bi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
 spindex,custom_index,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
-terrain,slope,dem,not-consumed,real_regression,gold,C11,腿走合成兜底
-terrain,aspect,dem,not-consumed,real_regression,gold,C11,腿走合成兜底
-terrain,hillshade,dem,not-consumed,real_regression,gold,C11,腿走合成兜底
-terrain,tpi,raster,not-consumed,real_regression,gold,C11,腿走合成兜底
+terrain,slope,dem,data,real_regression,gold,C11,腿走合成兜底
+terrain,aspect,dem,data,real_regression,gold,C11,腿走合成兜底
+terrain,hillshade,dem,data,real_regression,gold,C11,腿走合成兜底
+terrain,tpi,raster,data,real_regression,gold,C11,腿走合成兜底
 terrain,curvature,raster,data,none,gold,C11,夹具来源为启发式判定，开批前核对
-terrain,profile_curvature,raster,not-consumed,real_regression,gold,C11,腿走合成兜底
-terrain,plan_curvature,raster,not-consumed,real_regression,gold,C11,腿走合成兜底
-terrain,tri,raster,not-consumed,real_regression,gold,C11,腿走合成兜底
-terrain,roughness,raster,not-consumed,real_regression,gold,C11,腿走合成兜底
+terrain,profile_curvature,raster,data,real_regression,gold,C11,腿走合成兜底
+terrain,plan_curvature,raster,data,real_regression,gold,C11,腿走合成兜底
+terrain,tri,raster,data,real_regression,gold,C11,腿走合成兜底
+terrain,roughness,raster,data,real_regression,gold,C11,腿走合成兜底
 terrain,fill_sinks,dem,not-consumed,real_regression,relation,C11,腿走合成兜底
 terrain,flow_direction,dem,not-consumed,real_regression,relation,C11,腿走合成兜底
 terrain,flow_accumulation,dem,not-consumed,real_regression,relation,C11,腿走合成兜底
 terrain,stream_extract,raster,not-consumed,real_regression,relation,C11,腿走合成兜底
 terrain,watershed,dem,not-consumed,real_regression,relation,C11,腿走合成兜底
-terrain,profile_extract,raster,not-consumed,real_regression,gold,C11,腿走合成兜底
+terrain,profile_extract,raster,data,real_regression,gold,C11,腿走合成兜底
 terrain,viewshed,dem,not-consumed,real_regression,relation,C11,腿走合成兜底
 terrain,viewshed_multi,dem,not-consumed,real_regression,relation,C11,腿走合成兜底
 terrain,cut_fill,dem,not-consumed,real_regression,relation,C11,腿走合成兜底
