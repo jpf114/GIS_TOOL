@@ -327,9 +327,12 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 751 / Release 749**（2026-10-26 批次 C 阶段三收口双树全目标重建后现读；
-  上一档 750 / 748 是 C4b 加进 `docs_match_cli` 之后取的，**+1** 来自 N151 新增的那条 `TEST_F`
-  `PluginTest.ProximityFailsWithoutGeotransform` —— 是 PRE_TEST 发现让注册数变大，不是新增 `add_test`）。
+- **现行基线**：`ctest -N` 注册数 **Debug 754 / Release 752**（2026-10-26 阶段 2 四件落地后的双树全量轮现读，
+  见"批次 C 阶段二收口"那节）。上一档 **751 / 749** 是阶段三收口轮取的；两档之间涨了 **+3 / +3**：
+  C19 的 `install_smoke` 是一条 `add_test`（各 +1），C18 是两条 `TEST(...)`（各 +2）——
+  都不是"新增 `add_test` 才能数得到"那种 gtest 之外的注册。
+  再往前，**750 / 748** 是 C4b 加进 `docs_match_cli` 之后取的，**749 / 747** 到 **750 / 748** 那 **+1**
+  来自 N151 新增的那条 `TEST_F` `PluginTest.ProximityFailsWithoutGeotransform`。
   逐档账：C3m 收口 735 / 733（那一档 **+4** = 三条 `Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated`
   + 一条反回潮守卫 `VectorSourceNeverDisablesGpkgSpatialIndex`，详见第 2 节）⇒ C3n 系列 **+8**（C3n-1 +5、C3n-2a/2b/2c/2d +3：`VectorConvexHullMidFailure…`、
   `VectorDoubleInputOutputMustNotOverwriteSecondInput`、`VectorIntersectRejectedFeatureWrite…`；C3n-2c 是把既有
@@ -431,6 +434,12 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
+| Debug | **754** | **1182.09 s**（批次 C 阶段二收口轮现跑；开批 13:26:10、收工 13:56:56，串行 `-j1`、期间无并发构建，**754/754 全绿**） | 754 条**首档**；上一档 751（阶段三收口）**1288.71 s**；再往前 749 **1099.05 s** | 最慢 `real_data_vector_quick` **189.29 s** ⇒ 720÷189.29 = 3.80×；`union_poly` 146.66 ⇒ 4.09×；`overlay_ops` 121.63 ⇒ 3.54×；`join_heavy` 88.83 ⇒ 6.64×；`overlay_buffer_join` 83.70 ⇒ 7.53×；`checks` 47.29 ⇒ **2.11×**；`derive_heavy` 44.46 ⇒ 7.87×。<br>**但余量按安静态单跑判**（口径见下面那段）：`checks` 两跑 34.15/36.42 ⇒ 取 36.42 ⇒ **2.75×**；`quick` 167.92/168.28 ⇒ 取 168.28 ⇒ **4.28×** ⇒ 两条都在 2.5× 触发线之上 ⇒ **不拆腿、不抬 TIMEOUT** |
+| Release | **752** | **569.34 s**（同一轮紧随其后跑；**752/752 全绿**） | 752 条**首档**；上一档 749（阶段三收口）**586.26 s** | 最慢 `join_heavy` 67.32 ⇒ 8.76×；`quick` 70.09 ⇒ 10.3×；`overlay_buffer_join` 61.93 ⇒ 10.2×；`derive_heavy` 39.17 ⇒ 8.94×；`union_poly` 22.41 ⇒ 26.8×；`checks` 16.67 ⇒ 6.00×；`overlay_ops` 13.65 ⇒ 31.5× ⇒ **Release 侧七档全在 6× 以上，没有紧的** |
+⚠ 这两轮的 ctest 日志同名（`build/tmp/c4e_full_debug.log` / `_release.log`，都不入库），**后一轮把前一轮覆盖了**
+⇒ 751/749 那一档的 1288.71 s / 586.26 s 现在只有本文记录、不可复算；754/752 这一档同样只有本文记录。
+本表一贯的纪律就是"现读现写、跨轮差值一律不作证据"，这条覆盖事件正好是它的又一个注脚。
+
 | Debug | **751** | **1288.71 s**（批次 C 阶段三收口轮现跑，`build/tmp/c4e_full_debug.log` 不入库；开批时刻 11:50:06、`ctest -N` 先 reconfigure 再数、串行 `-j1`、期间无并发构建，**751/751 全绿**） | 751 条**首档**；上一档 750（C4b）没跑全量（那两片是纯文档 + 守卫注册）；再上一档 749 见下面那行 | 最慢 `real_data_vector_quick` **254.75 s** ⇒ 720 ÷ 254.75 = 2.83×；`union_poly` **139.40 s** ⇒ 4.30×；`overlay_ops` **126.05 s** ⇒ 3.41×；`join_heavy` **109.64 s** ⇒ 5.38×；`overlay_buffer_join` **89.47 s** ⇒ 7.04×；`derive_heavy` **49.34 s** ⇒ 7.10×；`checks` **46.29 s** ⇒ 100 ÷ 46.29 = **2.16×**（见下方"读数口径"，**安静态复测 34.42 s ⇒ 2.91×**）。守卫两条本轮现读：`source_mojibake_guard` 20.54 s、`docs_match_cli` 1.36 s 均 Passed |
 | Release | **749** | **586.26 s**（同一轮紧随其后跑，`build/tmp/c4e_full_release.log`；**749/749 全绿**） | 749 条**首档**；再往前 748（C4b）未跑全量；747 那一档见下面 | 最慢 `join_heavy` **84.55 s** ⇒ 6.98×；`quick` **71.31 s** ⇒ 10.1×；`overlay_buffer_join` **65.34 s** ⇒ 9.64×；`derive_heavy` **44.99 s** ⇒ 7.78×；`union_poly` **22.84 s** ⇒ 26.3×；`checks` **21.41 s** ⇒ 4.67×；`overlay_ops` **13.74 s** ⇒ 31.3× ⇒ **Release 侧七档全在 4.6× 以上，没有紧的** |
 
@@ -1359,6 +1368,25 @@ Debug 包 425 个文件 / 459,927 KB（Debug 侧带 `.dll` 调试版与 Qt 插�
 
 **本轮没做的事**：GUI 深验证（按批次 C 既定"CLI 优先、GUI 延后"）；N146/N148/N149/N150 的代码改动（裁定见下一节，都列批次 D）。
 
+
+**收口轮（阶段 2 四件全部落地之后重跑双树全量 + 双树 `--install`）**：
+
+| 项 | Debug | Release |
+|---|---|---|
+| `ctest -N` | **754** | **752** |
+| 全量 `-j1` | **754/754**，1182.09 s | **752/752**，569.34 s |
+| `cmake --install` → `build/tmp/` | rc=0，433 文件 / 461,367 KB | rc=0，**437 文件 / 199,067 KB**（含 C17 的 8 件 CRT） |
+| 交付三判据 | `install_closure`、`install_smoke`、`docs_match_cli`、`source_mojibake_guard` 都在全量轮里绿 | 同左 |
+| `data/` 写入 | **0**（`find data -type f -newermt "2026-10-26 13:26:10"`） | 同左（同一次取证覆盖两棵树，因为整条链串行） |
+| 工作树 | 收工时代码/文档 0 改动 | 同左 |
+
+**合并门（工单 Task C25）现读**：双树全绿 ✅、四条真实回归腿绿 ✅、`install_closure` ✅、
+**新增** `install_smoke` ✅、`docs_match_cli` ✅、阶段 2 四件（C17/C18/C19/C20）✅；
+**仍然红的两条**：① "PENDING = 0" —— 现值 **49**（`tests/action_gold_cases.txt` 126 行里 77 GOLD / 49 PENDING，
+全在非 vector 插件：processing 16 / terrain 10 / matching 6 / cutting 4 / projection 4 / raster_manage 3 /
+raster_inspect 2 / raster_render 2 / raster_math 1 / spindex 1）；② 计划里 C25 写的"合并前需用户确认一次"。
+⇒ 批次 C 的**代码与交付面**已收口，**覆盖晋升（拍板 1）这一整块未完成**，是否放宽门先合、
+还是做完 49 条再合，是用户决定，不自作主张。
 
 ### 批次 C C18：干净机器那一格补判据（N110 销账，2026-10-26）
 
