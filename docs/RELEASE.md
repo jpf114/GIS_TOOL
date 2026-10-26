@@ -1360,6 +1360,32 @@ Debug 包 425 个文件 / 459,927 KB（Debug 侧带 `.dll` 调试版与 Qt 插�
 **本轮没做的事**：GUI 深验证（按批次 C 既定"CLI 优先、GUI 延后"）；N146/N148/N149/N150 的代码改动（裁定见下一节，都列批次 D）。
 
 
+### 批次 C C18：干净机器那一格补判据（N110 销账，2026-10-26）
+
+`migrateLegacySettingsFrom` 的注释一直在承诺一句语义 —— "读到源但源里没键（健康的新机器）仍然算打开成功 ⇒ 标记照打，
+所以这里不会退化成每次启动重跑迁移"（`src/gui/app_settings.cpp:180-182`）—— 而**没有任何用例判它**：
+`AllBrokenSourcesLeaveTheMarkerUnstamped` 判 `opened == 0` 那一侧，其余各条喂的都是**有键**的源，
+于是 `opened >= 1 && copied == 0` 这一格是空的。⇒ 新增两条：
+`AppSettingsMigration.EmptyButOpenableSourceStillStampsTheMarker`（0 键源 ⇒ 不搬任何东西、标记照打、
+且这一次启动的用户配置里除标记外**不留任何键**；第二次启动早退后仍只有那 1 个键 —— 计划里
+"首启 0 键 / 退出后只写预期键"就落在这两句断言上）与
+`AppSettingsMigration.MissingLegacyFileIsConsumedNotBroken`（旧落点文件根本不存在 = 同一格）。
+后者单独成条的理由：将来有人给 `open()` 加"文件不存在就返回空指针"的体贴逻辑时，
+两条并一起的话这条只会换个分支悄悄跑过去。
+
+**存活变异取证（先红后绿）**：把 `if (opened == 0)` 写成 `if (opened == 0 || copied == 0)` 重建 ⇒
+`ctest -R AppSettingsMigration` **只有新加这两条红、原有 10 条全绿** ⇒ 这一格此前确实无人判；
+而这个变异的用户可见后果很重：每台新机器每次启动都重跑迁移、且一次性标记永远打不上。
+按 `cp` + `git hash-object`（基线 `0f3741374888cd50a8b1e9f778f8351ceb3eac8d`）还原后 12/12 绿，盘上无变异体残留。
+
+**工单 C18 原文里两处我按现状否证、没有执行**（都记在工单该条正文里）：
+① "改 APPDATA/注册表侧介质实测" —— 本仓红线挡着：两个生产旧落点在 Windows 上是 NativeFormat，
+**光构造就会在 HKCU 下建键**（`tests/test_app_settings.cpp:263-277` 把"读用户注册表当测试输入 + 在 HKCU 建键"
+两条都列为不可做），所以迁移语义只能走注入面，介质侧证据停在已有的 `appSettingsPath()`/`fileName()` 直测；
+② "旧键清理臂保留" —— `src/gui/**` 里**没有**任何删旧键的实现（`copyMissingKeys` 只"补缺不覆盖"、从不删源侧键），
+B3 当年做的是标记时机与干净机器语义，不是清理 ⇒ 不新造一个删除功能去"保留一条不存在的臂"。
+
+
 ### 批次 C 阶段三收口前的挂账逐条裁定（N145~N151，2026-10-26）
 
 裁定口径只有三档：**本轮已修** / **文档承重、关闭**（行为已如实写进正文，改代码属产品语义变更）/

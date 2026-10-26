@@ -418,3 +418,51 @@ TEST(AppSettingsPath, OverrideWinsAndSkipsLegacyRead) {
     EXPECT_FALSE(s.contains(QLatin1String(gis::gui::kMigrationMarkerKey)))
         << "注入态不得写迁移标记（R-B2）";
 }
+
+// ── C18 / N110 销账：健康新机器那一格（源打开成功但 0 键）此前只有注释在承诺，没有判据 ──────
+// migrateLegacySettingsFrom 里那句"读到源但源里没键（健康的新机器）仍然算打开成功 ⇒ 标记照打，
+// 所以这里不会退化成每次启动重跑迁移"（app_settings.cpp:180-182）之前两头都没用例沾：
+//   AllBrokenSourcesLeaveTheMarkerUnstamped 判的是 opened==0 那一侧；
+//   ImportsFromInjectedSources… 喂的是**有键**的源（copied>=1）。
+// ⇒ `opened>=1 && copied==0` 这一格是空的，把 `if (opened == 0)` 改写成 `if (copied == 0)`
+//   是一个**今天全绿**的存活变异，而它的用户可见后果是：每台新机器每次启动都重跑一遍迁移
+//   （并且永远不打标记 ⇒ 那条一次性标记形同不存在）。
+TEST(AppSettingsMigration, EmptyButOpenableSourceStillStampsTheMarker) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString legacyPath = writeIni(dir, QStringLiteral("old.ini"), {});  // 存在、可打开、0 键
+    const QString targetPath = dir.filePath(QStringLiteral("target.ini"));
+    {
+        QSettings target(targetPath, QSettings::IniFormat);
+        EXPECT_EQ(gis::gui::migrateLegacySettingsFrom(target, {iniSource(legacyPath)}), 0)
+            << "空源不该搬来任何东西";
+        EXPECT_TRUE(target.contains(QLatin1String(gis::gui::kMigrationMarkerKey)))
+            << "打开成功但 0 键 = 健康的新机器 ⇒ 已经消费过就得打标记，否则每次启动重跑迁移";
+        // 计划里"退出后只写预期键"那一格：这次启动除了标记以外不许留下任何键。
+        EXPECT_EQ(target.allKeys(),
+                  (QStringList{QString::fromLatin1(gis::gui::kMigrationMarkerKey)}))
+            << "新机器第一次启动的用户配置里，除迁移标记外不该多出任何键";
+    }
+    {   // 标记已烧 ⇒ 第二次直接早退，且不再往用户配置里添东西。
+        QSettings target(targetPath, QSettings::IniFormat);
+        EXPECT_EQ(gis::gui::migrateLegacySettingsFrom(target, {iniSource(legacyPath)}), 0);
+        EXPECT_EQ(target.allKeys().size(), 1)
+            << "第二次启动不许再写键（早退路径也要守住'只写预期键'）";
+    }
+}
+
+// 旧落点**根本不存在**（新机器上更常见的形态）必须与"存在但空"落在同一格：
+// QSettings(IniFormat) 对不存在的路径照样构造成功、读到 0 键 ⇒ opened>=1、标记照打。
+// 单独一条而不是并到上一条：如果哪天有人给 open() 加"文件不存在就返回空指针"的"体贴"逻辑，
+// 这条会红，而并在一起的那条只会安静地换个分支跑过去。
+TEST(AppSettingsMigration, MissingLegacyFileIsConsumedNotBroken) {
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString absent = dir.filePath(QStringLiteral("never_written.ini"));
+    ASSERT_FALSE(QFileInfo::exists(absent));
+    QSettings target(dir.filePath(QStringLiteral("target.ini")), QSettings::IniFormat);
+
+    EXPECT_EQ(gis::gui::migrateLegacySettingsFrom(target, {iniSource(absent)}), 0);
+    EXPECT_TRUE(target.contains(QLatin1String(gis::gui::kMigrationMarkerKey)))
+        << "'文件不存在'与'文件在但空'是同一格；判成全断源就等于每次启动都重跑迁移";
+}
