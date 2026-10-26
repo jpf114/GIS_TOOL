@@ -1,0 +1,47 @@
+{
+  "_comment": [
+    "tests/check_docs_match_cli.py 的两张表。",
+    "doc_overrides：二进制动作名与文档文件名用词不同、但指同一件事 ⇒ 人工映射（不改文件名，改名会牵动 总览.md 与链接）。",
+    "verified：逐条对撞过代码、确认『文档描述的是真实行为，而二进制侧的表表达不了』的豁免。",
+    "两条规矩：(1) 每条必须有 evidence（源码 文件:行 或行为依据）；(2) 漂移被修好后必须删掉对应条目，",
+    "否则守卫会因 DEAD-ALLOWLIST 变红 —— 陈旧豁免会把下一处真漂移一起吞掉。"
+  ],
+  "doc_overrides": [
+    {"action": "processing.kmeans", "doc": "影像处理与分析/K-Means 分割",
+     "reason": "动作名 kmeans，文档标题写的是产品用词 K-Means 分割"},
+    {"action": "projection.assign_srs", "doc": "投影转换/赋予坐标系",
+     "reason": "面板动作名『赋予栅格坐标系』，文件名省了『栅格』"},
+    {"action": "terrain.cut_fill", "doc": "地形分析/填挖方",
+     "reason": "面板动作名『挖填方分析』，文件名是『填挖方』（同义，语序不同）"},
+    {"action": "vector.envelope", "doc": "矢量数据处理/外包矩形",
+     "reason": "面板动作名『外接矩形』，文件名『外包矩形』（同一 GIS 概念两种叫法）"},
+    {"action": "vector.info", "doc": "矢量数据处理/矢量信息",
+     "reason": "面板动作名『信息查看』，文件名带上了对象『矢量信息』"},
+    {"action": "vector.polygonize", "doc": "矢量数据处理/面矢量化",
+     "reason": "面板动作名『栅格转面』，文件名『面矢量化』"},
+    {"action": "vector.rasterize", "doc": "矢量数据处理/栅格化",
+     "reason": "面板动作名『矢量转栅格』，文件名『栅格化』"},
+    {"action": "vector.sliver_remove", "doc": "矢量数据处理/碎片面消除",
+     "reason": "面板动作名『碎片面清理』，文件名『碎片面消除』"}
+  ],
+  "verified": [
+    {"action": "projection.transform", "key": "src_srs", "kinds": ["nodefaultspec"],
+     "evidence": "GUI 按动作覆盖默认值 src/gui/gui_data_support.cpp:2799-2801（EPSG:4326），动作兜底同值 src/plugins/projection/projection_plugin.cpp:463；插件级 ParamSpec 的空默认是给 reproject 的（空=读文件自带 CRS），CLI 因此不打 Default 行 ⇒ 文档写 EPSG:4326 与面板/行为一致",
+     "what": "文档 默认值=EPSG:4326，二进制 --help 无 Default"},
+    {"action": "vector.filter", "key": "extent", "kinds": ["nodefaultspec"],
+     "evidence": "extent 是 array 型 spec，CLI 的 Default 打印只覆盖 string/int/double/bool（src/cli/main.cpp:54-67）；动作兜底 0,0,0,0 且四值全零按未提供处理（src/plugins/vector/vector_plugin_info_filter.inc:187,191-194,215-216）",
+     "what": "文档 默认值=0,0,0,0，二进制 --help 无 Default"},
+    {"action": "cutting.clip", "key": "extent", "kinds": ["nodefaultspec"],
+     "evidence": "与 vector.filter 同族：兜底 {0,0,0,0}（src/plugins/cutting/cutting_plugin.cpp:228），全零当未提供并报 Either extent or cutline must be specified for clip（同文件 233-237）",
+     "what": "文档 默认值=0,0,0,0，二进制 --help 无 Default"},
+    {"action": "cutting.tile", "key": "tile_extent", "kinds": ["nodefaultspec"],
+     "evidence": "tile_extent 的 ParamType 是 Extent/std::array（src/plugins/cutting/cutting_plugin.cpp:151-152），CLI 不打 array 默认值；动作兜底 0,0,0,0 并按全图处理（同文件 1138）",
+     "what": "文档 默认值=全图，二进制 --help 无 Default"},
+    {"action": "georef.gcp_register", "key": "dst_srs", "kinds": ["required"],
+     "evidence": "行为必填：doGcpRegister 兜底空串并在 src/plugins/georef/georef_plugin.cpp:469 硬失败（取键在同文件 463）；插件级 ParamSpec 标 required=false 且默认 EPSG:4326（同文件 299），那个默认是 doRpcOrthorectify 的兜底（同文件 919）⇒ 插件级表表达不了按动作收紧的必填（漂移清单 D1 同族），GUI requiredKeys 也没列它 ⇒ 挂账 N146",
+     "what": "文档 必填=是，二进制 spec/GUI 都标 否"},
+    {"action": "cutting.tile", "key": "table", "kinds": ["count", "label"],
+     "evidence": "文档 19 行 vs visibleKeys 18：多出的『重采样方法』对应 resample，是 tile 实读的已声明键（读 src/plugins/cutting/cutting_plugin.cpp:1130，声明 同文件:81），只是没进 GUI visibleKeys ⇒ N109 藏键方向，文档那行必须留着。GUI 侧可见性与文档行数天然差 1",
+     "what": "cutting.tile 的行数与参数名两处整表级差异"}
+  ]
+}

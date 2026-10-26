@@ -2049,6 +2049,38 @@ add_test(
         -DREPO_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_source_mojibake.cmake
 )
+# ── Task C21 / C24（批次 C 阶段三）：文档参数表 ↔ 二进制参数契约的守卫 ──────────────
+# 判据本体 tests/check_docs_match_cli.py：拿 ActionUiConfig 的 visibleKeys/requiredKeys + 两张标签表
+#   + `gis-cli <plugin> --help` 的 required/Default，逐行对撞 docs/算法说明 126 篇的 `## 参数` 表
+#   （行数/参数名/必填/默认值）。豁免与人工映射都在 tests/docs_sync_allowlist.json 里，逐条带证据；
+#   豁免用不上（DEAD-ALLOWLIST）也算失败，防"漂移修好了、豁免还留着"把下一处真漂移吃掉。
+# WHY 恒注册、解释器缺失拒绝放行：本用例"文档干净"与"根本没检查"都是退出码 0 以外的东西才分得开
+#   （与上面 source_mojibake_guard 同一口径）。
+# WHY 探测要用"跑起来并回显"：本机 `python3` 是 WindowsApps 的空壳（静默零输出），
+#   只 find_program 到路径就等于把"检查不了"伪装成"检查通过"。
+find_program(GIS_PYTHON_EXECUTABLE NAMES python python3 py)
+set(_gis_docs_py "")
+if(GIS_PYTHON_EXECUTABLE)
+    execute_process(
+        COMMAND "${GIS_PYTHON_EXECUTABLE}" -c "print('GIS_DOCS_PY_OK')"
+        OUTPUT_VARIABLE _gis_docs_probe
+        ERROR_QUIET
+        RESULT_VARIABLE _gis_docs_probe_rc
+        TIMEOUT 20
+    )
+    if(_gis_docs_probe_rc EQUAL 0 AND _gis_docs_probe MATCHES "GIS_DOCS_PY_OK")
+        set(_gis_docs_py "${GIS_PYTHON_EXECUTABLE}")
+    endif()
+endif()
+add_test(
+    NAME docs_match_cli
+    COMMAND ${CMAKE_COMMAND}
+        -DPY=${_gis_docs_py}
+        -DCLI=$<TARGET_FILE:gis-cli>
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -DREPORT=${CMAKE_CURRENT_BINARY_DIR}/docs_match_cli_report.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_docs_match_cli.cmake
+)
 # Hard timeout for every test registered at configure time: a hanging test must fail, not
 # hang the pipeline. TESTS is the documented read-only directory property that lists the
 # tests add_test() has defined in this directory so far, so reading it at the very bottom

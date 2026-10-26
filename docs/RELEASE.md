@@ -314,8 +314,8 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 749 / Release 747**（2026-10-26 批次 C C3k-3 双树现读，
-  两棵树都是**全目标重建之后**取的 —— Release 侧"未重编 ⇒ 读 743"那条未验收项到此清偿）。
+- **现行基线**：`ctest -N` 注册数 **Debug 750 / Release 748**（2026-10-26 批次 C C4b 双树 reconfigure 后现读；
+  上一档 749 / 747 是 C3k-3 双树全目标重建之后取的 —— Release 侧"未重编 ⇒ 读 743"那条未验收项在 C3k-3 已清偿）。
   逐档账：C3m 收口 735 / 733（那一档 **+4** = 三条 `Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated`
   + 一条反回潮守卫 `VectorSourceNeverDisablesGpkgSpatialIndex`，详见第 2 节）⇒ C3n 系列 **+8**（C3n-1 +5、C3n-2a/2b/2c/2d +3：`VectorConvexHullMidFailure…`、
   `VectorDoubleInputOutputMustNotOverwriteSecondInput`、`VectorIntersectRejectedFeatureWrite…`；C3n-2c 是把既有
@@ -329,7 +329,8 @@ cmake --install build/release --config Release --prefix install
   **C3c-C3 +1**（`VectorPolygonizeExecutionCarvesEqualValueRegions`）⇒ **Debug 748** ⇒ 其后 C3h-2b 两片
   **+0**（只往既有用例里加断言、没加 `TEST_F`；C3h-2b2 只改 runner 与档闸）⇒ **748 / 746**（Release 那次也是
   全目标重建后现读，746 = 748 − 2 条 debug-only）⇒ **C3k-3 +1**（`real_data_vector_join_heavy` 一条新腿）
-  ⇒ **Debug 749 / Release 747**。
+  ⇒ **Debug 749 / Release 747** ⇒ **C4b +1**（文档参数表↔二进制守卫 `docs_match_cli`，载体是
+  `cmake -P` 而不是 gtest ⇒ 两棵树各多 1 条注册，不受 debug-only 那 2 条影响）⇒ **Debug 750 / Release 748**。
   两树差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空；快照 `build/tmp/c3k2_names_{debug,release}.txt`。
   ⚠ 紧随其后的 **C3m 评审席修复轮不动注册数**（守卫改的是匹配逻辑与 token 名单，两条都是注释/判据成形改动，
   没有增删用例）⇒ 735 / 733 那一档的墙钟与"为什么不能拿它判余量"见第 2 节"C3m 评审席修复轮"；
@@ -1187,6 +1188,39 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       （`find data -newermt "2026-10-26 00:00:00" -type f | wc -l` = **0**）；跑动前硬门控 = 0。
       ⚠ **未验收**：本片段没跑 ctest（只改注释，产品二进制不变）；文档同步守卫进 ctest、D5 补文档、
       正文级（非参数表）逐篇对撞都在下一片。
+  - **批次 C C4b + C4c（D5 补文档 + 文档同步守卫进 ctest，2026-10-26）**（控制器自跑）：
+    - **C4c**：新写 `docs/算法说明/分类统计/精度评估.md`（126 动作里唯一缺文档的 `accuracy_assessment`，
+      即 N113/D5）。内容全部按 `doAccuracyAssessment` 现读代码写：混淆矩阵按 `[参考值][分类值]` 建、
+      **PA 分母=行合计 / UA 分母=列合计**（批次 A Task 8 纠正过的口径）、Kappa 用 `Pe=Σ(行×列)/N²`、
+      NoData 只在**声明过**时剔除（不看 pbSuccess 会把合法的 0 类整类删掉）、只取第 1 波段、
+      不做几何对齐（尺寸不同直接失败）、类值按 `GDT_Int32` 读（浮点类别栅格会被截断）、
+      单类输入下 `1-Pe=0` 未特判。该动作现有 5 条用例（Execution / UsesStandardPaUa /
+      KeepsZeroClassWhenNoDataUndefined / ExcludesDeclaredNoDataPixel / HandlesClassPresentOnlyOnOneSide），
+      文档里每一条都可回溯到用例或代码行。
+    - **C4b**：守卫落成三件 —— 判据本体 `tests/check_docs_match_cli.py`、载体
+      `tests/check_docs_match_cli.cmake`、豁免与人工映射 `tests/docs_sync_allowlist.json`
+      （8 条动作名↔文件名同义 + 6 条覆盖 D9 那 7 处判定，**逐条带 evidence**）。注册为用例
+      `docs_match_cli`，**双树现读 Debug 750 / Release 748**（比 C3k-3 的 749/747 各 +1）。
+    - **三条硬设计**：(1) **豁免用不上也算失败**（`DEAD-ALLOWLIST` / `DEAD-OVERRIDE`），防止"漂移修好了、
+      豁免还留着"把下一处真漂移吃掉；(2) 判据自带 `--self-test` 合成自证（2 键 3 行的假文档，
+      `count/label/required/default` 四类缺陷必须全点名，"好文档 0 漂移"的绿臂也必须成立）——
+      **第一版夹具只埋 1 行，只能报出 2 类，自证当场把我的判据拦下来**（这正是"配不上的行不检查
+      必填/默认值"的同一件事在夹具上的投影）；(3) Python 探测 = "跑起来并回显 `GIS_DOCS_PY_OK`"，
+      缺失/二进制未构建一律 `FATAL_ERROR` 不 SKIP。
+    - **编码口径**：Python stdout 只用 ASCII（`backslashreplace`），逐行原文写
+      `build/{debug,release}/tests/docs_match_cli_report.txt`。实测经 cmake `message()` 转述会把
+      UTF-8 再按 GBK 编一次 ⇒ `1 行没配上` 变 `1 琛屾病閰嶄笂`（与 B21 给乱码守卫定"stdout 只用 ASCII"
+      同一条本机限制）。
+    - **能红的证据**：把 `地形分析/坡度.md` 的 `Z因子` 默认值 `1.0` 注成 `9.9` ⇒ 用例红、报告首行
+      `DRIFT terrain.slope 键 z_factor 默认值：文档=9.9 二进制=1`、`drift=1`；`cp` 还原后
+      `git hash-object` 与注入前逐字节相同（`306c128a405d9deec3be2260d6d3077700ef37f2`）⇒ 再绿。
+    - **同轮现读**：`docs_match_cli` 两配置 1.10 s / 0.74 s（TIMEOUT 走 300 的 blanket ⇒ 余量 >200×）；
+      判据现值 `actions=126 docs_checked=126 missing_doc=0 rows=594 matched=593 drift=0 allowed=7
+      dead_allowlist=0 dead_override=0 overrides=8`；`source_mojibake_guard` 扩到新文件后
+      **311 文件 0 违例**（上一档 309，+2 = 新增的 `.cmake` 与 `.json`）；`data/` 未被写入；跑动前硬门控 = 0。
+    - ⚠ **未验收**：本片段只单跑了 `docs_match_cli` 与乱码守卫，**没重跑双树全量**（注册数从 749/747
+      变 750/748，全量绿与墙钟要在阶段三收口时现读）；正文级（非参数表）逐篇对撞（C4d）与
+      `类型`/`说明`/`Options:` 三个维度仍未进判据；`*.py`/`*.md` 仍不在乱码守卫扩展名清单里。
 
 ### `ctest -j` 并行：现在开会得到假失败
 
@@ -1985,6 +2019,10 @@ C3h-1 复审又攒出五条同类项（同样归"冗余/一致性"批，行号�
 `classification.accuracy_assessment`（批次 A Task 8 改过它的 PA/UA 算法，却没有对应文档；
 `地物分类统计 / SVM 分类 / 随机森林分类 / 最大似然分类` 四篇都在）。
 其余 120 篇的参数表与 `--help` 的机械核对**仍未做**，已逐条复验的只有漂移清单里的 D1~D5。
+> **销账（2026-10-26 批次 C C4a/C4b/C4c）**：其余各篇的参数表已**全量**机械核对完（126 动作、594 行、
+> 四个维度），缺的那一篇 `分类统计/精度评估.md` 已按 `doAccuracyAssessment` 现读代码补上，
+> 且这条核对已落成 ctest 用例 `docs_match_cli`（豁免逐条带证据、用不上即报红）。
+> 仍**未做完**的两件：参数表之外的正文与代码逐篇对撞（C4d）、`类型`/`说明`/`Options:` 三个维度进判据。
 
 ---
 
