@@ -174,8 +174,12 @@ cmake --install build/release --config Release --prefix install
 - 验证它装对了：`ctest --test-dir build/release -C Release -R "^install_closure$"`（这条用例自己会
   跑一次 `cmake --install` 到 `build/tmp/install_closure_Release` 再逐个 PE 判导入闭包，
   缺件与"装了但没人引用"都会红）。
-- ⚠ 仍然不含 VC++ 运行库（`MSVCP140.dll` / `VCRUNTIME140*.dll` 按设计排除）⇒
-  目标机需要装过 VC++ Redistributable 或装过 Visual Studio。
+- **VC++ 运行库随包（C17 / 拍板 2，2026-10-26 起）**：Release 包 `bin/` 里带 **8 件** CRT
+  （`msvcp140 / msvcp140_1 / msvcp140_2 / msvcp140_atomic_wait / msvcp140_codecvt_ids /
+  vcruntime140 / vcruntime140_1 / concrt140`，+1,440 KB）⇒ **目标机零前提**，不需要再自装 VC++ Redistributable。
+  ⚠ 这一条只对 **Release 包**成立：Debug 包里的 vcpkg 调试版依赖导入的是带 `d` 的调试 CRT
+  （`msvcp140_1d.dll` / `vcruntime140_1d.dll` / `msvcp140d_atomic_wait.dll` 等），那批文件在 VS Redist 的
+  `debug_nonredist/` 下、目录名就是官方口径的"不可再分发"⇒ 不随包，Debug 包只在开发机/CI 上跑。
 - **包体与运行库范围（2026-10-21 现测）**：同一棵 Release 构建树装出来的包是
   **430 个文件 / 192.2 MB**（改前 508 个 / 359.6 MB）。少的 78 个文件、167.4 MB 是**逐字节相同的副本**：
   安装脚本原先在装完 `bin/*.dll` 后，又把 `bin/` 里每个运行库再复制一份进 `bin/plugins/`；
@@ -293,10 +297,19 @@ cmake --install build/release --config Release --prefix install
   **Debug 包当时不是可交付物**（连 `bin/platforms/` 都没有）。在没有扫描器的机器上 `cmake --install --config Debug`
   会**从"装出残缺包"变成"直接拒绝"**；这不是 21-E 引入的回归，因为残缺包本来就起不来。
   现行状态（Debug 分支已按配置安装）见"发布前验证 → 第 3 步"。
-- **N87：安装包不含 VC++ 运行库 ⇒ 目标机需自行安装 VC++ Redistributable。**
-  包内的 `Lerc` / `Qt6Core` / `arrow` 等十几个 DLL 直接导入 `MSVCP140.dll` 等，而这些被
-  `cmake/install_runtime_deps.cmake.in` 的 `POST_EXCLUDE` **按设计排除**（不随包分发微软运行库）。
-  ⇒ 干净机器上装完本产品的包，缺 `MSVCP140.dll` 会直接起不来；发布说明与安装文档必须写明前置依赖。
+- **N87 → 已由 C17 销账（2026-10-26）**：原决定是"安装包不含 VC++ 运行库 ⇒ 目标机需自行安装
+  VC++ Redistributable"，依据是包内 `Lerc` / `Qt6Core` / `arrow` 等 DLL 直接导入 `MSVCP140.dll` 等，
+  而这些被 `cmake/install_runtime_deps.cmake.in` 的 `POST_EXCLUDE` 按设计排除。
+  用户 2026-10-21 的第 2 项拍板（目标机零前提）把口径反过来 ⇒ 现由根 `CMakeLists.txt` 的
+  `include(InstallRequiredSystemLibraries)` + `install(PROGRAMS)` 随包，带哪几件由工具集算、不抄名单。
+  ⚠ 两条实测教训记在这里，别照着旧思路再设计一遍：
+  ① 把 `VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT` 加进 `file(GET_RUNTIME_DEPENDENCIES)` 的 `DIRECTORIES`
+     **不会**让它随包 —— 目录确实在场，但装出来的包一个 CRT 都没有、未解析列表也是空的（被按系统件静默丢弃）；
+  ② 真正被包内 PE 导入的 CRT 是 **7 个**名字而不是工单里写的"三件套"（多的 4 个是
+     `msvcp140_1 / msvcp140_2 / msvcp140_atomic_wait / concrt140`）⇒ 只带三件套，干净机器照样 0xC0000135。
+  ⇒ "该带的有没有真带上"由 `tests/check_install_closure.cmake` 从包内导入表判（那一侧已把释放版
+  从系统白名单里删掉，只留带 `d` 的调试变体）；反向对照做过：把随包那一段临时禁用后重配重装，
+  `install_closure` 立刻红并点名 `vcruntime140.dll ← z.dll / zstd.dll / …`。
 
 ### 工具链（N77 / presets）
 
@@ -1365,6 +1378,47 @@ Debug 包 425 个文件 / 459,927 KB（Debug 侧带 `.dll` 调试版与 Qt 插�
 | （新）**乱码守卫与文档表格完整性不进 ctest 的射程之外部分** | **列批次 D** | `docs_match_cli` 只比参数表的行数/参数名/必填/默认值四列：`类型`/`说明` 两列、`Options:` 枚举集合、正文级（非参数表）漂移、乱码守卫扩展名（`tests/check_source_mojibake.ps1` 不遍历 `docs/`）都没有机器兜底 ⇒ C4d 那 52 条正文漂移全靠人读，下一处同类漂移也会静默通过。 |
 
 
+### 批次 C C17：VC++ 运行库随包（拍板 2 落地，2026-10-26）
+
+**改了什么**：`CMakeLists.txt` 新增 `include(InstallRequiredSystemLibraries)` + `install(PROGRAMS …)`
+把工具集算出的 8 件 release CRT 装进 `<prefix>/bin`，外加安装期两道闸（名单为空 ⇒ FATAL；
+名单里任一件没真落进 `bin/` ⇒ FATAL）；`tests/check_install_closure.cmake` 把释放版 CRT 族
+从系统白名单删掉（只留带 `d` 的调试变体），使"少带一件被真实导入的运行库"直接判红。
+`cmake/install_runtime_deps.cmake.in` 的旧"有意不打包"注释改成新口径并记下两条实测否证。
+
+**盘面数字（现读，同一棵 Release 树改前/改后）**：包 429 → **437** 个文件，`du -sk` 197,627 → **199,067** KB
+⇒ **+8 文件 / +1,440 KB ≈ 1.4 MB**（工单 C17 里估的"+约 5 MB"偏高）。Debug 包 425 → **433** / 同样 +1,440 KB。
+
+**四条判据与取证**：
+
+1. **随包成立**：`cmake --install build/release --prefix build/tmp/c17_rel` rc=0，
+   日志出 `[C17] VC++ 运行库已随包：8 件`，`ls build/tmp/c17_rel/bin/` 数到 8 个 CRT 名。
+2. **闭包判据承重（反向对照）**：把 C17 那一段临时改成 `if(FALSE AND WIN32 AND MSVC)` 重配重装
+   ⇒ `ctest -R "^install_closure$"` 从绿转**红**，点名 `vcruntime140.dll ← Lerc.dll / z.dll / zstd.dll / gdald.dll …`；
+   按 `cp` + `git hash-object`（基线 `c574f3930f5872f708068be4b7466f08298239fc`）还原后两棵树都回到绿。
+   ⇒ 这条红不是"我改了判据所以红"，而是**判据独立于随包代码**：随机器删掉供给侧，判据自己就抓到。
+3. **工具集名单与实测导入表对撞**：`InstallRequiredSystemLibraries` 给的 8 件**覆盖**了包内 96 个 PE
+   实际直接导入的 7 件，多的 1 件是 `msvcp140_codecvt_ids.dll`（没人导入，31 KB）。
+   ⇒ 所以"不抄名单"这条守住了：带多少由工具集定，缺不缺由导入表判，两边都不是我手写的。
+4. **守卫没被弄坏**：`source_mojibake_guard` + `docs_match_cli` 两条本轮重跑 **2/2 Passed**；
+   `install_closure` Debug/Release 各 1/1 Passed。
+
+**本轮被实测否证的两条我自己的设计**（记下来防复发，两条都已写进代码注释现场）：
+
+- 我先把 CRT 目录加进 `file(GET_RUNTIME_DEPENDENCIES)` 的 `DIRECTORIES`，想复用"按导入表自然解析"这条最干净的路。
+  实测：生成的脚本里那两行目录**确实在场**，装完的包**一个 CRT 都没有**，且 `_gis_unresolved_deps` 是空的
+  ⇒ 这些名字被扫描器按系统件静默丢弃。⇒ 那条"未解析即 FATAL"的闸因此成了**恒不触发的死臂**，我也把它删了
+  （留着会让下一个人以为"缺 CRT 有人拦"）。
+- 我第一版调试 CRT 白名单写成 `^msvcp140d.*`，Debug 包立刻红出 48 条：调试版的 `d` **有两个位置**
+  （`msvcp140d.dll` / `msvcp140d_atomic_wait.dll` 紧跟族名，`msvcp140_1d.dll` / `vcruntime140_1d.dll` 在 `.dll` 前）。
+  ⇒ 改成两条形状各异的正则，并逐名对撞过：8 个调试名全放行、9 个释放名全不放行
+  （`msvcp140_codecvt_ids.dll` 这种"中间带 d"的释放名不会被误放，因为两条都要求 d 在**位置**上）。
+
+**未验收**：`cmake --install` 与 `install_closure` 都在本轮现跑，但**没有**在没装过 VC++ Redistributable
+的干净机器上验证"零前提"这一条 —— 本机核不到，工单 C17 自己就写了这条替代判据（包内存在 + 导入边可满足）。
+C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的实测，但仍不等于真机验证。
+
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
@@ -2172,7 +2226,8 @@ C3h-1 复审又攒出五条同类项（同样归"冗余/一致性"批，行号�
 ## 已知限制
 
 - Windows 代码签名未配置（SmartScreen 可能提示）
-- **交付目录不含 VC++ 运行库**：目标机需自行安装 VC++ Redistributable（N87）
+- **只有 Release 包做到"目标机零前提"**：Debug 包缺带 `d` 的调试版 VC 运行库（VS 的 `debug_nonredist/`，
+  不可再分发）⇒ Debug 包只能在本机/CI 的开发环境跑，不是可带走的交付物（见"打包与安装"的 N87→C17 一条）
 - **只走 `cmake --install` 交付**（2026-10-21 决定：不出安装包、不做云端构建）；
   Debug 的 `cmake --install` 分支已由批次 B 的 B4 补齐，见"发布前验证 → 第 3 步"
 - `classification` / `georef` 插件版本 0.1.0

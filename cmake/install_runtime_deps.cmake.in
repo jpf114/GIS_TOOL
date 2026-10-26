@@ -84,13 +84,19 @@ if(_gis_can_scan_runtime_deps)
             "api-ms-"
             "ext-ms-"
             "[Hh][Vv][Ss][Ii][Ff]ile[Tt]rust\\.dll"
-        # WHY 这三个 POST_EXCLUDE 是**有意的**，不是漏配（终审第 1 席 I-8 要求把这条写进代码现场）：
-        #   vcpkg 的第三方 dll（Lerc / Qt6Core / arrow / …）在导入表里直接引用 VC++ 运行库
-        #   （MSVCP140.dll、VCRUNTIME140(.1).dll 等十几个），而本脚本按设计**不打进 VC 运行库**——
-        #   它属于系统级可再分发包，随安装包分发既有授权问题也可能与机器上已有版本冲突。
-        #   ⇒ 后果是**用户可见**的：目标机必须自行安装 VC++ Redistributable，否则包内 exe 会以
-        #     0xC0000135（STATUS_DLL_NOT_FOUND）起不来。该要求已写进 docs/RELEASE.md 的发布说明（挂账 N87）。
-        #   改动这几条之前先回答"那 VC 运行库由谁分发"，答不出来就不要动。
+        # C17（拍板 2，2026-10-26 改）：VC++ 运行库**改为随包**，但**不由这段扫描负责**。
+        #   改前这里是三条 POST_EXCLUDE 把 CRT 连同 Windows 目录一起排除，旧注释给的理由是
+        #   "系统级可再分发包，随包有授权与版本冲突问题"⇒ 交付要求目标机自装 Redistributable（N87）。
+        #   用户 2026-10-21 的第 2 项拍板把口径改成"目标机零前提"，N87 因此销账。
+        #   ⚠ 试过把 VS 的 `VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT` 加进上面的 DIRECTORIES，
+        #     让它按导入表自然解析 —— **实测不成立**：重配后生成的脚本里那两行目录确实在场
+        #     （`build/release/install_runtime_deps.cmake` 的 DIRECTORIES 段可复算），
+        #     但装完的包里仍然一个 CRT 都没有，且 `_gis_unresolved_deps` 是**空的**
+        #     （⇒ 既没解析进来，也没报未解析，是被 CMake 的扫描器按系统件静默丢掉了）。
+        #     ⇒ 随包这一步改由根 CMakeLists.txt 用 `include(InstallRequiredSystemLibraries)` +
+        #       `install(PROGRAMS)` 承担（工具集说了算、不手抄名单），
+        #       而"该带的有没有真带上"由 tests/check_install_closure.cmake 从**包内 PE 的直接导入表**判
+        #       （那一侧已把 CRT 族从系统白名单里删掉，少带即红）。
         POST_EXCLUDE_REGEXES
             ".*/install/bin/.*"
             ".*/[Ww]indows/.*"
@@ -98,6 +104,12 @@ if(_gis_can_scan_runtime_deps)
     )
 
     if(_gis_unresolved_deps)
+        # C17 的口径变化（2026-10-26）：这里**不加**"CRT 族落在未解析里就 FATAL"那道闸。
+        #   试过，但它是条恒不触发的死臂 —— 本机实测把 CRT 目录放进 DIRECTORIES 之后，
+        #   `_gis_unresolved_deps` 是空的（那些名字既没进解析也没进未解析，被扫描器按系统件静默丢弃），
+        #   ⇒ 这道闸永远不会响，写它只会让下一个人以为"缺 CRT 有人拦"。
+        #   真正拦得住的是 tests/check_install_closure.cmake：它自己扫包内每个 PE 的直接导入名，
+        #   且已把 VC 运行库族从系统白名单里删掉 ⇒ 少带一个就红。
         list(JOIN _gis_unresolved_deps "\n  " _gis_unresolved_text)
         message(WARNING "Unresolved runtime dependencies (may need manual install):\n  ${_gis_unresolved_text}")
     endif()

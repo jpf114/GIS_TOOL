@@ -301,16 +301,22 @@ set(_gis_system_allowlist
     "^wtsapi32\\.dll$"          # 终端会话 API（Qt 会话感知）
     "^dbghelp\\.dll$"           # 符号与转储（Release 侧崩溃栈；OS 组件）
     "^xmllite\\.dll$"           # 轻量 XML 读取器（libxml2 的 OS 下游）
-    # ── VC++ 运行库族：**有意不打包**，与 cmake/install_runtime_deps.cmake.in 的
-    #    POST_EXCLUDE 决定同源（终审第 1 席 I-8）：它属于系统级可再分发包，随包分发有授权与
-    #    版本冲突问题 ⇒ 交付要求目标机自装 VC++ Redistributable（docs/RELEASE.md，挂账 N87）。
-    #    带 d 的那批是 VS 自带的**调试**运行库，Redistributable 里根本没有：Debug 只在本机/CI
-    #    的开发环境里跑，交付形态是 Release，所以这一族在 Debug 下同样只能白名单。
-    "^msvcp140.*\\.dll$"        # MSVC C++ 标准库（含 _1/_2/_atomic_wait 与 Debug 的 d 变体）
-    "^vcruntime140.*\\.dll$"    # MSVC C 运行时异常/杂项支持（含 _1 与 d 变体）
-    "^concrt140.*\\.dll$"       # PPL 并发运行时（OpenCV/GDAL 并行分支引用）
-    "^vccorlib140.*\\.dll$"     # C++/CX 支持（当前包未导入，同族留一并白，避免换 VS 版本即假红）
-    "^ucrtbase.*\\.dll$"        # UCRT（含 Debug 的 ucrtbased.dll；Windows 10+ 由 OS 自带）
+    # ── VC++ 运行库族：C17（拍板 2，2026-10-26）起**必须随包**，所以白名单里只留"带 d 的调试变体"。
+    #    改前这四条 `^msvcp140.* / ^vcruntime140.* / ^concrt140.* / ^vccorlib140.*` 把整族都放行，
+    #    等于用判据追认了"不打包 CRT"这个旧决定（N87）；口径改成"目标机零前提"之后，
+    #    非调试名必须从包内满足 ⇒ 从名单里删掉它们，让本脚本自己的"包内有同名文件"那条去判。
+    #    ⚠ 这里删的是**放行**，不是加断言：判据仍然从产物导入表导（下面逐 PE 扫直接导入），
+    #      所以"包多带了一个没人导入的 CRT"不会被判红，而"少带一个被导入的"立刻红。
+    #    ⚠ 调试版的 d 有**两个位置**，一个正则盖不住，本机 Debug 包 48 条调试 CRT 导入实测：
+    #      紧跟族名 `msvcp140d.dll` / `msvcp140d_atomic_wait.dll`，也在末尾 `msvcp140_1d.dll` /
+    #      `msvcp140_2d.dll` / `vcruntime140_1d.dll`。写成 `^msvcp140d.*` 只认得到前一类，
+    #      后三类会被判成"少带运行库"的假红（本轮就是这么暴露出来的）。
+    #      为什么这两条不会把释放版放进来：释放版名字要么紧跟 "_"（_1 / _2 / _atomic_wait /
+    #      _codecvt_ids），要么直接以 .dll 收尾 ⇒ 第一条要求族名后紧跟 d、第二条要求 .dll 前紧跟 d，
+    #      两条都对 `msvcp140_codecvt_ids.dll` 这种"中间带 d"的名字不成立（d 不在收尾位置）。
+    "^(msvcp140|vcruntime140|concrt140|vccorlib140)d[a-z0-9_]*\\.dll$"
+    "^(msvcp140|vcruntime140|concrt140|vccorlib140)_[a-z0-9_]*d\\.dll$"
+    "^ucrtbase.*\\.dll$"        # UCRT（含 Debug 的 ucrtbased.dll）：Windows 10+ 由 OS 自带，不随包
     )
 
 file(GLOB_RECURSE _gis_pe_files LIST_DIRECTORIES false

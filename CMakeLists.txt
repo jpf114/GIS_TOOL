@@ -199,6 +199,64 @@ if(WIN32)
     endif()
 endif()
 
+# ── C17（拍板 2，2026-10-26）：VC++ 运行库随包 ⇒ 目标机零前提（N87 销账）──────────────
+# 为什么用 InstallRequiredSystemLibraries 而不是自己列一份 CRT 名单：
+#   ① 名单会漂。N88 那一族的失效方式从来不是"名单变红"，而是"新条目不被断言"。
+#   ② 也试过第三条路 —— 让现成的 `file(GET_RUNTIME_DEPENDENCIES)` 按导入表自然解析：把
+#      `VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT`（与 debug_nonredist 的 DebugCRT）加进它的
+#      DIRECTORIES，重配后生成的脚本里那两行目录确实在场，**但装出来的包里一个 CRT 都没有，
+#      且未解析列表是空的** ⇒ 那些名字被扫描器按系统件静默丢弃了。这条实测结论记在
+#      cmake/install_runtime_deps.cmake.in 的 C17 注释里，别再照着"加目录就会带"设计第二遍。
+# 分工：本段只负责**随包**（带哪几件由工具集算）；"该带的有没有真带上"由
+#   tests/check_install_closure.cmake 从**包内每个 PE 的直接导入名**判 —— 那一侧已把
+#   `^msvcp140.* / ^vcruntime140.* / ^concrt140.* / ^vccorlib140.*` 从系统白名单里删掉，
+#   只留带 d 的调试变体（来自 Redist 的 debug_nonredist，目录名即官方口径"不可再分发"，
+#   且交付形态是 Release）。⇒ 少带一件被真实导入的运行库 ⇒ install_closure 红，
+#   而不是装出一个干净机器上 0xC0000135 起不来的包。
+#   本机实测被导入的 CRT 是 **7 个**名字（msvcp140 / vcruntime140 / vcruntime140_1 /
+#   msvcp140_1 / msvcp140_2 / msvcp140_atomic_wait / concrt140），不是工单 C17 里写的三件套
+#   ⇒ 只带三件套仍然起不来；这也是不把名单抄进任何一处的另一个理由。
+if(WIN32 AND MSVC)
+    include(InstallRequiredSystemLibraries)
+    set(GIS_VC_RUNTIME_LIBS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
+    set(GIS_VC_RUNTIME_LIBS_NAMES "")
+    foreach(_gis_vc_lib IN LISTS GIS_VC_RUNTIME_LIBS)
+        get_filename_component(_gis_vc_name "${_gis_vc_lib}" NAME)
+        list(APPEND GIS_VC_RUNTIME_LIBS_NAMES "${_gis_vc_name}")
+    endforeach()
+    list(LENGTH GIS_VC_RUNTIME_LIBS GIS_VC_RUNTIME_LIBS_COUNT)
+    if(GIS_VC_RUNTIME_LIBS_COUNT GREATER 0)
+        install(PROGRAMS ${GIS_VC_RUNTIME_LIBS} DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    endif()
+    message(STATUS "[C17] VC++ 运行库随包 ${GIS_VC_RUNTIME_LIBS_COUNT} 件：${GIS_VC_RUNTIME_LIBS_NAMES}")
+    # 安装期两道闸（与 N84 同口径：宁可装不出来，也不要静默少带）。
+    # WHY 不在配置期 FATAL：只装了 BuildTools 而无 Redist 组件的机器会连 configure 都做不了
+    #   —— 与运行库扫描器同一处置（见上面 GIS_RUNTIME_DEP_SCANNER 那段"找不到不能配置期红"）。
+    install(CODE "
+        if(NOT ${GIS_VC_RUNTIME_LIBS_COUNT} GREATER 0)
+            message(FATAL_ERROR
+                \"安装中止（C17 / 拍板 2）：InstallRequiredSystemLibraries 在本配置下没解析出任何 VC++ 运行库。\"
+                \"交付口径是目标机零前提 ⇒ 没有 CRT 可带就不许装出一个缺 CRT 的包。\"
+                \"处置：给这套 VS 安装补 VC++ Redistributable 生成组件（Microsoft.VisualStudio.Component.VC.Redist.14.Latest），\"
+                \"或换一台带该组件的打包机重跑 cmake --install。\")
+        endif()
+        set(_gis_c17_bin \"\${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@\")
+        set(_gis_c17_missing \"\")
+        foreach(_gis_c17_name IN LISTS \"${GIS_VC_RUNTIME_LIBS_NAMES}\")
+            if(NOT EXISTS \"\${_gis_c17_bin}/\${_gis_c17_name}\")
+                list(APPEND _gis_c17_missing \"\${_gis_c17_name}\")
+            endif()
+        endforeach()
+        if(_gis_c17_missing)
+            list(JOIN _gis_c17_missing \", \" _gis_c17_missing_text)
+            message(FATAL_ERROR
+                \"安装中止（C17 / 拍板 2）：VC++ 运行库应随包，但 \${_gis_c17_bin} 里找不到 \"
+                \"\${_gis_c17_missing_text}。配置期算出的名单：${GIS_VC_RUNTIME_LIBS_NAMES}\")
+        endif()
+        message(STATUS \"[C17] VC++ 运行库已随包：${GIS_VC_RUNTIME_LIBS_COUNT} 件\")
+    ")
+endif()
+
 if(NOT EXISTS "${GIS_VCPKG_PROJ_DATA_DIR}")
     message(FATAL_ERROR "未找到 PROJ 数据目录: ${GIS_VCPKG_PROJ_DATA_DIR}")
 endif()
