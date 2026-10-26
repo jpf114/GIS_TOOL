@@ -305,7 +305,16 @@ gis::framework::Result VectorPlugin::doConvert(
     std::string input = gis::framework::getParam<std::string>(params, "input", "");
     std::string output = gis::framework::getParam<std::string>(params, "output", "");
     std::string layerName = gis::framework::getParam<std::string>(params, "layer", "");
-    std::string format = gis::framework::getParam<std::string>(params, "format", "GeoJSON");
+    // N153：显式给了 --format 就用它；没给才按输出扩展名推导，推导不出来再回落 GeoJSON。
+    std::string format = gis::framework::getParam<std::string>(params, "format", "");
+    if (format.empty()) {
+        format = inferVectorFormatFromExtension(output);
+        if (format.empty()) {
+            format = "GeoJSON";
+            progress.onMessage("output format was not given and cannot be inferred from the "
+                               "output extension; falling back to GeoJSON");
+        }
+    }
 
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");

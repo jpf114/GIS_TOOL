@@ -59,6 +59,21 @@ static GDALDriver* getDriverForFormat(const std::string& format) {
     return nullptr;
 }
 
+// N153（批次 D，用户 2026-10-27 拍案 A）：未显式给 --format 时按输出扩展名推导格式。
+// 返回空串表示"映射不出来"，由调用方决定回落（convert 回落 GeoJSON 并打一行提示）。
+// 只认 getDriverForFormat 支持的五种格式；大小写不敏感（Windows 上 .GPKG 很常见）。
+static std::string inferVectorFormatFromExtension(const std::string& output) {
+    std::string ext = std::filesystem::u8path(output).extension().u8string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (ext == ".gpkg")    return "GPKG";
+    if (ext == ".shp")     return "ESRI Shapefile";
+    if (ext == ".geojson" || ext == ".json") return "GeoJSON";
+    if (ext == ".kml")     return "KML";
+    if (ext == ".csv")     return "CSV";
+    return std::string();
+}
+
 static std::string detectSrsType(const OGRSpatialReference* srs) {
     if (!srs) {
         return "unknown";

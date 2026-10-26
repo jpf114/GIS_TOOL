@@ -20017,3 +20017,130 @@ TEST_F(PluginTest, VectorStagedOutputHalfMigratedRosterIsLoadBearing) {
         EXPECT_EQ(stagedDeclarations[entry], 1) << entry.first << "::" << entry.second;
     }
 }
+
+// ── N153（批次 D）：`vector convert` 应按输出扩展名推导 --format ─────────────────────────
+// 背景：--format 的 spec 默认值是 GeoJSON，改造前"不传 --format"会把 GeoJSON 写进名叫 .gpkg 的文件。
+// 用户 2026-10-27 拍案 A：未显式给 --format 时按输出扩展名推导；扩展名无法映射才回落 GeoJSON 并提示。
+static std::string makeN153ConvertFixture(const std::string& name) {
+    const std::string path = utf8PathString(getTestDir() / name);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("ESRI Shapefile");
+    if (!driver) {
+        return std::string();
+    }
+    GDALDataset* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return std::string();
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(4326);
+    OGRLayer* layer = ds->CreateLayer("n153", srs.get(), wkbPoint);
+    if (!layer) {
+        GDALClose(ds);
+        return std::string();
+    }
+    OGRFieldDefn nameField("name", OFTString);
+    layer->CreateField(&nameField);
+    OGRFeatureDefn* defn = layer->GetLayerDefn();
+    for (int i = 0; i < 3; ++i) {
+        OGRFeature* feat = OGRFeature::CreateFeature(defn);
+        OGRPoint pt(116.0 + 0.01 * i, 40.0 + 0.01 * i);
+        feat->SetGeometry(&pt);
+        feat->SetField("name", ("p" + std::to_string(i)).c_str());
+        layer->CreateFeature(feat);
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(ds);
+    return path;
+}
+
+// 用第二个客户端（GDAL 按内容嗅探）判产物到底是什么格式 —— 只看 metadata 会漏"键对、文件错"。
+static std::string n153OutputDriverName(const std::string& output) {
+    GDALDataset* ds = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    if (!ds) {
+        return std::string();
+    }
+    const std::string name = ds->GetDriver() ? ds->GetDriver()->GetDescription() : "";
+    GDALClose(ds);
+    return name;
+}
+
+TEST_F(PluginTest, VectorConvertInfersGpkgFormatFromOutputExtension) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = makeN153ConvertFixture("n153_infer_gpkg_src.shp");
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(getTestDir() / "n153_infer_gpkg_out.gpkg");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("convert");
+    params["input"] = input;
+    params["output"] = output;   // 故意不给 format
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("output_format"), "GPKG");
+    EXPECT_EQ(n153OutputDriverName(output), "GPKG")
+        << "产物不是 GPKG ⇒ 扩展名没有参与格式判定（N153）";
+}
+
+TEST_F(PluginTest, VectorConvertInfersShapefileFormatFromOutputExtension) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = makeN153ConvertFixture("n153_infer_shp_src.shp");
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(getTestDir() / "n153_infer_shp_out.shp");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("convert");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("output_format"), "ESRI Shapefile");
+    EXPECT_TRUE(fs::exists(output));
+    EXPECT_EQ(n153OutputDriverName(output), "ESRI Shapefile");
+}
+
+TEST_F(PluginTest, VectorConvertFallsBackToGeoJsonForUnmappedExtension) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = makeN153ConvertFixture("n153_fallback_src.shp");
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(getTestDir() / "n153_fallback_out.dat");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("convert");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("output_format"), "GeoJSON");
+    EXPECT_EQ(n153OutputDriverName(output), "GeoJSON");
+}
+
+TEST_F(PluginTest, VectorConvertExplicitFormatBeatsOutputExtension) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = makeN153ConvertFixture("n153_explicit_src.shp");
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(getTestDir() / "n153_explicit_out.gpkg");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("convert");
+    params["input"] = input;
+    params["output"] = output;
+    params["format"] = std::string("GeoJSON");   // 显式给的优先，不能被扩展名推翻
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.metadata.at("output_format"), "GeoJSON");
+    EXPECT_EQ(n153OutputDriverName(output), "GeoJSON")
+        << "显式 --format 被扩展名覆盖了 ⇒ 案 A 实现反了";
+}
