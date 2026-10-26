@@ -14006,8 +14006,9 @@ TEST_F(PluginTest, ViewshedUsesEarthCurvatureCoefficientByDefault) {
 
     // R-T12-1 第 1 步"先量再断"的两个数不再用 std::cout 常驻打印（复审 F-4）：
     // ctest 通过态不收集 stdout，长期留在测试码里只是低价值噪声；同样的两个数已经流进
-    // 下面 EXPECT_LT / EXPECT_EQ 的失败消息，而取证时的实测值（启用曲率 2819 个 / coeff=0.0 517 个）
-    // 已经抄在这里，红态时还会由失败消息把双方的实际值再打一遍。
+    // 下面 EXPECT_LT / EXPECT_EQ 的失败消息，红态时还会由失败消息把双方的实际值再打一遍。
+    // WHY 这里不再抄具体数字：取证原始日志不入库，抄下来的两个数无法复核归属（此处曾把
+    // "启用曲率"与"coeff=0.0"两个数**贴反标签**，与下面的断言方向矛盾）⇒ 谁小谁大由断言自己判。
     EXPECT_LT(visibleWith, visibleNo)
         << "启用曲率/折射后远距离可见性应更保守；实测 coeff=0.85714 为 " << visibleWith
         << " 个、coeff=0.0 为 " << visibleNo << " 个（相等即说明 dfCurvCoeff 没进算法）";
@@ -15528,6 +15529,38 @@ TEST_F(PluginTest, ProximityDistanceIsScaledByPixelSize) {
     EXPECT_NEAR(gis::tests::readPixel(output, 1, 3, 0), 1.5f, 1e-6f);    // 3 像元 × 0.5
 }
 
+// N151：本动作的距离必须乘像元地面分辨率才有地理含义 ⇒ 地理参考是**硬前置**。
+// 改前 doProximity 丢弃 GetGeoTransform 的返回值：GDAL 失败时照样把数组填成默认单位阵，
+// 于是 dist *= |gt[1]| 成了恒等乘法 ⇒ 输出数值其实是**像元**距离，写盘侧又把同一份单位阵
+// 当地理参考复制出去 ⇒ 产物静默退化成 Origin(0,0)/Pixel(1,1) 且动作报成功
+// （变异臂实测：本用例这份 8×8 全背景输入读回 Min=Max=65536、Pixel Size=(1,1)、CRS none）。
+// 与本文件里 zonal_stats 那道 `!= CE_None` 前置同一口径，且判在任何写盘之前 ⇒ 不留半件。
+TEST_F(PluginTest, ProximityFailsWithoutGeotransform) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    // 整幅都是背景（没有任何目标像元）：这条路径旧写法会稳稳落一张"哨兵当距离"的图。
+    const std::string input = createRasterWithoutGeoTransform("prox_nogt_input.tif", 8, 8, 1, 0.0f);
+    ASSERT_FALSE(input.empty());
+    ASSERT_TRUE(rasterHasNoGeoTransform(input))
+        << input << " 应当取不到地理变换，否则这条用例锁错了分支";
+
+    const std::string output = utf8PathString(getTestDir() / "prox_nogt_output.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("proximity");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success) << "缺地理参考必须失败，而不是按像元单位出图并报成功，实际消息：" << result.message;
+    EXPECT_NE(result.message.find("geotransform"), std::string::npos) << result.message;
+    EXPECT_FALSE(fs::exists(output)) << "失败不得留下产物：" << output;
+}
+
 // F3（审查发现 M1 之①）：整波段全是 NoData 的形态此前没有任何用例覆盖。
 // 该波段每个像元都被 validMask 排除 ⇒ targetMask 全 0 ⇒ distanceTransform 落进"没有零像元可参照"
 // 的分支给出 65536（出处见 ProximityOutputKeepsEveryInputBand 的注释），但最后
@@ -15591,6 +15624,13 @@ static std::string writeProximityNoDataVrt(const std::string& stem, int width, i
     const size_t n = static_cast<size_t>(width) * height;
     std::string xml = "<VRTDataset rasterXSize=\"" + std::to_string(width) +
                       "\" rasterYSize=\"" + std::to_string(height) + "\">\n";
+    // 必须显式给一份 GeoTransform：本仓的 VRT 里没有 <SRS>，GDAL 也不会从 SimpleSource 反推变换，
+    // 于是 GetGeoTransform 返回 CE_Failure。N151 之后 proximity 把地理参考当硬前置（缺即失败），
+    // 这六篇用例测的是波段间 NoData 声明的告警/计数，不是"缺变换"那条分支 ⇒ 夹具补上变换，
+    // 让它们各测自己声明的那件事（与上面 options.pixelSize=1.0 同值，"像元大小 1.0"的注释才成立）。
+    // 六个数必须用**逗号**分隔：VRT 的解析器按逗号切，写成空格分隔会得到
+    // "GeoTransform node does not have expected six values" 并照样取不到变换（本轮实测踩过）。
+    xml += "  <GeoTransform>116,1,0,40,0,-1</GeoTransform>\n";
     gis::tests::RasterFixtureOptions options;
     options.pixelSize = 1.0;
     for (size_t i = 0; i < bands.size(); ++i) {

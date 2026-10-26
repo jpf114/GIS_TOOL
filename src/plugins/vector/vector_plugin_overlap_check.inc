@@ -75,7 +75,8 @@ gis::framework::Result VectorPlugin::doOverlapCheck(
 
             // N125 销账（C3d）：交面积口径必须与 topology_check **同源**，所以这里不再自带一份
             // 只认 Polygon / MultiPolygon 的本地 switch，改为复用 common.inc 的 polygonIntersectionArea()
-            // （它自己求交、并对 GeometryCollection 累加子面/子多面面积，vector_plugin_common.inc:492-511）。
+            // （它自己求交、并对 GeometryCollection 累加子面/子多面面积，见 common.inc 的
+            //  polygonIntersectionArea() 定义；WHY 不给行号：该文件已长到上千行，行号发票会失效）。
             // 旧写法的后果：真实省界这类 MultiPolygon 层的交集常常是**混合维度**的
             // GEOMETRYCOLLECTION(POLYGON, LINESTRING)（共面积 + 共边同时发生），旧 switch 落 default 得 0.0
             // ⇒ 下面 `overlapArea > 0.0` 不成立 ⇒ 整行不写，而 topology_check 报得出同一对的面积 ⇒ 自相矛盾。

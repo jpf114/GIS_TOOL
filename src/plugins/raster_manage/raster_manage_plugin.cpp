@@ -495,8 +495,15 @@ gis::framework::Result RasterManagePlugin::doProximity(
     std::vector<BandNoData> declarations;
     declarations.reserve(static_cast<size_t>(bandCount));
 
+    // 距离必须乘像元地面分辨率才有地理含义，所以地理参考是本动作的硬前置（N151）：
+    // 改前这里丢弃返回值 —— GDAL 失败时照样把数组填成默认单位阵，于是"缺地理参考"的输入
+    // 拿到 gt[1]=1.0，dist *= |gt[1]| 变成一次恒等乘法 ⇒ 输出的数值其实是**像元**距离，
+    // 而写盘侧把同一份单位阵当地理参考复制出去，产物静默退化成 Origin(0,0)/Pixel(1,1) 并报成功。
+    // 与本文件 zonal_stats 那道 `!= CE_None` 前置同一口径（terrain 侧填挖方/库容的 Task 19 同形）。
     double gt[6] = {};
-    srcDS->GetGeoTransform(gt);
+    if (srcDS->GetGeoTransform(gt) != CE_None) {
+        return gis::framework::Result::fail("input raster geotransform is missing");
+    }
 
     for (int b = 1; b <= bandCount; ++b) {
         progress.throwIfCancelled();

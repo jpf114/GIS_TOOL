@@ -1252,7 +1252,7 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       **52 条 = 第一轮 22 + 第二轮 28 + 2 条无法判定，剩余 0。**
       每条都由控制器对回代码行才落笔，依据逐条写在 `文档漂移清单.md` 的"第二轮"表里。
     - **代表性的四类**（都是参数核对结构上抓不到的）：`欧氏距离` 只乘 `|gt[1]|` 且 `GetGeoTransform` 返回值被丢弃
-      ⇒ 无地理参考的输入会得到**全 0 距离并报成功**（新挂账 **N151**）；`EVI` 的"安全除法"实为分母 `+1e-10`
+      ⇒ 无地理参考的输入**静默按像元单位出图**并报成功（新挂账 **N151**）；`EVI` 的"安全除法"实为分母 `+1e-10`
       后照常相除，与正文声称的公式**不是同一件事**；`连通组件`/`分水岭`/`边缘检测` 共同的 `toUint8`
       是全幅 min/max 拉伸而非类型转换 ⇒ 一切阈值/量纲都相对该幅自身极值；
       `重叠检查` 把"必须投影坐标系"写成"建议" ⇒ 用户按正文规划时会拿到一次失败而不是"面积可疑的表"。
@@ -1264,14 +1264,39 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       本轮第一次落笔把 9 行的 `1. `/`- ` 记号吃掉、编号列表断号（该批未提交，已全部回退重做），
       新执行器加三道闸（记号必须原样、`append` 模式不碰原行、落笔后跑 `## 处理流程` 编号连续性 lint）。
       `空间过滤.md` 另有一处"锚点是长句尾、替换把长句头吃掉"，靠肉眼复核补回。
-    - **新挂账 N151**：`raster_manage.proximity` 丢弃 `GetGeoTransform` 返回值（`raster_manage_plugin.cpp:498-499`）⇒ 无地理参考的输入得到**全 0 距离并报成功**；同文件 `:277` 检查了返回值（缺变换即失败）⇒ 属漏检不是口径。`opencv_wrapper.cpp:87-88` 是同形态第二处（静默用单位阵写盘）。本轮只把正文改诚实，代码未动。
-    - **转交 #132 裁定的两条代码侧缺陷**（非文档漂移）：`overlap_check.inc:78` 注释里的函数行号发票已失效
-      （写 `common.inc:492-511`，实际 `:782-801`）；`tests/test_plugins.cpp:14009` 的取证注释把
-      "启用曲率 2819 / coeff=0.0 517" 两个数**贴反标签**（同用例 `:14011` 断言是 `EXPECT_LT(visibleWith, visibleNo)`）。
+    - **新挂账 N151**：`raster_manage.proximity` 丢弃 `GetGeoTransform` 返回值（`raster_manage_plugin.cpp:498-499`）
+      ⇒ 无地理参考的输入**静默按像元单位出图**并报成功；同文件 zonal_stats 那道 `!= CE_None` 检查了返回值（缺变换即失败）
+      ⇒ 属漏检不是口径。`opencv_wrapper.cpp:87-88`（`matsToGdalTiff`）是同形态第二处（缺变换时把单位阵当地理参考写盘），
+      本轮**未**动它（射程之外，改它要连带全部栅格写盘动作的判据）。修复见下一段。
+    - **N151 的修复与一次"我自己的机制断言被实测否证"**：
+      ① `doProximity` 现按硬前置处理 —— `GetGeoTransform(...) != CE_None` 即 `fail("input raster geotransform is missing")`，
+      判在任何写盘之前 ⇒ 不留半件；新增用例 `PluginTest.ProximityFailsWithoutGeotransform`（夹具
+      `createRasterWithoutGeoTransform` + 谓词 `rasterHasNoGeoTransform` 锁对分支）。
+      ② **先红后绿**：把守卫删回改前形态重建变异臂 ⇒ 该用例三条断言全红
+      （`success=true`、消息 `Proximity map created`、产物落在 `test_e2e_output/prox_nogt_output.tif`）；
+      按 `cp` + `git hash-object` 还原（基线 blob `98ffd035ff3ec12d44b2d9db6ef94d97d75d9899`）重建后 15/15 绿。
+      ③ **变异臂顺带否证了我写进文档的机制**：我原断言"gt 保持全 0 ⇒ 整幅距离被乘成 0"，
+      而 `gis-cli raster_inspect info` 读那份变异臂产物是 `Min=Max=65536`、`Pixel Size=(1,1)`、`CRS none`
+      —— GDAL 在 `GetGeoTransform` 失败时**照样把数组填成默认单位阵**（terrain 侧 Task 19 的注释早已记过同一形态，
+      我就着这条证据读过去却仍写成"全 0"）。⇒ 文档/注释/用例消息里的后果全部改为
+      "静默按像元单位出图 + 输出地理参考退化为单位阵"；`6d58ce0` 的 commit message 里那句"全 0 距离"**是错的、不 amend**，
+      以本段与 `欧氏距离.md` 为准。教训：**机制断言必须由产物读数支撑，不能由"数组初值是 0"推出**。
+      ④ 6 条基于 VRT 的 `Proximity*NoData*` 用例改前之所以绿，是因为该 VRT 没有 `<GeoTransform>` ⇒ 走的正是缺变换那条路。
+      按新守卫它们全红，说明夹具与用例声明的那件事不符 ⇒ **修夹具不是"为了让测试绿"**：给 VRT 补
+      `<GeoTransform>116,1,0,40,0,-1</GeoTransform>`（六个数必须逗号分隔，空格分隔会被 GDAL 报
+      "GeoTransform node does not have expected six values" 并照样取不到变换 —— 本轮实测踩过），
+      补完后 6 条各测其 NoData 声明判据、距离缩放判据仍由 `ProximityDistanceIsScaledByPixelSize` 单独承重。
+
+    - **两条代码侧注释缺陷（转交后已就地修掉，不改行为）**：`overlap_check.inc` 的 N125 注释把
+      `polygonIntersectionArea` 定位成 `common.inc:492-511`（实际 `:782-801`，该文件已长到上千行）⇒ 改为只点函数名并写明
+      "WHY 不给行号"；`test_plugins.cpp` 视域曲率用例的取证注释把"启用曲率 2819 / coeff=0.0 517"两个数
+      **贴反标签**（同用例断言是 `EXPECT_LT(visibleWith, visibleNo)`，方向与之矛盾）⇒ 两个数从注释里删除，
+      原始日志不入库、无法复核归属，谁小谁大交给断言自己判；文档 34 行不动。
     - ⚠ **未验收面**：正文级对撞**仍无机器判据**（`docs_match_cli` 只管参数表四列），
       且 C4d 射程只覆盖"批次 A/C 改过实现的 28 个动作"，**其余约 98 个动作的正文从未逐篇对撞**；
-      本轮只重跑了 `docs_match_cli`（`drift=0`、`matched 593/594`）与乱码/编码/行尾/`## 处理流程` 编号四道静态检查，
-      **没重跑构建与全量**（纯文档 + 台账，产品二进制不变）—— 双树全量与 `--install` 复核是下一段（阶段三收口）。
+      文档面只重跑过 `docs_match_cli`（`drift=0`、`matched 593/594`）与乱码/编码/行尾/`## 处理流程` 编号四道静态检查。
+      **本片段动了产品二进制**（N151 修复改了 `plugin_raster_manage`，另两处是注释）：
+      Debug 侧已现读 `ctest -R Proximity` **15/15 绿**，其余两棵树的**全量与 `--install` 复核是下一段（阶段三收口）**。
 
 ### `ctest -j` 并行：现在开会得到假失败
 
