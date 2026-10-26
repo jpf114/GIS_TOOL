@@ -1419,6 +1419,52 @@ Debug 包 425 个文件 / 459,927 KB（Debug 侧带 `.dll` 调试版与 Qt 插�
 C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的实测，但仍不等于真机验证。
 
 
+### 批次 C C19 + C20：裸环境"带走"验收进 ctest，交付自验一页（2026-10-26）
+
+**C19 的载体换了**：工单点名的 `tests/check_install_smoke.ps1` 改成 `tests/check_install_smoke.cmake`
+（`cmake -P`）。理由不是省事：① 本仓另外三条交付/文档判据都是 `cmake -P`，"归零闸/参数缺失即红/失败文案"
+这套语义只有一份；② 本机 PowerShell 5.1 按 ANSI 解无 BOM 的 UTF-8 —— `.ps1` 里写中文会整脚本 ParserError、
+`Get-Content` 不带 `-Encoding` 会把 UTF-8 读坏（本仓因此报过假产品缺陷），而这条判据**恰恰要逐字节比 CLI 输出**。
+工单要求的五项（裸环境、`--list` 逐字节、每插件至少一条、数据命中、GUI 起得来、全落 ctest）一条没减。
+⚠ 写脚本时先踩了一发：`execute_process` **没有 `ENVIRONMENT` 这个关键字**（`unknown argument`），
+剥环境只能 `set(ENV{…})` / `unset(ENV{…})`（与本仓"给被 spawn 进程注入环境只能用 set(ENV{})"同一条结论）。
+
+**它判什么**（自己 `cmake --install` 一份 ⇒ 不吃现成包，防"残留文件顶罪"）：
+把环境剥到只剩 `<包>/bin` + `system32` + `Windows`（PATH、`GDAL_DATA`、`PROJ_LIB`、`QT_*`、
+`VCToolsInstallDir`、`PYTHON*` 全清），在里面判五件事：
+① 包内 `--list` 与构树 `--list` **逐字节相同**；② `GIS_PLUGIN_DLL_NAMES` 里 13 个插件**逐个点名**出现在 `--list`；
+③ 三种模态各一条真动作（`raster_inspect info` / `vector info` / `projection reproject`）；
+④ **PROJ 反臂**：藏掉包内 `share/proj` 后 reproject 必须失败，随后必须恢复且核 `proj.db` 回位；
+⑤ `gis-gui --self-test` 在注入 N101/N102 那两个落点后 rc=0；外加 `share/proj`+`share/gdal` 非空、`bin/` 里有 CRT。
+
+**取证（现读）**：ctest `install_smoke` Debug **Passed 7.51 s** / Release **Passed 5.36 s**
+⇒ 注册数 751/749 → **752/750**；`TIMEOUT 90` 按更慢那侧 7.51 s 算 **12.0×**（Release 16.8×），远高于 4× 线。
+反向对照两条：
+- **插件覆盖闸承重**：往 `-DPLUGIN_DLLS` 里塞一个 `plugin_notreal.dll` ⇒ 立刻红，文案是"有 1/14 个插件没出现在包内 --list 里"。
+  这条闸为什么必须存在，是实测出来的：把包内 `plugin_spindex.dll` 改名后 `--list` 从 1852 B 缩到 1648 B、
+  不再出现 `spindex`，而 `gis-cli` **仍 rc=0** ⇒ 单看 rc 会放过"少装一个插件"。
+- **PROJ 反臂承重**：本机藏起 `share/proj` ⇒ `PROJ: proj_create_from_database: Cannot find proj.db`、动作失败；
+  恢复后同一条命令成功 ⇒ "数据随包"不是靠目录存在蒙过去的。
+
+**两条如实登记为"没证到"的**（不写成已承重）：
+- 判据 ① 的"逐字节相同"这一半**造不出反臂**：拿 Debug 树的 CLI 当对照物，两侧 `--list` 竟然逐字节相同
+  （sha256 都是 `703019f7…`）⇒ 它今天实际能防的是"`-DCLI_BUILD` 被指到别的构建"，不是包内容坏；
+  包内容坏由 ②③④⑤ 与 `install_closure` 判。写清楚，免得下一个人以为这条已经证过。
+- **`GDAL_DATA` 没有本机可证的廉价载体**：藏掉 `share/gdal` 后 reproject 与 `raster_inspect info` 仍 rc=0
+  ⇒ 脚本里只要求它随包在位（判据 E），**不写"GDAL 数据被用到"的断言**。把"存在"写成"被使用"就是本仓反复踩的那类假绿。
+- `install_smoke` 在 Debug 侧也绿，但**这不等于 Debug 包可带走**：Debug 的 PE 要带 `d` 的调试版 CRT，
+  那批文件不可再分发、不在包里，本机跑得起来是因为这台机器装了 VS ⇒ 正是脚本自己要防的"开发机顶罪"。
+  脚本结尾按配置各打一行，把这个区分写进日志，不只写在注释里。
+
+**C20**：新增 `docs/交付自验.md`（目标机一页）。三条命令（`--list` 数插件行、任一动作跑通、PROJ 那条坐标转换）
++ 一张失败对照表（`0xC0000135` / 插件行数不足 13 / `Cannot find proj.db` / 中文乱码只是码页 / 只拷 `bin/` 会坏）
++ zip 打包命令 + 体积基线 + "这套自验覆盖不到什么"一节（干净机未验证、GUI 业务行为不在这里判、SmartScreen 属签名）。
+里面每个数都是现读现写：插件 13 行、`--list` 27 行 / 1852 字节、CRT 8 件、包 437 文件 / 约 193 MB。
+
+**验证范围**：本轮 ctest 只跑了新增/受影响的那几条（`install_smoke` ×2、`install_closure` ×2、
+`source_mojibake_guard`、`docs_match_cli`，全绿）。**双树全量要在 C18 之后重跑一遍**再谈合并。
+
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、

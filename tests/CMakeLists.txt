@@ -1497,6 +1497,37 @@ set_tests_properties(install_closure PROPERTIES
     RESOURCE_LOCK gis_install_closure_prefix
 )
 
+# ── 批次 C C19：裸环境"带走"验收（install_smoke）────────────────────────────────
+# 判据本体 tests/check_install_smoke.cmake：它自己 cmake --install 一份，然后把环境剥到只剩
+#   <包>/bin + system32 + Windows（PATH/GDAL_DATA/PROJ_LIB/QT_*/VCToolsInstallDir… 全清），
+#   在里面判：--list 与构树逐字节相同 + 13 个插件逐个点名 + 三种模态各一条真动作 +
+#   PROJ 反臂（藏掉包内 share/proj 必须失败）+ gis-gui --self-test 起得来 + CRT 与数据目录随包。
+# 与 install_closure 的分工：那条判"包内容自洽与闭包"（含"没人导入的也别多带"的反方向），
+#   这条判"把包扔到没有开发环境的机器上还动不动"。两条共用同一份 GIS_PLUGIN_DLL_NAMES，
+#   不各抄一份名单（N88 口径）。
+# WHY RESOURCE_LOCK：这条会删装 <tmp>/install_smoke_<CONFIG> 及其 _scratch 兄弟目录，
+#   同树并发跑两次会互相删现场（与 install_closure 同一理由，锁名各自独立，互不阻塞）。
+get_filename_component(GIS_INSTALL_SMOKE_PREFIX "${CMAKE_BINARY_DIR}/../tmp/install_smoke" ABSOLUTE)
+add_test(
+    NAME install_smoke
+    COMMAND ${CMAKE_COMMAND}
+        -DPREFIX=${GIS_INSTALL_SMOKE_PREFIX}_$<CONFIG>
+        -DCONFIG=$<CONFIG>
+        -DBUILD_DIR=${CMAKE_BINARY_DIR}
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -DCLI_BUILD=$<TARGET_FILE:gis-cli>
+        -DPLUGIN_DLLS=${GIS_PLUGIN_DLL_NAMES_FOR_TEST}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_install_smoke.cmake
+)
+# TIMEOUT 现读现定，不猜：本机安静态实测 Debug 9.60 s / Release 6.33 s（两棵树各一把 -P 直跑），
+#   取更慢的 Debug 9.60 s ⇒ 90 ÷ 9.60 = **9.4×**，Release 侧 90 ÷ 6.33 = 14.2×，都在 ≥4× 线上。
+#   为什么给到 90 而不是 40：这条里有一次完整 cmake --install、三次真动作、一次 GUI 起停，
+#   换到慢盘/CI 机上浮动比纯单测大；上界仍远低于 blanket 的 GIS_TEST_TIMEOUT，不掩盖真卡死。
+set_tests_properties(install_smoke PROPERTIES
+    TIMEOUT 90
+    RESOURCE_LOCK gis_install_smoke_prefix
+)
+
 find_program(GIS_POWERSHELL_EXECUTABLE NAMES powershell pwsh)
 if(GIS_POWERSHELL_EXECUTABLE)
     add_custom_target(real_raster_regression
