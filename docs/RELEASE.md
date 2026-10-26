@@ -1519,6 +1519,50 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
 `source_mojibake_guard`、`docs_match_cli`，全绿）。**双树全量要在 C18 之后重跑一遍**再谈合并。
 
 
+### 批次 C 阶段四：本地合并到 master（2026-10-26，不 push）
+
+用户裁定走 A 路：**先补 C17（拍板 2 的运行库随包）→ 再补 C19/C20/C18 → 然后合并**；
+**剩余 49 条 PENDING 的晋升归批次 D**，合并门里那两条红按裁定**保留、不抹平**（见本节末）。
+
+- **合并动作**：预合并 `master` = `4b1b52ea4a1f171293bd8486947582f18118947b`（只读核过），
+  在 `fix/batch-a-algorithm-defects`（HEAD `5994a4e`，工作树 0 改动）上执行
+  `git checkout master` → `git merge --ff-only fix/batch-a-algorithm-defects` ⇒ **`master` = `5994a4e`**。
+  可复核的等价证据：`git rev-list --left-right --count master...fix/batch-a-algorithm-defects` = `0  0`，
+  `master^{tree}` 与分支树同为 `26fb3e910917f95842923a4b427dec8a4a319bb4` ⇒ 纯快进、没有 squash、没有合并提交。
+- **没有 push**：`origin/master` 仍是 `4b1b52e`，本地 `master` 领先远端 **356** 条
+  （`git rev-list --count origin/master..master`）。推送属共享状态变更，需用户明确同意，本批不做。
+
+**合并后在 master 上复跑全量**（工单阶段四要求的收口；`build/tmp/c4e_closeout.sh`，
+开批 14:07:36 → 收尾 14:43:10，`HEAD = 5994a4e` 由脚本自己写进日志；那些日志在 gitignored 的 `build/tmp/` 下、会被清掉，所以下表把数值全誊写在纸面）：
+
+| 项 | Debug 树 | Release 树 |
+| --- | --- | --- |
+| `ctest -N` 注册数 | 754 | 752 |
+| 全量（`-j1`） | **754/754 全绿，1180.88 s** | **752/752 全绿，542.38 s** |
+| Skipped / Not Run / `***` | 日志内 **0** 处匹配 | 同 |
+| `cmake --install` | rc=0，433 文件 / 461 363 KB | rc=0，437 文件 / 199 067 KB |
+| 四条守卫用例用时 | `install_closure` 13.42、`install_smoke` 7.71、`source_mojibake_guard` 23.71、`docs_match_cli` 1.20 s | 8.45、5.40、17.44、0.71 s |
+
+- **合并前后同计数，墙钟差 1.21 s（Debug）/ 26.96 s（Release）**——都在本机 ±40 s 的波动带内
+  ⇒ 只登记，**不据此改任何 TIMEOUT**。
+- **收尾两条硬判据**：本轮开批时刻之后 `data/` 被写入的文件数 = **0**；工作树改动数 = **0**。
+- **安装态独立复核**（不靠 `--install` 的返回码）：两棵树的 `bin/` 按四类前缀
+  （`msvcp140` / `vcruntime140` / `concrt140` / `vccorlib140`）现读到 **8 个 CRT**，与配置期
+  `[C17] VC++ 运行库随包 8 件` 的名单逐字对上；`bin/plugins/` 13 个插件 DLL，`gis-cli.exe` 与 `gis-gui.exe` 在位，
+  `share/proj` 与 `share/gdal` 在位。
+  ⚠ 这一步我自己差点报出错数：第一次数 CRT 的 pattern 只写了 `msvcp140|vcruntime140`，数出 **7**，
+  漏掉 `concrt140.dll` ⇒ **数运行库要和闭包守卫用同一族前缀**，别临时抄一个更窄的 pattern。
+
+**合并门按裁定保留的两条红**（都写在 `docs/交付自验.md` 与工单里，这里只把"为什么允许带着它合并"落档）：
+
+1. **覆盖登记现值 GOLD 77 / PENDING 49**（共 126 行）——拍板 1 要求"72 条 PENDING 逐步全晋升"，
+   批次 C 实际做完的是 **vector 全组 33 行**，余 49 条全在非 vector 插件
+   （processing 16 / terrain 10 / matching 6 / cutting 4 / projection 4 / raster_manage 3 /
+   raster_inspect 2 / raster_render 2 / raster_math 1 / spindex 1），要新开工单组（批次 D）。
+2. **正文级漂移没有机器判据**：`docs_match_cli` 只判参数表的行数/参数名/必填/默认值四列
+   （现值 `rows=594 matched=593 drift=0`），`类型`/`说明` 两列、`Options:` 枚举集合与全部正文陈述
+   都靠 C4d 那两轮人读（共报 52 条 ⇒ 落笔 50 条、2 条判为无法判定）⇒ 下一处同类漂移仍会静默通过。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
