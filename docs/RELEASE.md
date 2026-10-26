@@ -314,8 +314,9 @@ cmake --install build/release --config Release --prefix install
 
 ### 基线口径与 `GOLD` 覆盖数的限定
 
-- **现行基线**：`ctest -N` 注册数 **Debug 750 / Release 748**（2026-10-26 批次 C C4b 双树 reconfigure 后现读；
-  上一档 749 / 747 是 C3k-3 双树全目标重建之后取的 —— Release 侧"未重编 ⇒ 读 743"那条未验收项在 C3k-3 已清偿）。
+- **现行基线**：`ctest -N` 注册数 **Debug 751 / Release 749**（2026-10-26 批次 C 阶段三收口双树全目标重建后现读；
+  上一档 750 / 748 是 C4b 加进 `docs_match_cli` 之后取的，**+1** 来自 N151 新增的那条 `TEST_F`
+  `PluginTest.ProximityFailsWithoutGeotransform` —— 是 PRE_TEST 发现让注册数变大，不是新增 `add_test`）。
   逐档账：C3m 收口 735 / 733（那一档 **+4** = 三条 `Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated`
   + 一条反回潮守卫 `VectorSourceNeverDisablesGpkgSpatialIndex`，详见第 2 节）⇒ C3n 系列 **+8**（C3n-1 +5、C3n-2a/2b/2c/2d +3：`VectorConvexHullMidFailure…`、
   `VectorDoubleInputOutputMustNotOverwriteSecondInput`、`VectorIntersectRejectedFeatureWrite…`；C3n-2c 是把既有
@@ -330,7 +331,8 @@ cmake --install build/release --config Release --prefix install
   **+0**（只往既有用例里加断言、没加 `TEST_F`；C3h-2b2 只改 runner 与档闸）⇒ **748 / 746**（Release 那次也是
   全目标重建后现读，746 = 748 − 2 条 debug-only）⇒ **C3k-3 +1**（`real_data_vector_join_heavy` 一条新腿）
   ⇒ **Debug 749 / Release 747** ⇒ **C4b +1**（文档参数表↔二进制守卫 `docs_match_cli`，载体是
-  `cmake -P` 而不是 gtest ⇒ 两棵树各多 1 条注册，不受 debug-only 那 2 条影响）⇒ **Debug 750 / Release 748**。
+  `cmake -P` 而不是 gtest ⇒ 两棵树各多 1 条注册，不受 debug-only 那 2 条影响）⇒ **Debug 750 / Release 748** ⇒ **C4d 两轮 +0**（纯文档 + 台账，两棵树都没重编）
+⇒ **N151 修复 +1**（`PluginTest.ProximityFailsWithoutGeotransform`，是 `TEST_F` 不是 `add_test`）⇒ **Debug 751 / Release 749**。
   两树差集仍恰为下面那两条 Debug 轻量闸门、`comm -13` 空；快照 `build/tmp/c3k2_names_{debug,release}.txt`。
   ⚠ 紧随其后的 **C3m 评审席修复轮不动注册数**（守卫改的是匹配逻辑与 token 名单，两条都是注释/判据成形改动，
   没有增删用例）⇒ 735 / 733 那一档的墙钟与"为什么不能拿它判余量"见第 2 节"C3m 评审席修复轮"；
@@ -416,6 +418,23 @@ cmake --install build/release --config Release --prefix install
 
 | 配置 | 注册数 | 全量墙钟（`-j1`、无并发构建、跑前硬门控 = 0） | 同计数历史样本 | 本轮最慢单条 |
 |---|---|---|---|---|
+| Debug | **751** | **1288.71 s**（批次 C 阶段三收口轮现跑，`build/tmp/c4e_full_debug.log` 不入库；开批时刻 11:50:06、`ctest -N` 先 reconfigure 再数、串行 `-j1`、期间无并发构建，**751/751 全绿**） | 751 条**首档**；上一档 750（C4b）没跑全量（那两片是纯文档 + 守卫注册）；再上一档 749 见下面那行 | 最慢 `real_data_vector_quick` **254.75 s** ⇒ 720 ÷ 254.75 = 2.83×；`union_poly` **139.40 s** ⇒ 4.30×；`overlay_ops` **126.05 s** ⇒ 3.41×；`join_heavy` **109.64 s** ⇒ 5.38×；`overlay_buffer_join` **89.47 s** ⇒ 7.04×；`derive_heavy` **49.34 s** ⇒ 7.10×；`checks` **46.29 s** ⇒ 100 ÷ 46.29 = **2.16×**（见下方"读数口径"，**安静态复测 34.42 s ⇒ 2.91×**）。守卫两条本轮现读：`source_mojibake_guard` 20.54 s、`docs_match_cli` 1.36 s 均 Passed |
+| Release | **749** | **586.26 s**（同一轮紧随其后跑，`build/tmp/c4e_full_release.log`；**749/749 全绿**） | 749 条**首档**；再往前 748（C4b）未跑全量；747 那一档见下面 | 最慢 `join_heavy` **84.55 s** ⇒ 6.98×；`quick` **71.31 s** ⇒ 10.1×；`overlay_buffer_join` **65.34 s** ⇒ 9.64×；`derive_heavy` **44.99 s** ⇒ 7.78×；`union_poly` **22.84 s** ⇒ 26.3×；`checks` **21.41 s** ⇒ 4.67×；`overlay_ops` **13.74 s** ⇒ 31.3× ⇒ **Release 侧七档全在 4.6× 以上，没有紧的** |
+
+**⚠ 上面两行的余量不能直接判"跌破触发线"——口径要先说清**（本轮 `checks` 的 2.16× 就是这么被否掉的）：
+表里那批秒数是**751 条混排的全量轮读数**，而 2.5× 触发线历来讲的是**安静态逐条单跑**（C3k-3 那档的
+quick 151.22 / checks 30.78 就是单跑读数，两者不同口径、不可跨口径比）。
+⇒ 收口轮跑完后立刻在安静态把最紧的两条腿各单跑两遍取最大值（`build/tmp/c4e_legmargin.txt`）：
+
+| 腿 | TIMEOUT | 全量轮读数 | 安静态单跑（两跑） | 判余量用的最大值 | 余量 |
+|---|---|---|---|---|---|
+| `real_data_vector_checks` | 100 s | 46.29 s | 34.39 / 34.42 s | **34.42 s** | **2.91×** |
+| `real_data_vector_quick` | 720 s | 254.75 s | 164.03 / 164.13 s | **164.13 s** | **4.39×** |
+
+⇒ 两跑彼此只差 0.03 / 0.10 s（很紧），比全量轮低 26% / 36% ⇒ **差额是全量轮的争用**（同锁串行的其它腿 +
+另外 740 条用例把文件系统缓存刷干净后每条腿都要重做输入现读与 `Sync-PluginDlls`），不是回归。
+`checks` 34.42 s 也落在历史同口径读数 35.40 / 34.47 附近 ⇒ **既不拆腿、也不抬 TIMEOUT**（纪律照旧）。
+唯一站得住的增量是注册数 +1 与 `quick` 那 8.5%（151.22→164.13，跨轮差值按本文件纪律不作证据）。
 | Debug | **749** | **1099.05 s**（批次 C C3k-3 双树全量轮现跑，`build/tmp/c3k3_full.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 749 条**首档**；上一档 748（C3h-2b 两片）**1363.88 s**；再往前从下面 744 那一行起是历史 | 最慢 `real_data_vector_quick` **151.22 s** ⇒ 720 ÷ 151.22 = **4.76×**；`real_data_vector_union_poly` **129.78 s** ⇒ 600 ÷ 129.78 = **4.62×**；`real_data_vector_join_heavy` **109.32 s** ⇒ 590 ÷ 109.32 = **5.40×**；`real_data_vector_overlay_ops` **107.53 s** ⇒ 430 ÷ 107.53 = **4.00×**；`real_data_vector_overlay_buffer_join` **72.83 s** ⇒ 630 ÷ 72.83 = **8.65×**；`real_data_vector_derive_heavy` **53.41 s** ⇒ 350 ÷ 53.41 = **6.55×**；`real_data_vector_checks` **30.78 s** ⇒ 100 ÷ 30.78 = **3.25×** |
 | Release | **747** | **515.48 s**（同一轮紧随其后跑，`build/tmp/c3k3_full.log`；**747/747 全绿**） | 747 条**首档**；上一档 746（C3h-2b 两片）**714.97 s** | 最慢 `real_data_vector_join_heavy` **91.21 s** ⇒ 590 ÷ 91.21 = **6.47×**；`quick` **63.84 s** ⇒ 720 ÷ 63.84 = **11.28×**；`overlay_buffer_join` **57.09 s** ⇒ 630 ÷ 57.09 = **11.04×**；`derive_heavy` **46.37 s** ⇒ 350 ÷ 46.37 = **7.55×**；`union_poly` **20.30 s** ⇒ 600 ÷ 20.30 = **29.6×**；`checks` **15.25 s** ⇒ 100 ÷ 15.25 = **6.56×**；`overlay_ops` **14.19 s** ⇒ 430 ÷ 14.19 = **30.3×** |
 | Debug | **744** | **1017.64 s**（批次 C C3k-2 拆腿轮现跑，`build/tmp/c3k2_close_dbg.log` 不入库；跑前硬门控 = 0、串行 `-j1`、期间无并发构建） | 744 条**首档**；再往前五档（740~743 各计数）**988.45 / 1033.21 / 1033.42 / 1085.26 / 1081.68 s**；再往前十四档（697~735）**702.01 / 741.52 / 761.78 / 732.32 / 761.30 / 754.82 / 851.06 / 936.24 / 1245.47 / 916.43 / 861.11 / 875.64 / 865.12 / 939.02 / 1083.87 s**（730 那一档另有 982.18 s 的一红轮） | 最慢 `real_data_vector_quick` **216.27 s** ⇒ 720 ÷ 216.27 = **3.33×**；`real_data_vector_overlay_buffer_join` **154.74 s** ⇒ 630 ÷ 154.74 = **4.07×**；`real_data_vector_overlay_ops` **103.44 s** ⇒ 430 ÷ 103.44 = **4.16×**；`real_data_vector_union_poly` **125.38 s** ⇒ 600 ÷ 125.38 = **4.79×**；`real_data_vector_checks` **31.83 s** ⇒ 100 ÷ 31.83 = **3.14×**；`real_data_raster` **9.47 s** ⇒ 60 ÷ 9.47 = **6.34×** |
@@ -1297,6 +1316,36 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       文档面只重跑过 `docs_match_cli`（`drift=0`、`matched 593/594`）与乱码/编码/行尾/`## 处理流程` 编号四道静态检查。
       **本片段动了产品二进制**（N151 修复改了 `plugin_raster_manage`，另两处是注释）：
       Debug 侧已现读 `ctest -R Proximity` **15/15 绿**，其余两棵树的**全量与 `--install` 复核是下一段（阶段三收口）**。
+
+### 批次 C 阶段三收口（双树全量 + 安装态复核，2026-10-26）
+
+**跑法**（严格串行，全程只有这一条链在用机器）：`cmake --preset debug` → 全目标 Debug 构建 →
+`ctest -N` 数注册 → Debug 全量 `-j1` → `cmake --preset release` → 全目标 Release 构建 → `ctest -N` →
+Release 全量 `-j1` → 两棵树各自 `cmake --install … --prefix build/tmp/c4e_install_{debug,release}`。
+开批时刻 **11:50:06**、收工 **12:23:24**（墙钟合计 33 分钟）；脚本与日志都在 `build/tmp/`（不入库）。
+
+**结果**：Debug **751/751**、Release **749/749** 全绿（墙钟 1288.71 s / 586.26 s，读数与"口径怎么比"的归因见
+"全量用时与单条用例超时"那一节的最新两行）。
+两道守卫本轮都是**在 ctest 里跑的**：`source_mojibake_guard` Passed 20.54 s、`docs_match_cli` Passed 1.36 s。
+`data/` 全程只读：`find data -type f -newermt "2026-10-26 11:50:06"` = **0**；工作树在收口链结束时 0 改动。
+
+**安装态复核**（只从包目录跑，产物一律落 `build/tmp/c4e_out/`）：
+
+| 检查 | Release 包 | Debug 包 |
+|---|---|---|
+| 可执行 | `bin/gis-cli.exe`、`bin/gis-gui.exe` 都在 | 同左 |
+| `bin/plugins` 条目数 | **13** | **13** |
+| CLI 参数契约来自包内二进制 | `raster_manage --help` 正常出 `Options: overviews, nodata, cog, zonal_stats, proximity` 与 `[required]/[optional]` | `spindex --help` 正常出 v1.2.0 插件说明 |
+| 真实数据跑一条动作 | `raster_manage proximity` 吃 `data/dem/utm_srtm_56_06_projection_reproject.tif`（有地理参考）⇒ `Success`，产出 144,201,196 B 的 tif 到 `build/tmp/c4e_out/`，0.765 s | —（同一判据由 Release 侧承重，Debug 侧不重复跑重活） |
+| GUI 能否起 | `--self-test` **rc=0**（需按 N101/N102 注入 `GIS_TOOL_SETTINGS_INI` + `GIS_CUSTOM_INDEX_PRESET_FILE` 两个环境变量；不注入直接跑是 rc=3，那是守卫不是包装坏） | 同左，**rc=0** |
+
+**文件数对账**：Release 包 429 个文件 / `du -sk` 197,627 KB，对上批次 B 收尾那档记录的 **430 文件 / 192.2 MB**
+—— 体积同一量级、**少 1 个文件本轮没追出是谁**（登记为未判定）。没有追的理由：包内容闭包判据（B5 那条用例）
+本轮在 ctest 里是绿的，它管的是"必需件全在 + 没有副本"，而"总数恰好等于某个历史数字"从来不是判据。
+Debug 包 425 个文件 / 459,927 KB（Debug 侧带 `.dll` 调试版与 Qt 插件补齐，见 N85/B4）。
+
+**本轮没做的事**：GUI 深验证（按批次 C 既定"CLI 优先、GUI 延后"）；N146/N148/N149/N150 的代码改动（裁定见下一节，都列批次 D）。
+
 
 ### 批次 C 阶段三收口前的挂账逐条裁定（N145~N151，2026-10-26）
 
