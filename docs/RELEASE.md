@@ -1298,6 +1298,24 @@ Release overlay 110.66 → **128.96 s**（差 **18.30 s ≈ 16.5%**，很松）�
       **本片段动了产品二进制**（N151 修复改了 `plugin_raster_manage`，另两处是注释）：
       Debug 侧已现读 `ctest -R Proximity` **15/15 绿**，其余两棵树的**全量与 `--install` 复核是下一段（阶段三收口）**。
 
+### 批次 C 阶段三收口前的挂账逐条裁定（N145~N151，2026-10-26）
+
+裁定口径只有三档：**本轮已修** / **文档承重、关闭**（行为已如实写进正文，改代码属产品语义变更）/
+**列批次 D**（需要用户拍板或需要新工单的范围）。凡"列批次 D"的都给出现值与成本，便于直接开工单。
+
+| 挂账 | 裁定 | 依据与现值 |
+| --- | --- | --- |
+| **N145** 矢量输出 metadata 两套口径（14 个动作发 `feature_count` 却不带标准三键；`union_total_pieces`/`repaired_count` 是"同数异名"） | **文档承重、关闭** | C3h-2b 已把 5 个写件动作的 metadata 补齐（`e11f428`），C4d 又逐键在正文声明了口径：`并集.md` 写 `union_total_pieces`＝**分块数**、`修复.md` 写 `repaired_count`＝成功写出条数、`融合.md` 本轮改写"整体融合恒为 1"为"全 NULL/全空几何时为 0 且仍报成功"。⇒ 缺的那层"是否同一口径"已有答案：**不是同一口径，且文档逐键写明**。统一成一个键反而会破坏下游脚本，不做。 |
+| **N146** GUI `requiredKeys` 未覆盖"按动作硬失败"的键 | **列批次 D** | 现值由 `docs_match_cli` 的 `required` 判据承重：参数表"必填=是"与二进制 `requiredKeys` 已 `drift=0`；N146 说的是另一半——**二进制不标必填但代码硬失败**的键（`viewshed` 的 `observer_x/observer_y` 属此类）。守卫目前只比"标了的"不比"没标的"⇒ 需要新增一条"硬失败键 ⊆ requiredKeys"判据，并逐动作取证哪些算硬失败。成本：判据 + 每动作取证，不能靠猜。 |
+| **N147** `viewshed` 观察点、`reservoir_volume` 水位缺省静默按 0 算 | **文档承重、关闭** | `视域分析.md` 参数表现值已写"不填按 `0` 计算（多半落在数据范围外，结果会是'全部不可见'），实际使用必须显式给出"；库容的 `water_level=0` 是**合法水位**（海平面），不是"缺省即无意义"。⇒ 与 N146 合并处理：真正要做的是把 `observer_x/observer_y` 升为必填（属 GUI/CLI 契约变更，不在批次 C 范围）。 |
+| **N148** 叠加类对"标准化后仍非法"的输入几何**逐条静默丢弃、不计数** | **列批次 D（建议第一优先）** | 承重代码：`common.inc:198` 的 `if (geom && !geom->IsEmpty())` 与 `collectNormalizedFeatures` 的镜像判据，四个动作共用（`overlay.inc:65/603/812`、`buffer_clip.inc:223`）⇒ 产物可以"少一块"而元数据无痕，只有全表空才失败。修法是**附加式**（新增 `overlay_skipped_feature_count` 之类的键，不改任何现有值），但要同时动两个镜像收集器（注释明令二者逐字同规则）+ 4 个动作的 metadata + 5 篇文档 + 判据 ⇒ 是一刀独立工单，不该塞进收口轮。 |
+| **N149** `vector.repair` 把 EMPTY 几何原样写出并计入 `repaired_count` | **列批次 D** | `common.inc:113-116` 对 EMPTY 返回非空指针的空克隆 ⇒ 过不了 `repair.inc:77` 的 `if (!repaired)` ⇒ 原样写出并计数，`repaired_count + skipped_count` 仍自洽 ⇒ 掩盖"空几何一个都没清掉"。改法（EMPTY 归进 skipped）会**改变已发布动作的计数值** ⇒ 需要产品拍板，不是收口轮能替用户决定的。 |
+| **N150** `vector.spatial_join` 的"不自计"按 `fs::equivalent` 判定 ⇒ 换一种路径拼法就在自计/不自计之间跳变 | **列批次 D** | 先要定"什么叫同一个图层"（路径等价？还是同一数据集 + 同一图层名/句柄？）——口径未定就改会把一种错误换成另一种。另 `join_value` 因 `SetWidth(254)` 在长汇总串下是否被驱动截断**至今未取证**（批次 C 两席都登记为未判定）⇒ 这两条必须各带一次实测，不适合塞进收口轮。 |
+| **N151** `raster_manage.proximity` 丢弃 `GetGeoTransform` 返回值 | **本轮已修**（`15712fd`） | 缺变换即硬失败、判在写盘之前；判据 `PluginTest.ProximityFailsWithoutGeotransform` 先红后绿。`opencv_wrapper.cpp:87-88`（`matsToGdalTiff`）是同形态第二处，射程之外未动 ⇒ 一并列批次 D。 |
+| （新）**CSV 两个检查动作无临时件契约、无"输出≠输入"闸** | **列批次 D** | `overlap_check.inc`、`multipart_check.inc` 走裸 `ofstream(..., trunc)`，不在 C3n 那 24 个写出点之内 ⇒ 输出路径写错会直接覆盖同名文件。文档已如实写明。迁移到 `VectorStagedOutput` 成本低（CSV 不是 GDAL 数据集，但等价闸照样适用），需要一条反向对照判据。 |
+| （新）**乱码守卫与文档表格完整性不进 ctest 的射程之外部分** | **列批次 D** | `docs_match_cli` 只比参数表的行数/参数名/必填/默认值四列：`类型`/`说明` 两列、`Options:` 枚举集合、正文级（非参数表）漂移、乱码守卫扩展名（`tests/check_source_mojibake.ps1` 不遍历 `docs/`）都没有机器兜底 ⇒ C4d 那 52 条正文漂移全靠人读，下一处同类漂移也会静默通过。 |
+
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
