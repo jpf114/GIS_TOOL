@@ -1465,6 +1465,9 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     std::string input  = gis::framework::getParam<std::string>(params, "input", "");
     std::string output = gis::framework::getParam<std::string>(params, "output", "");
     int band = gis::framework::getParam<int>(params, "band", 1);
+    // ↑ K-Means 没有 band 参数：聚类特征由**全部**波段拼成（下面按 GetRasterCount() 逐波段读），
+    // 这行取了值但从没被使用。`band` 是插件级 ParamSpec 声明的键 ⇒ CLI 接受 `--band` 却对本动作
+    // 完全无效，面板也不显示它（kmeans 的 visibleKeys 里没有 band）。文档同口径。
     // Task 15 / R-T15-4 + R-T15-5（后者已被控制器改判：本函数只删回退链，GUI 侧 "k" 分支保留并转挂账，
     // 改判的完整理由就写在下面三段里）：
     // 兜底改为与 paramSpecs() 的 kmeans_k 默认值（4）同值，并去掉对已废弃键 "k" 的回退链
