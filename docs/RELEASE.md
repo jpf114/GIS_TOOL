@@ -1564,6 +1564,24 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
    （现值 `rows=594 matched=593 drift=0`），`类型`/`说明` 两列、`Options:` 枚举集合与全部正文陈述
    都靠 C4d 那两轮人读（共报 52 条 ⇒ 落笔 50 条、2 条判为无法判定）⇒ 下一处同类漂移仍会静默通过。
 
+### 批次 D 现读立案与销账（2026-10-27）
+
+- **N137 改判**（失败契约，GPKG 矢量侧）：批次 C 立案时认定“失败会把旧产物截断”，而 C3n 的临时件契约（`51000fd`，24/24 写出点）
+  是**立案之后**才铺满的 ⇒ 现读 + 实跑复核：vector 全插件 `->Create(` 只剩 2 处（staged helper 建临时件 /
+  `raster_convert.inc:81` 建栅格）；把目标设成只读再重跑 ⇒ **`rc=1`、报 `Cannot replace output … (Win32 error 5)`、
+  目标 sha256 与大小逐字节不变、`gis-tmp` 残留 0**。⇒ **这半边改判为已销**。剩下的：`fid` 首值 0/1（诊断项，用户可见影响 0，
+  用户 2026-10-27 拍“不追”）、`vector.rasterize` 直写（失败会截断目标**栅格**）、N142（projection 自己的“先删后写”）——
+  后两处各开一小刀。
+- **N153（新立案，已修）**：`vector convert` 的 `--format` spec 默认值是 `GeoJSON`，而 CLI 只把用户显式给的键塞进 params
+  ⇒ `--output x.gpkg` 不传 `--format` 时得到“**名叫 .gpkg、内容是 GeoJSON**”的文件（落盘首字节 `{"type": "FeatureCollection"`）。
+  用户 2026-10-27 拍案 A：未显式给时**按输出扩展名推导**，推导不出才回落 GeoJSON 并打提示。
+  实现 = `inferVectorFormatFromExtension`（只认驱动支持的 5 种、大小写不敏感）+ `doConvert` 先取显式值；
+  **显式 `--format` 优先**，且 CLI 侧既有的一致性闸（`src/framework/src/action_validation.cpp:326`）保持不动。
+  用例 4 条（推导 ×2、回落 ×1、显式优先 ×1），每条都用**第二个客户端**（GDAL 按内容嗅探驱动名）判产物真格式；
+  先红后绿，`VectorConvert*` + `CoverageMeta*` + `param_guard_visible_keys_all_read` 共 **29/29** 绿。
+  ⚠ **GUI 的 convert 行为不变**：GUI 参数面板会实发 spec 默认值（批次 B 的 R-B20），所以它总是显式带 `format`；
+  本次只影响 CLI/工作流**没给这个键**的情形。文档 `docs/算法说明/矢量数据处理/格式转换.md` 的“输出说明”已按新判定顺序改写。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
