@@ -1770,6 +1770,64 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   只点名了 `overlap_check` 与 `multipart_check`）**未更新** ⇒ 它现在既漏 5 个动作、又还挂着"列批次 D"，
   改它属于登记表维护，按本刀纪律交回控制器处理；③ N157（前缀拼法）仍开账。
 
+### 批次 D 代码刀 D0-C2 落地（2026-10-27，Task 8 / 地理参考同族 + 防回潮守卫）
+
+起因：全仓取地理变换时**不判返回值**的位点共 6 处（不是先前台账说的 1~2 处）。GDAL 的语义反直觉——
+基类实现**在返回 CE_Failure 之前照样把默认恒等式 (0,1,0,0,0,1) 写进调用方的数组**
+（GDAL 3.12.4 现读 `gcore/gdaldataset.cpp:1506-1512`、`gcore/gdal_geotransform.h:47-62`），
+自定义该方法且失败前不碰数组的驱动则保留调用方初值。⇒ "取不到"在产物里表现为**一个看起来正常的假变换**，
+或未初始化的栈垃圾（`opencv_wrapper.cpp` 改前那两处连数组都没初始化，Debug 下把 `0xCCCC…` 持久化进交付 GeoTIFF）。
+**用户 2026-10-27 拍板"三件全做"**（B/C 停止伪造、F 缺参考即硬失败、D 换专有文案），A 与 E 两处经裁定**只加兜底理由注释、不改行为**。
+
+- **用户可见变更 ①（`processing.threshold` / `raster_math.reclassify`）**：无地理参考输入的产物不再被写入伪造的
+  `Origin = (0, 0) / Pixel Size = (1, 1)`，改为**完全没有地理变换**；两个动作**仍报成功、产物仍生成**——
+  这条既有契约不许改成失败（`tests/test_plugins.cpp:1969` 断不失败、`:1982` 断产物在场，同族的
+  `PluginTest.PansharpenNoGeoTransformSkipsExtentCheck` 一并守住），本刀只把伪造的元数据从产物里去掉。
+- **用户可见变更 ②（`terrain.viewshed_multi`）**：输入 DEM 取不到地理变换 ⇒ **硬失败**
+  `input raster geotransform is missing`（文案与 `terrain.cut_fill` `terrain_plugin.cpp:1220`、
+  `terrain.reservoir_volume` `:1343` 逐字同族），闸门排在创建产物之前 ⇒ 失败路径不留半个 .tif。
+  改前是"报成功 + 一张量纲全错的可见性掩膜"。
+- **用户可见变更 ③（`cutting.tile`）**：原来"有 CRS、但取不到地理变换"的输入会被报成 north-up 那句
+  （等于把 GDAL 的失败填充值当成用户犯的错）。现在两句分开——新增
+  `tile input geotransform is missing; cannot map pixels to the projected grid`，
+  顺序恒为「无 CRS → 取不到变换 → 非正北零旋转」，顺序与文案两条都进判据（三臂用例
+  `TileNamesMissingGeotransformSeparatelyFromNorthUpAndNoCrs`）。
+- **不改动行为的两位**：`gdal_wrapper.cpp` 的 `getRasterInfo`（位点 A，消费方现读只有
+  `src/gui/raster_preview_widget.cpp:125`（外层无 try）与 `tests/test_core.cpp:326`，改抛错即打挂预览面板）与
+  `cutting_plugin.cpp` 读 warp 产物那一处（位点 E，当前参数集不可达：上游三道闸 `:1190/:1198/:1264-:1269` +
+  warpArgv 从不传 `-dstmethod`，GDAL 只在 `DST_METHOD=NO_GEOTRANSFORM` 时才不给输出写变换，
+  现读 `apps/gdalwarp_lib.cpp:4897-4898`、`:4924-4926`、`:4932-4936`）。两处都只加"兜底理由"注释，
+  并在 `tests/geotransform_guard_allowlist.json` 里点名；A 的兜底描述本轮**被纠正**（原写"取不到就是全 0"，
+  按上面 GDAL 现读其实有两种形态）。
+- **机器兜底**：新守卫 `geotransform_guard`（ctest 注册 **#779**，`tests/check_geotransform_guard.py` + `.cmake` 载体）——
+  C++ 词法级把行注释/块注释/字符串里的同形态文本分出去、拼跨行语句，产品域（`src/`，148 个文件）钉
+  `any=21 code=20 comment_line=1 block_comment=0 string_only=0 / checked=18 unchecked=2 allowlisted=2 violations=0 dead=0`，
+  测试域（`tests/`，15 个文件）钉 CODE 桶那一侧 `code=3 checked=2 unchecked=1 allowlisted=1 violations=0 dead=0`
+  （注释桶刻意不钉，理由与承重演示见该文件注释）；7 条自证臂先于域判定跑，红则退出码 2；
+  DEAD 白名单（缺陷修好了、豁免还留着）同样判红。退出码 0/1/2/3 的**唯一消费者**是那个 `.cmake` 包装。
+- 判据：四条新用例 `ProcessingThresholdKeepsProductWithoutGeotransform`、
+  `RasterMathReclassifyKeepsProductWithoutGeotransform`、`TerrainMultiViewshedFailsWithoutGeotransform`、
+  `TileNamesMissingGeotransformSeparatelyFromNorthUpAndNoCrs`，先红后绿；产物侧判据一律用**第二个客户端**
+  （复用现成的 `rasterHasNoGeoTransform`，新开数据集按返回值判），不读动作自报的 metadata。
+- 注册数：Debug **774 → 779**（+4 条 `TEST_F` + 1 条 `add_test`）。**Release 树本刀未重编 ⇒ Release 侧一律未验收。**
+- 反向臂（"能红"证明）：把位点 B 改回无条件写出 ⇒ `#142` 与 `#779` 两条红（其余 7 条绿，判据是位点特异的），
+  守卫产品域同时读到位移 `checked 18→17 / unchecked 2→3 / violations 0→1`；还原后 9/9 复绿。
+
+**N151 的余波在本节销账**：上面"批次 C 阶段三收口前的挂账逐条裁定"表里 N151 那行写着
+`opencv_wrapper.cpp:87-88`（`matsToGdalTiff`）是同形态第二处、射程之外未动 ⇒ 一并列批次 D。**现已处理**：
+它就是本节的位点 C（用户可见变更 ① 的第二半，`raster_math.reclassify` 走的就是这条多波段写出通道），
+`15712fd` 当年只修了 `raster_manage.proximity` 那一处，第二处在批次 D 随 D0-C2 收口，**N151 至此全销**。
+
+> ⚠ 时间口径更正：`8e62bdc` 的提交信息写"四条红腿合计 1.87 s"，那是第一版夹具（对照腿崩溃那一次）的预览读数；
+> **以 `task-8-report.md` 节 2 的 2.39 s（逐条 0.25 / 0.16 / 0.21 / 0.41）为准**，提交不 amend。
+
+- ⚠ **本刀没做/未覆盖的**（如实登记）：① `threshold / reclassify / tile` 三个入口**没有任何真实数据腿**
+  （现读：两个真实腿脚本里 `"threshold"`/`"reclassify"`/`"tile"` 三个动作名 0 命中，`real_data_raster` 只跑
+  `terrain.viewshed_multi` 与 `processing.pansharpen`）⇒ 这三条的交付证据只有 fixture 级用例；
+  ② 越界观察点让 `viewshed_multi` 在 Debug 下被 STL 迭代器检查带走进程（`0xc0000409`），**另立 N160**、本刀不修；
+  ③ A 那处的"预览侧有无变换标志"仍挂 GUI 刀；④ Release 双树未验收；⑤ 节3 已提交注释里"实测 PNM"那一处
+  是本席未复现的前席自述（标 UNVERIFIED），承重的只有上面那条 GDAL 基类源码读数。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
