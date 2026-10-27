@@ -6819,6 +6819,13 @@ TEST_F(PluginTest, VectorClipRepairsInvalidOverlayGeometry) {
     EXPECT_FALSE(hasGeometryTypeWarning);
     EXPECT_FALSE(hasSelfIntersectionWarning);
     EXPECT_FALSE(hasDuplicateFidError);
+    // N148 修复轮 F4：本条是"非法但**修得好**"的正例（蝴蝶结自交面被 MakeValid 拆成两个三角形）⇒
+    // 采集器判据 `if (geom && !geom->IsEmpty())` 走成功支，新键**不许**出现。
+    // 这条断言把"修好了不发键 / 丢掉了才发键"的两条臂凑齐：另一半由
+    // VectorClipCountsSkippedOverlayInputGeometry（EMPTY/NULL ⇒ 发键）与
+    // VectorUnionCountsSkippedOverlayNullGeometry（NULL ⇒ 发键）钉住。
+    EXPECT_EQ(result.metadata.count("clip_skipped_input_count"), 0u)
+        << "MakeValid 修好的输入不属于被丢弃的输入，发 clip_skipped_input_count 就成了恒真键";
 }
 
 TEST_F(PluginTest, VectorFilterShapefileAsciiOutputReopens) {
@@ -8368,6 +8375,58 @@ static bool writeRectPlusEmptyLayer(const fs::path& path, double minX, double mi
     return ok;
 }
 
+// N148 修复轮 F3 夹具：GPKG 面图层（EPSG:3857），要素几何按参数给：
+//   withValidRect=true ⇒ 先写 1 条 [minX,minY]-[maxX,maxY] 的有效矩形；
+//   nullCount 条**根本不调 SetGeometry** 的要素 ⇒ GPKG 存 NULL，读回 `feat->GetGeometryRef()` 是 nullptr
+//   （这一点在下面的用例里由第二个客户端重开自证，不靠"驱动应该会这么写"的推测）。
+// 这一类与 writeRectPlusEmptyLayer 造的 EMPTY **不是同一条出口**：EMPTY 由 `cloneNormalizedGeometry`
+// 返回**非空指针的空克隆**、被采集器的 `!geom->IsEmpty()` 挡下；NULL 走的是入参为 nullptr 时那句
+// 直接 return nullptr。任务书四类里的 (a) 类此前 0 条用例钉过（复审计数见 task-6-review.md R3 §2/§3）。
+static bool writeNullGeometryPolygonLayer(const fs::path& path, bool withValidRect,
+                                          double minX, double minY, double maxX, double maxY,
+                                          int nullCount) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    const std::string pathText = utf8PathString(path);
+    std::error_code ignored;
+    fs::remove(pathText, ignored);
+    GDALDataset* ds = driver->Create(pathText.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    OGRLayer* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    bool ok = true;
+    if (withValidRect) {
+        OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(minX, minY);
+        ring.addPoint(maxX, minY);
+        ring.addPoint(maxX, maxY);
+        ring.addPoint(minX, maxY);
+        ring.addPoint(minX, minY);
+        poly.addRing(&ring);
+        feat->SetGeometry(&poly);
+        ok = layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+    }
+    for (int i = 0; ok && i < nullCount; ++i) {
+        OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        ok = layer->CreateFeature(feat) == OGRERR_NONE;   // 不设几何 ⇒ 落库为 NULL
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(ds);
+    return ok;
+}
+
 // 手算：输入 A=[0,10]×[0,4]（面积 40）；叠加侧有效 B=[20,30]×[2,12]（面积 100，与 A 不相交）
 //       + 1 条 EMPTY。⇒ 产物 2 块（input 1 + overlay 1、overlap 0、total 2 与既有判据同值），
 //       被丢的叠加输入恰 1 条 ⇒ 新键值 1；全有效对照臂 ⇒ 键不出现。
@@ -8419,6 +8478,92 @@ TEST_F(PluginTest, VectorUnionCountsSkippedOverlayInputGeometry) {
     EXPECT_EQ(clean.metadata.count("union_skipped_input_count"), 0u)
         << "零丢弃的正常批次不许发这个键，否则“出现即有丢失”的读法就废了";
     EXPECT_EQ(unionMetadataValue(clean, "union_total_pieces"), "2");
+}
+
+// N148 修复轮 F3：把"输入几何本身是 NULL"这一类（cloneNormalizedGeometry 的第一条出口）钉成判据。
+// 手算：输入 A=[0,10]×[0,4]（面积 40）；叠加侧有效 B=[20,30]×[2,12]（与 A 不相交）+ 1 条 NULL 几何。
+// ⇒ 产物仍是 2 块（input 1 + overlay 1、overlap 0、total 2，既有键取值一个不许动），被丢的叠加输入恰 1 条。
+// 反向臂：叠加层**只有** NULL 几何 ⇒ 一条有效几何都没留下 ⇒ 整条失败且不发键（与"全 EMPTY"同支）。
+// ⚠ 本条**不是新缺陷载体**：控制器与复审席的实测都表明当前树上这个键已经发得出来（见 task-6-fix1-report.md
+// 的实测读数），本条是把"已实现但无用例"的可达类补成机器判据，没有为了凑"先红"去动实现。
+TEST_F(PluginTest, VectorUnionCountsSkippedOverlayNullGeometry) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_union_nullgeom_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_union_nullgeom_overlay.gpkg";
+    const fs::path allNullPath = getTestDir() / "e2e_union_nullgeom_overlay_allnull.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_union_nullgeom_output.gpkg");
+    const std::string outputAllNull = utf8PathString(getTestDir() / "e2e_union_nullgeom_output_allnull.gpkg");
+
+    UnionFixtureFeature srcA;
+    srcA.minX = 0.0; srcA.minY = 0.0; srcA.maxX = 10.0; srcA.maxY = 4.0; srcA.name = "src1";
+    ASSERT_TRUE(writeUnionPolygonLayer(inputPath, {srcA}));
+    ASSERT_TRUE(writeNullGeometryPolygonLayer(overlayPath, true, 20.0, 2.0, 30.0, 12.0, 1));
+    ASSERT_TRUE(writeNullGeometryPolygonLayer(allNullPath, false, 0.0, 0.0, 0.0, 0.0, 1));
+
+    // 夹具身份自证（第二个客户端 GDALOpenEx 重开叠加层数几何指针）：这一条用例钉的是四类出口里的 (a)
+    // "输入几何本身就是 NULL"，一旦驱动把"没设几何"落库成 POLYGON EMPTY，本条就会悄悄退化成
+    // VectorUnionCountsSkippedOverlayInputGeometry 已经钉过的 (c) 类，新键仍绿但覆盖面是假的。
+    {
+        auto* checkDs = GDALOpenEx(utf8PathString(overlayPath).c_str(),
+                                   GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr);
+        ASSERT_NE(checkDs, nullptr) << "叠加夹具重开失败 ⇒ 下面的自证判据会空跑";
+        auto* checkLayer = checkDs ? GDALDataset::FromHandle(checkDs)->GetLayer(0) : nullptr;
+        ASSERT_NE(checkLayer, nullptr) << "叠加夹具没有可读图层";
+        int nullGeomCount = 0;
+        int emptyGeomCount = 0;
+        if (checkLayer) {
+            checkLayer->ResetReading();
+            OGRFeature* feat = nullptr;
+            while ((feat = checkLayer->GetNextFeature()) != nullptr) {
+                OGRGeometry* geom = feat->GetGeometryRef();
+                if (!geom) {
+                    ++nullGeomCount;
+                } else if (geom->IsEmpty()) {
+                    ++emptyGeomCount;
+                }
+                OGRFeature::DestroyFeature(feat);
+            }
+        }
+        GDALClose(checkDs);
+        EXPECT_EQ(nullGeomCount, 1) << "夹具必须恰有 1 条 GetGeometryRef()==nullptr 的要素（四类里的 (a) 类）";
+        EXPECT_EQ(emptyGeomCount, 0) << "驱动把『没设几何』写成了 POLYGON EMPTY ⇒ 本条打的是 (c) 类，"
+                                        "和 VectorUnionCountsSkippedOverlayInputGeometry 重复，覆盖面是假的";
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    // 既有键的取值一律不动（附加式契约）：NULL 输入被丢掉时，产物仍是"输入 1 块 + 叠加 1 块"。
+    EXPECT_EQ(result.message, "Union completed: 2 features");
+    EXPECT_EQ(unionMetadataValue(result, "union_input_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlap_pieces"), "0");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlay_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_total_pieces"), "2");
+    const auto skippedIt = result.metadata.find("union_skipped_input_count");
+    ASSERT_NE(skippedIt, result.metadata.end())
+        << "N148 类 (a)：输入几何本身就是 NULL 也要计入 union_skipped_input_count，"
+           "它是 cloneNormalizedGeometry 的第一条出口，不走自动修复；实际键数=" << result.metadata.size();
+    EXPECT_EQ(skippedIt->second, "1") << "恰好 1 条 NULL 几何的叠加输入被丢掉";
+
+    // 反向臂：叠加层整层只有 NULL 几何 ⇒ 一条有效几何都没留下 ⇒ 整条失败，且不发这个键。
+    params["overlay_vector"] = utf8PathString(allNullPath);
+    params["output"] = outputAllNull;
+    const auto allNull = p->execute(params, progress_);
+    EXPECT_FALSE(allNull.success) << "全 NULL 的叠加层必须整条失败，不能交出少了叠加侧的成功产物";
+    EXPECT_EQ(allNull.message, "Union requires valid overlay geometries and automatic repair failed.");
+    EXPECT_EQ(allNull.metadata.count("union_skipped_input_count"), 0u)
+        << "失败态不发计数键（CLI 实测无 Metadata 块）；这条臂钉的是“键只在成功产物上出现”";
+    EXPECT_TRUE(allNull.metadata.empty())
+        << "失败态一个键都不发；实际键数=" << allNull.metadata.size();
 }
 
 // 手算：[0,10]² 减去 [5,15]² = 一块 L 形 ⇒ feature_count 1；EMPTY 叠加面没参与也不该计数 ⇒ 新键 1。
