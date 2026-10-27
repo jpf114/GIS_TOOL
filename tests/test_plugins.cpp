@@ -19871,6 +19871,383 @@ C3n1Run c3n1RunAction(gis::framework::IGisPlugin* plugin,
     return run;
 }
 
+// ── 批次 D / D0-C3（Task 9）：7 个 CSV 检查动作的夹具与两臂载体 ─────────────────────
+// 射程：adjacency / dangling_endpoint_check / duplicate_point_check / hole_check /
+// multipart_check / overlap_check / topology_check。这 7 个写的是 **CSV 文本**、
+// 走裸 `std::ofstream(..., trunc)`，不在 C3n 那 24 个**数据集**写出点里 ⇒ 两个缺陷都还在：
+//   缺陷 A：output 指回输入那个矢量文件 ⇒ 输入被 trunc 清空，动作还报成功；
+//   缺陷 B：写入中途失败（取消）⇒ 目标位置留下上一份产物被截断后的半件。
+// 机器全部复用上面 J1/J4 那套，不自建第二套：
+//   c3n1FreshDir / c3n1ListFiles / c3n1CollectBytes / c3n1ExpectDirectoryUntouched
+//     （后者按 `.gis-tmp-` 扫残留 ⇒ CSV 侧临时件命名必须与数据集侧同源，否则新残骸没人抓）
+//   T17CancellableProgress：取消式 reporter ⇒ 产品代码里不需要任何测试缝
+//   C3n1Run / c3n1RunAction：把"抛了 / 没拦下来 / 拦下来但文案不点名"摊平成可逐臂读的形状
+using Csv7Ring = std::vector<std::pair<double, double>>;
+
+// 轴对齐正方形的外环坐标（闭合由 csv7FillRing 统一负责）。
+Csv7Ring csv7Square(double x0, double y0, double x1, double y1) {
+    return Csv7Ring{ {x0, y0}, {x1, y0}, {x1, y1}, {x0, y1} };
+}
+
+void csv7FillRing(OGRLinearRing& ring, const Csv7Ring& points) {
+    for (const auto& point : points) {
+        ring.addPoint(point.first, point.second);
+    }
+    ring.closeRings();
+}
+
+// EPSG:3857 的 GPKG 单图层夹具（层名 "shapes"）。
+// WHY 3857：adjacency / overlap_check / topology_check 三个动作都有"必须是投影坐标系"的
+// 硬闸（`detectSrsType(...) != "projected"` 直接 fail），拿 4326 的夹具连闸都过不了。
+GDALDataset* csv7CreateGpkg(const std::string& path, OGRwkbGeometryType layerType) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return nullptr;
+    }
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return nullptr;
+    }
+    OGRSpatialReference srs;
+    srs.importFromEPSG(3857);
+    if (!ds->CreateLayer("shapes", &srs, layerType, nullptr)) {
+        GDALClose(ds);
+        return nullptr;
+    }
+    return ds;
+}
+
+bool csv7AddPolygon(OGRLayer* layer, const Csv7Ring& outer, const Csv7Ring& hole = {}) {
+    OGRPolygon poly;
+    OGRLinearRing outerRing;
+    csv7FillRing(outerRing, outer);
+    poly.addRing(&outerRing);
+    if (!hole.empty()) {
+        OGRLinearRing holeRing;
+        csv7FillRing(holeRing, hole);
+        poly.addRing(&holeRing);
+    }
+    auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    feat->SetGeometry(&poly);
+    const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+    OGRFeature::DestroyFeature(feat);
+    return ok;
+}
+
+// 一只 MultiPolygon 特征：parts 里每个元素是一只面的外环 ⇒ parts.size() 就是部件数。
+bool csv7AddMultiPolygon(OGRLayer* layer, const std::vector<Csv7Ring>& parts) {
+    OGRMultiPolygon multi;
+    for (const auto& part : parts) {
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        csv7FillRing(ring, part);
+        poly.addRing(&ring);
+        multi.addGeometry(&poly);
+    }
+    auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    feat->SetGeometry(&multi);
+    const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+    OGRFeature::DestroyFeature(feat);
+    return ok;
+}
+
+bool csv7AddPoint(OGRLayer* layer, double x, double y) {
+    OGRPoint point(x, y);
+    auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+    feat->SetGeometry(&point);
+    const bool ok = layer->CreateFeature(feat) == OGRERR_NONE;
+    OGRFeature::DestroyFeature(feat);
+    return ok;
+}
+
+// multipart_check：F1..F6 全是"会被报出"的多部件要素（交替 2 部件 / 1 部件 Multi，两个半边各
+// 证一头），F7 = 普通 Polygon（两个半边都不成立 ⇒ 不出行）⇒ 成功趟**手算 6 行**。
+// WHY 要 6 行：契约臂的取消点只能落在第 2 行之后（算式见用例注释），产物必须"行数明显多于
+// 已写行数"才截得出半件 —— 夹具若只产 1 行，取消点写完的那一行恰好就是完整产物，
+// 旧产物字节"看起来没变"，本臂就退化成恒真的假载体（本轮取证实测到过这一点）。
+bool csv7WriteMultipartGpkg(const std::string& path) {
+    auto* ds = csv7CreateGpkg(path, wkbMultiPolygon);
+    if (!ds) {
+        return false;
+    }
+    OGRLayer* layer = ds->GetLayer(0);
+    bool ok = true;
+    for (int index = 0; index < 6; ++index) {
+        const double x0 = index * 10.0;
+        if (index % 2 == 0) {
+            // 2 部件 MultiPolygon ⇒ 靠左半边（partCount > 1）报出。
+            ok = csv7AddMultiPolygon(layer, { csv7Square(x0, 0, x0 + 5, 5),
+                                              csv7Square(x0 + 6, 0, x0 + 10, 5) }) && ok;
+        } else {
+            // 1 部件 MultiPolygon ⇒ 靠右半边（类型是 Multi）报出。
+            ok = csv7AddMultiPolygon(layer, { csv7Square(x0, 0, x0 + 5, 5) }) && ok;
+        }
+    }
+    return csv7AddPolygon(layer, csv7Square(60, 0, 65, 5)) && ok;
+}
+
+// hole_check：F1..F6 各带一个洞 ⇒ 各出一行；F7 无洞 ⇒ 不出行 ⇒ 成功趟手算 6 行。
+bool csv7WriteHoledPolygonGpkg(const std::string& path) {
+    auto* ds = csv7CreateGpkg(path, wkbPolygon);
+    if (!ds) {
+        return false;
+    }
+    OGRLayer* layer = ds->GetLayer(0);
+    bool ok = true;
+    for (int index = 0; index < 6; ++index) {
+        const double x0 = index * 10.0;
+        ok = csv7AddPolygon(layer, csv7Square(x0, 0, x0 + 10, 10),
+                            csv7Square(x0 + 4, 4, x0 + 6, 6)) && ok;
+    }
+    return csv7AddPolygon(layer, csv7Square(60, 0, 70, 10)) && ok;
+}
+
+// duplicate_point_check：7 只同坐标的点 ⇒ 从第 2 只起每只出一行（第 1 只只登记首见键）
+// ⇒ 成功趟手算 6 行；再加一只唯一的点撑住"扫过但不报"那一格。
+bool csv7WriteDuplicatePointGpkg(const std::string& path) {
+    auto* ds = csv7CreateGpkg(path, wkbPoint);
+    if (!ds) {
+        return false;
+    }
+    OGRLayer* layer = ds->GetLayer(0);
+    bool ok = true;
+    for (int index = 0; index < 7; ++index) {
+        ok = csv7AddPoint(layer, 0.0, 0.0) && ok;
+    }
+    return csv7AddPoint(layer, 1.0, 1.0) && ok;
+}
+
+// dangling_endpoint_check：4 条互不相干的直线段（8 个端点、每个只出现一次 ⇒ 全是悬挂端点）
+// ⇒ 成功趟手算 8 行。
+bool csv7WriteDanglingSegmentsGpkg(const std::string& path) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    OGRSpatialReference srs;
+    srs.importFromEPSG(3857);
+    auto* layer = ds->CreateLayer("shapes", &srs, wkbLineString, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    bool ok = true;
+    for (int index = 0; index < 4; ++index) {
+        const double y = index * 10.0;
+        OGRLineString line;
+        line.addPoint(0.0, y);
+        line.addPoint(10.0, y + 5.0);
+        auto* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        feat->SetGeometry(&line);
+        ok = (layer->CreateFeature(feat) == OGRERR_NONE) && ok;
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(ds);
+    return ok;
+}
+
+// adjacency：6 只首尾共边的正方形排成一条链 ⇒ Touches 真恰好发生在相邻那 5 对
+// （隔一格的两只之间有 10 个单位的间隙 ⇒ 既不相交也不接触）⇒ 成功趟手算 5 行。
+bool csv7WriteTouchingChainGpkg(const std::string& path) {
+    auto* ds = csv7CreateGpkg(path, wkbPolygon);
+    if (!ds) {
+        return false;
+    }
+    OGRLayer* layer = ds->GetLayer(0);
+    bool ok = true;
+    for (int index = 0; index < 6; ++index) {
+        const double x0 = index * 10.0;
+        ok = csv7AddPolygon(layer, csv7Square(x0, 0, x0 + 10, 10)) && ok;
+    }
+    GDALClose(ds);
+    return ok;
+}
+
+// overlap_check：6 只沿对角线各错开 5 个单位的正方形 ⇒ 只有相邻 5 对有面积 25 的重叠；
+// 隔一格的相邻对（如 [0,10] 与 [10,20]）只共一个点 ⇒ 交面积 0 ⇒ 不产行
+// ⇒ 成功趟手算 5 行。
+bool csv7WriteOverlappingChainGpkg(const std::string& path) {
+    auto* ds = csv7CreateGpkg(path, wkbPolygon);
+    if (!ds) {
+        return false;
+    }
+    OGRLayer* layer = ds->GetLayer(0);
+    bool ok = true;
+    for (int index = 0; index < 6; ++index) {
+        const double x0 = index * 5.0;
+        ok = csv7AddPolygon(layer, csv7Square(x0, x0, x0 + 10, x0 + 10)) && ok;
+    }
+    GDALClose(ds);
+    return ok;
+}
+
+// topology_check：4 组、每组两只逐字相同的面（组间相距 100 个单位 ⇒ 既不相交也不重叠）
+// ⇒ Equals 真恰好 4 对 ⇒ 成功趟手算 4 行（duplicate_geometry）。
+bool csv7WriteDuplicatePairsGpkg(const std::string& path) {
+    auto* ds = csv7CreateGpkg(path, wkbPolygon);
+    if (!ds) {
+        return false;
+    }
+    OGRLayer* layer = ds->GetLayer(0);
+    bool ok = true;
+    for (int index = 0; index < 4; ++index) {
+        const double x0 = index * 100.0;
+        ok = csv7AddPolygon(layer, csv7Square(x0, 0, x0 + 10, 10)) && ok;
+        ok = csv7AddPolygon(layer, csv7Square(x0, 0, x0 + 10, 10)) && ok;
+    }
+    GDALClose(ds);
+    return ok;
+}
+
+// 数一份 CSV 的数据行数（全文换行数减掉表头那一行）。
+// WHY 要数：契约臂的前置成功趟用它钉住"这份夹具真的产出了 ≥1 行数据"⇒ 取消点才可能落在
+// **行写出之后**。没有这一条，"取消发生在文件刚打开、一行都没写"的假载体也能让本臂绿。
+std::size_t csv7CountDataRows(const fs::path& path) {
+    const std::string text = c3n1ReadWholeFile(path);
+    std::size_t newlines = 0;
+    for (char ch : text) {
+        if (ch == '\n') {
+            ++newlines;
+        }
+    }
+    return newlines == 0 ? 0 : newlines - 1;
+}
+
+struct Csv7Case {
+    const char* action;
+    const char* tag;                 // 夹具目录名后缀
+    const char* inputName;           // 输入夹具；闸臂里 --output 就指回它
+    const char* outputName;          // 契约臂里那份"旧 CSV 产物"的文件名
+    int cancelAfter;                 // 第 N 次 onProgress 之后进入已取消态（算式见各用例注释块）
+    std::size_t expectedRows;        // 前置成功趟的数据行数（手算写死 + 用例里现数对撞）
+    std::size_t rowsBeforeThrow;     // 取消抛出前**已经写出**的行数（按该动作进度次序手算，红态实测过）
+    bool (*writeFixture)(const std::string& path);
+};
+
+std::map<std::string, gis::framework::ParamValue> csv7Params(const Csv7Case& item,
+                                                             const std::string& input,
+                                                             const std::string& output) {
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string(item.action);
+    params["input"] = input;
+    params["output"] = output;
+    return params;
+}
+
+// 闸臂：output 指回输入那个矢量文件本身 ⇒ 必须干净失败，且输入一个字节都不许变。
+// 两种拼法（同 J4）：逐字同一个路径 / 指向同一个文件的 dir\.<文件名> —— 后者专打
+// "拿字符串 == 当闸"那种假实现（字符串不同、文件相同，只有等价判定才拦得住）。
+void csv7RunGateArm(gis::framework::IGisPlugin* plugin, const Csv7Case& item, int spelling,
+                    gis::core::ProgressReporter& plainProgress) {
+    const std::string dirTag = std::string("csv7_gate_") + item.tag +
+        (spelling == 0 ? "_same" : "_dotslash");
+    const fs::path dir = c3n1FreshDir(dirTag);
+    ASSERT_TRUE(fs::exists(dir)) << "夹具目录建不出来：" << dir.u8string();
+
+    const fs::path inputPathObj = dir / fs::u8path(item.inputName);
+    const std::string inputPath = utf8PathString(inputPathObj);
+    ASSERT_TRUE(item.writeFixture(inputPath)) << "夹具写入失败：" << inputPath;
+
+    std::string output = inputPath;
+    if (spelling == 1) {
+        output = utf8PathString(dir / "." / fs::u8path(item.inputName));
+        ASSERT_NE(output, inputPath) << "拼法没造出差异，等价臂退化成同串臂";
+    }
+
+    const auto beforeNames = c3n1ListFiles(dir);
+    const auto beforeBytes = c3n1CollectBytes(dir);
+    ASSERT_GE(beforeBytes.size(), 1u) << "夹具目录是空的：" << dir.u8string();
+
+    const std::string what = std::string("闸臂[") + item.action +
+        (spelling == 0 ? "/same]" : "/dotslash]");
+    const C3n1Run run = c3n1RunAction(plugin, csv7Params(item, inputPath, output), plainProgress);
+
+    EXPECT_FALSE(run.threw)
+        << what << "：动作没有干净失败而是**抛出了**异常（" << run.outcome()
+        << "）⇒ 契约要的是返回一句点名规则的失败结果，而不是把 std::filesystem_error 的原文甩给用户";
+
+    EXPECT_FALSE(run.result.success)
+        << what << "：输出指回输入这件事没有被硬失败拦下来（" << run.outcome()
+        << "）⇒ 缺陷 A：输入已经在那个路径上被 trunc 了";
+
+    if (!run.threw && !run.result.success) {
+        EXPECT_NE(run.result.message.find("same file as input"), std::string::npos)
+            << what << "：失败消息没有点名『输出不能覆盖输入』这条规则，实际 message = "
+            << run.result.message;
+        // 文案可读性的另一半：不许是 std/Win32 的原文（"filesystem_error"/"No such file"
+        // 这类拼法出现就说明闸没挡住、失败是从底层抛上来的）。
+        EXPECT_EQ(run.result.message.find("filesystem_error"), std::string::npos)
+            << what << "：失败文案里混进了 std 原文：" << run.result.message;
+        EXPECT_FALSE(run.result.message.empty()) << what << "：失败文案是空串";
+    }
+
+    // ②③ 输入逐字节不变 + 那个位置没有多出/少掉任何文件（清单整份对撞，不只 exists()）。
+    c3n1ExpectDirectoryUntouched(dir, beforeNames, beforeBytes, what.c_str());
+}
+
+// 契约臂：output 先放一份**上一轮的完好 CSV 产物**，再让同一次动作在**行写出之后、且还有行
+// 没写完**的时候被取消 ⇒ 旧产物逐字节不变、目录清单不变、没有 *.gis-tmp-* 残留。
+// 载体是取消式 reporter T17CancellableProgress（产品代码里不开任何测试缝）；cancelAfter 与
+// rowsBeforeThrow 都按该动作源码里的进度调用次序手算，算式写在各用例的注释块里。
+// ⚠ 假载体形态（本轮取证实测到，必须挡掉）：夹具若只产 1 行，取消点写完那一行才抛出 ⇒
+//   "半件"恰好等于完整产物，旧产物字节"看起来没变"，本臂在未修复的实现上也会绿。
+//   ⇒ 判据把"完整行数 > 抛出前已写行数"钉成前置断言，任何一侧退化成相等都当场红。
+void csv7RunContractArm(gis::framework::IGisPlugin* plugin, const Csv7Case& item,
+                        gis::core::ProgressReporter& plainProgress) {
+    const fs::path dir = c3n1FreshDir(std::string("csv7_mid_") + item.tag);
+    ASSERT_TRUE(fs::exists(dir)) << "夹具目录建不出来：" << dir.u8string();
+
+    const std::string inputPath = utf8PathString(dir / fs::u8path(item.inputName));
+    ASSERT_TRUE(item.writeFixture(inputPath)) << "夹具写入失败：" << inputPath;
+
+    const fs::path output = dir / fs::u8path(item.outputName);
+    const std::string outputPath = utf8PathString(output);
+    const auto params = csv7Params(item, inputPath, outputPath);
+
+    // ① 前置成功趟：产出"改前就存在的完好旧产物"，并**现数它的行数**。
+    const auto first = plugin->execute(params, plainProgress);
+    ASSERT_TRUE(first.success)
+        << item.action << "：前置产物没做出来，契约臂无从谈起：" << first.message;
+    ASSERT_TRUE(fs::exists(output)) << item.action << "：前置产物文件不存在：" << outputPath;
+    const std::size_t fullRows = csv7CountDataRows(output);
+    ASSERT_EQ(fullRows, item.expectedRows)
+        << item.action << "：前置产物的数据行数与手算期望不符（期望 " << item.expectedRows
+        << "，实到 " << fullRows << "）⇒ 夹具或动作的产条数变了，本臂的取消算式作废，先重新现读";
+    // 取消点必须落在"已经写过若干行、而且还有行没写完"的中间：这是本臂不是假载体的机器判据
+    // （rowsBeforeThrow 由该动作的进度次序手算、并在红态实测过，见用例注释与本文件的报告读数）。
+    ASSERT_GT(item.expectedRows, item.rowsBeforeThrow)
+        << item.action << "：完整产物只有 " << item.expectedRows
+        << " 行、取消点前已写 " << item.rowsBeforeThrow
+        << " 行 ⇒ 半件恰好等于整件，本臂退化成恒真的假载体，夹具要加重";
+    ASSERT_GT(item.rowsBeforeThrow, 0u)
+        << item.action << "：取消点前一行都没写出 ⇒ 本臂只打了『刚打开文件』那一格，不是中途失败";
+
+    const auto beforeNames = c3n1ListFiles(dir);
+    const auto beforeBytes = c3n1CollectBytes(dir);
+    ASSERT_GE(beforeBytes.size(), 1u) << item.action << "：夹具目录是空的";
+
+    // ② 同一次动作，这次中途被取消。
+    const std::string what = std::string("契约臂[") + item.action + "] 中途取消";
+    T17CancellableProgress cancelling(item.cancelAfter);
+    EXPECT_THROW(plugin->execute(params, cancelling), gis::core::CancelledException)
+        << what << "：动作没有按取消抛出 CancelledException ⇒ 取消缝没落在行写出之后（假载体）";
+
+    // ③④ 旧产物逐字节不变、目录前后一致、没有 *.gis-tmp-* 残留。
+    c3n1ExpectDirectoryUntouched(dir, beforeNames, beforeBytes, what.c_str());
+}
+
+void csv7RunBothArms(gis::framework::IGisPlugin* plugin, const Csv7Case& item,
+                     gis::core::ProgressReporter& plainProgress) {
+    ASSERT_NE(plugin, nullptr) << "plugin not loaded: vector";
+    csv7RunGateArm(plugin, item, 0, plainProgress);
+    csv7RunGateArm(plugin, item, 1, plainProgress);
+    csv7RunContractArm(plugin, item, plainProgress);
+}
+
 } // namespace
 
 // ── J1：中途失败 ⇒ 旧产物逐字节不变 + 一个临时件都不留 ─────────────────────────────
@@ -20232,6 +20609,101 @@ TEST_F(PluginTest, VectorDoubleInputOutputMustNotOverwriteSecondInput) {
             }
         }
     }
+}
+
+// ── 批次 D / D0-C3（Task 9）：7 个 CSV 检查动作各一条（闸臂 × 2 拼法 + 契约臂）────────
+// 每条用例的两臂分工：
+//   闸臂（csv7RunGateArm，两种拼法）—— 缺陷 A：`--output` 指回输入那个矢量文件。
+//     改前红态：ofstream(output, trunc) 把输入就地清空、动作还报 success ⇒ ②③④ 三条一起红。
+//   契约臂（csv7RunContractArm）—— 缺陷 B：写入中途被取消。
+//     改前红态：目标位置留下上一份产物被截断后的半件（字节与清单都对不上）。
+// cancelAfter / expectedRows / rowsBeforeThrow 全部按**该动作源码里的进度调用次序**手算，
+// 前提是"抛出点落在已写若干行、而且还有行没写完的中间"（前置趟现数行数 + 两条行数对撞
+// 就是这一前提的机器判据，见 csv7RunContractArm ①）。
+// ⚠ 现读更正（任务书点名的 dangling`:43` 不是行循环里的取消点，它在 ofstream 打开**之前**的
+//   要素扫描循环里）：dangling 的行循环取消点在"ofs << 那一行"之后，本臂用它。
+
+TEST_F(PluginTest, VectorAdjacencyOutputEqualsInputFailsAndKeepsFile) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+    // 进度次序：(0.1)=#1 → (0.2)=#2 → (0.35)=#3 → 对(0,1)：Touches 真 ⇒ **先写行**
+    // → throwIfCancelled（未 armed）→ onProgress=#4（armed）→ 对(0,2)：隔一格、不相挨
+    // ⇒ 该分支里的 throwIfCancelled 抛出 ⇒ 抛出前已写 1 行、完整产物 5 行（6 只共边正方形的
+    //   相邻对数）⇒ 半件 = 1 行 ≠ 整件 = 5 行。
+    const Csv7Case item{ "adjacency", "adjacency", "adjacency_in.gpkg", "adjacency_out.csv",
+                         4, 5u, 1u, csv7WriteTouchingChainGpkg };
+    csv7RunBothArms(p, item, progress_);
+}
+
+TEST_F(PluginTest, VectorDanglingEndpointOutputEqualsInputFailsAndKeepsFile) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+    // 进度次序：(0.1)=#1 → (0.2)=#2 → 扫描循环 4 个要素 =#3,#4,#5,#6 → 端点循环 i=0：写行 →
+    // throwIfCancelled → onProgress=#7 → i=1：写行 → throwIfCancelled → onProgress=#8（armed）
+    // → i=2：写行 → throwIfCancelled 抛出 ⇒ 抛出前已写 3 行、完整产物 8 行（4 条线段 × 2 端点，
+    //   8 个端点各只出现一次 ⇒ 全是悬挂端点）。
+    // ⚠ 现读更正：任务书点名的 `:43` 那个取消点在 ofstream **之前**的要素扫描循环里，不是行循环；
+    //   本臂用的是行循环里"ofs << 那一行"之后的那个取消点（现读在 vector_plugin_dangling_endpoint_check.inc
+    //   的端点循环内，6 空格缩进）。
+    const Csv7Case item{ "dangling_endpoint_check", "dangling", "dangling_in.gpkg",
+                         "dangling_out.csv", 8, 8u, 3u, csv7WriteDanglingSegmentsGpkg };
+    csv7RunBothArms(p, item, progress_);
+}
+
+TEST_F(PluginTest, VectorDuplicatePointOutputEqualsInputFailsAndKeepsFile) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+    // 进度次序：(0.1)=#1 → (0.25)=#2 → P1（首见键、不产行）→ throwIfCancelled（未 armed）
+    // → onProgress=#3（armed）→ P2（与 P1 同坐标 ⇒ **写出一行**）→ throwIfCancelled 抛出
+    // ⇒ 抛出前已写 1 行、完整产物 6 行（7 只同坐标的点 ⇒ 从第 2 只起每只一行）。
+    const Csv7Case item{ "duplicate_point_check", "duplicate_point", "duplicate_point_in.gpkg",
+                         "duplicate_point_out.csv", 3, 6u, 1u, csv7WriteDuplicatePointGpkg };
+    csv7RunBothArms(p, item, progress_);
+}
+
+TEST_F(PluginTest, VectorHoleOutputEqualsInputFailsAndKeepsFile) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+    // 进度次序：(0.1)=#1 → (0.25)=#2 → F1（带洞 ⇒ 写行）→ throwIfCancelled（未 armed）
+    // → onProgress=#3（armed）→ F2（带洞 ⇒ 再写一行）→ throwIfCancelled 抛出
+    // ⇒ 抛出前已写 2 行、完整产物 6 行（6 只带洞的面 + 1 只无洞的不出行）。
+    const Csv7Case item{ "hole_check", "hole", "hole_in.gpkg", "hole_out.csv",
+                         3, 6u, 2u, csv7WriteHoledPolygonGpkg };
+    csv7RunBothArms(p, item, progress_);
+}
+
+TEST_F(PluginTest, VectorMultipartOutputEqualsInputFailsAndKeepsFile) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+    // 进度次序与 hole 同形：(0.1)=#1 → (0.25)=#2 → F1（2 部件 ⇒ 写行）→ throwIfCancelled
+    // → onProgress=#3（armed）→ F2（1 部件 MultiPolygon，右半边成立 ⇒ 再写一行）
+    // → throwIfCancelled 抛出 ⇒ 抛出前已写 2 行、完整产物 6 行（6 只多部件 + 1 只普通面）。
+    const Csv7Case item{ "multipart_check", "multipart", "multipart_in.gpkg", "multipart_out.csv",
+                         3, 6u, 2u, csv7WriteMultipartGpkg };
+    csv7RunBothArms(p, item, progress_);
+}
+
+TEST_F(PluginTest, VectorOverlapOutputEqualsInputFailsAndKeepsFile) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+    // 进度次序：(0.1)=#1 → (0.2)=#2 → (0.35)=#3 → 对(0,1)：相交且重叠面积 25>0 ⇒ **先写行**
+    // → throwIfCancelled（未 armed）→ onProgress=#4（armed）→ 对(0,2)：只共一个点 ⇒ 面积为 0
+    // ⇒ 不产行，走到循环体尾部的 throwIfCancelled 抛出 ⇒ 抛出前已写 1 行、完整产物 5 行。
+    const Csv7Case item{ "overlap_check", "overlap", "overlap_in.gpkg", "overlap_out.csv",
+                         4, 5u, 1u, csv7WriteOverlappingChainGpkg };
+    csv7RunBothArms(p, item, progress_);
+}
+
+TEST_F(PluginTest, VectorTopologyOutputEqualsInputFailsAndKeepsFile) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+    // 进度次序：(0.1)=#1 → (0.2)=#2 → (0.35)=#3 →（逐要素的 empty/invalid 循环不产进度、
+    // 本夹具也不产行）→ 对(0,1)：Equals 真 ⇒ **先写 duplicate_geometry 一行**
+    // → throwIfCancelled（未 armed）→ onProgress=#4（armed）→ 对(0,2)：跨组、既不相交也非等值
+    // ⇒ 走到该分支的 throwIfCancelled 抛出 ⇒ 抛出前已写 1 行、完整产物 4 行（4 组同形面）。
+    const Csv7Case item{ "topology_check", "topology", "topology_in.gpkg", "topology_out.csv",
+                         4, 4u, 1u, csv7WriteDuplicatePairsGpkg };
+    csv7RunBothArms(p, item, progress_);
 }
 
 // ── J2：成功路径的产物形态一个字没变 ────────────────────────────────────────────────
