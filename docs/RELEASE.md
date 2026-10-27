@@ -1425,7 +1425,7 @@ B3 当年做的是标记时机与干净机器语义，不是清理 ⇒ 不新造
 | **N146** GUI `requiredKeys` 未覆盖"按动作硬失败"的键 | **列批次 D** | 现值由 `docs_match_cli` 的 `required` 判据承重：参数表"必填=是"与二进制 `requiredKeys` 已 `drift=0`；N146 说的是另一半——**二进制不标必填但代码硬失败**的键（`viewshed` 的 `observer_x/observer_y` 属此类）。守卫目前只比"标了的"不比"没标的"⇒ 需要新增一条"硬失败键 ⊆ requiredKeys"判据，并逐动作取证哪些算硬失败。成本：判据 + 每动作取证，不能靠猜。 |
 | **N147** `viewshed` 观察点、`reservoir_volume` 水位缺省静默按 0 算 | **文档承重、关闭** | `视域分析.md` 参数表现值已写"不填按 `0` 计算（多半落在数据范围外，结果会是'全部不可见'），实际使用必须显式给出"；库容的 `water_level=0` 是**合法水位**（海平面），不是"缺省即无意义"。⇒ 与 N146 合并处理：真正要做的是把 `observer_x/observer_y` 升为必填（属 GUI/CLI 契约变更，不在批次 C 范围）。 |
 | **N148** 叠加类对"标准化后仍非法"的输入几何**逐条静默丢弃、不计数** | **列批次 D（建议第一优先）** | 承重代码：`common.inc:198` 的 `if (geom && !geom->IsEmpty())` 与 `collectNormalizedFeatures` 的镜像判据，四个动作共用（`overlay.inc:65/603/812`、`buffer_clip.inc:223`）⇒ 产物可以"少一块"而元数据无痕，只有全表空才失败。修法是**附加式**（新增 `overlay_skipped_feature_count` 之类的键，不改任何现有值），但要同时动两个镜像收集器（注释明令二者逐字同规则）+ 4 个动作的 metadata + 5 篇文档 + 判据 ⇒ 是一刀独立工单，不该塞进收口轮。 |
-| **N149** `vector.repair` 把 EMPTY 几何原样写出并计入 `repaired_count` | **列批次 D** | `common.inc:113-116` 对 EMPTY 返回非空指针的空克隆 ⇒ 过不了 `repair.inc:77` 的 `if (!repaired)` ⇒ 原样写出并计数，`repaired_count + skipped_count` 仍自洽 ⇒ 掩盖"空几何一个都没清掉"。改法（EMPTY 归进 skipped）会**改变已发布动作的计数值** ⇒ 需要产品拍板，不是收口轮能替用户决定的。 |
+| **N149** `vector.repair` 把 EMPTY 几何原样写出并计入 `repaired_count` | **本轮已修**（`3dbeb5e`） | **本行描述的是裁定时的旧态**：`common.inc:113-116` 对 EMPTY 返回非空指针的空克隆 ⇒ 过不了 `repair.inc:77` 的 `if (!repaired)` ⇒ 原样写出并计数，`repaired_count + skipped_count` 仍自洽 ⇒ 掩盖"空几何一个都没清掉"。改法（EMPTY 归进 skipped）会**改变已发布动作的计数值** ⇒ 需要产品拍板：**2026-10-27 用户拍案①，同日由 `3dbeb5e` 落地**，判据 `PluginTest.VectorRepairCountsEmptyGeometryAsSkipped`（四件套 + 产物身份集合），落地详情见下文「批次 D 代码刀 D0-A7 落地（2026-10-27）」小节。共享的 `cloneNormalizedGeometry` 未动（上抬会波及 `dissolve` 与 `buildNormalizedUnion`）。 |
 | **N150** `vector.spatial_join` 的"不自计"按 `fs::equivalent` 判定 ⇒ 换一种路径拼法就在自计/不自计之间跳变 | **列批次 D** | 先要定"什么叫同一个图层"（路径等价？还是同一数据集 + 同一图层名/句柄？）——口径未定就改会把一种错误换成另一种。另 `join_value` 因 `SetWidth(254)` 在长汇总串下是否被驱动截断**至今未取证**（批次 C 两席都登记为未判定）⇒ 这两条必须各带一次实测，不适合塞进收口轮。 |
 | **N151** `raster_manage.proximity` 丢弃 `GetGeoTransform` 返回值 | **本轮已修**（`15712fd`） | 缺变换即硬失败、判在写盘之前；判据 `PluginTest.ProximityFailsWithoutGeotransform` 先红后绿。`opencv_wrapper.cpp:87-88`（`matsToGdalTiff`）是同形态第二处，射程之外未动 ⇒ 一并列批次 D。 |
 | （新）**CSV 两个检查动作无临时件契约、无"输出≠输入"闸** | **列批次 D** | `overlap_check.inc`、`multipart_check.inc` 走裸 `ofstream(..., trunc)`，不在 C3n 那 24 个写出点之内 ⇒ 输出路径写错会直接覆盖同名文件。文档已如实写明。迁移到 `VectorStagedOutput` 成本低（CSV 不是 GDAL 数据集，但等价闸照样适用），需要一条反向对照判据。 |
@@ -1622,7 +1622,23 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   旧态读数 `repaired=5 / skipped=0 / 产物要素=5 / 产物内 EMPTY=2` ⇒ 新态 `3 / 2 / 3 / 0`；
   变异取证：把判据回退成 `if (!repaired)` ⇒ 该用例当场复红（既有 `VectorRepairExecution` 不受影响）。
   文档 `docs/算法说明/矢量数据处理/修复.md` 的口径陈述（算法内容/处理流程/结果解释/输出说明）已按新口径改写。
-- **N156 已修（用户拍：一行修 + 成对改）**：`spatial_join.inc` 与 `nearest.inc` 里那行同形的
+  **修复轮 1（2026-10-27，评审席逮到两处，本条为追记）**：
+  ① 上面这条新支路**自己引入了一次回归** —— EMPTY 支路 `continue` 前没有 `delete repaired`（`delete` 只在
+  成功支路），而改前该支路只有 `nullptr` 能到达 ⇒ 泄漏不存在 ⇒ **这是新引入的，不是既病**。改法照先例的
+  **所有权写法**而不是只照判据：克隆一拿到手就交 `std::unique_ptr<OGRGeometry>` 持有（与
+  `vector_plugin_singlepart.inc:85` 同形），`dstFeat->SetGeometry(repaired.get())` 之后函数体内不再出现
+  手写 `delete` ⇒ 三条出口（跳过 `continue`、`CreateFeature` 失败提前 `return`、正常走完）只有**一套**所有权。
+  ② 产物侧判据补身份：用例除个数外还断产物的 `name` 集合 = `{invalid-1, ok-1, ok-2}`，
+  挡住“把 EMPTY 丢掉但复制一条合法件充数”这类能蒙过纯个数判据的错法。
+  ⚠ **这条判据抓不到所有权**（如实登记，不拿恒真断言冒充有判据）：把所有权改回“裸指针 + 跳过支路漏
+  `delete`”的缺失态（即 `3dbeb5e` 的形状，工作树 blob `c406697c36bec253495a9b904f6f2f0dc93db8f3`）重建后重跑
+  受影响族 ⇒ **28/28 全绿、零新红**；本仓 `tests/` 也没有堆差分形态可搭（`_CrtMemCheckpoint` /
+  `_CrtDumpMemoryLeaks` / LSan grep = 0 命中），产物读数对“每条被跳过的 EMPTY 泄一次克隆”完全不敏感。
+  ⇒ 这一处**没有廉价判据**，防住它的是所有权写法本身，不是用例。
+- **N156 已修（用户拍：一行修 + 成对改）—— ⚠ 用户可见变更：`--join_vector` / `--nearest_vector` 写成
+  `GPKG:"<路径>":<图层>` 前缀串时，产物数值会变**（同一份数据：`join_count` 由 2 变 3、`nearest` 的
+  `nearest_dist` 由手算的正数变成"自己到自己 = 0"）。裸路径写法的读数不变 ⇒ 只有改串的人会遇到跳变。
+  `spatial_join.inc` 与 `nearest.inc` 里那行同形的
   `const bool sameDataset = fs::equivalent(fs::u8path(input), fs::u8path(joinVector/nearestVector));`
   用的是**会抛**的 `std::filesystem::equivalent` 重载 ⇒ 当 `--join_vector` / `--nearest_vector` 写成
   `GPKG:"<路径>":<图层>`（GDAL 与 `openVector` 都**接受**的合法数据源串）时，引号对 filesystem 是非法字符
@@ -1630,16 +1646,28 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   （`Error: equivalent: The filename, directory name, or volume label syntax is incorrect.`）吐给用户。
   两处都换成**带 `error_code` 的重载**（`std::error_code sameDatasetEc;` + 三参 `equivalent`），异常吞掉并
   按“不是同一个文件”处理 ⇒ 与同仓 `common.inc:412/645` 既有写法统一。
-  **未做**（用户本轮未批）：不解析 `GPKG:` 前缀取真路径再比 —— 那属 `--join_layer` 那笔账；
+  **未做**（用户本轮未批）：解析 `GPKG:` 前缀取真路径再比 —— 那属 `--join_layer` 那笔账，本轮一行未改；
   同一文件的不同图层做连接/目标时今天仍按“同一数据集 + 同一 FID”判据处理（Task 5 实测到 `join_count` 全 0），
   文档已如实写成未修面。
   判据 2 条（`VectorSpatialJoinAcceptsPrefixedGpkgSourceString` / `VectorNearestAcceptsPrefixedGpkgSourceString`），
   各两拍：① 同一文件裸路径 ⇒ 自计仍被排除（`join_count=2`；`nearest` 为 A→B(5)/B→A(5)/C→B(√85) 手算值）；
-  ② 同一文件加 `GPKG:"…":<图层>` 前缀 ⇒ 不许抛、产物照常（`join_count=3`；`nearest` 为自己、距离 0）。
+  ② 同一文件加 `GPKG:"…":<图层>` 前缀 ⇒ 不许抛，动作跑完，**数值按“不是同一个文件”给**（`join_count=3`；
+  `nearest` 为自己、距离 0）—— 不是“产物照常”，产物里的数就是变了。
   旧态读数：两条都 `threw=true`、`e.what()` 逐字含上面那句 std 原文 ⇒ 红；改后 27/27 绿。
   变异取证：把两处**成对**换回无 `ec` 重载 ⇒ 两条当场复红（拍①那条不红，说明自计语义由拍①独立守着，
   写死 `sameDataset=false` 这类假修会被拍①打回）。
+  **修复轮 1（2026-10-27）追记（B5）**：两条用例拍②的数值断言原先包在 `if (prefixed.success) { … }` 里 ——
+  EXPECT 失败照样红、不算恒真，但**动作没成功时数值就被静默跳过**；已改成 `ASSERT_TRUE(prefixed.success)`
+  打头、数值断言无条件走到，失败先响在最前面。
   文档同步：`空间连接.md`（结果解释 + 注意事项）、`最近邻.md`（算法内容 + 注意事项）按“路径等价判定”改写并写明未修面。
+- **（新立挂账）N157 —— 本刀新开了一条输出保护的风险面，不在 D0-A7 修**。机制（控制器已核代码）：
+  `vector_plugin_common.inc` 的"输出不得等于输入"保护闸在 `start()` 里走 `fs::equivalent(input, target_, ec)`，
+  传的是**整条输入串**；`GPKG:"<路径>":<图层>` 这种合法但非纯路径的 GDAL 数据源串对 filesystem 而言不是路径
+  ⇒ 带 `ec` 的重载不抛但恒得 `false` ⇒ **保护对带前缀的写法失效**。N156 之前同一条命令会先被 `filesystem_error`
+  撞死在 `rc=1`（错着但挡住了），N156 之后它放行 ⇒ 若用户写 `--join_vector='GPKG:"x.gpkg":LB'` 且 `--output x.gpkg`，
+  以前写不进去、**现在会真往自己输入上写**。影响面 = `spatial_join` / `nearest` 两个动作的前缀串用法。
+  本轮处置（按裁定只做文档与登记，**不改守卫**）：两篇文档把"可以写成前缀串"改成中性描述并点名本条挂账；
+  守卫本身的修法（解析前缀取真路径后再比等价）紧随其后另开一小刀，未批前不要照前缀串写覆盖自己输入的用法。
 
 ### `ctest -j` 并行：现在开会得到假失败
 

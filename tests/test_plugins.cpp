@@ -9144,6 +9144,7 @@ TEST_F(PluginTest, VectorRepairCountsEmptyGeometryAsSkipped) {
 
     int productTotal = 0;
     int productEmpty = 0;
+    std::set<std::string> productNames;   // A2：产物侧不只数个数，还要认身份
     outLayer->ResetReading();
     OGRFeature* productFeat = nullptr;
     while ((productFeat = outLayer->GetNextFeature()) != nullptr) {
@@ -9154,10 +9155,15 @@ TEST_F(PluginTest, VectorRepairCountsEmptyGeometryAsSkipped) {
         } else if (geom->IsEmpty()) {
             ++productEmpty;
         }
+        productNames.insert(productFeat->GetFieldAsString("name"));
         OGRFeature::DestroyFeature(productFeat);
     }
     EXPECT_EQ(productTotal, 3) << "产物按第二个客户端读到的要素数不是 3";
     EXPECT_EQ(productEmpty, 0) << "EMPTY 不得原样写进产物（案①的产物侧判据）";
+    // 只数 3/3 时，"把两条 EMPTY 丢掉、再复制一条合法件凑够 3 条"这类错法能蒙过个数判据；
+    // 身份集合把"哪三条"钉死：合法件各一条、非法件被 MakeValid 救回，EMPTY 件一条都不许出现。
+    EXPECT_EQ(productNames, (std::set<std::string>{"invalid-1", "ok-1", "ok-2"}))
+        << "产物要素的身份集合必须正好是这 3 条（夹具名见本用例开头的 addFeature）";
     GDALClose(outDs);
 }
 
@@ -9404,16 +9410,16 @@ TEST_F(PluginTest, VectorSpatialJoinAcceptsPrefixedGpkgSourceString) {
         thrownText = e.what();
     }
     ASSERT_FALSE(threw) << "合法 GDAL 数据源串不得抛 filesystem_error：" << thrownText;
-    EXPECT_TRUE(prefixed.success) << prefixed.message;
     EXPECT_EQ(prefixed.message.find("volume label syntax"), std::string::npos)
         << "不许把 Windows 的 std 原文吐给用户：" << prefixed.message;
-    if (prefixed.success) {
-        const std::map<std::string, int> prefixedCounts = readJoinCounts();
-        ASSERT_EQ(prefixedCounts.size(), 3u);
-        for (const auto& entry : prefixedCounts) {
-            EXPECT_EQ(entry.second, 3)
-                << "带前缀的数据源串按\"不是同一个文件\"处理 ⇒ 自计算进来；label=" << entry.first;
-        }
+    // B5（评审席）：原先把数值断言包在 `if (prefixed.success)` 里 ⇒ 动作没成功时整段被静默跳过，
+    // 只剩一句 message。改成 ASSERT 先响在最前面，数值断言无条件走到。
+    ASSERT_TRUE(prefixed.success) << "拍② 的动作没跑成，下面的数值断言无意义：" << prefixed.message;
+    const std::map<std::string, int> prefixedCounts = readJoinCounts();
+    ASSERT_EQ(prefixedCounts.size(), 3u);
+    for (const auto& entry : prefixedCounts) {
+        EXPECT_EQ(entry.second, 3)
+            << "带前缀的数据源串按\"不是同一个文件\"处理 ⇒ 自计算进来；label=" << entry.first;
     }
 }
 
@@ -9509,17 +9515,16 @@ TEST_F(PluginTest, VectorNearestAcceptsPrefixedGpkgSourceString) {
         thrownText = e.what();
     }
     ASSERT_FALSE(threw) << "合法 GDAL 数据源串不得抛 filesystem_error：" << thrownText;
-    EXPECT_TRUE(prefixed.success) << prefixed.message;
     EXPECT_EQ(prefixed.message.find("volume label syntax"), std::string::npos)
         << "不许把 Windows 的 std 原文吐给用户：" << prefixed.message;
-    if (prefixed.success) {
-        const std::map<std::string, std::pair<std::string, double>> prefixedRows = readNearest();
-        ASSERT_EQ(prefixedRows.size(), 3u);
-        for (const auto& entry : prefixedRows) {
-            EXPECT_EQ(entry.second.first, entry.first)
-                << "带前缀的数据源串按\"不是同一个文件\"处理 ⇒ 自己就是自己的最近邻";
-            EXPECT_NEAR(entry.second.second, 0.0, 1e-9);
-        }
+    // B5（评审席）：同上 —— 数值断言不再被 `if (prefixed.success)` 兜住，动作失败先由 ASSERT 响。
+    ASSERT_TRUE(prefixed.success) << "拍② 的动作没跑成，下面的数值断言无意义：" << prefixed.message;
+    const std::map<std::string, std::pair<std::string, double>> prefixedRows = readNearest();
+    ASSERT_EQ(prefixedRows.size(), 3u);
+    for (const auto& entry : prefixedRows) {
+        EXPECT_EQ(entry.second.first, entry.first)
+            << "带前缀的数据源串按\"不是同一个文件\"处理 ⇒ 自己就是自己的最近邻";
+        EXPECT_NEAR(entry.second.second, 0.0, 1e-9);
     }
 }
 

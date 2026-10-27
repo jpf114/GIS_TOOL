@@ -73,7 +73,11 @@ gis::framework::Result VectorPlugin::doRepair(
         OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
         dstFeat->SetFrom(feat);
 
-        OGRGeometry* repaired = cloneNormalizedGeometry(feat->GetGeometryRef());
+        // 所有权照抄先例 vector_plugin_singlepart.inc:85 的**写法**（不只抄判据）：克隆一拿到手就交
+        // 给 std::unique_ptr 持有。OGRFeature::SetGeometry 内部做的是克隆，故交出 .get() 后本地仍由
+        // 智能指针负责释放 ⇒ EMPTY/null 支路的 continue、以及 CreateFeature 失败支路的提前 return
+        // 都不必各自手写 delete（评审席逮到的正是"continue 前漏 delete repaired"这条新引入的泄漏）。
+        std::unique_ptr<OGRGeometry> repaired(cloneNormalizedGeometry(feat->GetGeometryRef()));
         // N149 案①（用户 2026-10-27 拍）：cloneNormalizedGeometry 对 EMPTY 返回的是**非空指针的
         // 空克隆**（common.inc 里 `if (!cloned || cloned->IsEmpty()) return cloned;`），所以只判
         // nullptr 会把 EMPTY 当成"修好了"：既计入 repaired_count，又原样写进产物。判据照抄本仓
@@ -90,8 +94,7 @@ gis::framework::Result VectorPlugin::doRepair(
             continue;
         }
 
-        dstFeat->SetGeometry(repaired);
-        delete repaired;
+        dstFeat->SetGeometry(repaired.get());
 
         if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
             OGRFeature::DestroyFeature(dstFeat);
