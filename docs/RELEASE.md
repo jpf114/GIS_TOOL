@@ -1607,6 +1607,22 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   字面判据 `if (geom && !geom->IsEmpty())` 在 `common.inc` 出现 3 次，第三处属于 `effectiveLayerGeometryType`，不是采集器镜像。
 - 自计行为今天**没有任何用例钉住**（`grep sameDataset|SelfJoin tests/test_plugins.cpp` = 0 命中）⇒ 新增红例是纯增、不撞既有断言。
 
+### 批次 D 代码刀 D0-A7 落地（2026-10-27）
+
+- **N149 已修（用户拍案①）—— ⚠ 用户可见变更：`vector.repair` 的 `repaired_count` / `skipped_count` 两个读数会变**。
+  `vector_plugin_repair.inc` 的 `doRepair` 原来只判 `if (!repaired)`，而 `cloneNormalizedGeometry` 对 EMPTY
+  返回的是**非空指针的空克隆**（`common.inc` 里 `if (!cloned || cloned->IsEmpty()) return cloned;`）
+  ⇒ EMPTY 既被计入 `repaired_count`、又被原样写进产物。改后判据与同仓既有先例 `vector_plugin_singlepart.inc:88`
+  一致：`if (!repaired || repaired->IsEmpty())` ⇒ **EMPTY 归 `skipped_count`，产物不再含 EMPTY**。
+  影响面：同一份输入重跑，`repaired_count` 减小、`skipped_count` 增大（变化量 = 输入里 EMPTY 要素的条数），
+  `repaired + skipped == 输入要素数` 这条恒等式不变 ⇒ 拿旧读数做差分或对账的脚本会看到跳变，这是**被批准的**行为变更。
+  只改 repair 本地，**共享的 `cloneNormalizedGeometry` 未动**（上抬会波及 `dissolve` 与 `buildNormalizedUnion`，那是另一笔账）。
+  判据 `PluginTest.VectorRepairCountsEmptyGeometryAsSkipped`：夹具 2 条合法 + 2 条 EMPTY + 1 条真非法（蝴蝶结），
+  四件套一起断（两个计数 + 产物要素数 + 产物内 EMPTY 个数，后两件由**第二个客户端** `GDALOpenEx` 重开产物读）；
+  旧态读数 `repaired=5 / skipped=0 / 产物要素=5 / 产物内 EMPTY=2` ⇒ 新态 `3 / 2 / 3 / 0`；
+  变异取证：把判据回退成 `if (!repaired)` ⇒ 该用例当场复红（既有 `VectorRepairExecution` 不受影响）。
+  文档 `docs/算法说明/矢量数据处理/修复.md` 的口径陈述（算法内容/处理流程/结果解释/输出说明）已按新口径改写。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、

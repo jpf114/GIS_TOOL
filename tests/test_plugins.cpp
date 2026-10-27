@@ -9043,6 +9043,124 @@ TEST_F(PluginTest, VectorRepairExecution) {
     GDALClose(outDs);
 }
 
+// ============== D0-A7 / N149：vector.repair 把 EMPTY 几何归 skipped_count ==============
+// 用户 2026-10-27 裁定走案①：EMPTY 归 skipped、产物不再原样写出 EMPTY；已发布动作的
+// repaired_count/skipped_count 两个读数因此改变 —— 这是被批准的行为变更，不是回归。
+// 判据是四件套：两个 metadata 计数 + 产物要素数 + 产物里 EMPTY 的个数。后两件用**第二个客户端**
+// （GDALOpenEx 重开产物）读，不信 execute 的返回值 —— 批次 C 的教训：`repaired+skipped==输入数`
+// 这个恒等式永成立，只看两键发现不了"EMPTY 被算进 repaired 且原样写进了产物"。
+TEST_F(PluginTest, VectorRepairCountsEmptyGeometryAsSkipped) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = utf8PathString(getTestDir() / "a7_n149_repair_input.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "a7_n149_repair_output.gpkg");
+
+    // 夹具 = 2 条合法 + 2 条 EMPTY + 1 条真非法（蝴蝶结自交），共 5 条。
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(input.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        // wkbUnknown：EMPTY 多边形与 EMPTY 多边形集合都要进得了夹具。
+        auto* layer = ds->CreateLayer("parcels", srs.get(), wkbUnknown, nullptr);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn nameField("name", OFTString);
+        ASSERT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+
+        auto addFeature = [layer](const char* name, const OGRGeometry& geom) {
+            OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            feat->SetField("name", name);
+            feat->SetGeometry(&geom);
+            const OGRErr err = layer->CreateFeature(feat);
+            OGRFeature::DestroyFeature(feat);
+            return err;
+        };
+
+        OGRPolygon okA;
+        {
+            OGRLinearRing ring;
+            ring.addPoint(0, 0);
+            ring.addPoint(10, 0);
+            ring.addPoint(10, 5);
+            ring.addPoint(0, 5);
+            ring.addPoint(0, 0);
+            okA.addRing(&ring);
+        }
+        OGRPolygon okB;
+        {
+            OGRLinearRing ring;
+            ring.addPoint(100, 100);
+            ring.addPoint(110, 100);
+            ring.addPoint(110, 105);
+            ring.addPoint(100, 105);
+            ring.addPoint(100, 100);
+            okB.addRing(&ring);
+        }
+        // 真非法：与 VectorRepairExecution 同一支蝴蝶结（挪到 (200,200) 一带免得与合法件重叠），
+        // MakeValid 之后非空 ⇒ 它必须仍归 repaired，用来挡住"顺手把 repaired 也判没了"的过修。
+        OGRPolygon bowtie;
+        {
+            OGRLinearRing ring;
+            ring.addPoint(200, 200);
+            ring.addPoint(250, 250);
+            ring.addPoint(250, 200);
+            ring.addPoint(200, 250);
+            ring.addPoint(200, 200);
+            bowtie.addRing(&ring);
+        }
+        OGRPolygon emptyPolygon;    // 无环 ⇒ IsEmpty()
+        OGRMultiPolygon emptyMulti; // 无部件 ⇒ IsEmpty()
+
+        ASSERT_EQ(addFeature("ok-1", okA), OGRERR_NONE);
+        ASSERT_EQ(addFeature("ok-2", okB), OGRERR_NONE);
+        ASSERT_EQ(addFeature("empty-1", emptyPolygon), OGRERR_NONE);
+        ASSERT_EQ(addFeature("empty-2", emptyMulti), OGRERR_NONE);
+        ASSERT_EQ(addFeature("invalid-1", bowtie), OGRERR_NONE);
+        GDALClose(ds);
+    }
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("repair");
+    params["input"] = input;
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    EXPECT_EQ(result.metadata.at("repaired_count"), "3")
+        << "口径 = 2 条合法 + 1 条 MakeValid 修好的非法；EMPTY 不再计入 repaired";
+    EXPECT_EQ(result.metadata.at("skipped_count"), "2")
+        << "N149 案①：2 条 EMPTY 归 skipped";
+
+    GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+        output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    ASSERT_NE(outDs, nullptr);
+    OGRLayer* outLayer = outDs->GetLayer(0);
+    ASSERT_NE(outLayer, nullptr);
+    EXPECT_EQ(outLayer->GetFeatureCount(FALSE), 3) << "产物要素数必须等于 repaired_count";
+
+    int productTotal = 0;
+    int productEmpty = 0;
+    outLayer->ResetReading();
+    OGRFeature* productFeat = nullptr;
+    while ((productFeat = outLayer->GetNextFeature()) != nullptr) {
+        ++productTotal;
+        OGRGeometry* geom = productFeat->GetGeometryRef();
+        if (!geom) {
+            ADD_FAILURE() << "产物第 " << productTotal << " 条要素没有几何";
+        } else if (geom->IsEmpty()) {
+            ++productEmpty;
+        }
+        OGRFeature::DestroyFeature(productFeat);
+    }
+    EXPECT_EQ(productTotal, 3) << "产物按第二个客户端读到的要素数不是 3";
+    EXPECT_EQ(productEmpty, 0) << "EMPTY 不得原样写进产物（案①的产物侧判据）";
+    GDALClose(outDs);
+}
+
 TEST_F(PluginTest, VectorGeomMetricsExecution) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);

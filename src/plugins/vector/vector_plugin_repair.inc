@@ -74,7 +74,13 @@ gis::framework::Result VectorPlugin::doRepair(
         dstFeat->SetFrom(feat);
 
         OGRGeometry* repaired = cloneNormalizedGeometry(feat->GetGeometryRef());
-        if (!repaired) {
+        // N149 案①（用户 2026-10-27 拍）：cloneNormalizedGeometry 对 EMPTY 返回的是**非空指针的
+        // 空克隆**（common.inc 里 `if (!cloned || cloned->IsEmpty()) return cloned;`），所以只判
+        // nullptr 会把 EMPTY 当成"修好了"：既计入 repaired_count，又原样写进产物。判据照抄本仓
+        // 既有先例 vector_plugin_singlepart.inc 的 `!normalized || normalized->IsEmpty()` ⇒ EMPTY 归 skipped。
+        // ⚠ 只改 repair 本地，**不动共享的 cloneNormalizedGeometry**（上抬会波及 dissolve 与
+        //   buildNormalizedUnion，那是另一笔账）。
+        if (!repaired || repaired->IsEmpty()) {
             ++skippedCount;
             OGRFeature::DestroyFeature(dstFeat);
             OGRFeature::DestroyFeature(feat);
