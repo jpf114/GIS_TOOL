@@ -1720,6 +1720,45 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   这条说的是"没被丢弃但维度掉了"）。**判据与修法未定**（候选：维度掉档记一笔、或按输入声明类型升型/拒绝、
   或只补文档口径），需用户拍板后另开一刀；本刀一行实现未动。
 
+### 批次 D 代码刀 D0-C3 落地（2026-10-27，Task 9 / 7 个 CSV 检查动作）
+
+- ⚠ **用户可见变更：以前会被截断的那几种拼法现在报失败。** `vector` 的 7 个写 CSV 的检查动作
+  `adjacency` / `dangling_endpoint_check` / `duplicate_point_check` / `hole_check` / `multipart_check` /
+  `overlap_check` / `topology_check`，把 `--output` 指回 `--input` 那个矢量文件时（含 `dir\.\同名`
+  这种指向同一个文件的另一种拼法），改前是**输入被就地清空、动作还报成功**
+  （CLI 实测：42 字节的输入变成 32 字节、`rc=0`），现在改成在任何建目录/建文件之前硬失败：
+  `Output must not be the same file as input: <输出> (input: <输入>)`、`rc=1`、输入逐字节不变。
+- 同一批动作**写入中途失败**（取消 / 磁盘满 / 替换失败）时的交付形态也变了：改前目标位置留下
+  "上一份产物被截断后的半件"（实测 7 条红态：完整产物 71~145 字节被截成 37~70 字节），
+  现在与批次 C 的 C3n 契约同口径 —— 旧产物逐字节保持原样、不留半件、临时件删干净。
+- 实现走的是**轻量等价路径**（CSV 不是 GDAL 数据集，套不进 `VectorStagedOutput`）：
+  `vector_plugin_common.inc` 新增 `CsvStagedOutput`（`start` = 等价闸 → 建父目录 → 同目录临时件 → 开流；
+  `stream` = 动作原来那个 `ofs`；`commit` = 关流 → 写失败即报失败 → 同卷替换）。
+  与数据集侧**同源**的两件事：临时件命名仍是 `<目标 stem>.gis-tmp-<进程号>-<序号><扩展名>`
+  （序号是**一把**进程内计数器，两个类型共用 ⇒ 同目录同 stem 也不会撞名）；
+  替换原语 `replaceStagedFile`（Win 侧 `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)`、
+  故意不带 `COPY_ALLOWED`；POSIX 侧 `fs::rename(..., ec)`）从 `VectorStagedOutput` 的私有静态成员
+  **原样提到文件作用域**共用，分支与文案逐字未改，仓库里**没有**第二份实现。
+- 等价判定用**三参带 `std::error_code`** 的 `fs::equivalent`（N156 的教训：无 `ec` 的重载对
+  `GPKG:"<路径>":<图层>` 这类合法 GDAL 数据源串抛 `filesystem_error`，std 原文会吐给用户）。
+  ⚠ 该类带前缀/带图层号的拼法**不受本闸保护**（剥前缀再比是独立挂账 N157（#157）的射程，本刀不做，
+  已在闸旁与 7 篇文档里各留一处说明，免得它悄悄消失）。
+- 判据（Debug）：7 条新用例
+  `PluginTest.Vector{Adjacency,DanglingEndpoint,DuplicatePoint,Hole,Multipart,Overlap,Topology}OutputEqualsInputFailsAndKeepsFile`，
+  每条两臂 = 闸臂（同串 + `dir\.\` 两种拼法，判"必须干净失败 + 文案点名规则 + 输入逐字节不变 +
+  目录清单不变"）与契约臂（`T17CancellableProgress` 让取消点落在"已写出若干行、而且还有行没写完"的
+  中间；前置趟现数完整产物行数，并把它与"抛出前已写行数"对撞，防"半件恰好等于整件"的假载体）。
+  取证顺序：先红（闸臂 28 条 + 契约臂 7 条）⇒ 实现后 7/7 绿 ⇒ **反向臂**（只摘闸、其余保留）
+  7 条闸臂全红 14 条判点、契约臂 0 红 ⇒ 两半各自承重。
+- 注册数：Debug **767 → 774**（+7）。Release 树本刀未重编 ⇒ Release 侧一律**未验收**。
+- 文档：`矢量数据处理/{邻接关系,悬挂端点检查,重复点检查,孔洞检查,多部件检查,重叠检查,拓扑检查}.md`
+  的"输出说明"段各加两条（输出不得指向输入；失败时旧产物逐字节保持原样）。参数表未动。
+- ⚠ **本轮没做/没做到的**（如实登记）：① 本刀**没有**给这 7 个动作补"产物内容级"的成功路径判据
+  （J2/J3 那两族只覆盖数据集写出点，CSV 侧的成功形态仍只有各动作既有的 `...Execution` 用例在判）；
+  ② 台账"批次 C 裁定表"里那一行（原文 `（新）**CSV 两个检查动作无临时件契约、无"输出≠输入"闸**`，
+  只点名了 `overlap_check` 与 `multipart_check`）**未更新** ⇒ 它现在既漏 5 个动作、又还挂着"列批次 D"，
+  改它属于登记表维护，按本刀纪律交回控制器处理；③ N157（前缀拼法）仍开账。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
