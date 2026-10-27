@@ -41,9 +41,16 @@ EXIT_USAGE = 3
 #
 # ⚠ 期望值是"位点全集"的**独立锚点**（另一个口径数出来的：对整行文本做 TOKEN 子串计数），
 #   解析器分类结果必须满足 any == code + comment_line + block_comment + string_only，
-#   并且每个桶都等于下面写死的数。这是本仓"归零类验收必须先证覆盖"的落地：
+#   并且**钉住的**每个桶都等于下面写死的数（产品域钉全部字面量桶；测试域只钉 CODE 桶那一侧，
+#   理由与逐桶分工见下面第二域的注释——两域各自都跑锚点恒等式，一个都没少）。
+#   这是本仓"归零类验收必须先证覆盖"的落地：
 #   少分类一行（漏数）与多分类一行（把注释当代码）都会在这里红，而不是让"0 个违规"看着像好消息。
-#   现读来源：task-8-report.md 节 0 的 21 行逐行分类表（HEAD 7241b49）。
+#   独立复算（与解析器不同口径；下面两条现读 = 21 与 1，必须逐字等于上面的 any / comment_line）：
+#     grep -rn "GetGeoTransform(" src/ --include=*.cpp --include=*.h --include=*.hpp --include=*.cc --include=*.inc | grep -o "GetGeoTransform(" | wc -l
+#     grep -rn "GetGeoTransform(" src/ --include=*.cpp --include=*.h --include=*.hpp --include=*.cc --include=*.inc | grep -c "^[^:]*:[0-9]*:[[:space:]]*//"
+#   tests/ 用同样两条，但要先 `| grep -v geotransform_guard_fixtures`（夹具归自证臂管）。
+#   ⚠ 朴素 grep 只认得出**整行 //** 这一类注释，块注释/字符串里的同形态文本它数不到 ——
+#     所以这两条只能对撞 any 与 comment_line；block_comment/string_only 的覆盖由自证臂夹具负责。
 #   改产品代码里任何一个位点后必须同步这里，并把新读数的算式写在提交信息里。
 # ───────────────────────────────────────────────────────────────────────────────
 DOMAINS = [
@@ -62,9 +69,29 @@ DOMAINS = [
         "root": "tests",
         "exclude_parts": ("geotransform_guard_fixtures",),
         "allowlist_key": "test_entries",
+        # ⚠ 第二域**刻意不钉** any / comment_line / block_comment / string_only 这四个字面量桶。
+        # 原因是实测撞上的：测试侧的解释性注释会原样引用缺陷行 —— 本刀新增的 B/C 用例头
+        #   （tests/test_plugins.cpp:2091）与 F 用例头（:15604）各引了一次改前原文，:15576 那条是
+        #   既有的（BASE 7241b49 上是 :15484）⇒ 测试域的注释桶天然随散文增长，钉死它就等于
+        #   "以后每写一句注释都要来改守卫"，而那正是本仓记过账的坑：
+        #   "为解释某事写的注释会污染数那件事的 grep"。
+        # 不钉 ≠ 不判，三样兜底都在：①`any == code + comment_line + block_comment + string_only`
+        #   的锚点恒等式照样逐域对撞（漏分类当场红）；②分桶**能力**由自证臂 bad/ok 两个夹具钉死
+        #   （bad：any=7 code=3 comment_line=1 block_comment=1 string_only=2；
+        #     ok ：any=8 code=6 comment_line=1 block_comment=0 string_only=1 —— 全是字面量期望）；
+        #   ③本域真正承重的是 CODE 桶那一侧（3 位点 / 2 已判 / 1 点名豁免 / 0 违规 / 0 死白名单），
+        #     一个都没放松 ⇒ 注释误并进 CODE 会让 code 从 3 变 4 当场红，
+        #     新增未判的代码位点会让 violations 红，两个方向都还咬得住；只有"多写一句注释"不再需要改守卫。
+        # 产品域（src/）保留全部字面量桶：那里的散文由本刀统一写成**不含 TOKEN 字面量**的形式
+        #   （A/E 两条兜底理由注释同此），所以 comment_line 恒为 1 = terrain_plugin.cpp:1337
+        #   （BASE 上是 :1318，节3 在 F 位点上方插了代码才下移）这一条既有的行，独立锚点才守得住。
+        # ⚠ 本注释里出现的 any=6 / comment_line=3 一律是**写这句时的现读，不是判据**；
+        #   复算命令（逐字照跑即可）：
+        #   python tests/check_geotransform_guard.py --repo-root . --allowlist tests/geotransform_guard_allowlist.json
+        #   读 `GTGUARD SCAN domain=test(...) any=… code=… comment_line=…`，别拿这里的数去改期望值。
+        #   （本文件自己不在扫描范围内：只走 CPP_EXTS，所以这些 TOKEN 字面量不会污染读数。）
         "expect": {
-            "any": 4, "code": 3, "comment_line": 1, "block_comment": 0, "string_only": 0,
-            "checked": 2, "unchecked": 1, "allowlisted": 1, "violations": 0, "dead": 0,
+            "code": 3, "checked": 2, "unchecked": 1, "allowlisted": 1, "violations": 0, "dead": 0,
         },
     },
 ]

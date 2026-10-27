@@ -21,7 +21,7 @@
       "id": "E-cuttingTileWarped",
       "file": "src/plugins/cutting/cutting_plugin.cpp",
       "function": "CuttingPlugin::doTile",
-      "hint_line": 1264,
+      "hint_line": 1280,
       "signature": "warpedDS->GetGeoTransform(wgt);",
       "fallback": "double wgt[6] = {} 零初始化 + 上游两道闸（无 CRS 与北向上判据）+ GDALWarp 失败即返回 nullptr。",
       "reason": "当前调用点参数集下不可达（warpArgv 从不传 -dstmethod NO_GEOTRANSFORM），改它零可观测收益；批次 D Task 8 未批准动它。前提写在这里：一旦有人给 warpArgv 加 -dstmethod，本条兜底立刻失效，守卫会因 signature 变更而 DEAD 报红。"
