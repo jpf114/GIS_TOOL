@@ -2084,6 +2084,98 @@ TEST_F(PluginTest, PansharpenNoGeoTransformSkipsExtentCheck) {
     // 处置模式与 Task 20 的 RejectedFeatureWrite、Task 21 的 N45 现状锁一致。
 }
 
+// ============================================================================
+// 批次 D / Task 8（D0-C2 位点 B + C）：opencv_wrapper 的两个共享写出函数不再伪造地理参考
+//
+// 缺陷本体（现读 `src/core/src/opencv_wrapper.cpp`）：
+//   B = :40 `srcDS->GetGeoTransform(adfGT);`（:39 `double adfGT[6];` **未初始化**）→ :44 无条件
+//       `dstDS->SetGeoTransform(adfGT);`（matToGdalTiff，单波段写出，40+ 调用点）
+//   C = :87 同形态（:86 同样未初始化）→ :91 无条件写出（matsToGdalTiff，多波段写出）
+// GDAL 失败时往数组里写什么**取决于驱动**（取证席 task-7 实测）：
+//   GTiff 走基类兜底 ⇒ 写恒等阵 (0,1,0,0,0,1)；PNM 这类自定义 GetGeoTransform 且失败前不碰数组的
+//   驱动 ⇒ **一个字都不写**，未初始化数组原样进产物（Debug 下是 MSVC 栈填充 0xCC = -9.25596e+61）。
+// 两条都经由同一个 SetGeoTransform 落进**交付物**，所以变更在产物侧，不在成败侧。
+//
+// WHY 不改成硬失败（用户 2026-10-27 拍板 + 既有契约）：本文件 :1969/:1982 已把
+//   "拿不到地理变换不得当成失败 + 产物照常生成"钉成契约（无参考影像 = BMP/截图/中间产物今天照常能跑），
+//   拒绝执行会断整条链。⇒ 判据名字里是 **KeepsProduct**，不是 FailsWithout…：
+//   三条断言 = ①success 为真 ②产物在场 ③**产物没有 GeoTransform**。
+// 第③条必须用**第二个客户端**读（`rasterHasNoGeoTransform` 自己新开数据集、按 GetGeoTransform 的
+//   **返回值**判，:1918 定义），不许拿动作自报的 metadata 自证（exercised ≠ conformant）。
+// 三条里改前只有③红（①②改前改后都绿）——这正是"不许失败"与"不许伪造"能同时成立的唯一形态。
+// ============================================================================
+
+TEST_F(PluginTest, ProcessingThresholdKeepsProductWithoutGeotransform) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+
+    std::error_code ec;
+    // 载体 = processing threshold（现读 processing_plugin.cpp:148 → gis::core::matToGdalTiff = 位点 B）。
+    // 夹具走 createRasterWithoutGeoTransform（:1899，全程不 SetGeoTransform / 不 SetProjection），
+    // 与位点 C 那一段共用同一套前置谓词，不另造判读逻辑。
+    const std::string input = createRasterWithoutGeoTransform("t8_b_threshold_input.tif", 20, 20, 1, 200.0f);
+    ASSERT_FALSE(input.empty());
+    fs::remove(input + ".aux.xml", ec);   // PAM 边车会把别处写过的变换式带进来，让"没有"变成"有"
+    ASSERT_TRUE(rasterHasNoGeoTransform(input)) << input << " 没有地理变换，否则本用例锁错了分支";
+
+    const std::string output = utf8PathString(getTestDir() / "t8_b_threshold_output.tif");
+    // 断言产物之前先清同名旧件（含 .aux.xml）：产物存在性/变换有无都只对**本次运行**负责，
+    // 上一轮（改前那次会写出伪造成品）留下的文件会把②③同时洗成假绿。
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+    ASSERT_FALSE(fs::exists(output)) << "stale output not removed: " << output;
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("threshold");
+    params["input"] = input;
+    params["output"] = output;
+    params["method"] = std::string("binary");
+    params["threshold_value"] = 128.0;
+    params["band"] = 1;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "拿不到地理变换不得当成失败（契约同 :1969）：" << result.message;
+    EXPECT_TRUE(fs::exists(output)) << "无参考输入的产物必须照常生成：" << result.message;
+    EXPECT_TRUE(rasterHasNoGeoTransform(output))
+        << "改前 opencv_wrapper.cpp:40 丢弃返回值、:44 无条件 SetGeoTransform(adfGT) ⇒ "
+           "GTiff 输入会让产物凭空带上恒等阵（raster_inspect 报 Pixel Size 1x1），"
+           "PNM/未初始化数组的输入会把栈残值原样持久化进交付物。实测见 task-8-report 节 3。";
+}
+
+TEST_F(PluginTest, RasterMathReclassifyKeepsProductWithoutGeotransform) {
+    auto* p = mgr_.find("raster_math");
+    ASSERT_NE(p, nullptr);
+
+    std::error_code ec;
+    // 载体 = raster_math reclassify（现读 raster_math_plugin.cpp:375 → gis::core::matsToGdalTiff = 位点 C）。
+    // 与位点 B 是两个不同的共享函数（单波段 / 多波段），各钉一次：少一条，另一条改动就没有护栏。
+    const std::string input = createRasterWithoutGeoTransform("t8_c_reclassify_input.tif", 20, 20, 1, 200.0f);
+    ASSERT_FALSE(input.empty());
+    fs::remove(input + ".aux.xml", ec);
+    ASSERT_TRUE(rasterHasNoGeoTransform(input)) << input << " 没有地理变换，否则本用例锁错了分支";
+
+    const std::string output = utf8PathString(getTestDir() / "t8_c_reclassify_output.tif");
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+    ASSERT_FALSE(fs::exists(output)) << "stale output not removed: " << output;
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("reclassify");
+    params["input"] = input;
+    params["output"] = output;
+    params["reclass_rules"] = std::string("0,127:1\n128,255:2");
+    params["default_value"] = 0.0;
+    params["keep_unmatched"] = false;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_TRUE(result.success) << "拿不到地理变换不得当成失败（契约同 :1969）：" << result.message;
+    EXPECT_TRUE(fs::exists(output)) << "无参考输入的产物必须照常生成：" << result.message;
+    EXPECT_TRUE(rasterHasNoGeoTransform(output))
+        << "改前 opencv_wrapper.cpp:87 丢弃返回值、:91 无条件 SetGeoTransform(adfGT) ⇒ 同位点 B 的两种伪造成品；"
+           "另外 processing pansharpen（processing_plugin.cpp:894）也走这支，"
+           "它的无变换契约由 PansharpenNoGeoTransformSkipsExtentCheck 钉在成败与提示上，与本条互不替代。";
+}
+
 // -------------------------------------------- Task 13 fix round 1 / F-2（Minor M-1）：容差**数值**本身
 // 审查实测：把 kPanMsExtentToleranceRatio 从 1e-6 改成 1e-4，8 条用例全绿 ⇒ 只有"相对口径"和
 // "低于容差不报警"有牙（Tier 1 的 M3/M4），具体数量级没人管。
@@ -15506,6 +15598,100 @@ TEST_F(PluginTest, ReservoirVolumeFailsWhenGeoTransformMissing) {
     EXPECT_FALSE(fs::exists(output)) << "失败路径不得留下产物";
 }
 
+// ============================================================================
+// 批次 D / Task 8（D0-C2 位点 F）：viewshed_multi 补齐同族缺参考闸门（**这条才是硬失败**）
+//
+// 缺陷本体（现读 `src/plugins/terrain/terrain_plugin.cpp`）：:1035 `srcDs->GetGeoTransform(gt);`
+// 丢弃返回值，:1038 无条件 `dstDs->SetGeoTransform(gt);`；:1034 虽然把 gt 零初始化了，
+// 但 GDAL 失败时**基类仍会把恒等阵写进数组**（gcore/gdaldataset.cpp:1506-1512），
+// 于是 GTiff 输入拿到伪造的 (0,1,0,0,0,1)。取证席实测同一动作有两种产物形态：
+//   GTiff 无参考输入 → 产物带伪造 Pixel Size (1,1)；PNM 无参考输入 → 产物读回 GeoTransform: (none)。
+// 口径对齐本文件既有先例：cut_fill（:1200/:1203）与 reservoir_volume（:1323）**早就**缺参考即失败，
+// 并被 CutFillFailsWhenGeoTransformMissing / ReservoirVolumeFailsWhenGeoTransformMissing 钉住
+// ⇒ viewshed_multi 是这个族里唯一的漏网点。失败文案逐字沿用那两处的 `"input raster geotransform is missing"`。
+//
+// ⚠ 射程：只有 viewshed_multi 经过这里。入口现读——writeViewshedMaskAsByte 全文件唯一调用点是
+//   runViewshedMultiProcess 内的 :1135；单点视域走 runViewshedProcess（:904）**不经过本位点**
+//   （由 GDALViewshedGenerate 自己写 Byte 输出）⇒ 本刀不给单点视域加闸（单点那两条
+//   ViewshedWarns* 用例的口径与产物一字不动，反向臂里专门核了这一点）。
+// 产物口径按 C3n 二选一，本刀取**"产物不生成"**：闸放在 createRaster 之前（改前后同一位置），
+// 失败路径根本不建文件，所以没有"临时件要清"的第二条断言。
+// ============================================================================
+
+TEST_F(PluginTest, TerrainMultiViewshedFailsWithoutGeotransform) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    std::error_code ec;
+    const std::string input = createRasterWithoutGeoTransform("t8_f_multi_nogt_input.tif", 16, 16, 1, 10.0f);
+    ASSERT_FALSE(input.empty());
+    fs::remove(input + ".aux.xml", ec);   // 同上：残留边车会把"没有变换"变成"有变换"，本用例就假红了
+    ASSERT_TRUE(rasterHasNoGeoTransform(input));
+
+    const std::string output = utf8PathString(getTestDir() / "t8_f_multi_nogt_output.tif");
+    fs::remove(output, ec);
+    fs::remove(output + ".aux.xml", ec);
+    ASSERT_FALSE(fs::exists(output)) << "stale output not removed: " << output;
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("viewshed_multi");
+    params["input"] = input;
+    params["output"] = output;
+    params["band"] = 1;
+    params["observer_points"] = std::string("4,4;12,12");
+    params["observer_height"] = 2.0;
+    params["target_height"] = 0.0;
+    params["max_distance"] = 0.0;
+
+    const auto result = p->execute(params, progress_);
+    EXPECT_FALSE(result.success)
+        << "viewshed_multi 缺地理参考必须显式失败（改前报 Success: MultiViewshed completed，"
+           "并把恒等阵或栈残值写进掩膜产物；与 cut_fill/reservoir_volume 同族口径）";
+    EXPECT_NE(result.message.find("input raster geotransform is missing"), std::string::npos)
+        << "失败文案必须与同族先例逐字一致：" << result.message;
+    EXPECT_FALSE(fs::exists(output)) << "失败路径不得留下产物（本刀口径=产物不生成，见上面注释的 C3n 二选一）";
+
+    // 反向对照（承重）：**有**变换的同尺寸输入必须照常成功。
+    // 少了这一段，"把 viewshed_multi 整个改坏"也能让上面三条全绿——那就是恒真判据。
+    // ⚠ 观察点必须落在这幅夹具的实际范围里：createConstantRaster 的默认原点 (116,40)、像元 0.001、
+    //   16×16 ⇒ x∈[116,116.016]、y∈[39.984,40]。上面那一条无变换的输入用像元坐标 4,4/12,12 是在范围内的
+    //   （没有变换时 GDAL 按像元空间读观察点）；这里如果照抄 4,4，会掉进"观察者落在 DEM 外"的另一条路径
+    //   （实测 GDAL Debug 在越界观察点上会触发 vector 迭代器断言、把测试进程带走，与本刀无关，已另记）。
+    const std::string okInput = createConstantRaster("t8_f_multi_withgt_input.tif", 16, 16, 10.0f);
+    ASSERT_FALSE(okInput.empty());
+    ASSERT_FALSE(rasterHasNoGeoTransform(okInput)) << "对照夹具必须**有**地理变换，否则这条正向没在判任何东西";
+    const std::string okOutput = utf8PathString(getTestDir() / "t8_f_multi_withgt_output.tif");
+    fs::remove(okOutput, ec);
+    fs::remove(okOutput + ".aux.xml", ec);
+    params["input"] = okInput;
+    params["output"] = okOutput;
+    params["observer_points"] = std::string("116.006,39.994;116.012,39.988");
+    const auto ok = p->execute(params, progress_);
+    EXPECT_TRUE(ok.success) << "有地理参考的输入不得被新闸门误伤：" << ok.message;
+    EXPECT_TRUE(fs::exists(okOutput)) << "对照腿必须真的产出掩膜：" << ok.message;
+    EXPECT_FALSE(rasterHasNoGeoTransform(okOutput))
+        << "成功路径的产物仍要带上真变换（闸门的副作用不许把 SetGeoTransform 一起改掉）";
+
+    // 单点视域不在本刀射程：同一个无参考 DEM 上 viewshed（单点）仍按现状走 GDAL 自己的写出路径。
+    // 这条不是"给单点加闸"，只是把射程写死在断言里，防止顺手扩大改动时无人报红。
+    const std::string singleOutput = utf8PathString(getTestDir() / "t8_f_single_nogt_output.tif");
+    fs::remove(singleOutput, ec);
+    std::map<std::string, gis::framework::ParamValue> singleParams;
+    singleParams["action"] = std::string("viewshed");
+    singleParams["input"] = input;
+    singleParams["output"] = singleOutput;
+    singleParams["band"] = 1;
+    singleParams["observer_x"] = 8.0;
+    singleParams["observer_y"] = 8.0;
+    singleParams["observer_height"] = 2.0;
+    singleParams["target_height"] = 0.0;
+    singleParams["max_distance"] = 0.0;
+    const auto single = p->execute(singleParams, progress_);
+    EXPECT_TRUE(single.success) << "单点视域不经位点 F（terrain_plugin.cpp:1135 只在 runViewshedMultiProcess 里），"
+                                   "本刀不许把它一起改掉：" << single.message;
+    EXPECT_EQ(single.message.find("geotransform is missing"), std::string::npos) << single.message;
+}
+
 TEST_F(PluginTest, WatershedOnSingleRowOrColumnRasterDoesNotThrow) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);
@@ -17992,6 +18178,117 @@ TEST_F(PluginTest, TileFailsOnRotatedSourceRaster) {
         EXPECT_NE(result.message.find("north-up"), std::string::npos)
             << "变体 #" << i << ": " << result.message;
     }
+}
+
+// 批次 D / Task 8（位点 D）载体夹具：**有 CRS 但没有 GeoTransform** 的 GTiff。
+// WHY 必须单独造这一类：cutting tile 今天的两道闸都不看 GetGeoTransform 的返回值——
+//   :1180 只问"有没有 CRS"、:1184 只问"是不是正北像元网格"。无 CRS 的输入（含 PNM）在 :1180
+//   就被挡下，永远走不到 :1171 那次读变换的后果上；只有"CRS 在、变换不在"这一类才打得到位点 D。
+//   现读 task-7 实测：这类输入的 GTiff 驱动会让 GDAL 把恒等阵 (0,1,0,0,0,1) 写进数组，
+//   于是 :1184 靠 `!(geoTransform[5] < 0.0)`（恒等阵的 gt[5] = +1）**巧合**把它挡下、
+//   报的是"不是正北像元网格"这句与真因无关的话。
+// 与 createRasterWithoutGeoTransform（:1899）同一套裸写口径，只多一句 SetProjection。
+static std::string createRasterWithCrsButNoGeoTransform(const std::string& name, int w, int h, float value) {
+    const std::string path = utf8PathString(getTestDir() / name);
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+    if (!ds) return {};
+    OGRSpatialReference srs;
+    srs.importFromEPSG(3857);
+    char* wkt = nullptr;
+    srs.exportToWkt(&wkt);
+    ds->SetProjection(wkt ? wkt : "");
+    CPLFree(wkt);
+    const std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), value);
+    auto* band = ds->GetRasterBand(1);
+    if (!band) return {};
+    band->RasterIO(GF_Write, 0, 0, w, h, const_cast<float*>(data.data()), w, h, GDT_Float32, 0, 0);
+    band->FlushCache();
+    return path;   // 全程没有 SetGeoTransform ⇒ 打开时 GetGeoTransform 返回 CE_Failure，而 CRS 在
+}
+
+// 位点 D 的判据分两臂（任务书点名"分别覆盖两臂"）：
+//   臂①（本刀的变更处）：有 CRS、无变换 ⇒ 失败**照旧**，但文案必须换成专有那句"读变换失败"，
+//     不许再说"不是正北像元网格"（那是把 GDAL 失败填充值的符号当成用户犯的错）。
+//   臂②（不许被改动打挂）：无 CRS ⇒ :1180 那句"no spatial reference"必须**仍然**先命中，
+//     所以新闸门的顺序只能放在 CRS 之后，不能提到它前面。
+//   臂③（防"合并成一句"）：真·旋转网格（CRS 有、变换有且取得到）⇒ 仍报 north-up 那句。
+//     这一臂是 D 的改动最容易被做坏的方向：把新文案并到 :1184 里，臂①③就分不开了。
+TEST_F(PluginTest, TileNamesMissingGeotransformSeparatelyFromNorthUpAndNoCrs) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    std::error_code ec;
+
+    // ── 臂①：有 CRS、无 GeoTransform ──────────────────────────────────────────
+    const std::string crsNoGt = createRasterWithCrsButNoGeoTransform("t8_d_crs_no_gt_input.tif", 16, 16, 5.0f);
+    ASSERT_FALSE(crsNoGt.empty());
+    fs::remove(crsNoGt + ".aux.xml", ec);
+    ASSERT_TRUE(rasterHasNoGeoTransform(crsNoGt)) << crsNoGt << " 必须真的取不到变换，否则本用例锁错了分支";
+    {   // 前置自证（另一半）：**CRS 确实在** ⇒ 这一类输入才打得到 :1171 而不是 :1180。
+        auto ds = gis::core::openRaster(crsNoGt, true);
+        ASSERT_NE(ds.get(), nullptr);
+        EXPECT_FALSE(std::string(ds->GetProjectionRef()).empty())
+            << "夹具没有 CRS 的话，臂①会先被 :1180 挡下，位点 D 根本没被走到";
+    }
+
+    const std::string outputA = utf8PathString(getTestDir() / "t8_d_crs_no_gt_output");
+    fs::remove_all(outputA);
+    auto paramsA = t17BaseTileParams(crsNoGt, outputA);
+    paramsA["min_zoom"] = 8;
+    paramsA["max_zoom"] = 8;
+    const auto missingGt = p->execute(paramsA, progress_);
+    EXPECT_FALSE(missingGt.success) << "有 CRS 无变换必须失败（改前也失败，但理由是巧合）";
+    EXPECT_NE(missingGt.message.find("geotransform is missing"), std::string::npos)
+        << "臂①：改前报的是 \"tile requires a north-up pixel grid\"（恒等阵 gt[5]=+1 命中符号判据），"
+           "把 GDAL 的失败填充值当成了用户犯的错：" << missingGt.message;
+    EXPECT_EQ(missingGt.message.find("north-up"), std::string::npos)
+        << "臂①：新文案不许与北向上那句合并：" << missingGt.message;
+    EXPECT_EQ(missingGt.message.find("no spatial reference"), std::string::npos)
+        << "臂①：这里 CRS 是在的，不能报无 CRS：" << missingGt.message;
+
+    // ── 臂②：无 CRS（GTiff）—— :1180 那句必须仍然先命中 ────────────────────────
+    const std::string noCrsNoGt = createRasterWithoutGeoTransform("t8_d_no_crs_input.tif", 16, 16, 1, 5.0f);
+    ASSERT_FALSE(noCrsNoGt.empty());
+    fs::remove(noCrsNoGt + ".aux.xml", ec);
+    const std::string outputB = utf8PathString(getTestDir() / "t8_d_no_crs_output");
+    fs::remove_all(outputB);
+    auto paramsB = t17BaseTileParams(noCrsNoGt, outputB);
+    paramsB["min_zoom"] = 8;
+    paramsB["max_zoom"] = 8;
+    const auto noCrs = p->execute(paramsB, progress_);
+    EXPECT_FALSE(noCrs.success);
+    EXPECT_NE(noCrs.message.find("no spatial reference"), std::string::npos)
+        << "臂②：新闸门只能排在 CRS 闸**之后**，否则这句现读文案会被顶掉（task-7 实测这句现在是 rc=1 的报因）："
+        << noCrs.message;
+    EXPECT_EQ(noCrs.message.find("geotransform is missing"), std::string::npos) << noCrs.message;
+
+    // ── 臂③：CRS 有、变换也取得到但真·旋转 —— north-up 那句必须还在 ─────────────
+    gis::tests::RasterFixtureOptions rotatedOptions;
+    rotatedOptions.crs = gis::tests::FixtureCrs::Epsg3857;
+    rotatedOptions.originX = 0.0;
+    rotatedOptions.originY = 0.0;
+    rotatedOptions.pixelSize = 1000.0;
+    const std::string rotated = gis::tests::writeFloatRaster(
+        getTestDir(), "t8_d_rotated_input.tif", 16, 16, std::vector<float>(16 * 16, 5.0f), rotatedOptions);
+    {   // 只破坏 gt[2]（旋转项），变换本身仍然取得到。
+        auto ds = gis::core::openRaster(rotated, false);
+        ASSERT_NE(ds.get(), nullptr);
+        double rot[6] = {0.0, 1000.0, 100.0, 0.0, 0.0, -1000.0};
+        ASSERT_EQ(ds->SetGeoTransform(rot), CE_None);
+        ds->FlushCache();
+    }
+    ASSERT_FALSE(rasterHasNoGeoTransform(rotated)) << "臂③的变换必须**取得到**，否则就重复了臂①";
+    const std::string outputC = utf8PathString(getTestDir() / "t8_d_rotated_output");
+    fs::remove_all(outputC);
+    auto paramsC = t17BaseTileParams(rotated, outputC);
+    paramsC["min_zoom"] = 8;
+    paramsC["max_zoom"] = 8;
+    const auto rotatedResult = p->execute(paramsC, progress_);
+    EXPECT_FALSE(rotatedResult.success);
+    EXPECT_NE(rotatedResult.message.find("north-up"), std::string::npos)
+        << "臂③：真·非正北网格仍要走 :1184 那句，不能被新文案吞掉：" << rotatedResult.message;
+    EXPECT_EQ(rotatedResult.message.find("geotransform is missing"), std::string::npos)
+        << "臂③：变换明明取得到，报『读变换失败』就是失实：" << rotatedResult.message;
 }
 
 // R-T17-4：throwIfCancelled 提前返回路径必须清理 warped 临时栅格（前缀扫描兜住
