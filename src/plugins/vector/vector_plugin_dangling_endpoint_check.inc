@@ -52,7 +52,8 @@ gis::framework::Result VectorPlugin::doDanglingEndpointCheck(
 
     // 批次 D / D0-C3：CSV 产物走"等价闸 -> 同目录临时件 -> 写完 -> 关闭 -> 替换"（CsvStagedOutput）。
     // 判定顺序不许倒：闸必须在**任何建目录/建文件之前**命中；本动作只有一个输入 => 保护清单就一个。
-    // 另有 GPKG:"<路径>":<图层> 这类带驱动前缀的数据源拼法不受本闸保护，见 N157（#157）。
+    // 批次 D / D0-C4（N157）已落地：GPKG:"<路径>":<图层> 这类带驱动前缀的数据源拼法**同样受本闸保护**
+    //（比较前先取串背后的那个文件路径，见 common.inc 的归一函数与它的甲案边界）。
     CsvStagedOutput csv;
     std::string stagedError;
     if (!csv.start(output, { input }, stagedError)) {
