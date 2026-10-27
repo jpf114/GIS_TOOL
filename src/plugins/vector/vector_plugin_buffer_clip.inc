@@ -186,7 +186,9 @@ gis::framework::Result VectorPlugin::doClip(
     }
 
     const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
-    auto clipEntries = collectNormalizedGeometries(clipLayer);
+    // N148：裁切层"标准化后仍非法/空"的输入条数（过去无痕丢，现发 clip_skipped_input_count）。
+    size_t clipSkippedClipInputs = 0;
+    auto clipEntries = collectNormalizedGeometries(clipLayer, &clipSkippedClipInputs);
     const bool useLinearPolygonSegmentation =
         isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(clipEntries) == 2;
 
@@ -347,5 +349,9 @@ gis::framework::Result VectorPlugin::doClip(
     // 与输入要素数不等是正常语义（没命中的要素不落地），所以判据只能拿它与产物对撞。
     mergeStandardRunMetadata(result, params, "clip");
     result.metadata["feature_count"] = std::to_string(count);
+    // N148 附加键（>0 才发）：既有键取值不动。
+    if (clipSkippedClipInputs > 0) {
+        result.metadata["clip_skipped_input_count"] = std::to_string(clipSkippedClipInputs);
+    }
     return result;
 }

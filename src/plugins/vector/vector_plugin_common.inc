@@ -195,7 +195,8 @@ struct OverlayGeometryEntry {
 
 static OGRGeometry* unionGeometryList(std::vector<OGRGeometry*>& geoms);
 
-static std::vector<OverlayGeometryEntry> collectNormalizedGeometries(OGRLayer* layer) {
+static std::vector<OverlayGeometryEntry> collectNormalizedGeometries(
+    OGRLayer* layer, size_t* skippedInputCount = nullptr) {
     std::vector<OverlayGeometryEntry> entries;
     if (!layer) {
         return entries;
@@ -210,6 +211,10 @@ static std::vector<OverlayGeometryEntry> collectNormalizedGeometries(OGRLayer* l
             geom->getEnvelope(&entry.envelope);
             entry.geometry = std::move(geom);
             entries.push_back(std::move(entry));
+        } else if (skippedInputCount) {
+            // N148：标准化后仍为空/非法的输入今天过去无痕丢掉；这里逐条计数，由调用方所在动作
+            // 发 `*_skipped_input_count` 附加键（既有键取值一律不动）。
+            ++(*skippedInputCount);
         }
         OGRFeature::DestroyFeature(feat);
     }
@@ -227,7 +232,10 @@ struct OverlayFeatureEntry {
 // 取舍规则必须逐字镜像 collectNormalizedGeometries：同样用 cloneNormalizedGeometry 标准化，
 // 标准化结果为空或 IsEmpty() 的要素跳过，其余按图层读取顺序压入，包串从标准化后的几何取。
 // WHY 要逐字：两张表跳过规则一旦不一致，"各分块面积之和 == 并集面积"这类不变量就会凭空多/少一块。
-static std::vector<OverlayFeatureEntry> collectNormalizedFeatures(OGRLayer* layer) {
+// 判据一致性由守卫用例钉住：PluginTest.VectorOverlayCollectorMirrorPredicateStaysVerbatim（源码扫描）。
+// N148：跳过支同样逐字镜像地累加 skippedInputCount，动作侧据此发 `*_skipped_input_count` 附加键。
+static std::vector<OverlayFeatureEntry> collectNormalizedFeatures(
+    OGRLayer* layer, size_t* skippedInputCount = nullptr) {
     std::vector<OverlayFeatureEntry> entries;
     if (!layer) {
         return entries;
@@ -245,6 +253,8 @@ static std::vector<OverlayFeatureEntry> collectNormalizedFeatures(OGRLayer* laye
             entry.feature.reset(feat);
             entries.push_back(std::move(entry));
             continue;
+        } else if (skippedInputCount) {
+            ++(*skippedInputCount);
         }
         OGRFeature::DestroyFeature(feat);
     }

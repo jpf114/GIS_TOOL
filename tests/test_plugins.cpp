@@ -8217,6 +8217,303 @@ TEST_F(PluginTest, VectorSourceNeverDisablesGpkgSpatialIndex) {
                "回潮点：" << offenderList;
 }
 
+// ── N148（Task 6 / D0-B）：叠加类动作对“标准化后仍非法/空”的输入几何逐条静默丢弃 ⇒ 附加式计数键 ──
+// 先证镜像规则同源（Step 1 守卫），再给四个动作各一条先红的数值用例（Step 2）。
+// 守卫是源码文本扫描（运行时现读 GIS_SOURCE_DIR），改 common.inc 的判据**不需要重编**就能让它红。
+
+// 守卫：collectNormalizedGeometries 与 collectNormalizedFeatures 是一对镜像采集器
+//（vector_plugin_common.inc 注释明令“取舍规则必须逐字镜像”）。本条按**函数名**锚定切出两个函数体
+//（同文件第三条同形判据属 effectiveLayerGeometryType，在两段切片之外、一行都不许被牵连），
+// 各自抽出“含 if ( 的决策行（trim 后）”清单，判：两侧清单逐字相等、且各恰有一条以 “if (geom” 开头的
+// 取舍判据、且两侧的 cloneNormalizedGeometry(feat->GetGeometryRef()) 标准化行逐字相等。
+// 它能红的方式（取证时实演一次）：把 :208 或 :240 任一处的判据改掉 ⇒ 两份清单不再相等 ⇒ 本条红。
+TEST_F(PluginTest, VectorOverlayCollectorMirrorPredicateStaysVerbatim) {
+    const fs::path commonInc = fs::u8path(
+        std::string(GIS_SOURCE_DIR) + "/src/plugins/vector/vector_plugin_common.inc");
+    ASSERT_TRUE(fs::exists(commonInc))
+        << "扫描对象不存在 ⇒ 这条守卫没在扫任何东西，判红而不是放过：" << commonInc.u8string();
+    std::ifstream in(commonInc, std::ios::binary);
+    ASSERT_TRUE(in.is_open()) << "扫描对象读不开：" << commonInc.u8string();
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    auto trim = [](std::string s) {
+        while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
+        while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n'))
+            s.pop_back();
+        return s;
+    };
+    // 从签名锚点切到文件作用域函数的闭合 }（顶格出现的第一处）；注释与缩进块里的闭合括号都不顶格。
+    auto sliceFunction = [&](const std::string& anchor) -> std::string {
+        int occurrences = 0;
+        std::size_t found = std::string::npos;
+        for (std::size_t pos = text.find(anchor); pos != std::string::npos;
+             pos = text.find(anchor, pos + anchor.size())) {
+            ++occurrences;
+            if (occurrences == 1) found = pos;
+        }
+        EXPECT_EQ(occurrences, 1) << "按函数名定位的锚点出现 " << occurrences << " 次（期望恰 1 次）：" << anchor;
+        if (occurrences != 1) return std::string();
+        const std::size_t end = text.find("\n}", found);
+        EXPECT_NE(end, std::string::npos) << "函数体没找到顶格闭合括号，切片失败：" << anchor;
+        return end == std::string::npos ? std::string() : text.substr(found, end - found);
+    };
+    auto decisionLines = [&](const std::string& body) {
+        std::vector<std::string> lines;
+        std::size_t start = 0;
+        while (start <= body.size()) {
+            const std::size_t nl = body.find('\n', start);
+            const std::string line =
+                trim(nl == std::string::npos ? body.substr(start) : body.substr(start, nl - start));
+            if (line.find("if (") != std::string::npos) lines.push_back(line);
+            if (nl == std::string::npos) break;
+            start = nl + 1;
+        }
+        return lines;
+    };
+
+    const std::string bodyA = sliceFunction(
+        "static std::vector<OverlayGeometryEntry> collectNormalizedGeometries(");
+    const std::string bodyB = sliceFunction(
+        "static std::vector<OverlayFeatureEntry> collectNormalizedFeatures(");
+    ASSERT_FALSE(bodyA.empty()) << "切不出 collectNormalizedGeometries 函数体 ⇒ 守卫空跑，判红";
+    ASSERT_FALSE(bodyB.empty()) << "切不出 collectNormalizedFeatures 函数体 ⇒ 守卫空跑，判红";
+
+    const std::vector<std::string> linesA = decisionLines(bodyA);
+    const std::vector<std::string> linesB = decisionLines(bodyB);
+    ASSERT_GE(linesA.size(), 2u)
+        << "几何采集器只抽出 " << linesA.size() << " 条决策行（下限 2：图层闸 + 取舍判据）⇒ 空跑判红";
+    ASSERT_GE(linesB.size(), 2u)
+        << "要素采集器只抽出 " << linesB.size() << " 条决策行（下限 2）⇒ 空跑判红";
+    EXPECT_EQ(linesA, linesB)
+        << "两个镜像采集器的取舍判据行不再逐字一致（common.inc 注释明令逐字镜像）⇒"
+           " 各分块面积之和==并集面积这类不变量会凭空多/少一块，且跳过计数在两条路径下口径分裂";
+
+    auto countGeomPredicates = [](const std::vector<std::string>& lines) {
+        int n = 0;
+        for (const auto& l : lines) {
+            if (l.rfind("if (geom", 0) == 0) ++n;
+        }
+        return n;
+    };
+    EXPECT_EQ(countGeomPredicates(linesA), 1)
+        << "collectNormalizedGeometries 里以 if (geom 开头的取舍判据必须恰有一条";
+    EXPECT_EQ(countGeomPredicates(linesB), 1)
+        << "collectNormalizedFeatures 里以 if (geom 开头的取舍判据必须恰有一条";
+
+    auto normalizedCloneLine = [&](const std::string& body) {
+        std::size_t start = 0;
+        while (start <= body.size()) {
+            const std::size_t nl = body.find('\n', start);
+            std::string line =
+                trim(nl == std::string::npos ? body.substr(start) : body.substr(start, nl - start));
+            if (line.find("cloneNormalizedGeometry(feat->GetGeometryRef())") != std::string::npos) {
+                return line;
+            }
+            if (nl == std::string::npos) break;
+            start = nl + 1;
+        }
+        return std::string("<missing>");
+    };
+    EXPECT_EQ(normalizedCloneLine(bodyA), normalizedCloneLine(bodyB))
+        << "两侧必须都把 feat->GetGeometryRef() 逐字同一形状地送进 cloneNormalizedGeometry 再判取舍";
+}
+
+// N148 夹具：GPKG 面图层（EPSG:3857）= 1 条有效矩形 +（withEmpty 时）1 条 EMPTY 面要素。
+// EMPTY 经 cloneNormalizedGeometry 仍是 EMPTY（或被驱动写成 NULL、读回空指针），两条形状都会落进
+// 采集器判据的跳过支——这正是“标准化后仍非法”今天无痕丢的那一类；与
+// VectorClipRepairsInvalidOverlayGeometry 那条自交面（MakeValid 修得好 ⇒ 不该计数）区分开。
+static bool writeRectPlusEmptyLayer(const fs::path& path, double minX, double minY,
+                                    double maxX, double maxY, bool withEmpty) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    const std::string pathText = utf8PathString(path);
+    std::error_code ignored;
+    fs::remove(pathText, ignored);
+    GDALDataset* ds = driver->Create(pathText.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    OGRLayer* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    bool ok = true;
+    {
+        OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(minX, minY);
+        ring.addPoint(maxX, minY);
+        ring.addPoint(maxX, maxY);
+        ring.addPoint(minX, maxY);
+        ring.addPoint(minX, minY);
+        poly.addRing(&ring);
+        feat->SetGeometry(&poly);
+        ok = layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+    }
+    if (ok && withEmpty) {
+        OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon emptyPoly;  // 无环 ⇒ IsEmpty() 为真
+        feat->SetGeometry(&emptyPoly);
+        ok = layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(ds);
+    return ok;
+}
+
+// 手算：输入 A=[0,10]×[0,4]（面积 40）；叠加侧有效 B=[20,30]×[2,12]（面积 100，与 A 不相交）
+//       + 1 条 EMPTY。⇒ 产物 2 块（input 1 + overlay 1、overlap 0、total 2 与既有判据同值），
+//       被丢的叠加输入恰 1 条 ⇒ 新键值 1；全有效对照臂 ⇒ 键不出现。
+TEST_F(PluginTest, VectorUnionCountsSkippedOverlayInputGeometry) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_union_skipcount_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_union_skipcount_overlay.gpkg";
+    const fs::path overlayCleanPath = getTestDir() / "e2e_union_skipcount_overlay_clean.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_union_skipcount_output.gpkg");
+    const std::string outputClean = utf8PathString(getTestDir() / "e2e_union_skipcount_output_clean.gpkg");
+
+    UnionFixtureFeature srcA;
+    srcA.minX = 0.0; srcA.minY = 0.0; srcA.maxX = 10.0; srcA.maxY = 4.0; srcA.name = "src1";
+    ASSERT_TRUE(writeUnionPolygonLayer(inputPath, {srcA}));
+    ASSERT_TRUE(writeRectPlusEmptyLayer(overlayPath, 20.0, 2.0, 30.0, 12.0, true));
+    ASSERT_TRUE(writeRectPlusEmptyLayer(overlayCleanPath, 20.0, 2.0, 30.0, 12.0, false));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    // 既有键的值纹丝不动（附加式契约；N145 的教训反向适用）：
+    EXPECT_EQ(result.message, "Union completed: 2 features");
+    EXPECT_EQ(unionMetadataValue(result, "union_input_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlap_pieces"), "0");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlay_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_total_pieces"), "2");
+    // 新键今天不存在 ⇒ 本条在当前树上是红的（红态=ASSERT_NE 先炸）。
+    const auto skippedIt = result.metadata.find("union_skipped_input_count");
+    ASSERT_NE(skippedIt, result.metadata.end())
+        << "N148：union 必须把标准化后仍被采集器丢掉的叠加输入计数发成 union_skipped_input_count，"
+           "本批叠加侧恰丢 1 条 EMPTY；实际键数=" << result.metadata.size();
+    EXPECT_EQ(skippedIt->second, "1") << "恰好 1 条叠加输入标准化后被丢";
+
+    // 反向臂：全有效叠加 ⇒ 键不得出现（“>0 才发”的约定与 union_skipped_overlay_pieces 同形，
+    // “出现即说明丢了输入”必须为真）。
+    params["overlay_vector"] = utf8PathString(overlayCleanPath);
+    params["output"] = outputClean;
+    const auto clean = p->execute(params, progress_);
+    ASSERT_TRUE(clean.success) << clean.message;
+    EXPECT_EQ(clean.metadata.count("union_skipped_input_count"), 0u)
+        << "零丢弃的正常批次不许发这个键，否则“出现即有丢失”的读法就废了";
+    EXPECT_EQ(unionMetadataValue(clean, "union_total_pieces"), "2");
+}
+
+// 手算：[0,10]² 减去 [5,15]² = 一块 L 形 ⇒ feature_count 1；EMPTY 叠加面没参与也不该计数 ⇒ 新键 1。
+TEST_F(PluginTest, VectorDifferenceCountsSkippedOverlayInputGeometry) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_diff_skipcount_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_diff_skipcount_overlay.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_diff_skipcount_output.gpkg");
+    ASSERT_TRUE(writeRectPlusEmptyLayer(inputPath, 0.0, 0.0, 10.0, 10.0, false));
+    ASSERT_TRUE(writeRectPlusEmptyLayer(overlayPath, 5.0, 5.0, 15.0, 15.0, true));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("difference");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto fcIt = result.metadata.find("feature_count");
+    ASSERT_NE(fcIt, result.metadata.end()) << "差集的 feature_count（N143 既有键）必须还在";
+    EXPECT_EQ(fcIt->second, "1") << "既有值不许动：一块 L 形";
+    const auto skippedIt = result.metadata.find("difference_skipped_input_count");
+    ASSERT_NE(skippedIt, result.metadata.end())
+        << "N148：difference 必须发 difference_skipped_input_count，本批叠加侧恰丢 1 条 EMPTY；"
+           "实际键数=" << result.metadata.size();
+    EXPECT_EQ(skippedIt->second, "1");
+}
+
+// 手算：[0,10]² ∩ [5,15]² = [5,10]² 一块 ⇒ feature_count 1；EMPTY 叠加面被静默丢 ⇒ 新键 1。
+TEST_F(PluginTest, VectorIntersectCountsSkippedOverlayInputGeometry) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_int_skipcount_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_int_skipcount_overlay.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_int_skipcount_output.gpkg");
+    ASSERT_TRUE(writeRectPlusEmptyLayer(inputPath, 0.0, 0.0, 10.0, 10.0, false));
+    ASSERT_TRUE(writeRectPlusEmptyLayer(overlayPath, 5.0, 5.0, 15.0, 15.0, true));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("intersect");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto fcIt = result.metadata.find("feature_count");
+    ASSERT_NE(fcIt, result.metadata.end()) << "交集的 feature_count（N143 既有键）必须还在";
+    EXPECT_EQ(fcIt->second, "1") << "既有值不许动：交块恰 1 条";
+    const auto skippedIt = result.metadata.find("intersect_skipped_input_count");
+    ASSERT_NE(skippedIt, result.metadata.end())
+        << "N148：intersect 必须发 intersect_skipped_input_count，本批叠加侧恰丢 1 条 EMPTY；"
+           "实际键数=" << result.metadata.size();
+    EXPECT_EQ(skippedIt->second, "1");
+}
+
+// 手算：[0,10]² 被 [2,8]² 裁出内部一块 ⇒ feature_count 1；裁切图层里的 EMPTY 被静默丢 ⇒ 新键 1。
+TEST_F(PluginTest, VectorClipCountsSkippedOverlayInputGeometry) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_clip_skipcount_input.gpkg";
+    const fs::path clipPath = getTestDir() / "e2e_clip_skipcount_overlay.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_clip_skipcount_output.gpkg");
+    ASSERT_TRUE(writeRectPlusEmptyLayer(inputPath, 0.0, 0.0, 10.0, 10.0, false));
+    ASSERT_TRUE(writeRectPlusEmptyLayer(clipPath, 2.0, 2.0, 8.0, 8.0, true));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = utf8PathString(inputPath);
+    params["clip_vector"] = utf8PathString(clipPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto fcIt = result.metadata.find("feature_count");
+    ASSERT_NE(fcIt, result.metadata.end()) << "裁切的 feature_count（N143 既有键）必须还在";
+    EXPECT_EQ(fcIt->second, "1") << "既有值不许动：裁得一块";
+    const auto skippedIt = result.metadata.find("clip_skipped_input_count");
+    ASSERT_NE(skippedIt, result.metadata.end())
+        << "N148：clip 必须发 clip_skipped_input_count，本批裁切侧恰丢 1 条 EMPTY；"
+           "实际键数=" << result.metadata.size();
+    EXPECT_EQ(skippedIt->second, "1");
+}
+
 // C3c-A（convert 的 A 半边）：输出格式/层名/要素数/字段保真/几何坐标逐点相等。
 // 期望值全部按夹具手推：字段名与顺序 name→code→ratio、code=1..3、ratio=0.25/0.5/0.75、
 // 坐标 (116.00,40.00)/(116.01,40.02)/(116.03,40.01)。三个点不关于 y=x 对称
