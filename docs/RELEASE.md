@@ -1582,6 +1582,31 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   ⚠ **GUI 的 convert 行为不变**：GUI 参数面板会实发 spec 默认值（批次 B 的 R-B20），所以它总是显式带 `format`；
   本次只影响 CLI/工作流**没给这个键**的情形。文档 `docs/算法说明/矢量数据处理/格式转换.md` 的“输出说明”已按新判定顺序改写。
 
+### 批次 D Task 4/5 取证：N150 的前提被我写错了，另立 N152~N156
+
+- **先纠错**：工单与 spec 里那句“`spatial_join` 的自计判据换一种路径拼法就会跳变”**未复现** ——
+  下级跑了 13 条可判臂，A1–A12 全部落到同一支（绝对/相对、`./` 与 `.\`、盘符小写、大小写混拼、内嵌 `.` 与 `..`、重复分隔符），
+  A13（8.3 短路径）**本卷不可判**（短名列全空、`GetShortNameW` 原样返回）。⇒ 工单 Task 5 的靶子写错了方向，已按现读改。
+- **真复现到的是另外三处**（都带读数）：
+  - **N154**：`join_value` 在 `.shp` 出口**静默截到 254 字节** —— 201/253/254 完整，255 与 401 都只剩 254，
+    硬证据是 `t254.dbf` 与 `t255.dbf` **MD5 相同**；`rc=0`、日志 `Success`、`join_count` 照记满。
+    同数据在 `.geojson`/`.kml` **保留完整**、在 `.gpkg` 被驱动放宽（DDL 写 `TEXT(254)` 但 SQLite 不 enforce）⇒ **按驱动分裂**。
+  - **N155**：中文属性值走 `.shp` 出口先被降级成 `?`（121 字符/361 字节 → 120 个 `?` + `;`）且**不写 `.cpg`** —— 与 N154 独立，别混成一条。
+  - **N156**：`--join_vector='GPKG:"<路径>":LB'`（GDAL 合法数据源串）撞上 `spatial_join.inc:109` 的**无 `ec` 重载**
+    ⇒ 抛 `filesystem_error`，CLI `rc=1` 把 std 原文吐给用户（我复跑一致：`Error: equivalent: The filename … syntax is incorrect`，进度停在 35.0% 可定位）。
+    同仓 `common.inc:412/645` 用的是带 `ec` 的重载 ⇒ **一句判据两种写法**；`vector_plugin_nearest.inc:118` 是这行的孪生，**必须成对修**。
+  - **同文件异层被静默全数跳过**（`joinLayer = joinDS->GetLayer(0)` 写死，`--layer` 只作用输入侧）：
+    我用独立客户端（python `sqlite3`）复跑到 `LB.join_count = [0,0,0]`。修法需要一个 `--join_layer` 新参数 ⇒ 牵动 CLI 参数表、GUI 与双输入保护清单，**待拍**。
+- **N152（补登记，之前只在私有台账里）**：本仓 `data/` **没有任何含 NIR 语义波段的真多光谱影像**
+  （5 张 4 波段图逐张现读 Color = Red/Green/Blue/Alpha）⇒ 光谱指数类的真实覆盖只能靠合成夹具；补一张真多光谱可解锁一批满档。
+- **Task 4（N149）取证结论**：`repair` 是**唯一离群点** —— `singlepart.inc:88` 已经写对
+  （`if (!normalized || normalized->IsEmpty()) ++skippedCount`），而 `repair.inc:76` 只有 `if (!repaired)`；
+  四件读数 `repaired=4/skipped=0/要素 4/产物内 EMPTY 2`，恒等式 `repaired+skipped==输入数` 永成立 ⇒ 只看两键的读者无法自检。
+  下级的“上抬到共享函数会波及三个检查动作的 null 解引用”被我**逐条否证**：`common.inc:970`、`topology_check.inc:87`、
+  `duplicate_point_check.inc:69` 三处下游都判空 ⇒ 不立案。**另立一条纪律**：
+  字面判据 `if (geom && !geom->IsEmpty())` 在 `common.inc` 出现 3 次，第三处属于 `effectiveLayerGeometryType`，不是采集器镜像。
+- 自计行为今天**没有任何用例钉住**（`grep sameDataset|SelfJoin tests/test_plugins.cpp` = 0 命中）⇒ 新增红例是纯增、不撞既有断言。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
