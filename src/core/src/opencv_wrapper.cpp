@@ -36,12 +36,24 @@ void matToGdalTiff(const cv::Mat& mat, const std::string& srcPath,
 
 void matToGdalTiff(const cv::Mat& mat, GDALDataset* srcDS,
                    const std::string& dstPath, int bandIndex) {
-    double adfGT[6];
-    srcDS->GetGeoTransform(adfGT);
+    double adfGT[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    // 批次 D / Task 8（位点 B）：GetGeoTransform 的**返回值必须判**，取不到就不往产物写。
+    // WHY 不改成失败：本函数有 40+ 调用点，"无参考输入照常出图"是既有契约
+    //   （tests/test_plugins.cpp:1969 断不失败、:1982 断产物存在），拒绝执行会断整条链。
+    // WHY 不能继续无条件 SetGeoTransform（改前形态）：GDAL 失败时**基类仍会把恒等阵
+    //   (0,1,0,0,0,1) 写进数组**（gcore/gdaldataset.cpp:1506-1512），而自定义 GetGeoTransform
+    //   且失败前不碰数组的驱动（实测 PNM）会让数组**保留调用方的初值**——改前这里是
+    //   `double adfGT[6];`（完全没有初始化），Debug 下即 MSVC 栈填充 0xCCCCCCCCCCCCCCCC
+    //   = -9.25596e+61，被原样持久化进交付 GeoTIFF。两种伪造成品的实测读数在
+    //   docs/RELEASE.md 批次 D 节与 tests/test_plugins.cpp 的同名新增用例注释里。
+    // 数组显式零初始化只是把"误读数组"的未定义性去掉；**判据只看返回值**，不看数组内容。
+    const bool hasGeoTransform = srcDS->GetGeoTransform(adfGT) == CE_None;
     std::string proj = getSRSWKT(srcDS);
 
     auto dstDS = createRaster(dstPath, mat.cols, mat.rows, 1, GDT_Float32);
-    dstDS->SetGeoTransform(adfGT);
+    if (hasGeoTransform) {
+        dstDS->SetGeoTransform(adfGT);
+    }
     if (!proj.empty()) {
         dstDS->SetProjection(proj.c_str());
     }
@@ -83,12 +95,18 @@ void matsToGdalTiff(const std::vector<cv::Mat>& mats, GDALDataset* srcDS,
     int height = mats[0].rows;
     int numBands = static_cast<int>(mats.size());
 
-    double adfGT[6];
-    srcDS->GetGeoTransform(adfGT);
+    double adfGT[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    // 批次 D / Task 8（位点 C，与上面位点 B 同形态、同处置）：判返回值，仅 CE_None 才写进产物。
+    // 本函数是**多波段**写出支，调用方含 processing pansharpen（processing_plugin.cpp:894）——
+    // 那条的无变换契约由 PansharpenNoGeoTransformSkipsExtentCheck 钉在"不失败 + 产物照常生成"上，
+    // 所以这里同样**不许**改成硬失败，只把伪造的变换式从产物里去掉。
+    const bool hasGeoTransform = srcDS->GetGeoTransform(adfGT) == CE_None;
     std::string proj = getSRSWKT(srcDS);
 
     auto dstDS = createRaster(dstPath, width, height, numBands, GDT_Float32);
-    dstDS->SetGeoTransform(adfGT);
+    if (hasGeoTransform) {
+        dstDS->SetGeoTransform(adfGT);
+    }
     if (!proj.empty()) {
         dstDS->SetProjection(proj.c_str());
     }

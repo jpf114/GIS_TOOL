@@ -1168,7 +1168,15 @@ gis::framework::Result CuttingPlugin::doTile(
 
     auto srcDS = gis::core::openRaster(input, true);
     double geoTransform[6] = {};
-    srcDS->GetGeoTransform(geoTransform);
+    // 批次 D / Task 8（位点 D）：判返回值，但**不改本动作的成败结论**——这类输入今天也失败，
+    // 只是理由是"巧合"：GDAL 在失败时仍会把恒等阵 (0,1,0,0,0,1) 写进数组
+    //   （gcore/gdaldataset.cpp:1506-1512），于是下面 :1184 靠 `!(geoTransform[5] < 0.0)` 命中；
+    //   驱动不写数组时（实测 PNM）留下的才是上面的零初值，命中的又变成 `!(geoTransform[1] > 0.0)`。
+    //   两句报的都是"你不是正北像元网格"，而真因是**根本没读到地理变换** ⇒ 本刀只把文案分开。
+    // 顺序硬约束：这条闸门必须排在下面"无 CRS"那条**之后**（现读 task-7 实测：无 CRS 的输入
+    //   先命中 :1180 那句，那是既有 rc=1 的报因，不许被顶掉）。判据两臂见
+    //   tests/test_plugins.cpp 的 TileNamesMissingGeotransformSeparatelyFromNorthUpAndNoCrs。
+    const bool hasGeoTransform = srcDS->GetGeoTransform(geoTransform) == CE_None;
     const double pixelSize = std::abs(geoTransform[1]);
 
     // 瓦片几何只在"可投影 + 正北像元网格"的源上有定义：
@@ -1180,6 +1188,14 @@ gis::framework::Result CuttingPlugin::doTile(
     if (std::string(srcDS->GetProjectionRef()).empty()) {
         return gis::framework::Result::fail(
             "tile input has no spatial reference; cannot project to EPSG:3857");
+    }
+    // (iii) 批次 D / Task 8 新增、排在 (i) 之后排在 (ii) 之前：**CRS 在、但读不到地理变换**。
+    // 文案刻意与 (ii) 分开：(ii) 说的是"网格不是正北"（用户的栅格真的旋转/斜切了），
+    // 这一句说的是"变换没读到"（栅格根本没有地理变换）——合并成一句就等于把 GDAL 的
+    // 失败填充值当成用户犯的错。措辞里不写 "north-up"，两条判据才能各自被断言分开。
+    if (!hasGeoTransform) {
+        return gis::framework::Result::fail(
+            "tile input geotransform is missing; cannot map pixels to the projected grid");
     }
     if (geoTransform[2] != 0.0 || geoTransform[4] != 0.0 ||
         !(geoTransform[1] > 0.0) || !(geoTransform[5] < 0.0)) {

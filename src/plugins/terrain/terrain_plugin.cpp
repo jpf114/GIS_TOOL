@@ -1028,11 +1028,25 @@ gis::framework::Result runViewshedProcess(
 // 挂账 N43（批次 A 复审 F-2 的验收语，不是架构选择）：本函数是绕过 opencv_wrapper 的**临时绕行**，
 // 批次 B 的交付物是"新增按 dtype 参数化的 core 写出 API 并删除本 helper"，
 // **不是**把这个本地写出器扶正成惯例、也不是留给后续任务当先例。
-void writeViewshedMaskAsByte(const cv::Mat& merged, GDALDataset* srcDs, const std::string& output) {
+// 批次 D / Task 8（位点 F）契约变更：**取不到地理参考就返回 false**，由调用方显式失败。
+// WHY 现在才补：同文件的 cut_fill（:1200/:1203）与 reservoir_volume（:1323）早就"缺参考即失败"，
+//   并被 CutFillFailsWhenGeoTransformMissing / ReservoirVolumeFailsWhenGeoTransformMissing 钉住，
+//   viewshed_multi 是这个族里唯一的漏网点（改前对无参考 DEM 报 Success 并落产物）。
+// WHY 失败文案逐字沿用 "input raster geotransform is missing"：一族三个动作的口径必须可对照，
+//   另造措辞会让用户在同一份 DEM 上收到三种说法（该文案同时出现在 :1201 与 :1324）。
+// WHY 数组保持零初始化而不是交给 GDAL：失败时基类会把恒等阵 (0,1,0,0,0,1) 写进来
+//   （gcore/gdaldataset.cpp:1506-1512），改前 :1038 无条件 SetGeoTransform 于是把这张**伪造的**
+//   参考写进掩膜；驱动不写数组时（实测 PNM）留下的才是这份零初值，而零阵被 GTiff 丢弃 ⇒
+//   同一动作两种产物形态，取证读数见 task-7-report / task-8-report。
+// ⚠ 只有 viewshed_multi 经过这里（全文件唯一调用点 :1135，在 runViewshedMultiProcess 内）；
+//   单点视域走 runViewshedProcess（:904），由 GDAL 自己写 Byte 输出，**不在本刀射程**。
+bool writeViewshedMaskAsByte(const cv::Mat& merged, GDALDataset* srcDs, const std::string& output) {
     cv::Mat mask;
     merged.convertTo(mask, CV_8U);   // 饱和转换：掩膜只有 0/255，没有会被压成 0 的负值
     double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    srcDs->GetGeoTransform(gt);
+    if (srcDs->GetGeoTransform(gt) != CE_None) {
+        return false;   // 在建产物**之前**就退：失败路径根本不创建 output（本刀口径=产物不生成）
+    }
     const std::string proj = gis::core::getSRSWKT(srcDs);
     auto dstDs = gis::core::createRaster(output, mask.cols, mask.rows, 1, GDT_Byte);
     dstDs->SetGeoTransform(gt);
@@ -1044,6 +1058,7 @@ void writeViewshedMaskAsByte(const cv::Mat& merged, GDALDataset* srcDs, const st
                       const_cast<uint8_t*>(mask.ptr<uint8_t>()), mask.cols, mask.rows,
                       GDT_Byte, 0, 0);
     dstBand->FlushCache();
+    return true;
 }
 
 gis::framework::Result runViewshedMultiProcess(
@@ -1132,7 +1147,11 @@ gis::framework::Result runViewshedMultiProcess(
     progress.onMessage("Writing terrain output: " + output);
     // R-T12-3：与单点视域（GDALViewshedGenerate 直接写 GDT_Byte）统一成同一种输出类型，
     // 并且不再把源 DEM 的 NoData 继承进这张 0/255 掩膜。
-    writeViewshedMaskAsByte(merged, srcDs.get(), output);
+    // 批次 D / Task 8（位点 F）：写不出去（DEM 取不到地理参考）时**显式失败**，口径与
+    // cut_fill / reservoir_volume 逐字一致；失败路径不产生 output（闸门在 createRaster 之前）。
+    if (!writeViewshedMaskAsByte(merged, srcDs.get(), output)) {
+        return gis::framework::Result::fail("input raster geotransform is missing");
+    }
     auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain.viewshed_multi");
     meta.algorithmParams["band"] = std::to_string(band);
     meta.algorithmParams["observer_count"] = std::to_string(observerPoints.size());
