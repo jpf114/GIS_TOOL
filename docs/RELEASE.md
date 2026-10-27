@@ -1424,7 +1424,7 @@ B3 当年做的是标记时机与干净机器语义，不是清理 ⇒ 不新造
 | **N145** 矢量输出 metadata 两套口径（14 个动作发 `feature_count` 却不带标准三键；`union_total_pieces`/`repaired_count` 是"同数异名"） | **文档承重、关闭** | C3h-2b 已把 5 个写件动作的 metadata 补齐（`e11f428`），C4d 又逐键在正文声明了口径：`并集.md` 写 `union_total_pieces`＝**分块数**、`修复.md` 写 `repaired_count`＝成功写出条数、`融合.md` 本轮改写"整体融合恒为 1"为"全 NULL/全空几何时为 0 且仍报成功"。⇒ 缺的那层"是否同一口径"已有答案：**不是同一口径，且文档逐键写明**。统一成一个键反而会破坏下游脚本，不做。 |
 | **N146** GUI `requiredKeys` 未覆盖"按动作硬失败"的键 | **列批次 D** | 现值由 `docs_match_cli` 的 `required` 判据承重：参数表"必填=是"与二进制 `requiredKeys` 已 `drift=0`；N146 说的是另一半——**二进制不标必填但代码硬失败**的键（`viewshed` 的 `observer_x/observer_y` 属此类）。守卫目前只比"标了的"不比"没标的"⇒ 需要新增一条"硬失败键 ⊆ requiredKeys"判据，并逐动作取证哪些算硬失败。成本：判据 + 每动作取证，不能靠猜。 |
 | **N147** `viewshed` 观察点、`reservoir_volume` 水位缺省静默按 0 算 | **文档承重、关闭** | `视域分析.md` 参数表现值已写"不填按 `0` 计算（多半落在数据范围外，结果会是'全部不可见'），实际使用必须显式给出"；库容的 `water_level=0` 是**合法水位**（海平面），不是"缺省即无意义"。⇒ 与 N146 合并处理：真正要做的是把 `observer_x/observer_y` 升为必填（属 GUI/CLI 契约变更，不在批次 C 范围）。 |
-| **N148** 叠加类对"标准化后仍非法"的输入几何**逐条静默丢弃、不计数** | **列批次 D（建议第一优先）** | 承重代码：`common.inc:198` 的 `if (geom && !geom->IsEmpty())` 与 `collectNormalizedFeatures` 的镜像判据，四个动作共用（`overlay.inc:65/603/812`、`buffer_clip.inc:223`）⇒ 产物可以"少一块"而元数据无痕，只有全表空才失败。修法是**附加式**（新增 `overlay_skipped_feature_count` 之类的键，不改任何现有值），但要同时动两个镜像收集器（注释明令二者逐字同规则）+ 4 个动作的 metadata + 5 篇文档 + 判据 ⇒ 是一刀独立工单，不该塞进收口轮。 |
+| **N148** 叠加类对"标准化后仍非法"的输入几何**逐条静默丢弃、不计数** | **本轮已修**（`6e3e9f5`，修复轮 1 口径补齐 `5ab329e`/`eb65e15`/`5a79a4a`） | **本行描述的是裁定时的旧态**（裁定时行号 `common.inc:198`、`overlay.inc:65/603/812`、`buffer_clip.inc:223` 与键名候选 `overlay_skipped_feature_count` **都已过期**：前者被本族自己的插入推走，后者**未采用**）。裁定时的事实是：`collectNormalizedGeometries` 的判据 `if (geom && !geom->IsEmpty())` 与 `collectNormalizedFeatures` 的镜像判据被四个动作共用 ⇒ 产物可以"少一块"而元数据无痕，只有全表空才失败。修法是**附加式**（不改任何现有值），实际落地的四个键是 `union_skipped_input_count` / `difference_skipped_input_count` / `intersect_skipped_input_count` / `clip_skipped_input_count`（">0 才发"）。现读定位（**行号是瞬时值，以函数名为准**）：判据 `common.inc:209`（几何趟）与 `:254`（要素趟镜像），采集点 `overlay.inc:36`（union 几何趟）/ `:583`（difference）/ `:798`（intersect）、`buffer_clip.inc:191`（clip），发键点 `overlay.inc:544/759/953`、`buffer_clip.inc:354`。落地详情与**覆盖边界**见下文「批次 D 代码刀 D0-B 落地（2026-10-27，Task 6 / N148）」小节。 |
 | **N149** `vector.repair` 把 EMPTY 几何原样写出并计入 `repaired_count` | **本轮已修**（`3dbeb5e`） | **本行描述的是裁定时的旧态**：`common.inc:113-116` 对 EMPTY 返回非空指针的空克隆 ⇒ 过不了 `repair.inc:77` 的 `if (!repaired)` ⇒ 原样写出并计数，`repaired_count + skipped_count` 仍自洽 ⇒ 掩盖"空几何一个都没清掉"。改法（EMPTY 归进 skipped）会**改变已发布动作的计数值** ⇒ 需要产品拍板：**2026-10-27 用户拍案①，同日由 `3dbeb5e` 落地**，判据 `PluginTest.VectorRepairCountsEmptyGeometryAsSkipped`（四件套 + 产物身份集合），落地详情见下文「批次 D 代码刀 D0-A7 落地（2026-10-27）」小节。共享的 `cloneNormalizedGeometry` 未动（上抬会波及 `dissolve` 与 `buildNormalizedUnion`）。 |
 | **N150** `vector.spatial_join` 的"不自计"按 `fs::equivalent` 判定 ⇒ 换一种路径拼法就在自计/不自计之间跳变 | **列批次 D** | 先要定"什么叫同一个图层"（路径等价？还是同一数据集 + 同一图层名/句柄？）——口径未定就改会把一种错误换成另一种。另 `join_value` 因 `SetWidth(254)` 在长汇总串下是否被驱动截断**至今未取证**（批次 C 两席都登记为未判定）⇒ 这两条必须各带一次实测，不适合塞进收口轮。 |
 | **N151** `raster_manage.proximity` 丢弃 `GetGeoTransform` 返回值 | **本轮已修**（`15712fd`） | 缺变换即硬失败、判在写盘之前；判据 `PluginTest.ProximityFailsWithoutGeotransform` 先红后绿。`opencv_wrapper.cpp:87-88`（`matsToGdalTiff`）是同形态第二处，射程之外未动 ⇒ 一并列批次 D。 |
@@ -1668,6 +1668,57 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   以前写不进去、**现在会真往自己输入上写**。影响面 = `spatial_join` / `nearest` 两个动作的前缀串用法。
   本轮处置（按裁定只做文档与登记，**不改守卫**）：两篇文档把"可以写成前缀串"改成中性描述并点名本条挂账；
   守卫本身的修法（解析前缀取真路径后再比等价）紧随其后另开一小刀，未批前不要照前缀串写覆盖自己输入的用法。
+
+### 批次 D 代码刀 D0-B 落地（2026-10-27，Task 6 / N148）
+
+- **N148 已修（用户裁定：只做附加式）—— ⚠ 零用户可见变更**：叠加类动作 `union` / `difference` /
+  `intersect` / `clip` 的四个既有键（`union_*_pieces` 四件、`feature_count`）与返回消息**取值一律不动**，
+  只新增 `union_skipped_input_count` / `difference_skipped_input_count` / `intersect_skipped_input_count` /
+  `clip_skipped_input_count`，沿用 `union_skipped_overlay_pieces` 的"**>0 才发**"约定 ⇒ "这个键出现"本身就是
+  "输入侧有丢失"的信号。裁定时写的键名候选 `overlay_skipped_feature_count` **未采用**。`doBuffer` 现读不走这两个
+  采集器 ⇒ **buffer 不发键**（本刀射程只有四个动作 + 四篇文档 `矢量数据处理/{并集,差集,交集,矢量裁切}.md`）。
+- **被丢弃的输入几何有四类**（`cloneNormalizedGeometry` 的全部出口，逐行读；四篇文档与键语义段已按此改写）：
+  (a) **输入几何本身就是 NULL**（第一句 `if (!geom) return nullptr;` 直接返回，**根本没进修复**）；
+  (b) `geom->clone()` 返回 null；
+  (c) 克隆出来就是 EMPTY —— 返回的是**非空指针的空克隆**，由采集器的 `!geom->IsEmpty()` 挡下；
+  (d) `IsValid()` 为假且 `MakeValid()` 失败或产出 EMPTY ⇒ **只有这一类才叫"修复失败"**。
+  ⇒ 旧口径"非法几何会先尝试自动修复；修复失败的单条被丢弃"对 (a)(b)(c) 三类是**错的**（键出现的原因比那句宽）。
+- **判据（Debug，现读注册数 767 = 上一刀 766 + 本修复轮 1 条）**：
+  ① 镜像守卫 `PluginTest.VectorOverlayCollectorMirrorPredicateStaysVerbatim`（源码文本扫描，按**函数名**切片，
+  比较两侧含 `if (` 的决策行清单逐字相等 + `if (geom` 判据各恰一条 + 标准化行逐字相等）；
+  ② 四条数值用例 `PluginTest.Vector(Union|Difference|Intersect|Clip)CountsSkipped...`（夹具为 EMPTY 面，即 (c) 类）；
+  ③ 修复轮 1 新增 `PluginTest.VectorUnionCountsSkippedOverlayNullGeometry`（(a) 类 NULL 几何：
+  `union_skipped_input_count==1` + 四件既有键 + `message` 逐字，夹具身份由**第二个客户端** `GDALOpenEx` 重开自证
+  `nullGeomCount==1 / emptyGeomCount==0`，防止驱动把"没设几何"写成 `POLYGON EMPTY` 让覆盖面悄悄退化回 (c)；
+  反向臂"整层只有 NULL" ⇒ 整条失败、`message` 逐字
+  `"Union requires valid overlay geometries and automatic repair failed."`、**metadata 为空**）；
+  ④ 修复轮 1 给既有正例 `PluginTest.VectorClipRepairsInvalidOverlayGeometry` 补
+  `EXPECT_EQ(result.metadata.count("clip_skipped_input_count"), 0u)` ⇒ "修好了不发键 / 丢掉了才发键"两头都有机器判据。
+- ⚠ **覆盖边界（如实登记，防后来者误以为守卫兜住一切）**：
+  ① 镜像守卫只把**含 `if (` 的行**列进比较清单 ⇒ 跳过支**体内**的累加行 `++(*skippedInputCount);`、
+  游标/循环行（`ResetReading()`、`while ((feat = layer->GetNextFeature()) != nullptr)`）都不在清单内，
+  守卫对它们**不敏感**；判据漂移由守卫兜，**计数缺失由数值用例兜**，这是两道分工不同的闸。
+  ② **要素趟那支持数今天不可达**：`collectNormalizedFeatures` 的两个调用点
+  （`vector_plugin_overlay.inc` 里 union 的路径 A / 路径 B）都只传图层不传计数指针 ⇒ 键的实际取值只来自几何趟；
+  单独删掉要素趟那两行 `++` ⇒ **0 条用例会红**。没删的理由：守卫要求两侧决策行逐字相等，删了守卫必红
+  （已在 `vector_plugin_common.inc` 的就地注释里写明"保留只为逐字镜像"，并写明将来若有调用点开始传计数
+  必须防重复计数——union 对同一叠加层就是扫两趟）。
+- ⚠ **Release 侧未验收**：本刀（含修复轮 1）只重编 Debug 树，Release 树没重编 ⇒ 新增用例在 Release 下的
+  注册数与跑绿状态为 `UNVERIFIED`，不由 Debug 结果替代。受影响族 Debug **57/57 绿**
+  （`-R "Vector(Union|Difference|Intersect|Clip)|VectorStagedOutput|KeepsOldProductAndLeavesNoTempFile|CoverageMeta|docs_match_cli|source_mojibake_guard"`）。
+  两条真实腿 `real_data_vector_overlay_ops` / `real_data_vector_overlay_buffer_join` 见 `task-6-fix1-report.md` 的实测秒数。
+- **（新立挂账）N158 —— 退化非法面被 `MakeValid` 修成低维几何后照样进产物、四个键一个都不发，本刀只登记不修**。
+  机制（控制器与实现席各自独立实测，读数一致）：`cloneNormalizedGeometry` 的 `MakeValid()` 支只判"返回 null 或 `IsEmpty()`"，
+  **不判维度** ⇒ 三点共线这类"真非法但退化"的面被修成 `LINESTRING`（或重合点修成 `POINT`）后是非空非 null，
+  走**保留支**进产物、占一条 `union_*_pieces`。
+  实测读数（输入 `POLYGON((0 0,10 0,10 10,0 10))`，叠加层 = 1 条有效面 `[20,20]-[30,30]` + 1 条三点共线"面"
+  `((2,2),(8,8),(4,4))`）：`rc=0`、`Success: Union completed: 3 features`、
+  `union_input_pieces 1 / union_overlap_pieces 1 / union_overlay_pieces 1 / union_total_pieces 3`、
+  **无 `union_skipped_input_count`**；把产物 `vector convert` 成 GeoJSON 逐条数几何类型 ⇒
+  `['LineString','Polygon','Polygon']` ⇒ **面变线进了产物、占了一块、无痕**。
+  这是"键出现才能诊断"这条产品承诺的**另一个盲区**（与 N148 不同账：N148 说的是"被丢弃不计数"，
+  这条说的是"没被丢弃但维度掉了"）。**判据与修法未定**（候选：维度掉档记一笔、或按输入声明类型升型/拒绝、
+  或只补文档口径），需用户拍板后另开一刀；本刀一行实现未动。
 
 ### `ctest -j` 并行：现在开会得到假失败
 
