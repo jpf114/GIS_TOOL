@@ -2112,6 +2112,39 @@ add_test(
         -DREPORT=${CMAKE_CURRENT_BINARY_DIR}/docs_match_cli_report.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_docs_match_cli.cmake
 )
+# ── 批次 D Task 8（D0-C2）：GetGeoTransform 防回潮守卫 ────────────────────────────
+# 判据本体 tests/check_geotransform_guard.py：把 src/（产品域）与 tests/（第二域）里每一个
+#   `GetGeoTransform(` 的 **CODE 位点**分类为"判了返回值 / 未判"，未判的必须被
+#   tests/geotransform_guard_allowlist.json 逐位点点名（本刀改完后产品域恰是 A 与 E 两处），
+#   并且现读桶计数必须等于脚本 DOMAINS 里写死的期望数（20 CODE / 18 CHECKED / 0 违规）——
+#   这条"不许归零"的对撞是判据的一部分：漏数一行与多数一行同样红，"0 个违规"才不是好消息。
+# WHY 自证臂先跑：批次 C 的 docs_match_cli 第一版夹具只埋 1 行、四类缺陷只报得出 2 类。
+#   本守卫 7 条臂里两条是"必须红"（DEAD 白名单、期望值对撞），一红一绿成对，防恒真断言。
+# WHY 恒注册、解释器缺失拒绝放行：与上面 docs_match_cli / source_mojibake_guard 同一口径。
+# WHY 自己再探一次解释器而不复用 _gis_docs_py：两个守卫各自声明自己的"拒绝放行"，
+#   共用一个变量会让后人改 docs_match_cli 的探测时静默改掉本守卫的注册条件。
+# 探测必须"跑起来并回显"：本机 python3 是 WindowsApps 空壳（静默零输出）。
+find_program(GIS_GTGUARD_PYTHON NAMES python python3 py)
+set(_gis_geotransform_py "")
+if(GIS_GTGUARD_PYTHON)
+    execute_process(
+        COMMAND "${GIS_GTGUARD_PYTHON}" -c "print('GIS_GTGUARD_PY_OK')"
+        OUTPUT_VARIABLE _gis_gtguard_probe
+        ERROR_QUIET
+        RESULT_VARIABLE _gis_gtguard_probe_rc
+        TIMEOUT 20
+    )
+    if(_gis_gtguard_probe_rc EQUAL 0 AND _gis_gtguard_probe MATCHES "GIS_GTGUARD_PY_OK")
+        set(_gis_geotransform_py "${GIS_GTGUARD_PYTHON}")
+    endif()
+endif()
+add_test(
+    NAME geotransform_guard
+    COMMAND ${CMAKE_COMMAND}
+        -DPY=${_gis_geotransform_py}
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_geotransform_guard.cmake
+)
 # Hard timeout for every test registered at configure time: a hanging test must fail, not
 # hang the pipeline. TESTS is the documented read-only directory property that lists the
 # tests add_test() has defined in this directory so far, so reading it at the very bottom

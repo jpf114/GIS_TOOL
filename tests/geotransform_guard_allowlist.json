@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "geotransform 守卫白名单（tests/check_geotransform_guard.py 读）。规矩与 tests/docs_sync_allowlist.json 同源：",
+    "每条必须点名到具体位点并写兜底理由；条目点名不到活位点（DEAD-ALLOWLIST）与未点名位点同样判红，",
+    "免得'缺陷修好了、豁免还留着'把下一处真回潮吃掉。",
+    "entries 只管产品域（src/），成员**恰是 A 与 E 两处**（批次 D Task 8 用户拍板的射程）；",
+    "test_entries 管第二域（tests/），里面没有任何产品代码。",
+    "行号（hint_line）只作定位提示，匹配键是 file + 归一化后的 signature；signature 改了名 = 位点变了 = 条目 DEAD = 必须重新核。"
+  ],
+  "entries": [
+    {
+      "id": "A-getRasterInfo",
+      "file": "src/core/src/gdal_wrapper.cpp",
+      "function": "getRasterInfo",
+      "hint_line": 182,
+      "signature": "ds->GetGeoTransform(info.geoTransform);",
+      "fallback": "RasterInfo info{}（同函数开头）把 geoTransform 先零初始化；取不到变换时数组保持全 0，函数照常返回。",
+      "reason": "批次 D Task 8 射程外：本函数的消费方只有 GUI 预览（src/gui/raster_preview_widget.cpp）与 tests/test_core.cpp，改成失败会直接把预览面板打挂。要补的是**预览侧**的'有无变换'标志，已登记另开 GUI 刀。"
+    },
+    {
+      "id": "E-cuttingTileWarped",
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "function": "CuttingPlugin::doTile",
+      "hint_line": 1264,
+      "signature": "warpedDS->GetGeoTransform(wgt);",
+      "fallback": "double wgt[6] = {} 零初始化 + 上游两道闸（无 CRS 与北向上判据）+ GDALWarp 失败即返回 nullptr。",
+      "reason": "当前调用点参数集下不可达（warpArgv 从不传 -dstmethod NO_GEOTRANSFORM），改它零可观测收益；批次 D Task 8 未批准动它。前提写在这里：一旦有人给 warpArgv 加 -dstmethod，本条兜底立刻失效，守卫会因 signature 变更而 DEAD 报红。"
+    }
+  ],
+  "test_entries": [
+    {
+      "id": "T-readGeoTransformFixture",
+      "file": "tests/raster_fixture.h",
+      "function": "readGeoTransform",
+      "hint_line": 347,
+      "signature": "ds->GetGeoTransform(gt.data());",
+      "fallback": "gt 六个槽先预置 quiet_NaN（同函数开头），任何数值断言都不会与 NaN 相等 ⇒ '打不开/取不到'不会被伪装成'读到 0'。",
+      "reason": "测试夹具读取器，不产出任何交付物；判返回值要改的是每个调用方的断言口径，与本刀射程无关。"
+    }
+  ]
+}
