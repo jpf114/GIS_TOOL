@@ -364,6 +364,73 @@ static void ensureParentDirectoryForFile(const std::string& output) {
     fs::create_directories(outputPath.parent_path());
 }
 
+// ── 批次 D / D0-C3：临时件**命名**与**替换**两条原语的单一来源 ────────────────────────
+// 原来这两件事都长在 VectorStagedOutput 里（私有成员）。CSV 文本产物（7 个检查动作）要走同一条
+// 失败契约，但不该自带第二份实现 ⇒ 按"提成文件作用域、分支与文案逐字不动"的方式共用：
+//   ① 命名 <目标 stem>.gis-tmp-<进程号>-<进程内自增序号>：<目标目录> 由调用方补，扩展名各接各的。
+//      WHY 必须同源：仓库里按 `.gis-tmp-` 这个名字扫残留的既有判据有两处
+//      （tests/test_plugins.cpp 的 c3n1ExpectDirectoryUntouched 与 J3 的成功路径臂），
+//      换名字 = 新残骸没人抓。
+//   ② 进程内序号是**一把**静态计数器（两个类共用）⇒ 同一目录里即便目标 stem 相同
+//      （out.csv 与 out.gpkg 的 stem 都是 "out"）也不会撞出同一个临时件名。
+static std::string stagedOutputProcessTag() {
+#ifdef _WIN32
+    return std::to_string(static_cast<unsigned long>(GetCurrentProcessId()));
+#else
+    return std::to_string(static_cast<unsigned long>(::getpid()));
+#endif
+}
+
+static unsigned long nextStagedOutputSequence() {
+    static std::atomic<unsigned long> sequence{ 0 };
+    return sequence.fetch_add(1) + 1;
+}
+
+static std::string stagedOutputPrefix(const fs::path& target) {
+    // 进程号挡跨进程撞名，进程内自增序号挡同进程两个动作撞名（GUI 的任务队列与测试
+    // 都会在一个进程里并发跑多个动作）。
+    return target.filename().stem().u8string() + ".gis-tmp-" + stagedOutputProcessTag() + "-" +
+        std::to_string(nextStagedOutputSequence());
+}
+
+// 同卷替换。**这里不走 std::filesystem::rename**：本机 MSVC STL（工具集 14.44.35207，
+// crt/src/stl/filesystem.cpp:722）把它实现成
+//   MoveFileExW(_Source, _Target, MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING)
+// ⇒ "目标已存在"确实是覆盖成功不报错（这正是替换语义），但带着 COPY_ALLOWED 后
+// **跨卷会悄悄退化成 copy+delete**，"同卷原子替换"就兑不了 ⇒ 自己发一次不带
+// COPY_ALLOWED 的 MoveFileExW：跨卷直接失败，而不是半路变成复制。
+// 非 Windows 分支跟着本仓既有的 #ifdef _WIN32 形态走，用 rename(2) 本身：POSIX 的 rename
+// 同卷原子、跨卷报 EXDEV，本来就没有退化路径。
+// ⚠ 本函数是**从 VectorStagedOutput 的私有静态成员原样提到文件作用域**的（批次 D / D0-C3）：
+//   分支、返回值、错误文案逐字未改，数据集侧与 CSV 侧共用这一份。
+static bool replaceStagedFile(const fs::path& stagedFile, const fs::path& target,
+                              std::string& error) {
+#ifdef _WIN32
+    const std::wstring stagedWide = utf8ToWide(stagedFile.u8string());
+    const std::wstring targetWide = utf8ToWide(target.u8string());
+    if (stagedWide.empty() || targetWide.empty()) {
+        error = "Cannot encode staged output path: " + stagedFile.u8string();
+        return false;
+    }
+    if (MoveFileExW(stagedWide.c_str(), targetWide.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        return true;
+    }
+    error = "Cannot replace output " + target.u8string() + " with the staged file " +
+        stagedFile.u8string() + " (Win32 error " +
+        std::to_string(static_cast<unsigned long>(GetLastError())) + ")";
+    return false;
+#else
+    std::error_code ec;
+    fs::rename(stagedFile, target, ec);
+    if (!ec) {
+        return true;
+    }
+    error = "Cannot replace output " + target.u8string() + " with the staged file " +
+        stagedFile.u8string() + "：" + ec.message();
+    return false;
+#endif
+}
+
 // ── C3n-1：矢量输出的失败契约载体「同目录临时件 → 全部成功 → 显式关闭 → 替换目标」────────
 // 契约出处：用户 2026-10-23 的裁定，原文登记在 docs/RELEASE.md 的 N137 条目。
 // 要治的病：矢量动作今天**先截断目标再写**（16 个写出点甚至在驱动建数据集之前就把整个目标
@@ -434,12 +501,8 @@ public:
 
         ensureParentDirectoryForFile(output);
 
-        // 进程号挡跨进程撞名，进程内自增序号挡同进程两个动作撞名（GUI 的任务队列与测试
-        // 都会在一个进程里并发跑多个动作）。
-        static std::atomic<unsigned long> sequence{ 0 };
-        const unsigned long seq = sequence.fetch_add(1) + 1;
-        stagedPrefix_ = target_.filename().stem().u8string() + ".gis-tmp-" +
-            stagedProcessTag() + "-" + std::to_string(seq);
+        // 命名与序号的单一来源见上面 stagedOutputPrefix()（数据集侧与 CSV 侧共用一把计数器）。
+        stagedPrefix_ = stagedOutputPrefix(target_);
         const std::string stagedName = stagedPrefix_ + target_.extension().u8string();
         staged_ = targetDir() / fs::u8path(stagedName);
 
@@ -512,14 +575,6 @@ private:
         return parent.empty() ? fs::path(".") : parent;
     }
 
-    static std::string stagedProcessTag() {
-#ifdef _WIN32
-        return std::to_string(static_cast<unsigned long>(GetCurrentProcessId()));
-#else
-        return std::to_string(static_cast<unsigned long>(::getpid()));
-#endif
-    }
-
     static std::string lowerExtension(const fs::path& path) {
         std::string ext = path.extension().u8string();
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
@@ -573,41 +628,8 @@ private:
             target_.filename().stem().u8string() + stagedFile.extension().u8string());
     }
 
-    // 同卷替换。**这里不走 std::filesystem::rename**：本机 MSVC STL（工具集 14.44.35207，
-    // crt/src/stl/filesystem.cpp:722）把它实现成
-    //   MoveFileExW(_Source, _Target, MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING)
-    // ⇒ "目标已存在"确实是覆盖成功不报错（这正是替换语义），但带着 COPY_ALLOWED 后
-    // **跨卷会悄悄退化成 copy+delete**，"同卷原子替换"就兑不了 ⇒ 自己发一次不带
-    // COPY_ALLOWED 的 MoveFileExW：跨卷直接失败，而不是半路变成复制。
-    // 非 Windows 分支跟着本仓既有的 #ifdef _WIN32 形态走，用 rename(2) 本身：POSIX 的 rename
-    // 同卷原子、跨卷报 EXDEV，本来就没有退化路径。
-    static bool replaceStagedFile(const fs::path& stagedFile, const fs::path& target,
-                                  std::string& error) {
-#ifdef _WIN32
-        const std::wstring stagedWide = utf8ToWide(stagedFile.u8string());
-        const std::wstring targetWide = utf8ToWide(target.u8string());
-        if (stagedWide.empty() || targetWide.empty()) {
-            error = "Cannot encode staged output path: " + stagedFile.u8string();
-            return false;
-        }
-        if (MoveFileExW(stagedWide.c_str(), targetWide.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-            return true;
-        }
-        error = "Cannot replace output " + target.u8string() + " with the staged file " +
-            stagedFile.u8string() + " (Win32 error " +
-            std::to_string(static_cast<unsigned long>(GetLastError())) + ")";
-        return false;
-#else
-        std::error_code ec;
-        fs::rename(stagedFile, target, ec);
-        if (!ec) {
-            return true;
-        }
-        error = "Cannot replace output " + target.u8string() + " with the staged file " +
-            stagedFile.u8string() + "：" + ec.message();
-        return false;
-#endif
-    }
+    // 同卷替换的原语在本文件**文件作用域**的 replaceStagedFile()（批次 D / D0-C3 从本类私有
+    // 静态成员原样提出，与 CSV 侧共用一份；WHY 只留一份：两把语义会漂）。
 
     // 新件全部落地之后，把**旧产物**留下的、这一轮没产出的同名边车清掉。
     // Shapefile：同 stem 但扩展名不在本轮落地集合里的那些（例：旧的 .prj，而这轮没写 .prj）。
@@ -682,6 +704,120 @@ private:
     fs::path staged_;
     std::vector<fs::path> protectedInputs_;
     gis::core::GdalDatasetPtr dataset_;
+};
+
+// ── 批次 D / D0-C3：CSV 文本产物的失败契约载体「等价闸 → 同目录临时件 → 写完 → 关闭 → 替换」──
+// 射程：adjacency / dangling_endpoint_check / duplicate_point_check / hole_check /
+// multipart_check / overlap_check / topology_check 这 7 个写 CSV 的检查动作。
+// 它们不是**数据集**写出点（没有驱动、没有边车、没有 rtree），所以不接进 VectorStagedOutput，
+// 但两件必须同源的事与它同源：临时件**命名**（stagedOutputPrefix）与**替换原语**
+//（replaceStagedFile，同卷、不带 COPY_ALLOWED）⇒ 仓库里按 `.gis-tmp-` 扫残留的既有判据
+// 一样能扫到这 7 个动作的残骸。
+// 治的两个病（改前实测见台账对应节，此处不复述数字）：
+//   缺陷 A：`--output` 指回 `--input` 那个矢量文件 ⇒ 旧写法 std::ofstream(output, trunc)
+//           把输入就地清空、动作还报成功；
+//   缺陷 B：写入中途失败（取消 / 磁盘满 / 写坏）⇒ 目标位置留下上一份产物被截断后的半件，
+//           与 C3n 的契约"失败 ⇒ 旧产物仍在场"相反。
+// 判定顺序（工单硬要求，不许倒）：参数齐备（动作自己已在前面判）→ 输出与输入等价判定 →
+// 建父目录 → 开临时件 → 写 → 替换。清理义务跟着**对象生命周期**走：动作里的
+// CancelledException 展开同样经析构删临时件，不靠某个 return 语句。
+class CsvStagedOutput {
+public:
+    CsvStagedOutput() = default;
+    CsvStagedOutput(const CsvStagedOutput&) = delete;
+    CsvStagedOutput& operator=(const CsvStagedOutput&) = delete;
+    ~CsvStagedOutput() { discardStagedFile(); }
+
+    // 建临时件并把写端交给动作。protectedInputs 是"绝不许被输出覆盖掉"的输入清单：
+    // 这 7 个动作每个**只有一个输入**（现读 getParam<std::string> 只有 input/output/layer 三键），
+    // 所以调用方传 { input } 即可； nearest / spatial_join 那种双输入族不归本类。
+    // 返回 false 时 error 是一句能直接给用户的失败原因（文案与数据集侧 staged.start 同源）。
+    bool start(const std::string& output, const std::vector<std::string>& protectedInputs,
+               std::string& error) {
+        target_ = fs::u8path(output);
+        if (target_.empty() || target_.filename().empty()) {
+            error = "output is required";
+            return false;
+        }
+
+        for (const std::string& rawInput : protectedInputs) {
+            if (rawInput.empty()) {
+                continue;
+            }
+            const fs::path input = fs::u8path(rawInput);
+            std::error_code ec;
+            // 必须用**三参带 std::error_code** 的 equivalent（N156 的教训）：无 ec 的重载对
+            // `GPKG:"<路径>":<图层>` 这类合法 GDAL 数据源串抛 filesystem_error ⇒ std 原文会吐给用户。
+            // 判"同一个文件"用等价而不是字符串相等：`dir\.\x.gpkg` 与 `dir\x.gpkg` 是同一个文件、
+            // Windows 上大小写不同的拼法也是同一个文件 ⇒ 拿 == 当闸会漏。
+            // 输出本来不存在时 equivalent 走 ec 分支返回 false ⇒ 不误伤"输出还没建"这条常规路径。
+            // ⚠ 带驱动前缀的数据源拼法（`GPKG:"x.gpkg":layer`、`/vsizip/…` 这类）**不受本闸保护**：
+            //   剥前缀再比是独立挂账 N157（#157）的射程，本刀不做，留这一行注释免得它悄悄消失。
+            if (fs::equivalent(input, target_, ec)) {
+                error = "Output must not be the same file as input: " + output +
+                    " (input: " + input.u8string() + ")";
+                return false;
+            }
+        }
+
+        ensureParentDirectoryForFile(output);
+
+        stagedPrefix_ = stagedOutputPrefix(target_);
+        staged_ = targetDir() / fs::u8path(stagedPrefix_ + target_.extension().u8string());
+
+        // 上次崩溃留的同名孤儿件先清掉 ⇒ 否则本轮的替换会把别人的残骸搬进目标名。
+        // （名字含进程号 + 进程内序号，正常路径本来就是空的。）
+        std::error_code orphanEc;
+        fs::remove(staged_, orphanEc);
+
+        ofs_.open(staged_, std::ios::binary | std::ios::trunc);
+        if (!ofs_.is_open()) {
+            error = "Cannot create output file: " + output;
+            return false;
+        }
+        return true;
+    }
+
+    // 动作写的那个流：引用，所有权在本对象（析构负责关闭）。
+    std::ostream& stream() { return ofs_; }
+
+    // 成功路径的收口：**先关闭流**（把缓冲区的最后一行真的落到盘上）→ 替换目标。
+    // 返回 false ⇒ 调用方必须把这次动作报成失败；此时旧产物仍在场，临时件由析构兜住。
+    bool commit(std::string& error) {
+        ofs_.close();
+        // 关闭时才暴露的写失败（缓冲区满时写盘失败要在 close/flush 才判得出来）也算这次动作失败：
+        // 这条支在旧写法里交出的正是"目标位置一份被截断的半件 + success"。
+        if (ofs_.fail()) {
+            error = "Cannot write output file: " + target_.u8string();
+            return false;
+        }
+        return replaceStagedFile(staged_, target_, error);
+    }
+
+private:
+    // 输出所在目录（相对路径 `x.csv` 的 parent 是空 path ⇒ 归一成 "."，与数据集侧同一个处理）。
+    fs::path targetDir() const {
+        const fs::path parent = target_.parent_path();
+        return parent.empty() ? fs::path(".") : parent;
+    }
+
+    // 失败 / 异常展开路径的兜底：**先关流再删文件**（Windows 上还开着句柄的文件删不掉）。
+    // 已 commit 的调用点走不到这里也执行一遍 —— 换名成功后这个路径已不存在，删除走 ec 静默失败，
+    // 与数据集侧 discardStagedFiles() 的幂等收尾同一个口径。
+    void discardStagedFile() {
+        if (ofs_.is_open()) {
+            ofs_.close();
+        }
+        if (!staged_.empty()) {
+            std::error_code ec;
+            fs::remove(staged_, ec);
+        }
+    }
+
+    std::string stagedPrefix_;
+    fs::path target_;
+    fs::path staged_;
+    std::ofstream ofs_;
 };
 
 // WHY vector 的 24 个 CreateLayer 点里，这 17 个共用这一个 builder、且它一个图层选项都不发：

@@ -25,11 +25,15 @@ gis::framework::Result VectorPlugin::doMultipartCheck(
 
     progress.onProgress(0.25);
 
-    ensureParentDirectoryForFile(output);
-    std::ofstream ofs(fs::u8path(output), std::ios::binary | std::ios::trunc);
-    if (!ofs.is_open()) {
-        return gis::framework::Result::fail("Cannot create output file: " + output);
+    // 批次 D / D0-C3：CSV 产物走"等价闸 -> 同目录临时件 -> 写完 -> 关闭 -> 替换"（CsvStagedOutput）。
+    // 判定顺序不许倒：闸必须在**任何建目录/建文件之前**命中；本动作只有一个输入 => 保护清单就一个。
+    // 另有 GPKG:"<路径>":<图层> 这类带驱动前缀的数据源拼法不受本闸保护，见 N157（#157）。
+    CsvStagedOutput csv;
+    std::string stagedError;
+    if (!csv.start(output, { input }, stagedError)) {
+        return gis::framework::Result::fail(stagedError);
     }
+    std::ostream& ofs = csv.stream();
 
     ofs << "source_fid,geom_type,part_count\n";
 
@@ -55,9 +59,13 @@ gis::framework::Result VectorPlugin::doMultipartCheck(
             static_cast<double>(totalCount));
     }
 
-    ofs.close();
     progress.throwIfCancelled();
     progress.onProgress(1.0);
+
+    // 收口：关流 -> 把临时件同卷替换到目标名。失败 => 报失败，旧产物仍在场、临时件由析构删干净。
+    if (!csv.commit(stagedError)) {
+        return gis::framework::Result::fail(stagedError);
+    }
 
     auto result = gis::framework::Result::ok(
         "Multipart check completed: " + std::to_string(issueCount) + " multipart features", output);
