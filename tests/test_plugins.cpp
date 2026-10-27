@@ -21183,6 +21183,10 @@ TEST_F(PluginTest, VectorStagedOutputSidecarCleanupKeepsOldProductUnderPrefixedI
     //   也就是说今天挡住删除的又是 OS 的占用锁，不是这道闸 ⇒ 本条是**回归守卫**（一旦有人让输入
     //   提前关闭，改前的实现会当场毁掉输入），而"三处闸真的共用一份归一"的红态可达性由
     //   VectorStagedOutputNormalizationSharedAcrossAllThreeGates 那条源码结构守卫提供。
+    //   ⚠ 反事实读数（复审席 2026-10-28，别把这句当"能红"的证据）：把改前的 plugin_vector.dll
+    //   （2026-10-27 14:48，md5 b794232b…，含 Task 9、不含 datasetSourceAsPlainPath）装进硬链接沙箱跑同一场景，
+    //   **不加变异**也是 rc=0、诱饵 x.cpg 被删（扫描确跑）、x.gpkg md5 不变 ⇒ 这一组的②臂**改前改后都绿**，
+    //   红态只在"commit 前插 srcDS.reset()"那把变异下可达。判它承重的是①臂与 #418，不是②臂。
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
 

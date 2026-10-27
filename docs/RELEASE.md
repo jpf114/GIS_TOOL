@@ -1851,10 +1851,14 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   改后同一命令：`filter` 停在 **30%**、`repair` 停在 **20%**，
   文案 `Output must not be the same file as input: <输出> (input: GPKG:"<路径>":<图层>)`
   （**原样回显用户敲进去的前缀拼法**，归一结果只用于比较、不顶替它）。
-  ⚠ **CSV 检查动作那一半 CLI 里拼不出来**（现读：`vector adjacency --input='GPKG:"…y.gpkg":src'
-  --output=…y.gpkg` 被参数校验先挡下 ⇒ `Error: 参数“输出文件”应使用 .csv`，`rc=1`，输入未动）
-  ⇒ 该面的载体只能是插件级调用，判据 `#416` 在 `PluginTest` 里打的就是 `CsvStagedOutput::start`
-  （改前该臂一路跑到 **100%** 才吐 `Win32 error 5`，改后在建临时件之前干净失败）。
+  ⚠ **CSV 检查动作那一半在 CLI 上也拼得出来**（复审席实测、控制器 2026-10-28 复现，本行原先写"拼不出来"是错的）：
+  框架级校验只管**扩展名**（`action_validation.cpp:235`），不管文件真实驱动 ⇒
+  把一个**投影坐标系**的 GPKG 改名成 `pjc.csv` 再写 `--input='GPKG:"build/tmp/…/pjc.csv":src' --output=…/pjc.csv`，
+  `vector adjacency` 现态在 **35%** 处报 `Output must not be the same file as input: …pjc.csv (input: GPKG:"…pjc.csv":src)`、
+  输入 md5 `05eb4d9d…` 前后不变；改前二进制同命令一路跑到 **100%** 才吐 `Win32 error 5`。
+  ⇒ 该面**用户可从 CLI 触发**，判据 `#416` 的插件级形态只是它的一个投影。
+  ⚠ 反例也要记：用**地理坐标**的 GPKG 试同一条命令会先撞投影闸
+  （`Error: Adjacency requires a projected coordinate system`）⇒ 载体必须是投影层，控制器第一次复现就踩了这个。
   另一头同样钉住：**合法前缀输入 + 别的输出必须照常成功**（实测 `filter --input='GPKG:"…x.gpkg":src'
   --output=…out_pass.gpkg --where="1=1"` ⇒ `rc=0`、`feature_count: 42`）⇒ 本刀**不新增任何拒绝面**。
 - 落点：`vector_plugin_common.inc` 新增**一份**文件作用域归一函数 `datasetSourceAsPlainPath`（现读 `:456`），
@@ -1877,7 +1881,13 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   ⇒ **反向臂**（三处归一摘回 `fs::u8path`）`3 failed / 4`（`#417` 仍绿，与"摘掉归一⇒四条红"的账面**不符**，已如实登记）
   ⇒ **可达性变异臂**：在 `doFilter` 的 `commit()` 前插一句 `srcDS.reset()` 模拟"输入提前关闭"——
   摘归一那一臂 `#417` **当场红**（输入 `x.gpkg` 真的被按 stem 的边车扫描删掉），
-  归一还原那一臂 `#417` **绿**（改由闸护住）⇒ `#417` 判别力成立、且证明今天"没毁数据"确实只差一句 `reset()`。
+  归一还原那一臂 `#417` **绿**（改由闸护住）⇒ 证明今天"没毁数据"确实只差一句 `reset()`。
+  ⚠ **口径降级（复审席反事实实测）**：`#417` 的②臂（"输入边车没被删"那一组判点）在**已提交态里恒绿**——
+  把 2026-10-27 14:48 那份**改前** `plugin_vector.dll`（md5 `b794232b…`，含 Task 9、不含归一）装进硬链接沙箱跑同场景，
+  **不加任何变异**也是 `rc=0`、诱饵 `x.cpg` 被删（证明扫描确实跑了）、`x.gpkg` md5 不变 ⇒ **改前逐条同样全绿**。
+  故不能写"`#417` 判别力成立"，只能写：**②臂是回归守卫，红态只在变异下可达**；
+  整条用例不是死条目——它的①臂（防"整块扫描没跑"）是真判据，而"三处闸真的共用一份归一"的红态由源码结构守卫 `#418` 提供。
+  可达性证不出来这件事本身转 **#161**（GPKG 支不查 `isProtectedInput` 的防御缺失）。
   变异用完即还原并用 `git show HEAD` + 行尾规范化 + `git hash-object --path` 对撞 blob 确认。
 - **边车删除的可达性答复**：本仓今天**没有**"输入数据集在 commit 前就已关闭"的动作
   （`grep -rnE "GDALClose|srcDS\.reset\(\)" src/plugins/vector/` ⇒ 命中 1 处且是注释原文；
