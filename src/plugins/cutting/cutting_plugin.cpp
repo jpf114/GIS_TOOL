@@ -1277,6 +1277,17 @@ gis::framework::Result CuttingPlugin::doTile(
     progress.onProgress(0.1);
 
     double wgt[6] = {};
+    // 批次 D / Task 8 白名单位点 E（**只加兜底理由注释，行为一律不改**）：这里读的是**重投影产物** warpedDS，
+    //   不是源栅格，所以下面三道闸都在它上游、都已经在改前改后同样生效：
+    //   ① :1188 无 CRS 即失败；② :1196 源取不到地理变换即失败（节3 刚落的位点 D 专有文案）；
+    //   ③ warp 自身失败时 :1264-:1269 直接返回 "Reprojection failed: ..."，走不到这一句。
+    // 现读不可达的第二半：参数表 warpArgStorage（:1241-:1251）只放 -t_srs / -r / 可选 -dstalpha / -co COMPRESS=LZW /
+    //   -co BIGTIFF=IF_SAFER，组装点在 :1253-:1255（GDALWarpAppOptionsNew 于 :1257），**从不传 -dstmethod**；而 GDAL 只在 DST_METHOD 恰为 NO_GEOTRANSFORM 时才跳过
+    //   给输出写变换（现读 GDAL 3.12.4：apps/gdalwarp_lib.cpp:4897-4898 那个判据，另一支 :4924-4926 同时
+    //   写 SRS 与地理变换）⇒ 只要②放行（源确有变换），warp 产物必然带变换，这一句的返回值恒为成功。
+    // 兜底：:1279 `double wgt[6] = {}` 零初值（**这行是本条豁免成立的全部依据**）＋上面三道闸。
+    // ⚠ 前提写死在这里：一旦有人给 warpArgv 加 -dstmethod（或把②那道闸放松），本条豁免立刻失效——
+    //   守卫会因位点签名变更报 DEAD-ALLOWLIST 而红（tests/geotransform_guard_allowlist.json 的 E 条 reason 同源）。
     warpedDS->GetGeoTransform(wgt);
     const int wWidth = warpedDS->GetRasterXSize();
     const int wHeight = warpedDS->GetRasterYSize();

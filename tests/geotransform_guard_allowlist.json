@@ -12,19 +12,19 @@
       "id": "A-getRasterInfo",
       "file": "src/core/src/gdal_wrapper.cpp",
       "function": "getRasterInfo",
-      "hint_line": 182,
+      "hint_line": 196,
       "signature": "ds->GetGeoTransform(info.geoTransform);",
-      "fallback": "RasterInfo info{}（同函数开头）把 geoTransform 先零初始化；取不到变换时数组保持全 0，函数照常返回。",
-      "reason": "批次 D Task 8 射程外：本函数的消费方只有 GUI 预览（src/gui/raster_preview_widget.cpp）与 tests/test_core.cpp，改成失败会直接把预览面板打挂。要补的是**预览侧**的'有无变换'标志，已登记另开 GUI 刀。"
+      "fallback": "RasterInfo info{}（同函数开头 :176）把六个槽先零初始化；但**取不到变换时不等于全 0**——GDAL 基类在返回 CE_Failure 之前仍把默认恒等式 (0,1,0,0,0,1) 写进数组（GDAL 3.12.4 现读 gcore/gdaldataset.cpp:1506-1512 的赋值与 gcore/gdal_geotransform.h:47-62 的成员默认值），只有自定义该方法且失败前不碰数组的驱动才留调用方的零初值；函数照常返回。",
+      "reason": "批次 D Task 8 射程外：本函数按值返回 RasterInfo、没有失败通道，改抛错就是改可观测契约；而消费方现读只有 GUI 预览（src/gui/raster_preview_widget.cpp:125，外层无 try，:299 已按 [1]/[5] 是否非零决定显不显示分辨率）与 tests/test_core.cpp:326（:330 断的是**有**变换的夹具）。改成失败会直接把预览面板整块打挂。要补的是**预览侧**的'有无变换'标志，已登记另开 GUI 刀。源码位点的兜底注释（src/core/src/gdal_wrapper.cpp:196 那一句的上方）与本条同源。"
     },
     {
       "id": "E-cuttingTileWarped",
       "file": "src/plugins/cutting/cutting_plugin.cpp",
       "function": "CuttingPlugin::doTile",
-      "hint_line": 1280,
+      "hint_line": 1291,
       "signature": "warpedDS->GetGeoTransform(wgt);",
       "fallback": "double wgt[6] = {} 零初始化 + 上游两道闸（无 CRS 与北向上判据）+ GDALWarp 失败即返回 nullptr。",
-      "reason": "当前调用点参数集下不可达（warpArgv 从不传 -dstmethod NO_GEOTRANSFORM），改它零可观测收益；批次 D Task 8 未批准动它。前提写在这里：一旦有人给 warpArgv 加 -dstmethod，本条兜底立刻失效，守卫会因 signature 变更而 DEAD 报红。"
+      "reason": "当前调用点参数集下不可达：这里读的是 warp 产物，上游三道闸（:1188 无 CRS 即失败 / :1196 源取不到地理变换即失败＝节3 的位点 D / :1264-:1269 warp 自身失败即返回）都在它前面；参数表 warpArgStorage(:1241-:1251) 从不传 -dstmethod，而 GDAL 只在 DST_METHOD=NO_GEOTRANSFORM 时才跳过给输出写变换（GDAL 3.12.4 现读 apps/gdalwarp_lib.cpp:4897-4898 判据、:4924-4926 写 SRS+变换、:4932-4936 才是跳过支）⇒ 改它零可观测收益，批次 D Task 8 未批准动它。前提写在这里：一旦有人给 warpArgv 加 -dstmethod（或放松 :1196 那道闸），本条兜底立刻失效，守卫会因 signature 变更而 DEAD 报红。源码位点的兜底注释（src/plugins/cutting/cutting_plugin.cpp:1291 那一句的上方）与本条同源。"
     }
   ],
   "test_entries": [

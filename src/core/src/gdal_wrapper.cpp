@@ -179,6 +179,20 @@ RasterInfo getRasterInfo(GDALDataset* ds, const std::string& filePath) {
     info.width = ds->GetRasterXSize();
     info.height = ds->GetRasterYSize();
     info.bandCount = ds->GetRasterCount();
+    // 批次 D / Task 8 白名单位点 A（**只加兜底理由注释，行为一律不改**）：这一句照旧丢弃返回值。
+    // 为什么不升级成失败：本函数按值返回 RasterInfo，**没有失败通道**，改成抛错就是改可观测契约；
+    //   而产品侧消费方现读只有 GUI 栅格预览一处（src/gui/raster_preview_widget.cpp:125，直接构造
+    //   rasterInfo_，外层没有 try；它只在这些行里把像元尺寸与包框排进侧栏，:299 已经按
+    //   `[1]/[5] 是否非零`决定"分辨率"那一行要不要显示），另一条是 tests/test_core.cpp:326 的
+    //   同信息断言（:330 断像元原点 = 120.0，走的是**有**变换的夹具）⇒ 给"没有地理参考的普通影像"
+    //   判死刑等于把预览面板整块打挂，那不在本刀批准的射程里（要补的是预览侧的"有无变换"标志，已挂 GUI 刀）。
+    // 兜底到底是什么形态（现读 GDAL 3.12.4 源码，别按"取不到就是全 0"想当然）：
+    //   上面 `RasterInfo info{};`（:176）把六个槽零初始化，所以最坏只可能是"全 0"或"GDAL 的默认填充值"，
+    //   不会是未初始化内存——基类实现**在返回 CE_Failure 之前也先把默认恒等式 (0,1,0,0,0,1) 写进数组**
+    //   （gcore/gdaldataset.cpp:1509 的赋值、函数体 :1506-:1512 + gcore/gdal_geotransform.h:47-:62 的成员默认值
+    //    xorig=0/xscale=1/xrot=0/yorig=0/yrot=0/yscale=1），只有自定义该方法且失败前不碰数组的驱动才留调用方初值；
+    //   ⇒ 于是预览侧对无参考影像可能显示"分辨率 1 × 1"这种伪值：这是**既有形态**，本刀不掩盖也不修，
+    //     口径与守卫白名单 tests/geotransform_guard_allowlist.json 的 A 条 fallback/reason 逐字同源。
     ds->GetGeoTransform(info.geoTransform);
     info.crsWKT = getSRSWKT(ds);
 
