@@ -9302,6 +9302,227 @@ TEST_F(PluginTest, VectorNearestExecution) {
     GDALClose(outDs);
 }
 
+// ============== D0-A7 / N156：路径等价判定必须走带 error_code 的 fs::equivalent ==============
+// 病：`const bool sameDataset = fs::equivalent(fs::u8path(input), fs::u8path(joinVector));` 用的是
+// 会抛的那个重载。`GPKG:"<路径>":<图层>` 是 openVector（GDALOpenEx）**接受**的合法 GDAL 数据源串，
+// 但对 std::filesystem 而言引号是非法字符 ⇒ 无 ec 版抛 filesystem_error ⇒ CLI rc=1、把
+// "Error: equivalent: The filename, directory name, or volume label syntax is incorrect."
+// 的 std 原文吐给用户。改法=换带 error_code 的重载、异常吞掉并视作"不是同一个文件"，与同仓
+// vector_plugin_common.inc 里 `if (fs::equivalent(input, target_, ec))` 那两处一致。
+// 每条用例两拍：① 同一文件的裸路径 ⇒ 等价判定为真 ⇒ 自计（同一 FID）被排除；
+// ② 同一文件加 `GPKG:"…":<图层>` 前缀 ⇒ 不许抛 std 原文，且按"不是同一个文件"处理（自计被算进来）。
+// 两拍合起来还挡掉"把 sameDataset 直接写死成 false"这类假修 —— 那样拍①会红。
+// ⚠ 这里**不解析** `GPKG:` 前缀取真路径再比：那属未批的 `--join_layer` 那笔账。
+TEST_F(PluginTest, VectorSpatialJoinAcceptsPrefixedGpkgSourceString) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string file = utf8PathString(getTestDir() / "a7_n156_sj.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "a7_n156_sj_output.gpkg");
+
+    // 夹具：图层 areas 三个**两两重叠**的多边形（label=A/B/C）⇒ 每个要素都连得到另外两个。
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(file.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("areas", srs.get(), wkbPolygon, nullptr);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn labelField("label", OFTString);
+        ASSERT_EQ(layer->CreateField(&labelField), OGRERR_NONE);
+
+        auto addFeature = [layer](const char* label, double minX, double minY, double maxX, double maxY) {
+            OGRPolygon poly;
+            OGRLinearRing ring;
+            ring.addPoint(minX, minY);
+            ring.addPoint(maxX, minY);
+            ring.addPoint(maxX, maxY);
+            ring.addPoint(minX, maxY);
+            ring.addPoint(minX, minY);
+            poly.addRing(&ring);
+            OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            feat->SetField("label", label);
+            feat->SetGeometry(&poly);
+            const OGRErr err = layer->CreateFeature(feat);
+            OGRFeature::DestroyFeature(feat);
+            return err;
+        };
+        ASSERT_EQ(addFeature("A", 0, 0, 10, 10), OGRERR_NONE);
+        ASSERT_EQ(addFeature("B", 5, 0, 15, 10), OGRERR_NONE);
+        ASSERT_EQ(addFeature("C", 0, 5, 10, 15), OGRERR_NONE);
+        GDALClose(ds);
+    }
+
+    // 第二个客户端读产物：源要素的 label -> join_count（不信 metadata）。
+    auto readJoinCounts = [&output]() {
+        std::map<std::string, int> counts;
+        GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+            output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        if (!outDs) {
+            return counts;
+        }
+        OGRLayer* outLayer = outDs->GetLayer(0);
+        if (outLayer) {
+            OGRFeature* feat = nullptr;
+            while ((feat = outLayer->GetNextFeature()) != nullptr) {
+                counts[feat->GetFieldAsString("label")] = feat->GetFieldAsInteger("join_count");
+                OGRFeature::DestroyFeature(feat);
+            }
+        }
+        GDALClose(outDs);
+        return counts;
+    };
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("spatial_join");
+    params["input"] = file;
+    params["output"] = output;
+    params["join_field"] = std::string("label");
+
+    // 拍①：join_vector = 与 input 同一个文件的裸路径 ⇒ 等价判定为真 ⇒ 自己不算自己的邻居。
+    params["join_vector"] = file;
+    const auto selfJoin = p->execute(params, progress_);
+    ASSERT_TRUE(selfJoin.success) << selfJoin.message;
+    const std::map<std::string, int> selfCounts = readJoinCounts();
+    ASSERT_EQ(selfCounts.size(), 3u);
+    for (const auto& entry : selfCounts) {
+        EXPECT_EQ(entry.second, 2)
+            << "同一文件裸路径该判成同一个数据源、自计排除；label=" << entry.first;
+    }
+
+    // 拍②：同一文件换成 openVector 接受的 `GPKG:"<路径>":<图层>` 数据源串 ⇒ 不许抛 std 原文。
+    params["join_vector"] = "GPKG:\"" + file + "\":areas";
+    bool threw = false;
+    std::string thrownText;
+    gis::framework::Result prefixed = gis::framework::Result::fail("<execute 未运行>");
+    try {
+        prefixed = p->execute(params, progress_);
+    } catch (const std::exception& e) {
+        threw = true;
+        thrownText = e.what();
+    }
+    ASSERT_FALSE(threw) << "合法 GDAL 数据源串不得抛 filesystem_error：" << thrownText;
+    EXPECT_TRUE(prefixed.success) << prefixed.message;
+    EXPECT_EQ(prefixed.message.find("volume label syntax"), std::string::npos)
+        << "不许把 Windows 的 std 原文吐给用户：" << prefixed.message;
+    if (prefixed.success) {
+        const std::map<std::string, int> prefixedCounts = readJoinCounts();
+        ASSERT_EQ(prefixedCounts.size(), 3u);
+        for (const auto& entry : prefixedCounts) {
+            EXPECT_EQ(entry.second, 3)
+                << "带前缀的数据源串按\"不是同一个文件\"处理 ⇒ 自计算进来；label=" << entry.first;
+        }
+    }
+}
+
+TEST_F(PluginTest, VectorNearestAcceptsPrefixedGpkgSourceString) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const std::string file = utf8PathString(getTestDir() / "a7_n156_nearest.gpkg");
+    const std::string output = utf8PathString(getTestDir() / "a7_n156_nearest_output.gpkg");
+
+    // 夹具：图层 points 三个点 A(0,0) / B(3,4) / C(10,10)。
+    // 手算：A↔B=5、B↔C=√((10-3)²+(10-4)²)=√85≈9.219544、A↔C=√200≈14.142136
+    // ⇒ 排除自计时 A→B(5)、B→A(5)、C→B(√85)；算进自计时三点都是"自己、0"。
+    {
+        auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+        ASSERT_NE(driver, nullptr);
+        auto* ds = driver->Create(file.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        ASSERT_NE(ds, nullptr);
+        auto srs = std::make_unique<OGRSpatialReference>();
+        srs->importFromEPSG(3857);
+        auto* layer = ds->CreateLayer("points", srs.get(), wkbPoint, nullptr);
+        ASSERT_NE(layer, nullptr);
+        OGRFieldDefn labelField("label", OFTString);
+        ASSERT_EQ(layer->CreateField(&labelField), OGRERR_NONE);
+
+        auto addFeature = [layer](const char* label, double x, double y) {
+            OGRPoint point(x, y);
+            OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+            feat->SetField("label", label);
+            feat->SetGeometry(&point);
+            const OGRErr err = layer->CreateFeature(feat);
+            OGRFeature::DestroyFeature(feat);
+            return err;
+        };
+        ASSERT_EQ(addFeature("A", 0, 0), OGRERR_NONE);
+        ASSERT_EQ(addFeature("B", 3, 4), OGRERR_NONE);
+        ASSERT_EQ(addFeature("C", 10, 10), OGRERR_NONE);
+        GDALClose(ds);
+    }
+
+    // 第二个客户端读产物：源点 label -> (最近邻 label, 距离)。
+    auto readNearest = [&output]() {
+        std::map<std::string, std::pair<std::string, double>> rows;
+        GDALDataset* outDs = static_cast<GDALDataset*>(GDALOpenEx(
+            output.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+        if (!outDs) {
+            return rows;
+        }
+        OGRLayer* outLayer = outDs->GetLayer(0);
+        if (outLayer) {
+            OGRFeature* feat = nullptr;
+            while ((feat = outLayer->GetNextFeature()) != nullptr) {
+                rows[feat->GetFieldAsString("label")] = {
+                    feat->GetFieldAsString("nearest_val"), feat->GetFieldAsDouble("nearest_dist")};
+                OGRFeature::DestroyFeature(feat);
+            }
+        }
+        GDALClose(outDs);
+        return rows;
+    };
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("nearest");
+    params["input"] = file;
+    params["output"] = output;
+    params["nearest_field"] = std::string("label");
+
+    // 拍①：nearest_vector = 与 input 同一个文件的裸路径 ⇒ 等价判定为真 ⇒ 自己不参与竞争。
+    params["nearest_vector"] = file;
+    const auto selfNearest = p->execute(params, progress_);
+    ASSERT_TRUE(selfNearest.success) << selfNearest.message;
+    const std::map<std::string, std::pair<std::string, double>> selfRows = readNearest();
+    ASSERT_EQ(selfRows.size(), 3u);
+    ASSERT_NE(selfRows.count("A"), 0u);
+    ASSERT_NE(selfRows.count("B"), 0u);
+    ASSERT_NE(selfRows.count("C"), 0u);
+    EXPECT_EQ(selfRows.at("A").first, "B");
+    EXPECT_NEAR(selfRows.at("A").second, 5.0, 1e-6);
+    EXPECT_EQ(selfRows.at("B").first, "A");
+    EXPECT_NEAR(selfRows.at("B").second, 5.0, 1e-6);
+    EXPECT_EQ(selfRows.at("C").first, "B");
+    EXPECT_NEAR(selfRows.at("C").second, std::sqrt(85.0), 1e-6);
+
+    // 拍②：同一文件换成 openVector 接受的 `GPKG:"<路径>":<图层>` 数据源串 ⇒ 不许抛 std 原文。
+    params["nearest_vector"] = "GPKG:\"" + file + "\":points";
+    bool threw = false;
+    std::string thrownText;
+    gis::framework::Result prefixed = gis::framework::Result::fail("<execute 未运行>");
+    try {
+        prefixed = p->execute(params, progress_);
+    } catch (const std::exception& e) {
+        threw = true;
+        thrownText = e.what();
+    }
+    ASSERT_FALSE(threw) << "合法 GDAL 数据源串不得抛 filesystem_error：" << thrownText;
+    EXPECT_TRUE(prefixed.success) << prefixed.message;
+    EXPECT_EQ(prefixed.message.find("volume label syntax"), std::string::npos)
+        << "不许把 Windows 的 std 原文吐给用户：" << prefixed.message;
+    if (prefixed.success) {
+        const std::map<std::string, std::pair<std::string, double>> prefixedRows = readNearest();
+        ASSERT_EQ(prefixedRows.size(), 3u);
+        for (const auto& entry : prefixedRows) {
+            EXPECT_EQ(entry.second.first, entry.first)
+                << "带前缀的数据源串按\"不是同一个文件\"处理 ⇒ 自己就是自己的最近邻";
+            EXPECT_NEAR(entry.second.second, 0.0, 1e-9);
+        }
+    }
+}
+
 // ============== C3b-B1：拓扑/检查四条的 CSV 拆列判据公共件 ==============
 // 工单（.superpowers/sdd/2026-10-21-批次C全功能验证与文档同步/task-C3b-brief.md §C3b-B1）把这四条
 // （overlap_check / topology_check / adjacency / dangling_endpoint_check）的判据从"子串包含"

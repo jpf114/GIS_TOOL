@@ -115,7 +115,15 @@ gis::framework::Result VectorPlugin::doNearest(
     int count = 0;
     const GIntBig rawTotalCount = srcLayer->GetFeatureCount();
     const GIntBig totalCount = rawTotalCount > 0 ? rawTotalCount : 1;
-    const bool sameDataset = fs::equivalent(fs::u8path(input), fs::u8path(nearestVector));
+    // N156（用户 2026-10-27 拍：一行修，与 spatial_join.inc 成对改）：路径等价判定必须走**带
+    // error_code 的重载**。`GPKG:"<路径>":<图层>` 是 openVector（GDALOpenEx）**接受**的合法 GDAL
+    // 数据源串，但对 std::filesystem 而言引号是非法字符 ⇒ 无 ec 的那版抛 filesystem_error，
+    // CLI rc=1 并把 Windows 的 std 原文（"equivalent: The filename, directory name, or volume
+    // label syntax is incorrect."）吐给用户。这里吞掉异常、按"不是同一个文件"处理，与同仓
+    // common.inc 的 `if (fs::equivalent(input, path, ec))` 两处写法一致。
+    // ⚠ 不解析 `GPKG:` 前缀取真路径再比 —— 那属未批的 `--join_layer` 那笔账。
+    std::error_code sameDatasetEc;
+    const bool sameDataset = fs::equivalent(fs::u8path(input), fs::u8path(nearestVector), sameDatasetEc);
     while ((srcFeat = srcLayer->GetNextFeature()) != nullptr) {
         OGRGeometry* srcGeom = srcFeat->GetGeometryRef();
         if (!srcGeom || srcGeom->IsEmpty()) {

@@ -1622,6 +1622,24 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   旧态读数 `repaired=5 / skipped=0 / 产物要素=5 / 产物内 EMPTY=2` ⇒ 新态 `3 / 2 / 3 / 0`；
   变异取证：把判据回退成 `if (!repaired)` ⇒ 该用例当场复红（既有 `VectorRepairExecution` 不受影响）。
   文档 `docs/算法说明/矢量数据处理/修复.md` 的口径陈述（算法内容/处理流程/结果解释/输出说明）已按新口径改写。
+- **N156 已修（用户拍：一行修 + 成对改）**：`spatial_join.inc` 与 `nearest.inc` 里那行同形的
+  `const bool sameDataset = fs::equivalent(fs::u8path(input), fs::u8path(joinVector/nearestVector));`
+  用的是**会抛**的 `std::filesystem::equivalent` 重载 ⇒ 当 `--join_vector` / `--nearest_vector` 写成
+  `GPKG:"<路径>":<图层>`（GDAL 与 `openVector` 都**接受**的合法数据源串）时，引号对 filesystem 是非法字符
+  ⇒ 抛 `filesystem_error`、CLI `rc=1`、把 Windows 的 std 原文
+  （`Error: equivalent: The filename, directory name, or volume label syntax is incorrect.`）吐给用户。
+  两处都换成**带 `error_code` 的重载**（`std::error_code sameDatasetEc;` + 三参 `equivalent`），异常吞掉并
+  按“不是同一个文件”处理 ⇒ 与同仓 `common.inc:412/645` 既有写法统一。
+  **未做**（用户本轮未批）：不解析 `GPKG:` 前缀取真路径再比 —— 那属 `--join_layer` 那笔账；
+  同一文件的不同图层做连接/目标时今天仍按“同一数据集 + 同一 FID”判据处理（Task 5 实测到 `join_count` 全 0），
+  文档已如实写成未修面。
+  判据 2 条（`VectorSpatialJoinAcceptsPrefixedGpkgSourceString` / `VectorNearestAcceptsPrefixedGpkgSourceString`），
+  各两拍：① 同一文件裸路径 ⇒ 自计仍被排除（`join_count=2`；`nearest` 为 A→B(5)/B→A(5)/C→B(√85) 手算值）；
+  ② 同一文件加 `GPKG:"…":<图层>` 前缀 ⇒ 不许抛、产物照常（`join_count=3`；`nearest` 为自己、距离 0）。
+  旧态读数：两条都 `threw=true`、`e.what()` 逐字含上面那句 std 原文 ⇒ 红；改后 27/27 绿。
+  变异取证：把两处**成对**换回无 `ec` 重载 ⇒ 两条当场复红（拍①那条不红，说明自计语义由拍①独立守着，
+  写死 `sameDataset=false` 这类假修会被拍①打回）。
+  文档同步：`空间连接.md`（结果解释 + 注意事项）、`最近邻.md`（算法内容 + 注意事项）按“路径等价判定”改写并写明未修面。
 
 ### `ctest -j` 并行：现在开会得到假失败
 
