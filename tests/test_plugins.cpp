@@ -21003,6 +21003,352 @@ TEST_F(PluginTest, VectorTopologyOutputEqualsInputFailsAndKeepsFile) {
     csv7RunBothArms(p, item, progress_);
 }
 
+// ── 批次 D / D0-C4（N157）：输出保护闸要看得穿 GDAL 数据源串 ─────────────────────────
+// 病灶（三处闸同一个）：判定用的是 filesystem 的等价比较，而 openVector 明确接受 GDAL 的
+// **数据源串**（`GPKG:"<路径>":<图层>`）当合法输入 ⇒ 这种串对 filesystem 不是路径，带 ec 的
+// equivalent 恒得 false ⇒ 闸看不见"输出其实就是输入那个文件本身"。
+// 改前实测（Debug CLI，build/tmp/batchD/n157/，控制器与本刀各跑过一遍）：
+//   filter --input='GPKG:"…/x.gpkg":src' --output=…/x.gpkg --where="1=1"
+//     ⇒ rc=1、进度停在 40.0%、文案 `Cannot replace output … (Win32 error 5)`；
+//   repair 同形 ⇒ rc=1、进度停在 90.0%、同一句 Win32 文案；
+//   两次的输入与改前副本逐字节一致、目录无 .gis-tmp- 残骸。
+// ⇒ 今天挡住用户毁数据的是"Windows 不许替换正被占用的文件"（OS 巧合），不是这道闸。
+// 判据一律**双向**：
+//   臂①（拦）前缀输入 + 输出指回同一个文件 ⇒ 必须在创建任何产物之前点名"输出就是输入"这条规则，
+//          失败文案里不许出现 Win32/std 原文（出现了就说明闸没拦住、是 OS 替我们挡的）；
+//   臂②（放）前缀输入 + 别的输出 ⇒ 必须照常成功（甲案不新增拒绝面；反向臂缺这一半
+//          就等于把"放宽拒绝面"当成"修好了"）。
+
+namespace {
+
+// 臂①/臂②共用的载体：input 一律写成 `GPKG:"<裸路径>":<层名>`，只有 output 变。
+// productKind：臂②产物的独立复核方式（gpkg = 开数据集数要素；csv = 数数据行）。
+enum class N157Product { GpkgFeatures, CsvRows };
+
+void n157RunPrefixedInputArms(gis::framework::IGisPlugin* plugin, const char* action,
+                              const char* tag, N157Product productKind,
+                              std::size_t expectedUnits,
+                              bool (*writeFixture)(const std::string&),
+                              gis::core::ProgressReporter& plainProgress) {
+    ASSERT_NE(plugin, nullptr) << "plugin not loaded: vector";
+    const std::string layerName = "shapes";   // 两份夹具的层名都是 "shapes"（现读 csv7CreateGpkg / c3n1WriteTwoPolygonGpkg）
+
+    // ── 臂①：前缀输入 + output 指回同一个文件 ⇒ 入口闸必须当场拦下 ──────────────
+    {
+        const fs::path dir = c3n1FreshDir(std::string("n157_gate_") + tag);
+        ASSERT_TRUE(fs::exists(dir)) << "夹具目录建不出来：" << dir.u8string();
+        const std::string inputPlain = utf8PathString(dir / fs::u8path("in.gpkg"));
+        ASSERT_TRUE(writeFixture(inputPlain)) << "夹具写入失败：" << inputPlain;
+
+        // 载体前提：这条臂打的必须是"前缀串真的能被 GDAL 打开"那一格，否则红的是"输入打不开"，
+        // 闸根本没被走到 ⇒ 与恒真判据同罪。第二个客户端直接 GDALOpenEx 现证。
+        const std::string prefixedInput = "GPKG:\"" + inputPlain + "\":" + layerName;
+        {
+            void* probe = GDALOpenEx(prefixedInput.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                                     nullptr, nullptr, nullptr);
+            ASSERT_TRUE(probe != nullptr)
+                << "载体前提不成立：" << prefixedInput << " 打不开 ⇒ 前缀拼法要重新现读，本臂无意义";
+            GDALClose(static_cast<GDALDataset*>(probe));
+        }
+
+        const auto beforeNames = c3n1ListFiles(dir);
+        const auto beforeBytes = c3n1CollectBytes(dir);
+        ASSERT_GE(beforeBytes.size(), 1u) << "夹具目录是空的：" << dir.u8string();
+
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string(action);
+        params["input"] = prefixedInput;
+        params["output"] = inputPlain;   // 与输入同一个文件，只是拼法不同
+        // ⚠ 接手席现读更正（前席这行漏了，两条 filter 载体因此红在**错误的地方**）：
+        //   `filter` 在没有 where 也没有 extent 时**先**返回
+        //   `At least one of --where or --extent must be specified`（现读
+        //   src/plugins/vector/vector_plugin_info_filter.inc:191-194），位置在 openVector 与
+        //   staged.start **之前** ⇒ 改前改后都红在这句参数校验上，红得与闸无关（等价于恒红判据）。
+        //   补 `where=1=1` 让载体真的走到闸；`adjacency` 不读 where ⇒ 对它无影响。
+        params["where"] = std::string("1=1");
+
+        const std::string what = std::string("N157 闸臂[") + action + "]";
+        const C3n1Run run = c3n1RunAction(plugin, params, plainProgress);
+
+        EXPECT_FALSE(run.threw)
+            << what << "：动作没有干净失败而是抛出了异常（" << run.outcome() << "）";
+        EXPECT_FALSE(run.result.success)
+            << what << "：`--output` 指回前缀串背后那个文件没有被拦下来（" << run.outcome() << "）";
+
+        if (!run.threw && !run.result.success) {
+            EXPECT_NE(run.result.message.find("same file as input"), std::string::npos)
+                << what << "：失败文案没有点名『输出不能覆盖输入』这条规则，实际 message = "
+                << run.result.message;
+            // 下面两句是本刀的承重判点：文案里出现 Win32/std 原文 = 闸没起作用、是 OS 替我们挡的，
+            // 换个在提交前就关掉输入句柄的动作或驱动就会真毁数据（改前实测就是这个形态）。
+            EXPECT_EQ(run.result.message.find("Win32 error"), std::string::npos)
+                << what << "：失败来自 OS 的占用锁而不是入口闸（改前的病灶）：" << run.result.message;
+            EXPECT_EQ(run.result.message.find("filesystem_error"), std::string::npos)
+                << what << "：失败文案里混进了 std 原文：" << run.result.message;
+            // 文案要把用户敲进去的**原样拼法**回显出来（归一后的纯路径不许顶替它，
+            // 否则用户看不出自己是带前缀写进来的）。
+            EXPECT_NE(run.result.message.find(prefixedInput), std::string::npos)
+                << what << "：失败文案没把输入拼法原样回显：" << run.result.message;
+        }
+        c3n1ExpectDirectoryUntouched(dir, beforeNames, beforeBytes, what.c_str());
+    }
+
+    // ── 臂②：同一个前缀输入 + **别的**输出 ⇒ 必须照常成功（甲案不新增拒绝面）────────
+    {
+        const fs::path dir = c3n1FreshDir(std::string("n157_pass_") + tag);
+        ASSERT_TRUE(fs::exists(dir)) << "夹具目录建不出来：" << dir.u8string();
+        const std::string inputPlain = utf8PathString(dir / fs::u8path("in.gpkg"));
+        ASSERT_TRUE(writeFixture(inputPlain)) << "夹具写入失败：" << inputPlain;
+        const std::string prefixedInput = "GPKG:\"" + inputPlain + "\":" + layerName;
+
+        const fs::path output = dir / fs::u8path(
+            productKind == N157Product::CsvRows ? "out.csv" : "out.gpkg");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string(action);
+        params["input"] = prefixedInput;
+        params["output"] = utf8PathString(output);
+        // 与臂①同一个理由（filter 缺 where/extent 会先撞参数校验，走不到产物）。
+        params["where"] = std::string("1=1");
+
+        const std::string what = std::string("N157 放行臂[") + action + "]";
+        // 跑之前先记下输入字节（放行臂也不许顺手碰输入）。
+        const std::string inputBefore = c3n1ReadWholeFile(dir / fs::u8path("in.gpkg"));
+        ASSERT_FALSE(inputBefore.empty()) << what << "：输入夹具是空文件，字节对撞会空转";
+
+        const auto ok = plugin->execute(params, plainProgress);
+        ASSERT_TRUE(ok.success)
+            << what << "：前缀输入 + 别的输出被拒了 ⇒ 甲案被写成了『认不出就拒』（未批准的乙案）："
+            << ok.message;
+        ASSERT_TRUE(fs::exists(output)) << what << "：产物不存在：" << output.u8string();
+
+        // 产物用第二个客户端复核（exercised ≠ conformant：只看 rc 会放过"跑通但产物空"）。
+        if (productKind == N157Product::GpkgFeatures) {
+            void* raw = GDALOpenEx(utf8PathString(output).c_str(),
+                                   GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr);
+            ASSERT_TRUE(raw != nullptr) << what << "：产物打不开：" << output.u8string();
+            auto* outDs = static_cast<GDALDataset*>(raw);
+            OGRLayer* outLayer = outDs->GetLayer(0);
+            ASSERT_TRUE(outLayer != nullptr) << what << "：产物没有图层";
+            EXPECT_EQ(static_cast<std::size_t>(outLayer->GetFeatureCount()), expectedUnits)
+                << what << "：产物要素数与夹具期望不符";
+            GDALClose(outDs);
+        } else {
+            const std::size_t rows = csv7CountDataRows(output);
+            EXPECT_EQ(rows, expectedUnits) << what << "：产物数据行数与夹具期望不符";
+        }
+
+        // 输入本身一个字节都没动（放行臂也不许顺手碰输入）。
+        const std::string inputAfter = c3n1ReadWholeFile(dir / fs::u8path("in.gpkg"));
+        const std::string diff = c3n1ByteDiff(inputBefore, inputAfter);
+        EXPECT_TRUE(diff.empty()) << what << "：输入字节被改动 " << diff;
+
+        std::string residue;
+        for (const auto& name : c3n1ListFiles(dir)) {
+            if (name.find(".gis-tmp-") != std::string::npos) {
+                residue += " " + name;
+            }
+        }
+        EXPECT_TRUE(residue.empty()) << what << "：目录里残留了临时件：" << residue
+            << "；目录 = " << dir.u8string();
+    }
+}
+
+} // namespace
+
+TEST_F(PluginTest, VectorFilterOutputEqualsInputWhenInputIsPrefixedSourceStringFails) {
+    // 载体一：VectorStagedOutput::start 的等价闸（矢量数据集写出点，24 个动作共用这一个入口）。
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+    n157RunPrefixedInputArms(p, "filter", "filter", N157Product::GpkgFeatures, 2u,
+                             c3n1WriteTwoPolygonGpkg, progress_);
+}
+
+TEST_F(PluginTest, VectorAdjacencyOutputEqualsInputWhenInputIsPrefixedSourceStringFails) {
+    // 载体二：CsvStagedOutput::start 的等价闸（7 个 CSV 检查动作共用；这里取 adjacency）。
+    // 夹具与 D0-C3 的 adjacency 用例同一份（6 只共边正方形 ⇒ 相邻对数 5）。
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+    n157RunPrefixedInputArms(p, "adjacency", "adjacency", N157Product::CsvRows, 5u,
+                             csv7WriteTouchingChainGpkg, progress_);
+}
+
+TEST_F(PluginTest, VectorStagedOutputSidecarCleanupKeepsOldProductUnderPrefixedInput) {
+    // 载体三：isProtectedInput —— **不在** start() 等价闸射程里的第三道闸。
+    // 场景：输入写成前缀串、输出是**同目录同 stem** 的 Shapefile ⇒ commit 末尾的
+    // removeStaleOldSidecars 按 stem 扫目录时会把输入自己（.gpkg 不在本轮落地扩展名里）扫进来，
+    // 这一格唯一的保护就是 isProtectedInput。
+    // ⚠ 诚实说法（本条判点的红态可达性）：改前这一格在 Windows 上**也是绿的** ——
+    //   现读实测 `grep -rn "GDALClose|srcDS.reset()" src/plugins/vector/*.inc|*.cpp` 命中 0 处 ⇒
+    //   24 个写出点在 commit 时输入句柄仍然开着，fs::remove(输入) 被共享冲突挡下、返回码被忽略。
+    //   也就是说今天挡住删除的又是 OS 的占用锁，不是这道闸 ⇒ 本条是**回归守卫**（一旦有人让输入
+    //   提前关闭，改前的实现会当场毁掉输入），而"三处闸真的共用一份归一"的红态可达性由
+    //   VectorStagedOutputNormalizationSharedAcrossAllThreeGates 那条源码结构守卫提供。
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    const fs::path dir = c3n1FreshDir("n157_sidecar_filter");
+    ASSERT_TRUE(fs::exists(dir)) << "夹具目录建不出来：" << dir.u8string();
+    const std::string inputPlain = utf8PathString(dir / fs::u8path("x.gpkg"));
+    ASSERT_TRUE(c3n1WriteTwoPolygonGpkg(inputPlain)) << "夹具写入失败：" << inputPlain;
+
+    // 诱饵边车：与目标同 stem、扩展名不在本轮落地集合里、也不是任何输入 ⇒ **必须被删掉**。
+    // 没有它，"输入还在"可能只是这段扫描整块没跑（空跑），判据看不出来。
+    {
+        std::ofstream decoy(dir / fs::u8path("x.cpg"), std::ios::binary);
+        decoy << "UTF-8";
+    }
+
+    const std::string prefixedInput = "GPKG:\"" + inputPlain + "\":shapes";
+    const auto beforeBytes = c3n1CollectBytes(dir);
+    ASSERT_GE(beforeBytes.count("x.gpkg"), 1u) << "夹具没落地：" << dir.u8string();
+    ASSERT_TRUE(beforeBytes.at("x.cpg").size() > 0u) << "诱饵边车是空文件，删除判点会空转";
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("filter");
+    params["input"] = prefixedInput;
+    params["output"] = utf8PathString(dir / fs::u8path("x.shp"));
+    // 接手席现读更正：同 n157RunPrefixedInputArms —— 不给 where/extent 的话动作在
+    // vector_plugin_info_filter.inc:191-194 就返回，**根本到不了** commit 末尾的
+    // removeStaleOldSidecars ⇒ 本条会红在参数校验而不是它要打的第三道闸。
+    params["where"] = std::string("1=1");
+
+    const C3n1Run run = c3n1RunAction(p, params, progress_);
+    ASSERT_FALSE(run.threw) << "动作抛了异常：" << run.outcome();
+    ASSERT_TRUE(run.result.success)
+        << "这一格的 output 与 input 是两个不同的文件，闸不该拦（拦了就是乙案）：" << run.outcome();
+
+    const auto afterBytes = c3n1CollectBytes(dir);
+
+    // ① 扫描确实跑了：诱饵被清掉（同 stem、未落地、非受保护输入）。
+    EXPECT_EQ(afterBytes.count("x.cpg"), 0u)
+        << "诱饵边车 x.cpg 没被 removeStaleOldSidecars 删掉 ⇒ 这段扫描没跑，下面的『输入存活』是空判";
+    // ② 输入自己必须存活且逐字节不变（改前的实现：受保护判定看不见前缀串 ⇒ fs::remove 打在输入上）。
+    const auto inputAfter = afterBytes.find("x.gpkg");
+    ASSERT_TRUE(inputAfter != afterBytes.end())
+        << "输入被按 stem 的边车扫描删掉了（isProtectedInput 没认出前缀串背后的路径）";
+    const std::string diff = c3n1ByteDiff(beforeBytes.at("x.gpkg"), inputAfter->second);
+    EXPECT_TRUE(diff.empty()) << "输入字节被改动：" << diff;
+    // ③ 产物照常落地、没有临时件残骸。
+    EXPECT_EQ(afterBytes.count("x.shp"), 1u) << "Shapefile 主件没落地";
+    bool residue = false;
+    for (const auto& [name, bytes] : afterBytes) {
+        if (name.find(".gis-tmp-") != std::string::npos) {
+            residue = true;
+        }
+    }
+    EXPECT_FALSE(residue) << "目录里留了 *.gis-tmp-* 残骸：" << dir.u8string();
+}
+
+TEST_F(PluginTest, VectorStagedOutputNormalizationSharedAcrossAllThreeGates) {
+    // 源码结构守卫（判点全部按**函数名/签名原文**定位，带"出现次数恰为 1"与"切不出即判红"）：
+    //   ① 归一函数在 vector_plugin_common.inc 里**只有一份定义**；
+    //   ② 三处闸（VectorStagedOutput::start / isProtectedInput / CsvStagedOutput::start）
+    //      各自所在的源码区间里，归一调用恰好一次、fs::equivalent 恰好一次；
+    //   ③ 全文件的 fs::equivalent( 非注释行命中恰好三处 ⇒ 第四处"裸等价判定"一冒头就红。
+    // 它能红的方式（Step 4 反向臂实测）：把某一处的归一调用摘掉（只留原 equivalent）⇒ 那一处的
+    // 调用计数变 0 ⇒ 本条当场红；复制一份前缀解析进某一处 ⇒ ②/③ 计数对不上 ⇒ 红。
+    const fs::path commonInc = fs::u8path(
+        std::string(GIS_SOURCE_DIR) + "/src/plugins/vector/vector_plugin_common.inc");
+    ASSERT_TRUE(fs::exists(commonInc))
+        << "扫描对象不存在 ⇒ 这条守卫没在扫任何东西，判红而不是放过：" << commonInc.u8string();
+    std::ifstream in(commonInc, std::ios::binary);
+    ASSERT_TRUE(in.is_open()) << "扫描对象读不开：" << commonInc.u8string();
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    auto occurrences = [&text](const std::string& needle, std::size_t from, std::size_t to) {
+        int count = 0;
+        for (std::size_t pos = text.find(needle, from);
+             pos != std::string::npos && pos < to;
+             pos = text.find(needle, pos + needle.size())) {
+            ++count;
+        }
+        return count;
+    };
+    // 注释行不参与计数：WHY 注释里会提 `fs::equivalent`、`datasetSourceAsPlainPath` 这些名字
+    //（本仓已经吃过一次"为解释某事写的注释污染了数那件事的 grep"）。
+    auto nonCommentLinesIn = [&text](std::size_t from, std::size_t to) {
+        std::string joined;
+        std::size_t pos = from;
+        while (pos < to) {
+            const std::size_t eol = text.find('\n', pos);
+            const std::size_t stop = (eol == std::string::npos) ? text.size() : eol;
+            const std::string line = text.substr(pos, stop - pos);
+            pos = stop + 1;
+            const std::size_t indent = line.find_first_not_of(" \t");
+            if (indent == std::string::npos) {
+                continue;
+            }
+            if (line.compare(indent, 2, "//") == 0) {
+                continue;
+            }
+            joined += line.substr(indent);
+            joined += "\n";
+        }
+        return joined;
+    };
+
+    // ① 定义恰一份（锚点 = 定义签名原文）。
+    const std::string defAnchor = "static fs::path datasetSourceAsPlainPath(";
+    const int definitions = occurrences(defAnchor, 0, text.size());
+    EXPECT_EQ(definitions, 1)
+        << "归一函数的定义出现 " << definitions << " 次（期望恰 1 次）⇒ 前缀解析被复制成了两份以上，"
+        << "两处会漂";
+
+    // ② 三处闸按签名锚定，锚点各自必须恰出现一次、且顺序与文件一致。
+    struct Site {
+        const char* name;
+        std::string anchor;
+    };
+    const std::vector<Site> sites = {
+        { "VectorStagedOutput::start",
+          "bool start(const std::string& output, const std::string& format," },
+        { "isProtectedInput", "bool isProtectedInput(const fs::path& path) const {" },
+        { "CsvStagedOutput::start",
+          "bool start(const std::string& output, const std::vector<std::string>& protectedInputs," },
+    };
+    std::vector<std::size_t> starts;
+    for (const auto& site : sites) {
+        const int hits = occurrences(site.anchor, 0, text.size());
+        EXPECT_EQ(hits, 1) << "锚点『" << site.name << "』的签名出现 " << hits
+            << " 次（期望恰 1 次）⇒ 切不出唯一区间，本条判红而不是放过";
+        const std::size_t pos = text.find(site.anchor);
+        ASSERT_NE(pos, std::string::npos) << site.name << " 的签名在源码里找不到：" << site.anchor;
+        starts.push_back(pos);
+    }
+    ASSERT_EQ(starts.size(), 3u);
+    EXPECT_TRUE(starts[0] < starts[1] && starts[1] < starts[2])
+        << "三处闸在文件里的先后关系和守卫假设的不一致 ⇒ 区间划分作废，先重新现读";
+
+    const std::size_t bounds[4] = { starts[0], starts[1], starts[2], text.size() };
+    auto countIn = [](const std::string& haystack, const std::string& needle) {
+        int count = 0;
+        for (std::size_t pos = haystack.find(needle);
+             pos != std::string::npos;
+             pos = haystack.find(needle, pos + needle.size())) {
+            ++count;
+        }
+        return count;
+    };
+    for (std::size_t i = 0; i < sites.size(); ++i) {
+        const std::string body = nonCommentLinesIn(bounds[i], bounds[i + 1]);
+        const int calls = countIn(body, "datasetSourceAsPlainPath(");
+        EXPECT_EQ(calls, 1)
+            << sites[i].name << " 所在区间里归一调用数到 " << calls << " 次（期望恰 1 次）⇒ "
+            << "这一处还看得见裸路径、看不见数据源串（或写重了）";
+        const int equivalents = countIn(body, "fs::equivalent(");
+        EXPECT_EQ(equivalents, 1)
+            << sites[i].name << " 所在区间里的 fs::equivalent 数到 " << equivalents
+            << " 次（期望恰 1 次）⇒ 等价判定与归一不再一一对应";
+    }
+
+    // ③ 全文件闸：第四处裸等价判定一冒头就红。
+    const std::string whole = nonCommentLinesIn(0, text.size());
+    const int totalEquivalents = countIn(whole, "fs::equivalent(");
+    EXPECT_EQ(totalEquivalents, 3)
+        << "vector_plugin_common.inc 的非注释行里 fs::equivalent 命中 " << totalEquivalents
+        << " 处（期望 3 处：两处 start + isProtectedInput）⇒ 新加了一道没走归一的等价闸";
+}
+
 // ── J2：成功路径的产物形态一个字没变 ────────────────────────────────────────────────
 // 这条防的是"临时件机制把产物名搞错 / 把边车落错"：机制改的是**写到哪儿**，一旦 commit 的落点
 // 算错（例如 Shapefile 的 .dbf 落成了 .shp、或 GPKG 换名后 .gpkg-wal 留在目录里），
