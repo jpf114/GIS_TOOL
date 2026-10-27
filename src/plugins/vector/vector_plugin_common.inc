@@ -431,6 +431,93 @@ static bool replaceStagedFile(const fs::path& stagedFile, const fs::path& target
 #endif
 }
 
+// ── 批次 D / D0-C4（N157）：GDAL 数据源串 → 纯路径；三处输出保护闸共用**这一份**───────────
+// 病灶：本文件三处"输出不得就是输入"的等价闸判的是 std::filesystem 的等价，而 openVector 明确接受
+// GDAL 的**数据源串**当合法输入（`GPKG:"<路径>":<图层>` 这类"驱动名前缀 + 路径 + 图层后缀"的拼法；
+// 既有用例 VectorSpatialJoinAcceptsPrefixedGpkgSourceString / VectorNearestAcceptsPrefixedGpkgSourceString
+// 钉的就是这种拼法今天能跑 ⇒ 它是合法输入，不是脏数据）。这种串对 filesystem 不是一个路径 ⇒ 带 ec 的
+// equivalent 恒得 false ⇒ 闸看不见"输出其实就是输入那个文件本身"（台账 N157 / 工单 D0-C4）。
+// 本函数只干一件事：认出带驱动前缀的拼法、取出它背后那个**文件路径**，让三处闸用同一个口径比。
+// ⚠ **认不出来就原样返回**，此时本闸不覆盖该形态：归一结果仍不是有效路径 ⇒ equivalent 走 ec 分支
+//   判 false ⇒ 放行。这是工单**甲案**的边界，不是遗漏 —— 乙案（认不出形态即拒）会把今天能跑的其它
+//   参数化拼法一起变成失败（`/vsizip/…`、`/vsimem/…`、`CSV:/path` 这类），属未批准的新增拒绝面。
+//   现在**不覆盖**的形态逐字摆出来：`/vsizip/dir.zip/x.gpkg`、`/vsimem/x.gpkg`（无 ':'，原样返回，
+//   本来也不是盘上的一个文件）；连接串形态（`PG:dbname=…`）；任何"':' 前那段不是已注册驱动短名"的写法。
+// 识别规则（宁可少认，不可错认 —— 错认会把一条合法裸路径改成别的路径）：
+//   ① 串里没有 ':' ⇒ 普通路径，原样返回；
+//   ② ':' 前是一个字母且紧跟 '/' 或 '\' ⇒ Windows 盘符（`C:/x.gpkg`、`D:\dir\x.gpkg`），原样返回；
+//   ③ ':' 前那段必须与某个**已注册的 GDAL 驱动短名**逐字相同（ASCII 大小写不敏感、且不含路径分隔符）
+//     才认作前缀。短名向 GDALDriverManager 现取，不写死名单 ⇒ 驱动增减不必回来改这里；
+//   ④ 前缀后的剩余：以 '"' 打头就截到下一个 '"'（GDAL 的引号形态，路径里可带空格）；不带引号时，
+//     若末尾还挂着一段不含路径分隔符的 ':' 尾巴（图层名），把它截掉；
+//   ⑤ 剥完剩下的必须非空且不含 '"' 才认，否则原样返回。
+// ⚠ 本函数**不做**任何等价判定、也不查文件存在性：三处闸各只留一份等价判定（结构守卫
+//   PluginTest.VectorStagedOutputNormalizationSharedAcrossAllThreeGates 按出现次数恰为 1 数这件事）。
+static fs::path datasetSourceAsPlainPath(const std::string& source) {
+    const std::size_t colon = source.find(':');
+    if (colon == std::string::npos || colon == 0) {
+        return fs::u8path(source);
+    }
+
+    // 规则②：单字母 + ':' + 路径分隔符 = Windows 盘符，不是驱动前缀。
+    if (colon == 1 && source.size() > 2 && std::isalpha(static_cast<unsigned char>(source[0])) &&
+        (source[2] == '/' || source[2] == '\\')) {
+        return fs::u8path(source);
+    }
+
+    // 规则③：前缀段必须逐字等于（大小写不敏感）某个已注册驱动短名。
+    const std::string prefix = source.substr(0, colon);
+    if (prefix.find('/') != std::string::npos || prefix.find('\\') != std::string::npos) {
+        return fs::u8path(source);
+    }
+    auto asciiEqualIgnoreCase = [](const std::string& left, const char* right) {
+        std::size_t i = 0;
+        for (; i < left.size() && right[i] != '\0'; ++i) {
+            if (std::tolower(static_cast<unsigned char>(left[i])) !=
+                std::tolower(static_cast<unsigned char>(right[i]))) {
+                return false;
+            }
+        }
+        return i == left.size() && right[i] == '\0';
+    };
+    bool isDriverPrefix = false;
+    if (auto* driverManager = GetGDALDriverManager()) {
+        for (int i = 0; i < driverManager->GetDriverCount() && !isDriverPrefix; ++i) {
+            GDALDriver* driver = driverManager->GetDriver(i);
+            isDriverPrefix = driver != nullptr && asciiEqualIgnoreCase(prefix, driver->GetDescription());
+        }
+    }
+    if (!isDriverPrefix) {
+        return fs::u8path(source);
+    }
+
+    // 规则④/⑤：取前缀背后的路径。
+    const std::string rest = source.substr(colon + 1);
+    std::string candidate;
+    if (!rest.empty() && rest.front() == '"') {
+        const std::size_t closing = rest.find('"', 1);
+        if (closing == std::string::npos) {
+            return fs::u8path(source);   // 引号没闭合 ⇒ 不猜，原样返回
+        }
+        candidate = rest.substr(1, closing - 1);
+    } else {
+        candidate = rest;
+        const std::size_t lastColon = candidate.rfind(':');
+        if (lastColon != std::string::npos) {
+            const std::string tail = candidate.substr(lastColon + 1);
+            const bool tailIsLayerName = !tail.empty() &&
+                tail.find('/') == std::string::npos && tail.find('\\') == std::string::npos;
+            if (tailIsLayerName) {
+                candidate = candidate.substr(0, lastColon);
+            }
+        }
+    }
+    if (candidate.empty() || candidate.find('"') != std::string::npos) {
+        return fs::u8path(source);
+    }
+    return fs::u8path(candidate);
+}
+
 // ── C3n-1：矢量输出的失败契约载体「同目录临时件 → 全部成功 → 显式关闭 → 替换目标」────────
 // 契约出处：用户 2026-10-23 的裁定，原文登记在 docs/RELEASE.md 的 N137 条目。
 // 要治的病：矢量动作今天**先截断目标再写**（16 个写出点甚至在驱动建数据集之前就把整个目标
@@ -478,7 +565,9 @@ public:
         protectedInputs_.clear();
         for (const auto& input : protectedInputs) {
             if (!input.empty()) {
-                protectedInputs_.push_back(fs::u8path(input));
+                // 存**用户敲进去的原样拼法**（不是 fs::path）：比较时才归一，
+                // 失败文案要回显的也是原样拼法（否则用户看不出自己是带前缀写进来的）。
+                protectedInputs_.push_back(input);
             }
         }
         if (target_.empty() || target_.filename().empty()) {
@@ -486,15 +575,19 @@ public:
             return false;
         }
 
-        for (const auto& input : protectedInputs_) {
+        for (const auto& rawInput : protectedInputs_) {
             std::error_code ec;
+            // 先归一再比：`GPKG:"x.gpkg":layer` 这类 openVector 接受的合法数据源串背后就是那个文件，
+            // 直接拿串当路径比会恒判"不是同一个文件"（N157 的病灶）。归一认不出的形态原样返回，
+            // 本闸此时不覆盖它 —— 甲案的边界，见本函数上方注释。
+            const fs::path input = datasetSourceAsPlainPath(rawInput);
             // 判"同一个文件"要用**等价**而不是字符串相等：`dir\.\x.gpkg` 与 `dir\x.gpkg` 是
             // 同一个文件，Windows 上大小写不同的拼法也是同一个文件 ⇒ 拿 `==` 当闸会漏
             //（J4 的 dotslash 臂专打这一点）。输出本来不存在时 equivalent 走 ec 分支返回 false
             // ⇒ 不会误伤"输出还没建"这条常规路径。
             if (fs::equivalent(input, target_, ec)) {
                 error = "Output must not be the same file as input: " + output +
-                    " (input: " + input.u8string() + ")";
+                    " (input: " + rawInput + ")";
                 return false;
             }
         }
@@ -679,7 +772,10 @@ private:
 
     bool isProtectedInput(const fs::path& path) const {
         std::error_code ec;
-        for (const auto& input : protectedInputs_) {
+        for (const auto& rawInput : protectedInputs_) {
+            // 与两处 start() 同一个归一（N157）：按 stem 清旧边车那支扫到的可能是**输入自己**，
+            // 输入写成数据源串时，这一格里唯一的保护就是先把串背后的路径取出来再比。
+            const fs::path input = datasetSourceAsPlainPath(rawInput);
             if (fs::equivalent(input, path, ec)) {
                 return true;
             }
@@ -702,7 +798,8 @@ private:
     std::string stagedPrefix_;
     fs::path target_;
     fs::path staged_;
-    std::vector<fs::path> protectedInputs_;
+    // 原样拼法（可含 GDAL 数据源前缀）；比较前由本类三处闸各自过一次归一，见 start()/isProtectedInput。
+    std::vector<std::string> protectedInputs_;
     gis::core::GdalDatasetPtr dataset_;
 };
 
@@ -744,18 +841,19 @@ public:
             if (rawInput.empty()) {
                 continue;
             }
-            const fs::path input = fs::u8path(rawInput);
+            // 先归一再比（批次 D / D0-C4，N157）：`GPKG:"<路径>":<图层>` 这类 openVector 明确接受的
+            // 数据源串，背后就是那个文件 ⇒ 取出来比才看得见"输出就是输入"；认不出的形态原样返回，
+            // 本闸此时不覆盖该形态（甲案的边界，不许在这里改成"认不出就拒"）。
+            const fs::path input = datasetSourceAsPlainPath(rawInput);
             std::error_code ec;
             // 必须用**三参带 std::error_code** 的 equivalent（N156 的教训）：无 ec 的重载对
             // `GPKG:"<路径>":<图层>` 这类合法 GDAL 数据源串抛 filesystem_error ⇒ std 原文会吐给用户。
             // 判"同一个文件"用等价而不是字符串相等：`dir\.\x.gpkg` 与 `dir\x.gpkg` 是同一个文件、
             // Windows 上大小写不同的拼法也是同一个文件 ⇒ 拿 == 当闸会漏。
             // 输出本来不存在时 equivalent 走 ec 分支返回 false ⇒ 不误伤"输出还没建"这条常规路径。
-            // ⚠ 带驱动前缀的数据源拼法（`GPKG:"x.gpkg":layer`、`/vsizip/…` 这类）**不受本闸保护**：
-            //   剥前缀再比是独立挂账 N157（#157）的射程，本刀不做，留这一行注释免得它悄悄消失。
             if (fs::equivalent(input, target_, ec)) {
                 error = "Output must not be the same file as input: " + output +
-                    " (input: " + input.u8string() + ")";
+                    " (input: " + rawInput + ")";
                 return false;
             }
         }
