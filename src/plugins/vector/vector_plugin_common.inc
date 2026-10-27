@@ -234,6 +234,12 @@ struct OverlayFeatureEntry {
 // WHY 要逐字：两张表跳过规则一旦不一致，"各分块面积之和 == 并集面积"这类不变量就会凭空多/少一块。
 // 判据一致性由守卫用例钉住：PluginTest.VectorOverlayCollectorMirrorPredicateStaysVerbatim（源码扫描）。
 // N148：跳过支同样逐字镜像地累加 skippedInputCount，动作侧据此发 `*_skipped_input_count` 附加键。
+// ⚠ 覆盖边界（如实登记，不是漏删）：**要素趟这支计数今天是不可达的** —— `collectNormalizedFeatures` 的
+// 两个调用点（`vector_plugin_overlay.inc` 路径 A / 路径 B 那两处）都只传图层、不传计数指针，
+// 所以 `*_skipped_input_count` 的实际取值只来自几何趟 `collectNormalizedGeometries`。
+// 保留这两行的唯一理由是"跳过支逐字镜像"（守卫把两侧含 `if (` 的决策行逐字比对，删掉要素趟这支 ⇒ 守卫必红）。
+// 一旦将来有调用点开始传计数指针，union 侧必须防重复计数：几何趟已经取过一次数，两趟各加一遍会把
+// 同一条被丢的输入算成 2 条（union 对同一叠加层就是扫两趟）。
 static std::vector<OverlayFeatureEntry> collectNormalizedFeatures(
     OGRLayer* layer, size_t* skippedInputCount = nullptr) {
     std::vector<OverlayFeatureEntry> entries;

@@ -8233,7 +8233,10 @@ TEST_F(PluginTest, VectorSourceNeverDisablesGpkgSpatialIndex) {
 //（同文件第三条同形判据属 effectiveLayerGeometryType，在两段切片之外、一行都不许被牵连），
 // 各自抽出“含 if ( 的决策行（trim 后）”清单，判：两侧清单逐字相等、且各恰有一条以 “if (geom” 开头的
 // 取舍判据、且两侧的 cloneNormalizedGeometry(feat->GetGeometryRef()) 标准化行逐字相等。
-// 它能红的方式（取证时实演一次）：把 :208 或 :240 任一处的判据改掉 ⇒ 两份清单不再相等 ⇒ 本条红。
+// 它能红的方式（取证时实演一次）：把 collectNormalizedGeometries 或 collectNormalizedFeatures 里任一处的
+// 取舍判据 `if (geom && !geom->IsEmpty())` 改掉 ⇒ 两份清单不再相等 ⇒ 本条红。
+// WHY 注释里不写行号：行号是**自己会腐烂的断言**——本刀往上补几行用例/注释就把判据从 :209/:248 推走了，
+// 写死行号等于埋一条必错的注释。守卫本来就按**函数名**切片定位，判据原文 + 函数名才是稳定坐标。
 TEST_F(PluginTest, VectorOverlayCollectorMirrorPredicateStaysVerbatim) {
     const fs::path commonInc = fs::u8path(
         std::string(GIS_SOURCE_DIR) + "/src/plugins/vector/vector_plugin_common.inc");
