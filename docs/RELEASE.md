@@ -1668,6 +1668,11 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   以前写不进去、**现在会真往自己输入上写**。影响面 = `spatial_join` / `nearest` 两个动作的前缀串用法。
   本轮处置（按裁定只做文档与登记，**不改守卫**）：两篇文档把"可以写成前缀串"改成中性描述并点名本条挂账；
   守卫本身的修法（解析前缀取真路径后再比等价）紧随其后另开一小刀，未批前不要照前缀串写覆盖自己输入的用法。
+  **【2026-10-28 结案，批次 D / D0-C4】**修法按工单裁定的**甲案**落地（剥前缀取真路径再比等价；乙案"认不出形态即拒"
+  未获批准、未实现）。⚠ 挂账原文把影响面写成"`spatial_join` / `nearest` 两个动作的前缀串用法"——**现读更正**：
+  那道闸是 `VectorStagedOutput::start` 与 `CsvStagedOutput::start` 两个**共用入口**，
+  射程 = 矢量 24 个数据集写出点 + 7 个写 CSV 的检查动作（`isProtectedInput` 是第三处，按 stem 清旧边车那一支），
+  不止那两个动作；实测载体见下面 D0-C4 那一节。
 
 ### 批次 D 代码刀 D0-B 落地（2026-10-27，Task 6 / N148）
 
@@ -1752,8 +1757,10 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   **原样提到文件作用域**共用，分支与文案逐字未改，仓库里**没有**第二份实现。
 - 等价判定用**三参带 `std::error_code`** 的 `fs::equivalent`（N156 的教训：无 `ec` 的重载对
   `GPKG:"<路径>":<图层>` 这类合法 GDAL 数据源串抛 `filesystem_error`，std 原文会吐给用户）。
-  ⚠ 该类带前缀/带图层号的拼法**不受本闸保护**（剥前缀再比是独立挂账 N157（#157）的射程，本刀不做，
-  已在闸旁与 7 篇文档里各留一处说明，免得它悄悄消失）。
+  ~~⚠ 该类带前缀/带图层号的拼法**不受本闸保护**（剥前缀再比是独立挂账 N157（#157）的射程，本刀不做，
+  已在闸旁与 7 篇文档里各留一处说明，免得它悄悄消失）。~~
+  **⇒ 2026-10-26/28 更正**：该射程已由**批次 D / D0-C4**（Task 8b）结案（见下面 D0-C4 那一节）——
+  三处闸现在先把数据源串归一成纯路径再比等价，前缀拼法同样受保护。
 - 判据（Debug）：7 条新用例
   `PluginTest.Vector{Adjacency,DanglingEndpoint,DuplicatePoint,Hole,Multipart,Overlap,Topology}OutputEqualsInputFailsAndKeepsFile`，
   每条两臂 = 闸臂（同串 + `dir\.\` 两种拼法，判"必须干净失败 + 文案点名规则 + 输入逐字节不变 +
@@ -1768,7 +1775,7 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   （J2/J3 那两族只覆盖数据集写出点，CSV 侧的成功形态仍只有各动作既有的 `...Execution` 用例在判）；
   ② 台账"批次 C 裁定表"里那一行（原文 `（新）**CSV 两个检查动作无临时件契约、无"输出≠输入"闸**`，
   只点名了 `overlap_check` 与 `multipart_check`）**未更新** ⇒ 它现在既漏 5 个动作、又还挂着"列批次 D"，
-  改它属于登记表维护，按本刀纪律交回控制器处理；③ N157（前缀拼法）仍开账。
+  改它属于登记表维护，按本刀纪律交回控制器处理；③ N157（前缀拼法）当时仍开账 ⇒ **已于 2026-10-28 由批次 D / D0-C4 结案**。
 
 ### 批次 D 代码刀 D0-C2 落地（2026-10-27，Task 8 / 地理参考同族 + 防回潮守卫）
 
@@ -1827,6 +1834,69 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   ② 越界观察点让 `viewshed_multi` 在 Debug 下被 STL 迭代器检查带走进程（`0xc0000409`），**另立 N160**、本刀不修；
   ③ A 那处的"预览侧有无变换标志"仍挂 GUI 刀；④ Release 双树未验收；⑤ 节3 已提交注释里"实测 PNM"那一处
   是本席未复现的前席自述（标 UNVERIFIED），承重的只有上面那条 GDAL 基类源码读数。
+
+### 批次 D 代码刀 D0-C4 落地（2026-10-28，Task 8b / N157 结案）
+
+起因：D0-A7 把 `sameDataset` 从"抛异常"改成 `fs::equivalent(..., ec)` 静默判否（那是 N156 的修法），
+副作用是**带驱动前缀的数据源串**在输出保护闸里恒判"不是同一个文件" ⇒ 保护看不见
+"`--output` 其实就是 `--input` 那个文件"。方案取工单裁定的**甲案**（认出前缀取真路径再比等价）；
+**乙案（认不出形态即拒）未获批准 ⇒ 未实现**，代码与文档都写明"认不出就原样返回、本闸此时不覆盖该形态"。
+
+- ⚠ **用户可见变更**：`vector` 的写出动作里，`--input` 写成 `GPKG:"<路径>":<图层>` 这类合法数据源串、
+  `--output` 指回同一个文件这一拼法，**从"跑完全部计算再撞 OS 占用锁"变成"建任何产物之前就报失败"**。
+  改前实测（Debug CLI）：`filter` 停在 **40%**、`repair` 停在 **90%**，文案是
+  `Cannot replace output … with the staged file …<x>.gis-tmp-<pid>-1.gpkg (Win32 error 5)`
+  （CSV 侧同一病灶在插件级用例里现读为一路跑到 **100%** 才吐这句）
+  ——挡住毁数据的只是"Windows 不许替换正被占用的文件"这个 **OS 巧合**，不是设计。
+  改后同一命令：`filter` 停在 **30%**、`repair` 停在 **20%**，
+  文案 `Output must not be the same file as input: <输出> (input: GPKG:"<路径>":<图层>)`
+  （**原样回显用户敲进去的前缀拼法**，归一结果只用于比较、不顶替它）。
+  ⚠ **CSV 检查动作那一半 CLI 里拼不出来**（现读：`vector adjacency --input='GPKG:"…y.gpkg":src'
+  --output=…y.gpkg` 被参数校验先挡下 ⇒ `Error: 参数“输出文件”应使用 .csv`，`rc=1`，输入未动）
+  ⇒ 该面的载体只能是插件级调用，判据 `#416` 在 `PluginTest` 里打的就是 `CsvStagedOutput::start`
+  （改前该臂一路跑到 **100%** 才吐 `Win32 error 5`，改后在建临时件之前干净失败）。
+  另一头同样钉住：**合法前缀输入 + 别的输出必须照常成功**（实测 `filter --input='GPKG:"…x.gpkg":src'
+  --output=…out_pass.gpkg --where="1=1"` ⇒ `rc=0`、`feature_count: 42`）⇒ 本刀**不新增任何拒绝面**。
+- 落点：`vector_plugin_common.inc` 新增**一份**文件作用域归一函数 `datasetSourceAsPlainPath`（现读 `:456`），
+  三处闸共用——`VectorStagedOutput::start`（归一 `:583` / 等价 `:588`）、`isProtectedInput`（`:778` / `:779`）、
+  `CsvStagedOutput::start`（`:847` / `:854`）；`protectedInputs_` 改存**原样拼法**（`vector<std::string>`）。
+  识别纪律：驱动短名向 `GetGDALDriverManager()` 现取（ASCII 大小写不敏感逐字比，不写死名单）、
+  盘符形态（`C:/…`）单独判掉绝不当前缀剥、引号形态与非引号带图层尾巴两种都取路径、
+  剥完空或含残引号即原样返回。**不做**等价判定、**不查**文件存在性。
+- 判据（作者=前席，四条 `TEST_F` 全部接住；接手席只补了载体参数）：
+  `PluginTest.VectorFilterOutputEqualsInputWhenInputIsPrefixedSourceStringFails`（`VectorStagedOutput::start`，
+  双向臂）、`…VectorAdjacencyOutputEqualsInputWhenInputIsPrefixedSourceStringFails`（`CsvStagedOutput::start`，
+  双向臂）、`…VectorStagedOutputSidecarCleanupKeepsOldProductUnderPrefixedInput`（`isProtectedInput`，
+  带诱饵边车 `x.cpg` 防"扫描整块没跑"的空判）、`…VectorStagedOutputNormalizationSharedAcrossAllThreeGates`
+  （源码结构守卫：定义恰 1 份 / 三处各恰 1 调用 + 1 等价 / 全文件等价恰 3，锚点带"切不出即判红"）。
+  ⚠ 接手席现读否证前席一处：`filter` 载体漏 `where` ⇒ 动作在 `vector_plugin_info_filter.inc:191-194`
+  就返回，**走不到闸**，两条用例改前改后都恒红在参数校验（等价于恒红判据）⇒ 补 `where=1=1`。
+- 取证顺序与读数（Debug，全部 `ctest --test-dir build/debug -C Debug`）：
+  先红 `3 failed / 4`（`#415 #416 #418` 红，`#417` 当时**绿**——挡住删除的是 OS 句柄而不是那道闸）
+  ⇒ 实现后 `100% tests passed, 0 failed out of 4`，`Total 1.25 sec`（还原干净后复跑 `1.01 sec`）
+  ⇒ **反向臂**（三处归一摘回 `fs::u8path`）`3 failed / 4`（`#417` 仍绿，与"摘掉归一⇒四条红"的账面**不符**，已如实登记）
+  ⇒ **可达性变异臂**：在 `doFilter` 的 `commit()` 前插一句 `srcDS.reset()` 模拟"输入提前关闭"——
+  摘归一那一臂 `#417` **当场红**（输入 `x.gpkg` 真的被按 stem 的边车扫描删掉），
+  归一还原那一臂 `#417` **绿**（改由闸护住）⇒ `#417` 判别力成立、且证明今天"没毁数据"确实只差一句 `reset()`。
+  变异用完即还原并用 `git show HEAD` + 行尾规范化 + `git hash-object --path` 对撞 blob 确认。
+- **边车删除的可达性答复**：本仓今天**没有**"输入数据集在 commit 前就已关闭"的动作
+  （`grep -rnE "GDALClose|srcDS\.reset\(\)" src/plugins/vector/` ⇒ 命中 1 处且是注释原文；
+  38 个 `= openVector(` 调用点全在函数体顶层，`GdalDatasetPtr` 活到动作 `return` ⇒ commit 时句柄仍开）
+  ⇒ 该路径**当前不可达，依赖 OS 句柄巧合**（不写"安全"）。
+  ⚠ 相邻面登记、本刀不修：`removeStaleOldSidecars` 的 **GPKG 支**（`:764`，删除落 `:768`）
+  对 `target_` 的 `-wal/-journal/-shm` **不查 `isProtectedInput`** ⇒ 另开一刀 D0-C4b。
+- 回归：先 `-N` 数应跑 **44** 条（正则见 `task-8b-report.md` 第 6 节；控制器 10-27 的 40 条基线 + 本刀 4 条），
+  加 `docs_match_cli` 与 `source_mojibake_guard` 共 **46** ⇒ 实跑 `100% tests passed, 0 failed out of 46`，
+  `Total 28.23 sec`。Debug 注册数现读 **783**（本刀 +4）。
+- 真实腿：只跑覆盖 `filter` / `adjacency` / `repair` / `convert` 的三个档 ⇒
+  `real_data_vector_quick` 161.92 s（TIMEOUT 720 ⇒ 4.44×）、`real_data_vector_checks` 32.87 s（100 ⇒ 3.04×）、
+  `real_data_vector_overlay_buffer_join` 87.62 s（630 ⇒ 7.19×），`100% tests passed, 0 failed out of 3`，
+  合计 282.44 s；**余量最低 3.04×，未跌破 2.5× ⇒ 不拆腿、未抬 TIMEOUT**。Release 双树本刀未编 ⇒ 未验收。
+- 文档：`矢量数据处理/{邻接关系,多部件检查,孔洞检查,悬挂端点检查,拓扑检查,重叠检查,重复点检查}.md` 七篇里
+  "带驱动前缀的数据源写法不受这道闸保护"那句升级为"同样受这道闸保护（认不出的形态仍放行）"；
+  `最近邻.md` / `空间连接.md`（D0-A7 那两处中性措辞）同样升级并点名结案。参数表**一个字节没动**。
+- `data/` 只读复核：`find data -type f -newermt "2026-10-28 00:19:45" | wc -l` = **0**；
+  `gen_data_baseline.py` 重算与 `data_baseline.prev` **字段级对撞 0 处差异**（读数见 `task-8b-report.md` 第 8 节）。
 
 ### `ctest -j` 并行：现在开会得到假失败
 
