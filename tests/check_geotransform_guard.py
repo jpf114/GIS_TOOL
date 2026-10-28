@@ -81,14 +81,17 @@ DOMAINS = [
         #   的锚点恒等式照样逐域对撞（漏分类当场红）；②分桶**能力**由自证臂 bad/ok 两个夹具钉死
         #   （bad：any=7 code=3 comment_line=1 block_comment=1 string_only=2；
         #     ok ：any=8 code=6 comment_line=1 block_comment=0 string_only=1 —— 全是字面量期望）；
-        #   ③本域真正承重的是 CODE 桶那一侧（**现读 8 位点 / 7 已判 / 1 点名豁免 / 0 违规 / 0 死白名单**），
-        #     一个都没放松 ⇒ 注释误并进 CODE 会让 code 从 8 变 9 当场红，
+        #   ③本域真正承重的是 CODE 桶那一侧（**现读 10 位点 / 9 已判 / 1 点名豁免 / 0 违规 / 0 死白名单**），
+        #     一个都没放松 ⇒ 注释误并进 CODE 会让 code 从 10 变 11 当场红，
         #     新增未判的代码位点会让 violations 红，两个方向都还咬得住；只有"多写一句注释"不再需要改守卫。
-        #     位点从 3 涨到 8 的账（写死在这里省得下把再翻守卫日志）：本守卫落地时是 3 位点
+        #     位点从 3 涨到 10 的账（写死在这里省得下把再翻守卫日志）：本守卫落地时是 3 位点
         #     （raster_fixture.h 一处点名豁免 + test_plugins.cpp 两处已判）；批次 D D1-P（Task 16）给
         #     `assign_srs` 加了两处"判了返回值"的 GT 读取却**没回来改这个期望数**⇒ 守卫从那时起就红
         #     （5 ≠ 3，本席现读到的是这条**已存在的红**，不是本席造成的）；批次 D D1-C1（Task 18）给
-        #     `cutting.clip` 的三档窗判据又加三处（同样都判返回值）。两处都按 ①的补救口径改成现读，
+        #     `cutting.clip` 的三档窗判据又加三处（同样都判返回值）；批次 D R3a 给
+        #     `PluginTest.RasterManageCogExecution` 与 `PluginTest.RasterRenderHistogramMatchExecution`
+        #     两块各加一处"地理参考必须由产物读回"的已判位点（两处都用 ASSERT_EQ 接 CE_None）。
+        #     两处都按 ①的补救口径改成现读，
         #     `violations` 与 `dead` 仍是 0 ⇒ 没有任何一位点是"裸调用混进来的"。
         # 产品域（src/）保留全部字面量桶：那里的散文由本刀统一写成**不含 TOKEN 字面量**的形式
         #   （A/E 两条兜底理由注释同此），所以 comment_line 恒为 1 = terrain_plugin.cpp:1337
@@ -99,7 +102,7 @@ DOMAINS = [
         #   读 `GTGUARD SCAN domain=test(...) any=… code=… comment_line=…`，别拿这里的数去改期望值。
         #   （本文件自己不在扫描范围内：只走 CPP_EXTS，所以这些 TOKEN 字面量不会污染读数。）
         "expect": {
-            "code": 8, "checked": 7, "unchecked": 1, "allowlisted": 1, "violations": 0, "dead": 0,
+            "code": 10, "checked": 9, "unchecked": 1, "allowlisted": 1, "violations": 0, "dead": 0,
         },
     },
 ]

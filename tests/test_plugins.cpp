@@ -2954,7 +2954,25 @@ TEST_F(PluginTest, RasterManageCogExecution) {
     auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);
 
-    const std::string input = createTestRaster("e2e_util_cog_input.tif", 64, 64);
+    // ── R3a（批次 D）：从"跑通了 + 三个从输入继承的 EXPECT_EQ"升级成结构侧 + 数值侧双判据 ──
+    // 夹具换成**非方**三级平台 createStepLevelRaster(64, 40)：
+    //   原夹具是 createTestRaster 的 64×64 方阵，宽高互换读不出任何差别（轴写反是等价变异），
+    //   而且它的 i%256 斜坡期望要靠求和顺序与逐档舍入凑，推不起闭式。
+    // 象限划分 x<32、y<20 ⇒ 每块 32*20 = 640 个像元，多重集 {0^640, 10^1280, 51^640}，n = 2560：
+    //   Mean   = (1280*10 + 640*51)/2560 = 45440/2560 = 17.75
+    //   E[x^2] = (1280*100 + 640*2601)/2560 = 1792640/2560 = 700.25
+    //   Var    = 700.25 - 17.75^2 = 700.25 - 315.0625 = 385.1875
+    //   StdDev = sqrt(385.1875) = 19.626194231179920（GDAL 印的是**总体**标准差）
+    // 容差夹心（C++ 侧直接拿 double，不走 6 位有效印法）：
+    //   Min 0 / Max 51 / Mean 17.75：三者都是二进制精确（17.75 = 71/4）⇒ 最坏舍入 0，
+    //     容差 1e-9 只是"别拿 0 当容差"的形式量；最近的真实缺陷是平台整级移动（51→50 时
+    //     Mean 移 640/2560 = 0.25）⇒ 2.5e8 倍余量，两支都夹得住。
+    //   StdDev 19.626194231179920 是无理数：float64 表示误差 ≤ 1 ulp(19.6) = 3.6e-15，
+    //     GDAL 内部按 double 累加，取容差 1e-6 ⇒ 对表示误差是 2.8e8 倍；对最近的真实缺陷
+    //     "样本标准差（除 n-1）"= 19.630028595626232，距离 3.834e-3 ⇒ 3834 倍。两边都成立。
+    //     ⚠ 本席位对 StdDev 的**实跑**读数只有临时探针的 9 位印法（19.626194231），
+    //     所以"残差 ≤ 5e-10"是印法界推出的上界，不是实测到 1e-15 级。
+    const std::string input = createStepLevelRaster("e2e_util_cog_input.tif", 64, 40);
     const std::string output = utf8PathString(getTestDir() / "e2e_util_cog_output.tif");
 
     std::map<std::string, gis::framework::ParamValue> params;
@@ -2966,12 +2984,70 @@ TEST_F(PluginTest, RasterManageCogExecution) {
     EXPECT_TRUE(result.success) << result.message;
     EXPECT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("format"), "COG");
+    EXPECT_EQ(result.metadata.at("compression"), "LZW");
+
+    // 与 R1/R2 同一道防务：PAM 边车按文件名命中，缓存的 Statistics 块会让 ComputeStatistics
+    // 不读像元直接答数；GIS_PROCESSING 元数据也写在同一份边车里，本块不判它（判"写了元数据"
+    // 不等于判"数值对"）。所以先删边车、再开产物。
+    std::error_code pamEc;
+    fs::remove(output + ".aux.xml", pamEc);
 
     auto ds = gis::core::openRaster(output, true);
     ASSERT_NE(ds, nullptr);
     EXPECT_EQ(ds->GetRasterXSize(), 64);
-    EXPECT_EQ(ds->GetRasterYSize(), 64);
+    EXPECT_EQ(ds->GetRasterYSize(), 40);
     EXPECT_EQ(ds->GetRasterCount(), 1);
+
+    auto* band = ds->GetRasterBand(1);
+    ASSERT_NE(band, nullptr);
+    EXPECT_EQ(band->GetRasterDataType(), GDT_Float32);
+
+    // 结构侧·瓦片化：本席位**现读实测**（临时探针三档尺寸 40x24 / 64x40 / 130x66 / 300x200 全部一致）
+    // 本机 GDAL 的 COG 驱动给的是 512 x 512 块，不是常被引用的 128。
+    // 这条是 "-of COG" 在本把唯一的承重读数：换成 -of GTiff 走条带，GetBlockSize 返回 64 x 1。
+    int blockX = 0;
+    int blockY = 0;
+    band->GetBlockSize(&blockX, &blockY);
+    EXPECT_EQ(blockX, 512);
+    EXPECT_EQ(blockY, 512);
+
+    // 结构侧·压缩：现读实测串挂在**数据集级** IMAGE_STRUCTURE 域（波段级同键读不到，两处都探过）。
+    const char* compress = ds->GetMetadataItem("COMPRESSION", "IMAGE_STRUCTURE");
+    ASSERT_NE(compress, nullptr) << "COG 产物必须能在 IMAGE_STRUCTURE 域读到 COMPRESSION 读数";
+    EXPECT_EQ(std::string(compress), "LZW");
+
+    // 数值侧·无损往返：解码后的统计量必须等于夹具字面量手推出来的那四个数。
+    double minValue = 0.0;
+    double maxValue = 0.0;
+    double meanValue = 0.0;
+    double stdDevValue = 0.0;
+    ASSERT_EQ(
+        band->ComputeStatistics(FALSE, &minValue, &maxValue, &meanValue, &stdDevValue, nullptr, nullptr),
+        CE_None);
+    EXPECT_NEAR(minValue, 0.0, 1e-9);
+    EXPECT_NEAR(maxValue, 51.0, 1e-9);
+    EXPECT_NEAR(meanValue, 17.75, 1e-9);
+    EXPECT_NEAR(stdDevValue, std::sqrt(385.1875), 1e-6);
+
+    // 数值侧·逐像元：四角 = 夹具字面量。值都是 8 位/32 位精确整数 ⇒ 用 EXPECT_FLOAT_EQ（4 ulp），
+    // 不随手写 1e-6（float32 在 51 处的 ulp 是 3.8e-6，比 1e-6 大，那种容差反而是假紧）。
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 0, 0), 0.0f);      // 左上 = 0
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 63, 0), 10.0f);    // 右上 = 10
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 0, 39), 51.0f);    // 左下 = 51
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 63, 39), 10.0f);   // 右下 = 10
+
+    // 地理参考必须由 GDALTranslate 带过去（夹具头是 createStepLevelRaster 写死的那套）。
+    double adfGT[6];
+    ASSERT_EQ(ds->GetGeoTransform(adfGT), CE_None);
+    EXPECT_NEAR(adfGT[0], 116.0, 1e-12);
+    EXPECT_NEAR(adfGT[1], 0.001, 1e-12);
+    EXPECT_NEAR(adfGT[3], 40.0, 1e-12);
+    EXPECT_NEAR(adfGT[5], -0.001, 1e-12);
+
+    // 记录性读数（**不作判据**，写明理由免得下一把误当凭据）：现读实测 -of COG 在 40x24 / 64x40 /
+    // 130x66 / 300x200 四档上金字塔层数都是 0（瓦片 512 时没有可退的层级），所以"-of GTiff"也给它 0，
+    // 这一条红不了任何缺陷；留着只防"给小图凭空造概览"这一类改动。
+    EXPECT_EQ(band->GetOverviewCount(), 0);
 }
 
 TEST_F(PluginTest, RasterInspectHistogramExecution) {
@@ -3286,12 +3362,87 @@ TEST_F(PluginTest, RasterRenderColormapExecution) {
     EXPECT_NEAR(gStd, std::sqrt(9629.6875), 1e-6) << "级别标准差不等于手推的 sqrt(9629.6875)";
 }
 
+// R3a（批次 D）：histogram_match 的参照夹具——**四象限各一个平台**，与输入的三平台**不同分布**。
+// 为什么必须是"另一幅图"而不是"同一幅图的另一个波段"：doHistogramMatch 里 source 与 reference
+// 共用同一个 band 号（gdalBandToMat(srcDS, band) 与 gdalBandToMat(refDS, band)），
+// 所以"拿同一个文件的不同波段当参照"这个动作根本拼不出来。
+// 为什么不能拿输入当自己的参照：source == reference 时两侧 CDF 逐档相等 ⇒ LUT 恒等，
+// "做了匹配"与"直接拷 sourceU8"在产物上不可区分 ⇒ 那是等价变异，不是判据。
+// 取值 0 / 17 / 34 / 51 的唯一理由（**本席位选的夹具形状，不是产品决定的**）：
+// 归一化标度 255/(51-0) = 5.0 二进制精确 ⇒ 四档落到 u8 的 0 / 85 / 170 / 255，
+// 且两侧 CDF 全是 1/4 的整数倍（0.25 / 0.5 / 0.75 / 1.0，double 里精确）
+// ⇒ "<" 与 "<=" 两种并列取法必然在同一批档上分叉，判据不靠浮点运气。
+static std::string createFourPlateauRaster(const std::string& name, int w, int h,
+                                           float tl, float tr, float bl, float br) {
+    EXPECT_EQ(w % 2, 0);
+    EXPECT_EQ(h % 2, 0);
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+    double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+    ds->SetGeoTransform(adfGT);
+    std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const bool left = x < (w / 2);
+            const bool top = y < (h / 2);
+            data[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] =
+                left ? (top ? tl : bl) : (top ? tr : br);
+        }
+    }
+    auto* band = ds->GetRasterBand(1);
+    band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+    band->FlushCache();
+    return path;
+}
+
 TEST_F(PluginTest, RasterRenderHistogramMatchExecution) {
     auto* p = mgr_.find("raster_render");
     ASSERT_NE(p, nullptr);
 
-    const std::string input = createTestRaster("e2e_util_hist_match_input.tif", 40, 40);
-    const std::string reference = createTerrainRaster("e2e_util_hist_match_reference.tif", 40, 40);
+    // ── R3a（批次 D）：从"输出 != 输入"升级成整张 LUT 的逐档值判据 ──────────────────
+    // 原块的两幅夹具都是 40×40 方阵，值级只有 EXPECT_NE(产物像元, 输入像元)——只证"变了"，
+    // 不证"变成什么"，且宽高互换读不出差别。现在：非方 48×32 + 参照换**不同分布**。
+    //
+    // 期望侧全部由夹具字面量手推（先落笔在本报告 §4.1，再跑首读），链路是三步：
+    //   (1) cv::normalize 各按各的 min/max：标度 = 255/(max-min)，两侧都是 255/51 = 5.0，
+    //       所以输入 {0,10,51} → u8 {0,50,255}（计数 384/768/384），
+    //       参照 {0,17,34,51} → u8 {0,85,170,255}（各 384），n = 48*32 = 1536。
+    //   (2) CDF 是 "<= v" 累积 / n ⇒ 输入：0..49 档 0.25、50..254 档 0.75、255 档 1.0；
+    //       参照：0..84 档 0.25、85..169 档 0.5、170..254 档 0.75、255 档 1.0。
+    //   (3) buildHistogramMatchLut 的取档规则（现读原文）：游标只单调前进、
+    //       `while (referenceCdf[referenceIndex] < sourceCdf[i])` ⇒ 命中"第一个 refCdf >= srcCdf 的档"，
+    //       **并列取低档**，空档沿用上一次的结果。逐档推：
+    //         i = 0      ：srcCdf 0.25，refCdf[0] = 0.25 不满足 "<" ⇒ lut[0] = 0
+    //         i = 1..49  ：srcCdf 仍是 0.25（空档沿用）        ⇒ lut = 0
+    //         i = 50..169：srcCdf 0.75，游标越过 0.25(1..84) 与 0.5(85..169) ⇒ lut[50] = 170
+    //         i = 170..254：同 0.75，沿用                      ⇒ lut = 170
+    //         i = 255    ：srcCdf 1.0 ⇒ 游标前进到头            ⇒ lut[255] = 255
+    //       ⇒ 非平凡命中只有三档：0→0、50→170、255→255。
+    //   (4) 产物期望（再由夹具数一次，不依赖上面那张表）：值只能是 {0,170,255}，
+    //       计数 384/768/384（n = 1536）：
+    //         Mean   = (768*170 + 384*255)/1536 = 228480/1536 = 148.75
+    //         E[x^2] = (768*28900 + 384*65025)/1536 = 47164800/1536 = 30706.25
+    //         Var    = 30706.25 - 148.75^2 = 30706.25 - 22126.5625 = 8579.6875
+    //         StdDev = sqrt(8579.6875) = 92.626602550239312
+    //       首读实测（本块改完第一次跑）与这四个数逐字相符，见 build/tmp/batchD/r3a/step1_first_run.log。
+    //
+    // 反事实（同一张表推出的**别的规则**给什么，用来证明这不是恒真）：
+    //   把 "<" 翻成 "<=" ⇒ lut[0] = 85、lut[50..254] = 255 ⇒ 产物只剩 {85^384, 255^1152}，
+    //     Min 0→85、Mean 148.75→212.5 ⇒ Min / Mean / 逐像元三支同刻红、残差同值。
+    //   不做匹配（lut[i] = i，或直接拷 sourceU8）⇒ 产物 {0,50,255} ⇒ Mean = 88.75 ⇒ 红。
+    //   输入当自己的参照（自匹配）⇒ LUT 恒等 ⇒ 同样是 88.75 ⇒ 这就是参照必须换分布的原因。
+    //
+    // 容差夹心（逐支）：
+    //   Min 0 / Max 255 / Mean 148.75：148.75 = 595/4 二进制精确，像元是整数 ⇒ 最坏舍入 0，
+    //     容差 1e-9；最近的真实缺陷是 "<=" 那档翻车（Mean 差 63.75）⇒ 6.4e10 倍余量。
+    //   StdDev 92.626602550239312：无理数，float64 表示误差 ≤ 1 ulp(92.6) = 1.4e-14，
+    //     取 1e-6 ⇒ 对表示误差 7e7 倍；对最近缺陷"样本标准差"sqrt(8579.6875*1536/1535) = 92.65671
+    //     距离 0.030 ⇒ 3e4 倍。两边都成立。样本值本身 = 92.656769169684367（现算，非引用）。
+    //   逐像元：8 位整型经 convertTo(CV_32F) 得到的是精确整数 ⇒ EXPECT_FLOAT_EQ（4 ulp），
+    //     不写随手 1e-6（170 处 float32 的 ulp 是 1.5e-5，1e-6 比一个 ulp 还小，是假紧）。
+    const std::string input = createStepLevelRaster("e2e_util_hist_match_input.tif", 48, 32);
+    const std::string reference = createFourPlateauRaster(
+        "e2e_util_hist_match_reference.tif", 48, 32, 0.0f, 17.0f, 34.0f, 51.0f);
     const std::string output = utf8PathString(getTestDir() / "e2e_util_hist_match_output.tif");
 
     std::map<std::string, gis::framework::ParamValue> params;
@@ -3305,7 +3456,50 @@ TEST_F(PluginTest, RasterRenderHistogramMatchExecution) {
     EXPECT_TRUE(result.success) << result.message;
     EXPECT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("action"), "histogram_match");
-    EXPECT_NE(readRasterPixel(output, 10, 10), readRasterPixel(input, 10, 10));
+    EXPECT_EQ(result.metadata.at("band"), "1");
+
+    std::error_code pamEc;
+    fs::remove(output + ".aux.xml", pamEc);
+
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    // 产物尺寸来自 matchedFloat 的 cols/rows（= 输入尺寸），非方 ⇒ 宽高写反看得见。
+    EXPECT_EQ(ds->GetRasterXSize(), 48);
+    EXPECT_EQ(ds->GetRasterYSize(), 32);
+    EXPECT_EQ(ds->GetRasterCount(), 1);
+    auto* band = ds->GetRasterBand(1);
+    ASSERT_NE(band, nullptr);
+    // 值域是 0..255 的整数值，但**存成 GDT_Float32**（convertTo(CV_32F) 之后写出）——不是原始辐射单位。
+    EXPECT_EQ(band->GetRasterDataType(), GDT_Float32);
+
+    double minValue = 0.0;
+    double maxValue = 0.0;
+    double meanValue = 0.0;
+    double stdDevValue = 0.0;
+    ASSERT_EQ(
+        band->ComputeStatistics(FALSE, &minValue, &maxValue, &meanValue, &stdDevValue, nullptr, nullptr),
+        CE_None);
+    EXPECT_NEAR(minValue, 0.0, 1e-9);
+    EXPECT_NEAR(maxValue, 255.0, 1e-9);
+    EXPECT_NEAR(meanValue, 148.75, 1e-9);
+    EXPECT_NEAR(stdDevValue, std::sqrt(8579.6875), 1e-6);
+
+    // 逐档命中值（三档各取两枚，且 (24,0) 与 (0,24) 两枚的期望不同 ⇒ 行列写反必红）。
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 0, 0), 0.0f);      // 输入 0  → lut[0]   = 0
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 23, 15), 0.0f);    // 输入 0（左上限界内）
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 24, 0), 170.0f);   // 输入 10 → lut[50]  = 170
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 47, 31), 170.0f);  // 输入 10（右半）
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 0, 16), 255.0f);   // 输入 51 → lut[255] = 255
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 23, 31), 255.0f);  // 输入 51（左下半）
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 0, 24), 255.0f);   // 与 (24,0) 的 170 构成转置探针
+
+    // 地理参考由 copyRasterGeoMetadata(srcDS, dstDS) 从输入带过来。
+    double adfGT[6];
+    ASSERT_EQ(ds->GetGeoTransform(adfGT), CE_None);
+    EXPECT_NEAR(adfGT[0], 116.0, 1e-12);
+    EXPECT_NEAR(adfGT[1], 0.001, 1e-12);
+    EXPECT_NEAR(adfGT[3], 40.0, 1e-12);
+    EXPECT_NEAR(adfGT[5], -0.001, 1e-12);
 }
 
 TEST_F(PluginTest, SpindexNdviExecution) {
