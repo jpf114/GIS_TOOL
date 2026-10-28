@@ -13317,6 +13317,23 @@ TEST_F(PluginTest, CuttingClipRejectsMissingExtentAndCutline) {
     EXPECT_NE(result.message.find("Either extent or cutline must be specified"), std::string::npos);
 }
 
+// D1-C1（Task 18）：把 clip 的"窗"从文本存在性升级为值级判据。
+// 几何全部从夹具字面量推算，不从产物回填：createConstantRaster 的 adfGT =
+//   {116.0, 0.001, 0.0, 40.0, 0.0, -0.001} ⇒ 20×10 这张的源包框
+//   x∈[116.000, 116.020]、y∈[39.990, 40.000]，像元 0.001×0.001。
+// extent 轴序 = xmin,ymin,xmax,ymax —— 依据是 doClip 把四个数拼成 GDAL 的
+//   -projwin ulx uly lrx lry 时用的下标顺序是 [0] [3] [2] [1]（不是 [0][1][2][3]）。
+// 于是手算口径固定为：
+//   起始列 = (xmin - 116.000)/0.001、起始行 = (40.000 - ymax)/0.001、
+//   宽 = (xmax - xmin)/0.001、高 = (ymax - ymin)/0.001、输出 Origin = (xmin, ymax)。
+// 容差逐支说（本批 R-D34/容差夹心规矩：不写"通用"论证；GT 下标 = [0]西 [1]x像元 [2]行斜置
+// [3]北 [4]列斜置 [5]y像元）：
+//   · gt[0]/gt[3]（窗左上角地理坐标）：可达产物错误的最小步长是"整块窗挪动一个像元" = 1e-3 度，
+//     而 double 表示/重算误差 ≤ 1e-14 ⇒ 1e-12 两头都夹开（离可达产物错 9 个数量级、离舍入误差 2 个数量级）。
+//   · gt[1]/gt[5]（像元尺寸）：判的是"没被重采样/没丢 y 的负号"，任何形变（取负、换轴、重算分辨率）
+//     都至少动 1e-3 量级 ⇒ 同一支上 1e-12 同样夹开。
+//   · gt[2]/gt[4]（斜置）：夹具恒 0，承重面只有"没注入 skew"一支，两枚同值 ⇒ 不覆盖互换。
+//   · 像元值：夹具是 Float32 常量 5.0，读出即精确；1e-4f 与本文件既有判据同口径。
 TEST_F(PluginTest, CuttingClipByExtentProducesExpectedWindow) {
     auto* p = mgr_.find("cutting");
     ASSERT_NE(p, nullptr);
@@ -13337,7 +13354,133 @@ TEST_F(PluginTest, CuttingClipByExtentProducesExpectedWindow) {
     ASSERT_NE(outDs, nullptr);
     EXPECT_EQ(outDs->GetRasterXSize(), 7);
     EXPECT_EQ(outDs->GetRasterYSize(), 4);
+
+    // 手算：列 = (116.005 - 116.000)/0.001 = 5、行 = (40.000 - 39.998)/0.001 = 2、
+    // 宽 = (116.012 - 116.005)/0.001 = 7、高 = (39.998 - 39.994)/0.001 = 4。
+    // 下面两支左上角断言把"窗落在哪"钉住：上面那对 EXPECT_EQ 只判窗多大，
+    // 整块窗平移一格（例如把 extent 的 [1]/[3] 两槽用反、或把起始列算成 round 而不是 floor）
+    // 时尺寸照样是 7×4、而这两支当场红。
+    // GT 下标口径（首轮跑读出来的事实，写准免得下把再踩）：GDAL 的六元组是
+    //   [0]=西边界 [1]=x 像元 [2]=行斜置 [3]=北边界 [4]=列斜置 [5]=y 像元(负)，
+    //   **不是** [1]/[3] 当原点。
+    double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    ASSERT_EQ(outDs->GetGeoTransform(gt), CE_None);
+    EXPECT_NEAR(gt[0], 116.005, 1e-12) << "输出窗西边界 = extent 的 xmin（手算）";
+    EXPECT_NEAR(gt[3], 39.998, 1e-12) << "输出窗北边界 = extent 的 ymax（手算）";
+    EXPECT_NEAR(gt[1], 0.001, 1e-12) << "x 像元尺寸必须原样继承源栅格，不被重采样改写";
+    EXPECT_NEAR(gt[5], -0.001, 1e-12) << "y 像元尺寸带负号继承（丢符号⇒这一支红）";
+    // 两枚斜置槽：夹具本来就是 0、且 -projwin 不产生斜置 ⇒ 这两支的承重面**只**是
+    // "产品没把像元尺寸写进斜置槽/没引入 skew"，两枚同值 ⇒ 不覆盖两者互换（照 D1-P 的口径限定）。
+    EXPECT_NEAR(gt[2], 0.0, 1e-12) << "行斜置：只判 skew 注入，不判与列斜置互换";
+    EXPECT_NEAR(gt[4], 0.0, 1e-12) << "列斜置：同上";
+
+    // 内容：窗内两个对角像元都必须是夹具常量 5.0。夹具是常量 ⇒ 这两支不判"窗在哪"
+    // （窗在哪由上面四支判），它们判的是"取到的窗确实是源数据、不是补出来的 0"：
+    // 本例请求窗完全在源包框内 ⇒ 任何一格补 0 都意味着窗算错了。
+    EXPECT_NEAR(readRasterPixel(output, 0, 0), 5.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 6, 3), 5.0f, 1e-4f) << "窗右下角 = 源(11,5)，仍在源内";
 }
+
+// D1-C1（Task 18）：extent 与源包框**部分相交**时的产品实到行为 = **不裁剪**。
+// 副本上 gis-cli 实测（build/tmp/batchD/d1c1/）⇒ rc=0、产物尺寸就是**请求窗**尺寸、
+// 窗外像元补 0 且**不写 NoData**（下游把补的 0 和真 0 数据分不开，已登记为缺口）。
+// 期望全部由夹具字面量手算：请求窗 x∈[115.998, 116.012]、y∈[39.988, 39.998]
+//   ⇒ 宽 (116.012-115.998)/0.001 = 14、高 (39.998-39.988)/0.001 = 10；
+//   与源包框 x∈[116.000,116.020]、y∈[39.990,40.000] 的交集 = x 向 12 列（本地列 2..13）、
+//   y 向 8 行（本地行 0..7）⇒ 有效像元 12×8 = 96、补 0 像元 140 - 96 = 44
+//   ⇒ Mean = 96×5/140 = 3.4285714285714284（推算，与实测印数 3.42857 同值）。
+TEST_F(PluginTest, CuttingClipExtentPartiallyOutsideSourcePadsZeroWindow) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createConstantRaster("d1c1_clip_partial_input.tif", 20, 10, 5.0f);
+    const std::string output = utf8PathString(getTestDir() / "d1c1_clip_partial_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = input;
+    params["output"] = output;
+    params["extent"] = std::array<double, 4>{115.998, 39.988, 116.012, 39.998};
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterXSize(), 14);
+    EXPECT_EQ(outDs->GetRasterYSize(), 10);
+
+    double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    ASSERT_EQ(outDs->GetGeoTransform(gt), CE_None);
+    EXPECT_NEAR(gt[0], 115.998, 1e-12) << "产品按**请求**窗出图，不把它裁回源包框";
+    EXPECT_NEAR(gt[3], 39.998, 1e-12);
+
+    // 补 0 带的位置是手算的：本地列 0..1 在源西侧、本地行 8..9 在源南侧。
+    EXPECT_NEAR(readRasterPixel(output, 0, 0), 0.0f, 1e-4f) << "西侧两列是补出来的 0";
+    EXPECT_NEAR(readRasterPixel(output, 1, 9), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 2, 0), 5.0f, 1e-4f) << "本地列 2 = 源列 0";
+    EXPECT_NEAR(readRasterPixel(output, 13, 7), 5.0f, 1e-4f) << "本地(13,7) = 源(11,9)，交集右下角";
+    EXPECT_NEAR(readRasterPixel(output, 13, 8), 0.0f, 1e-4f) << "本地行 8 已越过源下边界⇒补 0";
+
+    double bMin = 0.0;
+    double bMax = 0.0;
+    double bMean = 0.0;
+    double bStd = 0.0;
+    ASSERT_EQ(outDs->GetRasterBand(1)->ComputeStatistics(
+                  false, &bMin, &bMax, &bMean, &bStd, nullptr, nullptr), CE_None);
+    EXPECT_NEAR(bMean, 96.0 * 5.0 / 140.0, 1e-9)
+        << "96 个有效像元 / 140 个窗内像元（两个数都从夹具字面量手算）";
+    EXPECT_NEAR(bMin, 0.0, 1e-9);
+    EXPECT_NEAR(bMax, 5.0, 1e-9);
+}
+
+// D1-C1（Task 18）：extent 与源包框**完全不相交**时的产品实到行为（副本实测：x 轴出界、
+// y 轴出界、两轴都出界三种都是 rc=0 + 一张请求尺寸的**全 0 产物**，不报错、不写 NoData）。
+// 本用例按实到写判据，不为了让断言好看去改产品码；它同时把"零填充窗的尺寸仍由 extent 手算得出"
+// 这件事钉住：请求 x∈[116.100, 116.110]、y∈[39.900, 39.910] ⇒ 10×10、Origin = (116.100, 39.910)。
+TEST_F(PluginTest, CuttingClipExtentDisjointFromSourceProducesZeroFilledWindow) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createConstantRaster("d1c1_clip_disjoint_input.tif", 20, 10, 5.0f);
+    const std::string output = utf8PathString(getTestDir() / "d1c1_clip_disjoint_output.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = input;
+    params["output"] = output;
+    params["extent"] = std::array<double, 4>{116.10, 39.90, 116.11, 39.91};
+
+    const auto result = p->execute(params, progress_);
+    // 实到 = 成功。产品侧登记：不相交不报错而吐一张全 0 图 ⇒ 调用方无从分辨"裁空了"与"裁出来全是 0"；
+    // 若日后改成硬失败，这一支与下面四支一起红，属于**行为变更**而不是判据写错。
+    ASSERT_TRUE(result.success) << result.message;
+
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterXSize(), 10);
+    EXPECT_EQ(outDs->GetRasterYSize(), 10);
+
+    double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    ASSERT_EQ(outDs->GetGeoTransform(gt), CE_None);
+    EXPECT_NEAR(gt[0], 116.10, 1e-12) << "全 0 产物的左上角仍是请求窗的 (xmin, ymax)";
+    EXPECT_NEAR(gt[3], 39.91, 1e-12);
+    EXPECT_NEAR(gt[1], 0.001, 1e-12) << "零填充产物的像元尺寸仍是源的，不是重采样出来的";
+    EXPECT_NEAR(gt[5], -0.001, 1e-12);
+
+    double bMin = 0.0;
+    double bMax = 0.0;
+    double bMean = 0.0;
+    double bStd = 0.0;
+    ASSERT_EQ(outDs->GetRasterBand(1)->ComputeStatistics(
+                  false, &bMin, &bMax, &bMean, &bStd, nullptr, nullptr), CE_None);
+    EXPECT_NEAR(bMax, 0.0, 1e-9) << "整张都是补出来的 0：Max 若 >0 说明窗碰到了源";
+    EXPECT_NEAR(bMin, 0.0, 1e-9);
+    EXPECT_NEAR(bMean, 0.0, 1e-9);
+    EXPECT_NEAR(readRasterPixel(output, 0, 0), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(output, 9, 9), 0.0f, 1e-4f);
+}
+
 
 TEST_F(PluginTest, CuttingSplitExecutionCreatesTiles) {
     auto* p = mgr_.find("cutting");
@@ -13365,6 +13508,128 @@ TEST_F(PluginTest, CuttingSplitExecutionCreatesTiles) {
         }
     }
     EXPECT_EQ(tileCount, 4u);
+}
+
+// D1-C1（Task 18）：split 的网格算术**手算表**（两档 tile_size × 两档 overlap，逐格断言块数、
+// 首末块尺寸与块内像元值）。
+// 产品实到形态（读 doSplit 的循环 + 副本上 gis-cli 实测，两种载体对得上）：
+//   · 步长恒为 tile_size（`for (xOff = 0; xOff < width; xOff += tileSize)`）⇒ **块数与 overlap 无关**；
+//   · 每块尺寸 = min(tile_size + overlap, 该方向剩余)；
+//   · 块名 = tile_<xOff/tile_size>_<yOff/tile_size>。
+// ⚠ 任务书 §2.2 给的 `块数 = ceil((w - overlap)/(tile_size - overlap))` 属于"步长 = tile_size - overlap"
+//   的另一个模型，与本产品的实到不符（实测：ts=16/ov=4 与 ts=8/ov=3 的块数都和 ov=0 档相同）
+//   ⇒ 本用例一律按实到写期望，并把这条分歧登记进报告。
+// 夹具 = createTestRaster(30, 20) ⇒ 源像元值 = (30*y + x) % 256（字面量 data[i] = i % 256、i = y*w + x）。
+// 块名的三级映射是判据的承重面：块 (tx,ty) 的局部 (0,0) = 源 (tx*tile_size, ty*tile_size)，
+// 值 = (30*ty*tile_size + tx*tile_size) % 256 ⇒ 一旦步长被写成 tile_size±overlap，
+// 这些数会当场和表里的期望值不符（而块数那一列**不**判 overlap，见上面实到形态第一条）。
+// ⚠ 末块尺寸对 overlap **不敏感**（夹具上 ts=8 时末块在 ov=0/3 两档都是 6×4，因为
+//   min(·, 剩余) 先把 overlap 吃掉）⇒ 拿末块判 overlap 是恒绿臂，overlap 只由首块/邻块尺寸钉住。
+TEST_F(PluginTest, CuttingSplitTileGridHandTableAcrossTileSizeAndOverlap) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string input = createTestRaster("d1c1_split_grid_input.tif", 30, 20);
+
+    struct GridRow {
+        int tileSize;
+        int overlap;
+        int tilesX;         // ceil(30 / tileSize)
+        int tilesY;         // ceil(20 / tileSize)
+        int firstW;         // min(tileSize + overlap, 30)
+        int firstH;         // min(tileSize + overlap, 20)
+        int lastW;          // min(tileSize + overlap, 30 - (tilesX-1)*tileSize)
+        int lastH;          // min(tileSize + overlap, 20 - (tilesY-1)*tileSize)
+        float lastColValue; // tile_<tilesX-1>_0 局部(0,0) = 源((tilesX-1)*tileSize, 0)
+        float lastDiagValue;// 末块局部(0,0) = 源((tilesX-1)*tileSize, (tilesY-1)*tileSize)
+        float lastCornerValue; // 末块局部(lastW-1, lastH-1) = 源(29, 19) = (30*19+29) % 256
+    };
+
+    // 每行的六个期望数都由上面四列公式手算（推算），不是从产物回填：
+    //   ts=16,ov=0：ceil(30/16)=2、ceil(20/16)=2、首块 min(16,30)=16×min(16,20)=16、
+    //               末块 xOff=16→min(16,14)=14、yOff=16→min(16,4)=4、
+    //               值 源(16,0)=16、源(16,16)=496%256=240、源(29,19)=599%256=87
+    //   ts=16,ov=4：块数/末块同上（overlap 不进步长），首块 min(20,30)=20×min(20,20)=20
+    //   ts=8, ov=0：ceil(30/8)=4、ceil(20/8)=3、首块 8×8、末块 xOff=24→min(8,6)=6、yOff=16→min(8,4)=4、
+    //               值 源(24,0)=24、源(24,16)=504%256=248、源(29,19)=87
+    //   ts=8,ov=3：块数同上，首块 min(11,30)=11×min(11,20)=11，末块与 ov=0 档逐维相同（6×4）
+    const GridRow rows[] = {
+        {16, 0, 2, 2, 16, 16, 14, 4, 16.0f, 240.0f, 87.0f},
+        {16, 4, 2, 2, 20, 20, 14, 4, 16.0f, 240.0f, 87.0f},
+        { 8, 0, 4, 3,  8,  8,  6, 4, 24.0f, 248.0f, 87.0f},
+        { 8, 3, 4, 3, 11, 11,  6, 4, 24.0f, 248.0f, 87.0f},
+    };
+
+    for (const GridRow& row : rows) {
+        const std::string tag = std::to_string(row.tileSize) + "_" + std::to_string(row.overlap);
+        const fs::path outputDir = getTestDir() / ("d1c1_split_grid_" + tag);
+        fs::remove_all(outputDir);
+
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("split");
+        params["input"] = input;
+        params["output"] = utf8PathString(outputDir);
+        params["tile_size"] = row.tileSize;
+        params["overlap"] = row.overlap;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << tag << " " << result.message;
+        ASSERT_TRUE(fs::exists(outputDir)) << tag;
+
+        size_t tileCount = 0;
+        for (const auto& entry : fs::directory_iterator(outputDir)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".tif") {
+                ++tileCount;
+            }
+        }
+        EXPECT_EQ(tileCount, static_cast<size_t>(row.tilesX * row.tilesY)) << tag;
+
+        const fs::path first = outputDir / "tile_0_0.tif";
+        ASSERT_TRUE(fs::exists(first)) << tag;
+        {
+            auto ds = gis::core::openRaster(utf8PathString(first), true);
+            ASSERT_NE(ds, nullptr) << tag;
+            EXPECT_EQ(ds->GetRasterXSize(), row.firstW) << tag;
+            EXPECT_EQ(ds->GetRasterYSize(), row.firstH) << tag;
+        }
+
+        const fs::path last = outputDir /
+            ("tile_" + std::to_string(row.tilesX - 1) + "_" + std::to_string(row.tilesY - 1) + ".tif");
+        ASSERT_TRUE(fs::exists(last)) << tag << " 末块必须存在（块名 = 源偏移/tile_size）";
+        {
+            auto ds = gis::core::openRaster(utf8PathString(last), true);
+            ASSERT_NE(ds, nullptr) << tag;
+            EXPECT_EQ(ds->GetRasterXSize(), row.lastW) << tag;
+            EXPECT_EQ(ds->GetRasterYSize(), row.lastH) << tag;
+            // 末块右下角那一格恒等于源(29,19) ⇒ 判"末块真的够到源边缘"，
+            // 若末块被裁成固定 tile_size 或偏移算错，这一格读到的是窗外/另一个源像元。
+            EXPECT_NEAR(readRasterPixel(utf8PathString(last), row.lastW - 1, row.lastH - 1),
+                        row.lastCornerValue, 1e-4f) << tag << " 末块右下角 = 源(29,19) = 87";
+        }
+
+        const fs::path lastCol = outputDir /
+            ("tile_" + std::to_string(row.tilesX - 1) + "_0.tif");
+        ASSERT_TRUE(fs::exists(lastCol)) << tag;
+        EXPECT_NEAR(readRasterPixel(utf8PathString(lastCol), 0, 0), row.lastColValue, 1e-4f)
+            << tag << " 最右列块的局部(0,0) 必须是源列 (tilesX-1)*tile_size";
+        EXPECT_NEAR(readRasterPixel(utf8PathString(last), 0, 0), row.lastDiagValue, 1e-4f)
+            << tag << " 末块局部(0,0) 必须是源(tx,ty)=(tilesX-1, tilesY-1)*tile_size";
+
+        // overlap 的承重面：邻块与首块的重叠带读到**同一个源像元**（源列 tileSize+overlap-1）。
+        // 只有 overlap > 0 的档位这一支存在；ov=0 档没有重叠带 ⇒ 不写空判据。
+        if (row.overlap > 0) {
+            const int sharedSourceCol = row.tileSize + row.overlap - 1;
+            const float sharedValue = static_cast<float>(sharedSourceCol % 256);
+            EXPECT_NEAR(readRasterPixel(utf8PathString(first), row.tileSize + row.overlap - 1, 0),
+                        sharedValue, 1e-4f)
+                << tag << " 首块右边缘的重叠带 = 源列 tileSize+overlap-1";
+            const fs::path nextCol = outputDir / "tile_1_0.tif";
+            ASSERT_TRUE(fs::exists(nextCol)) << tag;
+            EXPECT_NEAR(readRasterPixel(utf8PathString(nextCol), row.overlap - 1, 0),
+                        sharedValue, 1e-4f)
+                << tag << " 邻块左边缘同一源像元 ⇒ 重叠真的是重叠，不是位移";
+        }
+    }
 }
 
 TEST_F(PluginTest, CuttingMosaicProducesCombinedExtentAndValues) {
@@ -13433,6 +13698,130 @@ TEST_F(PluginTest, CuttingMergeBandsCombinesInputAndBandsList) {
     auto outDs = gis::core::openRaster(output, true);
     ASSERT_NE(outDs, nullptr);
     EXPECT_EQ(outDs->GetRasterCount(), 3);
+}
+
+// D1-C1（Task 18）：merge_bands 的**波段顺序 / 重复项 / 每文件展开全部波段**判据。
+// 实到的参数消费面（读 doMergeBands 的拼接 + 副本 gis-cli 实测，两种载体一致）：
+//   · `bands` 吃的是**逗号分隔的文件路径列表**，接在 `input` 的列表之后；**不是波段索引**。
+//     同一份 `gis-cli cutting --help` 把 --bands 写成 "Comma-separated band indexes" ⇒ 文案与实现分歧
+//     （实测 --bands=1 ⇒ rc=1、案文 "Cannot open file: 1"）；本席不改产品码，只按实到写判据并登记缺口。
+//   · 输出波段 = 拼接后的每个文件按顺序贡献**它自己的全部波段**（`-separate` 的 VRT）。
+//     ⚠ 上面那两个既有用例（CuttingMergeBands*）的夹具是 createTestRaster ⇒ 三个文件内容**逐字节相同**，
+//     所以在它们身上判不出顺序；本用例改用三个不同常量的夹具，顺序才是可红的。
+//   · 输出包框 = 各输入的**地理并集** ⇒ 本用例所有夹具同尺寸、同默认 origin（116.0/40.0、0.001 像元），
+//     否则会像副本实测那样出现"半张是补出来的 0"（Mean 从 10 变 5）——那是坐标系效应，不是波段顺序。
+// 期望逐支来自 createConstantRaster / createMultiBandConstantRaster 的常量实参字面量（10/20/30），
+// 不是从产物回填。容差口径：夹具是 Float32 常量、直读不经换算 ⇒ 相邻两档常量差 10，
+// 而 1e-4f 比 10 小 5 个数量级，比 Float32 在 30 附近的 ulp（≈1.9e-6）大 ⇒ 两头都夹开。
+TEST_F(PluginTest, CuttingMergeBandsOrderShuffleAndRepeatedFile) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    const std::string band10 = createConstantRaster("d1c1_merge_const10.tif", 8, 8, 10.0f);
+    const std::string band20 = createConstantRaster("d1c1_merge_const20.tif", 8, 8, 20.0f);
+    const std::string band30 = createConstantRaster("d1c1_merge_const30.tif", 8, 8, 30.0f);
+
+    // 档 1：input 一个文件 + bands 两个文件 ⇒ 波段数 = 1 + 2 = 3（列表长度手算），
+    // 且第 k 个输出波段 = 拼接列表第 k 个文件（red, green, blue）。
+    {
+        const std::string output = utf8PathString(getTestDir() / "d1c1_merge_order_output.tif");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("merge_bands");
+        params["input"] = band10;
+        params["bands"] = band20 + "," + band30;
+        params["output"] = output;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "order: " << result.message;
+        auto outDs = gis::core::openRaster(output, true);
+        ASSERT_NE(outDs, nullptr);
+        EXPECT_EQ(outDs->GetRasterCount(), 3) << "波段数 = 拼接后的文件列表长度（1+2）";
+        EXPECT_EQ(outDs->GetRasterXSize(), 8);
+        EXPECT_EQ(outDs->GetRasterYSize(), 8);
+        EXPECT_NEAR(readRasterPixel(output, 1, 0, 0), 10.0f, 1e-4f) << "第 1 带 = input 的 red";
+        EXPECT_NEAR(readRasterPixel(output, 2, 0, 0), 20.0f, 1e-4f) << "第 2 带 = bands 的 green";
+        EXPECT_NEAR(readRasterPixel(output, 3, 7, 7), 30.0f, 1e-4f) << "第 3 带 = bands 的 blue";
+    }
+
+    // 档 2：把 bands 的两个文件**打乱** ⇒ 第 2、3 带内容互换。期望仍从夹具字面量推：
+    // "按输入顺序写出不理会 bands 列表" 与 "bands 顺序被反向遍历" 两臂都在这里红。
+    {
+        const std::string output = utf8PathString(getTestDir() / "d1c1_merge_shuffled_output.tif");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("merge_bands");
+        params["input"] = band10;
+        params["bands"] = band30 + "," + band20;
+        params["output"] = output;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "shuffled: " << result.message;
+        auto outDs = gis::core::openRaster(output, true);
+        ASSERT_NE(outDs, nullptr);
+        EXPECT_EQ(outDs->GetRasterCount(), 3);
+        EXPECT_NEAR(readRasterPixel(output, 1, 0, 0), 10.0f, 1e-4f);
+        EXPECT_NEAR(readRasterPixel(output, 2, 0, 0), 30.0f, 1e-4f) << "打乱后第 2 带 = blue";
+        EXPECT_NEAR(readRasterPixel(output, 3, 0, 0), 20.0f, 1e-4f) << "打乱后第 3 带 = green";
+    }
+
+    // 档 3：**重复项**（同一个文件在列表里出现两次）⇒ 实到合法（副本实测 rc=0），
+    // 期望 = 两个内容相同的带；同时判"重复没有被静默去重"（去重 ⇒ 波段数从 3 变 2 ⇒ 红）。
+    {
+        const std::string output = utf8PathString(getTestDir() / "d1c1_merge_repeated_output.tif");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("merge_bands");
+        params["input"] = band10;
+        params["bands"] = band20 + "," + band20;
+        params["output"] = output;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "repeated: " << result.message;
+        auto outDs = gis::core::openRaster(output, true);
+        ASSERT_NE(outDs, nullptr);
+        EXPECT_EQ(outDs->GetRasterCount(), 3) << "重复路径不去重 ⇒ 3 带";
+        EXPECT_NEAR(readRasterPixel(output, 1, 0, 0), 10.0f, 1e-4f);
+        EXPECT_NEAR(readRasterPixel(output, 2, 0, 0), 20.0f, 1e-4f);
+        EXPECT_NEAR(readRasterPixel(output, 3, 0, 0), 20.0f, 1e-4f) << "重复项第二次出现仍是 green";
+    }
+
+    // 档 4：bands 为空 ⇒ 只有 input 那一个文件 ⇒ 1 带（判列表长度的下界；
+    // 若实现在 bands 空时把 input 再补一遍，这一档从 1 变 2 ⇒ 红）。
+    {
+        const std::string output = utf8PathString(getTestDir() / "d1c1_merge_single_output.tif");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("merge_bands");
+        params["input"] = band10;
+        params["output"] = output;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "single: " << result.message;
+        auto outDs = gis::core::openRaster(output, true);
+        ASSERT_NE(outDs, nullptr);
+        EXPECT_EQ(outDs->GetRasterCount(), 1);
+        EXPECT_NEAR(readRasterPixel(output, 1, 0, 0), 10.0f, 1e-4f);
+    }
+
+    // 档 5：多波段输入 ⇒ 该文件按自己的波段序**整份展开**（10,20,30 三带）再拼上 bands 的 30
+    // ⇒ 期望 4 带 = 10, 20, 30, 30。"每个文件只取第 1 带" 的臂在这里塌成 2 带 ⇒ 红。
+    {
+        const std::string multi =
+            createMultiBandConstantRaster("d1c1_merge_multi.tif", 8, 8, {10.0f, 20.0f, 30.0f});
+        const std::string output = utf8PathString(getTestDir() / "d1c1_merge_multiband_output.tif");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("merge_bands");
+        params["input"] = multi;
+        params["bands"] = band30;
+        params["output"] = output;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "multiband: " << result.message;
+        auto outDs = gis::core::openRaster(output, true);
+        ASSERT_NE(outDs, nullptr);
+        EXPECT_EQ(outDs->GetRasterCount(), 4) << "多波段文件按波段序整份展开：3 + 1";
+        EXPECT_NEAR(readRasterPixel(output, 1, 0, 0), 10.0f, 1e-4f);
+        EXPECT_NEAR(readRasterPixel(output, 2, 0, 0), 20.0f, 1e-4f);
+        EXPECT_NEAR(readRasterPixel(output, 3, 0, 0), 30.0f, 1e-4f) << "展开的第 3 带来自 multi";
+        EXPECT_NEAR(readRasterPixel(output, 4, 0, 0), 30.0f, 1e-4f) << "第 4 带来自 bands";
+    }
 }
 
 TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
