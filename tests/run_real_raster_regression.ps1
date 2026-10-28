@@ -1407,6 +1407,50 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_connected_components raster type mismatch"
             Assert-TextContains -Text $info -Expected "Max:    4" -Message "processing_connected_components component count mismatch"
         }
+        "processing_threshold" {
+            Mark-Judged -Name $Case.Name
+            # Statistics are cached per file name in a PAM sidecar; this product is written by this
+            # case only, but a run interrupted after the sidecar was written would let a later run
+            # read the CACHED numbers instead of the pixels. Delete it, then judge the pixels.
+            Remove-Item ($processingThresholdOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingThresholdOutput)
+            )
+            # WHY Assert-InfoSizeExact and not Assert-TextContains "Size:   40 x 24 x 1 bands": the
+            # substring never compares the numbers and cannot tell a one-pixel window error from a
+            # correct window. Width and height are asserted separately on purpose -- the fixture is
+            # 40 x 24, so (cols, rows) written the other way round is only visible when W != H.
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 40 -ExpectedHeight 24 -ExpectedBands 1 -Message (
+                "processing_threshold did not write the 40 x 24 x 1 band product")
+            # Product dtype: convertTo(CV_32F, 1/255) plus createRaster(..., GDT_Float32). This is a
+            # judgement in its own right -- 0.0 and 1.0 would also fit an 8-bit band, so the dtype
+            # line is not a corollary of the four numbers below.
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_threshold product must be Float32 (convertTo(CV_32F) then matToGdalTiff)")
+            # Tolerance sandwich, per data point (raster_inspect info prints at six SIGNIFICANT
+            # digits, so these four expectations are checked against the printed form):
+            #   Min 0 / Max 1 / Mean 0.75 -- all three are exactly representable and print as whole
+            #     tokens ("0", "1", "0.75"), so their rounding residual is ZERO and 1e-9 buys nothing
+            #     for the print; what 1e-9 does buy is float32 read-back noise, which is <= 1 ulp.
+            #   Nearest defects, all far outside 1e-9:
+            #     threshold_value ignored/raised above the middle plateau (30 -> 100)  : Mean 0.25 (|d| = 0.5)
+            #     the toUint8 pre-normalisation dropped (raw 0/10/51 compared to 30)   : Mean 0.25 (|d| = 0.5)
+            #     max_value ignored and 255 hard-coded, or the /255 scale dropped      : Max 255 (|d| = 254)
+            #     binary replaced by binary_inv                                         : Mean 0.25 AND Max/Min swap
+            # So the tolerance is ~8 orders below the smallest defect it is meant to catch.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "processing_threshold low plateau (u8 0, 240 px) must survive binary as 0.0")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 1 -Tolerance 1e-9 -Message (
+                "processing_threshold high plateau must be max_value/255 = 1.0, not 255 (the /255 scale is hard-coded)")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected 0.75 -Tolerance 1e-9 -Message (
+                "processing_threshold mean should be 0.75 = 720/960 from the two plateaus above threshold_value=30")
+            # WHY StdDev is NOT asserted here: for this product shape sigma = sqrt(p*(1-p)) with
+            # p = Mean, so a StdDev row would be the same count read a second time (a corollary row,
+            # not a judgement). And "the band is strictly 0/1" is not something raster_inspect info's
+            # five statistics can prove -- that one is carried by the per-pixel EXPECT_NEAR probes in
+            # the PluginTest.ProcessingThresholdExecution unit block, which is the leg/unit split this
+            # seat registers as a coverage boundary rather than padding the leg with a duplicate row.
+        }
         "georef_dos_correction" {
             Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -2416,6 +2460,41 @@ $cases += New-Case -Name "processing_connected_components" -CaseArgs @(
     "--band=1"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "connected_components_output.tif")
+)
+
+# P1 (batch D): processing.threshold had NO case on this leg before this seat -- the action never
+# ran here, so a leg-side green for it was impossible by construction (grep of this file for
+# "processing_threshold" / "threshold_value" returned 0 hits at the start of the seat).
+# Input = a COPY of $data.StepLevelRaster under $ResolvedOutputRoot, never the shared original:
+# the original is what four other cases read, and an .aux.xml sidecar written against this product
+# name would answer band statistics from cache instead of from pixels.
+# Why the step-level fixture is the right carrier here: 40 x 24 (non-square, so an axis swap in the
+# product size is visible) with plateaus 0 / 10 / 51 whose counts are directly countable (240 / 480 /
+# 240 of 960), and cv::normalize maps min->0 and max->255 with scale 255/(51-0) = 5.0, a constant
+# that is exactly representable, so 10*5.0 = 50 and 51*5.0 = 255 land off any round-versus-truncate
+# boundary. So the normalised levels 0 / 50 / 255 are derived from the fixture, not read back.
+# method=binary with threshold_value=30 (below the middle plateau) and max_value=255:
+#   u8 > 30 -> the 50 plateau (480 px) AND the 255 plateau (240 px) = 720 px -> max_value/255 = 1.0
+#   the 0 plateau (240 px) stays 0.0
+#   Mean = 720/960 = 0.75 (exact, prints as "0.75" at six significant digits -> zero rounding)
+# Had threshold_value been compared against the RAW pixels instead of the normalised ones, only the
+# 51 plateau would qualify (240 px) and Mean would be 0.25 -- this branch is the leg-side witness of
+# that one sentence.
+$processingThresholdInput = Join-Path $ResolvedOutputRoot "processing_threshold_input.tif"
+Copy-Item $data.StepLevelRaster $processingThresholdInput -Force
+Remove-Item ($processingThresholdInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$processingThresholdOutput = Join-Path $ResolvedOutputRoot "processing_threshold_output.tif"
+Remove-Item ($processingThresholdOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "processing_threshold" -CaseArgs @(
+    "processing", "threshold",
+    ("--input=" + $processingThresholdInput),
+    ("--output=" + $processingThresholdOutput),
+    "--band=1",
+    "--method=binary",
+    "--threshold_value=30",
+    "--max_value=255"
+) -ExpectedOutputs @(
+    $processingThresholdOutput
 )
 
 $cases += New-Case -Name "georef_dos_correction" -CaseArgs @(
