@@ -164,6 +164,50 @@ static std::string createStepLevelRaster(const std::string& name, int w, int h) 
     return path;
 }
 
+// 批次 D P1（processing.threshold 晋升）：threshold 的 `band` 与 `otsu` 两档需要的两种形状，
+// createStepLevelRaster 都给不了——它只有 1 个波段（`band` 是三个可见参数之一，必须有一臂能改产物），
+// 而它的三档象限布局上 **Otsu 的最优间隙必然包含 threshold_value 的 spec 默认值 128.0**：
+// 归一后 min 恒为 0、max 恒为 255，三档里"把中间档判给哪一侧"的类间方差比较，赢家总在离得更远的那一侧，
+// 于是间隙总跨过 127.5 ⇒ 那一档上"跑了 Otsu"与"用了常数阈值"在产物上不可分辨（写了就是恒绿装饰）。
+// 所以这里给一个**按列分档、可多波段**的夹具：每档多少个像元 = 列宽 × 高，直接数得出来。
+//   edges      : 段边界（左闭右开），edges.front() 必须是 0、edges.back() 必须是 w、段数 = values 个数
+//   valuesPerBand: 每个波段一份档值表（原始像元值，归一由产品的 toUint8 负责，不在这里做）
+// 宽高仍取非方（40×24）：本动作产物是 createRaster(dst, mat.cols, mat.rows, 1, GDT_Float32)，
+// 方阵上 (cols, rows) 写反是等价变异 ⇒ 非方才看得见轴序写反。
+static std::string createColumnPlateauRaster(const std::string& name,
+                                             int w,
+                                             int h,
+                                             const std::vector<int>& edges,
+                                             const std::vector<std::vector<float>>& valuesPerBand) {
+    EXPECT_FALSE(edges.empty());
+    EXPECT_FALSE(valuesPerBand.empty());
+    EXPECT_EQ(edges.size(), valuesPerBand[0].size() + 1);
+    EXPECT_EQ(edges.front(), 0);
+    EXPECT_EQ(edges.back(), w);
+    if (edges.empty() || valuesPerBand.empty()) return std::string{};
+
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, static_cast<int>(valuesPerBand.size()), GDT_Float32);
+    double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+    ds->SetGeoTransform(adfGT);
+
+    for (size_t bandIndex = 0; bandIndex < valuesPerBand.size(); ++bandIndex) {
+        std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+        for (size_t segment = 0; segment + 1 < edges.size(); ++segment) {
+            const float value = valuesPerBand[bandIndex][segment];
+            for (int y = 0; y < h; ++y) {
+                for (int x = edges[segment]; x < edges[segment + 1]; ++x) {
+                    data[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = value;
+                }
+            }
+        }
+        auto* band = ds->GetRasterBand(static_cast<int>(bandIndex) + 1);
+        band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+        band->FlushCache();
+    }
+    return path;
+}
+
 static std::string createPatternRaster(const std::string& name, int w = 96, int h = 96) {
     std::string path = (getTestDir() / name).string();
     auto ds = gis::core::createRaster(path, w, h, 1, GDT_Byte);
@@ -1468,24 +1512,239 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
     EXPECT_TRUE(result.metadata.count("mean") > 0);
 }
 
+// 批次 D P1：本块由"只跑一次 + 断产物存在"扩成阈值语义的承重判据（改前 3 条断言、值级 0 条 ⇒
+// 过不了 CoverageMeta.GoldEvidenceIsAuditable 的第二条"剥完注释后块里必须有
+// EXPECT_NEAR/EXPECT_FLOAT_EQ/EXPECT_DOUBLE_EQ"）。登记表 processing,threshold 那行的第 4 列指本块。
+//
+// 推导链（doThreshold / gis::core::toUint8 / gis::core::matToGdalTiff 三处逐字现读）：
+//   raw v --toUint8--> u8 = cv::normalize(mat, u8, 0, 255, cv::NORM_MINMAX, CV_8U)
+//         --cv::threshold(gray, result, threshold_value, max_value, method)--> 8U
+//         --result.convertTo(outFloat, CV_32F, 1.0/255.0)--> 单波段 Float32
+// ⇒ (a) **threshold_value 比的是归一后的 0..255 尺度，不是原始像元值**（这条是 A1/A2 与"去掉归一"
+//     变异臂互相咬合的地方）；
+// ⇒ (b) **产物值域 = [0, max_value/255]**：max_value 同时进 cv::threshold 的 upper，而除数 255 写死
+//     在 convertTo 里 ⇒ A7（max_value=102 ⇒ 高档读回 0.4 而不是 1.0）钉的就是"值域谁定"；
+//     truncate/tozero 两支 max_value 不进产物（OpenCV 的 THRESH_TRUNC/THRESH_TOZERO 不用 upper），
+//     所以 A5/A6 的期望里没有它。
+// ⇒ (c) toUint8 还有一条 maxVal-minVal < 1e-10 ⇒ 整幅恒置 0 的退化支（单值栅格），A11/A12 两支一起
+//     把落点钉成"恰好是 0"（若落点是 255，两支同时反转）；
+// ⇒ (d) toUint8 开头还有一条 `mat.type() == CV_8U ⇒ clone`（8 位输入不归一）——**本动作到不了那里**，
+//     因为 gdalBandToMat 固定 RasterIO 进 GDT_Float32 的 CV_32F 矩阵 ⇒ 不给它写断言（写了就是恒真）。
+//
+// 夹具与手推档值（全部在首读之前写定，见 task-p1-report §3.1 的同一张表）：
+//   F1 = createStepLevelRaster 40×24 象限平台，raw 0/10/51，min 0 max 51 ⇒ 标度 255/51 = 5.0
+//        （二进制精确）⇒ u8 = 0(240 像元) / 50(480) / 255(240)。10*5.0、51*5.0 都不落在
+//        就近取整与截断的分叉上，所以本表不依赖取整口径。
+//   F2 = createColumnPlateauRaster 40×24 两波段，列段 [0,10)/[10,20)/[20,40)（240/240/480 像元）
+//        band1 raw 0/10/51 ⇒ u8 0/50/255；band2 raw 0/20/51 ⇒ u8 0/100/255
+//   F3 = createColumnPlateauRaster 40×24 单波段，列段 [0,4)/[4,8)/[8,24)/[24,40)（96/96/384/384）
+//        raw 0/10/30/51 ⇒ u8 0(96) / 50(96) / 150(384) / 255(384)
+//   F4 = createConstantRaster 30×18 全幅 200 ⇒ 退化支
+//
+// F3 的 Otsu 是**闭式推出来的**，不是拿产物回填的（类间方差 σ²_B = w_l·w_h·(μ_l-μ_h)²，总均值
+// μ = 160320/960 = 167.0，三个间隙各算一次）：
+//   阈值落在 [0,49]  ⇒ 低类 {0}   w=0.1 μ=0        高类 w=0.9 μ=160320/864=185.55556 ⇒ σ²_B=3098.78
+//   阈值落在 [50,149] ⇒ 低类 {0,50} w=0.2 μ=25.0    高类 w=0.8 μ=155520/768=202.5    ⇒ σ²_B=5041.00
+//   阈值落在 [150,254]⇒ 低类 {0,50,150} w=0.6 μ=62400/576=108.33333 高类 {255} w=0.4 ⇒ σ²_B=5162.67 ← 唯一最大
+// ⇒ 最优分区 = {0,50,150} 为低、{255} 为高，阈值必落在 [150,254]。这一段**整体在 128 的右侧**，
+//   所以"若代码把 threshold_value 当阈值用"（otsu 支传的是 0，spec 默认 128.0）会在 (12,5) 那一格
+//   得到 1.0 而不是 0.0 ⇒ 这一格是全表唯一能把"数据定阈值"与"常数阈值"分开的观察点。
+//   ⚠ 阈值落在 [150,254] 的**哪一个整数**在产物上不可分辨（产物是阈值的阶梯函数，阶梯内等价），
+//     这是动作的产物定义决定的、不是我挑夹具挑出来的；本块钉的是分区，不是整数。
+//   ⚠ 分区 {0,50,150}|{255} 与 F1 上推出的分区 {0,50}|{255} 都建立在 `dst = src > thresh ? maxval : 0`
+//     这条上游文档口径上（A3 那一档是本仓对该口径的**唯一**观察点：threshold_value 恰好等于档值 50），
+//     所以 A3 与 A10 不是两件独立的凭据，是同一事实的两条记录。
 TEST_F(PluginTest, ProcessingThresholdExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
 
-    std::string input = createTestRaster("e2e_thresh_input.tif", 50, 50);
-    std::string output = (getTestDir() / "e2e_thresh_output.tif").string();
+    // 夹套容差口径（夹心两端都要成立，不能只报一边）：
+    //   下界侧 —— 产物是 float32，期望由 u8*(1/255) 的 double 值再落到 float32，
+    //   0.196078431372549 附近的 float32 间隔是 2^-26 ≈ 1.49e-8 ⇒ 最坏舍入 7.5e-9；
+    //   GDAL 写 Float32 再读回是逐位往返，不引入额外误差 ⇒ 1e-6 比实测残差大 ~130 倍。
+    //   上界侧 —— 本表任意两个**不同结局**的产物值最小间隔是 102/255-100/255 = 0.007843
+    //   （A7 的 0.4 与 A5 的 0.392157），比容差大 7843 倍 ⇒ 容差不吞掉任何一次分档变化。
+    //   所以 1e-6 既不会因 float32 舍入假红，也不会把两个不同分档洗成同一个数。
+    constexpr double kEps = 1e-6;
 
-    std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("threshold");
-    params["input"] = input;
-    params["output"] = output;
-    params["method"] = std::string("binary");
-    params["threshold_value"] = 128.0;
-    params["band"] = 1;
+    std::error_code ec;
+    const fs::path dir = getTestDir();
+    auto staleClean = [&ec](const std::string& path) {
+        fs::remove(path, ec);
+        fs::remove(path + ".aux.xml", ec);
+    };
 
-    auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "Threshold failed: " << result.message;
-    EXPECT_TRUE(fs::exists(output));
+    // 三个可见参数（band / threshold_value / max_value）各有一臂，见下面 A2-A9 的注释。
+    // sendThresholdValue / sendMaxValue 为 false 时**不发这个键** ⇒ 走 ParamSpec 声明的默认值
+    // （threshold_value 128.0、max_value 255.0），A10 的 otsu 档就是靠它证明"otsu 不看 threshold_value"。
+    auto runThreshold = [&](const std::string& input,
+                            const std::string& output,
+                            const std::string& method,
+                            bool sendThresholdValue,
+                            double thresholdValue,
+                            bool sendMaxValue,
+                            double maxValue,
+                            int band) {
+        staleClean(output);
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("threshold");
+        params["input"] = input;
+        params["output"] = output;
+        params["method"] = method;
+        params["band"] = band;
+        if (sendThresholdValue) params["threshold_value"] = thresholdValue;
+        if (sendMaxValue) params["max_value"] = maxValue;
+        return p->execute(params, progress_);
+    };
+
+    const std::string stepInput = createStepLevelRaster("d1p1_thresh_f1.tif", 40, 24);
+    const std::string twoBandInput = createColumnPlateauRaster(
+        "d1p1_thresh_f2.tif", 40, 24, {0, 10, 20, 40},
+        {{0.0f, 10.0f, 51.0f}, {0.0f, 20.0f, 51.0f}});
+    const std::string fourPeakInput = createColumnPlateauRaster(
+        "d1p1_thresh_f3.tif", 40, 24, {0, 4, 8, 24, 40}, {{0.0f, 10.0f, 30.0f, 51.0f}});
+    const std::string flatInput = createConstantRaster("d1p1_thresh_f4.tif", 30, 18, 200.0f);
+    ASSERT_FALSE(stepInput.empty());
+    ASSERT_FALSE(twoBandInput.empty());
+    ASSERT_FALSE(fourPeakInput.empty());
+    ASSERT_FALSE(flatInput.empty());
+
+    // ---- A1/A2：threshold_value 承重（u8 = 0/50/255 三档；30 与 100 把中间档判到相反两侧）----
+    const std::string outBinaryLow = utf8PathString(dir / "d1p1_thresh_binary_t30.tif");
+    auto runBinaryLow = runThreshold(stepInput, outBinaryLow, "binary", true, 30.0, false, 0.0, 1);
+    EXPECT_TRUE(runBinaryLow.success) << "A1 binary/threshold_value=30 failed: " << runBinaryLow.message;
+    ASSERT_TRUE(fs::exists(outBinaryLow)) << "A1 produced no product at " << outBinaryLow;
+    EXPECT_NEAR(readRasterPixel(outBinaryLow, 5, 5), 0.0, kEps)
+        << "A1 u8 档 0 不高于 30 ⇒ 必须是 0.0（阈值比的是归一后的 0..255，raw 0 也一样是低档）";
+    EXPECT_NEAR(readRasterPixel(outBinaryLow, 30, 5), 1.0, kEps)
+        << "A1 raw 10 归一成 u8 50，50 > 30 ⇒ 255/255 = 1.0；若按 raw 比则 10 > 30 不成立 ⇒ 0.0，这一格就是归一那条链的观察点";
+    EXPECT_NEAR(readRasterPixel(outBinaryLow, 5, 20), 1.0, kEps)
+        << "A1 u8 档 255 > 30 ⇒ 1.0";
+
+    const std::string outBinaryHigh = utf8PathString(dir / "d1p1_thresh_binary_t100.tif");
+    auto runBinaryHigh = runThreshold(stepInput, outBinaryHigh, "binary", true, 100.0, false, 0.0, 1);
+    EXPECT_TRUE(runBinaryHigh.success) << "A2 binary/threshold_value=100 failed: " << runBinaryHigh.message;
+    ASSERT_TRUE(fs::exists(outBinaryHigh)) << "A2 produced no product at " << outBinaryHigh;
+    EXPECT_NEAR(readRasterPixel(outBinaryHigh, 5, 5), 0.0, kEps) << "A2 u8 档 0 ⇒ 低";
+    EXPECT_NEAR(readRasterPixel(outBinaryHigh, 30, 5), 0.0, kEps)
+        << "A2 u8 档 50 不高于 100 ⇒ 0.0（与 A1 同坐标只差一次 threshold_value，档位差 1.0 对 0.0）";
+    EXPECT_NEAR(readRasterPixel(outBinaryHigh, 5, 20), 1.0, kEps) << "A2 u8 档 255 > 100 ⇒ 1.0";
+
+    // ---- A3：平局档，本表唯一的 `src > thresh` 口径观察点（50 与档值 50 相等）----
+    const std::string outBinaryTie = utf8PathString(dir / "d1p1_thresh_binary_t50.tif");
+    auto runBinaryTie = runThreshold(stepInput, outBinaryTie, "binary", true, 50.0, false, 0.0, 1);
+    EXPECT_TRUE(runBinaryTie.success) << "A3 binary/threshold_value=50 failed: " << runBinaryTie.message;
+    ASSERT_TRUE(fs::exists(outBinaryTie)) << "A3 produced no product at " << outBinaryTie;
+    EXPECT_NEAR(readRasterPixel(outBinaryTie, 30, 5), 0.0, kEps)
+        << "A3 期望来自 cv::threshold 的上游文档口径 `dst = src > thresh ? maxval : 0`：50 > 50 不成立 ⇒ 0.0。"
+           "首读若给出 1.0 说明产品口径是 >=，那是与上游文档的分叉，要登记为缺陷而不是把本行改成 1.0。";
+    EXPECT_NEAR(readRasterPixel(outBinaryTie, 5, 20), 1.0, kEps) << "A3 u8 档 255 > 50 ⇒ 1.0（同档不受平局影响的一格）";
+    EXPECT_NEAR(readRasterPixel(outBinaryTie, 5, 5), 0.0, kEps) << "A3 u8 档 0 > 50 不成立 ⇒ 0.0";
+
+    // ---- A4：binary_inv 是 binary 的补集（同一夹具同一阈值，四格里高低正好互换）----
+    const std::string outBinaryInv = utf8PathString(dir / "d1p1_thresh_binary_inv_t30.tif");
+    auto runBinaryInv = runThreshold(stepInput, outBinaryInv, "binary_inv", true, 30.0, false, 0.0, 1);
+    EXPECT_TRUE(runBinaryInv.success) << "A4 binary_inv failed: " << runBinaryInv.message;
+    ASSERT_TRUE(fs::exists(outBinaryInv)) << "A4 produced no product at " << outBinaryInv;
+    EXPECT_NEAR(readRasterPixel(outBinaryInv, 5, 5), 1.0, kEps)
+        << "A4 u8 档 0 不高于 30 ⇒ 落 maxval 255 ⇒ 1.0（与 A1 同格相反）";
+    EXPECT_NEAR(readRasterPixel(outBinaryInv, 30, 5), 0.0, kEps) << "A4 u8 档 50 > 30 ⇒ 0.0";
+    EXPECT_NEAR(readRasterPixel(outBinaryInv, 5, 20), 0.0, kEps) << "A4 u8 档 255 > 30 ⇒ 0.0";
+
+    // ---- A5：truncate 把高档截到 threshold_value 本身（upper=max_value 不进产物）----
+    const std::string outTruncate = utf8PathString(dir / "d1p1_thresh_truncate_t100.tif");
+    auto runTruncate = runThreshold(stepInput, outTruncate, "truncate", true, 100.0, false, 0.0, 1);
+    EXPECT_TRUE(runTruncate.success) << "A5 truncate failed: " << runTruncate.message;
+    ASSERT_TRUE(fs::exists(outTruncate)) << "A5 produced no product at " << outTruncate;
+    EXPECT_NEAR(readRasterPixel(outTruncate, 5, 5), 0.0, kEps) << "A5 u8 档 0 不高于 100 ⇒ 原样 0 ⇒ 0.0";
+    EXPECT_NEAR(readRasterPixel(outTruncate, 30, 5), 50.0 / 255.0, kEps)
+        << "A5 u8 档 50 原样通过（50 不高于 100）⇒ 50/255 = 0.196078431372549";
+    EXPECT_NEAR(readRasterPixel(outTruncate, 5, 20), 100.0 / 255.0, kEps)
+        << "A5 u8 档 255 高于 100 ⇒ 截到 100 ⇒ 100/255 = 0.392156862745098。若这里读到 1.0，"
+           "说明截断支错用了 max_value 当 upper（那正是 A7 要排除的形状）。";
+
+    // ---- A6：tozero 把低档清零、高档原样 ----
+    const std::string outTozero = utf8PathString(dir / "d1p1_thresh_tozero_t30.tif");
+    auto runTozero = runThreshold(stepInput, outTozero, "tozero", true, 30.0, false, 0.0, 1);
+    EXPECT_TRUE(runTozero.success) << "A6 tozero failed: " << runTozero.message;
+    ASSERT_TRUE(fs::exists(outTozero)) << "A6 produced no product at " << outTozero;
+    EXPECT_NEAR(readRasterPixel(outTozero, 5, 5), 0.0, kEps) << "A6 u8 档 0 不高于 30 ⇒ 清零 ⇒ 0.0";
+    EXPECT_NEAR(readRasterPixel(outTozero, 30, 5), 50.0 / 255.0, kEps)
+        << "A6 u8 档 50 > 30 ⇒ 原样 50 ⇒ 0.196078431372549（A1 在同格给 1.0 ⇒ 这两支不是一支的两次写法）";
+    EXPECT_NEAR(readRasterPixel(outTozero, 5, 20), 1.0, kEps) << "A6 u8 档 255 > 30 ⇒ 原样 255 ⇒ 1.0";
+
+    // ---- A7：max_value 承重（产物值域由它定，除数 255 写死）----
+    const std::string outMaxValue = utf8PathString(dir / "d1p1_thresh_binary_t100_max102.tif");
+    auto runMaxValue = runThreshold(stepInput, outMaxValue, "binary", true, 100.0, true, 102.0, 1);
+    EXPECT_TRUE(runMaxValue.success) << "A7 max_value=102 failed: " << runMaxValue.message;
+    ASSERT_TRUE(fs::exists(outMaxValue)) << "A7 produced no product at " << outMaxValue;
+    EXPECT_NEAR(readRasterPixel(outMaxValue, 5, 20), 102.0 / 255.0, kEps)
+        << "A7 高档写 max_value=102 再除写死的 255 ⇒ 0.4（同坐标 A2 是 1.0 ⇒ 这一格只由 max_value 定）";
+    EXPECT_NEAR(readRasterPixel(outMaxValue, 30, 5), 0.0, kEps) << "A7 低档仍是 0.0（max_value 不改低档）";
+    EXPECT_NEAR(readRasterPixel(outMaxValue, 5, 5), 0.0, kEps) << "A7 u8 档 0 ⇒ 0.0";
+
+    // ---- A8/A9：band 承重（两个波段的中间档一个 50 一个 100，跨过 threshold_value=60）----
+    const std::string outBand1 = utf8PathString(dir / "d1p1_thresh_band1_t60.tif");
+    auto runBand1 = runThreshold(twoBandInput, outBand1, "binary", true, 60.0, false, 0.0, 1);
+    EXPECT_TRUE(runBand1.success) << "A8 band=1 failed: " << runBand1.message;
+    ASSERT_TRUE(fs::exists(outBand1)) << "A8 produced no product at " << outBand1;
+    EXPECT_NEAR(readRasterPixel(outBand1, 12, 5), 0.0, kEps)
+        << "A8 band1 中间档 raw 10 ⇒ u8 50，50 不高于 60 ⇒ 0.0（A9 同坐标是 1.0 ⇒ band 改产物）";
+    EXPECT_NEAR(readRasterPixel(outBand1, 2, 5), 0.0, kEps) << "A8 首段 u8 0 ⇒ 0.0（两波段相同的一格，证明差异不来自段边界）";
+    EXPECT_NEAR(readRasterPixel(outBand1, 30, 19), 1.0, kEps) << "A8 末段 u8 255 ⇒ 1.0（同上）";
+
+    const std::string outBand2 = utf8PathString(dir / "d1p1_thresh_band2_t60.tif");
+    auto runBand2 = runThreshold(twoBandInput, outBand2, "binary", true, 60.0, false, 0.0, 2);
+    EXPECT_TRUE(runBand2.success) << "A9 band=2 failed: " << runBand2.message;
+    ASSERT_TRUE(fs::exists(outBand2)) << "A9 produced no product at " << outBand2;
+    EXPECT_NEAR(readRasterPixel(outBand2, 12, 5), 1.0, kEps)
+        << "A9 band2 中间档 raw 20 ⇒ u8 100 > 60 ⇒ 1.0；与 A8 同一坐标、同一 method、同一阈值，"
+           "只差 band ⇒ band 是承重的可见参数（也顺带证明读的不是 band 1 的缓存）";
+    EXPECT_NEAR(readRasterPixel(outBand2, 2, 5), 0.0, kEps) << "A9 首段 u8 0 ⇒ 0.0";
+    EXPECT_NEAR(readRasterPixel(outBand2, 30, 19), 1.0, kEps) << "A9 末段 u8 255 ⇒ 1.0";
+
+    // ---- A10：otsu（F3 四峰，闭式分区 {0,50,150}|{255}；不发 threshold_value ⇒ spec 默认 128.0）----
+    const std::string outOtsu = utf8PathString(dir / "d1p1_thresh_otsu_f3.tif");
+    auto runOtsu = runThreshold(fourPeakInput, outOtsu, "otsu", false, 0.0, false, 0.0, 1);
+    EXPECT_TRUE(runOtsu.success) << "A10 otsu failed: " << runOtsu.message;
+    ASSERT_TRUE(fs::exists(outOtsu)) << "A10 produced no product at " << outOtsu;
+    EXPECT_NEAR(readRasterPixel(outOtsu, 12, 5), 0.0, kEps)
+        << "A10 全表唯一的分叉格：数据算出的阈值落在 [150,254] ⇒ u8 档 150 是低档 0.0；"
+           "若代码在 otsu 支误用 threshold_value（默认 128.0），150 > 128 ⇒ 1.0 ⇒ 本行红";
+    EXPECT_NEAR(readRasterPixel(outOtsu, 6, 19), 0.0, kEps) << "A10 u8 档 50 落在最优分区低侧 ⇒ 0.0";
+    EXPECT_NEAR(readRasterPixel(outOtsu, 2, 5), 0.0, kEps) << "A10 u8 档 0（归一后的 min）⇒ 0.0";
+    EXPECT_NEAR(readRasterPixel(outOtsu, 30, 19), 1.0, kEps)
+        << "A10 u8 档 255（归一后的 max）是唯一高档 ⇒ 1.0；分区若镜像倒置（低高互换）本行红";
+
+    // ---- A11/A12：toUint8 的 max-min<1e-10 退化支（单值栅格整幅恒置 0）----
+    const std::string outFlatBinary = utf8PathString(dir / "d1p1_thresh_flat_binary.tif");
+    auto runFlatBinary = runThreshold(flatInput, outFlatBinary, "binary", true, 30.0, false, 0.0, 1);
+    EXPECT_TRUE(runFlatBinary.success) << "A11 flat/binary failed: " << runFlatBinary.message;
+    ASSERT_TRUE(fs::exists(outFlatBinary)) << "A11 produced no product at " << outFlatBinary;
+    EXPECT_NEAR(readRasterPixel(outFlatBinary, 7, 3), 0.0, kEps)
+        << "A11 全幅 raw 200 ⇒ max-min = 0 < 1e-10 ⇒ u8 整幅 0 ⇒ 0 不高于 30 ⇒ 0.0";
+    EXPECT_NEAR(readRasterPixel(outFlatBinary, 22, 14), 0.0, kEps)
+        << "A11 第二格取不同 (x,y)：常量夹具上两点是同一事实，留两格只为排除"
+           "「只处理了首行/首列」这种部分写出形状";
+
+    const std::string outFlatInv = utf8PathString(dir / "d1p1_thresh_flat_binary_inv.tif");
+    auto runFlatInv = runThreshold(flatInput, outFlatInv, "binary_inv", true, 30.0, false, 0.0, 1);
+    EXPECT_TRUE(runFlatInv.success) << "A12 flat/binary_inv failed: " << runFlatInv.message;
+    ASSERT_TRUE(fs::exists(outFlatInv)) << "A12 produced no product at " << outFlatInv;
+    EXPECT_NEAR(readRasterPixel(outFlatInv, 7, 3), 1.0, kEps)
+        << "A12 binary_inv 与 A11 互补 ⇒ 退化支的落点是 0 而不是 255（若落点 255，A11/A12 同时反转）";
+    EXPECT_NEAR(readRasterPixel(outFlatInv, 22, 14), 1.0, kEps) << "A12 第二格同上";
+
+    // ---- A13：未知 method 的失败形状（走 doThreshold 的 else 支，不是框架的枚举闸）----
+    const std::string outUnknown = utf8PathString(dir / "d1p1_thresh_unknown_method.tif");
+    auto runUnknown = runThreshold(stepInput, outUnknown, "not_a_real_method", true, 30.0, false, 0.0, 1);
+    EXPECT_FALSE(runUnknown.success)
+        << "A13 未知 method 必须 fail；ProcessingPlugin::execute 不做参数校验，所以这条能直达 doThreshold 的 else 支";
+    EXPECT_NE(runUnknown.message.find("Unknown threshold method: not_a_real_method"), std::string::npos)
+        << "A13 失败消息必须点名方法名（实读 fail(\"Unknown threshold method: \" + method)），读到的是："
+        << runUnknown.message;
+    EXPECT_FALSE(fs::exists(outUnknown))
+        << "A13 失败支不得留下产物（写盘在 method 分派之后，任何一支红都不该有输出文件）";
 }
 
 TEST_F(PluginTest, ProcessingFilterExecution) {
