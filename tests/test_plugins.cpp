@@ -13788,6 +13788,371 @@ TEST_F(PluginTest, TerrainCurvatureHandValueOnUnitPlane) {
     ASSERT_TRUE(noiseResult.success) << noiseResult.message;
     EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), 4.4f, 1e-3f);
     EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), -4.4f, 1e-3f);
+
+    // ── D1-T2 补两件事：z_factor 在局部路上真生效（与 N163 的 slope 路相反）、产物是 Float32 ──
+    // Laplacian 是线性算子 ⇒ 高程整体 ×2 让每个像元 ×2：DEM-P 左列 +4→+8、右列 -4→-8、内部仍 0。
+    // 这一枚同时是"局部路吃 -z/吃 z_factor"的正证：slope 那条 z_factor 空参（#163）在这条路上不存在。
+    const std::string outPlaneZ2 = utf8PathString(getTestDir() / "d1_curv_plane_out_z2.tif");
+    std::map<std::string, gis::framework::ParamValue> planeZ2 = params;
+    planeZ2["z_factor"] = 2.0;
+    planeZ2["output"] = outPlaneZ2;
+    const auto planeZ2Result = p->execute(planeZ2, progress_);
+    ASSERT_TRUE(planeZ2Result.success) << planeZ2Result.message;
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 0, 7), 8.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 15, 7), -8.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 7, 7), 0.0f, 1e-4f);
+
+    // 产物波段类型 = GDT_Float32：曲率族一律不落 Byte 路径 ⇒ 与 hillshade 那组
+    // "取整律是推断（本机 vcpkg GDAL 3.12.4 无 frmts/dem 源码可读）"的钉子划清界限。
+    auto curvOutDs = gis::core::openRaster(outPlane, true);
+    ASSERT_NE(curvOutDs, nullptr);
+    EXPECT_EQ(curvOutDs->GetRasterBand(1)->GetRasterDataType(), GDT_Float32);
+    auto curvZ2Ds = gis::core::openRaster(outPlaneZ2, true);
+    ASSERT_NE(curvZ2Ds, nullptr);
+    EXPECT_EQ(curvZ2Ds->GetRasterBand(1)->GetRasterDataType(), GDT_Float32);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────────────
+// D1-T2：曲率族 / roughness / profile_extract 的值级夹具用例（晋升刀 §P1-1）
+//
+// 局部路的算式全在本仓（terrain_plugin.cpp:222-250 曲率族、:274-279 roughness、
+// :796-897 profile_extract），所以每条期望值都能按注释里的公式手算，再与产物逐像元/逐行对撞。
+// 独立参考实现 = build/tmp/batchD/d1t2/ref_model.py（只读源码公式、不读产物），
+// 对撞脚本同目录 probe3/probe6/probe7/probe8；实测最大互差 9.2e-5（Float32 累积口径差），
+// ⇒ 下面 1e-3 容差有 10 倍以上余量，任何算式级改动（换核、丢符号、丢分母）都会挪 ≥0.07。
+// 三幅 DEM 沿用前两把刀同一套：DEM-P（z=x、像元 1.0）、DEM-F（z=5）、DEM-N（:306，48×48、像元 0.001）。
+//
+// 单位口径（先写死，免得下一个人当物理量读）：局部路经 gdalBandToMat 取像元阵后**完全不读
+// 地理参考**（profile_extract 是唯一例外，它必须用 GT 反算像元号），所以 dz/dx 的单位是
+// "每像元"而不是"每地面单位"；同一份像元阵配 0.001（夹具）与 0.0005（腿的 terrain_input.tif，
+// gui_test_data_helper.cpp:612）两种像元时，曲率族/roughness 产物逐像元相同（本刀探针实测互差 0）。
+// ⇒ 本批 GOLD 只声称"算式与产物一致"，不声称结果是地面单位下的物理曲率。
+//
+// 偏导核口径（:67-73 五枚 cv::Sobel，全部 BORDER_REPLICATE；核形状由解析面实测反定）：
+//   zx = (1/8)·[1,2,1]ᵀ⊗[-1,0,1]，zy = (1/8)·[-1,-2,-1;0,0,0;1,2,1]（y 向下为正），
+//   zxx = [1,2,1]ᵀ⊗[1,-2,1]，zyy = [1,-2,1]ᵀ⊗[1,2,1]（尺度 1.0），zxy = (1/4)·[-1,0,1]ᵀ⊗[-1,0,1]。
+//   为什么敢这么写：DEM-P（只随 x 变）上 zx 内部=1、左右边缘=0.5，zxx 左缘=+4、右缘=-4，
+//   与"y 方向带 [1,2,1] 平滑"的核**逐位吻合**（实测 -2.8621671 vs 手算 -2.8621670，差 1.1e-7）；
+//   而 zxy 的符号由 z=x·y 面的探针独立定死（该面内部 zx=y、zy=x、zxx=zyy=0、zxy=±1 ⇒
+//   plan 给 ±0.101013 且符号只取决于 zxy 的取号，实测 +0.1010153 ⇒ 取 +1 那一支）。
+
+TEST_F(PluginTest, TerrainProfileCurvatureHandValueOnUnitPlane) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string plane = createMultiBandGradientRaster("d2_prof_plane.tif", 16, 16, {{0.0f, 1.0f}}, 116.0, 40.0, 1.0);
+    const std::string flat = createMultiBandConstantRaster("d2_prof_flat.tif", 16, 16, {5.0f}, 116.0, 40.0, 1.0);
+    const std::string noise = createTerrainRaster("d2_prof_noise.tif");
+    const std::string outPlane = utf8PathString(getTestDir() / "d2_prof_plane_out.tif");
+    const std::string outFlat = utf8PathString(getTestDir() / "d2_prof_flat_out.tif");
+    const std::string outNoise = utf8PathString(getTestDir() / "d2_prof_noise_out.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("profile_curvature");
+    params["input"] = plane;
+    params["output"] = outPlane;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    const auto planeResult = p->execute(params, progress_);
+    ASSERT_TRUE(planeResult.success) << planeResult.message;
+
+    // DEM-P：zx 内部 1、x=0/x=15 边缘 0.5（列 -1/16 被复制成边缘列 ⇒ 一阶差分只走半格）；
+    // zy≡0、zxy≡0、zyy≡0；zxx 内部 0、左缘 +4、右缘 -4。
+    // profile = -(zxx·zx² + 2·zxy·zx·zy + zyy·zy²) / (sq·(1+sq)^1.5)，sq = zx²+zy²。
+    //   内部：num=0 ⇒ 0；左缘：sq=0.25、num=4·0.25=1、den=0.25·1.25^1.5=0.3493856215
+    //         ⇒ -2.8621670112；右缘同号相反。上/下边缘（y 方向）在这幅面上是干净的 ⇒ 仍 0。
+    EXPECT_NEAR(readRasterPixel(outPlane, 7, 7), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 1, 9), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 8, 0), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 8, 15), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 7), -2.8621670f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 15, 7), 2.8621670f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 0), -2.8621670f, 1e-4f);
+
+    // DEM-F：zx=zy=0 ⇒ 走 :233 的 slopeSq<1e-10 早退分支 ⇒ 处处 0。
+    std::map<std::string, gis::framework::ParamValue> flatParams = params;
+    flatParams["input"] = flat;
+    flatParams["output"] = outFlat;
+    const auto flatResult = p->execute(flatParams, progress_);
+    ASSERT_TRUE(flatResult.success) << flatResult.message;
+    EXPECT_NEAR(readRasterPixel(outFlat, 7, 7), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outFlat, 0, 0), 0.0f, 1e-4f);
+    // 注：这一枚**不能**单独证明早退分支在承重——常数面的分子本来就是 0，
+    // 删掉早退也是 0/1e-10=0。要判它得有一幅"一阶导趋于 0 而二阶导不为 0"的顶点面，
+    // 夹具池里没有（见报告"判不到"一节），所以这里只当"平地不炸"的护栏，不当判别钉子。
+
+    // DEM-N (13,7) 九邻域（z(x,y)=x·1.5+y·0.8+((x·y)%11)·0.2，逐点摊开）：
+    //   24.0 24.5 27.2 / 25.0 25.7 28.6 / 26.0 26.9 27.8
+    //   zx=(3.2+7.2+1.8)/8=1.525、zy=(2.0+4.8+0.6)/8=0.925、
+    //   zxx=2.2+2·2.2+0.0=6.6、zyy=0.0+2·0.0+(-2.2)=-2.2、zxy=(24.0-27.2-26.0+27.8)/4=-0.35
+    //   sq=1.525²+0.925²=3.18125；num_p=6.6·2.325625+2(-0.35)(1.525)(0.925)+(-2.2)·0.855625=12.4793073
+    //   den_p=3.18125·4.18125^1.5=3.18125·8.5498632=27.1992502 ⇒ profile=-0.4588107
+    // DEM-N (41,41)：93.0 93.7 96.6 / 93.0 96.1 97.0 / 95.2 96.3 97.4
+    //   zx=13.8/8=1.725、zy=8.2/8=1.025、zxx=-2.2、zyy=-2.2、zxy=-0.35
+    //   sq=4.0262544；num_p=-10.0954317；den_p=45.3699105 ⇒ profile=+0.2225138
+    std::map<std::string, gis::framework::ParamValue> noiseParams = params;
+    noiseParams["input"] = noise;
+    noiseParams["output"] = outNoise;
+    const auto noiseResult = p->execute(noiseParams, progress_);
+    ASSERT_TRUE(noiseResult.success) << noiseResult.message;
+    EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), -0.4588107f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 0.2225138f, 1e-3f);
+
+    auto outDs = gis::core::openRaster(outNoise, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterBand(1)->GetRasterDataType(), GDT_Float32);
+}
+
+TEST_F(PluginTest, TerrainPlanCurvatureHandValueOnUnitPlane) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string plane = createMultiBandGradientRaster("d2_plan_plane.tif", 16, 16, {{0.0f, 1.0f}}, 116.0, 40.0, 1.0);
+    const std::string flat = createMultiBandConstantRaster("d2_plan_flat.tif", 16, 16, {5.0f}, 116.0, 40.0, 1.0);
+    const std::string noise = createTerrainRaster("d2_plan_noise.tif");
+    const std::string outPlane = utf8PathString(getTestDir() / "d2_plan_plane_out.tif");
+    const std::string outFlat = utf8PathString(getTestDir() / "d2_plan_flat_out.tif");
+    const std::string outNoise = utf8PathString(getTestDir() / "d2_plan_noise_out.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("plan_curvature");
+    params["input"] = plane;
+    params["output"] = outPlane;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    const auto planeResult = p->execute(params, progress_);
+    ASSERT_TRUE(planeResult.success) << planeResult.message;
+
+    // plan = -(zxx·zy² - 2·zxy·zx·zy + zyy·zx²) / sq^1.5。
+    // DEM-P 上 zy≡0、zxy≡0、zyy≡0 ⇒ 分子恒 0（含左右边缘，那里 zxx=±4 但配的是 zy²=0）
+    // ⇒ **整幅 0**，而同一幅面同一像元的 profile 在 x=0 是 -2.8621670。
+    // 这一对（同面同像元、一个 0 一个非 0）就是把 plan 支与 profile 支分开的钉子：
+    // 两支在 :238 的同一个 if 里，公式对调 ⇒ 这里读到 -2.86 ⇒ 本条红、profile 条也红。
+    EXPECT_NEAR(readRasterPixel(outPlane, 7, 7), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 7), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 15, 7), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 0), 0.0f, 1e-4f);
+
+    std::map<std::string, gis::framework::ParamValue> flatParams = params;
+    flatParams["input"] = flat;
+    flatParams["output"] = outFlat;
+    const auto flatResult = p->execute(flatParams, progress_);
+    ASSERT_TRUE(flatResult.success) << flatResult.message;
+    EXPECT_NEAR(readRasterPixel(outFlat, 7, 7), 0.0f, 1e-4f);
+
+    // DEM-N (13,7)（九邻域与偏导同上）：num_l=6.6·0.855625-2(-0.35)(1.525)(0.925)+(-2.2)·2.325625=1.5181722
+    //   den_l=3.18125^1.5=5.6740956 ⇒ plan=-0.2675620
+    // DEM-N (41,41)：num_l=-7.6200633、den_l=8.0788924 ⇒ plan=+0.9432064
+    // 边缘两枚：x=0 列（左缘，zxx 由复制列抬成 +7.6）与 x=47 列（右缘 -7.6）
+    //   (0,24) ⇒ plan=-2.5728001、(47,24) ⇒ plan=+3.1361764（profile 在同点是 -1.0158284/+0.3370174，
+    //   两支数值不同 ⇒ 与 profile_curvature 那条互不顶替）
+    std::map<std::string, gis::framework::ParamValue> noiseParams = params;
+    noiseParams["input"] = noise;
+    noiseParams["output"] = outNoise;
+    const auto noiseResult = p->execute(noiseParams, progress_);
+    ASSERT_TRUE(noiseResult.success) << noiseResult.message;
+    EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), -0.2675620f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 0.9432064f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 0, 24), -2.5728001f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 47, 24), 3.1361764f, 1e-3f);
+
+    auto outDs = gis::core::openRaster(outNoise, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterBand(1)->GetRasterDataType(), GDT_Float32);
+}
+
+TEST_F(PluginTest, TerrainRoughnessHandValueOnUnitPlane) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string plane = createMultiBandGradientRaster("d2_rough_plane.tif", 16, 16, {{0.0f, 1.0f}}, 116.0, 40.0, 1.0);
+    const std::string flat = createMultiBandConstantRaster("d2_rough_flat.tif", 16, 16, {5.0f}, 116.0, 40.0, 1.0);
+    const std::string noise = createTerrainRaster("d2_rough_noise.tif");
+    const std::string outPlane = utf8PathString(getTestDir() / "d2_rough_plane_out.tif");
+    const std::string outPlaneZ2 = utf8PathString(getTestDir() / "d2_rough_plane_out_z2.tif");
+    const std::string outFlat = utf8PathString(getTestDir() / "d2_rough_flat_out.tif");
+    const std::string outNoise = utf8PathString(getTestDir() / "d2_rough_noise_out.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("roughness");
+    params["input"] = plane;
+    params["output"] = outPlane;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    const auto planeResult = p->execute(params, progress_);
+    ASSERT_TRUE(planeResult.success) << planeResult.message;
+
+    // :274-279 = dilate(3×3) - erode(3×3)，都带 BORDER_REPLICATE ⇒ 值 = 3×3 窗口(含中心)的极差。
+    // DEM-P（z=x）：内部窗口列跨 x-1,x,x+1 ⇒ 极差 = 2；左右边缘被复制列压成两列 ⇒ 极差 = 1；
+    // 上/下边缘在 y 方向不产生新值（面逐行不变）⇒ 仍是 2（内部列）或 1（边角）。
+    EXPECT_NEAR(readRasterPixel(outPlane, 7, 7), 2.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 8, 0), 2.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 7), 1.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 15, 7), 1.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 0), 1.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 15, 15), 1.0f, 1e-4f);
+
+    // z_factor=2 ⇒ 高程 ×2、极差同步 ×2（局部路在 :202-204 就乘，跟 GDALDEM 那条 -z 是两回事）。
+    std::map<std::string, gis::framework::ParamValue> z2 = params;
+    z2["z_factor"] = 2.0;
+    z2["output"] = outPlaneZ2;
+    const auto z2Result = p->execute(z2, progress_);
+    ASSERT_TRUE(z2Result.success) << z2Result.message;
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 7, 7), 4.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 0, 7), 2.0f, 1e-4f);
+
+    // DEM-F：极差 0（含边缘）。
+    std::map<std::string, gis::framework::ParamValue> flatParams = params;
+    flatParams["input"] = flat;
+    flatParams["output"] = outFlat;
+    const auto flatResult = p->execute(flatParams, progress_);
+    ASSERT_TRUE(flatResult.success) << flatResult.message;
+    EXPECT_NEAR(readRasterPixel(outFlat, 7, 7), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outFlat, 0, 0), 0.0f, 1e-4f);
+
+    // DEM-N：(13,7) 窗口 24.0…28.6 ⇒ 28.6-24.0=4.6；(41,41) 93.0…97.4 ⇒ 4.4；
+    // 左边缘 (0,0) 复制列 ⇒ 窗口只剩 {0·?…} ⇒ 2.5；右下角 (24,47) ⇒ 5.2。
+    // 与 tri 的分工：tri 是 √(Σ(邻-心)²/8)（:251-273，另一条 else if 支），本条是极差，
+    // 同一点上 4.6 vs 1.63631 ⇒ 两支各自承重，一把"√→²"的变异只会打红 tri、不会打红本条。
+    std::map<std::string, gis::framework::ParamValue> noiseParams = params;
+    noiseParams["input"] = noise;
+    noiseParams["output"] = outNoise;
+    const auto noiseResult = p->execute(noiseParams, progress_);
+    ASSERT_TRUE(noiseResult.success) << noiseResult.message;
+    EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), 4.6f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 4.4f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 0, 0), 2.5f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 24, 47), 5.2f, 1e-4f);
+
+    auto outDs = gis::core::openRaster(outNoise, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterBand(1)->GetRasterDataType(), GDT_Float32);
+}
+
+// profile_extract 出的是**剖面采样 CSV**（header `distance,x,y,elevation`），不是栅格 ⇒
+// 判据形态与统计族不同：钉"行数 + 逐行的距离/像元高程"，两者都能手算。
+// 采样算式（:835-890）：pixelStep = max(1e-9, min(hypot(gt1,gt2), hypot(gt4,gt5)))；
+//   每段 steps = max(1, ceil(len/pixelStep))，t = k/steps（第一段 k=0..steps，后续段 k=1..steps）；
+//   x = x0+(x1-x0)t、distance = 已累计长度 + len·t；像元号 = lround(仿射逆坐标)，越界即 continue（不写行）。
+// CSV 由 ostream 缺省精度写出 ⇒ **6 位有效数字**：距离 ~1.3e-2 时末位是 1e-7、舍入误差 ≤5e-8
+// ⇒ 距离钉子一律用 1e-6：是打印分辨率的 20 倍，却比任何算式级改动小 4 个数量级
+// （漏加累计长度挪 1.3e-2；取整方向一变，整个行序列都换）。x/y 在 116.x 上只剩 1e-3 分辨率
+// ⇒ 只当辅助信息，不当值级判据。
+TEST_F(PluginTest, TerrainProfileExtractHandValueSampleTable) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string noise = createTerrainRaster("d2_pext_noise.tif");
+    const std::string outCsv = utf8PathString(getTestDir() / "d2_pext_two_point.csv");
+
+    auto executePath = [&](const std::string& input, const std::string& output, const std::string& path) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("profile_extract");
+        params["input"] = input;
+        params["output"] = output;
+        params["band"] = 1;
+        params["profile_path"] = path;
+        return p->execute(params, progress_);
+    };
+    auto readRows = [](const std::string& path) {
+        std::ifstream in(path);
+        std::vector<std::vector<std::string>> rows;
+        std::string line;
+        bool headerSeen = false;
+        while (std::getline(in, line)) {
+            if (!headerSeen) { headerSeen = true; continue; }
+            if (line.empty()) continue;
+            std::vector<std::string> fields;
+            std::stringstream ss(line);
+            std::string field;
+            while (std::getline(ss, field, ',')) fields.push_back(field);
+            rows.push_back(fields);
+        }
+        return rows;
+    };
+
+    // (1) 两点线：DEM-N 像元 0.001，起点恰在像元 (1,1) 的左上角 (116.001,39.999)，
+    //     终点 (116.011,39.991) = 像元 (11,9) 的左上角 ⇒ 仿射坐标 (1,1)→(11,9)，Δ=(10,-8)。
+    //     len = hypot(0.010,-0.008) = 0.012806248474865698 ⇒ len/pixelStep = 12.806 ⇒ steps=13 ⇒ 14 行。
+    //     k=0：distance=0、像元 (1,1) ⇒ z=1.5+0.8+((1)%11)·0.2 = 2.5
+    //     k=5：distance=5·len/13 = 0.0049254801826406529 ⇒ 打印 0.00492548；
+    //          仿射 (4.846, 4.077) ⇒ lround ⇒ 像元 (5,4) ⇒ z = 7.5+3.2+((20)%11=9)·0.2 = 12.5
+    //     k=13：distance=len ⇒ 0.0128062；像元 (11,9) ⇒ z = 16.5+7.2+((99)%11=0)·0.2 = 23.7
+    const auto twoPoint = executePath(noise, outCsv, "116.001,39.999;116.011,39.991");
+    ASSERT_TRUE(twoPoint.success) << twoPoint.message;
+    ASSERT_EQ(twoPoint.metadata.count("sample_count"), 1u);
+    EXPECT_EQ(twoPoint.metadata.at("sample_count"), "14");
+    auto rows1 = readRows(outCsv);
+    ASSERT_EQ(rows1.size(), 14u);
+    EXPECT_EQ(readTextFile(outCsv).substr(0, 22), std::string("distance,x,y,elevation"));
+    EXPECT_NEAR(std::stod(rows1[0][0]), 0.0, 1e-12);
+    EXPECT_NEAR(std::stof(rows1[0][3]), 2.5f, 1e-3);
+    EXPECT_NEAR(std::stod(rows1[5][0]), 0.0049254801826406529, 1e-6);
+    EXPECT_NEAR(std::stof(rows1[5][3]), 12.5f, 1e-3);
+    EXPECT_NEAR(std::stod(rows1[13][0]), 0.012806248474865698, 1e-6);
+    EXPECT_NEAR(std::stof(rows1[13][3]), 23.7f, 1e-3);
+
+    // (2) 三段线：第二段 (116.011,39.991)→(116.018,39.986)，Δ=(0.007,-0.005)、len=0.0086023…
+    //     ⇒ steps=9 ⇒ 9 行（k=0 被 :860 的去重丢掉）⇒ 共 14+9=23 行。
+    //     行 14 是第二段第一个采样点：distance = len1 + len2·(1/9) = 0.012806248474865698+0.00095581…
+    //     = 0.0137621（6 位有效）⇒ 这一枚钉的是 :867 的**累计**距离；把它写成 len·t（漏加累计量）
+    //     该行变 0.00095581 ⇒ 红。行 13（第一段末）仍是 0.0128062 ⇒ 两段不混。
+    const std::string outCsv3 = utf8PathString(getTestDir() / "d2_pext_three_point.csv");
+    const auto threePoint = executePath(noise, outCsv3, "116.001,39.999;116.011,39.991;116.018,39.986");
+    ASSERT_TRUE(threePoint.success) << threePoint.message;
+    EXPECT_EQ(threePoint.metadata.at("sample_count"), "23");
+    auto rows2 = readRows(outCsv3);
+    ASSERT_EQ(rows2.size(), 23u);
+    EXPECT_NEAR(std::stod(rows2[13][0]), 0.012806248474865698, 1e-6);
+    EXPECT_NEAR(std::stof(rows2[13][3]), 23.7f, 1e-3);
+    EXPECT_NEAR(std::stod(rows2[14][0]), 0.0137621, 1e-5);
+    EXPECT_NEAR(std::stof(rows2[14][3]), 28.0f, 1e-3);      // 像元 (12,10) ⇒ 18+8+((120)%11=10)·0.2 = 28.0
+    EXPECT_NEAR(std::stod(rows2[22][0]), 0.0214086, 1e-5);  // 全段总长 = len1+len2
+    EXPECT_NEAR(std::stof(rows2[22][3]), 40.2f, 1e-3);      // 像元 (18,14) ⇒ 27+11.2+((252)%11=10)·0.2 = 40.2
+
+    // (3) 越界尾巴：终点 (116.049,39.975) = 仿射 (48,25) 越出 48×48 的右下角。
+    //     Δ=(0.048,-0.024)、len=0.05366563145999495、steps=ceil(53.6656)=54 ⇒ 候选 55 个采样点，
+    //     k=53（仿射 x=48.111）与 k=54（x=49）落到像元列 48/49 ⇒ 被 :874 的越界分支 **丢弃**（不写行、
+    //     也不钳到边缘）⇒ 实写 53 行；最后一行 k=52 = 像元 (47,24) ⇒ distance=52·len/54=0.0516780、z=90.9。
+    //     若实现改成"钳到边缘照写"就是 55 行；若改成"越界即失败"就 0 行 ⇒ 两个方向都红。
+    const std::string outCsvOob = utf8PathString(getTestDir() / "d2_pext_out_of_bounds.csv");
+    const auto oob = executePath(noise, outCsvOob, "116.001,39.999;116.049,39.975");
+    ASSERT_TRUE(oob.success) << oob.message;
+    EXPECT_EQ(oob.metadata.at("sample_count"), "53");
+    auto rows3 = readRows(outCsvOob);
+    ASSERT_EQ(rows3.size(), 53u);
+    EXPECT_NEAR(std::stod(rows3[52][0]), 0.051678015479995135, 1e-6);
+    EXPECT_NEAR(std::stof(rows3[52][3]), 90.9f, 1e-3);
+
+    // (4) 各向异性像元：同一份像元阵把 GT 改成 dx=0.001 / dy=0.002（写法照 :13381 的 T1x 先例）。
+    //     pixelStep = min(hypot(gt1,gt2), hypot(gt4,gt5)) = 0.001 ⇒ 走的仍是细轴。
+    //     路径 (116.0013,39.9985)→(116.0113,39.9945)：仿射 x 1.3→11.3、y 0.75→2.75，
+    //     len = hypot(0.010,-0.004) = 0.010770329614269006 ⇒ /0.001 ⇒ steps=11 ⇒ 12 行。
+    //     **若 pixelStep 取 max（=0.002）⇒ steps=6 ⇒ 7 行** ⇒ 行数直接判得出min/max；
+    //     第二行的像元也不同：k=11 ⇒ 仿射 (11.3, 2.75) ⇒ lround ⇒ (11,3) ⇒ z=16.5+2.4+((33)%11=0)=18.9。
+    //     （选点刻意让所有仿射坐标离 .5 至少 0.018：lround 的判界恰在 .5，越靠近越吃浮点尾差。）
+    const std::string aniso = createTerrainRaster("d2_pext_aniso.tif");
+    {
+        auto ds = gis::core::openRaster(aniso, false);
+        ASSERT_NE(ds, nullptr);
+        double gt[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.002};   // dx=0.001、dy=0.002
+        EXPECT_EQ(ds->SetGeoTransform(gt), CE_None);
+        ds->FlushCache();
+    }
+    const std::string outCsvAniso = utf8PathString(getTestDir() / "d2_pext_aniso.csv");
+    const auto anisoResult = executePath(aniso, outCsvAniso, "116.0013,39.9985;116.0113,39.9945");
+    ASSERT_TRUE(anisoResult.success) << anisoResult.message;
+    EXPECT_EQ(anisoResult.metadata.at("sample_count"), "12");
+    auto rows4 = readRows(outCsvAniso);
+    ASSERT_EQ(rows4.size(), 12u);
+    EXPECT_NEAR(std::stod(rows4[11][0]), 0.010770329614269006, 1e-6);
+    EXPECT_NEAR(std::stof(rows4[11][3]), 18.9f, 1e-3);
+
+    // (5) 少于两个点 ⇒ 解析失败且不留产物（C3n 契约；:831 的解析在 :845 打开文件之前）。
+    const std::string outCsvBad = utf8PathString(getTestDir() / "d2_pext_single_point.csv");
+    const auto bad = executePath(noise, outCsvBad, "116.001,39.999");
+    EXPECT_FALSE(bad.success);
+    EXPECT_FALSE(fs::exists(outCsvBad));
 }
 
 TEST_F(PluginTest, TerrainFillSinksAndFlowDirectionExecution) {
