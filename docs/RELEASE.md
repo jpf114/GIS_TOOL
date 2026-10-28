@@ -2739,6 +2739,103 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
   ⑧ `tests/real_data_matrix.txt` 第 4 列 `fixture` 仍写 `data`，而该文件头注释说 raster 腿走合成兜底
      应标 `not-consumed`：本把与同腿 R2 的两行读法保持一致没动，交 D3 矩阵对账。
 
+### 批次 D 覆盖晋升 R3b（2026-10-29，`raster_manage.zonal_stats` 一条 PENDING→GOLD，含 N176 运行时复验）
+
+射程**一行**：`tests/action_gold_cases.txt` 的 `raster_manage,zonal_stats`。
+本把与 R3a 同形（腿上原来**连 case 都没有**）且**没走豁免通道**：`allowlisted` / `allowlist-table`
+改后仍 21/21 未动。它是 raster 侧最后一条 PENDING，做完剩 18 条（processing 15 + matching 2 + spindex 1）。
+
+- **N176 复验：成立**（这是本把的第一动作，且在改任何夹具之前完成）。选的是**零源码改动**的坐实法：
+  BASE 的块只判 `fs::exists(output)`，那就直接跑它、验产物本身。先删旧产物再跑 ⇒ 用例是**绿的**
+  （`[ OK ] PluginTest.RasterManageZonalStatsExecution (353 ms)`），而产物 `od -c` 是
+  `{ \r \n \r \n } \r \n` = **8 字节**、`zone_count` 位置上什么都没有 ⇒ JSON 里**一个区都没有**。
+  与 `doZonalStats` 空 map 的写出形状（`"{\n"` + 零条目 + `"\n}\n"`）逐字节一致。
+  静态那半也同刻对上：`createTestRaster` 的 GT `{116, 0.001, 0, 40, 0, -0.001}` 配
+  `createPolygonVectorDataset` 写死的 `x∈[0,100]` 环 ⇒ `colEnd = min(29, (int)((100-116)/0.001)) = -16000`
+  小于 `colStart = 0`；**同一对夹具的 `rowStart` 也大于 `rowEnd`**（两道闸同时命中，任务书只写了列那道）。
+  ⇒ 结论：该用例**自批次 A 起就在空跑**，"跑过"不等于"跑到统计支"。
+  **结案口径**：改夹具让两者相交属于测试面（本把做了），`doZonalStats` 的静默 `continue` 属于产品语义
+  （本把一字未动，反过来把它钉成回归判据）。
+- **夹具侧凭据**（扩写既有 `TEST_F`，**未新增块** ⇒ 全库 `Total Tests:` 802 不变）：
+  换成 `writeFloatBandsRaster` 的**非方 7x5** 双波段栅格，GT `{100, 1, 0, 200, 0, -1}`、NoData `-9999`
+  只落在 `(x=3, y=2)` 一个像元；`band1 = 10x + y` 与 `band2 = x + 10y` **互为 x/y 转置对**
+  （方阵 + 单波段判不出"行列写反"，R1 纪律 3）。区域用本把新建的 `createZonalRectVectorDataset`
+  （照 `createPolygonVectorDataset` 的层名/字段名/几何类型，只把环坐标交给调用方），四个矩形各钉一条支路：
+  **zA** 窗口 5x3 非方、`subGT` 平移 (1,1)，包框 15 像元而像元中心命中 10，再扣 1 个 NoData ⇒ `count 9`；
+  **zB** 1x1 ⇒ `variance` 恰为 0 ⇒ `stddev` 走 `variance > 0 ? sqrt : 0` 的下钳（样本口径此处是 `0/0 = nan`）；
+  **zEmpty** 窗口非空但零命中 ⇒ 区照样建、统计列全空；**zOff** 整环在西侧 ⇒ 静默 `continue`、连行都没有。
+  **推得**（`derive_unit_expectation.py`，首读之前落盘）：zA band1 值集 {11,12,21,22,31,41,42,51,52}
+  ⇒ `sum 283 / mean 283/9 / sumSq 10901 / variance 18020/81 / stddev sqrt(18020)/9`；
+  band2 {11,12,13,14,15,21,22,24,25} ⇒ `sum 157 / variance 2180/81 / stddev sqrt(2180)/9`；
+  zB 两栏 `min = max = mean` 且 `stddev = 0`。**首读逐格命中，未改一个期望**
+  （产物 6 行与推导表逐字节相同，含 `31.4444`/`14.9154`/`5.18783` 这些**6 位有效数字**的印法）。
+  容差口径写在注释里：整数列逐字比原文；`mean/stddev` 用 `EXPECT_NEAR(…, 1e-4)`——被判的量最大只到
+  两位整数 ⇒ 6 位有效数字的舍入上界 5e-5（实测最近的是均值的 4.4445e-5），而最接近的**错值**
+  （样本标准差 15.820169966779048）离期望 0.904771 ⇒ 余量 ≥ 3100 倍。
+- **腿侧凭据**：新建 `raster_manage_zonal_stats` 的 `New-Case` + 一条值级分支。区域是 `.ps1` 里
+  `[IO.File]::WriteAllText` 落的**手写 GeoJSON 矩形**（字面量全 ASCII、无 BOM），栅格是
+  `analysis_input.tif` 的**副本**（`manage_zonal_input.tif`）且开之前删边车，不直接碰 `generated_data` 原件。
+  **推得**（`derive_leg_expectation.py`，同样是首读之前落盘；控制器 §2.2 那张表我**独立复算一致**，
+  未照抄、未把期望改成读数）：四个商 `0.2 / 3.8 / 0.2 / 2.2` ⇒ 窗口 cols 0..3、rows 0..2 = **4x3**；
+  第 2 行中心 `40 - 2.5*0.0005 = 39.99875 < MinY 39.9989` ⇒ 只烧 cols 0..3 x rows 0..1 = **8 个像元**
+  （取包框会是 12）；band1 `sum 16 / mean 2 / var 1.5`、band2 `sum 20 / min -1 / var 5.25`、
+  band3 `sum 6 / mean 0.75 / var 1.1875` ⇒ `stddev` 分别是 `sqrt(1.5)=1.2247448714`、
+  `sqrt(5.25)=2.2912878475`、`sqrt(1.1875)=1.0897247359`。
+  **实跑**两处对撞：CLI 探针与真腿产物的三行逐字节等于推导（`z1,1,0,4,2,1.22474,16,8` 等）。
+  分支判的是**整行文本**（顺带钉住"三个波段都读、与 `band` 键无关"和 `feature_id_field` 真取 `zone` 属性）。
+  ⚠ **这条分支判不到"子窗少平移"**：腿上 `colStart == rowStart == 0` ⇒ `subGT` 本就等于父 GT。
+  也判不到 NoData 跳过：`makeAnalysisRaster` 三个波段都不声明 NoData。两条都写在注释里、不假装。
+  只有一个 fid ⇒ 行序在这里不是自由度（产品累加容器是 `std::unordered_map`，多区产物必须按 `feature_id` 选行）。
+- **闸读数（改前/改后同一条 `ctest -R "^real_data_raster$" -V`）**：
+  `registered/ran 72/72 → 73/73`、`judged 51 → 52`、`allowlisted/table 21/21` 未动、
+  `allowlist-gated-not-registered 0` 未动、`branch-labels 52 → 53`、`conditional-registrations 1` 未动、
+  `dead-branches 0`，不变量 `52 + 21 = 73` 成立；腿 **15.27 s → 14.20 s = 0.93×**（跑前 `tasklist`
+  里 `MSBuild|gis_tests|ctest|gis-cli` 计数 = 0；2.5× 线按这一对照算 = 35.7 s，未触，未抬 TIMEOUT，未减断言）。
+  定向配方 **43 条 → 43 条**（未新增 `TEST_F`），全库 `Total Tests: 802 → 802`，43/43 全绿。
+  `geotransform_guard` 现读 test 域 `code=10 / checked=9`、产品域 `code=20 / checked=18`
+  —— **这两数是 R3a 的 `67067ed` 改的，本把 diff 未碰守卫**（`git log -1 -- tests/check_geotransform_guard.py`）。
+- **臂清单**（六支；每臂的 build/unit/leg 日志与**逐臂还原裸 sha 对拍**都 tee 成文件，
+  落 `build/tmp/batchD/r3b/arms/`；全程没用 `git stash` / `checkout --` / `reset --hard`，还原一律 `cp`）：
+  还原凭据按本批改正后的口径**两条一起用**：动手前记工作树裸字节 sha
+  （`src/plugins/raster_manage/raster_manage_plugin.cpp` = `6e5320974afe3975d9e0a070ad0377814b9d05a2`），
+  六臂每臂还原后对拍同一个 sha 且 `MATCH=True`；另加 `git hash-object` == `git rev-parse HEAD:` 那一个
+  （`acab0c4326efbf7634353aa95caa45a41145a551`）。⚠ 这两个值**本来就应当不相等**（autocrlf：工作树 CRLF、
+  blob LF），拿 `--no-filters` 对 blob 是坏判据；终态另附 `S3_src_netzero_proof.txt`
+  （`git status --porcelain` = 0 行、`git diff -- src/` 空、受保护 `terrain_plugin.cpp` blob 仍
+  `588a42504ee19bcb551f8214e5c1adb68cea20e9`）。
+  - **A1** 总体方差 → 样本方差（除以 n−1，两处都改）：**夹具红**（残差正是推得的那两个数
+    `0.90480071595570166` 与 `0.31468998669833237`）、**腿红**（band1 整行不符）。承重。
+  - **A2** 掩膜判定永不跳过（= 直接用包框累加）：**夹具红**（zA `count 14`、`max 53`、`sum 448`）、
+    **腿红**（`count` 从 8 变 12 那一侧）。承重 ⇒ 本把确实在判"用掩膜而不是用包框"。
+  - **A3** 子窗 `subGT` 不平移：**夹具红**（zA 落到 `count 7 / sum 268`——与改前**推得**的
+    `10c+r, c∈2..5, r∈2..3 扣掉 NoData` 逐字相同）、**腿绿 = 该臂在腿上是 no-op**
+    （腿那侧 colStart/rowStart 都是 0）。承重只在夹具侧，如实分档。
+  - **A4** `static_cast<int>` → `std::floor`：**夹具绿 + 腿绿 ⇒ 等价变异**。按 R1/R-D41 的记法先问这个等价
+    是谁决定的：**是产品决定的，不是我把矩形挑成这样挑出来的**——`colStart`/`rowStart` 外侧有 `max(0, ·)`
+    钳制（负商不管 trunc 还是 floor 都被钳成 0），而要素要活过 `colStart > colEnd || rowStart > rowEnd`
+    那道闸就必须 `colEnd`/`rowEnd` 的商 ≥ 0（商为负时 `min(w-1, 商) < 0 ≤ colStart` ⇒ 必被跳过），
+    商非负时 trunc 与 floor 恒等 ⇒ **凡窗口非空两口径必等价**。唯一能分开两者的形状是
+    "环整体在原点西侧、且离原点不足一个像元宽"（trunc 留一个空统计的区、floor 直接跳过），
+    本把没有夹具覆盖它 ⇒ 登记成缺口，不写成判据。
+  - **A5** NoData 相等判据永不成立：**夹具红**（zA `count 10`、`min -9999`、`sum -9716`）、
+    **腿绿**（腿输入根本不声明 NoData ⇒ 腿那侧这一支不可达，与注释里写的一致）。承重只在夹具侧。
+  - **A6**（反事实副本臂，只改期望常数、不碰产品）：腿分支 band1 的期望把 `count 8` 改成包框的 `12`
+    ⇒ **腿红**（`raster_manage_zonal_stats band 1 (x+y) row mismatch`）。按 R-D34，这才叫"期望正确"被证过，
+    而不是"分支会红"。
+- **本把新立 N180**（只登记，不修产品）：`doZonalStats` 的 CSV **空分区行比表头少一列**。
+  实测逐字节：满值行 `commas=7 fields=8`（表头也是 8 列），空值行 `commas=6 fields=7`。
+  成因在源码里是可数的——满值那一支在 `fid,band` 之后发 6 个逗号（min/max/mean/stddev 各一个 + sum/count 两个），
+  空值那一支发 `csv << ",,,,,"` = 5 个。判据钉的是**现读形状**（`EXPECT_EQ(row->size(), 7u)`），
+  补那个逗号的人会让这一条红，届时必须连带改 JSON 支与本文档口径，而不是顺手放宽本条。
+- **文档**：`docs/算法说明/栅格工具/分区统计.md` 按现读改准五处——`stddev` 写明是**总体**标准差；
+  统计按**全部波段**进行且与 `band` 参数无关；处理流程补上"向零取整 + 两侧钳制 + 子窗平移 +
+  掩膜按像元中心 + 整条要素在范围外被静默跳过"；输出说明补 CSV 表头逐字与**行序不保证、按
+  `feature_id`+`band` 选行**，并写明空统计行的存在与 N180 的少一列；注意事项补"不重投影"、
+  ID 字段同值会共用一条记录、以及 `zone_count` 是分区数不是要素数（跑成功 ≠ 每个要素都算到）。
+  现读指认（本把不修）：`paramSpecs()` 里 `output` **和** `vector` 两个都声明 `required = false`，
+  而 `doZonalStats` 三个键任一为空就 `fail` ⇒ 属 #146"声明必填 vs 实为必填"跨插件同族论域。
+- **缺口（照实登记，不当判据）**：见下一节列表。Release 树未重编 ⇒ **R3b 全部结论只验收 Debug 侧**。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
