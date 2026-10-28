@@ -324,6 +324,55 @@ function Assert-InfoSizeExact {
         $Message + " (bands actual=" + $bands + " expected=" + $ExpectedBands + ")")
 }
 
+# R2 (batch D): reader for the top-level "Overviews: <n>" line that raster_inspect info prints from
+# GDALRasterBand::GetOverviewCount() on band 1.
+# WHY a dedicated reader instead of Assert-TextContains on "Overviews: 3": the substring form is also
+# satisfied by "Overviews: 30" and it never compares the number, so it cannot tell three overview
+# levels from five. Here the line must parse as a FULL integer (trailing junk = no match = fail
+# closed), and the caller compares integers, so "one level dropped" and "levels ignored" are both red.
+function Get-InfoOverviewCount {
+    param(
+        [string]$Text
+    )
+
+    $match = [regex]::Match($Text, "(?m)^\s*Overviews:\s*(\d+)\s*$")
+    Assert-Condition -Condition ($match.Success) -Message (
+        "raster_inspect info has no parseable 'Overviews: <int>' line")
+    return [int]$match.Groups[1].Value
+}
+
+# R2 (batch D): band-aware reader for the NON-numeric labels inside a "Band N:" block -- Type and
+# Color. Get-InfoBandStatValue can only serve numeric lines (its pattern demands a number and
+# end-of-line), and the dtype / colour-interpretation facts are exactly the two the colormap product
+# carries outside its statistics, so they need their own reader. The block anchor is the same
+# "(?ms)Band N: ... up to the next Band block or end of text" that Get-InfoBandStatValue uses; it is
+# repeated rather than factored out on purpose, so changing this reader cannot silently move an
+# already-GOLD branch's band lookup (and the reverse: that one is not in this knife's scope).
+# Fails closed when the block is missing, when the label line is missing, and when the captured
+# value is empty -- "no Color line printed" is a product state, not a zero.
+function Get-InfoBandLabelText {
+    param(
+        [string]$Text,
+        [int]$Band,
+        [string]$Label
+    )
+
+    $blockPattern = "(?ms)^\s*Band " + $Band + "\s*:.*?(?=^\s*Band \d+:|\Z)"
+    $block = [regex]::Match($Text, $blockPattern)
+    Assert-Condition -Condition ($block.Success) -Message ("raster_inspect info has no 'Band " + $Band + "' block")
+    $labelPattern = "(?m)^\s*" + $Label + ":\s*(\S.*?)\s*$"
+    # NOTE the different name: PowerShell variables are case-INsensitive, so "$label" here would be
+    # the "[string]$Label" parameter above, and "$label.Success" would read a property off that
+    # string and hand Assert-Condition an empty value instead of a boolean (this was the actual
+    # first-run failure of this reader).
+    $labelMatch = [regex]::Match($block.Value, $labelPattern)
+    Assert-Condition -Condition ($labelMatch.Success) -Message (
+        "band " + $Band + " has no '" + $Label + "' line (block read: " + $block.Value.Trim() + ")")
+    $value = $labelMatch.Groups[1].Value.Trim()
+    Assert-Condition -Condition ($value.Length -gt 0) -Message ("band " + $Band + " has an empty '" + $Label + "' value")
+    return $value
+}
+
 # D1-C1 (Task 18): read one NAMED raster of a directory (split tiles are judged by their name,
 # not by Get-ChildItem order -- the old "$tiles[0]" was alphabetical luck, so renaming the grid
 # would silently move the judgement to another tile).
@@ -471,6 +520,135 @@ function Validate-CaseOutputs {
             # The block header anchor is what makes this row independent of the two above.
             Assert-InfoBandStatNear -Text $info -Band 3 -Label "Max" -Expected 16 -Tolerance 1e-9 -Message (
                 "band 3 ((x*y) mod 17) maximum mismatch")
+        }
+        # ---- R2 (batch D): raster_manage.overviews value-level judgement -------------------
+        # Input = $rasterManageOverviewsInput, a copy of makeStepLevelRaster: 40 x 24 x 1 Float32,
+        #   three plateaus {0^240, 10^480, 51^240} in quadrants (x split at 20, y split at 12).
+        # The action has NO output key -- GDALDataset::BuildOverviews writes the overview IFDs INTO
+        # the file named by --input, so the judgement has two sides: the overview count that got
+        # added, and the full-resolution base that must NOT have changed.
+        # levels literal "2 1 4 0 8": doBuildOverviews keeps only tokens > 1, so 2/4/8 survive.
+        #   count 3 => pins the >1 filter (unfiltered would be 5) AND pins that --levels is read at
+        #   all (ignoring it falls back to the spec default "2 4 8 16" = 4).
+        # Size 40 x 24 is asserted on a NON-SQUARE base on purpose: width and height are compared
+        #   separately by Assert-InfoSizeExact, and a square product is an x/y reflexive invariant.
+        "raster_manage_overviews" {
+            Mark-Judged -Name $Case.Name
+            # PAM sidecars match by file name and survive across runs; a cached Statistics block
+            # makes ComputeStatistics answer without re-reading pixels, so the sidecar is dropped
+            # first and the numbers below are computed fresh (same defence as raster_inspect_info).
+            Remove-Item ($rasterManageOverviewsInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $rasterManageOverviewsInput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 40 -ExpectedHeight 24 -ExpectedBands 1 -Message (
+                "raster_manage_overviews damaged the 40 x 24 x 1 full-resolution base")
+            $overviewCount = Get-InfoOverviewCount -Text $info
+            Assert-Condition -Condition ($overviewCount -eq 3) -Message (
+                "'2 1 4 0 8' has exactly three tokens above 1 (2, 4, 8) so the overview count must be 3 (actual=" + $overviewCount + ")")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "in-place overview build must not restype the base band away from Float32")
+            # Base statistics must be untouched by an in-place build. Hand-derived from the fixture:
+            #   Mean   = (480*10 + 240*51)/960 = 17040/960 = 17.75
+            #   E[x^2] = (480*100 + 240*2601)/960 = 672240/960 = 700.25
+            #   Var    = 700.25 - 17.75^2 = 700.25 - 315.0625 = 385.1875
+            #   StdDev = sqrt(385.1875) = 19.62619423117992 (GDAL prints the POPULATION root)
+            # Tolerance sandwich, this branch only (info prints 6 significant digits, so the
+            # quantisation grid follows the MAGNITUDE of each value, not a fixed step):
+            #   Min 0 / Max 51  -> magnitude 0 / 5.1e1, whole numbers, "0" and "51" print exactly
+            #                      => worst rounding 0, tolerance 1e-9, nearest defect is a one-unit
+            #                         plateau move (51 -> 50) => 1e9x margin on both sides.
+            #   Mean 17.75      -> magnitude 1.775e1, needs 4 significant digits <= 6 => prints
+            #                      "17.75", ZERO rounding; nearest defect that keeps Min/Max green
+            #                      is the middle plateau moving by 1 => mean shifts 480/960 = 0.5
+            #                      => 5e8x the tolerance.
+            #   StdDev 19.6262  -> magnitude 1.96e1 => 6 significant digits put the last one in the
+            #                      1e-4 place => grid 1e-4, WORST rounding 5e-5; the value actually
+            #                      printed here is 19.6262 => observed residual 5.77e-6.
+            #                      Tolerance 2e-4 = 4.0x the worst-case rounding (not the observed
+            #                      one) and the nearest real defect, sample instead of population
+            #                      stddev sqrt(385.1875*960/959) = 19.63642, is 0.0102 away = 51x
+            #                      the tolerance. Both sides clear, so 2e-4 is not a padded number.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "overview build changed the lower plateau of the full-resolution band")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 51 -Tolerance 1e-9 -Message (
+                "overview build changed the upper plateau of the full-resolution band")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected 17.75 -Tolerance 1e-9 -Message (
+                "overview band mean should be 17.75 = 17040/960 from the fixture plateaus")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "StdDev" -Expected ([math]::Sqrt(385.1875)) -Tolerance 2e-4 -Message (
+                "overview band stddev should be sqrt(385.1875), the population root of E[x^2] - mean^2")
+        }
+        # ---- R2 (batch D): raster_render.colormap value-level judgement --------------------
+        # Input = makeStepLevelRaster (40 x 24 x 1, plateaus 0/10/51), cmap = autumn.
+        # autumn's 256-entry OpenCV LUT was measured with a product-independent oracle (python + cv2,
+        # all 256 indices walked): B == 0 constant, G == index exactly, R == 255 constant. The
+        # plugin reorders BGR -> RGB before writing, so in the PRODUCT the bands come out as
+        #   band 1 (Red)   = 255 constant
+        #   band 2 (Green) = the 8-bit normalised level ITSELF
+        #   band 3 (Blue)  = 0 constant
+        # i.e. band 2 is a read-out of cv::normalize and every expected number is hand-derived from
+        # the fixture: scale = 255/(51-0) = 5.0 (exactly representable, and 10*5.0 / 51*5.0 do not
+        # straddle a round-versus-truncate boundary) => levels 0 -> 0, 10 -> 50, 51 -> 255.
+        #   Mean   = (480*50 + 240*255)/960 = 85200/960 = 88.75
+        #   E[x^2] = (480*2500 + 240*65025)/960 = 16806000/960 = 17506.25
+        #   Var    = 17506.25 - 88.75^2 = 17506.25 - 7876.5625 = 9629.6875
+        #   StdDev = sqrt(9629.6875) = 98.1309711558996
+        # Dropping the BGR->RGB swap would move the constant 255 to band 3 and the constant 0 to
+        # band 1 => the two constant-band rows go red together; it would NOT move band 2 (autumn's
+        # G is the middle channel either way), which is why the swap evidence here is carried by the
+        # constants and by the Color names, not by the ramp.
+        "raster_render_colormap" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($rasterRenderColormapOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $rasterRenderColormapOutput)
+            )
+            # drv->Create(output, colored.cols, colored.rows, 3, GDT_Byte) reads width and height
+            # => non-square makes (cols, rows) versus (rows, cols) a visible difference.
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 40 -ExpectedHeight 24 -ExpectedBands 3 -Message (
+                "raster_render_colormap did not write the 40 x 24 x 3 bands of the autumn product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 2 -Label "Type") -eq "Byte") -Message (
+                "colormap band 2 must be 8-bit (GDT_Byte), not a wider dtype")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Color") -eq "Red") -Message (
+                "colormap band 1 colour interpretation must be Red (GCI_RedBand + 0)")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 2 -Label "Color") -eq "Green") -Message (
+                "colormap band 2 colour interpretation must be Green (GCI_RedBand + 1)")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 3 -Label "Color") -eq "Blue") -Message (
+                "colormap band 3 colour interpretation must be Blue (GCI_RedBand + 2)")
+            # Constant bands: Min and Max are the two endpoints that pin "constant AND which
+            # constant". Mean/StdDev are NOT asserted because min == max already implies mean == that
+            # value and stddev == 0 -- printing them would be a corollary row, not a judgement.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 255 -Tolerance 1e-9 -Message (
+                "autumn red channel must be the constant 255; if the BGR->RGB swap was dropped this is 0")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 255 -Tolerance 1e-9 -Message (
+                "autumn red channel must be constant, so max equals min (255)")
+            Assert-InfoBandStatNear -Text $info -Band 3 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "autumn blue channel must be the constant 0; if the BGR->RGB swap was dropped this is 255")
+            Assert-InfoBandStatNear -Text $info -Band 3 -Label "Max" -Expected 0 -Tolerance 1e-9 -Message (
+                "autumn blue channel must be constant, so max equals min (0)")
+            # Ramp band (Green = the normalised level). Tolerance sandwich, per data point, on the
+            # 6-significant-digit print of raster_inspect info:
+            #   Min 0 / Max 255 -> whole numbers ("0", "255") => zero rounding; the nearest defect
+            #                      is a one-unit shift of the top level (255 -> 254) => 1e9x 1e-9.
+            #   Mean 88.75      -> magnitude 8.875e1, 4 significant digits <= 6 => prints "88.75",
+            #                      ZERO rounding; keeping Min/Max green while moving the middle
+            #                      plateau one level shifts mean by 480/960 = 0.5 => 5e8x 1e-9.
+            #   StdDev 98.131   -> magnitude 9.81e1 => the 6th significant digit sits in the 1e-4
+            #                      place => grid 1e-4, WORST rounding 5e-5; the value printed here
+            #                      is 98.131 => observed residual 2.88e-5 (0.14x the tolerance).
+            #                      Tolerance 2e-4 = 4.0x the worst-case grid. Nearest defect: the
+            #                      middle plateau rendered one level off (50 -> 51) gives
+            #                      sqrt(9591.1875) = 97.9346, i.e. 0.196 away = 982x the tolerance,
+            #                      and it moves Mean by 0.5 too -- but with DIFFERENT residuals, so
+            #                      the two rows are not the same fact written twice.
+            Assert-InfoBandStatNear -Text $info -Band 2 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "colormap green channel is the normalised level, so its floor must be alpha = 0")
+            Assert-InfoBandStatNear -Text $info -Band 2 -Label "Max" -Expected 255 -Tolerance 1e-9 -Message (
+                "colormap green channel is the normalised level, so its ceiling must be beta = 255")
+            Assert-InfoBandStatNear -Text $info -Band 2 -Label "Mean" -Expected 88.75 -Tolerance 1e-9 -Message (
+                "colormap green mean should be 88.75 = 85200/960 from levels 0/50/255 with counts 240/480/240")
+            Assert-InfoBandStatNear -Text $info -Band 2 -Label "StdDev" -Expected ([math]::Sqrt(9629.6875)) -Tolerance 2e-4 -Message (
+                "colormap green stddev should be sqrt(9629.6875) = 98.1309711558996")
         }
         # ---- D1-T1: terrain value-level judgements (batch D first promotion knife) ----
         # Input for all six blocks below is the generated terrain DEM:
@@ -1209,6 +1387,7 @@ function Ensure-RasterRegressionData {
     $classMap = Join-Path $rasterDataRoot "classification_class_map.json"
     $classRaster = Join-Path $rasterDataRoot "classification_raster.tif"
     $analysisRaster = Join-Path $generatedRoot "analysis_input.tif"
+    $stepLevelRaster = Join-Path $generatedRoot "step_level_input.tif"
     $processingBinaryRaster = Join-Path $generatedRoot "processing_binary_input.tif"
     $terrainRaster = Join-Path $generatedRoot "terrain_input.tif"
     $supervisedClassificationRaster = Join-Path $generatedRoot "classification_supervised_input.tif"
@@ -1246,6 +1425,15 @@ function Ensure-RasterRegressionData {
 
     if (-not (Test-Path $analysisRaster)) {
         Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("analysis-raster", $analysisRaster)
+    }
+
+    # R2 (batch D): the overviews and colormap branches both read width/height, so their input has
+    # to be NON-SQUARE -- on a square product "W x H" is an x/y reflexive invariant and an axis swap
+    # is an equivalent mutation (nothing turns red). 40 x 24 with three plateau levels 0/10/51 in
+    # quadrants; see makeStepLevelRaster in tests/gui_test_data_helper.cpp for the hand-derived
+    # multiset {0^240, 10^480, 51^240} and why the extremes are 25% each (normalize saturation).
+    if (-not (Test-Path $stepLevelRaster)) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("step-level-raster", $stepLevelRaster)
     }
 
     if (-not (Test-Path $processingBinaryRaster)) {
@@ -1311,6 +1499,7 @@ function Ensure-RasterRegressionData {
         ClassificationClassMap = $classMap
         ClassificationRaster = $classRaster
         AnalysisRaster = $analysisRaster
+        StepLevelRaster = $stepLevelRaster
         ProcessingBinaryRaster = $processingBinaryRaster
         TerrainRaster = $terrainRaster
         SupervisedClassificationRaster = $supervisedClassificationRaster
@@ -1546,11 +1735,14 @@ $cases += New-Case -Name "raster_inspect_info" -CaseArgs @(
 ) -ExpectedOutputs @()
 
 $rasterManageOverviewsInput = Join-Path $ResolvedOutputRoot "manage_overviews_input.tif"
-Copy-Item $data.AnalysisRaster $rasterManageOverviewsInput -Force
+Copy-Item $data.StepLevelRaster $rasterManageOverviewsInput -Force
+# The copy is what the action mutates in place; a sidecar left by an earlier run would answer
+# statistics from cache instead of from pixels, so it is dropped before the case runs as well.
+Remove-Item ($rasterManageOverviewsInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
 $cases += New-Case -Name "raster_manage_overviews" -CaseArgs @(
     "raster_manage", "overviews",
     ("--input=" + $rasterManageOverviewsInput),
-    "--levels=2 4",
+    "--levels=2 1 4 0 8",
     "--resample=nearest"
 ) -ExpectedOutputs @(
     $rasterManageOverviewsInput
@@ -1567,14 +1759,20 @@ $cases += New-Case -Name "raster_manage_nodata" -CaseArgs @(
     $rasterManageNoDataInput
 )
 
+# Non-square, three-plateau input (see makeStepLevelRaster) and cmap=autumn: autumn's green channel
+# is the normalised 8-bit level itself, which is what makes the band statistics below derivable from
+# the fixture rather than read back out of the product. The output path is bound to a variable
+# because the judgement branch has to point at exactly the file this case writes.
+$rasterRenderColormapInput = $data.StepLevelRaster
+$rasterRenderColormapOutput = Join-Path $ResolvedOutputRoot "colormap_output.tif"
 $cases += New-Case -Name "raster_render_colormap" -CaseArgs @(
     "raster_render", "colormap",
-    ("--input=" + $data.AnalysisRaster),
-    ("--output=" + (Join-Path $ResolvedOutputRoot "colormap_output.tif")),
+    ("--input=" + $rasterRenderColormapInput),
+    ("--output=" + $rasterRenderColormapOutput),
     "--band=1",
-    "--cmap=jet"
+    "--cmap=autumn"
 ) -ExpectedOutputs @(
-    (Join-Path $ResolvedOutputRoot "colormap_output.tif")
+    $rasterRenderColormapOutput
 )
 
 $cases += New-Case -Name "terrain_slope" -CaseArgs @(
@@ -2135,11 +2333,12 @@ foreach ($case in $cases) {
 # turns the leg red too. So this list can neither rot forward (a branch appears and the entry is
 # forgotten) nor be orphaned backwards (someone deletes the New-Case the entry excuses).
 # The gate's printed "allowlisted=" is the number of entries this leg actually consulted for a
-# case that ran, not the size of the table below. On this leg the two agree (re-measured 23/23 on
-# the Debug quick leg by R1, after raster_inspect_info moved from this table to its own judgement
-# branch), because this file has exactly one gated registration site (the gate prints it
-# as conditional-registrations=1) and that name is not one of the entries below; the two counters
-# are printed separately so a leg where they differ cannot be read as a coverage number.
+# case that ran, not the size of the table below. On this leg the two agree (re-measured 21/21 on
+# the Debug leg by R2, after raster_manage_overviews and raster_render_colormap moved out of this
+# table into their own value-level judgement branches; R1 had measured 23/23 when
+# raster_inspect_info moved), because this file has exactly one gated registration site (the gate
+# prints it as conditional-registrations=1) and that name is not one of the entries below; the two
+# counters are printed separately so a leg where they differ cannot be read as a coverage number.
 $rasterGateAllowlist = @(
     [pscustomobject]@{ Name = "spindex_evi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
     [pscustomobject]@{ Name = "spindex_savi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
@@ -2153,8 +2352,6 @@ $rasterGateAllowlist = @(
     [pscustomobject]@{ Name = "spindex_ui"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
     [pscustomobject]@{ Name = "spindex_bi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
     [pscustomobject]@{ Name = "spindex_custom_index"; Reason = "fixture-side GOLD via PluginTest.SpindexCustomIndexExecution; no leg-side expectation derived" },
-    [pscustomobject]@{ Name = "raster_manage_overviews"; Reason = "action is PENDING in tests/action_gold_cases.txt, so no numeric expectation exists anywhere yet" },
-    [pscustomobject]@{ Name = "raster_render_colormap"; Reason = "action is PENDING in tests/action_gold_cases.txt, so no numeric expectation exists anywhere yet" },
     [pscustomobject]@{ Name = "raster_manage_nodata"; Reason = "fixture-side GOLD via PluginTest.RasterManageNoDataExecution; leg only checks the file exists" },
     [pscustomobject]@{ Name = "terrain_fill_sinks"; Reason = "fixture-side GOLD via PluginTest.TerrainFillSinksAndFlowDirectionExecution; leg-side DEM has no hand-derived sink expectation" },
     [pscustomobject]@{ Name = "terrain_flow_direction"; Reason = "fixture-side GOLD via PluginTest.TerrainFillSinksAndFlowDirectionExecution; leg-side DEM has no hand-derived coding expectation" },

@@ -532,6 +532,76 @@ int makeAnalysisRaster(const std::string& outputPath) {
     return 0;
 }
 
+// R2（批次 D）：raster_manage.overviews + raster_render.colormap 两条腿判据共用的**非方**夹具。
+// 为什么不能直接用 makeAnalysisRaster（32x32x3）：它是方阵，而这两个动作的腿判据都要读宽高
+// （金字塔的每级概览尺寸、伪彩色 Create(output, cols, rows) 的输出尺寸）——方阵上"宽高写反"是
+// 等价变异，改了不红。为什么值取三级平台而不是斜坡：伪彩色走 cv::normalize 到 8 位整型时用的是
+// 带百分位裁剪的极值估计，斜坡里每个值只占 1/256 = 0.39% 的像元会被裁掉，于是"极值映射到 0/255"
+// 这条本来能手推的关系被位移；这里把两个极值各做厚到 25%，裁剪够不着它们。
+// 形状与取值（与 tests/test_plugins.cpp 的 createStepLevelRaster 同一张表）：
+//   40 x 24 单波段 Float32，x 以 20 分左右、y 以 12 分上下，
+//   左上 = 0、右上 = 10、左下 = 51、右下 = 10
+//   ⇒ 多重集 {0^240, 10^480, 51^240}，n = 960
+//   Mean   = (480*10 + 240*51)/960 = 17040/960 = 17.75
+//   E[x^2] = (480*100 + 240*2601)/960 = 672240/960 = 700.25
+//   Var    = 700.25 - 17.75^2 = 385.1875，StdDev = sqrt(385.1875)
+//   标度 255/(51-0) = 5.0（可精确表示）⇒ 归一化后 0 -> 0、10 -> 50、51 -> 255
+int makeStepLevelRaster(const std::string& outputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(outputPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    const int width = 40;
+    const int height = 24;
+    GDALDataset* ds = driver->Create(outputPath.c_str(), width, height, 1, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create step level raster: " << outputPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.001, 0.0,
+        40.0, 0.0, -0.001
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<float> band1(static_cast<size_t>(width) * static_cast<size_t>(height), 0.0f);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const bool left = x < (width / 2);
+            const bool top = y < (height / 2);
+            float value = 10.0f;                // 右上 + 右下 = 10（占 50%）
+            if (left && top) value = 0.0f;      // 左上 = 0（下极值，占 25%）
+            if (left && !top) value = 51.0f;    // 左下 = 51（上极值，占 25%）
+            band1[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] = value;
+        }
+    }
+
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band) {
+        GDALClose(ds);
+        std::cerr << "Failed to get step level raster band\n";
+        return 1;
+    }
+    if (band->RasterIO(
+            GF_Write, 0, 0, width, height,
+            band1.data(), width, height, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write step level raster band\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+    return 0;
+}
+
 int makeProcessingBinaryRaster(const std::string& outputPath) {
     gis::core::initRuntimeEnvironment();
     GDALAllRegister();
@@ -1153,6 +1223,9 @@ int main(int argc, char* argv[]) {
     }
     if (command == "analysis-raster") {
         return makeAnalysisRaster(argv[2]);
+    }
+    if (command == "step-level-raster") {
+        return makeStepLevelRaster(argv[2]);
     }
     if (command == "processing-binary-raster") {
         return makeProcessingBinaryRaster(argv[2]);
