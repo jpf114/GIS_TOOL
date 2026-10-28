@@ -616,6 +616,73 @@ int makeStepLevelRaster(const std::string& outputPath) {
     return 0;
 }
 
+// R3a (batch D): reference fixture for the raster_render_histogram_match leg branch.
+// Four equal plateaus 0 / 17 / 34 / 51 on a NON-SQUARE 40 x 24 canvas (four 20 x 12 quadrants,
+// 240 pixels each), so its normalized 8-bit levels are 0 / 85 / 170 / 255 with cumulative
+// probabilities 1/4, 1/2, 3/4, 1 -- exactly the four values the LUT rule has to break ties on.
+// It must NOT be the same raster as the branch's input: with source == reference both CDFs are
+// identical, the LUT becomes the identity, and "matched" is then indistinguishable from "copied
+// sourceU8" (an equivalent mutation, not a judgement). The plateau VALUES are 0/17/34/51 rather
+// than any other quartet because the normalisation scale 255/(51-0) = 5.0 is exactly
+// representable in binary, so every level lands on an integer with no round-versus-truncate
+// question left open. That is a fixture-shape choice made here, not a product decision.
+int makeHistMatchReferenceRaster(const std::string& outputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(outputPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    const int width = 40;
+    const int height = 24;
+    GDALDataset* ds = driver->Create(outputPath.c_str(), width, height, 1, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create histogram match reference raster: " << outputPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.001, 0.0,
+        40.0, 0.0, -0.001
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<float> band1(static_cast<size_t>(width) * static_cast<size_t>(height), 0.0f);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const bool left = x < (width / 2);
+            const bool top = y < (height / 2);
+            float value = 34.0f;                  // right + bottom quadrant = 34 (240 pixels)
+            if (left && top) value = 0.0f;        // left + top    = 0  (240)
+            else if (left) value = 17.0f;         // left + bottom = 17 (240)
+            else if (top) value = 51.0f;          // right + top   = 51 (240)
+            band1[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] = value;
+        }
+    }
+
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band) {
+        GDALClose(ds);
+        std::cerr << "Failed to get histogram match reference raster band\n";
+        return 1;
+    }
+    if (band->RasterIO(
+            GF_Write, 0, 0, width, height,
+            band1.data(), width, height, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write histogram match reference raster band\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+    return 0;
+}
+
 int makeProcessingBinaryRaster(const std::string& outputPath) {
     gis::core::initRuntimeEnvironment();
     GDALAllRegister();
@@ -1240,6 +1307,9 @@ int main(int argc, char* argv[]) {
     }
     if (command == "step-level-raster") {
         return makeStepLevelRaster(argv[2]);
+    }
+    if (command == "histmatch-reference-raster") {
+        return makeHistMatchReferenceRaster(argv[2]);
     }
     if (command == "processing-binary-raster") {
         return makeProcessingBinaryRaster(argv[2]);

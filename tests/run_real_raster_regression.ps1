@@ -521,6 +521,117 @@ function Validate-CaseOutputs {
             Assert-InfoBandStatNear -Text $info -Band 3 -Label "Max" -Expected 16 -Tolerance 1e-9 -Message (
                 "band 3 ((x*y) mod 17) maximum mismatch")
         }
+        # ---- R3a (batch D): raster_manage.cog value-level judgement -------------------------
+        # Input = $cogInputRaster, a copy of makeStepLevelRaster: 40 x 24 x 1 Float32, plateaus
+        #   {0^240, 10^480, 51^240} (n = 960). doBuildCog runs GDALTranslate with "-of COG
+        #   -co COMPRESS=LZW -co BIGTIFF=IF_SAFER" hard-coded (no ParamSpec exposes any of them),
+        #   and LZW/COG are LOSSLESS, so the decoded product must answer the fixture's own numbers:
+        #     Mean   = (480*10 + 240*51)/960 = 17040/960 = 17.75
+        #     E[x^2] = (480*100 + 240*2601)/960 = 672240/960 = 700.25
+        #     Var    = 700.25 - 17.75^2 = 385.1875, StdDev = sqrt(385.1875) = 19.62619423117992
+        #   Tolerance sandwich (info prints 6 significant digits, so the grid follows magnitude):
+        #     Min 0 / Max 51 / Mean 17.75 print exactly => worst rounding 0, tolerance 1e-9, and the
+        #       nearest defect reachable here is a one-unit plateau move (mean shifts 240/960 = 0.25)
+        #       = 2.5e8x the tolerance.
+        #     StdDev 19.6262 => grid 1e-4, worst rounding 5e-5, tolerance 2e-4 = 4.0x that worst case
+        #       (four times, NOT "three orders of magnitude"); the nearest real defect, sample instead
+        #       of population root = 19.630028595626232, sits 3.83e-3 away = 19x the tolerance.
+        #   What this branch does NOT pin, stated so the next seat does not read it as cover:
+        #     tiling and COMPRESS=LZW are not observable through raster_inspect info at all (measured:
+        #     the product prints Driver "GTiff", Overviews 0, and no COMPRESSION line -- the string
+        #     lives in the IMAGE_STRUCTURE domain, dataset level, which info never reads), and a file
+        #     length proxy is a fixture accident at this size (measured: 40 x 24 x 4 = 3840 raw sample
+        #     bytes versus a 4096-byte COG product, i.e. LZW saves nothing once the 512 x 512 tile
+        #     header lands, so "smaller than raw" would be red for the WRONG reason on some other
+        #     shape). Both options are pinned only on the fixture side, by PluginTest.RasterManageCog-
+        #     Execution reading GetBlockSize() == 512 x 512 and IMAGE_STRUCTURE/COMPRESSION == "LZW".
+        "raster_manage_cog" {
+            Mark-Judged -Name $Case.Name
+            # PAM sidecars are matched by file name and survive between runs; a cached Statistics
+            # block makes ComputeStatistics answer without reading pixels, so drop it and judge the
+            # pixels that are in the product now (same defence as the overviews branch).
+            Remove-Item ($cogOutputRaster + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $cogOutputRaster)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 40 -ExpectedHeight 24 -ExpectedBands 1 -Message (
+                "raster_manage_cog did not carry the fixture's non-square 40 x 24 x 1 frame")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "the COG product must keep the fixture's Float32 sample type (an 8-bit lossy codec would not)")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "COG round trip moved the lower plateau of the fixture")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 51 -Tolerance 1e-9 -Message (
+                "COG round trip moved the upper plateau of the fixture")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected 17.75 -Tolerance 1e-9 -Message (
+                "COG band mean should be 17.75 = 17040/960 from the fixture plateaus")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "StdDev" -Expected ([math]::Sqrt(385.1875)) -Tolerance 2e-4 -Message (
+                "COG band stddev should be sqrt(385.1875), the population root of E[x^2] - mean^2")
+            # GeoTransform must survive GDALTranslate: the two label-anchored lines below are the
+            # fixture's own corner/pixel grid (116 / 40 / 0.001 degrees, south-up), so a product
+            # written without its georeference goes red here and nowhere else in this branch.
+            Assert-TextContains -Text $info -Expected "  Origin:      (116, 40)" -Message (
+                "COG product lost the fixture's upper-left corner")
+            Assert-TextContains -Text $info -Expected "  Pixel Size:  (0.001, -0.001)" -Message (
+                "COG product lost the fixture's 0.001 degree pixel grid")
+        }
+        # ---- R3a (batch D): raster_render.histogram_match value-level judgement --------------
+        # source = makeStepLevelRaster copy (40 x 24, plateaus 0 / 10 / 51), reference =
+        # makeHistMatchReferenceRaster (40 x 24, plateaus 0 / 17 / 34 / 51, 240 pixels each).
+        # Both sides normalise on their own min/max with scale 255/(51-0) = 5.0 (exactly
+        # representable), so the 8-bit levels are hand-countable and the whole expectation is
+        # derived from the two fixtures, never read back out of the product:
+        #   source u8 {0^240, 50^480, 255^240}     => CDF 0.25 (i = 0..49), 0.75 (50..254), 1.0 (255)
+        #   reference u8 {0^240, 85^240, 170^240, 255^240} => CDF 0.25 (0..84), 0.5 (85..169),
+        #                                                    0.75 (170..254), 1.0 (255)
+        #   buildHistogramMatchLut walks a monotone cursor and advances only while
+        #   referenceCdf < sourceCdf, i.e. "first reference level whose CDF is >= ", ties going to
+        #   the LOWER level, empty bins carry the previous result. Applying that bin by bin:
+        #     i = 0..49   srcCdf 0.25 => refCdf[0] = 0.25 already >= => lut[i] = 0
+        #     i = 50..254 srcCdf 0.75 => cursor crosses 0.25 (..84) and 0.5 (85..169), stops at 170
+        #     i = 255     srcCdf 1.0  => cursor crosses everything, stops at 255
+        #   => product 8-bit levels {0^240, 170^480, 255^240} stored as Float32:
+        #     Mean   = (480*170 + 240*255)/960 = 142800/960 = 148.75
+        #     E[x^2] = (480*28900 + 240*65025)/960 = 29478000/960 = 30706.25
+        #     Var    = 30706.25 - 148.75^2 = 8579.6875, StdDev = sqrt(8579.6875) = 92.626602550239312
+        #   Counter-expectations from the SAME table (this is why the branch is not a tautology):
+        #     flipping "<" to "<=" makes every tie jump one level up => lut[0] = 85, lut[50] = 255
+        #       => Min 0 -> 85 and Mean 148.75 -> 212.5, so the Min and Mean rows go red together.
+        #     skipping the matching (identity LUT, or copying sourceU8) => Mean = 88.75, red.
+        #     using the source as its own reference => identity LUT again, 88.75, red (that is why
+        #       the reference is a separate fixture).
+        #   Tolerance sandwich: Min 0 / Max 255 / Mean 148.75 print exactly (6 significant digits
+        #     cover 148.75 with two digits to spare) => worst rounding 0, tolerance 1e-9, nearest
+        #     defect is the tie-rule flip 63.75 away => 6.4e10x. StdDev prints 92.6266 on a 1e-4
+        #     grid => worst rounding 5e-5, tolerance 2e-4 = 4.0x, and the sample-root defect 0.030
+        #     away = 150x. Both sides clear, so 2e-4 is not a padded number.
+        "raster_render_histogram_match" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($histMatchOutputRaster + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $histMatchOutputRaster)
+            )
+            # Output geometry comes from matchedFloat.cols/rows, i.e. the SOURCE size; the reference
+            # is the same size here so this also proves the product did not take the reference's frame.
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 40 -ExpectedHeight 24 -ExpectedBands 1 -Message (
+                "histogram_match product must carry the source frame 40 x 24 x 1, not the reference's")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "histogram_match writes matched 8-bit values through convertTo(CV_32F), so the band must be Float32")
+            # The value domain after matching is the reference's 8-bit levels, NOT radiometry:
+            # Min 0 / Max 255 is the load-bearing pair for the tie rule (see the flip above).
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "histogram_match min should be lut[0] = 0 (a '<=' tie rule would give 85 here)")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 255 -Tolerance 1e-9 -Message (
+                "histogram_match max should be lut[255] = 255, the top level of the reference")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected 148.75 -Tolerance 1e-9 -Message (
+                "histogram_match mean should be 148.75 = 142800/960 for the derived LUT 0->0, 50->170, 255->255")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "StdDev" -Expected ([math]::Sqrt(8579.6875)) -Tolerance 2e-4 -Message (
+                "histogram_match stddev should be sqrt(8579.6875) from the derived output multiset")
+            Assert-TextContains -Text $info -Expected "  Origin:      (116, 40)" -Message (
+                "histogram_match product lost the source corner written by copyRasterGeoMetadata")
+            Assert-TextContains -Text $info -Expected "  Pixel Size:  (0.001, -0.001)" -Message (
+                "histogram_match product lost the source pixel grid written by copyRasterGeoMetadata")
+        }
+
         # ---- R2 (batch D): raster_manage.overviews value-level judgement -------------------
         # Input = $rasterManageOverviewsInput, a copy of makeStepLevelRaster: 40 x 24 x 1 Float32,
         #   three plateaus {0^240, 10^480, 51^240} in quadrants (x split at 20, y split at 12).
@@ -1401,6 +1512,7 @@ function Ensure-RasterRegressionData {
     $classRaster = Join-Path $rasterDataRoot "classification_raster.tif"
     $analysisRaster = Join-Path $generatedRoot "analysis_input.tif"
     $stepLevelRaster = Join-Path $generatedRoot "step_level_input.tif"
+    $histMatchReferenceRaster = Join-Path $generatedRoot "histmatch_reference_input.tif"
     $processingBinaryRaster = Join-Path $generatedRoot "processing_binary_input.tif"
     $terrainRaster = Join-Path $generatedRoot "terrain_input.tif"
     $supervisedClassificationRaster = Join-Path $generatedRoot "classification_supervised_input.tif"
@@ -1460,6 +1572,14 @@ function Ensure-RasterRegressionData {
     # choice made by me, not a product decision.
     if (-not (Test-Path $stepLevelRaster)) {
         Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("step-level-raster", $stepLevelRaster)
+    }
+
+# R3a (batch D): the histogram_match leg branch needs a reference whose pixel multiset is
+# countable by hand AND whose distribution differs from the input's. histmatch_reference_input.tif
+# is 40 x 24 four-plateau {0, 17, 34, 51} with 240 pixels each (see makeHistMatchReferenceRaster).
+# It is generated on demand and only when missing, same as the other fixtures in this directory.
+    if (-not (Test-Path $histMatchReferenceRaster)) {
+        Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("histmatch-reference-raster", $histMatchReferenceRaster)
     }
 
     if (-not (Test-Path $processingBinaryRaster)) {
@@ -1526,6 +1646,7 @@ function Ensure-RasterRegressionData {
         ClassificationRaster = $classRaster
         AnalysisRaster = $analysisRaster
         StepLevelRaster = $stepLevelRaster
+        HistMatchReferenceRaster = $histMatchReferenceRaster
         ProcessingBinaryRaster = $processingBinaryRaster
         TerrainRaster = $terrainRaster
         SupervisedClassificationRaster = $supervisedClassificationRaster
@@ -1799,6 +1920,44 @@ $cases += New-Case -Name "raster_render_colormap" -CaseArgs @(
     "--cmap=autumn"
 ) -ExpectedOutputs @(
     $rasterRenderColormapOutput
+)
+
+# R3a (batch D): inputs for the two branches added by this seat.
+# cog writes a NEW file (GDALTranslate output), so the fixture is copied first and the product is
+# bound to a variable that the judgement branch points at -- the same shape raster_manage_overviews
+# uses, but the copy is only there so an interrupted run cannot leave the shared fixture half-written.
+$cogInputRaster = Join-Path $ResolvedOutputRoot "manage_cog_input.tif"
+Copy-Item $data.StepLevelRaster $cogInputRaster -Force
+Remove-Item ($cogInputRaster + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cogOutputRaster = Join-Path $ResolvedOutputRoot "manage_cog_output.tif"
+Remove-Item ($cogOutputRaster + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "raster_manage_cog" -CaseArgs @(
+    "raster_manage", "cog",
+    ("--input=" + $cogInputRaster),
+    ("--output=" + $cogOutputRaster)
+) -ExpectedOutputs @(
+    $cogOutputRaster
+)
+
+# histogram_match: source = the 40 x 24 three-plateau fixture {0^240, 10^480, 51^240}; reference =
+# a SEPARATE 40 x 24 four-plateau fixture {0^240, 17^240, 34^240, 51^240}. The reference must not
+# be the source: with source == reference both CDFs are identical, the LUT becomes the identity and
+# "matched" would be indistinguishable from "copied the normalised source" (equivalent mutation).
+# Same size on both sides is also deliberate -- the resize path is INTER_LINEAR on the reference and
+# its output histogram is then not hand-countable (registered as a gap for this seat).
+$histMatchInputRaster = Join-Path $ResolvedOutputRoot "hist_match_input.tif"
+Copy-Item $data.StepLevelRaster $histMatchInputRaster -Force
+Remove-Item ($histMatchInputRaster + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$histMatchOutputRaster = Join-Path $ResolvedOutputRoot "hist_match_output.tif"
+Remove-Item ($histMatchOutputRaster + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "raster_render_histogram_match" -CaseArgs @(
+    "raster_render", "histogram_match",
+    ("--input=" + $histMatchInputRaster),
+    ("--reference=" + $data.HistMatchReferenceRaster),
+    ("--output=" + $histMatchOutputRaster),
+    "--band=1"
+) -ExpectedOutputs @(
+    $histMatchOutputRaster
 )
 
 $cases += New-Case -Name "terrain_slope" -CaseArgs @(
