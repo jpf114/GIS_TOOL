@@ -256,6 +256,91 @@ function Assert-InfoStatNear {
     )
 }
 
+# D1-C1 (Task 18): band-aware numeric reader.
+# WHY a second reader instead of reusing Get-InfoStatValue: that one takes the FIRST match of the
+# label, so on a multi-band product it silently judges band 1 only -- its own SCOPE comment says so.
+# The merge_bands branch has to read band 12, so the label must be looked up INSIDE the "Band N:"
+# block. Fails closed when the block is missing or when the block has no numeric line for the label
+# ("no statistics printed" is a product state, not a zero).
+function Get-InfoBandStatValue {
+    param(
+        [string]$Text,
+        [int]$Band,
+        [string]$Label
+    )
+
+    $blockPattern = "(?ms)^\s*Band " + $Band + "\s*:.*?(?=^\s*Band \d+:|\Z)"
+    $block = [regex]::Match($Text, $blockPattern)
+    Assert-Condition -Condition ($block.Success) -Message ("raster_inspect info has no 'Band " + $Band + "' block")
+    $statPattern = "(?m)^\s*" + $Label + ":\s*(-?[0-9]+(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?)\s*$"
+    $stat = [regex]::Match($block.Value, $statPattern)
+    Assert-Condition -Condition ($stat.Success) -Message (
+        "band " + $Band + " has no numeric '" + $Label + "' line" + " (block read: " + $block.Value.Trim() + ")")
+    return [double]$stat.Groups[1].Value
+}
+
+function Assert-InfoBandStatNear {
+    param(
+        [string]$Text,
+        [int]$Band,
+        [string]$Label,
+        [double]$Expected,
+        [double]$Tolerance,
+        [string]$Message
+    )
+
+    $actual = Get-InfoBandStatValue -Text $Text -Band $Band -Label $Label
+    Assert-Condition -Condition ([math]::Abs($actual - $Expected) -le $Tolerance) -Message (
+        $Message + " (band=" + $Band + " actual=" + $actual + " expected=" + $Expected + " tolerance=" + $Tolerance + ")"
+    )
+}
+
+# D1-C1 (Task 18): value-level reader for the "Size:   W x H x B bands" line.
+# WHY parse instead of Assert-TextContains on "Size:   2 x 2 x 1 bands": the substring never
+# compares the numbers (it cannot tell a one-pixel window error from a correct window, and it is
+# also satisfied by any longer number that starts with the same digits). Here each of the three
+# fields must parse as a full integer, then they are compared one by one -- width and height are
+# asserted SEPARATELY on purpose, because a square product is an x/y reflexive invariant and only
+# a W != H pair can see an axis swap.
+function Assert-InfoSizeExact {
+    param(
+        [string]$Text,
+        [int]$ExpectedWidth,
+        [int]$ExpectedHeight,
+        [int]$ExpectedBands,
+        [string]$Message
+    )
+
+    $match = [regex]::Match($Text, "(?m)^\s*Size:\s*(\d+)\s+x\s+(\d+)\s+x\s+(\d+)\s+bands\s*$")
+    Assert-Condition -Condition ($match.Success) -Message ($Message + " (no parseable 'Size: W x H x B bands' line)")
+    $width = [int]$match.Groups[1].Value
+    $height = [int]$match.Groups[2].Value
+    $bands = [int]$match.Groups[3].Value
+    Assert-Condition -Condition ($width -eq $ExpectedWidth) -Message (
+        $Message + " (width actual=" + $width + " expected=" + $ExpectedWidth + ")")
+    Assert-Condition -Condition ($height -eq $ExpectedHeight) -Message (
+        $Message + " (height actual=" + $height + " expected=" + $ExpectedHeight + ")")
+    Assert-Condition -Condition ($bands -eq $ExpectedBands) -Message (
+        $Message + " (bands actual=" + $bands + " expected=" + $ExpectedBands + ")")
+}
+
+# D1-C1 (Task 18): read one NAMED raster of a directory (split tiles are judged by their name,
+# not by Get-ChildItem order -- the old "$tiles[0]" was alphabetical luck, so renaming the grid
+# would silently move the judgement to another tile).
+function Get-NamedRasterInfo {
+    param(
+        [string]$ResolvedCliPath,
+        [string]$Directory,
+        [string]$FileName
+    )
+
+    $path = Join-Path $Directory ($FileName + ".tif")
+    Assert-Condition -Condition (Test-Path $path) -Message ("missing raster: " + $path)
+    return Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+        "raster_inspect", "info", ("--input=" + $path)
+    )
+}
+
 function Validate-CaseOutputs {
     param(
         [pscustomobject]$Case,
@@ -593,9 +678,41 @@ function Validate-CaseOutputs {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "cutting_clip_output.tif"))
             )
-            Assert-TextContains -Text $info -Expected "Size:   2 x 2 x 1 bands" -Message "cutting_clip raster size mismatch"
+            # ---- D1-C1 (Task 18): value-level readings, DERIVED not measured ----
+            # Source fixture (gui_test_data_helper.cpp makeClassRaster, reached through
+            #   makeClassificationInputs): 6 x 6 x 1 Int32, EPSG:3857, geotransform origin
+            #   (12935000, 4852300), pixel size 50 m, EVERY cell == 1, NoData == 0.
+            # Case extent uses the axis order xmin,ymin,xmax,ymax (that is what doClip splices into
+            #   GDAL's -projwin ulx uly lrx lry as [0] [3] [2] [1]): 12935050,4852100,12935150,4852200
+            #   start col = (12935050 - 12935000) / 50 = 1 ; end col = (12935150 - 12935000) / 50 = 3
+            #   start row = (4852300 - 4852200) / 50 = 2 ; end row = (4852300 - 4852100) / 50 = 4
+            #   => Width = 2, Height = 2, and the window lies wholly inside the source.
+            # WHAT THIS BRANCH CANNOT JUDGE (registered as a leg-side gap, do not read it as
+            #   position evidence): every valid cell of this fixture is 1, so Min/Max/Mean/StdDev are
+            #   the same for ANY window that stays inside the raster -- they pin "the band is the
+            #   source's data and it is constant", not "where the window is". Window POSITION is
+            #   pinned on the unit side only (tests/test_plugins.cpp CuttingClipByExtentProducesExpectedWindow
+            #   reads the output geotransform as doubles). Width/Height are the leg's shape evidence,
+            #   and a square 2 x 2 is itself x/y reflexive -- that is why the asymmetric twin case
+            #   cutting_clip_asymmetric_window below exists.
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 2 -ExpectedHeight 2 -ExpectedBands 1 -Message "cutting_clip window shape"
             Assert-TextContains -Text $info -Expected "CRS:    EPSG:3857" -Message "cutting_clip crs mismatch"
-            Assert-TextContains -Text $info -Expected "Mean:   1" -Message "cutting_clip mean mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 1.0 -Tolerance 1e-6 -Message "cutting_clip band 1 mean"
+            Assert-InfoStatNear -Text $info -Label "StdDev" -Expected 0.0 -Tolerance 1e-9 -Message "cutting_clip band 1 stddev"
+        }
+        "cutting_clip_asymmetric_window" {
+            Mark-Judged -Name $Case.Name
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "cutting_clip_asym_output.tif"))
+            )
+            # Same fixture as cutting_clip, non-square extent 12935000,4852100,12935150,4852300:
+            #   cols (12935000 - 12935000)/50 = 0 .. (12935150 - 12935000)/50 = 3 => Width = 3
+            #   rows (4852300 - 4852300)/50 = 0 .. (4852300 - 4852100)/50 = 4 => Height = 4
+            # W != H is the whole point of this case: an axis-order mistake (feeding the extent as
+            # {xmin,xmax,ymin,ymax} or dropping the y sign) can no longer hide behind a square window.
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 3 -ExpectedHeight 4 -ExpectedBands 1 -Message "cutting_clip_asymmetric window shape"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 1.0 -Tolerance 1e-6 -Message "cutting_clip_asymmetric band 1 mean"
+            Assert-InfoStatNear -Text $info -Label "StdDev" -Expected 0.0 -Tolerance 1e-9 -Message "cutting_clip_asymmetric band 1 stddev"
         }
         "cutting_mosaic" {
             Mark-Judged -Name $Case.Name
@@ -610,20 +727,80 @@ function Validate-CaseOutputs {
             Mark-Judged -Name $Case.Name
             $tilesDir = Join-Path $ResolvedOutputRoot "cutting_split_tiles"
             $tiles = @(Get-ChildItem $tilesDir -Filter *.tif -ErrorAction Stop)
+            # doSplit's REAL grid (read of the plugin's loops, and reproduced on copies): the stride is
+            #   tile_size (xOff += tileSize), the block size is min(tile_size + overlap, remaining),
+            #   the block NAME is tile_<xOff/tile_size>_<yOff/tile_size>, and the COUNT does not depend
+            #   on overlap at all. With the fixture 6 x 6 and tile_size 4:
+            #   count = ceil(6/4) * ceil(6/4) = 2 * 2 = 4
+            #   tile_0_0 (xOff 0, yOff 0) = min(4,6) x min(4,6) = 4 x 4
+            #   tile_1_0 (xOff 4, yOff 0) = min(4,2) x min(4,6) = 2 x 4   <- the pair with tile_0_1
+            #   tile_0_1 (xOff 0, yOff 4) = min(4,6) x min(4,2) = 4 x 2      is what pins the axes
+            #   tile_1_1 (xOff 4, yOff 4) = min(4,2) x min(4,2) = 2 x 2   <- last block clamp
             Assert-Condition -Condition ($tiles.Count -eq 4) -Message "cutting_split tile count mismatch"
-            $firstTile = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
-                "raster_inspect", "info", ("--input=" + $tiles[0].FullName)
-            )
-            Assert-TextContains -Text $firstTile -Expected "Size:   4 x 4 x 1 bands" -Message "cutting_split first tile size mismatch"
+            $tile00 = Get-NamedRasterInfo -ResolvedCliPath $ResolvedCliPath -Directory $tilesDir -FileName "tile_0_0"
+            Assert-InfoSizeExact -Text $tile00 -ExpectedWidth 4 -ExpectedHeight 4 -ExpectedBands 1 -Message "cutting_split tile_0_0 shape"
+            $tile10 = Get-NamedRasterInfo -ResolvedCliPath $ResolvedCliPath -Directory $tilesDir -FileName "tile_1_0"
+            Assert-InfoSizeExact -Text $tile10 -ExpectedWidth 2 -ExpectedHeight 4 -ExpectedBands 1 -Message "cutting_split tile_1_0 shape"
+            $tile01 = Get-NamedRasterInfo -ResolvedCliPath $ResolvedCliPath -Directory $tilesDir -FileName "tile_0_1"
+            Assert-InfoSizeExact -Text $tile01 -ExpectedWidth 4 -ExpectedHeight 2 -ExpectedBands 1 -Message "cutting_split tile_0_1 shape"
+            $tile11 = Get-NamedRasterInfo -ResolvedCliPath $ResolvedCliPath -Directory $tilesDir -FileName "tile_1_1"
+            Assert-InfoSizeExact -Text $tile11 -ExpectedWidth 2 -ExpectedHeight 2 -ExpectedBands 1 -Message "cutting_split tile_1_1 shape"
+            # Content level on the first tile: constant 1 fixture, so this is "the tile carries the
+            # source values", not a position read (same limit as the clip branch above).
+            Assert-InfoStatNear -Text $tile00 -Label "Mean" -Expected 1.0 -Tolerance 1e-6 -Message "cutting_split tile_0_0 mean"
+        }
+        "cutting_split_overlap" {
+            Mark-Judged -Name $Case.Name
+            $tilesDir = Join-Path $ResolvedOutputRoot "cutting_split_overlap_tiles"
+            $tiles = @(Get-ChildItem $tilesDir -Filter *.tif -ErrorAction Stop)
+            # This is the ONLY leg-side branch that consumes overlap > 0. Same 6 x 6 fixture,
+            #   tile_size 4, overlap 2 => count stays 4 (overlap never enters the stride), while the
+            #   blocks grow to min(4+2, remaining):
+            #   tile_0_0 = 6 x 6   (4+2 clamped by the raster edge -- 2 x 2 more than the ov=0 case)
+            #   tile_1_0 = 2 x 6   tile_0_1 = 6 x 2   tile_1_1 = 2 x 2
+            # WARNING: tile_1_1 is IDENTICAL to the ov=0 case (min(clip, remaining) eats the overlap first),
+            #   so the last block is NOT evidence about overlap -- if overlap were ignored this branch
+            #   stays green on tile_1_1 and goes red on tile_0_0 / tile_1_0 / tile_0_1 only.
+            Assert-Condition -Condition ($tiles.Count -eq 4) -Message "cutting_split_overlap tile count mismatch"
+            $tile00 = Get-NamedRasterInfo -ResolvedCliPath $ResolvedCliPath -Directory $tilesDir -FileName "tile_0_0"
+            Assert-InfoSizeExact -Text $tile00 -ExpectedWidth 6 -ExpectedHeight 6 -ExpectedBands 1 -Message "cutting_split_overlap tile_0_0 shape"
+            $tile10 = Get-NamedRasterInfo -ResolvedCliPath $ResolvedCliPath -Directory $tilesDir -FileName "tile_1_0"
+            Assert-InfoSizeExact -Text $tile10 -ExpectedWidth 2 -ExpectedHeight 6 -ExpectedBands 1 -Message "cutting_split_overlap tile_1_0 shape"
+            $tile01 = Get-NamedRasterInfo -ResolvedCliPath $ResolvedCliPath -Directory $tilesDir -FileName "tile_0_1"
+            Assert-InfoSizeExact -Text $tile01 -ExpectedWidth 6 -ExpectedHeight 2 -ExpectedBands 1 -Message "cutting_split_overlap tile_0_1 shape"
+            $tile11 = Get-NamedRasterInfo -ResolvedCliPath $ResolvedCliPath -Directory $tilesDir -FileName "tile_1_1"
+            Assert-InfoSizeExact -Text $tile11 -ExpectedWidth 2 -ExpectedHeight 2 -ExpectedBands 1 -Message "cutting_split_overlap tile_1_1 shape"
         }
         "cutting_merge_bands" {
             Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "cutting_merge_output.tif"))
             )
-            Assert-TextContains -Text $info -Expected "Size:   24 x 24 x 12 bands" -Message "cutting_merge_bands raster size mismatch"
-            Assert-TextContains -Text $info -Expected "Band 12:" -Message "cutting_merge_bands band count mismatch"
-            Assert-TextContains -Text $info -Expected "Mean:   110" -Message "cutting_merge_bands final band mean mismatch"
+            # ---- D1-C1 (Task 18): value-level readings, DERIVED not measured ----
+            # Case passes --input=<ndvi_input.tif>,<ndvi_input.tif>. That fixture
+            #   (gui_test_data_helper.cpp makeNdviRaster) is 24 x 24 x 6 Float32 whose band k is a
+            #   CONSTANT raster with literal values 10, 20, 30, 70, 90, 110. doMergeBands builds a
+            #   "-separate" VRT over the concatenated file list, so the merged product is
+            #   bands 1..6 = 10,20,30,70,90,110 and bands 7..12 = the same six numbers again.
+            # Band count = 6 + 6 = 12 (list length), size stays 24 x 24 because both entries share
+            #   one georeference (two DIFFERENT origins would grow the product to the union extent --
+            #   seen on copies, where a 10-valued half became Mean 5 because the other half was padding).
+            # Reading each band through its OWN block (Get-InfoBandStatValue) is deliberate: the old
+            #   Assert-TextContains "Mean:   110" only proves some band has that text, and
+            #   Get-InfoStatValue would have judged band 1 while claiming the last band.
+            # WARNING: LIMITATION (leg-side gap, registered): both list entries are the SAME file, so this
+            #   case cannot see WHICH FILE came first -- a reversed file list yields an identical
+            #   product. File ORDER is judged on the unit side (tests/test_plugins.cpp
+            #   CuttingMergeBandsOrderShuffleAndRepeatedFile, three different constants). What the leg
+            #   does pin is the per-band VALUES, the band COUNT and the intra-file band expansion order.
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 24 -ExpectedHeight 24 -ExpectedBands 12 -Message "cutting_merge_bands product shape"
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected 10.0 -Tolerance 1e-6 -Message "cutting_merge_bands band 1 mean"
+            Assert-InfoBandStatNear -Text $info -Band 2 -Label "Mean" -Expected 20.0 -Tolerance 1e-6 -Message "cutting_merge_bands band 2 mean"
+            Assert-InfoBandStatNear -Text $info -Band 6 -Label "Mean" -Expected 110.0 -Tolerance 1e-6 -Message "cutting_merge_bands band 6 mean"
+            Assert-InfoBandStatNear -Text $info -Band 7 -Label "Mean" -Expected 10.0 -Tolerance 1e-6 -Message "cutting_merge_bands band 7 mean"
+            Assert-InfoBandStatNear -Text $info -Band 8 -Label "Mean" -Expected 20.0 -Tolerance 1e-6 -Message "cutting_merge_bands band 8 mean"
+            Assert-InfoBandStatNear -Text $info -Band 12 -Label "Mean" -Expected 110.0 -Tolerance 1e-6 -Message "cutting_merge_bands band 12 mean"
+            Assert-InfoBandStatNear -Text $info -Band 12 -Label "StdDev" -Expected 0.0 -Tolerance 1e-9 -Message "cutting_merge_bands band 12 stddev"
         }
         # ---- D1-F (task 15): raster_math_band_math value-level branch ----
         # Before this knife the switch had NO branch for this case name: the case ran (the CLI call
@@ -1471,6 +1648,20 @@ $cases += New-Case -Name "cutting_clip" -CaseArgs @(
     (Join-Path $ResolvedOutputRoot "cutting_clip_output.tif")
 )
 
+# D1-C1 (Task 18): the cutting_clip case above lands on a SQUARE 2 x 2 window, and a square is an
+# x/y reflexive invariant -- parsing width and height off it cannot see the extent being read in the
+# wrong axis order. This twin asks for a 3 x 4 window on the same fixture (extent is given as
+# xmin,ymin,xmax,ymax, which is what doClip splices into -projwin ulx uly lrx lry), so width and
+# height are different numbers and the branch can tell an axis swap from a correct window.
+$cases += New-Case -Name "cutting_clip_asymmetric_window" -CaseArgs @(
+    "cutting", "clip",
+    ("--input=" + $data.ClassificationRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "cutting_clip_asym_output.tif")),
+    "--extent=12935000,4852100,12935150,4852300"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "cutting_clip_asym_output.tif")
+)
+
 $cases += New-Case -Name "cutting_mosaic" -CaseArgs @(
     "cutting", "mosaic",
     ("--input=" + $data.ClassificationRaster + "," + $data.ClassificationRaster),
@@ -1487,6 +1678,21 @@ $cases += New-Case -Name "cutting_split" -CaseArgs @(
     "--overlap=0"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "cutting_split_tiles")
+)
+
+# D1-C1 (Task 18): the split case above passes overlap=0, so it never exercises the overlap read
+# point. This twin keeps tile_size=4 and sets overlap=2 on the same 6 x 6 fixture. doSplit's stride
+# is tile_size, so the COUNT stays 4 while tile_0_0 grows to 6 x 6 (min(4+2, 6)) and tile_1_0 /
+# tile_0_1 grow to 2 x 6 / 6 x 2 -- those three are the leg-side evidence that overlap is consumed.
+# (tile_1_1 stays 2 x 2: the clamp eats the overlap, which is why the last block is not evidence.)
+$cases += New-Case -Name "cutting_split_overlap" -CaseArgs @(
+    "cutting", "split",
+    ("--input=" + $data.ClassificationRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "cutting_split_overlap_tiles")),
+    "--tile_size=4",
+    "--overlap=2"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "cutting_split_overlap_tiles")
 )
 
 $cases += New-Case -Name "cutting_merge_bands" -CaseArgs @(
