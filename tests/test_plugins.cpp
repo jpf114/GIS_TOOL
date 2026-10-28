@@ -3254,14 +3254,21 @@ TEST_F(PluginTest, RasterRenderColormapExecution) {
     auto statOf = [&](int b, double* mn, double* mx, double* mean, double* sd) {
         return ds->GetRasterBand(b)->ComputeStatistics(false, mn, mx, mean, sd, nullptr, nullptr);
     };
+    // ⚠ 装饰行自查（修复轮 1 补，S-1）：**这 4 行只载 2 个事实**。B1 臂（漏掉 BGR→RGB 换序）里
+    //   rMin 与 rMax 同因、同刻、**同残差**（各差 255），bMin/bMax 亦然 ⇒ 在"常值通道"这个前提下
+    //   Min 与 Max 互相蕴含，第二格不是新信息。算容差可加性 / 独立证据数时按 **2** 计，不按 4 计。
+    //   仍然留 4 行而不压成 2 行的理由是：Min 与 Max 是 ComputeStatistics 的两个**独立出参槽**，
+    //   压成一行就看不见"只写坏其中一个槽"那一类缺陷；既然留着，message 就必须逐行不同，
+    //   否则红起来分不出是哪一格 —— 本轮改的就是这一点（旧的四行是两两逐字相同的）。
+    //   下面每条 message 各写"是哪一格 + 该格的判据原文 + 漏换序时这一格实际读到什么"。
     double rMin = 0.0, rMax = 0.0, rMean = 0.0, rStd = 0.0;
     ASSERT_EQ(statOf(1, &rMin, &rMax, &rMean, &rStd), CE_None);
-    EXPECT_NEAR(rMin, 255.0, 1e-9) << "autumn 的 R 通道必须是常值 255";
-    EXPECT_NEAR(rMax, 255.0, 1e-9) << "autumn 的 R 通道必须是常值 255";
+    EXPECT_NEAR(rMin, 255.0, 1e-9) << "band1 Min 槽不是 255：autumn 的 R 通道恒为 255，漏掉 BGR→RGB 换序时这一槽读到 B 通道的 0";
+    EXPECT_NEAR(rMax, 255.0, 1e-9) << "band1 Max 槽不是 255：常值通道的上界必须等于那个常数 255，漏换序时这一槽同样读到 B 通道的 0（与上一格同因同残差，见装饰行自查）";
     double bMin = 0.0, bMax = 0.0, bMean = 0.0, bStd = 0.0;
     ASSERT_EQ(statOf(3, &bMin, &bMax, &bMean, &bStd), CE_None);
-    EXPECT_NEAR(bMin, 0.0, 1e-9) << "autumn 的 B 通道必须是常值 0";
-    EXPECT_NEAR(bMax, 0.0, 1e-9) << "autumn 的 B 通道必须是常值 0";
+    EXPECT_NEAR(bMin, 0.0, 1e-9) << "band3 Min 槽不是 0：autumn 的 B 通道恒为 0，漏掉 BGR→RGB 换序时这一槽读到 R 通道的 255";
+    EXPECT_NEAR(bMax, 0.0, 1e-9) << "band3 Max 槽不是 0：常值通道的上界必须等于那个常数 0，漏换序时这一槽同样读到 R 通道的 255（与上一格同因同残差）";
 
     // 波段 2（绿）= 归一化级别，多重集 {0^240, 50^480, 255^240}，n = 960：
     //   Mean   = (480*50 + 240*255)/960 = (24000 + 61200)/960 = 85200/960 = 88.75

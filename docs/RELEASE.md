@@ -2538,8 +2538,17 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
   **边车口径**：两个动作的 `openRaster` 都 `if (!ds) throw` ⇒ 没有返回值可判（R1 已被这条否证过，不重犯）；
   真正的风险在读侧——同名 `.aux.xml` 命中时 `ComputeStatistics` 不回读像元 ⇒ 本把两分支（腿与单测）
   **读前都先删边车**。
-- **落账凭据**（逐笔提交、不 amend）：Step1 单测 `5f44f97`、Step2 腿侧 + 删豁免 `27b9480`、
-  Step4 登记 + 五张计数 + 上限 `130d8ce`、Step5 文档与本节 = 下一笔。
+- **落账凭据**（逐笔提交、不 amend）：Step1 单测 `5f44f97`、Step2 腿侧值级分支 + 同笔删豁免 + 新夹具子命令
+  `27b9480`、Step4 登记 + 五张计数 + 上限 `130d8ce`、Step5 两篇算法说明的数值口径 **与本节** `65f7b90`。
+  ⚠ 这一条的第一版写的是"Step5 文档与本节 = **下一笔**"——那句话在它落地的那一刻就已经自指失效
+  （它描述的正是含它自己的那一笔），修复轮 1 按 S-2 改成上面这个不带"下一笔"的事实句。
+  同型的句子在本文件 R1 一节还留着一条（`Step5 文档与本节 = 下一笔`，在 histogram/info 那节的落账凭据里）；
+  **本把没有改它** —— R1 已由控制器结案，改一份已批准的记录不该由 R2 的修复轮顺手做，登记在这里交给控制器定。
+  修复轮 1（定向复审判 not approved 后的六件事）另起几笔：M-2 撤回被产品否证的因果 `3816ffd`、
+  M-1 裸行号锚点改"函数名 + 判据原文" `196fa9f`、S-4 容差算术更正 `5a39274`；
+  最后一笔是纯登记（S-1 装饰行的 message 逐行分开 + 上面这句 S-2 + 下面缺口清单的 S-3 第 ⑧ 条），
+  **它自己的 SHA 写不进它自己的提交文本**（那又是一次自指），所以这里不预留号，
+  要定位就在 `git log` 里取本节 R2 一节的最后一笔。
   证据用例 = `PluginTest.RasterManageOverviewsExecution` / `PluginTest.RasterRenderColormapExecution`；
   腿 case = `run_real_raster_regression.ps1` 的 `raster_manage_overviews` / `raster_render_colormap`。
 - **计数现读对撞**（改前/改后都重跑登记表头部那批命令本身，不是按减法推）：
@@ -2608,7 +2617,22 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
   而头部 ⚠ 要求 absent 时写 `not-consumed`，与第 8 列 note "腿走合成兜底"互相矛盾 ⇒
   **与 R1 已登记的缺口⑥同一条**，归 D3 矩阵对账，本把未改；本把按 R-D39 只做了第 5 列的复核
   （`real_regression` 复核为真，两条 `New-Case` 都在）与 note 口径核对（准确）；⑦Release 侧未验收
-  （未重编 ⇒ 这两条 GOLD 的 Release 凭据归 D4 收口门）。
+  （未重编 ⇒ 这两条 GOLD 的 Release 凭据归 D4 收口门）；⑧**单测里那 4 行常量波段统计只载 2 个事实**
+  （S-1，修复轮 1 补）：`raster_render` 单测的 `rMin/rMax/bMin/bMax` 四条 `EXPECT_NEAR` 在 B1 臂里
+  **同因、同刻、同残差**（四条差值都是 255），旧写法还把 message 写成两两逐字相同 ⇒ 红起来分不出是哪一格。
+  修复轮 1 把四条 message 改成各自"哪一格 + 该格判据原文 + 漏换序时读到什么"，并在注释里点明这 4 行是
+  **装饰形态**（算独立证据时按 2 计）；行本身保留 4 条，因为 `Min`/`Max` 是 `ComputeStatistics` 的两个
+  独立出参槽，压成两行就看不见"只写坏一个槽"那一类缺陷。改后重跑 B1 臂实测仍 6 条 error
+  （`test_plugins.cpp` 的 3245/3246 两条像元探针 + 3266/3267/3270/3271 四条统计槽，残差逐条 = 255），
+  band2 的探针与 Mean/StdDev、Color 三行、几何两行照旧全绿
+  （`build/tmp/batchD/r2/arms/F1_B1_newmessages_unit.log`）；⑨**Step 3 那 9 臂的逐臂还原对撞没有 tee**
+  （S-3，修复轮 1 补）：当时每臂还原后都跑了 `git hash-object` 对 `git rev-parse HEAD:<path>` 并贴了
+  MATCH，但那些读数只在会话输出与席位报告里，**盘上没有档**——修复轮 1 现读
+  `grep -rl hash-object build/tmp/batchD/r2/arms/` 在加我这一轮的文件**之前**是**空**。
+  ⇒ **终态可证**（收尾 `git status --porcelain -- src/` 空 + 受保护 blob 对撞过），
+  **中间态不可核**（每一臂还原是否当场回到 HEAD 只能信席位自述）。本把不补写"已 tee"；
+  修复轮 1 自己的 B1 臂已经把还原对撞逐臂写进 `arms/F1_B1_restore_ledger.txt`（MATCH，
+  `778c198f051527db607ba96aab53f3aeb09e3ec4`），这条口径从下一把起照此执行。
 - **本把没做的事**：`src/` 除 Step3 取证外零改动（每臂当场 `cp` 还原 + `git hash-object` 对
   `git rev-parse HEAD:` 贴 MATCH，**未用 `git checkout --`**，收尾 `git status` 空）；未新建腿 case；
   未动 R3 三行；未动既有 GOLD；未跑全量 ctest；未动 Release 树；`data/` 只读
