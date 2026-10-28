@@ -2221,6 +2221,102 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   ⇒ 按"能单独红才算承重"的口径这 7 枚不承重。**本把不删，只登记（未修）**：删断言会动 GOLD 证据的承重面计算
   （`numeric=16` 这个计数同时被登记表与审计用例读着），那是另一把的账 ⇒ 留给 **D3 判据加固统一处理**。
 
+### 批次 D 覆盖晋升 D1-C1（2026-10-28，Task 18 / cutting `clip`·`split`·`merge_bands` 三条 PENDING→GOLD）
+
+射程三条；`cutting,tile` **不在本把**（它的动作槽写在共享 helper `t17BaseTileParams` 里 ⇒ 26 个 `Tile*` 用例
+结构上登不上 GOLD，需另建独立证据用例，归 D1-C2）。三条的"剥注释后数值断言数"开批现读**全是 0**
+（动作槽与 `"cutting"` 归属都在 ⇒ 卡的就是审计第（2）条），三条腿分支当时全是 `Assert-TextContains`
+的 exact-text 包含——**有手算数值期望 ≠ 做数值比较**，本把把腿侧也改成了"解析成数再比"。
+
+- **参数消费面的两条实到事实（本把落笔前先在副本上用 `gis-cli` 探针实测，不是推算）**：
+  - `clip` 的 `extent` 轴序是 `xmin,ymin,xmax,ymax`，实现拼成 GDAL `-projwin ulx uly lrx lry` 时下标顺序是
+    `[0] [3] [2] [1]`；把四元组当 `{minx,maxx,miny,maxy}` 读 ⇒ 窗口高度为负、GDAL 当场拒
+    （实测案文 `Computed -srcwin 1 2 -161659 -161659 has negative width and/or height.`）。
+    窗按**整像元向下取整**对齐，输出左上角是对齐后的像元边。
+    ⚠ **部分相交与完全不相交都不裁剪、不报错**：产物尺寸就是**请求窗**，窗外补 `0` 且**不写 NoData**
+    （实测 14×10 窗只有 12×8=96 格来自源 ⇒ Mean 被稀释成 `96×5/140`；两轴都不相交时得到一张 10×10 全 0 图，rc 仍是 0）。
+    按实到写判据与文档，产品码一字未改；"下游分不开补的 0 与真 0"登记为缺口①。
+  - `split` 的网格是**固定步长 `tile_size`**（`xOff += tileSize`）、每块 `min(tile_size + overlap, 剩余)`、
+    块数 = `ceil(w/tile_size) × ceil(h/tile_size)` ⇒ **与 `overlap` 无关**。
+    ⚠ **任务书 §2.2 给的 `块数 = ceil((w-overlap)/(tile_size-overlap))` 是"步长 = tile_size-overlap"另一个模型，
+    与产品实到不符**（实测 `ts=16/ov=4` 与 `ts=8/ov=3` 的块数都和 `ov=0` 档相同）⇒ 一律按实到写期望，登记为缺口②。
+    另两条恒绿陷阱也按实到点名：**末块尺寸对 `overlap` 不敏感**（`min(·,剩余)` 先吃掉 overlap；
+    `ts=8` 时 ov=0/3 两档末块都是 6×4）⇒ 末块不是 overlap 的证据；`overlap ≥ tile_size` 的退化输入**不校验不报错**，
+    `ts=4` 配 `overlap=6` 与 `overlap=10` 在 6×6 图上得到**逐块相同**的网格 ⇒ 那两档区分不了实现有没有读 overlap。
+  - `merge_bands` 的 `bands` 吃的是**逗号分隔的文件路径列表**（接在 `input` 之后），**不是波段索引**：
+    实测 `--bands=1` ⇒ rc=1、案文 `Cannot open file: 1`，而 `gis-cli cutting --help` 与 ParamSpec 的英文描述
+    都写 "Comma-separated band indexes" ⇒ 文案/实现分歧，登记为缺口③（本把不改码，文档按实现写准）。
+    重复路径**不去重**；每个文件贡献自己的**全部**波段；各输入地理参考不同时 VRT 取**地理并集**、
+    每个来源在自家包框外补 0（实测两张 10×6 常量图 origin 差 10 列 ⇒ Mean 从 10.0 变 5.0）。
+- **三条凭据**（证据用例写进登记表第 4 列）：
+  `clip`→`PluginTest.CuttingClipByExtentProducesExpectedWindow`（GT 六元组 `116.005/39.998/0.001/-0.001/0/0`
+  + 窗内两角像元 = 夹具常量 5.0，全部由 `createConstantRaster` 的 `adfGT` 字面量与 `extent` 手算）；
+  `split`→`PluginTest.CuttingSplitTileGridHandTableAcrossTileSizeAndOverlap`（两档 `tile_size` × 两档 `overlap`
+  的手算表：块数 4/4/12/12、首块 16×16/20×20/8×8/11×11、末块 14×4/14×4/6×4/6×4，再加"块 (tx,ty) 局部 (0,0)
+  = 源 `(tx·ts, ty·ts)` 的像元值"（夹具 `(30y+x)%256`）与 `ov>0` 两档的"重叠带读到同一个源像元"）；
+  `merge_bands`→`PluginTest.CuttingMergeBandsOrderShuffleAndRepeatedFile`（三个不同常量夹具 10/20/30 跑五档：
+  拼接顺序 / 打乱后第 2、3 带互换 / 重复不去重 / `bands` 空的 1 带下界 / 多波段文件整份展开成 4 带）。
+  另两档新用例把边界情况按实到钉住：`…PartiallyOutsideSourcePadsZeroWindow`、`…DisjointFromSourceProducesZeroFilledWindow`。
+- **首轮读数（实测）**：10 条 `PluginTest.Cutting*` **3 红 7 绿**，三条红全是本席把 GDAL 的 GT 槽位读错
+  （`[0]/[3]` 当成 `[1]/[4]`；失败消息印出的 `gt[1] evaluates to 0.001` 就是纠正依据）⇒
+  **地理期望值一个没改、只把下标改准**，改后 10/10 绿。这不是"从产物回填期望"，回填的期望不会在改下标时保持不动。
+- **变异臂台账（六臂，全部改 `cutting_plugin.cpp` 的消费点、单独改单独还原；取证形态都指名"哪一档、什么形态"）**：
+  `CL-1` `-projwin` 两槽互换（轴序误读）⇒ 三条 clip 用例红在 `result.success`，腿侧 rc=1（`cutting_clip failed`）；
+  `CL-2` ulx 多加一个像元（**rc 仍 0**）⇒ 红在**数**上：`GetRasterXSize()==7`、`gt[0] evaluates to 116.006`、
+  右下角像元 `evaluates to 0`、部分相交档的 `bMean` 差 0.2637 ⇒ **这一臂才是"值级判据真的在比较"的证据**，
+  `CL-1` 只证明用反轴序会被 GDAL 拒；
+  `SP-1` 两处 `min(tileSize + overlap, 剩余)` 丢掉 `overlap` ⇒ 只有 `ov>0` 两档红（首块尺寸 + 重叠带读空），
+  `ov=0` 两档与旧用例 `CuttingSplitExecutionCreatesTiles` **绿**（那里 overlap 本来就是 0）；
+  `SP-2` 把 `overlap` 折进步长 ⇒ 块数、首块尺寸与"末块根本没产出 `fs::exists(last)`"三支红；
+  `MG-1` 吞掉 `bands` 列表 ⇒ 逐带/逐数的 4 档红、`bands` 空那一档与腿侧 case 绿（它们本来就不读该键）；
+  `MG-2` 拼接列表反序 ⇒ 红在逐带像元值（第 1 带差 20、第 2 带差 10），⚠ **腿侧 rc=0**（该 case 两条列表项是
+  同一个文件 ⇒ 腿结构上判不出文件顺序，登记为缺口④）。
+  还原证明：`cutting_plugin.cpp` 每臂还原后 `git hash-object` = `dc4bf9f5be619570db1d8f9fea03459b3e922aab`
+  （= `git rev-parse HEAD:` 同一值；`git show HEAD:… > …` + 行尾归一 CRLF，未用 `git checkout --`），
+  六臂跑完 `git status --porcelain` 空、`git diff --stat -- src/` 空，且每臂还原后都重建过一次
+  ⇒ 后续读数落在**还原后的二进制**上；受保护的 `terrain_plugin.cpp` 复验仍为 `588a42504ee19bcb551f8214e5c1adb68cea20e9`。
+- **腿侧**：三条分支现在把数**解析成数再比**（新增 `Assert-InfoSizeExact` 逐支比宽/高/带数、
+  `Get-InfoBandStatValue`/`Assert-InfoBandStatNear` 按 `Band N:` 块取数——补掉 `Get-InfoStatValue` 自带注释点名的
+  "多波段只判第 1 带"那扇门、`Get-NamedRasterInfo` 按块名取而不靠 `Get-ChildItem` 字母序运气）。
+  新增两条 case：`cutting_clip_asymmetric_window`（同一夹具、手算 **3×4** 非方形 ⇒ 才可能看见轴序被写反）与
+  `cutting_split_overlap`（`tile_size=4, overlap=2` ⇒ 块数仍 4、首块涨到 6×6、邻块 2×6/6×2；
+  `tile_1_1` 与 ov=0 档逐维相同 ⇒ 它不是 overlap 的证据）。
+  `merge_bands` 按带判第 1/2/6/7/8/12 带 Mean = 10/20/110/10/20/110（期望来自 `makeNdviRaster` 的六个常量字面量）。
+  **反事实臂四支（改期望常数、副本上跑，仓库原件未动）**：height 2→3 ⇒ `(height actual=2 expected=3)` rc=1；
+  `tile_1_0` 宽高互换 ⇒ `(width actual=2 expected=4)`；`band 7 Mean 10→30` ⇒ `(band=7 actual=10 expected=30)`;
+  overlap 首块 6×6→4×4 ⇒ `(width actual=6 expected=4)` ⇒ 四支的 `actual=` 印的都是产品实到值。
+  腿侧闸读数对撞：改前（HEAD 版副本）`registered=67 ran=67 judged=43 allowlisted=24 branch-labels=44 dead-branches=0`、
+  改后 `ran=69 judged=45 allowlisted=24 branch-labels=46 dead-branches=0` ⇒ 硬不变量 `judged + allowlisted == ran`
+  两边都成立（43+24=67、45+24=69），白名单一个字没动、没有死支。
+  秒数对撞 `TIMEOUT 60`：改前 ctest 11.29 s、改后 11.27 s、晋升复跑 11.61 s ⇒ **5.17×~5.32×**，在 2.5× 线之上，
+  TIMEOUT 没抬、断言只增不减。⚠ 控制器给的 9.84~10.58 s 与本席三次现读（11.29/11.27/11.61）不同档，按实到登记。
+- **登记算术**（与三行改状态同一笔提交，四个新计数是逐条重跑现读命令得出的、不是推算）：
+  `gold_rows 97→100`、`pending_rows 29→26`、`gold_rows_all_lines 98→101`（仍只比 `gold_rows` 多 1，
+  多的是登记表第 3 行的格式说明）、`gold_rows_literal_slot 82→85`（= 100 − `table_driven` 15），
+  `data_rows 126` 与 `gold_rows_table_driven 15` 不动；`kPendingCeiling 29→26`。
+  审计复跑：定向族 **30/30 Passed**（`GoldEvidenceIsAuditable` 认了三行、`RegistryHeaderCountsMatchData`
+  把"表/上限/头部"三者撞在同一数上）。注册数：全库 `Total Tests:` **797→801**、定向族 **26→30**
+  （新增 4 条 `TEST_F`：两条 clip 边界档 + split 手算表 + merge_bands 五档）。
+- ⚠ **Release 侧未验收**：三条晋升一律只在 Debug 取证，Release 树本批未重编 ⇒ 归 D4 收口门补凭据。
+- **缺口（照实登记）**：①`clip` 对"部分相交/完全不相交"返回成功并写一张**请求尺寸的零填充**产物，
+  窗外补的是 `0` 而**不是 NoData** ⇒ 调用方无法区分"裁空了"与"裁出来全是 0"；判据按实到钉住了这个行为，
+  改不改（可观测行为变更）要过裁定门，本把不动码。
+  ②任务书 §2.2 给的 split 块数公式 `ceil((w-overlap)/(tile_size-overlap))` 与产品实到分叉（见上）
+  ⇒ **控制器裁定：判任务书公式错，不立 N、不需拍板**。理由（现读 `cutting_plugin.cpp:413-424`）：产品是
+  「网格步长恒为 `tile_size`、每块按 `min(tile_size+overlap, 剩余)` 加长」这一**自洽**模型，重叠带宽度恰为
+  `overlap`；ParamSpec 的「重叠像素」描述串与 GUI/中文文档从未承诺过「步长随 `overlap` 缩短」⇒ 没有契约被违反，
+  分叉只存在于本把任务书的推导里（控制器自误，已在本节与台账点名）。判据与文档一律按产品实到写。
+  ③`cutting --help` 与 ParamSpec 把 `--bands` 描述成 "band indexes"、实现吃文件路径 ⇒ 文案缺陷；
+  它同时是 `docs` 侧的一处反面（本把只把中文文档按实现写准）。
+  ④腿侧 `cutting_merge_bands` 的两条列表项是**同一个文件** ⇒ 该 case 结构上判不出文件顺序（`MG-2` 臂下腿 rc=0 实测），
+  文件顺序今天只由单测侧那一档承重；给腿换一个不同常量的第二输入归后续批次。
+  ⑤腿侧 `clip`/`split` 的夹具 `classification_raster` 每格都是 `1` ⇒ Mean/StdDev **不判窗落在哪**，
+  位置判据今天只在单测侧存在；且腿侧 `info` 文本的 `Origin:` 走默认 6 位有效印法，12935050 会被印成
+  `1.29351e+07` ⇒ 印法误差 ±50 m 与一格像元（50 m）同量级，**腿侧结构上无法用 Origin 判亚像素/一格位移**
+  （这条是按印法步长逐支点名的，不是"通用"论证）。
+- **本把没做的事**：`cutting,tile` 一行仍 PENDING（射程外，另派 D1-C2）；`docs/算法说明/文档漂移清单.md` 未动；
+  未跑全量 ctest（那是收口门）。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
