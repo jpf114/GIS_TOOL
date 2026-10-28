@@ -2694,8 +2694,15 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
   定向配方 43 条 → 43 条（未新增 `TEST_F`），全库 `Total Tests: 802 → 802`。
   ⚠ 本把给两块各加了一处"判了返回值"的 `GetGeoTransform` ⇒ `geotransform_guard` 测试域期望数同笔按现读
   改成 `code 8→10 / checked 7→9`（`violations/dead` 仍 0/0，产品域 `20 CODE / 18 CHECKED` 未动，R-D38）。
-- **臂清单**（每臂日志都 tee 成文件，落 `build/tmp/batchD/r3a/arms/`；`src/` 每臂当场 `cp` 还原，
-  `git hash-object` 对 `git rev-parse HEAD:` **逐臂 MATCH**；全程没用 `git stash` / `checkout --` / `reset --hard`）：
+- **臂清单**（每臂的 unit/leg 日志都 tee 成文件，落 `build/tmp/batchD/r3a/arms/`；`src/` 每臂当场 `cp` 还原；
+  全程没用 `git stash` / `checkout --` / `reset --hard`）：
+  ⚠ **第一版这里写的是「`git hash-object` 对 `git rev-parse HEAD:` 逐臂 MATCH」，修复轮撤回该说法**：
+  `arm.py` 的 stdout 没有 tee ⇒ **逐臂还原的凭据在磁盘上一份都没有**（能证的只有"现在干净"）。
+  控制器复跑取的终态凭据（`V1_restore_proof.log`）：本把 range 的 **10 个文件** cleaned-content hash 全部 ==
+  `git rev-parse ce8bfdc:<path>`、`git status --porcelain` = 0；同时**逐字节**对 blob 只有 1/10 相等
+  （`core.autocrlf=true` 且无 `.gitattributes` ⇒ 工作树 CRLF、blob LF 是常态，9/10 天然 raw≠blob）。
+  ⇒ 本仓可证的还原口径是「cleaned-content == blob」**加上**「动手前先记该工作树文件的裸字节 sha、还原后对拍」；
+  单用 `--no-filters` 对 blob 在这 9 个文件上**恒判失败**，是个坏判据（控制器 10-29 自己写错过一次，已改正）。
   - A1 `-of COG` → `-of GTiff`：夹具红在 `GetBlockSize`（实测 64×32 vs 期望 512×512 两支）；**腿绿**
     ⇒ 瓦片化在腿上没有任何读数，这一支只有夹具侧承重。
   - A2 `COMPRESS=LZW` → `COMPRESS=NONE`：夹具红在 `COMPRESSION` 元数据（`ASSERT_NE(compress, nullptr)`
