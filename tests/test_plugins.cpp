@@ -504,7 +504,7 @@ static float readRasterPixel(const std::string& path, int bandIndex, int x, int 
 //   x = lon_deg * (π/180) * a
 //   y = a * ln(tan(π/4 + lat_rad/2))，lat_rad = lat_deg * π/180
 // 常数口径：EPSG 文档里的 ±20037508.34 是 a*π = 20037508.342789244 的**四舍五入**值（`rounded/π = 6378136.99911216`，
-// 比 a 少 8.87e-6 m），用 `lon * 20037508.34 / 180` 反算会带入系统偏差。⚠ **这类"容差夹在实现残差与候选口径之差
+// 比 a 少 8.8784e-4 m），用 `lon * 20037508.34 / 180` 反算会带入系统偏差。⚠ **这类"容差夹在实现残差与候选口径之差
 // 之间"的论证必须逐支、逐数据点核**（批次 D D1-P 修复轮 1 由改期望常数的反事实臂纠正；下面两个 Δ 用本注释
 // 给的常数即可在任意语言里复算，不必翻外部记录）：
 //   (116, 40) 那档 Δx = 1.7975e-3 m（对产物 metadata 的 6 位小数印法是 1.7978e-3 m）、Δy = 6.7734e-4 m，比值 0.377；
@@ -3568,7 +3568,7 @@ TEST_F(PluginTest, ProjectionTransformExecution) {
     // 诚实声明这一档的承重面很窄：原点是 4326↔3857 的**不动点**，
     // 所以它结构上抓不到轴序丢失与源/目标互换（那两条由档 1 与档 3 承担），
     // 它抓的是"原点处出 NaN/Inf/异常偏移或整条公式换族"这类缺陷。
-    // 同理它也**不判常数口径**：原点处两套常数的差只有 5.55e-17 × (a − rounded/π) ≈ 5e-22 m ⇒ 无可夹之物。
+    // 同理它也**不判常数口径**：原点处两套常数的差只有 5.55e-17 × (a − rounded/π) = 5.55e-17 × 8.8784e-4 ≈ 4.9e-20 m ⇒ 无可夹之物。
     std::map<std::string, gis::framework::ParamValue> originParams;
     originParams["action"] = std::string("transform");
     originParams["src_srs"] = std::string("EPSG:4326");
