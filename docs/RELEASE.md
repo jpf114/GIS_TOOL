@@ -1908,6 +1908,40 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
 - `data/` 只读复核：`find data -type f -newermt "2026-10-28 00:19:45" | wc -l` = **0**；
   `gen_data_baseline.py` 重算与 `data_baseline.prev` **字段级对撞 0 处差异**（读数见 `task-8b-report.md` 第 8 节）。
 
+### 批次 D 覆盖晋升 D1-M（2026-10-28，Task 14 / matching detect·corner·match·register 四条 PENDING→GOLD）
+
+本刀**不改产品码**（只在变异取证时改、取证完当场还原），是把 matching 四条动作的测试面从"成功+产物存在"
+升到"值级判据"，并把登记表现场翻 GOLD。判据形状一律用"能由参数/判据文本/库契约手算推出"的关系，
+**不钉检测器内部计数**（批次 C N108 自指期望同族）。`ecc_register` / `stitch` 被 Debug 轻量闸门
+（`GIS_MATCHING_LIGHTWEIGHT_DEBUG`）挡死、Debug 侧永不执行其数值断言 ⇒ 本批不碰，归 D4 收口门与挂账 #165。
+
+- **`检测器上限参数的三种真实语义`（用户可见口径，非代码变更；是否统一行为见挂账 #167 未决）**：
+  `detect` / `match` / `register` 的 `最大特征点` 参数，现读在 96×96 图案夹具上实测为——
+  1. **`akaze`：完全不生效**。`createDetector` 对 akaze 走 `cv::AKAZE::create()`（不传参），
+     该参数被丢弃（实测 `max_points=20` 与 `=200` 都出 29 个）。
+  2. **`sift`：不是硬上限**。实测 `max_points=20` 出 23 个（越过设定值）。
+  3. **`orb`：是上限但不保证取满**。计数恒不超设定值，纹理/边界不足时低于它（实测 20⇒10、1000⇒48）。
+  对照：`corner` 的 `最大角点数` **两支都真消费**（`goodFeaturesToTrack` 与 harris 抑制循环各自截到该值，
+  候选充足时 `corner_count` 恰好等于设定值）。`match` / `register` 的 `比值检验 = 0` ⇒ 一条匹配都不留
+  （判据 `d(1st) < 比值 × d(2nd)`，距离非负 ⇒ 恒假）；`register` 此时匹配数 0 < 4 ⇒ 动作显式失败、不产出文件。
+  ⚠ CLI/GUI 侧 `action_validation.cpp:574` 把 `比值检验` 合法区间校验成 `(0, 1]`，`--ratio_test=0` 会被参数校验拒
+  ⇒ 0 档这条只在库级（`PluginManager::execute` 直连）可达，已由单测钉住，腿侧晋升不了这一档（如实登记）。
+- 判据（四条 `TEST_F`，Debug 全绿；每行第 4 列证据见登记表）：
+  `PluginTest.MatchingDetectCapLadderAndFlatZeroPoint`（detect：ORB 上限不越 + 平坦图 ORB/SIFT 恒 0 零点）、
+  `PluginTest.MatchingCornerMaxCornersCapLadder`（corner：shi_tomasi 与 harris 两支 max_corners=1/2/3 恰截 + 平坦零点）、
+  `PluginTest.MatchingMatchRatioTestLadderAndZeroPoint`（match：ratio=0 恒 0 + 阶梯不减 + 三档不全等）、
+  `PluginTest.MatchingRegisterIdentityTransformKeepsRasterPixels`（register：reference==input 恒等 ⇒ 逐像元相等 + ratio=0 失败支不产文件）。
+- 变异取证七臂全翻红（M1 orb 去上限 / M2 goodFeaturesToTrack 写死大数 / M3 doMatch 去 ratioTest /
+  M4 doRegister 去 ratioTest / M5 warp x-y 互换 / M6 harris 去 break / M7 warp 尺寸写歪），
+  台账见用例注释；两臂（仿射方向对调、affine↔translation）在恒等自洽夹具下判不到，如实标注未跑。
+- 腿侧 `run_real_matching_regression.ps1`：detect 升上限档、corner 升恰截档、register **补判据分支**
+  （从"只跑不判"改为核产物宽高==参考宽高）、match 加逐条 distance≥0 结构判据；`quick` 实跑合计 0.68 s，
+  `real_data_matching` 单跑 4.13 s。
+- 登记算术：`gold_rows 87→91`、`pending_rows 39→35`、`gold_rows_all_lines 88→92`、
+  `gold_rows_literal_slot 72→76`（table_driven 15 不动）、`kPendingCeiling 39→35`，同一笔提交；
+  `ctest -R "^(CoverageMeta|CoverageMetaJudge)"` 19/19 绿。
+- ⚠ **Release 侧未验收**：本批只在 Debug 树取证，Release 未重编 ⇒ 四条晋升的 Release 凭据缺位，归收口门补。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
