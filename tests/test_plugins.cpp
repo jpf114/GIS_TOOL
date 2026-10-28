@@ -13498,8 +13498,10 @@ TEST_F(PluginTest, TerrainHillshadeHandValueOnUnitPlane) {
     // ESRI/GDAL 模型：hs = 255*(cos(zen)*cos(slope) + sin(zen)*sin(slope)*cos(az-aspect))，
     // zen = 90-altitude，az 与 aspect 都是"自北顺时针"。DEM-P 的 slope=45、aspect=270（见上两条）。
     // 输出波段是 Byte（GDAL 给 hillshade 的 NODATA 约定是 0）。在**解析面**（平面/平地）上参考模型是
-    // 精确可判的，取整方向实测为向上：180.31→181、197.36→198、127.50→128（round() 会给 180/197，
-    // 与实测不相容）；在**噪声 DEM** 上逐像元取整方向不可判（参考值与产物互差 ≤0.7），所以下面 (5)
+    // 精确可判的，取整方向实测为向上：146.26→147、158.17→159、197.36→198、127.50→128
+    // （round() 会给 146/158/197，与实测不相容；D1-T1x 换点前这里的例子是 180.31→181，
+    //   alt 从 45 换到 35 后由 146.26→147 顶上来，判别力不减）；在**噪声 DEM** 上逐像元取整方向不可判
+    // （参考值与产物互差 ≤0.7），所以下面 (5)
     // 那两枚钉子按"参考值上取整 = 产物"实测钉住，判别力来自"改公式必挪 >10"而不是 ±1 的取整差。
     // (1) az=270 与 aspect=270 对齐：raw = 255*(cos45*cos45 + sin45*sin45*cos(0)) = 255*cos(0°) = 255 ⇒ 255。
     EXPECT_FLOAT_EQ(readRasterPixel(outAligned, 7, 7), 255.0f);
@@ -13529,27 +13531,38 @@ TEST_F(PluginTest, TerrainHillshadeHandValueOnUnitPlane) {
     ASSERT_TRUE(oppositeResult.success) << oppositeResult.message;
     EXPECT_FLOAT_EQ(readRasterPixel(outOpposite, 7, 7), 1.0f);
 
-    // (4) DEM-F：slope=0 ⇒ 第二项整项消失 ⇒ raw = 255*cos(zen)=255*sin(45°)=180.31 ⇒ ceil = 181。
-    //     与 altitude 无关的方位（az=315） ⇒ 这条钉住"高度角进了 -alt"，去掉 -alt ⇒ 默认 30 ⇒ 128 ⇒ 红。
+    // (4) DEM-F：slope=0 ⇒ 第二项整项消失 ⇒ raw = 255*cos(zen)。**altitude 由 45 换成 35（D1-T1x 加固）**：
+    //     alt=45 是 zen = 90-altitude 的**不动点**（zen=45=alt），所以"把 zen 写成 alt"这类口径错误
+    //     在本用例 alt=45 的六枚钉子上全部恒不敏感（我逐枚复算：180.312229→181 等，两个口径给同一个数）。
+    //     换到 alt=35 ⇒ zen=55 ⇒ raw = 255*cos(55°) = 146.261991 ⇒ ceil = **147**；
+    //     zen=alt 那一支会给 255*cos(35°) = 208.883771 ⇒ 209 ⇒ 红（差 62 个字节，与带宽无关，是选点）。
+    //     az=315 在平地上不参与（slope=0 ⇒ 含 cos(az-aspect) 的第二项整项消失），保留只为说明"平地与方位无关"。
+    //     去掉 -alt ⇒ GDAL 缺省 alt=30 ⇒ zen=60 ⇒ raw = 255*cos(60°) = 127.5 ⇒ ceil = 128 ⇒ 红（差 19）。
     std::map<std::string, gis::framework::ParamValue> flatParams = params;
     flatParams["input"] = flat;
     flatParams["output"] = outFlat;
     flatParams["azimuth"] = 315.0;
+    flatParams["altitude"] = 35.0;                             // 换点：90-alt 的不动点在 45，这里避开它
     const auto flatResult = p->execute(flatParams, progress_);
     ASSERT_TRUE(flatResult.success) << flatResult.message;
-    EXPECT_FLOAT_EQ(readRasterPixel(outFlat, 7, 7), 181.0f);
+    EXPECT_FLOAT_EQ(readRasterPixel(outFlat, 7, 7), 147.0f);
 
-    // (5) DEM-N (13,7)：slope=89.96788、aspect=301.23921、az=315、alt=45
-    //     raw = 255*(cos45*cos(89.96788°) + sin45*sin(89.96788°)*cos(315-301.23921°)) = 175.23784 ⇒ ceil = 176。
-    //     (41,41)：slope=89.97145、aspect=300.71894 ⇒ raw = 174.82994 ⇒ ceil = 175。
+    // (5) DEM-N (13,7)：slope=89.96788、aspect=301.23921。**azimuth 由 315 换成 330（D1-T1x 加固）**：
+    //     315 是 Horn 核 x↔y 反射的**对称轴** ⇒ 互换 dzdx/dzdy 时 cos(315-aspect) 不变
+    //     （复审席量到 Δmean=0.0000，我按单点复算同样给 175.237879→176 两个口径都成立 ⇒ 恒不红）。
+    //     换到 az=330（不是对称轴）⇒
+    //       raw = 255*(cos45*cos(89.96788°) + sin45*sin(89.96788°)*cos(330-301.23921°)) = 158.169355 ⇒ ceil = **159**
+    //       (41,41)：slope=89.97145、aspect=300.71894 ⇒ raw = 157.363651 ⇒ ceil = **158**
+    //     互换核后 aspect 变 328.76080（cos(330-328.76080°)=0.99977）⇒ 同一枚像元变 180.371120 ⇒ 181 ⇒ 红（差 22）。
+    //     去掉 -az ⇒ GDAL 缺省 315 ⇒ 回到 175.237879 ⇒ 176 ⇒ 红（差 17）。
     std::map<std::string, gis::framework::ParamValue> noiseParams = params;
     noiseParams["input"] = noise;
     noiseParams["output"] = outNoise;
-    noiseParams["azimuth"] = 315.0;
+    noiseParams["azimuth"] = 330.0;                             // 换点：避开 x↔y 反射对称轴 315
     const auto noiseResult = p->execute(noiseParams, progress_);
     ASSERT_TRUE(noiseResult.success) << noiseResult.message;
-    EXPECT_FLOAT_EQ(readRasterPixel(outNoise, 13, 7), 176.0f);
-    EXPECT_FLOAT_EQ(readRasterPixel(outNoise, 41, 41), 175.0f);
+    EXPECT_FLOAT_EQ(readRasterPixel(outNoise, 13, 7), 159.0f);
+    EXPECT_FLOAT_EQ(readRasterPixel(outNoise, 41, 41), 158.0f);
 
     // (6) hillshade 这一路 z_factor 是真生效的（与 slope 相反）：DEM-P 上 z=10 ⇒ slope=atan(10)=84.2894069°，
     //     az=270 与 aspect=270 对齐 ⇒ raw = 255*cos(zen-slope) = 255*cos(45°-84.2894069°) = 197.359111 ⇒ ceil = 198。

@@ -333,17 +333,37 @@ function Validate-CaseOutputs {
             )
             Assert-TextContains -Text $info -Expected "Type:   Byte" -Message "terrain_hillshade raster type mismatch"
             # ESRI model: hs = 255*(cos(zen)cos(slope) + sin(zen)sin(slope)cos(az-aspect)),
-            # zen = 90-45 = 45, az = 315. The reference mean of the *unquantised* double model over the
-            # 2116 interior pixels is 169.7759; the product is a Byte band, so each pixel may land on
-            # either side of that value. On analytic DEMs the rounding direction is decidable and is
-            # upward (180.31 -> 181 and 197.49 -> 198, which round() rules out), but on this noisy DEM
-            # the per-pixel rounding is not identifiable (reference and product differ by <= 0.7 there),
-            # hence the explicit +-0.55 band instead of a single number. Min/Max carry +-1 for the same
-            # reason. Any formula-level change (drop -alt, swap the GDAL algorithm name, flip a sign)
-            # moves these three numbers by tens, so the assertions are not vacuous.
-            Assert-InfoStatNear -Text $info -Label "Min" -Expected 128.0 -Tolerance 1.0 -Message "terrain_hillshade min mismatch"
-            Assert-InfoStatNear -Text $info -Label "Max" -Expected 181.0 -Tolerance 1.0 -Message "terrain_hillshade max mismatch"
-            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 169.7759 -Tolerance 0.55 -Message "terrain_hillshade mean mismatch"
+            # zen = 90-altitude. D1-T1x moved the parameter point from az=315/alt=45 to az=330/alt=35:
+            # 315 is the reflection axis of the Horn x<->y kernels (swapping them leaves cos(az-aspect)
+            # unchanged) and alt=45 is the fixed point of zen = 90-altitude (zen == alt), so at the old
+            # point two whole mutation classes were invisible no matter how tight the band was -- the
+            # reviewer measured |delta mean| = 0.0000 for both and my own recomputation agrees.
+            # The band was NOT widened to make this work: tolerance is still +-0.55 (a Byte band's
+            # quantisation uncertainty is inherently 1.0 wide, so +-0.55 around the unquantised
+            # reference mean is already close to the narrowest usable band).
+            # Reference (independent numpy implementation of the formula above over the float32 DEM
+            # z = 1.5x + 0.8y + ((x*y)%11)*0.2, cell 0.0005, the 2116 non-NODATA interior pixels):
+            #   raw   min/max/mean = 104.497867 / 208.850938 / 174.580886
+            #   ceil-law mean      = 175.057656   floor-law mean = 174.057656
+            # Pinned Mean is the *unquantised* reference 174.580886, NOT the product's printed value
+            # 174.865 (raster_inspect prints 6 significant digits, raster_inspect_plugin.cpp:282-285;
+            # a copy-back would have pinned 174.865). Measured margin: |174.865 - 174.580886| =
+            # 0.284114 inside +-0.55 -> 0.266 left (the old point left 0.214).
+            # Sensitivity at the new point (|delta mean| from the same reference implementation):
+            #   swap dzdx <-> dzdy kernels        30.757777   (was 0.0000 at az=315)
+            #   zen = altitude instead of 90-alt  52.306318   (was 0.0000 at alt=45)
+            #   drop -az (GDAL default azimuth)   22.078407
+            #   drop -alt (GDAL default altitude)  9.981752
+            #   aspect written as 360-aspect     181.0442     cos(az-aspect) replaced by 1: 34.3464
+            #   z_factor 0.5 / 10                  0.043541 / 0.039203  <- NOT catchable on this DEM:
+            #     it climbs 1.5/0.8 z-units per 0.0005 ground unit, so every interior slope is ~89.97
+            #     deg, atan saturates and scaling both partials leaves the aspect ratio untouched.
+            #     That lever is pinned on the analytic plane in the fixture case instead
+            #     (DEM-P z=10 -> 198 vs z=1 -> 255); the slope-side silence is filed as N163.
+            # Min/Max carry +-1 for the same rounding reason (measured product: Min 105, Max 209).
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected 105.0 -Tolerance 1.0 -Message "terrain_hillshade min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 209.0 -Tolerance 1.0 -Message "terrain_hillshade max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 174.580886 -Tolerance 0.55 -Message "terrain_hillshade mean mismatch"
         }
         "terrain_tpi" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -1061,8 +1081,8 @@ $cases += New-Case -Name "terrain_hillshade" -CaseArgs @(
     ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_hillshade_output.tif")),
     "--band=1",
     "--z_factor=1",
-    "--azimuth=315",
-    "--altitude=45"
+    "--azimuth=330",
+    "--altitude=35"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "terrain_hillshade_output.tif")
 )
