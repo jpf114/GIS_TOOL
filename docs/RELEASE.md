@@ -1947,7 +1947,7 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
 **先说清这把没干什么**：两条晋升的凭据来自**既有**数值断言（`PansharpenMeanBlendReplacesSimpleMean`
 与 `BandMathDivisorThresholdBoundaryIsPinned`，都是批次 A/Task 13 时代就写进 `tests/test_plugins.cpp` 的块），
 本刀**没有新增任何算法测试、也没有新增 `TEST_F`**（Debug 注册数因此不变）。本轮新增的只有两样：
-①对这两条 PENDING 所属九个断言块的**变异取证台账**（七臂，落在 `tests/test_plugins.cpp` 的用例注释里），
+①对这两条 PENDING 所属九个断言块的**变异取证台账**（十臂，落在 `tests/test_plugins.cpp` 的用例注释里），
 ②腿 `real_data_raster` 里 `raster_math_band_math` 从"有 case 无判据分支"补成一条**值级判据分支**。
 产品码只在取证时被改、当场还原（四个落点 `git hash-object` 全对基线 blob）。
 
@@ -1959,7 +1959,8 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   `<` 与 `<=` 在这份数据上不可能给出不同结果 ⇒ 这是**等价变异**，不是"闸没生效"。
   换成阈值量级臂（`1e-15`→`1e-14`）才杀得动：`divide_by_zero_pixels` 由 `"0"` 变 `"2"`、像元值由 ~1e15 变 0.0。
   ⇒ 现在被钉住的口径是"阈值两侧的**量级**"，而**不是**"等号归哪一边"；要钉后者得先造一个除数恰为 1e-15 的夹具。
-- 变异臂台账（Debug，七臂；每臂单独改单独还原，跑的是 `-R "^(PluginTest\.(Pansharpen|BandMath)[A-Za-z0-9_]*)$"` 那 12 条）：
+- 变异臂台账（Debug，**十臂**：pansharpen P1–P4 + band_math M1–M6；每臂单独改单独还原，跑的是
+  `-R "^(PluginTest\.(Pansharpen|BandMath)[A-Za-z0-9_]*)$"` 那 6 条一组 ⇒ 共 10 次单臂跑，外加一次腿臂）：
   pansharpen `P1` 去掉 mean_blend 的除以 2 ⇒ 只红 MeanBlend（实测 140 对期望 70）；
   `P2` 写出参照数据集 PAN→MS ⇒ 同时红 OutputUsesPanGeoTransform（gt[1] 30 对 15）、
   SharedNoDataTagFollowsPanBand1（-9999 对 -555）与 ExtentMismatchWarns 的网格侧；
