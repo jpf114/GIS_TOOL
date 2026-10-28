@@ -415,22 +415,91 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Max" -Expected 2.303802 -Tolerance 2e-3 -Message "terrain_tri max mismatch"
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 1.718467 -Tolerance 2e-3 -Message "terrain_tri mean mismatch"
         }
+        # ---- D1-T2: curvature family / roughness raised from type-level to value level ----
+        # Same generated DEM as the six blocks above (gui_test_data_helper.cpp:595-624). These three
+        # actions are this repo's own code, not GDAL: terrain_plugin.cpp:222-250 (profile/plan
+        # curvature from five cv::Sobel derivatives) and :274-279 (roughness = dilate(3x3) - erode(3x3),
+        # both BORDER_REPLICATE). Every expected number below comes from an independent
+        # re-implementation of those formulas (build/tmp/batchD/d1t2/ref_model.py), never read back
+        # from the product. Product vs model on the identical 48x48 array (probe3.py, float32 tail):
+        #   profile_curvature  product -2.385006 / 3.092854 / 0.0086002   model -2.385005 / 3.092848 / 0.0086002
+        #   plan_curvature     product -9.183311 / 12.066192 / 0.0190742  model -9.183276 / 12.066154 / 0.0190742
+        #   roughness          product  2.500000 /  6.600006 / 4.7921877  model  2.500000 /  6.600006 / 4.7921875
+        # Tolerance 2e-3 = 22x the largest observed product/model drift (9.2e-5), and every mutation
+        # arm run for this knife moved at least one of these three numbers by >0.02 (readings and the
+        # per-arm deltas are in task-13b-report.md section 6, recorded after the arms were run).
+        # raster_inspect prints stats with the ostream default of 6 significant digits, so at magnitude
+        # ~10 the last printed digit is 1e-5 -- comfortably inside the 2e-3 band, not a hidden widening.
+        # UNITS: the local path never reads the geotransform (gdalBandToMat, kernels in pixel space),
+        # so these are per-pixel derivatives. The very same 48x48 array with cell size 0.001 (the C++
+        # fixture DEM-N) produced a pixel-for-pixel identical product -- which is exactly why these
+        # pins must NOT be read as a georeferencing or ground-unit-curvature claim.
         "terrain_profile_curvature" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_profile_curvature_output.tif"))
             )
+            Assert-TextContains -Text $info -Expected "Size:   48 x 48 x 1 bands" -Message "terrain_profile_curvature raster size mismatch"
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_profile_curvature raster type mismatch"
+            # Interior of the 3x3 border only: this action reads the whole array (no Horn border, no
+            # source NODATA on this DEM), so Min/Max sit on the replicated left/right columns where
+            # zxx reaches +-7.6 while zx drops to half a step.
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected -2.385005 -Tolerance 2e-3 -Message "terrain_profile_curvature min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 3.092848 -Tolerance 2e-3 -Message "terrain_profile_curvature max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 0.0086002 -Tolerance 2e-3 -Message "terrain_profile_curvature mean mismatch"
         }
         "terrain_plan_curvature" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_plan_curvature_output.tif"))
             )
+            Assert-TextContains -Text $info -Expected "Size:   48 x 48 x 1 bands" -Message "terrain_plan_curvature raster size mismatch"
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_plan_curvature raster type mismatch"
+            # plan and profile are NOT the same shape on this DEM: plan divides by sq^1.5 (no (1+sq)^1.5
+            # damping), so its spread is ~4x wider (-9.18..12.07 vs -2.39..3.09). Swapping the two
+            # formulas therefore reddens both blocks; the fixture case pins them per pixel as well.
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected -9.183276 -Tolerance 2e-3 -Message "terrain_plan_curvature min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 12.066154 -Tolerance 2e-3 -Message "terrain_plan_curvature max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 0.0190742 -Tolerance 2e-3 -Message "terrain_plan_curvature mean mismatch"
         }
+        "terrain_roughness" {
+            # This case existed since batch C but had NO judgement block at all (only the produced-file
+            # existence check), so before D1-T2 the leg asserted nothing about roughness values.
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_roughness_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   48 x 48 x 1 bands" -Message "terrain_roughness raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_roughness raster type mismatch"
+            # roughness = max-min of the 3x3 window (centre included, replicate border). The DEM climbs
+            # 1.5 per column and 0.8 per row with a +-2.0 noise term, so the range is 2.5..6.6 and never
+            # 0; tri on the same DEM is 0.81..2.30 (T1 S5), so the two blocks are not interchangeable.
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected 2.5 -Tolerance 2e-3 -Message "terrain_roughness min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 6.600006 -Tolerance 2e-3 -Message "terrain_roughness max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 4.7921875 -Tolerance 2e-3 -Message "terrain_roughness mean mismatch"
+        }
+        # ---- D1-T2: profile_extract raised to per-row value level ----
+        # The product is a CSV (header distance,x,y,elevation), not a raster, so the statistical
+        # template does not apply. Expected rows come from an independent sampler of
+        # terrain_plugin.cpp:835-890 (steps = ceil(len/pixelStep), pixelStep = min of the two axes,
+        # pixel index = lround of the affine coordinate, out-of-bounds samples dropped not clamped).
+        # Path = (116.001,39.999) -> (116.010,39.992) -> (116.020,39.985) on cell size 0.0005, i.e.
+        # affine (2,2) -> (20,16) -> (40,30); len1 = 0.0114018 (steps 23), len2 = 0.0122066 (steps 25),
+        # first segment 24 rows + second 25 rows (its k=0 is skipped at :860) = 49 rows, all in bounds.
+        # Elevation column is DEM z(x,y) = x*1.5 + y*0.8 + ((x*y)%11)*0.2 at the sampled cell:
+        #   (2,2)  = 3.0+1.6+0.8  = 5.4        (20,16) = 30+12.8+0.2 = 43.0
+        #   (21,17)= 31.5+13.6+1.0 = 46.1      (40,30) = 60+24.0+0.2 = 84.2
+        # Row 24 is the cumulative-distance nail: without the running offset at :867 it reads
+        # 0.000488 instead of 0.01189. Distances are printed with 6 significant digits, hence 1e-6.
         "terrain_profile_extract" {
             $rows = Import-Csv (Join-Path $ResolvedOutputRoot "terrain_profile_output.csv")
             Assert-Condition -Condition ($rows.Count -ge 10) -Message "terrain_profile_extract should output at least 10 rows"
             Assert-Condition -Condition ([double]$rows[0].distance -eq 0.0) -Message "terrain_profile_extract first distance should be zero"
+            Assert-Condition -Condition ($rows.Count -eq 49) -Message "terrain_profile_extract row count should be 49 (steps 23+25, actual=$($rows.Count))"
+            Assert-Condition -Condition ([Math]::Abs([double]$rows[0].elevation - 5.4) -lt 1e-3) -Message "terrain_profile_extract first elevation should be 5.4 (cell 2,2)"
+            Assert-Condition -Condition ([Math]::Abs([double]$rows[23].distance - 0.0114018) -lt 1e-6) -Message "terrain_profile_extract last segment-1 distance should be len1=0.0114018"
+            Assert-Condition -Condition ([Math]::Abs([double]$rows[23].elevation - 43.0) -lt 1e-3) -Message "terrain_profile_extract segment-1 end elevation should be 43.0 (cell 20,16)"
+            Assert-Condition -Condition ([Math]::Abs([double]$rows[24].distance - 0.01189) -lt 1e-6) -Message "terrain_profile_extract segment-2 first distance should be len1+len2/25=0.01189 (cumulative)"
+            Assert-Condition -Condition ([Math]::Abs([double]$rows[24].elevation - 46.1) -lt 1e-3) -Message "terrain_profile_extract segment-2 first elevation should be 46.1 (cell 21,17)"
+            Assert-Condition -Condition ([Math]::Abs([double]$rows[48].distance - 0.0236083) -lt 1e-6) -Message "terrain_profile_extract last distance should be len1+len2=0.0236083"
+            Assert-Condition -Condition ([Math]::Abs([double]$rows[48].elevation - 84.2) -lt 1e-3) -Message "terrain_profile_extract last elevation should be 84.2 (cell 40,30)"
         }
         "terrain_viewshed_multi" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
