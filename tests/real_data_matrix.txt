@@ -65,7 +65,7 @@ cutting,clip,raster,data,real_regression,gold,C7,腿走合成兜底
 cutting,mosaic,raster,not-consumed,real_regression,relation,C7,腿走合成兜底
 cutting,split,raster,data,real_regression,gold,C7,腿走合成兜底
 cutting,merge_bands,raster,data,real_regression,gold,C7,腿走合成兜底
-cutting,tile,raster,data,none,gold,C7,夹具来源为启发式判定，开批前核对
+cutting,tile,raster,data,real_regression,gold,C7,腿走合成兜底（本机无 data/raster ⇒ 走 generated_data 分支，批次 D D1-C2 已核对）
 georef,dos_correction,raster,not-consumed,real_regression,relation,C13,腿走合成兜底
 georef,radiometric_calibration,raster,not-consumed,real_regression,relation,C13,腿走合成兜底
 georef,gcp_register,raster+gcps,synthetic,real_regression,relation,C13,夹具来源为启发式判定，开批前核对
@@ -134,7 +134,7 @@ terrain,slope,dem,data,real_regression,gold,C11,腿走合成兜底
 terrain,aspect,dem,data,real_regression,gold,C11,腿走合成兜底
 terrain,hillshade,dem,data,real_regression,gold,C11,腿走合成兜底
 terrain,tpi,raster,data,real_regression,gold,C11,腿走合成兜底
-terrain,curvature,raster,data,none,gold,C11,夹具来源为启发式判定，开批前核对
+terrain,curvature,raster,data,real_regression,gold,C11,腿走合成兜底（批次 D 现读：`run_real_raster_regression.ps1` 里 `New-Case -Name terrain_curvature` 实调 terrain/curvature，矩阵这格从批次 C 起就漏改）
 terrain,profile_curvature,raster,data,real_regression,gold,C11,腿走合成兜底
 terrain,plan_curvature,raster,data,real_regression,gold,C11,腿走合成兜底
 terrain,tri,raster,data,real_regression,gold,C11,腿走合成兜底
