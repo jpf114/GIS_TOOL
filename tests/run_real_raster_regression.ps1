@@ -216,6 +216,38 @@ function Assert-TextContains {
     Assert-Condition -Condition ($Text.Contains($Expected)) -Message $Message
 }
 
+# D1-T1: value-level reader for the per-band numbers printed by `raster_inspect info`.
+# WHY a regex on the whole line instead of Assert-TextContains on "Mean:   8": a substring
+# lets "89.98" satisfy an expectation of "8" (and "899" satisfy "89"), which is exactly the
+# vacuous-judge shape the registry header forbids. Here the label is anchored to its own
+# column and the captured token must parse as a full number, then we compare numerically.
+function Get-InfoStatValue {
+    param(
+        [string]$Text,
+        [string]$Label
+    )
+
+    $pattern = "(?m)^\s*" + $Label + ":\s*(-?[0-9]+(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?)\s*$"
+    $match = [regex]::Match($Text, $pattern)
+    Assert-Condition -Condition ($match.Success) -Message ("raster_inspect info has no numeric '" + $Label + "' line")
+    return [double]$match.Groups[1].Value
+}
+
+function Assert-InfoStatNear {
+    param(
+        [string]$Text,
+        [string]$Label,
+        [double]$Expected,
+        [double]$Tolerance,
+        [string]$Message
+    )
+
+    $actual = Get-InfoStatValue -Text $Text -Label $Label
+    Assert-Condition -Condition ([math]::Abs($actual - $Expected) -le $Tolerance) -Message (
+        $Message + " (actual=" + $actual + " expected=" + $Expected + " tolerance=" + $Tolerance + ")"
+    )
+}
+
 function Validate-CaseOutputs {
     param(
         [pscustomobject]$Case,
@@ -254,18 +286,108 @@ function Validate-CaseOutputs {
             Assert-Condition -Condition ($payload.total -gt 0) -Message "histogram total should be greater than zero"
             Assert-Condition -Condition ($payload.histogram.Count -eq 16) -Message "histogram bin count should equal 16"
         }
+        # ---- D1-T1: terrain value-level judgements (batch D first promotion knife) ----
+        # Input for all six blocks below is the generated terrain DEM:
+        #   48 x 48 Float32, z(x,y) = x*1.5 + y*0.8 + ((x*y)%11)*0.2   (gui_test_data_helper.cpp:595-624)
+        #   cell size 0.0005 x 0.0005, no CRS, no source NODATA          (gui_test_data_helper.cpp:612-615)
+        # Every expected number below is produced by an independent reference implementation of the
+        # documented formulas (Horn first differences + GDAL slope/aspect/hillshade, Riley TIN TRI,
+        # center-minus-8-neighbour-mean TPI, cv::Laplacian ksize=3 = d2/dx2 + d2/dy2), not read back
+        # from the product. Reference and product agreed to float32 precision at the probe stage.
+        # The tolerance (1e-3 .. 5e-3) only absorbs float32/double tail; any algorithm-constant change
+        # moves these numbers by >= 0.5, which is why they are load-bearing.
         "terrain_slope" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_slope_output.tif"))
             )
             Assert-TextContains -Text $info -Expected "Size:   48 x 48 x 1 bands" -Message "terrain_slope raster size mismatch"
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_slope raster type mismatch"
+            # Horn slope = atan(sqrt(dzdx^2+dzdy^2)) in degrees. dzdx/dzdy here are ~1e3 because the
+            # DEM climbs 1.5 and 0.8 z-units per 0.0005 ground unit, so every interior pixel lands in
+            # (89.96, 89.99). Statistics exclude the 1-pixel Horn border, which GDAL fills with its
+            # default NODATA -9999; pinning that value is what proves the border is still NODATA and
+            # did not silently become 0 or 45.
+            Assert-InfoStatNear -Text $info -Label "NoData" -Expected -9999.0 -Tolerance 1e-6 -Message "terrain_slope nodata sentinel mismatch"
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected 89.968927 -Tolerance 1e-3 -Message "terrain_slope min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 89.988577 -Tolerance 1e-3 -Message "terrain_slope max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 89.982932 -Tolerance 1e-3 -Message "terrain_slope mean mismatch"
+        }
+        "terrain_aspect" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_aspect_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_aspect raster type mismatch"
+            # aspect = 90 - atan2(dzdy, -dzdx) in degrees, wrapped into [0,360). With dzdx ~ +3000 and
+            # dzdy ~ +1600 the plane falls to the west-north-west, so the interior band is 270..329:
+            # min is exactly the "pure east rise, no noise" limit 270 and mean 298.176. A sign flip in
+            # either partial derivative maps 270->90 and moves the mean by ~90 deg, so this is a
+            # directional pin, not a range check.
+            Assert-InfoStatNear -Text $info -Label "NoData" -Expected -9999.0 -Tolerance 1e-6 -Message "terrain_aspect nodata sentinel mismatch"
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected 269.999958 -Tolerance 1e-3 -Message "terrain_aspect min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 328.448646 -Tolerance 1e-3 -Message "terrain_aspect max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 298.176267 -Tolerance 1e-3 -Message "terrain_aspect mean mismatch"
+        }
+        "terrain_hillshade" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_hillshade_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Type:   Byte" -Message "terrain_hillshade raster type mismatch"
+            # ESRI model: hs = 255*(cos(zen)cos(slope) + sin(zen)sin(slope)cos(az-aspect)),
+            # zen = 90-45 = 45, az = 315. The reference mean of the *unquantised* double model over the
+            # 2116 interior pixels is 169.7759; the product is a Byte band, so each pixel may land on
+            # either side of that value. On analytic DEMs the rounding direction is decidable and is
+            # upward (180.31 -> 181 and 197.49 -> 198, which round() rules out), but on this noisy DEM
+            # the per-pixel rounding is not identifiable (reference and product differ by <= 0.7 there),
+            # hence the explicit +-0.55 band instead of a single number. Min/Max carry +-1 for the same
+            # reason. Any formula-level change (drop -alt, swap the GDAL algorithm name, flip a sign)
+            # moves these three numbers by tens, so the assertions are not vacuous.
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected 128.0 -Tolerance 1.0 -Message "terrain_hillshade min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 181.0 -Tolerance 1.0 -Message "terrain_hillshade max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 169.7759 -Tolerance 0.55 -Message "terrain_hillshade mean mismatch"
+        }
+        "terrain_tpi" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_tpi_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_tpi raster type mismatch"
+            # TPI = centre - mean(8 neighbours) with BORDER_REPLICATE over all 2304 pixels (no NODATA on
+            # the local path). The signed extremes come from the border rows/columns (replication counts
+            # the centre column twice) and the noise term: -1.237502 .. +1.637502, mean 0. If the
+            # centre were left inside the neighbourhood mean (sum9/9) the whole field would shift by
+            # roughly centre/9 - centre/8 ~ +-6 and the mean would no longer be 0.
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected -1.237502 -Tolerance 2e-3 -Message "terrain_tpi min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 1.637502 -Tolerance 2e-3 -Message "terrain_tpi max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 0.0 -Tolerance 1e-3 -Message "terrain_tpi mean mismatch"
+        }
+        "terrain_curvature" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_curvature_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   48 x 48 x 1 bands" -Message "terrain_curvature raster size mismatch"
+            Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_curvature raster type mismatch"
+            # cv::Laplacian(ksize=3) = d2/dx2 + d2/dy2 with the Sobel-smoothed second differences, i.e.
+            # K = [[2,0,2],[0,-8,0],[2,0,2]] (verified pixel by pixel against a single-pulse impulse).
+            # On this DEM the linear part cancels and only the ((x*y)%11)*0.2 term survives, plus the
+            # replicated border: extremes -16.000015 / +13.200020, mean 0. Swapping ksize 3 -> 1 (the
+            # 4-neighbour kernel) changes both extremes, so this is not a vacuous pair.
+            # NOTE: the registry row terrain,curvature stays PENDING in this batch by controller
+            # ruling - this block only closes the "no leg case at all" gap the brief listed.
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected -16.000015 -Tolerance 2e-3 -Message "terrain_curvature min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 13.200020 -Tolerance 2e-3 -Message "terrain_curvature max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 0.0 -Tolerance 5e-3 -Message "terrain_curvature mean mismatch"
         }
         "terrain_tri" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_tri_output.tif"))
             )
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "terrain_tri raster type mismatch"
+            # Riley TIN-TRI = sqrt(sum((neighbour-centre)^2)/8) over the 8 neighbours (clamped border).
+            # Reference over the full 2304 pixels: 0.810863 .. 2.303802, mean 1.718467. Dividing by 9
+            # instead of 8 scales every value by sqrt(8/9) = 0.943 (mean -> 1.6206), which is 20x the
+            # tolerance, so the pin is arithmetic-shape sensitive, not just range sensitive.
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected 0.810863 -Tolerance 2e-3 -Message "terrain_tri min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 2.303802 -Tolerance 2e-3 -Message "terrain_tri max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 1.718467 -Tolerance 2e-3 -Message "terrain_tri mean mismatch"
         }
         "terrain_profile_curvature" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -953,6 +1075,18 @@ $cases += New-Case -Name "terrain_tpi" -CaseArgs @(
     "--z_factor=1"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "terrain_tpi_output.tif")
+)
+
+# D1-T1: terrain curvature had no leg case at all (the brief lists it as the missing key);
+# added here with a value-level judgement block below. Registry row stays PENDING this batch.
+$cases += New-Case -Name "terrain_curvature" -CaseArgs @(
+    "terrain", "curvature",
+    ("--input=" + $data.TerrainRaster),
+    ("--output=" + (Join-Path $ResolvedOutputRoot "terrain_curvature_output.tif")),
+    "--band=1",
+    "--z_factor=1"
+) -ExpectedOutputs @(
+    (Join-Path $ResolvedOutputRoot "terrain_curvature_output.tif")
 )
 
 $cases += New-Case -Name "terrain_profile_curvature" -CaseArgs @(
