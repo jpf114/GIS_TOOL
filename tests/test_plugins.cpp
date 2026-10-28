@@ -16849,6 +16849,31 @@ TEST_F(PluginTest, MatchingRegisterExecutionProducesAlignedOutput) {
 //        ⇒ ratio=0 恒假 ⇒ 恰好 0；0<=t 的接受集单调 ⇒ 阶梯不增反向=不减）；
 //   §2.4 恒等变换（reference==input ⇒ 对应点自洽 ⇒ 变换=恒等 ⇒ 产物与输入逐像元相等）。
 // ⚠ 检测器内部计数（10/22/48/29/47/114 那族实测值）一律**不钉常量**——那是批次 C N108 自指期望同族。
+//
+// —— 变异取证台账（task-14 Step 3，全部改 src/plugins/matching/matching_plugin.cpp，取证完当场还原：
+//    还原一律 `git show HEAD:<path>` + CRLF 归一 + sha1 对基线 blob b5ddb7000590128aebe9fb1d0ca812cf1564e1b6，
+//    七臂对撞全过；每臂单独重建 plugin_matching 后跑定向 ctest）：
+//  M1 ORB::create(maxPoints)→ORB::create() ⇒ MatchingDetectCapLadderAndFlatZeroPoint 红
+//     （实测 `capped20 = 48 vs 20`）；腿 matching_detect 同红（"count exceeds max_points cap: 48"）。
+//  M2 goodFeaturesToTrack(..., maxCorners, ...)→写死 100000 ⇒ MatchingCornerMaxCornersCapLadder
+//     shi_tomasi 三档全红；腿 matching_corner 红（"should equal max_corners=3, got 47"）。
+//  M3 doMatch 判据 `m[0].distance < m[1].distance`（去 ratioTest）⇒ MatchingMatchRatioTestLadderAndZeroPoint
+//     红（零点档实测 48、"三档全等"臂 48 vs 48）。
+//  M4 doRegister 同一判据去 ratioTest ⇒ MatchingRegisterIdentityTransformKeepsRasterPixels 的
+//     ratio=0 支红（success 翻真、文案不含 ": 0"、留下产物）；恒等支不红（本臂只该打零点档，分支隔离正确）。
+//  M5 doRegister 估完 H 后强乘 x/y 互换阵 [[0,1],[1,0]] ⇒ 恒等主判据红
+//     （maxAbsDiff=255、差异像元 1366/9216）。
+//  M6 harris 支删 `corners.size() >= maxCorners` break ⇒ harris 三档全红（实测 40 > 1/2/3）；
+//     shi_tomasi 档不红 ⇒ 两支各自有判据盯、互不代工。
+//  M7 doRegister warp 目标尺寸 refMat.size()→写死 64×64 ⇒ 恒等用例尺寸断言红 +
+//     **腿 register 新判据分支红**（"matching_register width 64 != reference width 96" ⇒ 该分支承重，
+//     不是"只跑不判"）。
+//  未实跑的候选臂（分析判"判不到"，不冒充取证）：
+//   a) `estimateAffine2D(pts2, pts1)` 方向对调：恒等夹具 pts1≡pts2 逐位相同 ⇒ 两个方向解出的都是恒等 ⇒
+//      任何产物判据都无从区分（夹具对称性，非判据缺陷；批次 C "x↔y 反射不变量"同族）。
+//   b) transform 分支 affine→translation：自匹配下 estimateAffinePartial2D 已给出精确恒等，
+//      translation 支强制线性部分为单位阵、平移项 ≈0 ⇒ 产物仍是恒等 ⇒ 判据恒绿，抓不到。
+//      ⇒ §2.4 的"换 translation"臂按字面**做不到红**，本批用 M5（轴互换）代替其"变换写错"意图，如实记录。
 // ============================================================================
 
 namespace {
