@@ -499,6 +499,23 @@ static float readRasterPixel(const std::string& path, int bandIndex, int x, int 
     return value;
 }
 
+// D1-P（Task 16）：projection 的三条值级判据共用的**独立推算**期望，不从产物回填。
+// EPSG:3857 是**球面** Mercator，球半径 a = 6378137 m（EPSG 定义里就把 WGS84 长半轴当球半径用）：
+//   x = lon_deg * (π/180) * a
+//   y = a * ln(tan(π/4 + lat_rad/2))，lat_rad = lat_deg * π/180
+// 常数口径（本文件的容差就是按这个差值定的）：EPSG 文档里的 ±20037508.34 是 a*π = 20037508.342789244
+// 的**四舍五入**值，用 `lon * 20037508.34 / 180` 反算会带入系统偏差 dx = -1.798e-3 m、dy = -6.77e-4 m
+// （(116,40) 那档：a 口径 12913060.932019735，四舍五入口径 12913060.930222223）。
+// 因此所有墨卡托断言取 1e-3 m：它比实测的"产物 vs a 口径公式"残差（顶点级 1.9e-9 m、
+// metadata 级 <5e-7 m，后者是 std::to_string 的 6 位小数栅格化）大六个量级以上，
+// 又**小于**上面那两个口径之差 ⇒ 连"插件用的是哪个常数"一并钉住。
+static void expectedWebMercatorXY(double lonDeg, double latDeg, double& x, double& y) {
+    constexpr double kSphereRadius = 6378137.0;
+    constexpr double kPi = 3.14159265358979323846;
+    x = lonDeg * kPi / 180.0 * kSphereRadius;
+    y = kSphereRadius * std::log(std::tan(kPi / 4.0 + (latDeg * kPi / 180.0) / 2.0));
+}
+
 TEST_F(PluginTest, PluginManagerScan) {
     EXPECT_GE(mgr_.plugins().size(), 4u);
 }
@@ -585,11 +602,41 @@ TEST_F(PluginTest, ProjectionVectorReprojectExecution) {
     const OGRSpatialReference* outSrs = outLayer->GetSpatialRef();
     ASSERT_NE(outSrs, nullptr);
     EXPECT_TRUE(outSrs->IsProjected());
+    // 输出的权威码必须是 3857（"投影 CRS"这一条由 IsProjected 承担太宽：任何投影系都过）。
+    const char* outAuthCode = outSrs->GetAuthorityCode(nullptr);
+    ASSERT_NE(outAuthCode, nullptr) << "输出 CRS 没有 EPSG 权威码";
+    EXPECT_EQ(std::string(outAuthCode), "3857");
 
+    // D1-P 值级判据：夹具两端点是手写进 createGeometry 那条线里的
+    //   line->addPoint(116.38, 39.90); line->addPoint(116.42, 39.92);
+    // 产物里那两个顶点应当等于 expectedWebMercatorXY(该端点)（球面 3857 口径，独立推算）。
+    // 原来的两条 `EXPECT_GT(std::abs(extent.MaxX/MaxY), 1000.0)` 是**不承重**的：
+    // 任何投影 CRS、甚至 x/y 写反、甚至常数口径用错，都照样 >1000 ⇒ 已按判据强度替换掉。
+    double v0x = 0.0, v0y = 0.0, v1x = 0.0, v1y = 0.0;
+    expectedWebMercatorXY(116.38, 39.90, v0x, v0y);
+    expectedWebMercatorXY(116.42, 39.92, v1x, v1y);
+
+    outLayer->ResetReading();
+    OGRFeature* outFeat = outLayer->GetNextFeature();
+    ASSERT_NE(outFeat, nullptr);
+    // 判类族用 dynamic_cast 而不是 toLineString()（后者是不判类型的裸下转）。
+    auto* outLine = dynamic_cast<OGRLineString*>(outFeat->GetGeometryRef());
+    ASSERT_NE(outLine, nullptr) << "输出几何不是 LineString";
+    ASSERT_EQ(outLine->getNumPoints(), 2);
+    EXPECT_NEAR(v0x, outLine->getX(0), 1e-3);
+    EXPECT_NEAR(v0y, outLine->getY(0), 1e-3);
+    EXPECT_NEAR(v1x, outLine->getX(1), 1e-3);
+    EXPECT_NEAR(v1y, outLine->getY(1), 1e-3);
+    OGRFeature::DestroyFeature(outFeat);
+
+    // 两点线且 x、y 都单调增 ⇒ 包框四边一一对应那两枚顶点的 x/y（四边各有独立期望，
+    // 不是"只比对称函数"那种对 x↔y 反射不变的写法 ⇒ 坐标写反当场红）。
     OGREnvelope extent;
     ASSERT_EQ(outLayer->GetExtent(&extent, TRUE), OGRERR_NONE);
-    EXPECT_GT(std::abs(extent.MaxX), 1000.0);
-    EXPECT_GT(std::abs(extent.MaxY), 1000.0);
+    EXPECT_NEAR(v0x, extent.MinX, 1e-3);
+    EXPECT_NEAR(v1x, extent.MaxX, 1e-3);
+    EXPECT_NEAR(v0y, extent.MinY, 1e-3);
+    EXPECT_NEAR(v1y, extent.MaxY, 1e-3);
 
     GDALClose(outDs);
 }
@@ -3426,6 +3473,51 @@ TEST_F(PluginTest, ProjectionInfoExecution) {
     EXPECT_EQ(result.metadata.at("width"), "20");
     EXPECT_EQ(result.metadata.at("height"), "10");
     EXPECT_EQ(result.metadata.at("bands"), "1");
+
+    // D1-P 值级判据。先读 doInfo 发哪些键：metadata 只有 `width/height/bands/wkt` 四枚，
+    // **不发** pixel_size / extent 这类键 ⇒ "像元尺寸 + 包框四边"只能换判据形态：
+    // 从 doInfo 自己发的 message 文本里取 Origin / Pixel Size 的数，再由 GT 推包框四边。
+    // 期望全部来自夹具源码的 adfGT（createTestRaster 手写 {116.0, 0.001, 0.0, 40.0, 0.0, -0.001}），
+    // 不从产物回填：
+    //   x_min = 116.000        x_max = 116.0 + 20 * 0.001  = 116.020
+    //   y_max = 40.000         y_min = 40.0 + 10 * (-0.001) = 39.990
+    // 文本是 ostringstream 默认精度（6 位有效）⇒ "116"/"40"/"0.001"/"-0.001" 都是精确可解析的写法。
+    auto grabPairFromMessage = [&result](const char* label, double& first, double& second) -> bool {
+        const std::size_t labelPos = result.message.find(label);
+        if (labelPos == std::string::npos) return false;
+        const std::size_t openPos = result.message.find('(', labelPos);
+        if (openPos == std::string::npos) return false;
+        const std::size_t commaPos = result.message.find(',', openPos);
+        if (commaPos == std::string::npos) return false;
+        first = std::stod(result.message.substr(openPos + 1));
+        second = std::stod(result.message.substr(commaPos + 1));
+        return true;
+    };
+
+    double originX = 0.0, originY = 0.0, pixelSizeX = 0.0, pixelSizeY = 0.0;
+    ASSERT_TRUE(grabPairFromMessage("Origin:", originX, originY)) << result.message;
+    ASSERT_TRUE(grabPairFromMessage("Pixel Size:", pixelSizeX, pixelSizeY)) << result.message;
+    EXPECT_NEAR(0.001, pixelSizeX, 1e-12);          // 像元尺寸（东向为正）
+    EXPECT_NEAR(-0.001, pixelSizeY, 1e-12);         // 像元尺寸（北向为负：y 随行号递减）
+    EXPECT_NEAR(116.000, originX, 1e-9);            // 包框左上角 x
+    EXPECT_NEAR(40.000, originY, 1e-9);             // 包框左上角 y
+    // 包框四边（右边/下边由已判读的 GT + 已判读的行列数推出，四条都是独立手算值）
+    EXPECT_NEAR(116.000, originX, 1e-9);
+    EXPECT_NEAR(116.000 + 20 * 0.001, originX + 20 * pixelSizeX, 1e-9);
+    EXPECT_NEAR(40.000, originY, 1e-9);
+    EXPECT_NEAR(40.000 - 10 * 0.001, originY + 10 * pixelSizeY, 1e-9);
+
+    // info 发的第四枚键是 `wkt`：夹具在上一步把 CRS 盖成 EPSG:4326 ⇒ 读回的权威码必须恰为 4326
+    // （比 WKT 子串不结实：任何含 "4326" 的文本都过）。
+    {
+        OGRSpatialReference srs;
+        std::string wktCopy = result.metadata.at("wkt");
+        char* wktCStr = const_cast<char*>(wktCopy.c_str());
+        ASSERT_EQ(srs.importFromWkt(&wktCStr), OGRERR_NONE);
+        const char* authCode = srs.GetAuthorityCode(nullptr);
+        ASSERT_NE(authCode, nullptr) << "info 回读的 WKT 没有 EPSG 权威码";
+        EXPECT_EQ(std::string(authCode), "4326");
+    }
 }
 
 TEST_F(PluginTest, ProjectionTransformExecution) {
@@ -3439,12 +3531,57 @@ TEST_F(PluginTest, ProjectionTransformExecution) {
     params["x"] = 116.0;
     params["y"] = 40.0;
 
+    // 档 1：正向 4326 -> 3857，输入 (116, 40)。
+    // 原来的两条 `EXPECT_GT(std::abs(std::stod(dst)), 1000.0)` 属**不承重判据**（恒真倾向）：
+    // 3857 的任何输出都 >1000，x/y 写反、常数口径用错、甚至源目标互换后剩下的那个投影值也 >1000
+    // ⇒ 按判据强度替换为独立推算的墨卡托值，而不是留着当判据。
     const auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << result.message;
     ASSERT_TRUE(result.metadata.count("dst_x"));
     ASSERT_TRUE(result.metadata.count("dst_y"));
-    EXPECT_GT(std::abs(std::stod(result.metadata.at("dst_x"))), 1000.0);
-    EXPECT_GT(std::abs(std::stod(result.metadata.at("dst_y"))), 1000.0);
+
+    double mercX = 0.0, mercY = 0.0;
+    expectedWebMercatorXY(116.0, 40.0, mercX, mercY);   // 算式见该函数的注释
+    EXPECT_NEAR(mercX, std::stod(result.metadata.at("dst_x")), 1e-3);
+    EXPECT_NEAR(mercY, std::stod(result.metadata.at("dst_y")), 1e-3);
+    // 源坐标必须原样回读（源/目标 SRS 互换的臂当场红在这里 + 上面两条）。
+    EXPECT_NEAR(116.0, std::stod(result.metadata.at("src_x")), 1e-9);
+    EXPECT_NEAR(40.0, std::stod(result.metadata.at("src_y")), 1e-9);
+
+    // 档 2：原点 (0, 0)。这一档**不许**写成 `EXPECT_DOUBLE_EQ(..., 0.0)`：
+    // 墨卡托公式本身在原点的 y 有 1e-10 量级的浮点尾差（ln(tan(π/4)) 在 IEEE double 里
+    // 不是精确 0，按 `ln(tan(π/4+φ/2))*R/π` 与 `a*ln(tan(π/4+φ/2))` 两种写法分别得
+    // -7.08e-10 与 -3.54e-10，尾差量级随写法而变 ⇒ 尾差的**具体值**不是可钉的期望），
+    // 而本插件的 metadata 走 std::to_string（6 位小数栅格化）、message 走 setprecision(10)，
+    // 现读产物两路都印成 0 ⇒ 只能断"接近 0 且量级安全"，容差取 1e-6。
+    // 诚实声明这一档的承重面很窄：原点是 4326↔3857 的**不动点**，
+    // 所以它结构上抓不到轴序丢失与源/目标互换（那两条由档 1 与档 3 承担），
+    // 它抓的是"原点处出 NaN/Inf/异常偏移或整条公式换族"这类缺陷。
+    std::map<std::string, gis::framework::ParamValue> originParams;
+    originParams["action"] = std::string("transform");
+    originParams["src_srs"] = std::string("EPSG:4326");
+    originParams["dst_srs"] = std::string("EPSG:3857");
+    originParams["x"] = 0.0;
+    originParams["y"] = 0.0;
+    const auto originResult = p->execute(originParams, progress_);
+    ASSERT_TRUE(originResult.success) << originResult.message;
+    EXPECT_NEAR(0.0, std::stod(originResult.metadata.at("dst_x")), 1e-6);
+    EXPECT_NEAR(0.0, std::stod(originResult.metadata.at("dst_y")), 1e-6);
+
+    // 档 3：反向 3857 -> 4326 的往返（拿档 1 的输出喂回去）。
+    // 这条证明插件不是硬编码单方向：只做正向的实现会在这里把墨卡托值原样吐出（差 7 个量级），
+    // 丢掉 OAMS_TRADITIONAL_GIS_ORDER 的实现会把 (lon, lat) 当 (lat, lon) ⇒ 这里回不来 116/40。
+    // 容差 1e-6 度（≈0.11 m）：正档 metadata 的 6 位小数栅格化本身只贡献 <5e-12 度的输入误差。
+    std::map<std::string, gis::framework::ParamValue> backParams;
+    backParams["action"] = std::string("transform");
+    backParams["src_srs"] = std::string("EPSG:3857");
+    backParams["dst_srs"] = std::string("EPSG:4326");
+    backParams["x"] = std::stod(result.metadata.at("dst_x"));
+    backParams["y"] = std::stod(result.metadata.at("dst_y"));
+    const auto roundTrip = p->execute(backParams, progress_);
+    ASSERT_TRUE(roundTrip.success) << roundTrip.message;
+    EXPECT_NEAR(116.0, std::stod(roundTrip.metadata.at("dst_x")), 1e-6);
+    EXPECT_NEAR(40.0, std::stod(roundTrip.metadata.at("dst_y")), 1e-6);
 }
 
 TEST_F(PluginTest, ProjectionTransformParamsDoNotRequireInput) {
@@ -3469,6 +3606,24 @@ TEST_F(PluginTest, ProjectionAssignSrsExecution) {
 
     const std::string input = createTestRaster("projection_assign_input.tif", 16, 16);
 
+    // D1-P 赋前基线。夹具 = createTestRaster(name, 16, 16)：
+    //   adfGT = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001}
+    //   像元值 data[i] = float(i % 256)，i = y*width + x，width = 16 ⇒ 值(x,y) = 16y + x
+    //   （16*16 = 256 个像元，i 最大 255 ⇒ 取模不换圈，每个像元的期望值都是独立手算）
+    // assign_srs 的契约是**只盖 CRS、不重采样** ⇒ "像元值与地理变换一字未动"是手算可推的强期望。
+    const double expectedFirst = 16 * 0 + 0;    // (0,0) -> 0
+    const double expectedCenter = 16 * 5 + 3;   // (3,5) -> 83
+    const double expectedCorner = 16 * 15 + 15; // (15,15) -> 255
+    const float beforeFirst = readRasterPixel(input, 0, 0);
+    const float beforeCenter = readRasterPixel(input, 3, 5);
+    const float beforeCorner = readRasterPixel(input, 15, 15);
+    double gtBefore[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    {
+        auto dsBefore = gis::core::openRaster(input, true);
+        ASSERT_NE(dsBefore, nullptr);
+        ASSERT_EQ(dsBefore->GetGeoTransform(gtBefore), CE_None);
+    }
+
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("assign_srs");
     params["input"] = input;
@@ -3479,7 +3634,47 @@ TEST_F(PluginTest, ProjectionAssignSrsExecution) {
 
     auto ds = gis::core::openRaster(input, true);
     ASSERT_NE(ds, nullptr);
-    EXPECT_FALSE(gis::core::getSRSWKT(ds.get()).empty());
+
+    // ① 读回的权威码**恰为 3857**（走 GetAuthorityCode）。
+    //    替换掉原来的 `EXPECT_FALSE(getSRSWKT(ds.get()).empty())`：那是"非空"级判据，
+    //    任何 CRS 都能过、连 4326/32613 都分不出来 ⇒ 不属数值判据。
+    const std::string assignedWkt = gis::core::getSRSWKT(ds.get());
+    ASSERT_FALSE(assignedWkt.empty());
+    {
+        OGRSpatialReference stamped;
+        std::string wktCopy = assignedWkt;
+        char* wktCStr = const_cast<char*>(wktCopy.c_str());
+        ASSERT_EQ(stamped.importFromWkt(&wktCStr), OGRERR_NONE);
+        const char* authCode = stamped.GetAuthorityCode(nullptr);
+        ASSERT_NE(authCode, nullptr) << "assign_srs 盖完之后读回的 WKT 没有 EPSG 权威码";
+        EXPECT_EQ(std::string(authCode), "3857");
+    }
+
+    // ② 地理变换一字未动（重采样/重投影会把原点推到墨卡托量级、像元尺寸换成 0.001*a 之类）
+    double gtAfter[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    ASSERT_EQ(ds->GetGeoTransform(gtAfter), CE_None);
+    EXPECT_NEAR(116.0, gtAfter[0], 1e-9);      // 手算：Origin X
+    EXPECT_NEAR(0.001, gtAfter[1], 1e-12);     // 手算：像元尺寸 X
+    EXPECT_NEAR(0.0, gtAfter[2], 1e-12);       // 手算：旋转项
+    EXPECT_NEAR(40.0, gtAfter[3], 1e-9);       // 手算：Origin Y
+    EXPECT_NEAR(0.0, gtAfter[4], 1e-12);       // 手算：旋转项
+    EXPECT_NEAR(-0.001, gtAfter[5], 1e-12);    // 手算：像元尺寸 Y（负号是 y 递减方向）
+    // 与赋前逐支对撞（"盖章前后同一个数"这一半由赋前基线承担，上面那半由手算承担）
+    EXPECT_NEAR(gtBefore[0], gtAfter[0], 1e-12);
+    EXPECT_NEAR(gtBefore[1], gtAfter[1], 1e-12);
+    EXPECT_NEAR(gtBefore[3], gtAfter[3], 1e-12);
+    EXPECT_NEAR(gtBefore[5], gtAfter[5], 1e-12);
+    EXPECT_EQ(ds->GetRasterXSize(), 16);       // 行列数/波段数也不会被重采样改动
+    EXPECT_EQ(ds->GetRasterYSize(), 16);
+    EXPECT_EQ(ds->GetRasterCount(), 1);
+
+    // ③ 像元值一字未动，且等于手算的 16y+x（把"接成 reproject"的变异臂当场判红的那条）
+    EXPECT_FLOAT_EQ(expectedFirst, readRasterPixel(input, 0, 0));
+    EXPECT_FLOAT_EQ(expectedCenter, readRasterPixel(input, 3, 5));
+    EXPECT_FLOAT_EQ(expectedCorner, readRasterPixel(input, 15, 15));
+    EXPECT_FLOAT_EQ(beforeFirst, readRasterPixel(input, 0, 0));
+    EXPECT_FLOAT_EQ(beforeCenter, readRasterPixel(input, 3, 5));
+    EXPECT_FLOAT_EQ(beforeCorner, readRasterPixel(input, 15, 15));
 }
 
 // C3c-A（info 的 A 半边）：整串相等 + 手算 extent 数值。
