@@ -503,12 +503,17 @@ static float readRasterPixel(const std::string& path, int bandIndex, int x, int 
 // EPSG:3857 是**球面** Mercator，球半径 a = 6378137 m（EPSG 定义里就把 WGS84 长半轴当球半径用）：
 //   x = lon_deg * (π/180) * a
 //   y = a * ln(tan(π/4 + lat_rad/2))，lat_rad = lat_deg * π/180
-// 常数口径（本文件的容差就是按这个差值定的）：EPSG 文档里的 ±20037508.34 是 a*π = 20037508.342789244
-// 的**四舍五入**值，用 `lon * 20037508.34 / 180` 反算会带入系统偏差 dx = -1.798e-3 m、dy = -6.77e-4 m
-// （(116,40) 那档：a 口径 12913060.932019735，四舍五入口径 12913060.930222223）。
-// 因此所有墨卡托断言取 1e-3 m：它比实测的"产物 vs a 口径公式"残差（顶点级 1.9e-9 m、
-// metadata 级 <5e-7 m，后者是 std::to_string 的 6 位小数栅格化）大六个量级以上，
-// 又**小于**上面那两个口径之差 ⇒ 连"插件用的是哪个常数"一并钉住。
+// 常数口径：EPSG 文档里的 ±20037508.34 是 a*π = 20037508.342789244 的**四舍五入**值（`rounded/π = 6378136.99911216`，
+// 比 a 少 8.87e-6 m），用 `lon * 20037508.34 / 180` 反算会带入系统偏差。⚠ **这类"容差夹在实现残差与候选口径之差
+// 之间"的论证必须逐支、逐数据点核**（批次 D D1-P 修复轮 1 由改期望常数的反事实臂纠正；下面两个 Δ 用本注释
+// 给的常数即可在任意语言里复算，不必翻外部记录）：
+//   (116, 40) 那档 Δx = 1.7975e-3 m（对产物 metadata 的 6 位小数印法是 1.7978e-3 m）、Δy = 6.7734e-4 m，比值 0.377；
+//   ⇒ 正向档那两支同取 1e-3 m，只有 **dst_x 支**夹得住（错口径必红），**dst_y 支夹不住**（同一错口径下保持绿），
+//     "插件用的是哪个常数"这件事只由 x 一支在钉；y 走 `a·ln(tan(π/4+φ/2))` 那条非线性式，Δy 还随纬度涨（40°→6.8e-4、
+//     60°→1.2e-3、80°→2.2e-3 m），Δx 则随经度线性缩放（1.55e-5 m/°，"约 1.8e-3 m"只对 116° 成立）；
+//   ⇒ 原点档取 1e-6 m、往返档取 1e-6 度，而两口径之差换算成度只有 1.6e-8（经向）/6.1e-9（纬向），那两档连 x 侧也不钉。
+// 1e-3 的另一半理由 x/y 两支都成立：它比 Step3 记的"产物 vs a 口径公式"残差（顶点级 1.9e-9 m、
+// metadata 级 <5e-7 m，后者是 std::to_string 的 6 位小数栅格化）大三个到六个量级。
 static void expectedWebMercatorXY(double lonDeg, double latDeg, double& x, double& y) {
     constexpr double kSphereRadius = 6378137.0;
     constexpr double kPi = 3.14159265358979323846;
@@ -3563,6 +3568,7 @@ TEST_F(PluginTest, ProjectionTransformExecution) {
     // 诚实声明这一档的承重面很窄：原点是 4326↔3857 的**不动点**，
     // 所以它结构上抓不到轴序丢失与源/目标互换（那两条由档 1 与档 3 承担），
     // 它抓的是"原点处出 NaN/Inf/异常偏移或整条公式换族"这类缺陷。
+    // 同理它也**不判常数口径**：原点处两套常数的差只有 5.55e-17 × (a − rounded/π) ≈ 5e-22 m ⇒ 无可夹之物。
     std::map<std::string, gis::framework::ParamValue> originParams;
     originParams["action"] = std::string("transform");
     originParams["src_srs"] = std::string("EPSG:4326");
@@ -3578,6 +3584,8 @@ TEST_F(PluginTest, ProjectionTransformExecution) {
     // 这条证明插件不是硬编码单方向：只做正向的实现会在这里把墨卡托值原样吐出（差 7 个量级），
     // 丢掉 OAMS_TRADITIONAL_GIS_ORDER 的实现会把 (lon, lat) 当 (lat, lon) ⇒ 这里回不来 116/40。
     // 容差 1e-6 度（≈0.11 m）：正档 metadata 的 6 位小数栅格化本身只贡献 <5e-12 度的输入误差。
+    // 本档**不判常数口径**（修复轮 1 按逐支口径补这一句）：两套常数之差换算成度只有 1.6e-8（经向）/6.1e-9（纬向），
+    // 远小于 1e-6 度 ⇒ 夹不住；"插件用的是哪个常数"只由档 1 的 dst_x 一支钉着（档 1 的 dst_y 支夹不住，见算子注释）。
     std::map<std::string, gis::framework::ParamValue> backParams;
     backParams["action"] = std::string("transform");
     backParams["src_srs"] = std::string("EPSG:3857");
