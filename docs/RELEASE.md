@@ -2401,6 +2401,109 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
 - **本把没做的事**：`src/` 除 Step3 取证外零改动（当场还原）；未动 `resample`/`add_alpha` 缺省（B19）；
   未修 D1-C1 那两条已知文案不一致（B16 `resample` 面板默认、`--bands` 描述串）；未跑全量 ctest。
 
+### 批次 D 覆盖晋升 R1（2026-10-29，`raster_inspect` 的 `histogram`·`info` 两条 PENDING→GOLD）
+
+射程**两行**：`tests/action_gold_cases.txt` 的 `raster_inspect,histogram` 与 `raster_inspect,info`。
+**本把不新建腿 case**（两条都已有腿），做的是**判据升级**：`histogram` 从"只数数组长度 + 总数非零"提到逐桶值级；
+`info` 从"在名单里但被豁免、根本没判据分支"补成值级分支并同笔删豁免。
+`raster_manage` 的 `cog`/`zonal_stats`、`raster_render` 的 `histogram_match`/`colormap`、`raster_manage,overviews`
+都归 R2/R3，本把一条未动；既有 GOLD `nodata`/`proximity` 未动。
+
+- **归属现读**（`grep -n '"raster_inspect"' tests/test_plugins.cpp` = **6 处**，逐处回到所在 `TEST_F`）：
+  `RasterInspectInfoExecution`、`RasterInspectHistogramExecution`、`RasterInspectHistogramAcceptsConstantRaster`、
+  `RasterInspectInfoAcceptsConstantRaster`、`RasterInspectHistogramRejectsAllNoDataBand`、
+  `RasterInspectInfoDistinguishesAllNoDataBand` ⇒ **六块剥注释后都没有 `EXPECT_NEAR`/`EXPECT_FLOAT_EQ`/
+  `EXPECT_DOUBLE_EQ`**（N133 那四块判的是 metadata 十进制字符串相等与 `message.find` 子串）⇒
+  两行今天确实不承重，本把就是给它们写真判据。`info` 这个动作名四个插件都在用，
+  所以只认"块体内同时出现 `"raster_inspect"` 与动作槽"的块（上表第 1/4/6 行），
+  没拿全仓 `["action"] = std::string("info")` 的命中数当覆盖数。
+- **落账凭据**（逐笔提交、不 amend）：Step1 单测 `3afcdf4`、Step2 腿侧 `5fbd8e6`、Step4 登记+上限 `34dc895`、
+  Step5 文档与本节 = 下一笔。证据用例 = `PluginTest.RasterInspectHistogramExecution` /
+  `PluginTest.RasterInspectInfoExecution`；腿 case = `run_real_raster_regression.ps1` 的
+  `raster_inspect_histogram` / `raster_inspect_info`。
+- **计数现读对撞**（改前/改后都重跑登记表头部那批命令本身）：`data_rows 126→126`、`gold_rows 101→103`、
+  `pending_rows 25→23`、`gold_rows_all_lines 102→104`、`gold_rows_table_driven 15→15`、
+  `gold_rows_literal_slot 86→88`，`kPendingCeiling 25→23`（与表同笔）；
+  `ctest -R '^(CoverageMeta|CoverageMetaJudge)'` = **19/19 Passed**（含 `GoldEvidenceIsAuditable` 回库核这两块）。
+- **注册数**（只认 `Total Tests:`）：定向配方改前 **43** ⇒ 改后 **43**——本把**没新增 `TEST_F`**，
+  两条都是在既有块里加断言（配方 = CoverageMeta 4 + CoverageMetaJudge 15 + 脚本守卫 4 + `PluginTest.Raster*` 19 + 腿 1）。
+- **腿侧闸前后对撞**（本把唯一会变的地方，与任务书"三个数应当不变"的预期不同，现读为证）：
+  `registered 70→70`、`ran 70→70`（不新增 case ✓）、**`judged 46→47`**、**`allowlisted 24→23`**、
+  `allowlist-table 24→23`、`branch-labels 47→48`、`dead-branches 0→0`、`conditional-registrations 1→1` ⇒
+  不变量 `judged + allowlisted == ran` 成立（47+23=70）。
+  原因：`raster_inspect_info` 改前在 `$rasterGateAllowlist` 里被豁免（理由原文是"action is PENDING …
+  so no numeric expectation exists anywhere yet"），晋升它就必须同笔删豁免，否则闸按 stale-entry 判红。
+- **腿计时**：改前本席现跑 `real_data_raster` **13.98 s / 13.14 s**，改后 **13.87 s**（Step5 后复跑再取一读，见配方节）；
+  本把用自己的改前/改后对撞（本会话同一条腿的跨席散布本来就 12.7~16.6，不拿两个数互相归因），
+  `TIMEOUT 60` ⇒ 余量 4.3×，未跌破 2.5× 触发线 ⇒ **未抬 TIMEOUT、未减断言、未拆腿**。
+  新增成本 = 1 次 CLI 调用 + 9 次数值解析，逐用例现读 `raster_inspect_histogram 0.07s` / `raster_inspect_info 0.07s`。
+
+- **判的是哪两个量**（期望全部从夹具源码字面量手推，**没有一条从产物回填**）：
+  - **推得**（单测侧，夹具 `createTestRaster(…, 32, 32)`：行主序 `data[i] = i % 256` ⇒ 1024 个像元 = **4 轮完整的 0..255**）：
+    `min 0`、`max 255`；`Mean = 4×32640/1024 = 127.5`；
+    `E[x²] = 4×(255·256·511/6)/1024 = 22238720/1024 = 21717.5`；`Var = 21717.5 − 127.5² = 5461.25`；
+    `StdDev = √5461.25 = 73.900270636`；`Extent` = `(116, 39.968) - (116.032, 40)`；
+    桶宽 `255/16 = 15.9375` ⇒ 第 i 桶收整数 `16i … 16i+15` = 16 个不同值 × 4 次 = **每桶 64**。
+  - **推得**（腿侧，夹具 `makeAnalysisRaster` 32×32×3，band1 `x+y`、band2 `2x−y`、band3 `(x·y) mod 17`）：
+    band1 `min 0 / max 62 / mean 31744/1024 = 31 / Var = 1131.5 − 961 = 170.5 / StdDev = √170.5 = 13.05756486`；
+    band2 `min −31 / mean 15.5 / Var = 4×85.25 + 85.25 = 426.25 / StdDev = √426.25 = 20.64582283`；
+    band3 `max 16`；16 个桶 = `[10,26,42,58,74,90,106,90,122,106,90,74,58,42,26,10]`（值 `k` 出现 `min(k+1, 63−k)` 次、
+    桶宽 `3.875` 是 k/8 型 dyadic ⇒ 边界精确、`max` 被夹进末桶），16 个桶心 = `3.875i + 1.9375`。
+  - **实跑**：Debug 树两枚单测首跑即绿（15 + 18 枚断言逐枚相符，无一条需要改期望去就产物）；
+    腿改前绿、改后绿；A4 臂把腿的期望原样打进错误消息 ⇒ 实到 `13.0575648572006`，
+    与 `analysis_input.tif.aux.xml` 里 GDAL 自己缓存的 `STATISTICS_STDDEV=13.057564857201` 同值
+    （"总体不是样本"这一档由此取得第二处独立对撞）。
+  - **容差夹心是逐支算的**：13 枚 `info` 数值判据里 11 枚的真值十进制展开 ≤6 位有效 ⇒ **舍入误差 0**（容差只吸收 double 尾）；
+    只有两支 StdDev 需要真夹心 —— 量级 `[10,100)` ⇒ 步长 `1e-4` ⇒ 最坏舍入 `5e-5` ⇒ 容差 `2e-4` = **4×**（不是三个数量级），
+    上半边最近错答（样本标准差）分别是 `6.35e-3`（**31.8×**）与 `1.01e-2`（**50.4×**）；
+    单测那支 StdDev 同为 `4×` 下 / `180×` 上。逐支逐数据点的表在 `task-r1-report.md` 的 Step 3b 节。
+
+- **变异臂清单**（`src/plugins/raster_inspect/raster_inspect_plugin.cpp` 只在取证时改、当场从字节快照还原；
+  **没用 `git checkout --`**；八臂每臂尾行都自证 `RESTORED sha256 match: True` 且
+  `git hash-object --path` 与 `git rev-parse HEAD:` 同为 `0d5bebd4541f…`；臂后另做一次还原重建刷掉变异 DLL）：
+
+  | 臂 | 改动（函数名 + 判据原文） | 红在哪一档、什么形态 |
+  | --- | --- | --- |
+  | A1 | `doHistogram` 请求直方图的 `TRUE, FALSE`（IncludeOutOfRange）→ `FALSE, FALSE` | 单测 `RasterInspectHistogramExecution` ***Failed***（Info 那条仍 Passed）；腿 **`histogram bin 15 count mismatch (actual=9 expected=10)`** —— 末桶丢的就是值 62 那 1 个像元，与落笔前的预测同值 |
+  | A2 | `doHistogram` 桶心 `minVal + (i + 0.5) * binWidth` → 丢 `+ 0.5` | 腿 **`histogram bin 0 center mismatch (actual=0 expected=1.9375)`**；**单测档绿**（该侧刻意不钉 `center`，理由见下"判不出来的面"） |
+  | A3 | `doRasterInfo` 的 `oss << "  Min:    " << bMin` → `<< bMax` | 单测 `RasterInspectInfoExecution` ***Failed***；腿 **`band 1 (x + y) minimum mismatch (band=1 actual=62 expected=0)`** |
+  | A4 | `oss << "  StdDev: " << bStd` → `<< bMean` | 单测 ***Failed***；腿 **`band 1 stddev … (band=1 actual=31 expected=13.0575648572006 tolerance=0.0002)`** |
+  | A5 | `Origin: (" << adfGT[0] << ", " << adfGT[3]` 两支互换 | 单测 ***Failed***（116 ≠ 40 判得出轴序）；**腿档绿**（腿今天不判 Origin ⇒ 这一行只有单测承重） |
+  | A6 | 波段循环 `for (int b = 1; b <= bands; ++b)` → `b < bands` | 单测 ***Failed***（单波段夹具里没有 `Min:` 行 ⇒ "读不到"没被当成 0）；腿红在**第一个读 info 文本的用例** `spindex_ndvi mean mismatch` ⇒ 本把的 band-3 格没轮到，其可红性由 CF4 另证 |
+  | A7 | `maxX = adfGT[0] + width * adfGT[1]` → `(width + 1) *` | 单测 ***Failed***（`116.033` vs `116.032` = 容差 `1e-9` 的 `1e6` 倍）；腿档绿（不判 Extent） |
+  | A8 | `Size:   " << width << " x " << height` 两支互换 | **等价变异（如实登记）**：单测两条**全绿** —— 两侧夹具都是 32×32 方的 ⇒ 本把 Size 那两格对"轴写反"天生不承重；腿红在**别的**用例（`projection_reproject raster size mismatch`，那台产物是非方的）⇒ 不许写成"轴写反全仓没人管"，也不许写成本把判得到 |
+
+- **反事实臂（改期望常数 ⇒ 证明分支真在比，"分支会红"≠"期望正确"）**：
+  CF1 桶 8 的 `122→121` ⇒ 红 `actual=122 expected=121`；CF2 桶 0 心 `1.9375→1.9` ⇒ 红 `actual=1.9375`；
+  CF3 band1 `Mean 31→30` ⇒ 红 `band=1 actual=31 expected=30`；CF4 band3 `Max 16→15` ⇒ 红 `band=3 actual=16`
+  （同时证明 `Get-InfoBandStatValue` 的 `Band N:` 块头锚真在第三个块里取到数）；CF5 `ExpectedBands 3→2` ⇒ 红 `bands actual=3`。
+  五臂的 `actual=` 都等于手推值 ⇒ 判据在比数、且比的就是那一格。
+- **装饰形态的处置**（点名 + 能不能红）：腿改前那句 `total -gt 0` 是**开口下界**（任何非零都过）⇒ 换成 `-eq 1024`；
+  但 `total` 在产品码里就是这 16 个桶的求和 ⇒ **本行被 16 行算术蕴含、不计独立判据**（代码注释与报告同写），
+  单测侧则**根本没写** `total`、也没写 `bin` 索引（那字段就是循环变量 = 恒真）；
+  为避免"同期望 + 同容差"的重复形状，**主动删掉** `band2 Max = 62`（与 `band1 Max` 同值）与 `band3 Min = 0`（与 `band1 Min` 同型），
+  换成唯一值的 `band2 Min = -31`、`band3 Max = 16`、`band2 Mean = 15.5`。
+- **文档按实到写准**（`docs/算法说明/栅格工具/`，两篇的归属**由现读正文判定、不按文件名猜**：
+  `直方图.md` 的参数表是 `输入/输出/波段号/柱数` 四枚 = `doHistogram` 的四个读点，
+  `栅格信息.md` 只有 `输入文件` 一枚且写明"不生成输出文件" = `doRasterInfo` 唯一的读点 ⇒ 归属确定）。
+  `直方图.md` 补了左闭右开桶区间与"`max` 计入末箱"、三处印法不可互相换算（`center` 定点 4 位、
+  小数位超 4 时进位与舍去交替 ⇒ 别拿 `center` 反推桶宽）、元数据只发 4 枚键、`total` 就是桶和；
+  `栅格信息.md` 补了**本动作不发任何元数据键**、子串判据会被长数字前缀吃、缺省 6 位有效 ⇒ 步长随量级变、
+  `StdDev` 是总体标准差、`Extent` 在方图像上判不出轴写反、`Overviews:` 只读第 1 波段。
+- ⚠ **Release 侧未验收**：本把全部读数来自 Debug 树；Release 树未重编 ⇒ 这两条 GOLD 的 Release 凭据归 D4 收口门。
+- **缺口（照实登记）**：①`info` 不发 metadata ⇒ 判据全在文本解析上，`CRS`/`Color`/`Driver`/`Rotation`(两支都 0)/
+  `Scale`/`Offset` 今天仍无任何数值判据；②`Extent` 的 `width↔height` 与 Size 的宽高两格在**方夹具**下等价（A8 实测），
+  要判得到得换非方夹具；③单测侧不钉 `center`（该夹具桶心卡在 `fixed(4)` 的舍入中线上，写不出可手推期望）；
+  ④A6 在腿档被 `spindex_ndvi` 抢先判红 ⇒ 本把 band-3 格没有"产品变异臂"、只有改期望臂（CF4）；
+  ⑤PAM 边车 `analysis_input.tif.aux.xml` 会缓存统计（命中时 `ComputeStatistics` 不回读像元）⇒ 本把两分支先删边车，
+  但**别的分支没删**，那条口径归腿侧统一处理；⑥矩阵 `fixture` 列口径两种写法并存（`data` vs `not-consumed`），
+  本机根本没有 `data/raster` ⇒ 归 D3 矩阵对账，本把未改；⑦`doHistogram`/`doRasterInfo` 都未判 `openRaster` 返回值
+  （现读事实，射程外未动、未立案）。
+- **本把没做的事**：`src/` 除 Step3 取证外零改动（当场还原、`git status` 空）；未新建腿 case；
+  未动 `raster_manage,overviews`/`raster_render,colormap`（R2）与 `cog`/`zonal_stats`/`histogram_match`（R3）；
+  未动既有 GOLD `nodata`/`proximity`；未跑全量 ctest；未动 Release 树；受保护的 terrain blob 复核仍为
+  `588a42504ee19bcb551f8214e5c1adb68cea20e9`。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
