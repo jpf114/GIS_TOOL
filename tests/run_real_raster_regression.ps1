@@ -359,8 +359,14 @@ function Validate-CaseOutputs {
             #   swap dzdx <-> dzdy kernels        30.757777   (was 0.0000 at az=315)
             #   zen = altitude instead of 90-alt  52.306318   (was 0.0000 at alt=45)
             #   drop -az (GDAL default azimuth)   22.078407
-            #   drop -alt (GDAL default altitude)  9.981752
+            #   drop -alt (GDAL default = 45)     23.863422  (controller 2026-10-28 measured the same
+            #     direction with raster_inspect: Mean 174.865 at alt=35 -> 151.12 at alt=45, and
+            #     omitting --altitude gives 151.12 exactly, which is what pins 45 as the default)
+            #   altitude 35 -> 30                  9.981752  (Mean 184.837; this was the number the
+            #     previous line mislabelled as "drop -alt", which is why the arm looked unmeasurable)
             #   aspect written as 360-aspect     181.0442     cos(az-aspect) replaced by 1: 34.3464
+            #     (both are reference-model numbers computed WITHOUT the 0..255 clamp the product
+            #     applies; they are kept as sensitivity ordering only, not as product readings)
             #   z_factor 0.5 / 10                  0.043541 / 0.039203  <- NOT catchable on this DEM:
             #     it climbs 1.5/0.8 z-units per 0.0005 ground unit, so every interior slope is ~89.97
             #     deg, atan saturates and scaling both partials leaves the aspect ratio untouched.
