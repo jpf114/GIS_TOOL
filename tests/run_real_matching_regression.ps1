@@ -190,32 +190,84 @@ function Read-JsonPayload {
     return ($raw.Substring($jsonStart) | ConvertFrom-Json)
 }
 
+function Get-TiffDimensions {
+    param([string]$Path)
+
+    # Minimal baseline-TIFF IFD0 reader: tags 256/257 only.
+    # GDAL writes little-endian by default; anything else is a hard error here
+    # so the criterion can never silently vacuate.
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    Assert-Condition -Condition ($bytes.Length -ge 8) -Message ("TIFF too short: " + $Path)
+    Assert-Condition -Condition ($bytes[0] -eq 0x49 -and $bytes[1] -eq 0x49) `
+        -Message ("Get-TiffDimensions expects little-endian II TIFF: " + $Path)
+    $ifdOffset = [BitConverter]::ToInt32($bytes, 4)
+    $entryCount = [BitConverter]::ToUInt16($bytes, $ifdOffset)
+    $width = -1
+    $height = -1
+    for ($i = 0; $i -lt $entryCount; $i++) {
+        $entryStart = $ifdOffset + 2 + ($i * 12)
+        $tag = [BitConverter]::ToUInt16($bytes, $entryStart)
+        if ($tag -eq 256 -or $tag -eq 257) {
+            $value = [BitConverter]::ToInt32($bytes, $entryStart + 8)
+            if ($tag -eq 256) { $width = $value } else { $height = $value }
+        }
+    }
+    Assert-Condition -Condition ($width -gt 0 -and $height -gt 0) `
+        -Message ("TIFF width/height tags 256/257 not found: " + $Path)
+    return [pscustomobject]@{ Width = $width; Height = $height }
+}
+
 function Validate-CaseOutputs {
     param(
         [pscustomobject]$Case,
-        [string]$ResolvedOutputRoot
+        [string]$ResolvedOutputRoot,
+        [string]$ReferencePath
     )
 
     switch ($Case.Name) {
         "matching_detect" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "detect_output.json")
+            # Value-level (library contract): cv::ORB::create(nTopFeatures) never exceeds the cap.
+            # Case asks max_points=20; uncap ORB::create() and this assert goes red (batchD mutation M1).
             Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_detect count should be greater than zero"
+            Assert-Condition -Condition ($payload.count -le 20) -Message ("matching_detect count exceeds max_points cap: " + $payload.count)
             Assert-Condition -Condition ($payload.keypoints.Count -eq $payload.count) -Message "matching_detect keypoint count mismatch"
         }
         "matching_corner" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "corner_output.json")
-            Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_corner count should be greater than zero"
+            # Value-level (cap ladder, D1-M): both branches truncate exactly at max_corners when
+            # candidates are sufficient; case passes max_corners=3 so count must be exactly 3.
+            Assert-Condition -Condition ($payload.count -eq 3) -Message ("matching_corner count should equal max_corners=3, got " + $payload.count)
             Assert-Condition -Condition ($payload.keypoints.Count -eq $payload.count) -Message "matching_corner keypoint count mismatch"
         }
         "matching_match" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "match_output.json")
             Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_match count should be greater than zero"
             Assert-Condition -Condition ($payload.matches.Count -eq $payload.count) -Message "matching_match match count mismatch"
+            # Predicate-side fact behind the ratio-zero criterion: distances are non-negative.
+            # NOTE: the ratio_test=0 value assert cannot live in this leg -- CLI validation
+            # (action_validation.cpp:574) restricts matching ratio_test to (0,1], rc=1 rejects 0.
+            # The zero point is pinned C++-side only (PluginTest.MatchingMatchRatioTestLadderAndZeroPoint).
+            foreach ($m in @($payload.matches)) {
+                Assert-Condition -Condition ($m.distance -ge 0) -Message ("matching_match negative distance in payload: " + $m.distance)
+                Assert-Condition -Condition ($null -ne $m.idx1 -and $null -ne $m.idx2) -Message "matching_match match entry missing idx1/idx2"
+            }
         }
         "matching_detect_sift" {
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "detect_sift_output.json")
             Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_detect_sift count should be greater than zero"
             Assert-Condition -Condition ($payload.keypoints.Count -eq $payload.count) -Message "matching_detect_sift keypoint count mismatch"
+        }
+        "matching_register" {
+            # Criterion branch added by D1-M (case existed, validation did not).
+            # Warp target size is decided by the reference raster (doRegister warps to refMat.size()),
+            # so output dims must equal reference dims for any fixture. No content-count constants.
+            $refDims = Get-TiffDimensions -Path $ReferencePath
+            $outDims = Get-TiffDimensions -Path (Join-Path $ResolvedOutputRoot "register_output.tif")
+            Assert-Condition -Condition ($outDims.Width -eq $refDims.Width) `
+                -Message ("matching_register width " + $outDims.Width + " != reference width " + $refDims.Width)
+            Assert-Condition -Condition ($outDims.Height -eq $refDims.Height) `
+                -Message ("matching_register height " + $outDims.Height + " != reference height " + $refDims.Height)
         }
     }
 }
@@ -300,7 +352,7 @@ $cases += New-Case -Name "matching_detect" -CaseArgs @(
     ("--input=" + $data.Reference),
     ("--output=" + (Join-Path $ResolvedOutputRoot "detect_output.json")),
     "--method=orb",
-    "--max_points=200"
+    "--max_points=20"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "detect_output.json")
 )
@@ -310,7 +362,7 @@ $cases += New-Case -Name "matching_corner" -CaseArgs @(
     ("--input=" + $data.Reference),
     ("--output=" + (Join-Path $ResolvedOutputRoot "corner_output.json")),
     "--corner_method=shi_tomasi",
-    "--max_corners=50"
+    "--max_corners=3"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "corner_output.json")
 )
@@ -391,7 +443,7 @@ if ($Mode -eq "full") {
 $results = @()
 foreach ($case in $cases) {
     $results += Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
-    Validate-CaseOutputs -Case $case -ResolvedOutputRoot $ResolvedOutputRoot
+    Validate-CaseOutputs -Case $case -ResolvedOutputRoot $ResolvedOutputRoot -ReferencePath $data.Reference
 }
 
 Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results
