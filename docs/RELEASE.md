@@ -1990,6 +1990,69 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   "拿不到变换式⇒没有范围保护⇒动作仍成功"）；band_math 整像元块的计数半条无臂可杀（见上 `M5`）；
   这两条都不影响所晋升行的凭据，但别把"该块全绿"读成"该块每个断言都被钉住"。
 
+### 批次 D D1-T3（2026-10-28，腿侧"跑过必须判过"双向闸 + terrain 复审遗留收口）
+
+**这把不晋升任何动作**（`action_gold_cases.txt` 与 `kPendingCeiling` 一字未动，Debug 注册数 `ctest -N` 现读仍是 **797**，
+没有新增 `TEST_F`/`add_test`），它收的是"覆盖"这个概念本身能不能信。
+
+- **闸（R-D33 八条形状）**：新增共享一份 `tests/regression_case_gate.ps1`，三个真实数据 runner
+  （`run_real_raster/matching/vector_regression.ps1`）用 dot-source 引入同一份逻辑，**没有抄三份**。
+  名单**运行时收**：`Register-Case` 挂在每个 runner 自己的 `New-Case` 函数体内部（所以 vector 那层
+  `New-DerivedCase`/`New-CheckCase` 包装发出的动态名天然收得到）；`Mark-Judged` 挂在**判据分支体开头**
+  （raster 44 处、matching 5 处、vector 48 处 + 那条按组标分发的 `union_poly` 支），执行到才记账；
+  另加第四枚钩子 `Note-CaseRun` 挂在派发循环的 `Invoke-Case` 之前，用来把"本档真跑的名单"和"注册的名单"分开判
+  （实测必需：vector 的 `Invoke-Case` 还被 `Invoke-SetupCommand` 复用去跑造件命令，挂在它内部会把
+  `prepare_*` 这些非用例动作当成 case）。
+  闸硬失败四类：跑过未判且不在 allowlist、allowlist 条目已被判（反向必要性）、
+  **判据分支没有任何 case 能走到**（反向死支闸）、注册数或实跑数为 0（归零闸）。
+  死支豁免**不手抄**：分支标签与"某名的注册点是否被 `if ($Mode ...)`/`if ($Group ...)`/构建配置包住"
+  一律用 PowerShell **AST** 从 runner 自己的源码导（条件原文当理由）⇒ 拆掉 Mode 门后该名自动不再豁免。
+  口径声明写进闸的输出与报错文案：**闸判的是本次实到，不是静态全集**。
+- **现读基线（Debug，三腿全绿）**：raster `registered=67 ran=67 judged=43 allowlisted=24 branch-labels=44`；
+  matching `5/5/4 + 3 / 5`；vector `25/25/25 + 0 / 48`，`dead-branches=0` 三腿一致。
+  秒数对撞（TIMEOUT 未抬、断言未减）：`real_data_raster` 11.12 s ⇒ 60/11.12 ≈ **5.4×**；
+  `real_data_matching` 1.86 s ⇒ ≈ **32×**；`real_data_vector_quick` 167.03 s ⇒ 720/167.03 ≈ **4.31×**
+  （三条都在 2.5× 拆腿线之上）。定向族
+  `-R "^(PluginTest\.(Terrain|Matching)[A-Za-z0-9_]*|CoverageMeta.*|CoverageMetaJudge.*|real_data_raster|real_data_matching)$"`
+  现读 **58 条全绿**（30.58 s，含上面两条腿）。
+- ⚠ **上一把记的"vector 8 条有分支无 case"被这把的运行时口径否证**：`hull_polygon` `envelope_polygon`
+  `centroid_polygon` `interior_polygon` `boundary_polygon` `vertices_line` `midpoints_line` `endpoints_line`
+  全部经包装函数 `New-DerivedCase -Name "..."` 无条件注册、quick 档逐条实跑、且各自判据分支被记到账
+  （`judged=25 == ran=25` 含这 8 条）⇒ 它们是"静态抽 `New-Case -Name` 字面量"这个取径的漏看
+  （全文件 `New-Case|New-DerivedCase|New-CheckCase -Name 字面量` 实到 49 名，只数直接调用只到 23 名）。
+  **一条没删、一条没塞 allowlist。**
+- **闸自身能红（副本臂取证，仓库树全程干净）**：① 删掉 `"matching_register"` 整支 ⇒
+  `1 case(s) ran with no judgement branch and no allowlist entry: matching_register`（标签数 5→4）；
+  ② 给已 allowlist 的 `matching_change` 补一条判据分支 ⇒ `allowlist entry(ies) are now judged, so the entry is stale`；
+  ③ vector 里把 `"hull_polygon" {` 写成 `"hull_polygon_typo" {`（注册侧一字未动）⇒ **双向同时咬**：
+  `1 case(s) ran with no judgement branch ...: hull_polygon || 1 judgement branch(es) no case can reach ...: hull_polygon_typo`；
+  ④（附加）把三个钩子删光 ⇒ `0 case(s) registered ... passing on an empty set would make the gate meaningless`；
+  ⑤（附加·改期望值的反事实臂）把 `matching_corner` 的 `-eq 3` 改成 `-eq 4` ⇒ 抛在判据本身
+  （`matching_corner count should equal max_corners=3, got 3`），证明挂 `Mark-Judged` 之后分支仍在真比较。
+- **MUT-ARM-PROFDAMP（terrain profile 曲率丢掉 `(1 + slopeSq)^1.5` 阻尼，专属臂）**：产品码只在取证时被改、当场还原
+  （`git show HEAD:src/plugins/terrain/terrain_plugin.cpp` + 行尾归一，`git hash-object` = 基线 blob）。
+  实跑红态读数：`TerrainProfileCurvatureHandValueOnUnitPlane` 红在
+  DEM-P `(0,7) = -4`（钉子 -2.8621670）、`(15,7) = +4`、`(0,0) = -4`，
+  DEM-N `(13,7) = -3.922762393951416`（钉子 -0.4588107）、`(41,41) = 2.5073926448822021`（钉子 0.2225138）；
+  同一臂下 `TerrainPlanCurvatureHandValueOnUnitPlane` **保持绿**（plan 的分母 `pow(slopeSq,1.5)` 不含阻尼因子）
+  ⇒ 这是第一条"只 profile 红"的臂（旧九臂里 SWAP 臂同时杀 plan 与 profile）。腿侧同臂也红：
+  `real_data_raster` 红在 `terrain_profile_curvature min mismatch (actual=-10.5131 expected=-2.385005 tolerance=0.002)`。
+  与复审席推算值对撞：`(0,7)` 推算 -4.0 = 实跑 -4（一致）；`(13,7)` 推算 -3.92276716、实跑 -3.9227624，
+  **差约 4.8e-6**（float32 量级尾差，以实跑值为准）；`(41,41)` 与 `(15,7)`/`(0,0)` 复审席未给推算值。
+- **文档面（项 1/3/4/7）**：波段运算两处撤掉"造一个除数恰为 `1e-15` 的夹具就能钉等号"的承诺，改登记为
+  **按构造不可达**（波段除数经 `values[b] = bandMats[b].at<float>(y, x)` 升到 double，而 `1e-15` 这个 double
+  不在 float32 网格上 ⇒ 等号对任何波段数据取不到，可达等号只有表达式**字面量**除数那条路）；
+  `平面曲率.md` 把 `slopeSq < 1e-10` 早退分支登记为**今天无判据且结构上判不到**（平地分子恒 0 ⇒
+  有无该分支都是 0，任何"平地期望 0"断言恒真），与 `-b`、ROUGHBORDER、tri `std::clamp` 邻域同档，
+  **本批不造该夹具、也不写占位断言**；curvature 的"ksize 3→1 同时挪两个钉子"更正为"只挪 (13,7) 一枚"；
+  roughness 的钉子数经全仓 `git grep` 复扫确认"12 枚"从未进入任何已提交内容（现读值级钉子 14 枚，未新增数字）。
+- ⚠ **Release 侧未验收**：本把全部改动（闸 + 三 runner + 文档）只在 Debug 取证，Release 树未重编、腿未跑 ⇒ 归 D4 收口门补凭据。
+- 缺口（照实登记）：① vector 的 `Mode=full` 四条档腿与 raster/matching 的 full 档都不在 ctest 里，本轮**没实跑**，
+  只用源码静态对撞证明"full 档不会新增未判/死支"（`注册全名 − 标签 − 条件注册 = ∅` 两侧都成立）⇒ 那是推演不是凭据；
+  ② matching 的 `ecc_register`/`stitch` 在 Debug 压根不注册，本轮只验到"条件豁免"半边，
+  它们在非 Debug 档会进实跑名单、靠两条新增 allowlist 条目兜住（同样未实跑）；
+  ③ 24 条 raster 未判与 3 条 matching 未判是**登记**不是修复，逐条理由见 runner 里的 allowlist 与 `action_gold_cases.txt`。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
