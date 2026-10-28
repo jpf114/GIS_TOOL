@@ -13302,7 +13302,15 @@ TEST_F(PluginTest, TerrainSlopeHandValueOnUnitPlane) {
     //   dzdy = ((26.0+2*26.9+27.8)-(24.0+2*24.5+27.2))/0.008 = (107.6-100.2)/0.008 = 924.9997
     //   （float32 存值尾差进了最后一位），
     //   slope = atan(hypot(1525.0001,924.9997))*180/pi = 89.96788。
-    //   x/y 两个分量都不为零 ⇒ 交换 dzdx/dzdy 的核（或把 dx 用成 dy）一定挪动这个数。
+    //   如实定级（D1-T1x 还 D1-T1 的案文债；旧稿在这里写"x/y 两个分量都不为零 ⇒ 交换 dzdx/dzdy 的核
+    //   （或把 dx 用成 dy）一定挪动这个数"，复审席已证伪，我也独立复算确认）：
+    //     ① atan(hypot(u,v)) 对两分量**对称**，hypot(1525.0001,924.9997)=hypot(924.9997,1525.0001)
+    //        ⇒ 互换核之后这个数逐位不变；
+    //     ② 本夹具像元步长各向同性（createTerrainRaster :309 的 GT 用同一个标量 0.001 填 x/y）
+    //        ⇒ "把 dx 用成 dy"是空操作。
+    //   ⇒ 这两枚双分量钉子判的是"两个分量都非零、不是退化的一元斜面"（把 dzdy 写成常数面那种退化才红），
+    //     判不到上面那一整类变异；那一类里判得到的是**方向角**（同一点 aspect 301.23921 在互换下变
+    //     328.76079），那是 terrain,aspect 行（登记表 :127）的证据，不记在本行上。
     std::map<std::string, gis::framework::ParamValue> noiseParams = params;
     noiseParams["input"] = noise;
     noiseParams["output"] = outNoise;
@@ -13354,6 +13362,11 @@ TEST_F(PluginTest, TerrainAspectHandValueOnUnitPlane) {
 
     // DEM-N (13,7)：dzdx=1525.0001、dzdy=924.9997 ⇒ atan2(924.9997,-1525.0001)=148.76079°
     //   ⇒ aspect = 90 - 148.76079 = -58.76079 ⇒ +360 = 301.23921。
+    //   这一枚才是"交换 dzdx/dzdy 的核 / 把 dx 用成 dy"那一整类变异的判点（D1-T1x 从 slope 块搬来）：
+    //   atan2(y,x) 对 x/y **不对称**，互换后 atan2(1525.0001,-924.9997)=121.23921° ⇒ aspect 变
+    //   90-121.23921=-31.23921 ⇒ +360 = 328.76079（Δ=27.5216°，是 1e-3 容差的 27521 倍）⇒ 红；
+    //   同一处 slope 的 hypot(1525.0001,924.9997)=hypot(924.9997,1525.0001)=1783.605828 逐位不变 ⇒ 不红。
+    //   ⚠ 这条只记在 terrain,aspect 行（登记表 :127）的证据上；slope 行不声称判得到这一类。
     std::map<std::string, gis::framework::ParamValue> noiseParams = params;
     noiseParams["input"] = noise;
     noiseParams["output"] = outNoise;
@@ -13363,6 +13376,15 @@ TEST_F(PluginTest, TerrainAspectHandValueOnUnitPlane) {
     EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 300.71894f, 1e-3f);
 }
 
+// 期望值来源的口径边界（D1-T1x 补，给下面 hillshade 与真实腿的"非回抄"论证划适用域）：
+// 产品 raster_inspect 的 info 统计行**只打 6 位有效数字** ——
+//   src/plugins/raster_inspect/raster_inspect_plugin.cpp:271（NoData）与 :282-285（Min/Max/Mean/StdDev）
+//   全是裸 `oss << double`，该文件只有 :141/:154 的直方图分支设了 setprecision ⇒ iostream 缺省 6 位。
+// 适用域：**统计读数**——"腿侧那 8 位值不可能抄自输出"这句成立（例：腿钉的 hillshade 均值取未量化参考值，
+// 产品自己打的是另一侧的 3 位小数值，抄产品抄不出钉的数）。
+// 不适用域：① 本文件的**逐像元**期望值——readRasterPixel 走 GDAL 直接读波段，拿的是 float32 全精度，
+//   从不经过打印文本，所以夹具钉子的"非回抄"只能靠独立参考模型复算，不能拿这条口径冒充；
+// ② 它是 iostream 缺省而非产品契约，哪天给统计行加 setprecision，这条论证自动失效（判据本身不受影响）。
 TEST_F(PluginTest, TerrainHillshadeHandValueOnUnitPlane) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);
@@ -13390,7 +13412,7 @@ TEST_F(PluginTest, TerrainHillshadeHandValueOnUnitPlane) {
     // ESRI/GDAL 模型：hs = 255*(cos(zen)*cos(slope) + sin(zen)*sin(slope)*cos(az-aspect))，
     // zen = 90-altitude，az 与 aspect 都是"自北顺时针"。DEM-P 的 slope=45、aspect=270（见上两条）。
     // 输出波段是 Byte（GDAL 给 hillshade 的 NODATA 约定是 0）。在**解析面**（平面/平地）上参考模型是
-    // 精确可判的，取整方向实测为向上：180.31→181、197.49→198、127.50→128（round() 会给 180/197，
+    // 精确可判的，取整方向实测为向上：180.31→181、197.36→198、127.50→128（round() 会给 180/197，
     // 与实测不相容）；在**噪声 DEM** 上逐像元取整方向不可判（参考值与产物互差 ≤0.7），所以下面 (5)
     // 那两枚钉子按"参考值上取整 = 产物"实测钉住，判别力来自"改公式必挪 >10"而不是 ±1 的取整差。
     // (1) az=270 与 aspect=270 对齐：raw = 255*(cos45*cos45 + sin45*sin45*cos(0)) = 255*cos(0°) = 255 ⇒ 255。
@@ -13408,6 +13430,12 @@ TEST_F(PluginTest, TerrainHillshadeHandValueOnUnitPlane) {
     // (3) az=90（背光，正对反面）：cos(90-270)=-1 ⇒ raw = 255*(0.5-0.5)=0 ⇒ ceil = 0；
     //     实测 1：GDAL 内部 double 的 atan2 组合在 180° 处不是精确 -1，raw = 3e-6 量级 ⇒ ceil 进 1。
     //     这里钉 1 而不是 0，是因为 0 同时是 hillshade 的 NODATA 值，钉 0 等于把该像元从统计里删掉。
+    //     ⚠ D1-T1x 限定：这一枚（EXPECT_FLOAT_EQ 1.0f）是 terrain 首批里**唯一确定来自产物回抄**的期望值——
+    //     我和复审席各自的独立复算在同一处都给 raw = 0.000000000（atan2 在这一路给出精确 180°），
+    //     公式推不出 1，1 只能来自 GDAL Byte 写入前的浮点尾差。⇒ 它是**浮点运气钉**：换 libm/GDAL 版本、
+    //     只要 raw 落到 ≤0 一侧就写成 0，本条当场假红。判点不删（它钉的是"背光面写出的字节不是 NODATA"，
+    //     同块另有 8 枚派生钉子承重），但它的证据等级是"实测"而不是"手算可得"；跨 GDAL 版本翻红时
+    //     先按本段复核 raw 落在哪一侧再改期望，不许直接把它改成 0（那等于把该像元删进 NODATA）。
     std::map<std::string, gis::framework::ParamValue> oppositeParams = params;
     oppositeParams["output"] = outOpposite;
     oppositeParams["azimuth"] = 90.0;
@@ -13437,8 +13465,12 @@ TEST_F(PluginTest, TerrainHillshadeHandValueOnUnitPlane) {
     EXPECT_FLOAT_EQ(readRasterPixel(outNoise, 13, 7), 176.0f);
     EXPECT_FLOAT_EQ(readRasterPixel(outNoise, 41, 41), 175.0f);
 
-    // (6) hillshade 这一路 z_factor 是真生效的（与 slope 相反）：DEM-P 上 z=10 ⇒ slope=atan(10)=84.2894062°，
-    //     az=270 与 aspect=270 对齐 ⇒ raw = 255*cos(zen-slope) = 255*cos(45°-84.2894062°) = 197.4877 ⇒ ceil = 198。
+    // (6) hillshade 这一路 z_factor 是真生效的（与 slope 相反）：DEM-P 上 z=10 ⇒ slope=atan(10)=84.2894069°，
+    //     az=270 与 aspect=270 对齐 ⇒ raw = 255*cos(zen-slope) = 255*cos(45°-84.2894069°) = 197.359111 ⇒ ceil = 198。
+    //     （D1-T1x 更正：旧稿这里写 197.4877，按同一式子手推不出——它反解出的 slope 是 84.24376°
+    //       （acos(197.4877/255)=39.24376 ⇒ 45+39.24376），对应 z=tan(84.24376°)=9.9202 而不是 10；
+    //       复算值 197.359111 = 255*cos(39.2894069°)。钉的字节 198 不受影响：
+    //       ceil(197.359111)=ceil(197.4877)=198，且 197.359 仍把 round 律（→197）否掉。）
     //     （round 会给 197，所以这同时是量化律的第二个判别点。）去掉 -z ⇒ 回到 255 ⇒ 红。
     const std::string outPlaneZ10 = utf8PathString(getTestDir() / "d1_hs_plane_z10_out.tif");
     std::map<std::string, gis::framework::ParamValue> z10Params = params;
