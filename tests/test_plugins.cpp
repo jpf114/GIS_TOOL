@@ -2372,22 +2372,30 @@ TEST_F(PluginTest, PansharpenSharedNoDataTagFollowsPanBand1) {
 //   ctest --test-dir build/debug -C Debug -R "^(PluginTest\.Pansharpen[A-Za-z0-9_]*)$"   (6 tests)
 // and then restored with `git show HEAD:<path>` + CRLF normalisation + `git hash-object` against
 // the baseline blob dd4fdeea702e72071917c6f8a7a65262de6e43b4 (MATCH on all four restores).
-//   P1 mean_blend branch: delete `sharp = sharp * 0.5` (line 850)
-//     -> RED, this block only: test_plugins.cpp:2408 readPixel is 140 where 70 was expected.
-//        That is exactly the "branch name kept, formula lost" shape this block claims to catch.
-//   P2 output reference dataset `panDS.get()` -> `msDS.get()` (matsToGdalTiff call, line 894)
-//     -> RED 3 of 6: PansharpenOutputUsesPanGeoTransform (gt[1]=30 vs 15, gt[5] likewise),
-//        PansharpenSharedNoDataTagFollowsPanBand1 (outNoData=-9999 vs -555 at 2356, and the
-//        "PAN untagged" side at 2333 which now inherits MS again), and on its grid side
-//        PansharpenExtentMismatchWarnsWithoutFailing (shiftedGt[1]=30 vs 15 at 1863/1864).
-//   P3 metadata literal `"pan_band1(shared GDAL_NODATA tag, declared="` -> `"ms_band1(...)"` (line 928)
-//     -> RED: this block's sibling PansharpenSharedNoDataTagFollowsPanBand1 at 2338 plus
-//        PansharpenOutputUsesPanGeoTransform's nodata_source find(). Needed because P2 moves the
-//        grid AND the tag value through one argument, so the string contract has no other lever.
-//   P4 pansharpenExtentMismatchRatio: `edgeDelta / largerSide` -> `edgeDelta` (absolute metres, line 745)
-//     -> RED: PansharpenExtentMismatchWarnsWithoutFailing (1855 difference 0.9967 against 1e-12;
-//        1874 the 0.1 mm case starts warning, count 1 vs 0) and
-//        PansharpenExtentMismatchToleranceAnchorsOneMicroratio.
+//   P1 mean_blend branch: delete `sharp = sharp * 0.5` (processing_plugin.cpp mean_blend branch)
+//     -> RED, this block only: PansharpenMeanBlendReplacesSimpleMean's
+//        `EXPECT_FLOAT_EQ(readPixel(output, 1, 3, 4), 70.0f)` reads 140 where (40 + 100)/2 = 70 was
+//        expected. That is exactly the "branch name kept, formula lost" shape this block claims to catch.
+//   P2 output reference dataset `panDS.get()` -> `msDS.get()` (the matsToGdalTiff reference argument)
+//     -> RED 3 of 6: PansharpenOutputUsesPanGeoTransform (`EXPECT_DOUBLE_EQ(gt[1], 15.0)` and the
+//        `EXPECT_DOUBLE_EQ(gt[5], -15.0)` sibling read the MS 30 instead of the PAN 15),
+//        PansharpenSharedNoDataTagFollowsPanBand1 (`EXPECT_DOUBLE_EQ(outNoData, -555.0)` becomes
+//        -9999, and its "PAN untagged" sibling `EXPECT_FALSE(readNoDataValue(outNoTag, band, outNoData))`
+//        flips to declared because MS's -9999 is inherited again), and on its grid side
+//        PansharpenExtentMismatchWarnsWithoutFailing (`EXPECT_DOUBLE_EQ(shiftedGt[1], 15.0)` and the
+//        `shiftedGt[5]` sibling read 30 vs 15).
+//   P3 metadata literal `"pan_band1(shared GDAL_NODATA tag, declared="` -> `"ms_band1(...)"`
+//     -> RED: this block's sibling PansharpenSharedNoDataTagFollowsPanBand1's
+//        `EXPECT_NE(untaggedSource.find("pan_band1"), std::string::npos)` plus
+//        PansharpenOutputUsesPanGeoTransform's `EXPECT_NE(result.metadata.at("nodata_source").find("pan_band1"), std::string::npos)`.
+//        Needed because P2 moves the grid AND the tag value through one argument, so the string
+//        contract has no other lever.
+//   P4 pansharpenExtentMismatchRatio: `edgeDelta / largerSide` -> `edgeDelta` (absolute metres)
+//     -> RED: PansharpenExtentMismatchWarnsWithoutFailing
+//        (`EXPECT_NEAR(std::stod(shifted.metadata.at("pan_ms_extent_mismatch")), 1.0/300.0, 1e-12)`
+//        reads 0.9967 against the 1e-12 tolerance, and the 0.1 mm case's
+//        `EXPECT_EQ(withinTolerance.metadata.count("pan_ms_extent_mismatch"), 0u)` starts warning, count 1 vs 0)
+//        and PansharpenExtentMismatchToleranceAnchorsOneMicroratio.
 // All five audit-hit blocks have at least one killing arm. Honest scope note:
 // PansharpenNoGeoTransformSkipsExtentCheck went green under all four arms -- it is not one of the
 // five numeric hits and it pins "no geotransform => no extent guard, the run still succeeds".
@@ -12970,29 +12978,44 @@ TEST_F(PluginTest, BandMathDivisionFailureInvalidatesWholePixel) {
 // each restored the same way as the pansharpen ledger above (MATCH on every restore).
 // Where the code actually lives: the divisor gate and the operand order are in the CORE engine,
 // not in the plugin -- gis_core is a static lib, so every engine arm here also relinked plugin_*.dll.
-//   M1 the arm this knife was asked to run: `std::abs(b) < kNearZeroDivisorEpsilon` -> `<=` (line 268)
+//   M1 the arm this knife was asked to run: `std::abs(b) < kNearZeroDivisorEpsilon` -> `<=`
+//      (expression_engine.cpp Divide branch)
 //     -> **GREEN, i.e. an equivalent mutant.** The two fixture divisors here are 1.000001e-15 and
 //        0.999999e-15; neither equals 1e-15, so `<` and `<=` cannot disagree on this data. This is
 //        recorded instead of quietly replaced, because "that arm did not kill anything" is not
 //        evidence of a decorative assertion -- the gate is real, only the arm was insensitive.
 //        M2 is the sensitive arm for the same contract.
-//   M2 kNearZeroDivisorEpsilon 1e-15 -> 1e-14 (line 45)
-//     -> RED: this block at 12956 (divide_by_zero_pixels "2" vs "0") and 12958/12959
-//        (pixel 0.0 vs 1/1.000001e-15, difference 9.9999904e14 against the 1e9f tolerance).
-//   M3 Subtract `a - b` -> `b - a` (line 261)
-//     -> RED: BandMathNegativeBandsComputeWithCorrectSign at 12829/12830/12845/12846 (off by 4 in
-//        BOTH directions -- the mirror expression is what makes the sign claim two-sided) and
-//        BandMathDivideByZeroCountEqualsFailingPixelsOnly at 12899/12900.
-//   M4 Divide: keep the flag but drop the fail-fast (push 0.0 and evaluate on, line 268)
-//     -> RED: BandMathDivisionFailureInvalidatesWholePixel at 12930/12931 (5.0 vs 0.0), which is
-//        precisely the old-engine value that block says it discriminates. Its counter stayed "2",
-//        so what M4 kills is the whole-pixel VALUE claim, not the counting claim.
-//   M5 plugin counting shape: first failure marks the whole image as failed (line 126)
-//     -> RED: BandMathDivideByZeroCountEqualsFailingPixelsOnly at 12897 ("32" vs "4").
+//   M2 kNearZeroDivisorEpsilon 1e-15 -> 1e-14 (the divisor-constant definition, kNearZeroDivisorEpsilon)
+//     -> RED for BandMathDivisorThresholdBoundaryIsPinned: its above-side counting assertion
+//        `EXPECT_EQ(result.metadata.at("divide_by_zero_pixels"), "0")` flips to "2", and the two
+//        above-side pixel assertions `EXPECT_NEAR(readPixel(aboveOutput, 1, 0, 0), 1.0f/1.000001e-15f, 1e9f)`
+//        and its `readPixel(aboveOutput, 1, 1, 0)` sibling collapse to 0.0 (difference 9.9999904e14
+//        against the 1e9f tolerance). D1-T3 correction: the earlier draft pinned this by a bare line
+//        number that had drifted onto BandMathDivisionFailureInvalidatesWholePixel's own 0.0 pixel
+//        assertion (which stays GREEN under M2); anchored now by case name + assertion text.
+//   M3 Subtract `a - b` -> `b - a` (expression_engine.cpp Subtract branch)
+//     -> RED for BandMathNegativeBandsComputeWithCorrectSign: all four of its value assertions flip,
+//        `EXPECT_NEAR(readPixel(output, 1, 0, 0), 2.0f, 1e-5f)` and its `(output, 1, 1, 0)` sibling
+//        go to -2.0 while the mirror block's two `EXPECT_NEAR(..., -2.0f, 1e-5f)` go to +2.0
+//        (off by 4 in BOTH directions -- the mirror expression is what makes the sign claim two-sided),
+//        and for BandMathDivideByZeroCountEqualsFailingPixelsOnly its negative-result siblings
+//        `EXPECT_NEAR(readPixel(output, 1, 1, 0), -2.0f, 1e-5f)` and `(output, 1, 0, 0), -1.0f` flip too.
+//   M4 Divide: keep the flag but drop the fail-fast (push 0.0 and evaluate on, expression_engine.cpp Divide)
+//     -> RED: BandMathDivisionFailureInvalidatesWholePixel's two whole-pixel pixel assertions
+//        `EXPECT_NEAR(readPixel(output, 1, 0, 0), 0.0f, 1e-6f)` and its `(output, 1, 1, 0)` sibling
+//        (5.0 vs 0.0), which is precisely the old-engine value that block says it discriminates.
+//        Its counter stayed "2", so what M4 kills is the whole-pixel VALUE claim, not the counting claim.
+//   M5 plugin counting shape: first failure marks the whole image as failed (raster_math_plugin.cpp counter)
+//     -> RED for BandMathDivideByZeroCountEqualsFailingPixelsOnly: `EXPECT_EQ(it->second, "4")`
+//        reads "32" instead of "4".
 //        **GREEN** for BandMathDivisionFailureInvalidatesWholePixel: that fixture is 2x1 with every
-//        pixel failing, so per-pixel and per-image counting coincide there. Stated plainly: the
-//        metadata "2" of the whole-pixel block cannot be killed by any counting-shape arm on it.
-//   M6 plugin writes the first operand instead of the evaluated value (line 127)
+//        pixel failing, so per-pixel and per-image counting coincide there. D1-T3 scope note (the
+//        earlier text over-claimed "any counting-shape arm"): this only shows the ONE counting shape
+//        this knife ran -- M5, first-failure-marks-the-whole-image -- does not bear on the whole-pixel
+//        block's metadata "2". It is NOT an exhaustive claim: a different counting shape, e.g. one
+//        that records a single count per run (`divideByZero = 1`), would be killed on the spot by that
+//        `"2"` assertion (1 vs 2). So only M5's shape is shown non-load-bearing here.
+//   M6 plugin writes the first operand instead of the evaluated value (raster_math_plugin.cpp write)
 //     -> RED for the real-data leg `real_data_raster` through the branch added by this knife:
 //        "raster_math_band_math B1+B2 min mismatch (actual=30 expected=80 tolerance=1E-06)".
 //        Same leg without the mutant: green at 11.82 / 12.26 / 12.37 s (TIMEOUT 60 => ~4.8x).
