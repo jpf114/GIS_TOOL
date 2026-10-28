@@ -2335,6 +2335,64 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
 - **本把没做的事**：`cutting,tile` 一行仍 PENDING（射程外，另派 D1-C2）；`docs/算法说明/文档漂移清单.md` 未动；
   未跑全量 ctest（那是收口门）。
 
+### 批次 D 覆盖晋升 D1-C2（2026-10-28，`cutting,tile` 一行 PENDING→GOLD）
+
+射程**一行**：`tests/action_gold_cases.txt` 的 `cutting,tile`。`cutting` 的另三条（clip/split/merge_bands）
+是上一把 D1-C1 的账，本把未动。结构性障碍与台账 R-D26 / tracker #168 同源：既有 27 条 `PluginTest.Tile*`
+用例的动作槽全写在共享 helper `t17BaseTileParams` 体内（`params["action"] = std::string("tile")`），
+`CoverageMeta.GoldEvidenceIsAuditable` 只看**同一个 TEST 块体**，所以整族结构上登不上 GOLD
+⇒ 本把新建一条**独立**证据用例，块体内内联动作槽，而不是把 helper 抄一遍。
+
+- **落账凭据**（逐笔提交、不 amend）：Step1 单测 `8f7e39c`、Step2 腿 case `451ec5f`、Step4 登记+上限 `17a3577`。
+  证据用例 = `PluginTest.TileAutoMaxZoomBandAndTilePixelSizeGrid`；腿 case = `run_real_raster_regression.ps1` 的 `cutting_tile`。
+- **计数现读对撞**（改前/改后都跑了登记表头部那批命令本身，不是推的）：
+  `data_rows 126→126`、`gold_rows 100→101`、`pending_rows 26→25`、`gold_rows_all_lines 101→102`、
+  `gold_rows_table_driven 15→15`、`gold_rows_literal_slot 85→86`，`kPendingCeiling 26→25`（与表同笔）。
+- **注册数**（只认 `Total Tests:`）：`PluginTest.Tile*` 改前 **27** ⇒ 改后 **28**；
+  定向配方 §5 改前 **61** ⇒ 改后 **62**（新增 1 条 `TEST_F`；腿 case 不单独注册）。
+- **腿计时**：改前本把现跑 `real_data_raster` **12.71 s**（控制器 22:29 另一次现读 15.37 s ⇒ 同一条腿散布 2.66 s，
+  本把用自己的改前/改后对撞），改后 **12.99 s**（新 case 自身 0.24 s），`TIMEOUT 60` ⇒ **4.62×** 余量，
+  未跌破 2.5× 触发线，未抬 TIMEOUT、未减断言。腿侧闸 `registered=70 ran=70 judged=46 allowlisted=24
+  dead-branches=0` ⇒ `judged+allowlisted==ran` 成立。
+
+- **判的是哪两个量**（写这行之前先做的探针：`grep -n "max_zoom" tests/test_plugins.cpp` 的 29 处命中全是显式赋值、
+  `grep -n "tile_pixel_size" tests/test_plugins.cpp` 零命中 ⇒ 这两处今天确实没人判）：
+  - **推得**（手推，公式只含 `2π·a = 40075016.685578488`、`2^z`、`tileSize`、夹具 `pixelSize`）：
+    `pixelSize=1000` 配 `ts=256` ⇒ 自动档 z=8、9 张；配 `ts=128` ⇒ z=9、10 张；
+    逐档索引 `x=y=2^(z-1)`（z=0 ⇒ 0）；覆盖缘列数 `64000/tileWidthM(z)·ts` = 104.66131637 / 52.33065819 / 104.66131637；
+    `pixelSize=50`（真实腿的 `classification_raster`）配 `ts=256` ⇒ z=12、层级集 `[0..12]`、最深瓦片 `12/3370/1552.png`、
+    alpha 均值 `255·81/65536 = 0.3151702881`；配 `ts=128` ⇒ z=13、`[0..13]`、`13/6740/3104.png`、`255·81/16384 = 1.2606811523`。
+  - **实跑**（Debug 树 `gis-cli` 探针 + 单测 + 腿）：以上每一项**逐值相符**（腿侧打印 `Mean: 0.31517` / `Mean: 1.26068`，
+    6 位有效印法下的舍入误差 ≤ 6.4e-7，比 1e-5 容差小三个数量级；单测侧实到 105/53/105 列，
+    Δ 分别 0.33868 / 0.66934 / 0.33868，都 < 1.0 容差 ⇒ 容差论证是**三支各自成立**，不是一支通用）。
+- **变异臂清单**（`src/plugins/cutting/cutting_plugin.cpp` 只在取证时改、当场 `cp` 还原，
+  四臂还原后 `git hash-object --path` 与 `git rev-parse HEAD:` 同为 `dc4bf9f5be619570db1d8f9fea03459b3e922aab`）：
+  | 臂 | 改动（函数名 + 判据原文） | 红在哪一档、什么形态 |
+  | --- | --- | --- |
+  | M1 | `computeMaxZoom` 的 `>= pixelSize * 0.5` 丢掉 `* 0.5` | 单测 **ts=256 档**红：实到集少 `"8/128/128.png"`（8 vs 9）⇒ `***Failed 0.46 s` |
+  | M2 | `computeMaxZoom` 的 `for (int z = 30; z >= 0; --z)` 改成从 `z=0` 往上 | 单测 **ts=256 档**红：实到只剩 `{ "0/0/0.png" }` ⇒ `***Failed 0.22 s` |
+  | M3 | `doTile` 里 `computeMaxZoom(pixelSize, tileSize)` 的实参写死 `256` | 单测 **ts=128 档**红（实到少 `"9/256/256.png"`，9 vs 10）⇒ `***Failed 0.30 s`；**腿同臂红**：`cutting_tile ts=128 level set mismatch (actual=[0..12] expected=[0..13], derived max_zoom=13)` |
+  | M4 | `doTile` 里 `tileResX = (rect.maxX - rect.minX) / tileSize` 的分母写死 `256` | 单测 **ts=128 档**红三处：z=0 那张被 `dx1<=dx0` 吞掉、两支 `EXPECT_NEAR` 差 **23.338683626565413** 与 **52.669341813282706**（> 1.0）⇒ `***Failed 0.34 s`；ts=256 档在该臂下 Δ=0 ⇒ 必须分档才认得出这只手 |
+- **判不出来的变异如实登记**（不造恒真断言去杀它）：`>=` 改 `>`（`res(8,256)/500 = 1.223`，远离等号 ⇒ **等价变异**）；
+  半径 `6378137` 挪 ±20%（要挪 22% 才换档、像元列只挪几十分之一）；`min(maxZoom, 22)` 的 22；
+  `mercatorTileGrid` 的 `ts << z`（在 `src/core/`，射程外未取证）。
+- **文档按实到写准**：`docs/算法说明/影像裁切与镶嵌/栅格切片.md` 补了常数口径（球面 `a·π = 20037508.342789244`）、
+  自动档"从 z=30 往下 + 半个像元"的遍历方向与四条手推实例、`tile_pixel_size` 的**两处**消费点
+  （`res` 的除数 ⇒ 决定档位；`tileResX` 的除数 ⇒ 决定覆盖缘列数；并点名它**不**改变单层瓦片地理范围，
+  因为 `tiles = globalWidth/tileSize = 2^z` 把 `tileSize` 约掉了 ⇒ 拿它当"网格尺寸"会写出恒真判据）、
+  `add_alpha` 插件缺省 `true` 与两档透明度口径（含"既有 helper 显式设 false ⇒ 缺省路径从未被判"）、
+  `resample` 实到缺省 `average` 与面板 `nearest` 的 **B19 已知不一致**（本把不改、只写准）。
+- ⚠ **Release 侧未验收**：本把全部读数来自 Debug 树；Release 树未重编 ⇒ `cutting,tile` 这条 GOLD 的
+  Release 凭据归 D4 收口门。
+- **缺口（照实登记）**：①常数口径（`6378137`/`20037508.342789244`）本把判不到，见上；
+  ②`>=` 与 `>` 等价、`maxZoom` 钳位 22 无臂；③新用例夹具对 x=y 对称 ⇒ 单测侧判不到轴序（腿侧的
+  `3370/1552` 判得到，两载体互补）；④`add_alpha` 缺省 `true` 这条路径在新用例里**被走到但没被判**
+  （夹具无 NoData ⇒ 两档产物不可区分，既有锚已证"两档都 4 波段、集合相同"）；⑤`resample`/`overview_resampling`/
+  `jpeg_quality`/`nodata_value` 在 tile 上的消费仍无数值判据（B19 决策门与后续批次）；
+  ⑥腿侧第二次 `ts=128` 跑是**判据分支内**再调一次 CLI，不占 case 名额（gate 的 `conditional-registrations=1` 不变）。
+- **本把没做的事**：`src/` 除 Step3 取证外零改动（当场还原）；未动 `resample`/`add_alpha` 缺省（B19）；
+  未修 D1-C1 那两条已知文案不一致（B16 `resample` 面板默认、`--bands` 描述串）；未跑全量 ctest。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
