@@ -2108,6 +2108,80 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   ⇒ `Δ = 6.381e-11/(7.976e-12^1.5 + 1e-10) = 0.638`。以实测为准 ⇒ **同一结论更硬**（`0.638` 比 `2e-3` 大 2.5 个数量级），
   本席没有拿它去放宽任何判据。
 
+### 批次 D 覆盖晋升 D1-P（2026-10-28，Task 16 / projection `info`·`transform`·`assign_srs`·`reproject` 四条 PENDING→GOLD）
+
+**先立一条裁定**：**R-D31**（覆盖 D0-P0 普查表对 `projection.transform` 的定档）。普查把它标成
+`fixture-only`，理由是"该动作不吃文件，`data/` 里没有任何文件能成为它的 primary_input"；**改判为满档（D1）**。
+理由三条：定档规则是为"有没有真实输入"设计的，而 `transform` 是**纯坐标函数**，期望可由公式独立推算，
+判据强度上限**高于**依赖真图的动作；它的腿分支今天已在判值级读数；"没有影像输入"不等于"没有判据"。
+⇒ **影响：`fixture-only` 名册由 2 条减到 1 条（只剩 `spindex.ndvi`）**，工单与普查表按此读。
+
+- **口径更正（本刀落笔前复算抓到的，任务书原文在这里是错的）**：EPSG:3857 是**球面**口径，
+  投影用的是球半径 `a = 6378137`（`x = lon·π/180·a`），而 EPSG 文档里的 `±20037508.34` 是
+  `a·π = 20037508.342789244` 的**四舍五入**常数 ⇒ 用 `lon·20037508.34/180` 当期望会带入
+  **dx = 1.798e-3 m、dy = 6.77e-4 m** 的系统偏差。任务书建议的 `EXPECT_NEAR(值, 116.0*20037508.34/180.0, 1e-3)`
+  若照写**首跑就红**（残差 1.798e-3 > 1e-3）。⇒ 本刀一律用 `a` 口径、容差仍取 1e-3 m，
+  该 1e-3 是**校准过的**：比实测残差（GPKG 顶点级 1.9e-9 m、metadata 级 <5e-7 m＝`std::to_string` 的 6 位小数栅格化）
+  大六个量级，又**小于**两个口径之差 ⇒ 顺带钉住"插件用的是哪个常数"。
+- **原点那一档**：`ln(tan(π/4))` 在 IEEE double 里是 `5.551115123125783e-17`（非 0），
+  乘 `R/π` 得 −7.08e-10、乘 `a` 得 −3.54e-10 ⇒ **尾差的量级（1e-10）成立、具体值随写法漂移**，
+  而产物两条输出路（metadata 6 位小数 / message `setprecision(10)`）都印成 0。
+  ⇒ 断言写成 `EXPECT_NEAR(0.0, 值, 1e-6)`，**不写** `EXPECT_DOUBLE_EQ`，**也不写**"不许是精确 0"那种非零断言。
+  ⚠ 承重面如实登记：原点是 4326↔3857 的**不动点**，这一档结构上抓不到轴序丢失与源/目标互换
+  （**MF-T1 臂下它确实是绿的**，见下），它抓的是原点处 NaN/Inf/异常偏移。
+- **`info` 的判据形态换了**（不是放弃判据）：现读 `doInfo` 的 metadata 只有 `width/height/bands/wkt` 四枚，
+  **不发** pixel_size / extent ⇒ "像元尺寸 + 包框四边"改成从 `doInfo` 自己发的 message 文本取
+  `Origin:` / `Pixel Size:` 两支的数，再由 GT × 已判读的行列数推包框右下两边；期望全部来自
+  `createTestRaster` 的 `adfGT` 字面量 `{116.0, 0.001, 0.0, 40.0, 0.0, -0.001}`（20×10 ⇒ 116.000/116.020/39.990/40.000）。
+- **四条凭据**（证据用例都写进登记表第 4 列）：`info`→`PluginTest.ProjectionInfoExecution`、
+  `transform`→`PluginTest.ProjectionTransformExecution`、`assign_srs`→`PluginTest.ProjectionAssignSrsExecution`、
+  `reproject`→`PluginTest.ProjectionVectorReprojectExecution`。晋升前四块的"剥注释后数值断言数"实测**全是 0**
+  （动作槽与 `"projection"` 归属都在 ⇒ 卡的就是审计第（2）条），被**替换**而非留存的三条恒真倾向判据：
+  `transform` 的两条 `EXPECT_GT(std::abs(dst), 1000.0)`、`reproject` 的两条 `EXPECT_GT(std::abs(extent.MaxX/MaxY), 1000.0)`、
+  `assign_srs` 的 `EXPECT_FALSE(getSRSWKT(...).empty())`（论证：产物 12913060.93 与写反后的 4865942.28 **都** >1000，
+  这个关系在本夹具上不可能变）。
+- **变异臂台账（六臂，全部 Debug 档 + `-R "PluginTest\.Projection"` 形态；每臂单独改单独还原）**：
+  `MF-T1` 源/目标 SRS 互换 ⇒ 正向两支（残差 1.29e7 / 4.87e6）与往返两支（偏 0.0051° / 0.0363°）红，
+  **原点两支与 src 回显两支绿**；`MF-T2` `gis::core::parseSRS` 的 `OAMS_TRADITIONAL_GIS_ORDER` →
+  `OAMS_AUTHORITY_COMPLIANT` ⇒ 红在 `result.success`（lat 越界、变换失败）后 `ASSERT` 中止，
+  同族另外五条用例**全绿**（那三条的产物路径不走 parseSRS 轴序）；
+  `MF-A1` `assign_srs` 盖章后把 `gt[0]/gt[3]` 搬到墨卡托原点 ⇒ 红 GT 四支（差 1.29e7 / 4.87e6），
+  **像元三支与权威码支绿**；`MF-A2` 只把 (3,5) 一个像元写成 7.0f ⇒ 红该像元的手算支与赋前对撞支，
+  **GT 十支与另两枚像元支绿** ⇒ 这两臂合起来才等于"GT 支与像元支各自可红、互不遮蔽"；
+  `MF-I1` `doInfo` 的 Origin 打印 x/y 写反 ⇒ 红六支（全为差 76），**Pixel Size 两支与 width/height/bands、
+  `wkt` 权威码 4326 支绿**；`MF-R1` 矢量支 `-t_srs` → `-a_srs`（只声明系、不真变换）⇒ 红八支
+  （四顶点 + 包框四边，残差量级 1.3e7），**输出权威码 3857 与 `IsProjected()` 绿**
+  ⇒ "CRS 声明对了"不等于"坐标真变了"，两类判据必须同在场。
+  还原证明：`projection_plugin.cpp` 回到 `9c473e2b4fe8ebf21b8e55acd7b0ac90bcee921d`、
+  `gdal_wrapper.cpp` 回到 `ddf770a00b2f313d0caa9b320886a3ea954b76e9`（`git show HEAD:… > …` + 行尾归一 + `git hash-object`），
+  还原重编后 `100% tests passed, 0 tests failed out of 6` ⇒ 绿态读在**还原后的二进制**上。
+- **腿侧**：`projection_transform`/`projection_reproject`/`projection_assign_srs` 早就是值级
+  （`projection_transform` 的 `12913060.93`/`4865942.28` 正是 `a` 口径在 `setprecision(10)` 下的印法）；
+  本刀给 `projection_info` 补两枚**由生成器字面量独立可推**的读数
+  （`makeClassRaster` 的 `Create(…, 6, 6, 1, …)` + `geotransform {12935000.0, 50.0, 0.0, 4852300.0, 0.0, -50.0}`
+  ⇒ `"Pixel Size: (50, -50)"` 与 `"Origin: (1.2935e+07, 4.8523e+06)"`，后者是 message 默认 6 位有效数字的印法）。
+  包框四边腿侧判不到（doInfo 不发 extent 键也不印包框）⇒ 钉在 Debug 单测里，这个边界已写进 `.ps1` 注释。
+  **反事实副本臂**（证这两枚真在比、不是"分支会红"）：把期望改成 `"Pixel Size: (50, 50)"` ⇒
+  `real_data_raster` **Failed 5.35 s**、带 `D1P-COUNTERFACTAL pixel size mismatch`、退出码非 0；改回后连跑两支绿。
+  腿侧闸读数（`ctest -V` 现读）：`registered=67 ran=67 judged=43 allowlisted=24 … dead-branches=0`
+  ⇒ 硬不变量 `judged + allowlisted == ran`（43+24=67）成立，没动 allowlist、没新增 case。
+  秒数对撞 `TIMEOUT 60`：补判据前控制器基线 11.12~14.95 s（4.0×~5.4×）⇒ 本把补完 13.54 s、
+  还原后连跑 **10.41 / 10.50 s（5.76× / 5.71×）**，在 ≥2.5× 线之上；TIMEOUT 与断言数都没减（净加两枚）。
+- **登记算术**（与四行改状态同一笔提交）：`gold_rows 93→97`、`pending_rows 33→29`、
+  `gold_rows_all_lines 94→98`、`gold_rows_literal_slot 78→82`（`table_driven` 15 不动、`data_rows` 126 不变）、
+  `kPendingCeiling 33→29`。四个新计数的现读命令逐条重跑过（不是推算）。
+  审计复跑：`ctest -R "CoverageMeta"` ⇒ **19/19 Passed**（`GoldEvidenceIsAuditable` 认了四行、
+  `RegistryHeaderCountsMatchData` 把"表/上限/头部"三者对撞在同一数上）。
+  注册数不变：全库 `ctest -N` `Total Tests:` 前后都是 **797**，定向族前后都是 **26**
+  （本把只补断言、**没有新增 `TEST_F`**；新增的是一个文件级 `static` 期望算子 `expectedWebMercatorXY`，不产生用例）。
+- ⚠ **Release 侧未验收**：四条晋升一律只在 Debug 取证，Release 树本批未重编 ⇒ 归 D4 收口门补凭据。
+- **缺口（照实登记）**：①原点档的承重面按构造就窄（不动点），已由 §R-D31 那节的 MF-T1 现读坐实，不为它造非零断言；
+  ②`info` 的 `Origin`/`Pixel Size` 判据依赖 message 的**默认精度印法**（6 位有效 ⇒ `1.2935e+07`），
+  属"文本契约"而非纯数值契约 —— 若将来 `doInfo` 改精度，腿侧与单测两侧会同时红，这是有意为之但要知道；
+  ③`#155`（projection 输出先删后写）与 `#164/#172`（可见参数有效性 / CLI 区间闸与 ParamSpec 分叉）
+  都在本把射程之外，**产品行为一字未改**（`doTransform` 的 `x/y` ParamSpec 区间 `-1e9..1e9` 与
+  真实墨卡托值的关系、`reproject` 的先删后写都没动）。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
