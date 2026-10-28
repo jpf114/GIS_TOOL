@@ -1942,6 +1942,47 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   `ctest -R "^(CoverageMeta|CoverageMetaJudge)"` 19/19 绿。
 - ⚠ **Release 侧未验收**：本批只在 Debug 树取证，Release 未重编 ⇒ 四条晋升的 Release 凭据缺位，归收口门补。
 
+### 批次 D 覆盖晋升 D1-F（2026-10-28，Task 15 / pansharpen·band_math 两条 PENDING→GOLD）
+
+**先说清这把没干什么**：两条晋升的凭据来自**既有**数值断言（`PansharpenMeanBlendReplacesSimpleMean`
+与 `BandMathDivisorThresholdBoundaryIsPinned`，都是批次 A/Task 13 时代就写进 `tests/test_plugins.cpp` 的块），
+本刀**没有新增任何算法测试、也没有新增 `TEST_F`**（Debug 注册数因此不变）。本轮新增的只有两样：
+①对这两条 PENDING 所属九个断言块的**变异取证台账**（七臂，落在 `tests/test_plugins.cpp` 的用例注释里），
+②腿 `real_data_raster` 里 `raster_math_band_math` 从"有 case 无判据分支"补成一条**值级判据分支**。
+产品码只在取证时被改、当场还原（四个落点 `git hash-object` 全对基线 blob）。
+
+- 为什么这两条能"免费"晋升：台账 R-D29 对全部 39 条 PENDING 复跑 GOLD 审计的两条字面判据，
+  只有这两行命中（pansharpen 5 块、band_math 4 块）⇒ 断言早就在库里，缺的只是登记表没翻 + 没做过活性取证。
+- ⚠ **本刀最重要的取证结论（对"有 EXPECT_NEAR 就是判据"这种洗白的现场反例）**：
+  任务书建议的 band_math 阈值臂——把除零闸的 `std::abs(b) < 1e-15` 翻成 `<=`——实测**全绿**，
+  因为夹具的两个除数是 `1.000001e-15` 与 `0.999999e-15`，两个都不**恰好等于** `1e-15`，
+  `<` 与 `<=` 在这份数据上不可能给出不同结果 ⇒ 这是**等价变异**，不是"闸没生效"。
+  换成阈值量级臂（`1e-15`→`1e-14`）才杀得动：`divide_by_zero_pixels` 由 `"0"` 变 `"2"`、像元值由 ~1e15 变 0.0。
+  ⇒ 现在被钉住的口径是"阈值两侧的**量级**"，而**不是**"等号归哪一边"；要钉后者得先造一个除数恰为 1e-15 的夹具。
+- 变异臂台账（Debug，七臂；每臂单独改单独还原，跑的是 `-R "^(PluginTest\.(Pansharpen|BandMath)[A-Za-z0-9_]*)$"` 那 12 条）：
+  pansharpen `P1` 去掉 mean_blend 的除以 2 ⇒ 只红 MeanBlend（实测 140 对期望 70）；
+  `P2` 写出参照数据集 PAN→MS ⇒ 同时红 OutputUsesPanGeoTransform（gt[1] 30 对 15）、
+  SharedNoDataTagFollowsPanBand1（-9999 对 -555）与 ExtentMismatchWarns 的网格侧；
+  `P3` 把 `nodata_source` 字面量 `pan_band1` 改 `ms_band1` ⇒ 红 metadata 字符串那一半（P2 动不了它，
+  因为参照数据集那一行同时喂地理网格与标签取值）；`P4` 把相对差异改成绝对米数 ⇒ 红两条范围不符块。
+  band_math `M2` 阈值量级、`M3` 减法操作数对调（镜像两支同时红，偏 4）、`M4` 除零不再中止求值
+  （整像元块得到旧引擎那个"看着合理的" 5.0）、`M5` 首个失败像元把整图计成除零
+  （除零计数块 4→32 红；**整像元块在这一臂下是绿的**，因为它 2×1 夹具每个像元都失败，
+  逐像元计数与整图计数在那儿重合 ⇒ 那条 `"2"` 断言杀不到，已如实写进台账）、
+  `M6` 写出第一个操作数代替求值结果 ⇒ 真实腿红在 `actual=30 expected=80`。
+- 腿侧：`Validate-CaseOutputs` 的 switch **没有 `default`**，"有 case"从来不等于"有判据分支"
+  （批次 D 的元发现），所以这条分支的活性是靠 M6 臂证明的，不是靠"跑过了"。
+  期望全部由夹具推出（`makePansharpenInputs` 的 B1≡30/B2≡50 + doBandMath 恒写单波段 ⇒ 30×30×1、每像元 80），
+  用 `Assert-InfoStatNear` 取数而不是 `Assert-TextContains "Mean:   80"`（后者会被 800/80.x 前缀吃成假绿）。
+  秒数对撞：加判据前 14.39 s（32 条集合内测）⇒ 加判据后单跑 11.82 / 12.26 / 12.37 s，
+  `TIMEOUT 60` ⇒ 约 4.8×（在 ≥2.5× 线之上，TIMEOUT 与断言数都没动）。
+- 登记算术（同一笔提交）：`gold_rows 91→93`、`pending_rows 35→33`、`gold_rows_all_lines 92→94`、
+  `gold_rows_literal_slot 76→78`（`table_driven` 15 不动、`data_rows` 126 不变）、`kPendingCeiling 35→33`。
+- ⚠ **Release 侧未验收**：两条晋升一律只在 Debug 取证，Release 树本批未重编 ⇒ 归 D4 收口门补凭据。
+- 缺口（照实登记）：`PansharpenNoGeoTransformSkipsExtentCheck` 在四臂下始终绿（它不属九个数值命中块，钉的是
+  "拿不到变换式⇒没有范围保护⇒动作仍成功"）；band_math 整像元块的计数半条无臂可杀（见上 `M5`）；
+  这两条都不影响所晋升行的凭据，但别把"该块全绿"读成"该块每个断言都被钉住"。
+
 ### `ctest -j` 并行：现在开会得到假失败
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
