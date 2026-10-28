@@ -16,6 +16,7 @@ param(
     [string]$Group = "all"
 )
 
+. (Join-Path $PSScriptRoot "regression_case_gate.ps1")
 $ErrorActionPreference = "Stop"
 if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)) {
     $PSNativeCommandUseErrorActionPreference = $false
@@ -100,6 +101,7 @@ function New-Case {
         [string]$Group
     )
 
+    Register-Case -Name $Name
     return [pscustomobject]@{
         Name = $Name
         Args = [string[]]$CaseArgs
@@ -1149,6 +1151,7 @@ function Assert-TopologyCheckCase {
 
     switch ($Case.Name) {
         "multipart_check_prov" {
+            Mark-Judged -Name $Case.Name
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["multipart_prov_csv"])
             Assert-CsvHeader -Table $table -Expected "source_fid,geom_type,part_count" -Label $Case.Name
             $issue = Get-ReportedMetadataCount -Text $Case.Output -Key "issue_count" -Label ($Case.Name + " issue_count")
@@ -1177,6 +1180,7 @@ function Assert-TopologyCheckCase {
             $script:C3baMultipartProvParts = $partSum
         }
         "singlepart_prov" {
+            Mark-Judged -Name $Case.Name
             Assert-Condition -Condition ($script:C3baMultipartProvParts -ge 0) -Message (
                 $Case.Name + " ran before multipart_check_prov, cannot cross-check part counts")
             $read = Assert-DerivedGeometryCase -Name $Case.Name -ResolvedCliPath $ResolvedCliPath `
@@ -1213,6 +1217,7 @@ function Assert-TopologyCheckCase {
                 $Case.Name + ":" + $read.Geometry + " singlepart Multi")
         }
         "multipart_check_buf" {
+            Mark-Judged -Name $Case.Name
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["multipart_buf_csv"])
             Assert-CsvHeader -Table $table -Expected "source_fid,geom_type,part_count" -Label $Case.Name
             $issue = Get-ReportedMetadataCount -Text $Case.Output -Key "issue_count" -Label ($Case.Name + " issue_count")
@@ -1233,6 +1238,7 @@ function Assert-TopologyCheckCase {
                 " " + $TopologyRefs.BufferStats.Geometry)
         }
         "hole_check_prov" {
+            Mark-Judged -Name $Case.Name
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["hole_prov_csv"])
             Assert-CsvHeader -Table $table -Expected "source_fid,geom_type,hole_count" -Label $Case.Name
             $issue = Get-ReportedMetadataCount -Text $Case.Output -Key "issue_count" -Label ($Case.Name + " issue_count")
@@ -1267,6 +1273,7 @@ function Assert-TopologyCheckCase {
             $script:C3baHoleProvIssue = $issue
         }
         "hole_check_buf" {
+            Mark-Judged -Name $Case.Name
             Assert-Condition -Condition ($script:C3baHoleProvIssue -ge 0) -Message (
                 $Case.Name + " ran before hole_check_prov, cannot cross-check the hole counts")
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["hole_buf_csv"])
@@ -1285,6 +1292,7 @@ function Assert-TopologyCheckCase {
                 $script:C3baHoleProvIssue + " 0 prov >0")
         }
         "overlap_check_buf" {
+            Mark-Judged -Name $Case.Name
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["overlap_buf_csv"])
             Assert-CsvHeader -Table $table -Expected "source_fid,target_fid,overlap_area" -Label $Case.Name
             $relations = Get-ReportedMetadataCount -Text $Case.Output -Key "relation_count" -Label ($Case.Name + " relation_count")
@@ -1310,6 +1318,7 @@ function Assert-TopologyCheckCase {
             $script:C3baOverlapBufRelations = $relations
         }
         "topology_check_buf" {
+            Mark-Judged -Name $Case.Name
             Assert-Condition -Condition ($script:C3baOverlapBufRelations -ge 0) -Message (
                 $Case.Name + " ran before overlap_check_buf, cannot cross-check relation counts")
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["topology_buf_csv"])
@@ -1330,6 +1339,7 @@ function Assert-TopologyCheckCase {
                 $script:C3baOverlapBufRelations + " buf30 O(n )")
         }
         "overlap_check_prov" {
+            Mark-Judged -Name $Case.Name
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["overlap_prov_csv"])
             Assert-CsvHeader -Table $table -Expected "source_fid,target_fid,overlap_area" -Label $Case.Name
             $relations = Get-ReportedMetadataCount -Text $Case.Output -Key "relation_count" -Label ($Case.Name + " relation_count")
@@ -1356,6 +1366,7 @@ function Assert-TopologyCheckCase {
             $script:C3baOverlapProvRelations = $relations
         }
         "topology_check_prov" {
+            Mark-Judged -Name $Case.Name
             Assert-Condition -Condition ($script:C3baOverlapProvRelations -ge 0) -Message (
                 $Case.Name + " ran before overlap_check_prov, cannot cross-check relation counts")
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["topology_prov_csv"])
@@ -1385,6 +1396,7 @@ function Assert-TopologyCheckCase {
                 " ")
         }
         "adjacency_prov" {
+            Mark-Judged -Name $Case.Name
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["adjacency_prov_csv"])
             Assert-CsvHeader -Table $table -Expected "source_fid,target_fid,shared_length" -Label $Case.Name
             $relations = Get-ReportedMetadataCount -Text $Case.Output -Key "relation_count" -Label ($Case.Name + " relation_count")
@@ -1410,6 +1422,7 @@ function Assert-TopologyCheckCase {
             $script:C3baAdjacencyProvRelations = $relations
         }
         "adjacency_buf" {
+            Mark-Judged -Name $Case.Name
             Assert-Condition -Condition ($script:C3baOverlapBufRelations -ge 0) -Message (
                 $Case.Name + " ran before overlap_check_buf, cannot cross-check relation counts")
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["adjacency_buf_csv"])
@@ -1427,6 +1440,7 @@ function Assert-TopologyCheckCase {
                 $script:C3baAdjacencyProvRelations)
         }
         "dangling_endpoint_w212" {
+            Mark-Judged -Name $Case.Name
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["dangling_window_csv"])
             Assert-CsvHeader -Table $table -Expected "source_fid,endpoint_type,x,y" -Label $Case.Name
             $issue = Get-ReportedMetadataCount -Text $Case.Output -Key "issue_count" -Label ($Case.Name + " issue_count")
@@ -1457,6 +1471,7 @@ function Assert-TopologyCheckCase {
             $script:C3baDanglingWindowIssue = $issue
         }
         "dangling_endpoint_closed_ring" {
+            Mark-Judged -Name $Case.Name
             Assert-Condition -Condition ($script:C3baDanglingWindowIssue -ge 0) -Message (
                 $Case.Name + " ran before dangling_endpoint_w212, cannot cross-check dangling counts")
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["dangling_ring_csv"])
@@ -1477,6 +1492,7 @@ function Assert-TopologyCheckCase {
                 $Case.Name + ": > 0")
         }
         "duplicate_point_ring_endpoints" {
+            Mark-Judged -Name $Case.Name
             $table = Get-CsvTable -Path ([string]$TopologyRefs.Outputs["duplicate_ring_csv"])
             Assert-CsvHeader -Table $table -Expected "source_fid,duplicate_fid,x,y" -Label $Case.Name
             $issue = Get-ReportedMetadataCount -Text $Case.Output -Key "issue_count" -Label ($Case.Name + " issue_count")
@@ -1518,6 +1534,7 @@ function Assert-TopologyCheckCase {
                 -Stats $TopologyRefs.EndpointStats -Tolerance 0.01 -Label $Case.Name
         }
         "geom_metrics_buf" {
+            Mark-Judged -Name $Case.Name
             # 输出图层声明是输入的 **Multi 变体**（resultLayerGeometryType），回读到的 Geometry 与输入不同名
             # 也可能同名（buf30 本来就是 MultiPolygon）⇒ 判据按契约写 "^Multi"，不照抄派生批的期望值。
             $read = Assert-DerivedGeometryCase -Name $Case.Name -ResolvedCliPath $ResolvedCliPath `
@@ -1550,6 +1567,7 @@ function Assert-TopologyCheckCase {
             }
         }
         "sliver_remove_buf_low_area" {
+            Mark-Judged -Name $Case.Name
             $read = Assert-DerivedGeometryCase -Name $Case.Name -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$TopologyRefs.Outputs["sliver_low"]) -ScratchDir $TopologyRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $TopologyRefs.BufferStats `
@@ -1579,6 +1597,7 @@ function Assert-TopologyCheckCase {
             $script:C3baSliverLowFeatures = $feature
         }
         "sliver_remove_buf_high_area" {
+            Mark-Judged -Name $Case.Name
             Assert-Condition -Condition ($script:C3baSliverLowFeatures -ge 0) -Message (
                 $Case.Name + " ran before sliver_remove_buf_low_area, cannot cross-check thresholds")
             $feature = Get-ReportedMetadataCount -Text $Case.Output -Key "feature_count" -Label ($Case.Name + " feature_count")
@@ -1606,6 +1625,7 @@ function Assert-TopologyCheckCase {
                 $Case.Name + ": feature_count " + $feature + " vector info " + $readback)
         }
         "nearest_w212_self" {
+            Mark-Judged -Name $Case.Name
             $read = Assert-DerivedGeometryCase -Name $Case.Name -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$TopologyRefs.Outputs["nearest_self"]) -ScratchDir $TopologyRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $TopologyRefs.WindowStats `
@@ -2667,11 +2687,13 @@ function Validate-CaseOutputs {
     #   ⇒ 这条腿的判据覆盖面必须由组标保证，名字只当"这条腿该有什么"的门禁（名单对撞在第 6 条不变量里）。
     if ($Case.Group -eq "union_poly") {
         Assert-UnionPolyCase -Case $Case -ResolvedCliPath $ResolvedCliPath -Refs $UnionPolyRefs | Out-Null
+        Mark-Judged -Name $Case.Name
         return
     }
 
     switch ($Case.Name) {
         "buffer_quick" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "buffer_quick"
             Assert-TextContains -Text $Case.Output -Expected "srs_type: projected" -Message "buffer_quick srs_type mismatch"
             # C3c-B：这条腿原来只比对 CLI 自报的两个数，一个都没落地读产物 ⇒ 层名/几何类族/CRS/字段
@@ -2694,15 +2716,19 @@ function Validate-CaseOutputs {
                 ($script:RoadsCoreFieldNames -join ",") + "'")
         }
         "clip_focus" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "clip_focus"
         }
         "difference_focus" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 0 -Label "difference_focus"
         }
         "intersect_focus" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "intersect_focus"
         }
         "spatial_join_focus" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "spatial_join_focus"
             Assert-Condition -Condition (Test-Path (Join-Path $ResolvedOutputRoot "spatial_join_focus.gpkg")) -Message "spatial_join_focus output missing"
             # C3c-C2：这条腿此前只判"CLI 自报的要素数 + 文件在场"。补三条**产物侧**判据，钉的是
@@ -2737,6 +2763,7 @@ function Validate-CaseOutputs {
                 -Label "spatial_join_focus"
         }
         "union_focus" {
+            Mark-Judged -Name $Case.Name
             # 这条**不**跟着换成 feature_count：doUnion 的计数语义是"分块数"，它自己已经发了
             # union_total_pieces（= 同一个 count，见 vector_plugin_overlay.inc 的 union_* 记账），
             # 再补一个 feature_count 就是同一个数发两个键 ⇒ 正是本刀要清的冗余，不是要铺的口径。
@@ -2744,26 +2771,32 @@ function Validate-CaseOutputs {
             Assert-Condition -Condition ($unionCount -ge $InputFeatureCount) -Message ("union_focus: reported " + $unionCount + ", expected at least " + $InputFeatureCount)
         }
         "clip_far" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 0 -Label "clip_far"
         }
         "intersect_far" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 0 -Label "intersect_far"
         }
         "difference_far" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "difference_far"
         }
         "clip_partial" {
+            Mark-Judged -Name $Case.Name
             $partialCount = Get-ReportedMetadataCount -Text $Case.Output -Key "feature_count" -Label "clip_partial"
             Assert-Condition -Condition ($partialCount -gt 0 -and $partialCount -le $InputFeatureCount) -Message ("clip_partial: reported " + $partialCount + ", expected in (0, " + $InputFeatureCount + "]")
             $script:ClipPartialCount = $partialCount
         }
         "intersect_partial" {
+            Mark-Judged -Name $Case.Name
             $partialCount = Get-ReportedMetadataCount -Text $Case.Output -Key "feature_count" -Label "intersect_partial"
             Assert-Condition -Condition ($partialCount -gt 0 -and $partialCount -le $InputFeatureCount) -Message ("intersect_partial: reported " + $partialCount + ", expected in (0, " + $InputFeatureCount + "]")
             Assert-Condition -Condition ($null -ne $script:ClipPartialCount) -Message "intersect_partial ran before clip_partial, cannot cross-check"
             Assert-Condition -Condition ($script:ClipPartialCount -eq $partialCount) -Message ("clip and intersect disagree on the same partial window: " + $script:ClipPartialCount + " vs " + $partialCount)
         }
         "dissolve_bbox" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 1 -Label "dissolve_bbox"
             # C3c-B：这条腿原来只抠 CLI 消息里那句 "1 features"，一个都没落地读产物。
             # 输入 china_bbox_3857 是**单个**面、且没点名 dissolve_field ⇒ 走"整体融合"分支，
@@ -2800,6 +2833,7 @@ function Validate-CaseOutputs {
                 -Label "dissolve_bbox"
         }
         "convert_roads_geojson" {
+            Mark-Judged -Name $Case.Name
             # 判据从"头三行 + 要素数"增强到关系级：输入/输出两边的层名、字段名与顺序、
             # CRS、extent 逐项对撞（输入是 build/tmp/c3cA/ 里的 roads 复制件）。层声明类型不比：
             # GeoJSON 恒为 Unknown，见 Assert-C3cAConvertCase 里的说明。
@@ -2811,6 +2845,7 @@ function Validate-CaseOutputs {
                 -ExpectedFeatureCount $InputFeatureCount | Out-Null
         }
         "rasterize_bbox" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "bbox_rasterized.tif"))
             )
@@ -2819,6 +2854,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   1" -Message "rasterize_bbox mean mismatch"
         }
         "polygonize_bbox_raster" {
+            Mark-Judged -Name $Case.Name
             $polygonizeReported = Get-ReportedMetadataCount -Text $Case.Output -Key "feature_count" `
                 -Label "polygonize_bbox_raster feature_count"
             Assert-Condition -Condition ($polygonizeReported -eq 1) -Message (
@@ -2845,36 +2881,42 @@ function Validate-CaseOutputs {
         }
         # ── C3a 几何派生 8 条：判据全部由输入图层自己的现读属性推导 ──
         "hull_polygon" {
+            Mark-Judged -Name $Case.Name
             Assert-DerivedGeometryCase -Name "hull_polygon" -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$DerivedRefs.Outputs["hull_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
                 -ExpectedGeometryPattern "Polygon" -ExtentMode "equal" -FeaturesMode "equal" | Out-Null
         }
         "envelope_polygon" {
+            Mark-Judged -Name $Case.Name
             Assert-DerivedGeometryCase -Name "envelope_polygon" -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$DerivedRefs.Outputs["envelope_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
                 -ExpectedGeometryPattern "Polygon" -ExtentMode "equal" -FeaturesMode "equal" | Out-Null
         }
         "centroid_polygon" {
+            Mark-Judged -Name $Case.Name
             Assert-DerivedGeometryCase -Name "centroid_polygon" -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$DerivedRefs.Outputs["centroid_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
                 -ExpectedGeometryPattern "Point" -ExtentMode "inside" -FeaturesMode "equal" | Out-Null
         }
         "interior_polygon" {
+            Mark-Judged -Name $Case.Name
             Assert-DerivedGeometryCase -Name "interior_polygon" -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$DerivedRefs.Outputs["interior_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
                 -ExpectedGeometryPattern "Point" -ExtentMode "inside" -FeaturesMode "equal" | Out-Null
         }
         "boundary_polygon" {
+            Mark-Judged -Name $Case.Name
             Assert-DerivedGeometryCase -Name "boundary_polygon" -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$DerivedRefs.Outputs["boundary_polygon"]) -ScratchDir $DerivedRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $DerivedRefs.PolygonStats `
                 -ExpectedGeometryPattern "^(Multi)?LineString$" -ExtentMode "inside" -FeaturesMode "equal" | Out-Null
         }
         "vertices_line" {
+            Mark-Judged -Name $Case.Name
             $read = Assert-DerivedGeometryCase -Name "vertices_line" -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$DerivedRefs.Outputs["vertices_line"]) -ScratchDir $DerivedRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $DerivedRefs.LineStats `
@@ -2882,6 +2924,7 @@ function Validate-CaseOutputs {
             $script:DerivedVertexCount = $read.FeatureCount
         }
         "midpoints_line" {
+            Mark-Judged -Name $Case.Name
             $read = Assert-DerivedGeometryCase -Name "midpoints_line" -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$DerivedRefs.Outputs["midpoints_line"]) -ScratchDir $DerivedRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $DerivedRefs.LineStats `
@@ -2892,6 +2935,7 @@ function Validate-CaseOutputs {
                 -MidpointCount $script:DerivedMidpointCount -InputFeatureCount $DerivedRefs.LineStats.FeatureCount
         }
         "endpoints_line" {
+            Mark-Judged -Name $Case.Name
             $read = Assert-DerivedGeometryCase -Name "endpoints_line" -ResolvedCliPath $ResolvedCliPath `
                 -OutputPath ([string]$DerivedRefs.Outputs["endpoints_line"]) -ScratchDir $DerivedRefs.ScratchRoot `
                 -CliOutput $Case.Output -InputStats $DerivedRefs.LineStats `
@@ -2903,30 +2947,37 @@ function Validate-CaseOutputs {
         }
         # ── C3f / N127：中文属性值 --where 的真实数据腿（判据见 Ensure-ChineseAttributeFilterInput 上方注释）──
         "filter_cn_attribute" {
+            Mark-Judged -Name $Case.Name
             Assert-ChineseAttributeFilterCase -Case $Case -ResolvedCliPath $ResolvedCliPath `
                 -Refs $ChineseFilterRefs | Out-Null
         }
         # ── C3c-A：info / repair 的真实数据腿（判据见各 Assert-C3cA* 函数头）──
         "info_province" {
+            Mark-Judged -Name $Case.Name
             Assert-C3cAInfoProvinceCase -Case $Case -Refs $C3cARefs | Out-Null
         }
         "info_roads" {
+            Mark-Judged -Name $Case.Name
             Assert-C3cAInfoRoadsCase -Case $Case -Refs $C3cARefs `
                 -ExpectedFeatureCount $InputFeatureCount | Out-Null
         }
         "repair_province" {
+            Mark-Judged -Name $Case.Name
             Assert-C3cARepairCase -Case $Case -ResolvedCliPath $ResolvedCliPath `
                 -ResolvedOutputRoot $ResolvedOutputRoot -Refs $C3cARefs | Out-Null
         }
         # ── C3c-B：simplify 的真实数据腿（判据见 Assert-C3cBSimplifyCase 函数头）──
         "simplify_roads" {
+            Mark-Judged -Name $Case.Name
             Assert-C3cBSimplifyCase -Case $Case -ResolvedCliPath $ResolvedCliPath `
                 -ResolvedOutputRoot $ResolvedOutputRoot -Refs $C3cBRefs | Out-Null
         }
         "clip_stress" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected $InputFeatureCount -Label "clip_stress"
         }
         "difference_stress" {
+            Mark-Judged -Name $Case.Name
             Assert-ReportedMetadataCountEquals -Text $Case.Output -Key "feature_count" -Expected 0 -Label "difference_stress"
         }
     }
@@ -3797,6 +3848,7 @@ Assert-Condition -Condition ($runCases.Count -gt 0) -Message (
 
 $results = @()
 foreach ($case in $runCases) {
+    Note-CaseRun -Name $case.Name
     $result = Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
     Validate-CaseOutputs -Case $result -ResolvedCliPath $ResolvedCliPath -ResolvedOutputRoot $ResolvedOutputRoot -InputFeatureCount $InputFeatureCount -DerivedRefs $derivedRefs -TopologyRefs $topologyRefs -ChineseFilterRefs $script:ChineseFilterRefs -UnionPolyRefs $unionPolyRefs -C3cARefs $script:C3cARefs -C3cBRefs $script:C3cBRefs
     $results += $result
@@ -3837,6 +3889,7 @@ $summaryTag = $Mode
 if ($Group -ne "all") { $summaryTag = $Mode + "_" + $Group }
 $summaryJsonPath = Join-Path $ResolvedOutputRoot ("summary_" + $summaryTag + ".json")
 $summaryCsvPath = Join-Path $ResolvedOutputRoot ("summary_" + $summaryTag + ".csv")
+Assert-AllCasesJudged -RunnerName "vector" -RunnerPath $PSCommandPath -RuntimeRosters @() -SelectedGroup $Group -Allowlist @()
 Save-RegressionResults -JsonPath $summaryJsonPath -CsvPath $summaryCsvPath -Mode $Mode -Group $Group -Results $results
 
 Write-Host "Vector regression completed:" -ForegroundColor Green

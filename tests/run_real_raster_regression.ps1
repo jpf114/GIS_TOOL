@@ -7,6 +7,7 @@ param(
     [string]$Mode = "quick"
 )
 
+. (Join-Path $PSScriptRoot "regression_case_gate.ps1")
 $ErrorActionPreference = "Stop"
 if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)) {
     $PSNativeCommandUseErrorActionPreference = $false
@@ -88,6 +89,7 @@ function New-Case {
         [string[]]$ExpectedOutputs
     )
 
+    Register-Case -Name $Name
     return [pscustomobject]@{
         Name = $Name
         Args = [string[]]$CaseArgs
@@ -263,6 +265,7 @@ function Validate-CaseOutputs {
 
     switch ($Case.Name) {
         "spindex_ndvi" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "ndvi_output.tif"))
             )
@@ -270,24 +273,28 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   0.75" -Message "spindex_ndvi mean mismatch"
         }
         "spindex_ndmi" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "ndmi_output.tif"))
             )
             Assert-TextContains -Text $info -Expected "Mean:   -0.125" -Message "spindex_ndmi mean mismatch"
         }
         "spindex_bsi" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "bsi_output.tif"))
             )
             Assert-TextContains -Text $info -Expected "Mean:   0" -Message "spindex_bsi mean mismatch"
         }
         "spindex_evi2" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "evi2_output.tif"))
             )
             Assert-TextContains -Text $info -Expected "Mean:   1.57895" -Message "spindex_evi2 mean mismatch"
         }
         "raster_inspect_histogram" {
+            Mark-Judged -Name $Case.Name
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "histogram_output.json")
             Assert-Condition -Condition ($payload.total -gt 0) -Message "histogram total should be greater than zero"
             Assert-Condition -Condition ($payload.histogram.Count -eq 16) -Message "histogram bin count should equal 16"
@@ -303,6 +310,7 @@ function Validate-CaseOutputs {
         # The tolerance (1e-3 .. 5e-3) only absorbs float32/double tail; any algorithm-constant change
         # moves these numbers by >= 0.5, which is why they are load-bearing.
         "terrain_slope" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_slope_output.tif"))
             )
@@ -319,6 +327,7 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 89.982932 -Tolerance 1e-3 -Message "terrain_slope mean mismatch"
         }
         "terrain_aspect" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_aspect_output.tif"))
             )
@@ -334,6 +343,7 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 298.176267 -Tolerance 1e-3 -Message "terrain_aspect mean mismatch"
         }
         "terrain_hillshade" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_hillshade_output.tif"))
             )
@@ -378,6 +388,7 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 174.580886 -Tolerance 0.55 -Message "terrain_hillshade mean mismatch"
         }
         "terrain_tpi" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_tpi_output.tif"))
             )
@@ -392,6 +403,7 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 0.0 -Tolerance 1e-3 -Message "terrain_tpi mean mismatch"
         }
         "terrain_curvature" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_curvature_output.tif"))
             )
@@ -409,6 +421,7 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 0.0 -Tolerance 5e-3 -Message "terrain_curvature mean mismatch"
         }
         "terrain_tri" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_tri_output.tif"))
             )
@@ -441,6 +454,7 @@ function Validate-CaseOutputs {
         # fixture DEM-N) produced a pixel-for-pixel identical product -- which is exactly why these
         # pins must NOT be read as a georeferencing or ground-unit-curvature claim.
         "terrain_profile_curvature" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_profile_curvature_output.tif"))
             )
@@ -454,6 +468,7 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 0.0086002 -Tolerance 2e-3 -Message "terrain_profile_curvature mean mismatch"
         }
         "terrain_plan_curvature" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_plan_curvature_output.tif"))
             )
@@ -467,6 +482,7 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 0.0190742 -Tolerance 2e-3 -Message "terrain_plan_curvature mean mismatch"
         }
         "terrain_roughness" {
+            Mark-Judged -Name $Case.Name
             # This case existed since batch C but had NO judgement block at all (only the produced-file
             # existence check), so before D1-T2 the leg asserted nothing about roughness values.
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -495,6 +511,7 @@ function Validate-CaseOutputs {
         # Row 24 is the cumulative-distance nail: without the running offset at :867 it reads
         # 0.000488 instead of 0.01189. Distances are printed with 6 significant digits, hence 1e-6.
         "terrain_profile_extract" {
+            Mark-Judged -Name $Case.Name
             $rows = Import-Csv (Join-Path $ResolvedOutputRoot "terrain_profile_output.csv")
             Assert-Condition -Condition ($rows.Count -ge 10) -Message "terrain_profile_extract should output at least 10 rows"
             Assert-Condition -Condition ([double]$rows[0].distance -eq 0.0) -Message "terrain_profile_extract first distance should be zero"
@@ -508,6 +525,7 @@ function Validate-CaseOutputs {
             Assert-Condition -Condition ([Math]::Abs([double]$rows[48].elevation - 84.2) -lt 1e-3) -Message "terrain_profile_extract last elevation should be 84.2 (cell 40,30)"
         }
         "terrain_viewshed_multi" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "terrain_viewshed_multi_output.tif"))
             )
@@ -515,6 +533,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Max:    255" -Message "terrain_viewshed_multi max mismatch"
         }
         "projection_info" {
+            Mark-Judged -Name $Case.Name
             $text = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "projection", "info", ("--input=" + $data.ClassificationRaster)
             )
@@ -522,6 +541,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $text -Expected "Authority: EPSG:3857" -Message "projection_info authority mismatch"
         }
         "projection_transform" {
+            Mark-Judged -Name $Case.Name
             $text = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "projection", "transform",
                 "--src_srs=EPSG:4326",
@@ -534,6 +554,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $text -Expected "4865942.28" -Message "projection_transform dst_y mismatch"
         }
         "projection_assign_srs" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "projection_assign_input.tif"))
             )
@@ -541,6 +562,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "CRS:    EPSG:4326" -Message "projection_assign_srs crs mismatch"
         }
         "projection_reproject" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "projection_reproject_output.tif"))
             )
@@ -549,6 +571,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   1" -Message "projection_reproject mean mismatch"
         }
         "cutting_clip" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "cutting_clip_output.tif"))
             )
@@ -557,6 +580,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   1" -Message "cutting_clip mean mismatch"
         }
         "cutting_mosaic" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "cutting_mosaic_output.tif"))
             )
@@ -565,6 +589,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   1" -Message "cutting_mosaic mean mismatch"
         }
         "cutting_split" {
+            Mark-Judged -Name $Case.Name
             $tilesDir = Join-Path $ResolvedOutputRoot "cutting_split_tiles"
             $tiles = @(Get-ChildItem $tilesDir -Filter *.tif -ErrorAction Stop)
             Assert-Condition -Condition ($tiles.Count -eq 4) -Message "cutting_split tile count mismatch"
@@ -574,6 +599,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $firstTile -Expected "Size:   4 x 4 x 1 bands" -Message "cutting_split first tile size mismatch"
         }
         "cutting_merge_bands" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "cutting_merge_output.tif"))
             )
@@ -600,6 +626,7 @@ function Validate-CaseOutputs {
         # Liveness proof (same knife): replacing the evaluated value with the first operand
         #   (result.at<float>(y,x) = values[0]) turns this branch red with actual=30.
         "raster_math_band_math" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "band_math_output.tif"))
             )
@@ -609,6 +636,7 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 80.0 -Tolerance 1e-06 -Message "raster_math_band_math B1+B2 mean mismatch"
         }
         "processing_pansharpen" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "pansharpen_output.tif"))
             )
@@ -618,6 +646,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   95" -Message "processing_pansharpen band3 mean mismatch"
         }
         "processing_gabor_filter" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "gabor_filter_output.tif"))
             )
@@ -625,6 +654,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_gabor_filter raster type mismatch"
         }
         "processing_glcm_texture" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "glcm_texture_output.tif"))
             )
@@ -632,6 +662,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_glcm_texture raster type mismatch"
         }
         "processing_mean_shift_filter" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "mean_shift_filter_output.tif"))
             )
@@ -639,6 +670,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Type:   Float32" -Message "processing_mean_shift_filter raster type mismatch"
         }
         "processing_skeleton" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "skeleton_output.tif"))
             )
@@ -647,6 +679,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Max:    1" -Message "processing_skeleton max mismatch"
         }
         "processing_connected_components" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "connected_components_output.tif"))
             )
@@ -655,6 +688,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Max:    4" -Message "processing_connected_components component count mismatch"
         }
         "georef_dos_correction" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_dos_output.tif"))
             )
@@ -665,6 +699,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   0.5" -Message "georef_dos_correction mean mismatch"
         }
         "georef_radiometric_calibration" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_radiometric_output.tif"))
             )
@@ -675,6 +710,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   384.5" -Message "georef_radiometric_calibration mean mismatch"
         }
         "georef_gcp_register" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_gcp_output.tif"))
             )
@@ -683,6 +719,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   7" -Message "georef_gcp_register mean mismatch"
         }
         "georef_cosine_correction" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_cosine_output.tif"))
             )
@@ -690,6 +727,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   20" -Message "georef_cosine_correction mean mismatch"
         }
         "georef_minnaert_correction" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_minnaert_output.tif"))
             )
@@ -697,6 +735,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   14.1421" -Message "georef_minnaert_correction mean mismatch"
         }
         "georef_c_correction" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_c_output.tif"))
             )
@@ -704,6 +743,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   18.1239" -Message "georef_c_correction mean mismatch"
         }
         "georef_percentile_stretch" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_percentile_stretch_output.tif"))
             )
@@ -714,6 +754,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   0" -Message "georef_percentile_stretch mean mismatch"
         }
         "georef_rpc_orthorectify" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "georef_rpc_output.tif"))
             )
@@ -722,6 +763,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Mean:   9" -Message "georef_rpc_orthorectify mean mismatch"
         }
         "classification_feature_stats" {
+            Mark-Judged -Name $Case.Name
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "feature_stats_output.json")
             Assert-Condition -Condition ($payload.meta.actual_srs -eq "EPSG:3857") -Message "classification_feature_stats actual_srs mismatch"
             Assert-Condition -Condition ($payload.records.Count -ge 2) -Message "classification_feature_stats should output at least two records"
@@ -729,12 +771,14 @@ function Validate-CaseOutputs {
             Assert-Condition -Condition ($summary.Count -eq 1) -Message "classification_feature_stats summary record missing"
         }
         "classification_feature_stats_csv" {
+            Mark-Judged -Name $Case.Name
             $rows = Import-Csv (Join-Path $ResolvedOutputRoot "feature_stats_output.csv")
             Assert-Condition -Condition ($rows.Count -ge 2) -Message "classification_feature_stats_csv should output at least two rows"
             Assert-Condition -Condition ($rows[0].PSObject.Properties.Name -contains "feature_id") -Message "classification_feature_stats_csv missing feature_id column"
             Assert-Condition -Condition ($rows[0].PSObject.Properties.Name -contains "pixel_count") -Message "classification_feature_stats_csv missing pixel_count column"
         }
         "classification_svm_classify" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "classification_svm_output.tif"))
             )
@@ -744,6 +788,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Max:    2" -Message "classification_svm_classify max mismatch"
         }
         "classification_random_forest_classify" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "classification_rf_output.tif"))
             )
@@ -753,6 +798,7 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Max:    2" -Message "classification_random_forest_classify max mismatch"
         }
         "classification_max_likelihood_classify" {
+            Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "classification_ml_output.tif"))
             )
@@ -1658,10 +1704,42 @@ $cases += New-Case -Name "classification_max_likelihood_classify" -CaseArgs @(
 
 $results = @()
 foreach ($case in $cases) {
+    Note-CaseRun -Name $case.Name
     $results += Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
     Validate-CaseOutputs -Case $case -ResolvedOutputRoot $ResolvedOutputRoot -ResolvedCliPath $ResolvedCliPath
 }
 
+# Allowlist for the shared ran-must-be-judged gate (tests/regression_case_gate.ps1).
+# One entry per case that this leg runs but does not judge, each with the reason for the
+# missing judgement. The gate asserts the reverse necessity too: the moment a branch is
+# added for one of these names, the stale entry turns the leg red, so this list cannot
+$rasterGateAllowlist = @(
+    [pscustomobject]@{ Name = "spindex_evi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_savi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_gndvi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_ndwi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_mndwi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_ndbi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_arvi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_nbr"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_awei"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_ui"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_bi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
+    [pscustomobject]@{ Name = "spindex_custom_index"; Reason = "fixture-side GOLD via PluginTest.SpindexCustomIndexExecution; no leg-side expectation derived" },
+    [pscustomobject]@{ Name = "raster_inspect_info"; Reason = "action is PENDING in tests/action_gold_cases.txt, so no numeric expectation exists anywhere yet" },
+    [pscustomobject]@{ Name = "raster_manage_overviews"; Reason = "action is PENDING in tests/action_gold_cases.txt, so no numeric expectation exists anywhere yet" },
+    [pscustomobject]@{ Name = "raster_render_colormap"; Reason = "action is PENDING in tests/action_gold_cases.txt, so no numeric expectation exists anywhere yet" },
+    [pscustomobject]@{ Name = "raster_manage_nodata"; Reason = "fixture-side GOLD via PluginTest.RasterManageNoDataExecution; leg only checks the file exists" },
+    [pscustomobject]@{ Name = "terrain_fill_sinks"; Reason = "fixture-side GOLD via PluginTest.TerrainFillSinksAndFlowDirectionExecution; leg-side DEM has no hand-derived sink expectation" },
+    [pscustomobject]@{ Name = "terrain_flow_direction"; Reason = "fixture-side GOLD via PluginTest.TerrainFillSinksAndFlowDirectionExecution; leg-side DEM has no hand-derived coding expectation" },
+    [pscustomobject]@{ Name = "terrain_flow_accumulation"; Reason = "fixture-side GOLD via PluginTest.TerrainFlowAccumulationExecution; leg-side accumulation total was not derived independently" },
+    [pscustomobject]@{ Name = "terrain_stream_extract"; Reason = "fixture-side GOLD via PluginTest.TerrainStreamExtractExecution; leg-side threshold-to-count mapping not derived" },
+    [pscustomobject]@{ Name = "terrain_watershed"; Reason = "fixture-side GOLD via PluginTest.TerrainWatershedExecution; watershed rewrites non-zero pixels, leg-side labelling not derived" },
+    [pscustomobject]@{ Name = "terrain_viewshed"; Reason = "fixture-side GOLD via PluginTest.TerrainViewshedExecution; visibility set not derived for this DEM/observer pair" },
+    [pscustomobject]@{ Name = "terrain_cut_fill"; Reason = "fixture-side GOLD via PluginTest.TerrainCutFillExecution; cut/fill volumes not derived for this DEM" },
+    [pscustomobject]@{ Name = "terrain_reservoir_volume"; Reason = "fixture-side GOLD via PluginTest.TerrainReservoirVolumeExecution; reservoir volume not derived for this DEM" }
+)
+Assert-AllCasesJudged -RunnerName "raster" -RunnerPath $PSCommandPath -SelectedGroup "all" -Allowlist $rasterGateAllowlist
 Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results
 
 Write-Host "Raster regression completed:" -ForegroundColor Green

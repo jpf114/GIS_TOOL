@@ -7,6 +7,7 @@ param(
     [string]$Mode = "quick"
 )
 
+. (Join-Path $PSScriptRoot "regression_case_gate.ps1")
 $ErrorActionPreference = "Stop"
 if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)) {
     $PSNativeCommandUseErrorActionPreference = $false
@@ -100,6 +101,7 @@ function New-Case {
         [string[]]$ExpectedOutputs
     )
 
+    Register-Case -Name $Name
     return [pscustomobject]@{
         Name = $Name
         Args = [string[]]$CaseArgs
@@ -226,6 +228,7 @@ function Validate-CaseOutputs {
 
     switch ($Case.Name) {
         "matching_detect" {
+            Mark-Judged -Name $Case.Name
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "detect_output.json")
             # Value-level (library contract): cv::ORB::create(nTopFeatures) never exceeds the cap.
             # Case asks max_points=20; uncap ORB::create() and this assert goes red (batchD mutation M1).
@@ -234,6 +237,7 @@ function Validate-CaseOutputs {
             Assert-Condition -Condition ($payload.keypoints.Count -eq $payload.count) -Message "matching_detect keypoint count mismatch"
         }
         "matching_corner" {
+            Mark-Judged -Name $Case.Name
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "corner_output.json")
             # Value-level (cap ladder, D1-M): both branches truncate exactly at max_corners when
             # candidates are sufficient; case passes max_corners=3 so count must be exactly 3.
@@ -241,6 +245,7 @@ function Validate-CaseOutputs {
             Assert-Condition -Condition ($payload.keypoints.Count -eq $payload.count) -Message "matching_corner keypoint count mismatch"
         }
         "matching_match" {
+            Mark-Judged -Name $Case.Name
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "match_output.json")
             Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_match count should be greater than zero"
             Assert-Condition -Condition ($payload.matches.Count -eq $payload.count) -Message "matching_match match count mismatch"
@@ -254,11 +259,13 @@ function Validate-CaseOutputs {
             }
         }
         "matching_detect_sift" {
+            Mark-Judged -Name $Case.Name
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "detect_sift_output.json")
             Assert-Condition -Condition ($payload.count -gt 0) -Message "matching_detect_sift count should be greater than zero"
             Assert-Condition -Condition ($payload.keypoints.Count -eq $payload.count) -Message "matching_detect_sift keypoint count mismatch"
         }
         "matching_register" {
+            Mark-Judged -Name $Case.Name
             # Criterion branch added by D1-M (case existed, validation did not).
             # Warp target size is decided by the reference raster (doRegister warps to refMat.size()),
             # so output dims must equal reference dims for any fixture. No content-count constants.
@@ -442,10 +449,20 @@ if ($Mode -eq "full") {
 
 $results = @()
 foreach ($case in $cases) {
+    Note-CaseRun -Name $case.Name
     $results += Invoke-Case -ResolvedCliPath $ResolvedCliPath -Case $case
     Validate-CaseOutputs -Case $case -ResolvedOutputRoot $ResolvedOutputRoot -ReferencePath $data.Reference
 }
 
+# Allowlist for the shared ran-must-be-judged gate (tests/regression_case_gate.ps1).
+# Each entry states why this leg runs the case without judging it; the gate also fails on a
+# stale entry, so adding a branch here must be paired with deleting the entry.
+$matchingGateAllowlist = @(
+    [pscustomobject]@{ Name = "matching_change"; Reason = "fixture-side GOLD via PluginTest.MatchingChangeExecutionReportsChangedPixels; the leg has no independently derived changed-pixel count for its generated pair" }
+    [pscustomobject]@{ Name = "matching_ecc_register"; Reason = "PENDING in tests/action_gold_cases.txt; the case only registers on a non-Debug CLI build (R-D25 lightweight gate), and no judgement branch exists for it yet" }
+    [pscustomobject]@{ Name = "matching_stitch"; Reason = "PENDING in tests/action_gold_cases.txt; the case only registers on a non-Debug CLI build (R-D25 lightweight gate), and no judgement branch exists for it yet" }
+)
+Assert-AllCasesJudged -RunnerName "matching" -RunnerPath $PSCommandPath -SelectedGroup "all" -Allowlist $matchingGateAllowlist
 Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results
 
 Write-Host "Matching regression completed:" -ForegroundColor Green
