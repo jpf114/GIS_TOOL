@@ -485,6 +485,116 @@ static std::string createPolygonVectorDataset(const std::string& name, int epsg)
     return path;
 }
 
+// R3b（批次 D）：分区统计（zonal_stats）专用的"坐标可控矩形"矢量夹具。
+// WHY 不能复用 createPolygonVectorDataset：它的环写死成 x 属于 [0,100]、y 属于 [0,100]，
+//   而配套栅格的原点是 x=116、像元 0.001 ⇒ doZonalStats 的窗口算式得到
+//   colEnd = min(29, static_cast<int>((100-116)/0.001)) = -16000 < colStart = max(0, ...) = 0，
+//   于是整条要素被 "colStart > colEnd || rowStart > rowEnd" 那道闸**静默 continue**，
+//   zoneStats 恒空、产物恒空，而当时块里唯一的产物断言是 fs::exists(output) ⇒ 该用例
+//   自批次 A 起就在空跑（N176）。结案口径：改夹具让两者相交属于**测试面**，产品语义一字未动。
+// 层名/字段名/几何类型与 createPolygonVectorDataset 保持同形（features、id、name、wkbPolygon），
+// 只把环的坐标交给调用方，免得顺手改出第二个口径。
+struct ZonalRect {
+    const char* id;
+    double minX;
+    double minY;
+    double maxX;
+    double maxY;
+};
+
+static std::string createZonalRectVectorDataset(const std::string& name,
+                                                const std::vector<ZonalRect>& rects) {
+    const std::string path = utf8PathString(getTestDir() / name);
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    EXPECT_NE(driver, nullptr);
+    if (!driver) return path;
+    auto* ds = driver->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    EXPECT_NE(ds, nullptr);
+    if (!ds) return path;
+
+    OGRSpatialReference srs;
+    EXPECT_EQ(srs.importFromEPSG(4326), OGRERR_NONE);
+    auto* layer = ds->CreateLayer("features", &srs, wkbPolygon, nullptr);
+    EXPECT_NE(layer, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return path;
+    }
+
+    OGRFieldDefn idField("id", OFTString);
+    OGRFieldDefn nameField("name", OFTString);
+    EXPECT_EQ(layer->CreateField(&idField), OGRERR_NONE);
+    EXPECT_EQ(layer->CreateField(&nameField), OGRERR_NONE);
+
+    for (const auto& rect : rects) {
+        auto* feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        EXPECT_NE(feature, nullptr);
+        if (!feature) continue;
+        feature->SetField("id", rect.id);
+        feature->SetField("name", rect.id);
+
+        OGRPolygon polygon;
+        OGRLinearRing ring;
+        ring.addPoint(rect.minX, rect.minY);
+        ring.addPoint(rect.maxX, rect.minY);
+        ring.addPoint(rect.maxX, rect.maxY);
+        ring.addPoint(rect.minX, rect.maxY);
+        ring.addPoint(rect.minX, rect.minY);  // 手工闭环，与 createPolygonVectorDataset 同形
+        polygon.addRing(&ring);
+        feature->SetGeometry(&polygon);
+        EXPECT_EQ(layer->CreateFeature(feature), OGRERR_NONE);
+        OGRFeature::DestroyFeature(feature);
+    }
+    GDALClose(ds);
+    return path;
+}
+
+// 分区统计的 CSV 产物读取。⚠ 累加容器是 std::unordered_map<std::string, std::vector<ZoneAccum>>
+// ⇒ **行序不保证**，所以只按 (feature_id, band) 选行，绝不按物理行号取。
+// 产物写盘走 std::ofstream，Windows 下换行是 CRLF ⇒ 这里把行尾的 \r 剥掉再切列。
+static std::vector<std::vector<std::string>> readZonalCsvRows(const std::string& path,
+                                                              std::string& headerOut) {
+    std::vector<std::vector<std::string>> rows;
+    headerOut.clear();
+    std::ifstream in(path);
+    std::string line;
+    bool firstLine = true;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (firstLine) {
+            headerOut = line;
+            firstLine = false;
+            continue;
+        }
+        if (line.empty()) continue;
+        std::vector<std::string> fields;
+        std::size_t start = 0;
+        while (true) {
+            const std::size_t comma = line.find(',', start);
+            if (comma == std::string::npos) {
+                fields.push_back(line.substr(start));
+                break;
+            }
+            fields.push_back(line.substr(start, comma - start));
+            start = comma + 1;
+        }
+        rows.push_back(std::move(fields));
+    }
+    return rows;
+}
+
+static const std::vector<std::string>* findZonalCsvRow(const std::vector<std::vector<std::string>>& rows,
+                                                       const std::string& featureId, int band) {
+    const std::string bandText = std::to_string(band);
+    for (const auto& row : rows) {
+        // 这里**不按列数筛行**：count==0 的分区行产品只印 6 个逗号（7 个字段），比表头的 8 列少一列
+        // （N180，见 RasterManageZonalStatsExecution 里的逐字读数）。按 ==8 筛会把那一行直接判成"不存在"，
+        // 于是把一个真缺陷洗白成一次空跑 —— 正是本块要消灭的形状。
+        if (row.size() >= 2 && row[0] == featureId && row[1] == bandText) return &row;
+    }
+    return nullptr;
+}
+
 static std::string createClassMapJson(const std::string& name) {
     const std::string path = utf8PathString(getTestDir() / name);
     std::ofstream ofs(path, std::ios::binary);
@@ -18818,20 +18928,162 @@ TEST_F(PluginTest, RasterManageZonalStatsExecution) {
     auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);
 
-    const std::string input = createTestRaster("e2e_zonal_input.tif", 30, 30);
-    const std::string vectorPath = createPolygonVectorDataset("e2e_zonal_zones.gpkg", 4326);
-    const std::string output = utf8PathString(getTestDir() / "e2e_zonal_output.json");
+    // 夹具（全部手推，推导链落 build/tmp/batchD/r3b/arms/S1_derivation_unit_expectation.txt，
+    // 落笔在任何产品读数之前）：
+    //   栅格 7 列 x 5 行（**非方**——R1 的纪律 3：方阵判不出行列写反），
+    //   GT {100, 1, 0, 200, 0, -1} ⇒ 列 c 覆盖 x 属于 [100+c, 101+c]、中心 100.5+c；
+    //                                    行 r 覆盖 y 属于 [199-r, 200-r]、中心 199.5-r。
+    //   band1 = 10x + y、band2 = x + 10y —— 两栏互为 x/y 转置，任何"把行当列取"的实现
+    //   都会让两栏统计量错位而不是恰好相等；NoData(-9999) 只落在 (x=3, y=2) 一个像元上，
+    //   它同时是 band1 的 32 与 band2 的 23，用来判 GetNoDataValue 那条
+    //   abs(val - nodata) < 1e-9 的跳过支路（去掉它 min 会变成 -9999，count 会变 10）。
+    gis::tests::RasterFixtureOptions zonalOpts;
+    zonalOpts.crs = gis::tests::FixtureCrs::Epsg4326;
+    zonalOpts.originX = 100.0;
+    zonalOpts.originY = 200.0;
+    zonalOpts.pixelSize = 1.0;
+    zonalOpts.hasNoData = true;
+    zonalOpts.noData = -9999.0;
+
+    const std::vector<float> zonalBand1 = {
+         0.f,  10.f,  20.f,  30.f,  40.f,  50.f,  60.f,   // y=0
+         1.f,  11.f,  21.f,  31.f,  41.f,  51.f,  61.f,   // y=1
+         2.f,  12.f,  22.f, -9999.f, 42.f,  52.f,  62.f,  // y=2（x=3 是 NoData，本名 32）
+         3.f,  13.f,  23.f,  33.f,  43.f,  53.f,  63.f,   // y=3
+         4.f,  14.f,  24.f,  34.f,  44.f,  54.f,  64.f,   // y=4
+    };
+    const std::vector<float> zonalBand2 = {
+         0.f,   1.f,   2.f,   3.f,   4.f,   5.f,   6.f,   // y=0
+        10.f,  11.f,  12.f,  13.f,  14.f,  15.f,  16.f,   // y=1
+        20.f,  21.f,  22.f, -9999.f, 24.f,  25.f,  26.f,  // y=2（x=3 是 NoData，本名 23）
+        30.f,  31.f,  32.f,  33.f,  34.f,  35.f,  36.f,   // y=3
+        40.f,  41.f,  42.f,  43.f,  44.f,  45.f,  46.f,   // y=4
+    };
+    ASSERT_EQ(zonalBand1.size(), 35u);
+    ASSERT_EQ(zonalBand2.size(), 35u);
+
+    const std::string input = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "r3b_zonal_input.tif", 7, 5, {zonalBand1, zonalBand2}, zonalOpts);
+    ASSERT_FALSE(input.empty());
+
+    // 四个矩形各判一条独立的支路：
+    //   zA    窗口 5x3（非方）但只有 10 个像元中心落在环内 ⇒ 判"取包框不当掩膜"（那样会得 15）
+    //         且 colStart=1/rowStart=1 都非零 ⇒ 判"子窗地理参考少平移一个像元"（那样会得 8）
+    //   zB    窗口 1x1 ⇒ variance = sumSq/count - mean^2 恰为 0 ⇒ 判 stddev 那条
+    //         "variance > 0 ? sqrt : 0" 的下钳；写成样本标准差（除以 n-1）在这里是 0/0 = nan
+    //   zEmpty 窗口 1x1 但像元中心 (100.5, 198.5) 落在环外 ⇒ 区**照样建**、六个统计列全空
+    //         ⇒ 判 count==0 那条 else 分支（其余统计列一个都不印）
+    //   zOff   整个环在栅格西侧 ⇒ colEnd = min(6, (int)((50-100)/1)) = -50 < colStart = 0
+    //         ⇒ 静默 continue、**连区都不建** ⇒ 这条就是 N176 的形状，钉住"跑了不等于跑到统计支"
+    const std::vector<ZonalRect> zonalRects = {
+        {"zA", 101.2, 196.8, 105.8, 198.8},
+        {"zB", 105.2, 198.2, 105.8, 198.8},
+        {"zEmpty", 100.6, 198.6, 100.8, 198.9},
+        {"zOff", 0.0, 0.0, 50.0, 100.0},
+    };
+    const std::string vectorPath = createZonalRectVectorDataset("r3b_zonal_zones.gpkg", zonalRects);
+    ASSERT_TRUE(fs::exists(vectorPath));
+
+    // 产物用 .csv ⇒ 扩展名决定格式（非 .csv 走 JSON，JSON 支本把无判据，照实登记成缺口）。
+    const std::string output = utf8PathString(getTestDir() / "r3b_zonal_output.csv");
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("zonal_stats");
     params["input"] = input;
     params["vector"] = vectorPath;
     params["output"] = output;
+    params["feature_id_field"] = std::string("id");
 
     const auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << result.message;
-    EXPECT_TRUE(fs::exists(output));
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    // N176 的结案判据：钉的是"产物里真的带上了统计"，不是"文件存在"。
+    // zOff 被静默 continue 掉 ⇒ zone_count 数的是活下来的区（3），要素个数（4）在这里不可见。
+    ASSERT_EQ(result.metadata.count("zone_count"), 1u) << "result.metadata 里没有 zone_count";
+    EXPECT_EQ(result.metadata.at("zone_count"), "3");
+    EXPECT_EQ(result.metadata.at("band_count"), "2");
+
+    std::string zonalHeader;
+    const auto zonalRows = readZonalCsvRows(output, zonalHeader);
+    EXPECT_EQ(zonalHeader, "feature_id,band,min,max,mean,stddev,sum,count");
+    ASSERT_EQ(zonalRows.size(), 6u)
+        << "3 个区 x 2 个波段 = 6 行；多出来的是 zOff 没被 continue 掉，少出来是有区没进 zoneStats";
+
+    // 容差口径：CSV 用默认 ostream 打印 double ⇒ **6 位有效数字**，不是 6 位小数。
+    // 本夹具里被判的量最大只到两位整数，所以量化误差上界是 5e-5（zA/zB 的 mean 实到 4.4445e-5），
+    // 取 1e-4 是"不可能是舍入产物"的最小 10 的幂；而最接近的**错值**（样本标准差）离期望 >= 0.31
+    // ⇒ 余量 >= 3100 倍。整数列（min/max/sum/count）逐字比对原文，不吃这个容差。
+    constexpr double kZonalCsvTol = 1e-4;
+
+    // ---- zA / band 1：命中 10 个中心、其中 1 个 NoData ⇒ count 9 ----
+    // 值集合 {11,12,21,22,31,41,42,51,52}：sum 283、sumSq 10901
+    // mean = 283/9、variance = 10901/9 - (283/9)^2 = 18020/81、stddev = sqrt(18020)/9
+    const auto* za1 = findZonalCsvRow(zonalRows, "zA", 1);
+    ASSERT_NE(za1, nullptr) << "CSV 里没有 zA/band1（按 feature_id+band 选行，与行序无关）";
+    EXPECT_EQ(za1->size(), 8u) << "有统计的分区行必须是表头那 8 列";
+    EXPECT_EQ(za1->at(2), "11");
+    EXPECT_EQ(za1->at(3), "52");
+    EXPECT_EQ(za1->at(6), "283");
+    EXPECT_EQ(za1->at(7), "9");
+    EXPECT_NEAR(std::stod(za1->at(4)), 283.0 / 9.0, kZonalCsvTol);
+    EXPECT_NEAR(std::stod(za1->at(5)), std::sqrt(18020.0) / 9.0, kZonalCsvTol);
+    // 反事实锚（不是断言，写清楚防"把期望改成读数"）：样本标准差会是 15.820169966779048，
+    // 与上行期望差 0.904771 ⇒ 本条 EXPECT_NEAR 判得住总体/样本之别。
+
+    // ---- zA / band 2：值集合 {11,12,13,14,15,21,22,24,25}：sum 157、sumSq 2981 ----
+    // variance = 2981/9 - (157/9)^2 = 2180/81、stddev = sqrt(2180)/9
+    const auto* za2 = findZonalCsvRow(zonalRows, "zA", 2);
+    ASSERT_NE(za2, nullptr) << "CSV 里没有 zA/band2";
+    EXPECT_EQ(za2->at(2), "11");
+    EXPECT_EQ(za2->at(3), "25");
+    EXPECT_EQ(za2->at(6), "157");
+    EXPECT_EQ(za2->at(7), "9");
+    EXPECT_NEAR(std::stod(za2->at(4)), 157.0 / 9.0, kZonalCsvTol);
+    EXPECT_NEAR(std::stod(za2->at(5)), std::sqrt(2180.0) / 9.0, kZonalCsvTol);
+    // band1 与 band2 的统计量互不相等 ⇒ 行列转置（或"只算了一个波段"）在这里必红。
+
+    // ---- zB / 两个波段：1 个像元 ⇒ variance 恰为 0 ⇒ stddev 下钳成 0 ----
+    const auto* zb1 = findZonalCsvRow(zonalRows, "zB", 1);
+    ASSERT_NE(zb1, nullptr) << "CSV 里没有 zB/band1";
+    EXPECT_EQ(zb1->at(2), "51");
+    EXPECT_EQ(zb1->at(3), "51");
+    EXPECT_EQ(zb1->at(4), "51");
+    EXPECT_EQ(zb1->at(5), "0") << "variance 为 0 时必须下钳成 0；样本口径会印成 nan/inf";
+    EXPECT_EQ(zb1->at(6), "51");
+    EXPECT_EQ(zb1->at(7), "1");
+
+    const auto* zb2 = findZonalCsvRow(zonalRows, "zB", 2);
+    ASSERT_NE(zb2, nullptr) << "CSV 里没有 zB/band2";
+    EXPECT_EQ(zb2->at(2), "15");
+    EXPECT_EQ(zb2->at(3), "15");
+    EXPECT_EQ(zb2->at(4), "15");
+    EXPECT_EQ(zb2->at(5), "0");
+    EXPECT_EQ(zb2->at(6), "15");
+    EXPECT_EQ(zb2->at(7), "1");
+
+    // ---- zEmpty：区建了、但一个像元都没命中 ⇒ 六个统计列全空 ----
+    for (int band = 1; band <= 2; ++band) {
+        const auto* row = findZonalCsvRow(zonalRows, "zEmpty", band);
+        ASSERT_NE(row, nullptr) << "zEmpty 的窗口非空（1x1），区应当进 zoneStats，哪怕统计列为空";
+        // N180（本把新立，产品缺陷、本把不修）：count==0 那一支发的是 `csv << ",,,,,"`，
+        // 而满值那一支在 "fid,band" 之后发 6 个逗号（min/max/mean/stddev 各一个 + sum/count 两个），
+        // 空值那一支只有 5 个 ⇒ 产物行比 8 列表头**少一列**（实测逐字节读数 6 个逗号 / 7 个字段，
+        // 同批产物里满值行是 7 个逗号 / 8 个字段）。这里钉的是**现读形状**，不是"应该的形状"：
+        // 谁补上那个逗号，这一条就会红，届时必须连带把 JSON 支与文档口径一起改，而不是顺手放宽本条。
+        EXPECT_EQ(row->size(), 7u) << "N180：空分区行实测只有 7 个字段（表头是 8 列）";
+        for (std::size_t col = 2; col < row->size(); ++col) {
+            EXPECT_TRUE(row->at(col).empty())
+                << "zEmpty band" << band << " 第 " << col << " 列本该是空字段";
+        }
+    }
+
+    // ---- zOff：静默 continue ⇒ 连行都不该有（N176 的形状） ----
+    EXPECT_EQ(findZonalCsvRow(zonalRows, "zOff", 1), nullptr)
+        << "整个环在栅格外侧的要素被 colStart > colEnd 那道闸静默 continue，不该出现在产物里";
+    EXPECT_EQ(findZonalCsvRow(zonalRows, "zOff", 2), nullptr);
 }
+
 
 TEST_F(PluginTest, RasterManageProximityExecution) {
     auto* p = mgr_.find("raster_manage");
