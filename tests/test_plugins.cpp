@@ -2607,7 +2607,7 @@ TEST_F(PluginTest, RasterInspectInfoExecution) {
         FAIL() << "plugin not loaded: raster_inspect";
     }
 
-    std::string input = createTestRaster("e2e_util_info_input.tif", 32, 32);
+    std::string input = createTestRaster("e2e_util_info_input.tif", 64, 32);
     // PAM 边车按文件名匹配：上一跑留下的 .aux.xml 里缓存的统计会让 ComputeStatistics
     // **不重读像元**直接回缓存（与 N133 夹具里同一口径的防御），于是"改了像素读路径"
     // 这一类产物动改动在本用例里读不出差别 ⇒ 先删边车，判的是现算。
@@ -2624,22 +2624,30 @@ TEST_F(PluginTest, RasterInspectInfoExecution) {
     // ── R1（批次 D）：把"只判成功"升级成解析成数再比 ──────────────────────────
     // 夹具字面量（createTestRaster 的函数体，行主序 data[i] = float(i % 256)、
     // adfGT = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001}、单波段 Float32、不写 NoData）：
-    //   32*32 = 1024 个像元 = 4 轮完整的 0..255 ⇒ Min = 0、Max = 255，每个值恰好出现 4 次。
-    //   Mean  = (4 * Σ_{0..255} k)/1024 = (4 * 32640)/1024 = 130560/1024 = 127.5
-    //   E[x²] = (4 * Σ_{0..255} k²)/1024 = (4 * 255*256*511/6)/1024 = 22238720/1024 = 21717.5
+    //   64*32 = 2048 个像元 = 8 轮完整的 0..255 ⇒ Min = 0、Max = 255，每个值恰好出现 8 次。
+    //   ⚠ 为什么是 64*32 而不是方阵（R1 复审必须修①）：面积只要是 256 的整数轮就能让逐像元统计好推，
+    //   **这条约束只限 `w*h`、不限形状**；方形是上一版自己选的（`3afcdf4` 把 30×30 改成 32×32），
+    //   而方形产物是 x/y 反射不变量 ⇒ "宽高写反"在它上面是等价变异（改了不红）。本仓已在两处写过这条
+    //   （`Assert-InfoSizeExact` 的定义注释、`cutting_clip_asymmetric_window` 那条腿 case 的注释）
+    //   ⇒ 用方夹具等于把 helper 要防的东西放回去，所以是**改夹具**而不是登记缺口。
+    //   Mean  = (8 * Σ_{0..255} k)/2048 = (8 * 32640)/2048 = 261120/2048 = 127.5（与方阵同值）
+    //   E[x²] = (8 * Σ_{0..255} k²)/2048 = (8 * 5559680)/2048 = 44477440/2048 = 21717.5
+    //   ⇒ 每个值的出现次数同时翻倍 ⇒ 均值与总体方差**逐字不变**（Var = 21717.5 − 127.5² = 5461.25），
+    //     变的只有 Size 两格与 Extent 的 maxX。
     //   Var（GDAL 的 StdDev 是**总体**标准差 = sqrt(E[x²] - Mean²)，同一公式已在
     //        analysis_input.tif 的 PAM 边车上独立对撞：sqrt(170.5) = 13.057564857201 逐位相同）
     //       = 21717.5 - 127.5² = 21717.5 - 16256.25 = 5461.25
     //   StdDev = sqrt(5461.25) = 73.9002706…（产品走默认 6 位有效印法 ⇒ 印 "73.9003"）
-    // Extent 手推：minX = 116、maxX = 116 + 32*0.001 = 116.032、
+    // Extent 手推：minX = 116、maxX = 116 + 64*0.001 = 116.064、
     //             minY = 40 + 32*(-0.001) = 39.968、maxY = 40。
-    // 尺寸这行的宽与高在本夹具下相等（32 x 32 是方的）⇒ 它单独判不出"轴写反"，
-    // 只能判出"维度读错/波段数读错"；轴写反由下面 Origin(116 vs 40) 与
-    // PixelSize(+0.001 vs -0.001) 两支的**不对称值**判出（四支合起来才盖住这一类）。
+    // 尺寸这行在本夹具下宽 64 ≠ 高 32 ⇒ 它与 Extent 的 maxX/minY 一起**能**看见"宽高写反"
+    // （写反时 Size 报 32 x 64、maxX 变 116.032）。而 Origin(116 vs 40) 与 PixelSize(+0.001 vs
+    // −0.001) 两支判的是**另一类**缺陷——GeoTransform 槽位写反（这两支根本不读 width/height）。
+    // 上一版把这两类混成一句"轴写反由 Origin/PixelSize 承担"，是复审抓到的措辞越界。
     const auto sizeFields = infoLineNumbers(result.message, "Size");
     ASSERT_TRUE(sizeFields.has_value()) << result.message;
     ASSERT_EQ(sizeFields->size(), 3u) << "Size 行要三个数，实际文本: " << result.message;
-    EXPECT_NEAR((*sizeFields)[0], 32.0, 1e-9) << "info 报出的宽不等于夹具字面量 32";
+    EXPECT_NEAR((*sizeFields)[0], 64.0, 1e-9) << "info 报出的宽不等于夹具字面量 64";
     EXPECT_NEAR((*sizeFields)[1], 32.0, 1e-9) << "info 报出的高不等于夹具字面量 32";
     EXPECT_NEAR((*sizeFields)[2], 1.0, 1e-9) << "info 报出的波段数不等于夹具字面量 1";
 
@@ -2660,7 +2668,7 @@ TEST_F(PluginTest, RasterInspectInfoExecution) {
     ASSERT_EQ(extentFields->size(), 4u) << "Extent 行要四个数，实际文本: " << result.message;
     EXPECT_NEAR((*extentFields)[0], 116.0, 1e-9) << result.message;
     EXPECT_NEAR((*extentFields)[1], 39.968, 1e-9) << "minY 不等于 40 + 32*(-0.001)" << result.message;
-    EXPECT_NEAR((*extentFields)[2], 116.032, 1e-9) << "maxX 不等于 116 + 32*0.001" << result.message;
+    EXPECT_NEAR((*extentFields)[2], 116.064, 1e-9) << "maxX 不等于 116 + 64*0.001" << result.message;
     EXPECT_NEAR((*extentFields)[3], 40.0, 1e-9) << result.message;
 
     const auto bandMin = infoSingleNumber(result.message, "Min");
