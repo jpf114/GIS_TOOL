@@ -539,6 +539,19 @@ function Validate-CaseOutputs {
             )
             Assert-TextContains -Text $text -Expected "Size: 6 x 6 x 1 bands" -Message "projection_info size mismatch"
             Assert-TextContains -Text $text -Expected "Authority: EPSG:3857" -Message "projection_info authority mismatch"
+            # D1-P: two more readings that are hand-derivable from the generator, not back-filled
+            # from the product. makeClassRaster (tests/gui_test_data_helper.cpp) creates this input as
+            # 6 x 6 x 1 Int32 with geotransform {12935000.0, 50.0, 0.0, 4852300.0, 0.0, -50.0}, so
+            #   Pixel Size printed by doInfo = "50" and "-50"  (adfGT[1], adfGT[5])
+            #   Origin printed by doInfo = adfGT[0], adfGT[3] = 12935000, 4852300, and doInfo writes the
+            #     message with an ostringstream at default precision (6 significant digits), which renders
+            #     those two as 1.2935e+07 and 4.8523e+06.
+            # The derived envelope is x in [12935000, 12935000 + 6*50 = 12935300],
+            # y in [4852300 - 6*50 = 4852000, 4852300] - the same box as the generator's polygon ring,
+            # but doInfo emits no extent key, so the four sides are asserted in the Debug unit case
+            # PluginTest.ProjectionInfoExecution instead of here.
+            Assert-TextContains -Text $text -Expected "Pixel Size: (50, -50)" -Message "projection_info pixel size mismatch"
+            Assert-TextContains -Text $text -Expected "Origin: (1.2935e+07, 4.8523e+06)" -Message "projection_info origin mismatch"
         }
         "projection_transform" {
             Mark-Judged -Name $Case.Name
