@@ -1431,7 +1431,20 @@ function Ensure-RasterRegressionData {
     # to be NON-SQUARE -- on a square product "W x H" is an x/y reflexive invariant and an axis swap
     # is an equivalent mutation (nothing turns red). 40 x 24 with three plateau levels 0/10/51 in
     # quadrants; see makeStepLevelRaster in tests/gui_test_data_helper.cpp for the hand-derived
-    # multiset {0^240, 10^480, 51^240} and why the extremes are 25% each (normalize saturation).
+    # multiset {0^240, 10^480, 51^240}.  RETRACTION (batch D fix round 1): the first version of this
+    # comment said the plateaus exist because "cv::normalize to 8-bit clips percentiles, so a ramp
+    # whose extreme buckets hold only 0.39% of the pixels gets its extremes cut off".  That causal
+    # claim was written by this seat into committed text and is WRONG -- controller, reviewer and
+    # this seat each disproved it independently.  Measured here: NORM_MINMAX to CV_8U is exactly
+    # t = (v - min) * 255 / (max - min) with no histogram and no percentile step, so a 64 x 64
+    # i % 256 ramp (every bucket 0.390625% of the pixels) still maps min -> 0 and max -> 255; the
+    # product binary on that ramp reads band2 Min 0 / Max 255 / Mean 127.5 / StdDev 73.9003, which
+    # equals the independently derived sqrt((256^2 - 1) / 12).  See logs F1_cv2_normalize_probe.log
+    # and F1_product_info_ramp64x64.log under build/tmp/batchD/r2/arms/.
+    # The REAL reason for plateaus is derivability, not clipping: three levels are directly
+    # countable (240/480/240) so both moments are two lines of closed form, while a 256-level ramp
+    # needs summation order plus a per-level round-vs-truncate check.  That is a fixture-shape
+    # choice made by me, not a product decision.
     if (-not (Test-Path $stepLevelRaster)) {
         Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("step-level-raster", $stepLevelRaster)
     }
