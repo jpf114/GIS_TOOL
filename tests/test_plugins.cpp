@@ -13234,6 +13234,401 @@ TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
     EXPECT_GT(readRasterPixel(roughnessOutput, 24, 24), 0.01f);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 批次 D / D1-T1：terrain 首批五条 PENDING→GOLD 的值级用例（+ curvature 只建 case 不晋升）
+//
+// 三幅夹具 DEM 全是**可手算**的（协议 §P1-1 只准用库里已有的夹具生成器）：
+//   DEM-P（单位斜坡）= createMultiBandGradientRaster("...", 16, 16, {{0,1}}, 116.0, 40.0, /*pixelSize=*/1.0)
+//       z(x,y) = 0 + 1.0*x ⇒ 逐列 0,1,2,…,15，逐行不变；像元边长 1.0 ⇒ dz/dx = 1、dz/dy = 0。
+//   DEM-F（平地）    = createMultiBandConstantRaster("...", 16, 16, {5.0f}, 116.0, 40.0, 1.0) ⇒ dz/dx = dz/dy = 0。
+//   DEM-N（噪声斜坡）= createTerrainRaster("...")（:306，48x48、像元 0.001）
+//       z(x,y) = x*1.5 + y*0.8 + ((x*y)%11)*0.2 —— 每条算术都在下面逐点摊开。
+// slope/aspect/hillshade 走 GDALDEMProcessing（Horn 一阶差分 + ESRI 光照模型），
+// tpi/tri/curvature 走本仓 runLocalTerrainProcess（OpenCV 3x3，BORDER_REPLICATE）。
+// 全部期望值先由独立参考实现算出（Horn/ESRI 公式写在注释里），再与产物逐像元对撞；
+// 容差 1e-3 只吸收 float32/double 的口径差（任何算法常数级改动都会把值挪动 ≥0.5）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_F(PluginTest, TerrainSlopeHandValueOnUnitPlane) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string plane = createMultiBandGradientRaster("d1_slope_plane.tif", 16, 16, {{0.0f, 1.0f}}, 116.0, 40.0, 1.0);
+    const std::string flat = createMultiBandConstantRaster("d1_slope_flat.tif", 16, 16, {5.0f}, 116.0, 40.0, 1.0);
+    const std::string noise = createTerrainRaster("d1_slope_noise.tif");
+    const std::string outPlane = utf8PathString(getTestDir() / "d1_slope_plane_out.tif");
+    const std::string outFlat = utf8PathString(getTestDir() / "d1_slope_flat_out.tif");
+    const std::string outNoise = utf8PathString(getTestDir() / "d1_slope_noise_out.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("slope");
+    params["input"] = plane;
+    params["output"] = outPlane;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    const auto planeResult = p->execute(params, progress_);
+    ASSERT_TRUE(planeResult.success) << planeResult.message;
+
+    // Horn（GDAL demprocessing_lib.cpp，全部内部 double）：
+    //   dzdx = ((c+2f+i)-(a+2d+g))/(8*dx)，dzdy = ((g+2h+i)-(a+2b+c))/(8*dy)，
+    //   slope = atan(z_factor*sqrt(dzdx²+dzdy²)) * 180/pi。
+    // DEM-P：三列权 (1,2,1) 各自求和 ⇒ 右列 4*(x+1) - 左列 4*(x-1) = 8 ⇒ dzdx = 8/(8*1.0) = 1.0，
+    //        dzdy = 0 ⇒ slope = atan(1)*180/pi = 45.000000（内部每个像元都是 45）。
+    EXPECT_NEAR(readRasterPixel(outPlane, 7, 7), 45.0f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 1, 1), 45.0f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 14, 14), 45.0f, 1e-3f);
+    // 一像素边框凑不齐 3x3 窗口 ⇒ GDAL 写自己的默认 NODATA -9999（不是 0、不是 45）。
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 0), -9999.0f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 15, 7), -9999.0f, 1e-3f);
+
+    // z_factor 这条**不当判据**：实测 slope 产物对 z_factor 完全不敏感
+    //   （--z_factor=0.5/1/10 在单位斜面上都报 45，见 D1-T1 报告的 N 条候选），
+    //   因为本仓 runDemProcess 把 z_factor 送进 GDAL 的 -z，而 GDAL 的 slope 只认 -s/-p。
+    //   是不是缺陷交控制器裁定，裁定前这里不钉任何 z_factor 期望值（钉住现状等于替缺陷立字据）。
+    // DEM-F：dzdx=dzdy=0 ⇒ atan(0)=0，内部 0、边框仍是 -9999（坡度 0 与 NODATA 分得开）。
+    std::map<std::string, gis::framework::ParamValue> flatParams = params;
+    flatParams["input"] = flat;
+    flatParams["output"] = outFlat;
+    const auto flatResult = p->execute(flatParams, progress_);
+    ASSERT_TRUE(flatResult.success) << flatResult.message;
+    EXPECT_NEAR(readRasterPixel(outFlat, 7, 7), 0.0f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outFlat, 0, 0), -9999.0f, 1e-3f);
+
+    // DEM-N 的 (13,7)（dx=dy=0.001）：九邻域
+    //   24.000 24.500 27.200
+    //   25.000 25.700 28.600
+    //   26.000 26.900 27.800
+    //   dzdx = ((27.2+2*28.6+27.8)-(24.0+2*25.0+26.0))/(8*0.001) = (112.2-100.0)/0.008 = 1525.0001、
+    //   dzdy = ((26.0+2*26.9+27.8)-(24.0+2*24.5+27.2))/0.008 = (107.6-100.2)/0.008 = 924.9997
+    //   （float32 存值尾差进了最后一位），
+    //   slope = atan(hypot(1525.0001,924.9997))*180/pi = 89.96788。
+    //   x/y 两个分量都不为零 ⇒ 交换 dzdx/dzdy 的核（或把 dx 用成 dy）一定挪动这个数。
+    std::map<std::string, gis::framework::ParamValue> noiseParams = params;
+    noiseParams["input"] = noise;
+    noiseParams["output"] = outNoise;
+    const auto noiseResult = p->execute(noiseParams, progress_);
+    ASSERT_TRUE(noiseResult.success) << noiseResult.message;
+    EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), 89.96788f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 89.97145f, 1e-3f);
+}
+
+TEST_F(PluginTest, TerrainAspectHandValueOnUnitPlane) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string plane = createMultiBandGradientRaster("d1_aspect_plane.tif", 16, 16, {{0.0f, 1.0f}}, 116.0, 40.0, 1.0);
+    const std::string flat = createMultiBandConstantRaster("d1_aspect_flat.tif", 16, 16, {5.0f}, 116.0, 40.0, 1.0);
+    const std::string noise = createTerrainRaster("d1_aspect_noise.tif");
+    const std::string outPlane = utf8PathString(getTestDir() / "d1_aspect_plane_out.tif");
+    const std::string outFlat = utf8PathString(getTestDir() / "d1_aspect_flat_out.tif");
+    const std::string outNoise = utf8PathString(getTestDir() / "d1_aspect_noise_out.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("aspect");
+    params["input"] = plane;
+    params["output"] = outPlane;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    const auto planeResult = p->execute(params, progress_);
+    ASSERT_TRUE(planeResult.success) << planeResult.message;
+
+    // GDAL aspect = 90 - atan2(dzdy, -dzdx)*180/pi（<0 再 +360），口径是"下坡朝向、自北顺时针"。
+    // DEM-P：z 随 x 增大 ⇒ 坡面朝西下坡：dzdx=+1、dzdy=0 ⇒ atan2(0,-1)=180° ⇒ 90-180=-90 ⇒ +360 = 270。
+    //        这一条同时钉住符号约定：把 dzdx 或 dzdy 反号 ⇒ 270↔90、301.24↔238.76，立刻红。
+    EXPECT_NEAR(readRasterPixel(outPlane, 7, 7), 270.0f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 14, 3), 270.0f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 0), -9999.0f, 1e-3f);   // 边框凑不齐窗口
+
+    // DEM-F：梯度为 0 ⇒ GDAL 的"平地无朝向"约定：**整幅**（含内部）都写 NODATA -9999，
+    //        不是 0、不是 90。把这条传播去掉 ⇒ (7,7) 变成某个数 ⇒ 红。
+    std::map<std::string, gis::framework::ParamValue> flatParams = params;
+    flatParams["input"] = flat;
+    flatParams["output"] = outFlat;
+    const auto flatResult = p->execute(flatParams, progress_);
+    ASSERT_TRUE(flatResult.success) << flatResult.message;
+    EXPECT_NEAR(readRasterPixel(outFlat, 7, 7), -9999.0f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outFlat, 3, 11), -9999.0f, 1e-3f);
+    auto flatDs = gis::core::openRaster(outFlat, true);
+    ASSERT_NE(flatDs, nullptr);
+    EXPECT_NEAR(flatDs->GetRasterBand(1)->GetNoDataValue(), -9999.0, 1e-6);
+
+    // DEM-N (13,7)：dzdx=1525.0001、dzdy=924.9997 ⇒ atan2(924.9997,-1525.0001)=148.76079°
+    //   ⇒ aspect = 90 - 148.76079 = -58.76079 ⇒ +360 = 301.23921。
+    std::map<std::string, gis::framework::ParamValue> noiseParams = params;
+    noiseParams["input"] = noise;
+    noiseParams["output"] = outNoise;
+    const auto noiseResult = p->execute(noiseParams, progress_);
+    ASSERT_TRUE(noiseResult.success) << noiseResult.message;
+    EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), 301.23921f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 300.71894f, 1e-3f);
+}
+
+TEST_F(PluginTest, TerrainHillshadeHandValueOnUnitPlane) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string plane = createMultiBandGradientRaster("d1_hs_plane.tif", 16, 16, {{0.0f, 1.0f}}, 116.0, 40.0, 1.0);
+    const std::string flat = createMultiBandConstantRaster("d1_hs_flat.tif", 16, 16, {5.0f}, 116.0, 40.0, 1.0);
+    const std::string noise = createTerrainRaster("d1_hs_noise.tif");
+    const std::string outAligned = utf8PathString(getTestDir() / "d1_hs_aligned_out.tif");
+    const std::string outNorth = utf8PathString(getTestDir() / "d1_hs_north_out.tif");
+    const std::string outOpposite = utf8PathString(getTestDir() / "d1_hs_opposite_out.tif");
+    const std::string outFlat = utf8PathString(getTestDir() / "d1_hs_flat_out.tif");
+    const std::string outNoise = utf8PathString(getTestDir() / "d1_hs_noise_out.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("hillshade");
+    params["input"] = plane;
+    params["output"] = outAligned;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    params["azimuth"] = 270.0;
+    params["altitude"] = 45.0;
+    const auto alignedResult = p->execute(params, progress_);
+    ASSERT_TRUE(alignedResult.success) << alignedResult.message;
+
+    // ESRI/GDAL 模型：hs = 255*(cos(zen)*cos(slope) + sin(zen)*sin(slope)*cos(az-aspect))，
+    // zen = 90-altitude，az 与 aspect 都是"自北顺时针"。DEM-P 的 slope=45、aspect=270（见上两条）。
+    // 输出波段是 Byte（GDAL 给 hillshade 的 NODATA 约定是 0）。在**解析面**（平面/平地）上参考模型是
+    // 精确可判的，取整方向实测为向上：180.31→181、197.49→198、127.50→128（round() 会给 180/197，
+    // 与实测不相容）；在**噪声 DEM** 上逐像元取整方向不可判（参考值与产物互差 ≤0.7），所以下面 (5)
+    // 那两枚钉子按"参考值上取整 = 产物"实测钉住，判别力来自"改公式必挪 >10"而不是 ±1 的取整差。
+    // (1) az=270 与 aspect=270 对齐：raw = 255*(cos45*cos45 + sin45*sin45*cos(0)) = 255*cos(0°) = 255 ⇒ 255。
+    EXPECT_FLOAT_EQ(readRasterPixel(outAligned, 7, 7), 255.0f);
+    EXPECT_FLOAT_EQ(readRasterPixel(outAligned, 14, 2), 255.0f);
+
+    // (2) az=0（与朝向垂直）：cos(0-270)=cos(-270°)=0 ⇒ raw = 255*(0.5+0)=127.5 ⇒ ceil = 128。
+    std::map<std::string, gis::framework::ParamValue> northParams = params;
+    northParams["output"] = outNorth;
+    northParams["azimuth"] = 0.0;
+    const auto northResult = p->execute(northParams, progress_);
+    ASSERT_TRUE(northResult.success) << northResult.message;
+    EXPECT_FLOAT_EQ(readRasterPixel(outNorth, 7, 7), 128.0f);
+
+    // (3) az=90（背光，正对反面）：cos(90-270)=-1 ⇒ raw = 255*(0.5-0.5)=0 ⇒ ceil = 0；
+    //     实测 1：GDAL 内部 double 的 atan2 组合在 180° 处不是精确 -1，raw = 3e-6 量级 ⇒ ceil 进 1。
+    //     这里钉 1 而不是 0，是因为 0 同时是 hillshade 的 NODATA 值，钉 0 等于把该像元从统计里删掉。
+    std::map<std::string, gis::framework::ParamValue> oppositeParams = params;
+    oppositeParams["output"] = outOpposite;
+    oppositeParams["azimuth"] = 90.0;
+    const auto oppositeResult = p->execute(oppositeParams, progress_);
+    ASSERT_TRUE(oppositeResult.success) << oppositeResult.message;
+    EXPECT_FLOAT_EQ(readRasterPixel(outOpposite, 7, 7), 1.0f);
+
+    // (4) DEM-F：slope=0 ⇒ 第二项整项消失 ⇒ raw = 255*cos(zen)=255*sin(45°)=180.31 ⇒ ceil = 181。
+    //     与 altitude 无关的方位（az=315） ⇒ 这条钉住"高度角进了 -alt"，去掉 -alt ⇒ 默认 30 ⇒ 128 ⇒ 红。
+    std::map<std::string, gis::framework::ParamValue> flatParams = params;
+    flatParams["input"] = flat;
+    flatParams["output"] = outFlat;
+    flatParams["azimuth"] = 315.0;
+    const auto flatResult = p->execute(flatParams, progress_);
+    ASSERT_TRUE(flatResult.success) << flatResult.message;
+    EXPECT_FLOAT_EQ(readRasterPixel(outFlat, 7, 7), 181.0f);
+
+    // (5) DEM-N (13,7)：slope=89.96788、aspect=301.23921、az=315、alt=45
+    //     raw = 255*(cos45*cos(89.96788°) + sin45*sin(89.96788°)*cos(315-301.23921°)) = 175.23784 ⇒ ceil = 176。
+    //     (41,41)：slope=89.97145、aspect=300.71894 ⇒ raw = 174.82994 ⇒ ceil = 175。
+    std::map<std::string, gis::framework::ParamValue> noiseParams = params;
+    noiseParams["input"] = noise;
+    noiseParams["output"] = outNoise;
+    noiseParams["azimuth"] = 315.0;
+    const auto noiseResult = p->execute(noiseParams, progress_);
+    ASSERT_TRUE(noiseResult.success) << noiseResult.message;
+    EXPECT_FLOAT_EQ(readRasterPixel(outNoise, 13, 7), 176.0f);
+    EXPECT_FLOAT_EQ(readRasterPixel(outNoise, 41, 41), 175.0f);
+
+    // (6) hillshade 这一路 z_factor 是真生效的（与 slope 相反）：DEM-P 上 z=10 ⇒ slope=atan(10)=84.2894062°，
+    //     az=270 与 aspect=270 对齐 ⇒ raw = 255*cos(zen-slope) = 255*cos(45°-84.2894062°) = 197.4877 ⇒ ceil = 198。
+    //     （round 会给 197，所以这同时是量化律的第二个判别点。）去掉 -z ⇒ 回到 255 ⇒ 红。
+    const std::string outPlaneZ10 = utf8PathString(getTestDir() / "d1_hs_plane_z10_out.tif");
+    std::map<std::string, gis::framework::ParamValue> z10Params = params;
+    z10Params["output"] = outPlaneZ10;
+    z10Params["z_factor"] = 10.0;
+    const auto z10Result = p->execute(z10Params, progress_);
+    ASSERT_TRUE(z10Result.success) << z10Result.message;
+    EXPECT_FLOAT_EQ(readRasterPixel(outPlaneZ10, 7, 7), 198.0f);
+
+    auto outDs = gis::core::openRaster(outNoise, true);
+    ASSERT_NE(outDs, nullptr);
+    EXPECT_EQ(outDs->GetRasterBand(1)->GetRasterDataType(), GDT_Byte);
+}
+
+TEST_F(PluginTest, TerrainTpiHandValueOnUnitPlane) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string plane = createMultiBandGradientRaster("d1_tpi_plane.tif", 16, 16, {{0.0f, 1.0f}}, 116.0, 40.0, 1.0);
+    const std::string flat = createMultiBandConstantRaster("d1_tpi_flat.tif", 16, 16, {5.0f}, 116.0, 40.0, 1.0);
+    const std::string noise = createTerrainRaster("d1_tpi_noise.tif");
+    const std::string outPlane = utf8PathString(getTestDir() / "d1_tpi_plane_out.tif");
+    const std::string outPlaneZ2 = utf8PathString(getTestDir() / "d1_tpi_plane_z2_out.tif");
+    const std::string outFlat = utf8PathString(getTestDir() / "d1_tpi_flat_out.tif");
+    const std::string outNoise = utf8PathString(getTestDir() / "d1_tpi_noise_out.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("tpi");
+    params["input"] = plane;
+    params["output"] = outPlane;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    const auto planeResult = p->execute(params, progress_);
+    ASSERT_TRUE(planeResult.success) << planeResult.message;
+
+    // 本仓实现（terrain_plugin.cpp:209-219）：boxFilter(3x3, BORDER_REPLICATE) 得 sum9（normalize=true ⇒ mean9），
+    //   result = center - (mean9*9 - center)/8 = center - (sum9 - center)/8 = 中心与"8 邻域均值"之差。
+    // DEM-P 内部：9 邻域 = {x-1,x,x+1} 各三次 ⇒ sum9 = 9*x ⇒ (sum9-center)/8 = x ⇒ TPI = 0。
+    // DEM-P 左边缘 x=0：列 -1 被 REPLICATE 成列 0 ⇒ sum9 = 3*(0+0+1) = 3 ⇒ 0 - (3-0)/8 = -0.375。
+    //   ⇒ "8 邻域均值扣掉中心"这条如果写成 sum9/9（把中心算进邻域），左边缘会变 -0.3333 ⇒ 红。
+    EXPECT_NEAR(readRasterPixel(outPlane, 7, 7), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 1, 12), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 7), -0.375f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 15, 7), 0.375f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 0), -0.375f, 1e-4f);
+
+    // z_factor 在局部路径里是先把高程整体缩放（elevation *= z_factor）⇒ TPI 线性放大 2 倍。
+    std::map<std::string, gis::framework::ParamValue> z2 = params;
+    z2["output"] = outPlaneZ2;
+    z2["z_factor"] = 2.0;
+    const auto z2Result = p->execute(z2, progress_);
+    ASSERT_TRUE(z2Result.success) << z2Result.message;
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 0, 7), -0.75f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 15, 7), 0.75f, 1e-4f);
+
+    // DEM-F：处处 0（含边缘，因为 REPLICATE 复制的就是自己）。
+    std::map<std::string, gis::framework::ParamValue> flatParams = params;
+    flatParams["input"] = flat;
+    flatParams["output"] = outFlat;
+    const auto flatResult = p->execute(flatParams, progress_);
+    ASSERT_TRUE(flatResult.success) << flatResult.message;
+    EXPECT_NEAR(readRasterPixel(outFlat, 7, 7), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outFlat, 0, 0), 0.0f, 1e-4f);
+
+    // DEM-N (13,7)：center=25.700，9 邻域和 = 24.0+24.5+27.2+25.0+25.7+28.6+26.0+26.9+27.8 = 235.700
+    //   ⇒ TPI = 25.7 - (235.7-25.7)/8 = 25.7 - 26.25 = -0.55000。
+    // DEM-N (41,41)：center=96.100，sum9=858.300 ⇒ 96.1 - 762.2/8 = 96.1 - 95.275 = +0.82500。
+    std::map<std::string, gis::framework::ParamValue> noiseParams = params;
+    noiseParams["input"] = noise;
+    noiseParams["output"] = outNoise;
+    const auto noiseResult = p->execute(noiseParams, progress_);
+    ASSERT_TRUE(noiseResult.success) << noiseResult.message;
+    EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), -0.55f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 0.825f, 1e-3f);
+}
+
+TEST_F(PluginTest, TerrainTriHandValueOnUnitPlane) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string plane = createMultiBandGradientRaster("d1_tri_plane.tif", 16, 16, {{0.0f, 1.0f}}, 116.0, 40.0, 1.0);
+    const std::string flat = createMultiBandConstantRaster("d1_tri_flat.tif", 16, 16, {5.0f}, 116.0, 40.0, 1.0);
+    const std::string noise = createTerrainRaster("d1_tri_noise.tif");
+    const std::string outPlane = utf8PathString(getTestDir() / "d1_tri_plane_out.tif");
+    const std::string outPlaneZ2 = utf8PathString(getTestDir() / "d1_tri_plane_z2_out.tif");
+    const std::string outFlat = utf8PathString(getTestDir() / "d1_tri_flat_out.tif");
+    const std::string outNoise = utf8PathString(getTestDir() / "d1_tri_noise_out.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("tri");
+    params["input"] = plane;
+    params["output"] = outPlane;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    const auto planeResult = p->execute(params, progress_);
+    ASSERT_TRUE(planeResult.success) << planeResult.message;
+
+    // 本仓实现（terrain_plugin.cpp:251-273，Riley 的 TIN-TRI）：
+    //   TRI = sqrt( Σ(neighbor-center)² / 8 )，邻域越界用 std::clamp（等于 REPLICATE）。
+    // DEM-P 内部：8 个邻域里 3 个差 -1、2 个差 0、3 个差 +1 ⇒ Σ=6 ⇒ sqrt(6/8)=0.86602540。
+    //   若把分母写成 9（把中心算进邻域）⇒ sqrt(6/9)=0.81649658 ⇒ 红；
+    //   若把 Σ/8 改成 Σ/64（即先平均再开方之外的另一种口径）⇒ 0.306 ⇒ 红。
+    EXPECT_NEAR(readRasterPixel(outPlane, 7, 7), 0.86602540f, 1e-5f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 1, 12), 0.86602540f, 1e-5f);
+    // DEM-P 左边缘 x=0：clamp 后 3 个邻域差 +1、5 个差 0 ⇒ sqrt(3/8) = 0.61237244。
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 7), 0.61237244f, 1e-5f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 0), 0.61237244f, 1e-5f);
+
+    // z_factor=2 ⇒ 差值全部翻倍 ⇒ TRI 翻倍：2*sqrt(6/8) = 1.73205081（去掉 *=z_factor 这条 ⇒ 0.866 ⇒ 红）。
+    std::map<std::string, gis::framework::ParamValue> z2 = params;
+    z2["output"] = outPlaneZ2;
+    z2["z_factor"] = 2.0;
+    const auto z2Result = p->execute(z2, progress_);
+    ASSERT_TRUE(z2Result.success) << z2Result.message;
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 7, 7), 1.73205081f, 1e-5f);
+
+    // DEM-F：处处 0。
+    std::map<std::string, gis::framework::ParamValue> flatParams = params;
+    flatParams["input"] = flat;
+    flatParams["output"] = outFlat;
+    const auto flatResult = p->execute(flatParams, progress_);
+    ASSERT_TRUE(flatResult.success) << flatResult.message;
+    EXPECT_NEAR(readRasterPixel(outFlat, 7, 7), 0.0f, 1e-5f);
+
+    // DEM-N (13,7)：center=25.700，8 个差 = {-1.7,-1.2,+1.5,-0.7,+2.9,+0.3,+1.2,+2.1}
+    //   Σ差² = 2.89+1.44+2.25+0.49+8.41+0.09+1.44+4.41 = 21.42 ⇒ sqrt(21.42/8) = 1.63631。
+    // DEM-N (41,41)：Σ差² = 28.58 ⇒ sqrt(28.58/8) = 1.89011。
+    std::map<std::string, gis::framework::ParamValue> noiseParams = params;
+    noiseParams["input"] = noise;
+    noiseParams["output"] = outNoise;
+    const auto noiseResult = p->execute(noiseParams, progress_);
+    ASSERT_TRUE(noiseResult.success) << noiseResult.message;
+    EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), 1.63631f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 1.89011f, 1e-4f);
+}
+
+// curvature：本批**只建 case、不晋升**（登记表那一行留 PENDING，控制器裁定）。
+// 算子口径现读自脉冲响应实测：cv::Laplacian(ksize=3) = ∂²/∂x² + ∂²/∂y² 的 Sobel 平滑二阶差分，
+//   ∂²/∂x² = [1,2,1]ᵀ⊗[1,-2,1]、∂²/∂y² = [1,-2,1]ᵀ⊗[1,2,1]，相加 ⇒
+//   K = [[2,0,2],[0,-8,0],[2,0,2]]（对角权 +2、正交权 0、中心 -8；单点脉冲实测逐字相同）。
+//   ksize 从 3 改成 1（四点核 [[0,1,0],[1,-4,1],[0,1,0]]）会同时挪动下面 DEM-N 的两个钉子 ⇒ 红。
+TEST_F(PluginTest, TerrainCurvatureHandValueOnUnitPlane) {
+    auto* p = mgr_.find("terrain");
+    ASSERT_NE(p, nullptr);
+
+    const std::string plane = createMultiBandGradientRaster("d1_curv_plane.tif", 16, 16, {{0.0f, 1.0f}}, 116.0, 40.0, 1.0);
+    const std::string flat = createMultiBandConstantRaster("d1_curv_flat.tif", 16, 16, {5.0f}, 116.0, 40.0, 1.0);
+    const std::string noise = createTerrainRaster("d1_curv_noise.tif");
+    const std::string outPlane = utf8PathString(getTestDir() / "d1_curv_plane_out.tif");
+    const std::string outFlat = utf8PathString(getTestDir() / "d1_curv_flat_out.tif");
+    const std::string outNoise = utf8PathString(getTestDir() / "d1_curv_noise_out.tif");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("curvature");
+    params["input"] = plane;
+    params["output"] = outPlane;
+    params["band"] = 1;
+    params["z_factor"] = 1.0;
+    const auto planeResult = p->execute(params, progress_);
+    ASSERT_TRUE(planeResult.success) << planeResult.message;
+
+    // DEM-P 内部：K 的两列对角权落在 x±1（同列值和 = 2*center）⇒ 2*(c)+2*(c) 相消 ⇒ 0（线性面上无曲率）。
+    // DEM-P 左列 x=0（REPLICATE 复制列 0）：对角 4 槽取 (0,0)=0、(0,1)=1、(1,0)=0、(1,1)=1
+    //   ⇒ 2*(0+1+0+1) - 8*0 = +4；右列 x=15 同理 = -4（面在右边"凸出去"）。
+    EXPECT_NEAR(readRasterPixel(outPlane, 7, 7), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 1, 9), 0.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 7), 4.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 15, 7), -4.0f, 1e-4f);
+    EXPECT_NEAR(readRasterPixel(outPlane, 0, 0), 4.0f, 1e-4f);
+
+    // DEM-F：处处 0（K 权重和 = 0 ⇒ 常数面必为 0）。
+    std::map<std::string, gis::framework::ParamValue> flatParams = params;
+    flatParams["input"] = flat;
+    flatParams["output"] = outFlat;
+    const auto flatResult = p->execute(flatParams, progress_);
+    ASSERT_TRUE(flatResult.success) << flatResult.message;
+    EXPECT_NEAR(readRasterPixel(outFlat, 7, 7), 0.0f, 1e-4f);
+
+    // DEM-N (13,7)：九邻域 24.0/24.5/27.2 · 25.0/25.7/28.6 · 26.0/26.9/27.8
+    //   ⇒ 2*(24.0+27.2+26.0+27.8) - 8*25.7 = 2*105.0 - 205.6 = +4.4；
+    //   DEM-N (41,41) ⇒ 2*(93.0+96.6+95.2+97.4) - 8*96.1 = 2*382.2 - 768.8 = -4.4。
+    std::map<std::string, gis::framework::ParamValue> noiseParams = params;
+    noiseParams["input"] = noise;
+    noiseParams["output"] = outNoise;
+    const auto noiseResult = p->execute(noiseParams, progress_);
+    ASSERT_TRUE(noiseResult.success) << noiseResult.message;
+    EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), 4.4f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), -4.4f, 1e-3f);
+}
+
 TEST_F(PluginTest, TerrainFillSinksAndFlowDirectionExecution) {
     auto* p = mgr_.find("terrain");
     ASSERT_NE(p, nullptr);
