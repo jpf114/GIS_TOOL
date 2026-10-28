@@ -2365,6 +2365,32 @@ TEST_F(PluginTest, PansharpenSharedNoDataTagFollowsPanBand1) {
 // R-T13-3：旧值**不进枚举**（不得为了让 GUI 用例继续通过而留在枚举里），只能经由一条显式拒绝
 // 路径拿到可操作错误。WHY 单靠下面的 Unknown 分支不够：那句是
 // "Unknown pansharpen method: simple_mean"，里面没有新名，用户看完不知道该改成什么。
+// ---- D1-F / task 15 mutation ledger for the five pansharpen numeric blocks (2026-10-28) ----
+// Registry row `processing,pansharpen` was promoted to GOLD on the strength of THIS block.
+// Every arm was applied alone to src/plugins/processing/processing_plugin.cpp, rebuilt
+// (`--target gis_tests`), run with
+//   ctest --test-dir build/debug -C Debug -R "^(PluginTest\.Pansharpen[A-Za-z0-9_]*)$"   (6 tests)
+// and then restored with `git show HEAD:<path>` + CRLF normalisation + `git hash-object` against
+// the baseline blob dd4fdeea702e72071917c6f8a7a65262de6e43b4 (MATCH on all four restores).
+//   P1 mean_blend branch: delete `sharp = sharp * 0.5` (line 850)
+//     -> RED, this block only: test_plugins.cpp:2408 readPixel is 140 where 70 was expected.
+//        That is exactly the "branch name kept, formula lost" shape this block claims to catch.
+//   P2 output reference dataset `panDS.get()` -> `msDS.get()` (matsToGdalTiff call, line 894)
+//     -> RED 3 of 6: PansharpenOutputUsesPanGeoTransform (gt[1]=30 vs 15, gt[5] likewise),
+//        PansharpenSharedNoDataTagFollowsPanBand1 (outNoData=-9999 vs -555 at 2356, and the
+//        "PAN untagged" side at 2333 which now inherits MS again), and on its grid side
+//        PansharpenExtentMismatchWarnsWithoutFailing (shiftedGt[1]=30 vs 15 at 1863/1864).
+//   P3 metadata literal `"pan_band1(shared GDAL_NODATA tag, declared="` -> `"ms_band1(...)"` (line 928)
+//     -> RED: this block's sibling PansharpenSharedNoDataTagFollowsPanBand1 at 2338 plus
+//        PansharpenOutputUsesPanGeoTransform's nodata_source find(). Needed because P2 moves the
+//        grid AND the tag value through one argument, so the string contract has no other lever.
+//   P4 pansharpenExtentMismatchRatio: `edgeDelta / largerSide` -> `edgeDelta` (absolute metres, line 745)
+//     -> RED: PansharpenExtentMismatchWarnsWithoutFailing (1855 difference 0.9967 against 1e-12;
+//        1874 the 0.1 mm case starts warning, count 1 vs 0) and
+//        PansharpenExtentMismatchToleranceAnchorsOneMicroratio.
+// All five audit-hit blocks have at least one killing arm. Honest scope note:
+// PansharpenNoGeoTransformSkipsExtentCheck went green under all four arms -- it is not one of the
+// five numeric hits and it pins "no geotransform => no extent guard, the run still succeeds".
 TEST_F(PluginTest, PansharpenMeanBlendReplacesSimpleMean) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -12935,6 +12961,41 @@ TEST_F(PluginTest, BandMathDivisionFailureInvalidatesWholePixel) {
 // 取 1e-15 的 ±1e-6 相对偏移（约 ±9 个 float32 ulp），既"紧贴阈值"又远离浮点量化：
 // Float32 在 1e-15 附近的 ulp≈1.06e-22，而这里与阈值的差是 1e-21，量化误差不可能把两侧翻过来。
 // 前提仍是**绝对**判据 ⇒ 波段量级 ≳1e-14；改成相对判据是输出语义变更，需先写进 spec。
+// ---- D1-F / task 15 mutation ledger for the four band_math numeric blocks (2026-10-28) ----
+// Registry row `raster_math,band_math` was promoted on the strength of THIS block.
+// Runs were
+//   ctest --test-dir build/debug -C Debug -R "^(PluginTest\.BandMath[A-Za-z0-9_]*)$"   (6 tests)
+// with arms in src/core/src/expression_engine.cpp (baseline blob c7b31bbc15f846caa4ada7b85fa44aebaff28c05)
+// and src/plugins/raster_math/raster_math_plugin.cpp (b0c08095c41ecd2a3b6d80ac075921624222296f),
+// each restored the same way as the pansharpen ledger above (MATCH on every restore).
+// Where the code actually lives: the divisor gate and the operand order are in the CORE engine,
+// not in the plugin -- gis_core is a static lib, so every engine arm here also relinked plugin_*.dll.
+//   M1 the arm this knife was asked to run: `std::abs(b) < kNearZeroDivisorEpsilon` -> `<=` (line 268)
+//     -> **GREEN, i.e. an equivalent mutant.** The two fixture divisors here are 1.000001e-15 and
+//        0.999999e-15; neither equals 1e-15, so `<` and `<=` cannot disagree on this data. This is
+//        recorded instead of quietly replaced, because "that arm did not kill anything" is not
+//        evidence of a decorative assertion -- the gate is real, only the arm was insensitive.
+//        M2 is the sensitive arm for the same contract.
+//   M2 kNearZeroDivisorEpsilon 1e-15 -> 1e-14 (line 45)
+//     -> RED: this block at 12956 (divide_by_zero_pixels "2" vs "0") and 12958/12959
+//        (pixel 0.0 vs 1/1.000001e-15, difference 9.9999904e14 against the 1e9f tolerance).
+//   M3 Subtract `a - b` -> `b - a` (line 261)
+//     -> RED: BandMathNegativeBandsComputeWithCorrectSign at 12829/12830/12845/12846 (off by 4 in
+//        BOTH directions -- the mirror expression is what makes the sign claim two-sided) and
+//        BandMathDivideByZeroCountEqualsFailingPixelsOnly at 12899/12900.
+//   M4 Divide: keep the flag but drop the fail-fast (push 0.0 and evaluate on, line 268)
+//     -> RED: BandMathDivisionFailureInvalidatesWholePixel at 12930/12931 (5.0 vs 0.0), which is
+//        precisely the old-engine value that block says it discriminates. Its counter stayed "2",
+//        so what M4 kills is the whole-pixel VALUE claim, not the counting claim.
+//   M5 plugin counting shape: first failure marks the whole image as failed (line 126)
+//     -> RED: BandMathDivideByZeroCountEqualsFailingPixelsOnly at 12897 ("32" vs "4").
+//        **GREEN** for BandMathDivisionFailureInvalidatesWholePixel: that fixture is 2x1 with every
+//        pixel failing, so per-pixel and per-image counting coincide there. Stated plainly: the
+//        metadata "2" of the whole-pixel block cannot be killed by any counting-shape arm on it.
+//   M6 plugin writes the first operand instead of the evaluated value (line 127)
+//     -> RED for the real-data leg `real_data_raster` through the branch added by this knife:
+//        "raster_math_band_math B1+B2 min mismatch (actual=30 expected=80 tolerance=1E-06)".
+//        Same leg without the mutant: green at 11.82 / 12.26 / 12.37 s (TIMEOUT 60 => ~4.8x).
 TEST_F(PluginTest, BandMathDivisorThresholdBoundaryIsPinned) {
     auto* p = mgr_.find("raster_math");
     ASSERT_NE(p, nullptr);
