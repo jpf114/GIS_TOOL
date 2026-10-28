@@ -109,6 +109,48 @@ static std::string createTestRaster(const std::string& name, int w = 100, int h 
     return path;
 }
 
+// R2（批次 D）：overviews / colormap 两条晋升共用的**非方**夹具。
+// 为什么不能沿用 createTestRaster 的 i%256 斜坡：那套值让 cv::normalize 的极值各只占
+// 1/256 = 0.39% 的像元，而 OpenCV 往 8 位整型输出做归一化时走的是**带百分位裁剪**的
+// min/max（它先建 256 桶直方图、两端各丢掉一小撮再定标）——于是"min→0、max→255"这个
+// 我本来能手推的对应关系会被裁剪位移，期望值就得从产物回填（N108 禁止）。
+// 这里的三级平台把极值各做厚到 25%：改夹具之前我用本机 python + cv2 实测过同形状的
+// 960 个像元（0×240 / 10×480 / 51×240），normalize 的输出**逐位**是 0 / 50 / 255，
+// 一个都没被裁掉，所以标度就是 255/(51-0) = 5.0（5.0 是二进制可精确表示的常数，
+// 10*5.0 与 51*5.0 都不落在舍入/截断的分叉上，cvRound 与截断两种取整给同一个数）。
+// 形状取 40×24（宽 != 高）：这两个动作的判据都要读宽高（金字塔的每级概览尺寸、
+// 伪彩色 Create(output, cols, rows) 的输出尺寸），方阵上"宽高写反"是等价变异 = 自我制造的盲区。
+// 四个象限的取值（x 以 w/2=20 分左右、y 以 h/2=12 分上下）：
+//   左上 = 0、右上 = 10、左下 = 51、右下 = 10   ⇒ 计数 0:240、10:480、51:240（40*24 = 960）
+// 象限**左右/上下都不同值**，所以 (5,20) 与 (20,5) 这一对互为转置的探针点取值不同
+// （51 对 10）⇒ 行主序/列主序写反在这套夹具上可红，而不只是靠尺寸那一格。
+static std::string createStepLevelRaster(const std::string& name, int w, int h) {
+    // 三级平台的计数要正好是 25%/50%/25%（上面那套手推按此成立），所以 w、h 必须都是偶数。
+    EXPECT_EQ(w % 2, 0);
+    EXPECT_EQ(h % 2, 0);
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+    double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+    ds->SetGeoTransform(adfGT);
+
+    std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const bool left = x < (w / 2);
+            const bool top = y < (h / 2);
+            float value = 10.0f;               // 右上 + 右下 = 10（占 50%）
+            if (left && top) value = 0.0f;     // 左上 = 0（占 25%，下极值）
+            if (left && !top) value = 51.0f;   // 左下 = 51（占 25%，上极值）
+            data[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = value;
+        }
+    }
+
+    auto* band = ds->GetRasterBand(1);
+    band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+    band->FlushCache();
+    return path;
+}
+
 static std::string createPatternRaster(const std::string& name, int w = 96, int h = 96) {
     std::string path = (getTestDir() / name).string();
     auto ds = gis::core::createRaster(path, w, h, 1, GDT_Byte);
@@ -2689,19 +2731,85 @@ TEST_F(PluginTest, RasterManageOverviewsExecution) {
     auto* p = mgr_.find("raster_manage");
     ASSERT_NE(p, nullptr);
 
-    const std::string input = createTestRaster("e2e_util_overviews_input.tif", 128, 128);
+    const std::string input = createStepLevelRaster("e2e_util_overviews_input.tif", 40, 24);
+    // PAM 边车按文件名匹配，上一跑缓存的统计会让 ComputeStatistics 不回读像元（与
+    // RasterInspectInfoExecution 里同一口径的防御）⇒ 读前先删，判的是现算。
+    std::error_code ovrPamEc;
+    fs::remove(input + ".aux.xml", ovrPamEc);
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("overviews");
     params["input"] = input;
-    params["levels"] = std::string("2 4");
+    // 层级串故意掺两个**无效** token（1 和 0）：doBuildOverviews 的解析循环只保留
+    // `level > 1`，所以 5 个 token 里活下来 3 个 ⇒ 概览数必须是 3 而不是 5（判"没做 >1 过滤"）
+    // 也不是 4（判"忽略 --levels、落回默认 2 4 8 16"）。
+    params["levels"] = std::string("2 1 4 0 8");
+    params["resample"] = std::string("nearest");
 
     const auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(result.success) << result.message;
 
     auto ds = gis::core::openRaster(input, true);
     ASSERT_NE(ds, nullptr);
-    EXPECT_GE(ds->GetRasterBand(1)->GetOverviewCount(), 1);
+
+    // ── R2（批次 D）：金字塔是**原地**写进 input（本 action 根本没有 output 键），
+    // 所以判据分三组，各自钉一类不同的产物改动：
+    // (1) 全分辨率底图不能被碰坏（尺寸/波段数/逐像元值/统计量）；
+    // (2) 概览**条数**要等于层级串里活下来的 token 数；
+    // (3) 概览**每级的宽高**要等于 底图宽高 / 该级 —— 这一组只在非方夹具上能看见"宽高写反"
+    //     （40×24 ⇒ 20×12、10×6、5×3；方阵上每一级都是正方形，写反了也一模一样）。
+    // GDAL 的每级尺寸是 ceil(底图/级)；我把 40 与 24 都取成 2/4/8 的公倍因子，
+    // 于是 ceil 与 floor 给同一个数 ⇒ 期望不依赖 GDAL 的取整口径，只由夹具字面量决定。
+    EXPECT_EQ(ds->GetRasterXSize(), 40) << "原地建金字塔把底图宽度改掉了（夹具字面量 40）";
+    EXPECT_EQ(ds->GetRasterYSize(), 24) << "原地建金字塔把底图高度改掉了（夹具字面量 24）";
+    EXPECT_EQ(ds->GetRasterCount(), 1) << "原地建金字塔不该新增波段";
+
+    GDALRasterBand* base = ds->GetRasterBand(1);
+    ASSERT_NE(base, nullptr);
+    EXPECT_EQ(base->GetOverviewCount(), 3)
+        << "\"2 1 4 0 8\" 里只有 2/4/8 三个 >1 的层级，概览条数必须是 3";
+
+    struct LevelShape { int level; int width; int height; };
+    const LevelShape expectedShapes[3] = { {2, 20, 12}, {4, 10, 6}, {8, 5, 3} };
+    for (int i = 0; i < 3; ++i) {
+        GDALRasterBand* ovr = base->GetOverview(i);
+        ASSERT_NE(ovr, nullptr) << "第 " << i << " 级概览不存在";
+        // GDAL 把概览按"由细到粗"排序，所以第 i 个就是 expectedShapes[i]。
+        EXPECT_EQ(ovr->GetXSize(), expectedShapes[i].width)
+            << "level " << expectedShapes[i].level << " 的概览宽度不是 40/" << expectedShapes[i].level;
+        EXPECT_EQ(ovr->GetYSize(), expectedShapes[i].height)
+            << "level " << expectedShapes[i].level << " 的概览高度不是 24/" << expectedShapes[i].level;
+    }
+
+    // 底图像元必须逐字不变（文档《金字塔.md》："它不会改变原始全分辨率数据"）。
+    // 四个探针点覆盖四个象限；(5,20) 与 (20,5) 互为转置像、取值 51 对 10，
+    // 所以"把行列索引写反"这类底图重排在这一组上就红，不必等统计量。
+    EXPECT_FLOAT_EQ(readRasterPixel(input, 0, 0), 0.0f) << "左上象限 (0,0) 的底图像元被改了";
+    EXPECT_FLOAT_EQ(readRasterPixel(input, 30, 5), 10.0f) << "右上象限 (30,5) 的底图像元被改了";
+    EXPECT_FLOAT_EQ(readRasterPixel(input, 5, 20), 51.0f) << "左下象限 (5,20) 的底图像元被改了";
+    EXPECT_FLOAT_EQ(readRasterPixel(input, 20, 5), 10.0f) << "右上象限 (20,5) 的底图像元被改了";
+    EXPECT_FLOAT_EQ(readRasterPixel(input, 30, 20), 10.0f) << "右下象限 (30,20) 的底图像元被改了";
+
+    // 统计量口径（与上面逐像元探针独立：它判的是"整幅底图"而不是四个点）：
+    //   夹具值多重集 {0^240, 10^480, 51^240}，n = 960
+    //   Mean   = (480*10 + 240*51)/960 = (4800 + 12240)/960 = 17040/960 = 17.75
+    //   E[x^2] = (480*100 + 240*2601)/960 = (48000 + 624240)/960 = 672240/960 = 700.25
+    //   Var    = 700.25 - 17.75^2 = 700.25 - 315.0625 = 385.1875（三个数都是二进制精确值）
+    //   StdDev = sqrt(385.1875) = 19.62619423117992（GDAL 的 StdDev 是**总体**标准差）
+    // 容差 1e-6：这两个量在本夹具上是**精确**有理数（17.75、385.1875 都能二进制精确表示），
+    // 残差只可能来自 double 累加顺序，量级在 1e-15；而任何"真把底图改了/换成样本标准差"的
+    // 改动都至少移动 0.01（样本口径 sqrt(385.1875*960/959) = 19.63642，Δ = 0.0102）
+    // ⇒ 容差被实测残差顶着 1e9 倍、被缺陷差顶着 1.0e4 倍，两头都不窄。
+    double statMin = 0.0;
+    double statMax = 0.0;
+    double statMean = 0.0;
+    double statStd = 0.0;
+    ASSERT_EQ(base->ComputeStatistics(false, &statMin, &statMax, &statMean, &statStd,
+                                      nullptr, nullptr), CE_None);
+    EXPECT_NEAR(statMin, 0.0, 1e-9) << "底图最小值不等于左上象限的字面量 0";
+    EXPECT_NEAR(statMax, 51.0, 1e-9) << "底图最大值不等于左下象限的字面量 51";
+    EXPECT_NEAR(statMean, 17.75, 1e-9) << "底图均值不等于手推的 17040/960";
+    EXPECT_NEAR(statStd, std::sqrt(385.1875), 1e-6) << "底图标准差不等于手推的 sqrt(385.1875)";
 }
 
 TEST_F(PluginTest, RasterManageNoDataExecution) {
@@ -3059,20 +3167,92 @@ TEST_F(PluginTest, RasterRenderColormapExecution) {
     auto* p = mgr_.find("raster_render");
     ASSERT_NE(p, nullptr);
 
-    const std::string input = createTestRaster("e2e_util_colormap_input.tif", 40, 40);
+    const std::string input = createStepLevelRaster("e2e_util_colormap_input.tif", 40, 24);
     const std::string output = utf8PathString(getTestDir() / "e2e_util_colormap_output.tif");
+    std::error_code cmapPamEc;
+    fs::remove(input + ".aux.xml", cmapPamEc);
+    fs::remove(output + ".aux.xml", cmapPamEc);
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("colormap");
     params["input"] = input;
     params["output"] = output;
-    params["cmap"] = std::string("jet");
+    params["band"] = 1;
+    // 选 autumn 而不是默认的 jet，是为了让**产物本身**把中间量暴露出来：
+    // autumn 的 256 项 LUT 用与产品无关的 oracle（本机 python + cv2 的 applyColorMap，
+    // 逐位遍历全部 256 项）实测为 B=0 恒定 / G == 索引 / R == 255 恒定。
+    // 产品写完 BGR 后按 {bgr[2], bgr[1], bgr[0]} 换序成 RGB 落盘 ⇒
+    //   输出波段 1(Red) = 常值 255、波段 2(Green) = **归一化后的 8 位级别本身**、波段 3(Blue) = 常值 0。
+    // 于是波段 2 就是 cv::normalize 的读数器，期望全部由夹具字面量手推，不需要抄任何 LUT 常数；
+    // 而"漏掉那次 BGR→RGB 换序"会把常值 0 挪到波段 1、把常值 255 挪到波段 3 ⇒ 两头同时红。
+    params["cmap"] = std::string("autumn");
 
     const auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(result.success) << result.message;
+
     auto ds = gis::core::openRaster(output, true);
     ASSERT_NE(ds, nullptr);
-    EXPECT_EQ(ds->GetRasterCount(), 3);
+
+    // ── R2（批次 D）：三组判据 ────────────────────────────────────────────────
+    // (1) 几何：`drv->Create(output, colored.cols, colored.rows, 3, GDT_Byte)` 读的就是宽高
+    //     ⇒ 夹具非方（40×24），写成 (rows, cols) 在这一组立刻红；方阵上它是等价变异。
+    EXPECT_EQ(ds->GetRasterXSize(), 40) << "伪彩色输出的宽度不等于夹具字面量 40（Create 的第 2 参）";
+    EXPECT_EQ(ds->GetRasterYSize(), 24) << "伪彩色输出的高度不等于夹具字面量 24（Create 的第 3 参）";
+    EXPECT_EQ(ds->GetRasterCount(), 3) << "伪彩色输出必须是 3 个波段";
+
+    // (2) 波段元数据：数据类型 + Color 解释。这两条都是**枚举**，不被任何统计量算术蕴含。
+    //     Color 来自 `SetColorInterpretation(static_cast<GDALColorInterp>(GCI_RedBand + i))`
+    //     ⇒ 循环上界/起点写错（比如从 GreenBand 起）只可能在这一组露出来。
+    for (int i = 1; i <= 3; ++i) {
+        GDALRasterBand* band = ds->GetRasterBand(i);
+        ASSERT_NE(band, nullptr);
+        EXPECT_EQ(band->GetRasterDataType(), GDT_Byte) << "输出波段 " << i << " 不是 8 位";
+    }
+    EXPECT_EQ(ds->GetRasterBand(1)->GetColorInterpretation(), GCI_RedBand) << "波段 1 的颜色解释不是 Red";
+    EXPECT_EQ(ds->GetRasterBand(2)->GetColorInterpretation(), GCI_GreenBand) << "波段 2 的颜色解释不是 Green";
+    EXPECT_EQ(ds->GetRasterBand(3)->GetColorInterpretation(), GCI_BlueBand) << "波段 3 的颜色解释不是 Blue";
+
+    // (3) 逐像元值。探针点覆盖四个象限，且 (5,20)/(20,5) 互为转置像、取值不同 ⇒ 行主序写反可红。
+    //     期望值推法（全部走夹具字面量，不回读产物）：
+    //       波段 1 = autumn 的 R = 255（常数，与级别无关）
+    //       波段 3 = autumn 的 B = 0  （常数，与级别无关）
+    //       波段 2 = autumn 的 G = 归一化级别：夹具值 0/10/51，标度 255/(51-0) = 5.0
+    //                ⇒ 0 -> 0、10 -> 50、51 -> 255
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 1, 0, 0), 255.0f);
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 3, 0, 0), 0.0f);
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 2, 0, 0), 0.0f) << "左上象限 (0,0)：夹具值 0 ⇒ 级别 0";
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 2, 30, 5), 50.0f) << "右上象限 (30,5)：夹具值 10 ⇒ 级别 10*5.0=50";
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 2, 20, 5), 50.0f) << "右上象限 (20,5)：夹具值 10 ⇒ 级别 50";
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 2, 5, 20), 255.0f) << "左下象限 (5,20)：夹具值 51 ⇒ 级别 51*5.0=255";
+    EXPECT_FLOAT_EQ(readRasterPixel(output, 2, 30, 20), 50.0f) << "右下象限 (30,20)：夹具值 10 ⇒ 级别 50";
+
+    // 常量波段的整体口径：Min == Max == 那个常数（均值/标准差被它蕴含，故不另开行）。
+    auto statOf = [&](int b, double* mn, double* mx, double* mean, double* sd) {
+        return ds->GetRasterBand(b)->ComputeStatistics(false, mn, mx, mean, sd, nullptr, nullptr);
+    };
+    double rMin = 0.0, rMax = 0.0, rMean = 0.0, rStd = 0.0;
+    ASSERT_EQ(statOf(1, &rMin, &rMax, &rMean, &rStd), CE_None);
+    EXPECT_NEAR(rMin, 255.0, 1e-9) << "autumn 的 R 通道必须是常值 255";
+    EXPECT_NEAR(rMax, 255.0, 1e-9) << "autumn 的 R 通道必须是常值 255";
+    double bMin = 0.0, bMax = 0.0, bMean = 0.0, bStd = 0.0;
+    ASSERT_EQ(statOf(3, &bMin, &bMax, &bMean, &bStd), CE_None);
+    EXPECT_NEAR(bMin, 0.0, 1e-9) << "autumn 的 B 通道必须是常值 0";
+    EXPECT_NEAR(bMax, 0.0, 1e-9) << "autumn 的 B 通道必须是常值 0";
+
+    // 波段 2（绿）= 归一化级别，多重集 {0^240, 50^480, 255^240}，n = 960：
+    //   Mean   = (480*50 + 240*255)/960 = (24000 + 61200)/960 = 85200/960 = 88.75
+    //   E[x^2] = (480*2500 + 240*65025)/960 = (1200000 + 15606000)/960 = 16806000/960 = 17506.25
+    //   Var    = 17506.25 - 88.75^2 = 17506.25 - 7876.5625 = 9629.6875
+    //   StdDev = sqrt(9629.6875) = 98.1309711558996
+    // 这一行**不是**均值的推论：Min/Max 只钉住两个极值平台、Mean 只钉住"中间平台取 50 且占 480 个"，
+    // 而StdDev 钉的是二阶矩 —— 若把中间平台改成"两个不同值各占一半"仍能凑出同一个均值，
+    // 二阶矩就对不上。所以四个矩里留这三个是各有独立职责的。
+    double gMin = 0.0, gMax = 0.0, gMean = 0.0, gStd = 0.0;
+    ASSERT_EQ(statOf(2, &gMin, &gMax, &gMean, &gStd), CE_None);
+    EXPECT_NEAR(gMin, 0.0, 1e-9) << "级别下界不是 0 ⇒ normalize 的 alpha 端被挪动";
+    EXPECT_NEAR(gMax, 255.0, 1e-9) << "级别上界不是 255 ⇒ normalize 的 beta 端被挪动";
+    EXPECT_NEAR(gMean, 88.75, 1e-9) << "级别均值不等于手推的 85200/960";
+    EXPECT_NEAR(gStd, std::sqrt(9629.6875), 1e-6) << "级别标准差不等于手推的 sqrt(9629.6875)";
 }
 
 TEST_F(PluginTest, RasterRenderHistogramMatchExecution) {
