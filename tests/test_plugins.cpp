@@ -16858,7 +16858,9 @@ TEST_F(PluginTest, MatchingRegisterExecutionProducesAlignedOutput) {
 //  M2 goodFeaturesToTrack(..., maxCorners, ...)→写死 100000 ⇒ MatchingCornerMaxCornersCapLadder
 //     shi_tomasi 三档全红；腿 matching_corner 红（"should equal max_corners=3, got 47"）。
 //  M3 doMatch 判据 `m[0].distance < m[1].distance`（去 ratioTest）⇒ MatchingMatchRatioTestLadderAndZeroPoint
-//     红（零点档实测 48、"三档全等"臂 48 vs 48）。
+//     红（零点档实测 48，且 `EXPECT_NE(zero, top)` 变 48 vs 48 ⇒ 两条都红；
+//     ⚠ 本夹具是**自匹配**⇒ d0=0 ⇒ 0.25/0.5/0.75/1.0 四档 match_count 实测全 = 48（控制器 CLI 复跑），
+//     所以比值阶梯在这条用例上**不承重**，承重的是零点档与 EXPECT_NE(zero, top)）。
 //  M4 doRegister 同一判据去 ratioTest ⇒ MatchingRegisterIdentityTransformKeepsRasterPixels 的
 //     ratio=0 支红（success 翻真、文案不含 ": 0"、留下产物）；恒等支不红（本臂只该打零点档，分支隔离正确）。
 //  M5 doRegister 估完 H 后强乘 x/y 互换阵 [[0,1],[1,0]] ⇒ 恒等主判据红
@@ -16914,7 +16916,12 @@ TEST_F(PluginTest, MatchingDetectCapLadderAndFlatZeroPoint) {
     const int capped20 = runDetect("orb", 20, "orb20");
     const int capped1000 = runDetect("orb", 1000, "orb1000");
     EXPECT_LE(capped20, 20) << "ORB 上限契约被破坏：max_points=20 却出 " << capped20;
-    EXPECT_LE(capped1000, 1000) << "ORB 上限契约被破坏：max_points=1000 却出 " << capped1000;
+    // 夹具的候选池实测 48 ⇒ `EXPECT_LE(capped1000, 1000)` 是**恒真**的（复审席 10-28 指认，控制器复算同意：
+    // 去上限后 ORB 缺省也才 500，96x96 图根本产不出 >1000），删掉。
+    // 换成两条**能红**的关系：上限吃紧时严格小于放开档（去上限 ⇒ 两档都 48 ⇒ 红），
+    // 且放开档仍是上限的不动点（48 <= 1000 只作说明用，不作判据）。
+    EXPECT_LT(capped20, capped1000)
+        << "max_points 未被消费：20 档与 1000 档同为 " << capped20 << "（去上限变异应在此红）";
 
     // —— §2.2 空输入零点：恒定值(无纹理)夹具。产品链路 readBandAsMat→CV_32F，
     //    toUint8 对 max-min<1e-10 的图像**恒置全 0**（opencv_wrapper.cpp:162），
@@ -17004,10 +17011,15 @@ TEST_F(PluginTest, MatchingMatchRatioTestLadderAndZeroPoint) {
         << "ratio_test=0 必须一条匹配都不留（判据文本直接推出，与影像内容无关）";
 
     // —— 阶梯：接受集随 ratioTest 单调不减（t1<=t2 ⇒ {d0<t1*d1} ⊆ {d0<t2*d1}，d1>=0）。
+    // ⚠ 控制器 2026-10-28 实测：**自匹配夹具上这阶梯是平的**——同一张图当 reference 与 input 时
+    //    每个描述子的最近邻距离 d0=0，⇒ `0 < t*d1` 对任意 t>0 都成立。
+    //    CLI 复跑 `--ratio_test=0.25/0.5/0.75/1.0` 的 match_count **全是 48** ⇒
+    //    `EXPECT_LE(zero, mid)` 与 `EXPECT_LE(mid, top)` 都**不可能红**（zero 已被上面钉成 0、计数非负；
+    //    mid 与 top 恒等）。所以本用例真正承重的是**零点档**与下面两条：
+    //    去 ratioTest（写成 `d0 < d1`）⇒ 零点档变 48 ⇒ `EXPECT_NE(zero, top)` 当场红。
     const int mid = runMatch(0.5, "rt05");
     const int top = runMatch(1.0, "rt10"); // double 边界档
-    EXPECT_LE(zero, mid);
-    EXPECT_LE(mid, top);
+    EXPECT_LE(mid, top);  // 本夹具下恒真，只作"接受集不因放宽而缩小"的回归哨兵，不记入判别力
     // 三档不许全等（全等 = ratio_test 没被消费）；top>0 由自匹配 d0=0<d1 保证。
     EXPECT_NE(zero, top) << "ratio_test=0 与 =1 计数相等 ⇒ 参数未被消费";
     EXPECT_GT(top, 0) << "比值=1 时只要两描述子距离不等就接受，自匹配夹具必须留下东西";
