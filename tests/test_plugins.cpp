@@ -3475,13 +3475,16 @@ TEST_F(PluginTest, ProjectionInfoExecution) {
     EXPECT_EQ(result.metadata.at("bands"), "1");
 
     // D1-P 值级判据。先读 doInfo 发哪些键：metadata 只有 `width/height/bands/wkt` 四枚，
-    // **不发** pixel_size / extent 这类键 ⇒ "像元尺寸 + 包框四边"只能换判据形态：
-    // 从 doInfo 自己发的 message 文本里取 Origin / Pixel Size 的数，再由 GT 推包框四边。
-    // 期望全部来自夹具源码的 adfGT（createTestRaster 手写 {116.0, 0.001, 0.0, 40.0, 0.0, -0.001}），
-    // 不从产物回填：
-    //   x_min = 116.000        x_max = 116.0 + 20 * 0.001  = 116.020
-    //   y_max = 40.000         y_min = 40.0 + 10 * (-0.001) = 39.990
-    // 文本是 ostringstream 默认精度（6 位有效）⇒ "116"/"40"/"0.001"/"-0.001" 都是精确可解析的写法。
+    // **不发** pixel_size / extent 这类键；message 只印 GeoTransform 的三对读数
+    // （`Origin:` / `Pixel Size:` / `Rotation:`），**不印包框** ⇒ "包框四边"这个量两侧都判不到：
+    // 腿侧没有 extent 键可读，单测若拿已判读的 GT × 行列数去算右下两边，写出来的只是算术恒等式
+    // （期望 = 夹具字面量的算术，实测 = 同一批字面量经产物往返后的同一算术）⇒ 登记为缺口，不冒充判据。
+    // 本用例判的是 doInfo 真发、且每枚各读一个**别的判据读不到**的产物观测量的六支：
+    // Origin 两枚 + Pixel Size 两枚 + Rotation 两枚，期望全部来自夹具源码的 adfGT 字面量
+    // （createTestRaster 手写 {116.0, 0.001, 0.0, 40.0, 0.0, -0.001}），不从产物回填。
+    // Rotation 那一对的承重面按实登记：夹具 adfGT[2] 与 adfGT[4] 同为 0.0 ⇒ 它钉的是
+    // "旋转槽没有被别的 GT 项（原点/像元尺寸）填进去、这一对读数没丢"，**不**覆盖两枚旋转项互换。
+    // 文本是 ostringstream 默认精度（6 位有效）⇒ "116"/"40"/"0.001"/"-0.001"/"0" 都是精确可解析的写法。
     auto grabPairFromMessage = [&result](const char* label, double& first, double& second) -> bool {
         const std::size_t labelPos = result.message.find(label);
         if (labelPos == std::string::npos) return false;
@@ -3497,15 +3500,18 @@ TEST_F(PluginTest, ProjectionInfoExecution) {
     double originX = 0.0, originY = 0.0, pixelSizeX = 0.0, pixelSizeY = 0.0;
     ASSERT_TRUE(grabPairFromMessage("Origin:", originX, originY)) << result.message;
     ASSERT_TRUE(grabPairFromMessage("Pixel Size:", pixelSizeX, pixelSizeY)) << result.message;
-    EXPECT_NEAR(0.001, pixelSizeX, 1e-12);          // 像元尺寸（东向为正）
-    EXPECT_NEAR(-0.001, pixelSizeY, 1e-12);         // 像元尺寸（北向为负：y 随行号递减）
-    EXPECT_NEAR(116.000, originX, 1e-9);            // 包框左上角 x
-    EXPECT_NEAR(40.000, originY, 1e-9);             // 包框左上角 y
-    // 包框四边（右边/下边由已判读的 GT + 已判读的行列数推出，四条都是独立手算值）
-    EXPECT_NEAR(116.000, originX, 1e-9);
-    EXPECT_NEAR(116.000 + 20 * 0.001, originX + 20 * pixelSizeX, 1e-9);
-    EXPECT_NEAR(40.000, originY, 1e-9);
-    EXPECT_NEAR(40.000 - 10 * 0.001, originY + 10 * pixelSizeY, 1e-9);
+    EXPECT_NEAR(0.001, pixelSizeX, 1e-12);          // 像元尺寸（东向为正）= 夹具 adfGT[1]
+    EXPECT_NEAR(-0.001, pixelSizeY, 1e-12);         // 像元尺寸（北向为负：y 随行号递减）= adfGT[5]
+    EXPECT_NEAR(116.000, originX, 1e-9);            // GeoTransform 原点（左上角）x = adfGT[0]
+    EXPECT_NEAR(40.000, originY, 1e-9);             // GeoTransform 原点（左上角）y = adfGT[3]
+    // 第三对读数：doInfo 印的 `Rotation:` 槽（夹具 adfGT[2]、adfGT[4] 都是字面量 0.0）。
+    // 换掉原先两枚"右边/下边"推论行的理由：那两枚的实测侧只由上面四支各自钉死的解析值线性组合而成，
+    // 容差可加性把独立可红窗口压到 2e-11 以下、再被 6 位有效印法量化成恰好 0 ⇒ 没有可达的产物状态
+    // 能让它们单独红；这一对读的是一个**没有任何其它判据读过**的产物观测量。
+    double rotationX = 0.0, rotationY = 0.0;
+    ASSERT_TRUE(grabPairFromMessage("Rotation:", rotationX, rotationY)) << result.message;
+    EXPECT_NEAR(0.0, rotationX, 1e-12);             // 旋转项 = 夹具 adfGT[2]
+    EXPECT_NEAR(0.0, rotationY, 1e-12);             // 旋转项 = 夹具 adfGT[4]
 
     // info 发的第四枚键是 `wkt`：夹具在上一步把 CRS 盖成 EPSG:4326 ⇒ 读回的权威码必须恰为 4326
     // （比 WKT 子串不结实：任何含 "4326" 的文本都过）。
