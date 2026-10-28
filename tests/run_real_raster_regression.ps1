@@ -380,9 +380,97 @@ function Validate-CaseOutputs {
         }
         "raster_inspect_histogram" {
             Mark-Judged -Name $Case.Name
+            # PAM sidecar: analysis_input.tif.aux.xml caches the band statistics (and the last
+            # histogram) by file name. A cache hit makes the plugin's ComputeStatistics return the
+            # stored min/max WITHOUT reading pixels, so "min >= max -> which bucket edges" changes
+            # would not move this branch. Delete it first: judge what the pixels say now.
+            Remove-Item ($data.AnalysisRaster + ".aux.xml") -Force -ErrorAction SilentlyContinue
             $payload = Read-JsonPayload -Path (Join-Path $ResolvedOutputRoot "histogram_output.json")
-            Assert-Condition -Condition ($payload.total -gt 0) -Message "histogram total should be greater than zero"
-            Assert-Condition -Condition ($payload.histogram.Count -eq 16) -Message "histogram bin count should equal 16"
+            # R1 (batch D): the two lines this branch used to carry were "total -gt 0" and
+            # "bin count -eq 16", which only prove the action emitted something. The input is
+            # makeAnalysisRaster band 1, z(x, y) = x + y on a 32 x 32 grid (x, y in [0, 31]),
+            # so every number below is derived from that literal:
+            #   valid cells = 32*32 = 1024 (band has no NODATA), min = 0 at (0,0), max = 62 at
+            #   (31,31); min != max -> 16 buckets of width (62-0)/16 = 3.875;
+            #   the value k occurs c(k) = min(k+1, 63-k) times (diagonals of x+y);
+            #   3.875 is a k/8 dyadic so the bucket edges are exact in double -- 31/3.875 = 8.0
+            #   and 62/3.875 = 16.0 -- so bucket i takes the integers in [3.875i, 3.875(i+1)),
+            #   except the last one: GDAL clamps the iBucket = 16 it computes for the max back
+            #   into bucket 15, which is the only thing that distinguishes the TRUE passed as
+            #   IncludeOutOfRange from a FALSE (that arm drops value 62 -> bucket 15 gives 10,
+            #   bucket count stays 16, so nothing else in this file would see it).
+            $histogramExpectedCounts = @(10, 26, 42, 58, 74, 90, 106, 90, 122, 106, 90, 74, 58, 42, 26, 10)
+            # center = min + (i + 0.5) * binWidth = 3.875i + 1.9375, all of them k/16 dyadic with
+            # at most four decimals, and the product prints them fixed with setprecision(4) -> the
+            # emitted decimal IS the exact value, so the rounding error here is zero, not "small".
+            $histogramExpectedCenters = @(
+                1.9375, 5.8125, 9.6875, 13.5625, 17.4375, 21.3125, 25.1875, 29.0625,
+                32.9375, 36.8125, 40.6875, 44.5625, 48.4375, 52.3125, 56.1875, 60.0625
+            )
+            Assert-Condition -Condition ($payload.histogram.Count -eq 16) -Message (
+                "histogram bin count should be the 16 asked for (--bins=16 on a non-constant band)")
+            for ($histIndex = 0; $histIndex -lt 16; $histIndex++) {
+                $histBucket = $payload.histogram[$histIndex]
+                Assert-Condition -Condition ($null -ne $histBucket) -Message (
+                    "histogram bucket " + $histIndex + " is missing from the JSON body")
+                $histCount = [double]$histBucket.count
+                Assert-Condition -Condition ($histCount -eq $histogramExpectedCounts[$histIndex]) -Message (
+                    "histogram bin " + $histIndex + " count mismatch (actual=" + $histCount +
+                    " expected=" + $histogramExpectedCounts[$histIndex] +
+                    ", hand-derived from band 1 = x + y on 32 x 32)")
+                $histCenter = [double]$histBucket.center
+                Assert-Condition -Condition ([math]::Abs($histCenter - $histogramExpectedCenters[$histIndex]) -le 1e-12) -Message (
+                    "histogram bin " + $histIndex + " center mismatch (actual=" + $histCenter +
+                    " expected=" + $histogramExpectedCenters[$histIndex] + " = 3.875*i + 1.9375)")
+            }
+            # Kept as the fail-fast point only: the product sums these very buckets into "total",
+            # so this line is arithmetically implied by the 16 assertions above and is NOT counted
+            # as an independent judgement in the report. It used to be "total -gt 0".
+            Assert-Condition -Condition ($payload.total -eq 1024) -Message (
+                "histogram total should be the 1024 valid pixels of the 32 x 32 band")
+        }
+        # R1 (batch D): this case used to sit on the leg allowlist with the reason "action is
+        # PENDING ... so no numeric expectation exists anywhere yet". That reason is now false on
+        # both sides, so the allowlist entry is deleted in the same commit as this branch (the
+        # gate turns a now-judged-but-still-exempted case red as a stale entry).
+        # Input = $data.AnalysisRaster = makeAnalysisRaster: 32 x 32 x 3 bands Float32, GeoTransform
+        #   {116.0, 0.0005, 0, 40.0, 0, -0.0005}, no CRS, no NODATA on any band,
+        #   band 1 = x + y, band 2 = 2x - y, band 3 = (x * y) mod 17 over x, y in [0, 31].
+        # Everything below is derived from those literals; the arithmetic (and the tolerance
+        # sandwich per datum, since raster_inspect info prints with the default 6 significant
+        # digits and the quantum therefore moves with the magnitude) is in the R1 report.
+        "raster_inspect_info" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($data.AnalysisRaster + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $data.AnalysisRaster)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 32 -ExpectedHeight 32 -ExpectedBands 3 -Message (
+                "raster_inspect_info does not report the 32 x 32 x 3 bands of makeAnalysisRaster")
+            # band 1 = x + y: min 0, max 62, mean (2 * 32 * 496)/1024 = 31,
+            #   stddev = sqrt(E[x^2] - mean^2) = sqrt(1158656/1024 - 961) = sqrt(170.5)
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "band 1 (x + y) minimum mismatch")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 62 -Tolerance 1e-9 -Message (
+                "band 1 (x + y) maximum mismatch")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected 31 -Tolerance 1e-9 -Message (
+                "band 1 mean should be 31 = 32768/1024 summed diagonals")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "StdDev" -Expected ([math]::Sqrt(170.5)) -Tolerance 2e-4 -Message (
+                "band 1 stddev should be sqrt(170.5), the population root of E[x^2] - mean^2")
+            # band 2 = 2x - y: min -31 at (0,31), mean 15.5, stddev sqrt(4*85.25 + 85.25) =
+            #   sqrt(426.25). Its max is 62 as well, which is the same number band 1 already
+            #   pins in another block, so it is dropped here instead of posing as a 9th row.
+            Assert-InfoBandStatNear -Text $info -Band 2 -Label "Min" -Expected (-31) -Tolerance 1e-9 -Message (
+                "band 2 (2x - y) minimum should be -31; it is the only negative statistic here")
+            Assert-InfoBandStatNear -Text $info -Band 2 -Label "Mean" -Expected 15.5 -Tolerance 1e-9 -Message (
+                "band 2 mean should be 15.5 = (2*15.5) - 15.5")
+            Assert-InfoBandStatNear -Text $info -Band 2 -Label "StdDev" -Expected ([math]::Sqrt(426.25)) -Tolerance 2e-4 -Message (
+                "band 2 stddev should be sqrt(426.25) = sqrt(5) * band-1-free variance multiple")
+            # band 3 = (x * y) mod 17: residues 0..16 both occur (1*16 and 0*x), and 16 is the
+            # highest statistic ceiling in this product, so it is unique to the third block.
+            # The block header anchor is what makes this row independent of the two above.
+            Assert-InfoBandStatNear -Text $info -Band 3 -Label "Max" -Expected 16 -Tolerance 1e-9 -Message (
+                "band 3 ((x*y) mod 17) maximum mismatch")
         }
         # ---- D1-T1: terrain value-level judgements (batch D first promotion knife) ----
         # Input for all six blocks below is the generated terrain DEM:
@@ -2047,8 +2135,9 @@ foreach ($case in $cases) {
 # turns the leg red too. So this list can neither rot forward (a branch appears and the entry is
 # forgotten) nor be orphaned backwards (someone deletes the New-Case the entry excuses).
 # The gate's printed "allowlisted=" is the number of entries this leg actually consulted for a
-# case that ran, not the size of the table below. On this leg the two agree (measured 24/24 on the
-# Debug quick leg), because this file has exactly one gated registration site (the gate prints it
+# case that ran, not the size of the table below. On this leg the two agree (re-measured 23/23 on
+# the Debug quick leg by R1, after raster_inspect_info moved from this table to its own judgement
+# branch), because this file has exactly one gated registration site (the gate prints it
 # as conditional-registrations=1) and that name is not one of the entries below; the two counters
 # are printed separately so a leg where they differ cannot be read as a coverage number.
 $rasterGateAllowlist = @(
@@ -2064,7 +2153,6 @@ $rasterGateAllowlist = @(
     [pscustomobject]@{ Name = "spindex_ui"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
     [pscustomobject]@{ Name = "spindex_bi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
     [pscustomobject]@{ Name = "spindex_custom_index"; Reason = "fixture-side GOLD via PluginTest.SpindexCustomIndexExecution; no leg-side expectation derived" },
-    [pscustomobject]@{ Name = "raster_inspect_info"; Reason = "action is PENDING in tests/action_gold_cases.txt, so no numeric expectation exists anywhere yet" },
     [pscustomobject]@{ Name = "raster_manage_overviews"; Reason = "action is PENDING in tests/action_gold_cases.txt, so no numeric expectation exists anywhere yet" },
     [pscustomobject]@{ Name = "raster_render_colormap"; Reason = "action is PENDING in tests/action_gold_cases.txt, so no numeric expectation exists anywhere yet" },
     [pscustomobject]@{ Name = "raster_manage_nodata"; Reason = "fixture-side GOLD via PluginTest.RasterManageNoDataExecution; leg only checks the file exists" },
