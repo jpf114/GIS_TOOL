@@ -708,6 +708,56 @@ function Validate-CaseOutputs {
         # band 1 => the two constant-band rows go red together; it would NOT move band 2 (autumn's
         # G is the middle channel either way), which is why the swap evidence here is carried by the
         # constants and by the Color names, not by the ramp.
+        "raster_manage_zonal_stats" {
+            Mark-Judged -Name $Case.Name
+            # Everything below was derived by hand BEFORE the first read; the archived derivation and
+            # the produced CSV are under build/tmp/batchD/r3b/arms/ (gitignored), so the numbers are
+            # restated here as well.
+            #   input  = a copy of makeAnalysisRaster: 32 x 32 x 3 Float32, GeoTransform
+            #            {116.0, 0.0005, 0.0, 40.0, 0.0, -0.0005}, band1 = x + y, band2 = 2x - y,
+            #            band3 = (x*y) % 17, stored at index y*32 + x, and NO NODATA value.
+            #   zones  = the GeoJSON rectangle above: x in [116.0001, 116.0019],
+            #            y in [39.9989, 39.9999]; "zone" is read through feature_id_field, so the
+            #            feature_id column pins that parameter rather than the layer FID.
+            #   window = max(0, trunc((116.0001-116)/0.0005)) = trunc(0.2) = 0 for colStart,
+            #            min(31, trunc(3.8)) = 3 for colEnd, max(0, trunc(0.2)) = 0 for rowStart and
+            #            min(31, trunc(2.2)) = 2 for rowEnd -> a 4 x 3 sub-window. Its subGT equals
+            #            the parent GeoTransform because colStart == rowStart == 0, so THIS branch
+            #            cannot judge a missing sub-window translation (the unit block's zA does).
+            #   mask   = pixel CENTRES inside the ring: row 2's centre is 40 - 2.5*0.0005 = 39.99875
+            #            which is below MinY 39.9989, so cols 0..3 x rows 0..1 burn = 8 cells.
+            #            Taking the envelope instead of the mask would give 12 cells -- that is the
+            #            load-bearing difference, and the margins to the ring edges are 0.00015 map
+            #            units (0.3 pixel), far outside any double rounding of 0.2 / 3.8 / 2.2.
+            #   stats  = the product's population variance sumSq/count - mean^2, then sqrt when > 0:
+            #            band1 {0,1,2,3 / 1,2,3,4}  -> sum 16, min 0,  max 4, mean 2,    var 1.5
+            #            band2 {0,2,4,6 / -1,1,3,5} -> sum 20, min -1, max 6, mean 2.5,  var 5.25
+            #            band3 {0,0,0,0 / 0,1,2,3}  -> sum 6,  min 0,  max 3, mean 0.75, var 1.1875
+            #            stddev = sqrt(1.5) = 1.2247448714, sqrt(5.25) = 2.2912878475,
+            #            sqrt(1.1875) = 1.0897247359. The sample form (divide by n-1) would print
+            #            1.30931 / 2.44949 / 1.16496 -- at least 0.075 away, so these rows do pin
+            #            population versus sample. Printing is std::ostream default = 6 SIGNIFICANT
+            #            digits, which is why the expectations are written as the printed text.
+            # WHY whole rows and not just the numbers: the row also pins the band column (all three
+            # bands are read whatever the "band" key says) and the feature_id column.
+            # NOTE on row order: the product accumulates into std::unordered_map, so row order is not
+            # guaranteed. There is exactly ONE feature here, hence exactly one fid, so "which physical
+            # row" is not a degree of freedom for this branch; a multi-zone product must be selected
+            # by feature_id (the unit block does that).
+            Assert-Condition -Condition (Test-Path $zonalOutputCsv) -Message (
+                "raster_manage_zonal_stats produced no CSV at " + $zonalOutputCsv)
+            $zonalCsvLines = @(Get-Content $zonalOutputCsv -Encoding UTF8)
+            Assert-Condition -Condition ($zonalCsvLines.Count -eq 4) -Message (
+                "raster_manage_zonal_stats must emit 1 header + 3 band rows, found " + $zonalCsvLines.Count)
+            Assert-Condition -Condition ($zonalCsvLines[0] -eq "feature_id,band,min,max,mean,stddev,sum,count") -Message (
+                "raster_manage_zonal_stats CSV header drifted from the product's literal")
+            Assert-Condition -Condition ($zonalCsvLines -contains "z1,1,0,4,2,1.22474,16,8") -Message (
+                "raster_manage_zonal_stats band 1 (x+y) row mismatch: expected the hand-derived 8-cell zone")
+            Assert-Condition -Condition ($zonalCsvLines -contains "z1,2,-1,6,2.5,2.29129,20,8") -Message (
+                "raster_manage_zonal_stats band 2 (2x-y) row mismatch: expected min -1 and stddev sqrt(5.25)")
+            Assert-Condition -Condition ($zonalCsvLines -contains "z1,3,0,3,0.75,1.08972,6,8") -Message (
+                "raster_manage_zonal_stats band 3 ((x*y)%17) row mismatch: expected sum 6 and stddev sqrt(1.1875)")
+        }
         "raster_render_colormap" {
             Mark-Judged -Name $Case.Name
             Remove-Item ($rasterRenderColormapOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
@@ -1958,6 +2008,28 @@ $cases += New-Case -Name "raster_render_histogram_match" -CaseArgs @(
     "--band=1"
 ) -ExpectedOutputs @(
     $histMatchOutputRaster
+)
+
+# R3b (batch D): zonal_stats had NO case on this leg at all before this seat -- the action never
+# ran here, so a leg-side green for it was impossible by construction. The zones fixture is a
+# hand-written GeoJSON rectangle (ASCII literal, written with WriteAllText so no BOM is added);
+# the raster is a COPY of makeAnalysisRaster taken into the run's own output root, because opening
+# the shared generated fixture in place would let a PAM sidecar answer statistics from cache.
+$zonalInputRaster = Join-Path $ResolvedOutputRoot "manage_zonal_input.tif"
+Copy-Item $data.AnalysisRaster $zonalInputRaster -Force
+Remove-Item ($zonalInputRaster + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$zonalVectorPath = Join-Path $ResolvedOutputRoot "manage_zonal_zones.geojson"
+[IO.File]::WriteAllText($zonalVectorPath, '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"zone":"z1"},"geometry":{"type":"Polygon","coordinates":[[[116.0001,39.9989],[116.0019,39.9989],[116.0019,39.9999],[116.0001,39.9999],[116.0001,39.9989]]]}}]}')
+$zonalOutputCsv = Join-Path $ResolvedOutputRoot "manage_zonal_output.csv"
+Remove-Item $zonalOutputCsv -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "raster_manage_zonal_stats" -CaseArgs @(
+    "raster_manage", "zonal_stats",
+    ("--input=" + $zonalInputRaster),
+    ("--vector=" + $zonalVectorPath),
+    ("--output=" + $zonalOutputCsv),
+    "--feature_id_field=zone"
+) -ExpectedOutputs @(
+    $zonalOutputCsv
 )
 
 $cases += New-Case -Name "terrain_slope" -CaseArgs @(
