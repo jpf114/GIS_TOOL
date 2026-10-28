@@ -2042,9 +2042,15 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
 - **文档面（项 1/3/4/7）**：波段运算两处撤掉"造一个除数恰为 `1e-15` 的夹具就能钉等号"的承诺，改登记为
   **按构造不可达**（波段除数经 `values[b] = bandMats[b].at<float>(y, x)` 升到 double，而 `1e-15` 这个 double
   不在 float32 网格上 ⇒ 等号对任何波段数据取不到，可达等号只有表达式**字面量**除数那条路）；
-  `平面曲率.md` 把 `slopeSq < 1e-10` 早退分支登记为**今天无判据且结构上判不到**（平地分子恒 0 ⇒
-  有无该分支都是 0，任何"平地期望 0"断言恒真），与 `-b`、ROUGHBORDER、tri `std::clamp` 邻域同档，
-  **本批不造该夹具、也不写占位断言**；curvature 的"ksize 3→1 同时挪两个钉子"更正为"只挪 (13,7) 一枚"；
+  `平面曲率.md` 把 `slopeSq < 1e-10` 早退分支登记为**今天无判据**，可判性按三档写清（修复轮 1 撤销旧文那句"这一支从实现结构上就没人能判"的否定命题）：
+  ① **恰零档**（`zx = zy = 0` 严格成立）恒真、判不到——今天 `d2_plan_flat.tif` 那枚 `EXPECT_NEAR(..., 0.0f, 1e-4f)`
+  正踩在这一档，而 unit-plane 那 4 枚走的是 `zy ≡ 0 ∧ zyy ≡ 0` 的公式零（同像元 profile 断言非零 ⇒ 压根没进早退支）；
+  ② **小斜率档**（`0 < slopeSq < 1e-10`）**可判**：`Δ ≤ 0.99999·(|zxx|+|zxy|+|zyy|)`，上界就是二阶导绝对值之和、不是小量，
+  按产品码同形的 `cv::Sobel` 实测 crest 偏 `δ = 1e-6` 给 `slopeSq = 7.976e-12`、**`Δ = 0.638`** ≫ 腿容差 `2e-3`；
+  ③ 本批仍**不造该夹具、也不写占位断言**，理由从"判不到"换成"可判、但要新造亚像素 crest/鞍部面，且期望必须从
+  float32 量化后的输入手推"（实测 `δ ∈ [5e-7, 3e-6]` 给 `Δ = 0.146 ~ 5.68`、量化使 `Δ` 偏精确值 `0.3% ~ 9.1%`
+  ⇒ 容差得放宽到 `1e-2` 档）；旧文把这条与 `-b`、ROUGHBORDER、tri `std::clamp` 并成"同一档、都算实现结构上取不到判据"的说法也一并撤销；
+  curvature 的"ksize 3→1 同时挪两个钉子"更正为"只挪 (13,7) 一枚"；
   roughness 的钉子数经全仓 `git grep` 复扫确认"12 枚"从未进入任何已提交内容（现读值级钉子 14 枚，未新增数字）。
 - ⚠ **Release 侧未验收**：本把全部改动（闸 + 三 runner + 文档）只在 Debug 取证，Release 树未重编、腿未跑 ⇒ 归 D4 收口门补凭据。
 - 缺口（照实登记）：① vector 的 `Mode=full` 四条档腿与 raster/matching 的 full 档都不在 ctest 里，本轮**没实跑**，
@@ -2052,6 +2058,53 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   ② matching 的 `ecc_register`/`stitch` 在 Debug 压根不注册，本轮只验到"条件豁免"半边，
   它们在非 Debug 档会进实跑名单、靠两条新增 allowlist 条目兜住（同样未实跑）；
   ③ 24 条 raster 未判与 3 条 matching 未判是**登记**不是修复，逐条理由见 runner 里的 allowlist 与 `action_gold_cases.txt`。
+
+### 批次 D D1-T3 修复轮 1（2026-10-28，复审席 `task-17-review.md` 判 not approved 的四条必须修）
+
+- **MF-1（真缺口：闸会装绿）**：共享闸 `tests/regression_case_gate.ps1` 补第 (6) 项硬失败——
+  **每条 allowlist 条目必须仍对应本档真注册过的 case**，唯一的例外走**声明**（AST 派生的 `ConditionalCase`：
+  该字面量名确有一条 `New-Case`/`New-DerivedCase`/`New-CheckCase` 调用点、且该调用点的祖先 `if` gate 在
+  `Mode`/`Group`/构建档上），不走"查不到就放过"。头注释的承诺由"两个方向"改写为 forward/reverse/allow 三个方向，
+  于是它原先那句"deleting a `New-Case` 也会显形"第一次成为真话。
+- **MF-1 双向可红取证（副本全在 `build/tmp/batchD/d1t3c/`，仓库原件全程干净；旧臂用 HEAD 版 runner + HEAD 版闸）**：
+
+  | 臂 | 只改副本的内容 | 旧闸（HEAD） | 新闸 |
+  |---|---|---|---|
+  | ①a | 删豁免条目 `spindex_evi` 的那条 `New-Case` 注册（其余原样） | **rc=0 装绿** `registered=66 ran=66 judged=43 allowlisted=24 branch-labels=44` | **rc=1** `1 allowlist entry(ies) name no case of this run's roster and have no gated registration site …: spindex_evi`，同排 `allowlisted=23 allowlist-table=24 allowlist-gated-not-registered=1` |
+  | ①b | 删**有判据分支**的 `spindex_ndmi` 注册 | rc=1（dead-branch） | rc=1（同一条，未削弱） |
+  | ①c | 删掉 matching 的 `if (-not $isDebugCliBuild) { … }` 整块（两条 ConditionalCase 声明随之消失） | **rc=0 装绿** `registered=5 ran=5 judged=4 allowlisted=3` | **rc=1** `2 allowlist entry(ies) …: matching_ecc_register,matching_stitch` |
+  | ② | 把 `$isDebugCliBuild` 强制为假让那两条**真注册真跑**，再**只把 `matching_ecc_register` 从 allowlist 摘掉** | — | **rc=1** `1 case(s) ran with no judgement branch and no allowlist entry: matching_ecc_register`；同臂正对照（条目保留）**rc=0** `registered=7 ran=7 judged=4 allowlisted=3`（4+3=7） |
+  | 自证 | 未改动的 raster 副本 + 新闸 | — | **rc=0**，与仓库原件读数逐字相同（副本机器不引入红/绿） |
+
+  ⚠ 臂②的前提：产品码自己 in Debug lightweight 档拒绝这两个动作（实测 `gis-cli.exe matching ecc_register …` 与
+  `matching stitch …` 均 rc=1，stderr `Error: … is unavailable in Debug lightweight mode; please use Release build`），
+  所以副本里只把这两块的 `CaseArgs` 换成 Debug 合法的 `matching detect`（`-Name` 字面量、所在 `if` 门、
+  `Validate-CaseOutputs` 的分支形状都没动）——闸只看得见注册名/实跑档/分支标签，测的仍是闸；
+  但这**不等于** Release 档上 matching 腿绿（Release 未验收）。
+- **MF-2（计数器语义与注释口径）**：`allowlisted` 改为"本次实到且被豁免的条数"，表长与差值另档打印
+  （`allowlist-table` / `allowlist-gated-not-registered`），并新增第 (7) 项硬失败 `judged + allowlisted == ran`。
+  原件现读（Debug quick）：raster `43 + 24 = 67` ✓、matching `4 + 1 = 5` ✓（旧口径 `allowlisted=3` 的 4+3=7≠5 含混消除）、
+  vector `25 + 0 = 25` ✓。raster/matching 两处 "per case that this leg **runs** but does not judge" 在 matching 上为假
+  ⇒ 按 (a) 本档真跑不判 / (b) 被构建档门掉注册 两类重写，并明写 (b) 需正向物证；raster 那句以 `so this list cannot`
+  结尾的截断半句补完。
+- **MF-3（产品码注释写过头，本刀唯一动 `src/` 处、只改注释）**：`src/core/src/expression_engine.cpp` 里
+  `实测边界：除数 1e-15 接受、0.99999e-15 拒绝` 三处失真（全仓无除数恰为 `1e-15` 的夹具；那个数少抄一个 9，实测是
+  `0.999999e-15`；而"`1e-15` 接受"正是 `0c4d876` 刚按构造否证的取不到的等号点）⇒ 改成与那笔一致的两层口径
+  （波段除数 `at<float>` 升 double、`1e-15` 不在 float32 网格上、最近者 `1.0000000036274937e-15` ⇒ 等号按构造取不到、
+  `<` 与 `<=` 恒同解；可达等号只有表达式字面量除数、今天无夹具；有夹具的是两侧 `1.000001e-15` 受 / `0.999999e-15` 拒，
+  见 `PluginTest.BandMathDivisorThresholdBoundaryIsPinned`）。`git diff -U0 src/` 非注释改动行 **0**；
+  本文件新 blob `bc7eaaea29d27410c854eb17cf5b4d662640d8f5`（**有意的注释改动，非变异残留**）；受保护的
+  `src/plugins/terrain/terrain_plugin.cpp` blob 仍 `588a42504ee19bcb551f8214e5c1adb68cea20e9`；`gis_tests` 已重编
+  且 exe mtime 晚于源 mtime，被引用的那条用例实跑绿。
+- **MF-4（过头的否定命题改回三档）**：见上面 D1-T3"文档面"那条的三档写法与 `平面曲率.md` 的同名小节。
+  本席按产品码那五个 `cv::Sobel` 实参（`zx/zy` `scale=1/8`、`zxx/zyy` `scale=1`、`zxy` `scale=1/4`、`BORDER_REPLICATE`）
+  独立复算：上界 `Δ ≤ 0.99999·(|zxx|+|zxy|+|zyy|)` **与复审席一致**（`g(s)=s/(s^1.5+1e-10)` 在 `(0,1e-10)` 单调增、
+  上确界 `1/(1+1e-5)=0.999990000`，另在 9×9 float32 扫面内所有落在早退带的像元上违例 **0**）；
+  但**样例值不一致、本席的更大**：复审席用解析二阶导 `zxx=zyy=2A`（A=1 ⇒ `S=4`、`Δ=0.16`），
+  而代码里 `cv::Sobel(…, dx=2, ksize=3, scale=1.0)` 给的是 `zxx = 4·(z(x+1)−2z(x)+z(x−1)) = 8A = 8`
+  （实测 `zxx=zyy=8.000`、`zxy=0`，`zx=−1.967e-6`、`zy=−2.027e-6`、`slopeSq=7.976e-12`、`num=6.381e-11`）
+  ⇒ `Δ = 6.381e-11/(7.976e-12^1.5 + 1e-10) = 0.638`。以实测为准 ⇒ **同一结论更硬**（`0.638` 比 `2e-3` 大 2.5 个数量级），
+  本席没有拿它去放宽任何判据。
 
 ### `ctest -j` 并行：现在开会得到假失败
 
