@@ -2516,7 +2516,87 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   未动既有 GOLD `nodata`/`proximity`；未跑全量 ctest；未动 Release 树；受保护的 terrain blob 复核仍为
   `588a42504ee19bcb551f8214e5c1adb68cea20e9`。
 
-### `ctest -j` 并行：现在开会得到假失败
+### 批次 D 覆盖晋升 R2（2026-10-29，`raster_manage.overviews`·`raster_render.colormap` 两条 PENDING→GOLD）
+
+射程**两行**：`tests/action_gold_cases.txt` 的 `raster_manage,overviews` 与 `raster_render,colormap`。
+两条今天都**没有判据分支**、都在 `$rasterGateAllowlist` 里被豁免 ⇒ 本把做的是**从零补值级分支 + 同笔删豁免**
+（不是升级已有分支），这与 R1 的 `info` 半边同形、与 R1 的 `histogram` 半边（判据升级）不同形。
+R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一条未动；既有 GOLD
+`nodata`/`proximity`/`raster_inspect.*` 未动；**本把没有新建任何腿 case**。
+
+- **归属现读**（`tests/test_plugins.cpp` 里四个串共 **32 行 / 23 个 `TEST_F`**，逐块定性地）：
+  只有 `RasterManageOverviewsExecution` 与 `RasterRenderColormapExecution` 两块**执行**这两个动作，
+  且两块剥注释后都**没有** `EXPECT_NEAR`/`EXPECT_FLOAT_EQ`/`EXPECT_DOUBLE_EQ`（旧形态是
+  `EXPECT_GE(GetOverviewCount(), 1)` 与 `EXPECT_EQ(GetRasterCount(), 3)`，两条都是"存在性"而不是值级）⇒
+  与"腿侧没有判据分支"这条独立对撞一致。`RasterRenderPluginParams` 只 `find` 不 `execute`；
+  两个 `*GuiPanelHidesParametersTheActionNeverReads` 块出现插件名与动作名但不跑动作 ⇒ 没当凭据用。
+- **产品面现读**：`overviews` **没有 output 参数**，`BuildOverviews` 原地写进输入文件，
+  处理元数据也写进同一文件内部的 `GIS_PROCESSING` 域；`levels` 解析只保留 `>1` 的 token、
+  `resample` 转大写后原样交给 GDAL。`colormap` 产出 `列数 x 行数 x 3 波段 GDT_Byte`，
+  先 `cv::normalize(..., 0, 255, NORM_MINMAX, CV_8U)` 再 `applyColorMap`，写盘前做一次 BGR→RGB 换序，
+  波段解释设成 `GCI_RedBand + i`；常数波段（`max-min < 1e-10`）直接报错不产出。
+  **边车口径**：两个动作的 `openRaster` 都 `if (!ds) throw` ⇒ 没有返回值可判（R1 已被这条否证过，不重犯）；
+  真正的风险在读侧——同名 `.aux.xml` 命中时 `ComputeStatistics` 不回读像元 ⇒ 本把两分支（腿与单测）
+  **读前都先删边车**。
+- **落账凭据**（逐笔提交、不 amend）：Step1 单测 `5f44f97`、Step2 腿侧 + 删豁免 `27b9480`、
+  Step4 登记 + 五张计数 + 上限 `130d8ce`、Step5 文档与本节 = 下一笔。
+  证据用例 = `PluginTest.RasterManageOverviewsExecution` / `PluginTest.RasterRenderColormapExecution`；
+  腿 case = `run_real_raster_regression.ps1` 的 `raster_manage_overviews` / `raster_render_colormap`。
+- **计数现读对撞**（改前/改后都重跑登记表头部那批命令本身，不是按减法推）：
+  `data_rows 126→126`、`gold_rows 103→105`、`pending_rows 23→21`、`gold_rows_all_lines 104→106`、
+  `gold_rows_table_driven 15→15`、`gold_rows_literal_slot 88→90`，`kPendingCeiling 23→21`（与表同笔）。
+- **闸的五个计数**（预期与实测完全一致，没有顶回任务书）：
+  `registered 70→70`、`ran 70→70`（不新增 case）、`judged 47→49`、`allowlisted 23→21`、
+  `allowlist-table 23→21`、`branch-labels 48→50`、`dead-branches 0→0`、`conditional-registrations 1→1`；
+  不变量 `49 + 21 = 70` 成立。同笔删那两条豁免是闸第 (3) 条 `staleAllow` 的要求，不是顺手清理。
+- **夹具形状**：两条 case/两个单测原来都是**方阵**（腿输入 `makeAnalysisRaster` 32×32×3、
+  单测 128×128 与 40×40），而两个动作的判据都读宽高 ⇒ 新建非方夹具
+  `makeStepLevelRaster` / `createStepLevelRaster` = `40×24×1`、四象限三级平台 `{0^240, 10^480, 51^240}`。
+  三级平台而不是斜坡的理由是**产品决定的**：`cv::normalize` 到 8 位整型时带百分位裁剪，
+  斜坡的极值桶各只占 0.39% 会被裁掉 ⇒ 期望只能从产物回填（N108）；极值做厚到 25% 后裁剪够不着。
+  而"方阵会把轴写反洗成等价变异"是**夹具决定的**——这一条不是推理，是实测：
+  **保持 `Create(rows, cols)` 变异在二进制里，只把夹具换成 40×40 ⇒ 整个用例 PASSED 全绿**
+  （`build/tmp/batchD/r2/arms/A_B2_square_fixture.log`），同一变异在 40×24 上红（`A_B2_unit.log`）。
+- **臂清单（9 臂，全部 tee 到 `build/tmp/batchD/r2/arms/`，全部实测）**：
+  产品消费点变异 5 臂 —— B1 漏 BGR→RGB 换序（单测 6 条 error：`band1 像素 0 vs 255`、`band3 像素 255 vs 0`、
+  `rMin/rMax/bMin/bMax` 各差 255；**band2 的 5 支探针与 Mean/StdDev、Color 三行、几何两行全绿** ⇒
+  一次天然的"常量支 vs 斜坡支"分离证明；腿 `band=1 actual=0 expected=255`）；
+  B2 `Create` 宽高写反（单测 `GetRasterXSize Which is 24`、`YSize Which is 40`；腿 `width actual=24 expected=40`）；
+  A1 忽略 `--levels` 落回默认（单测与腿都 `count actual=4`）；A2 层级翻倍、A3 层级 +1（同红，见下条更正）；
+  改期望常数反事实臂 3 支 —— CF-A overviews StdDev 期望改 `Sqrt(385.0)` ⇒ 腿红 `actual=19.6262`（Δ=0.0048=24× 容差）；
+  CF-B colormap Mean 改 `88.76` ⇒ 腿红 `actual=88.75`；CF-C colormap StdDev 改 `Sqrt(9629.0)` ⇒
+  腿红 `actual=98.131 expected=98.1274681218261`（Δ=0.0035=17.5× 容差）。
+  另 1 支是上面那把"方夹具等价"对撞臂。
+- **⚠ 一处因果我写错并当场更正**（提交文本里没有这个错误结论，是报告 §4 的第一版写错后改准）：
+  A2/A3 我原先写成"token `1` 被翻倍成 `2`、反过来通过了 `>1` 过滤 ⇒ 条数与尺寸同时被扰动"。
+  现读 `while (iss >> level) { if (level > 1) { ovrLevels.push_back(<变形>); } }` ⇒ **过滤跑在原始 token 上**，
+  所以 A2 请求的是 `{4,8,16}` 三条、A3 请求 `{3,5,9}` 三条，而两臂的 `GetOverviewCount()` 都报 **4**
+  ⇒ 真正的事实是 **GDAL 自己多建了一条更粗的概览**（最细一条仍对应请求里的最小因子：
+  A2 是 `10×6 = 40/4`、A3 是 `14×8 ≈ 40/3`）。我没有解释 GDAL 的补级规则，只登记读数。
+- **推得 vs 实跑分开写**：
+  **实跑**——以上 9 臂的红/绿、闸五个计数前后对、腿耗时对（改前 13.34 s → 改后 12.51 s/12.53 s，
+  `TIMEOUT 60` ⇒ 4.8× 余量，未抬 TIMEOUT 未减断言，跑前 `tasklist` 三类进程计数 0）、
+  定向族 43/43 绿、`CoverageMeta`+`CoverageMetaJudge` 19/19 绿、全库 `Total Tests:` 802→802（未新增 `TEST_F`）、
+  autumn 的 LUT `(R=255, G=级别, B=0)` 与 `normalize` 不饱和（本机 python + cv2 逐位遍历 256 项）。
+  **只是推断**——①autumn 的通道公式在**仓库实际链接的 OpenCV 4.14.0**（vcpkg `OpenCVConfig-version.cmake`）
+  上成立：我的 oracle 是 **4.13.0**，公式跨这两版未变属推断，其 4.14.0 落地凭据是单测首跑全绿那一次；
+  ②"每级宽高是单测独占领"是**读端代码**（`info` 只印 `Overviews: <count>`，不印任何每级几何）
+  加两次臂构造失败，**不是**一次"腿绿、单测红"的实测。
+- **缺口（照实登记）**：①`resample` 完全不被判据覆盖——条数与每级宽高都不随 `nearest`/`average` 变，
+  要判它必须回读概览像元，而 `info` 没有这个读数器；②腿侧判不到"每级宽高"（上一条②的同一根因）；
+  ③`GetOverviewCount()` 与 `info` 的 `Overviews:` 都**只读第 1 波段**（R1 已登记过同一句），
+  多波段输入的概览一致性今天无人判；④colormap 的**逐像元摆放**只在单测侧有证据（5 支象限探针），
+  腿侧只有全局统计量 ⇒ 全局统计不变的行/列重排在腿上是绿的；⑤未知色带名静默落回 `jet`，
+  本把未判（要判得再加一条 case，超出"不新增 case"的射程）；⑥矩阵 `fixture` 列在这两行写 `data`
+  而头部 ⚠ 要求 absent 时写 `not-consumed`，与第 8 列 note "腿走合成兜底"互相矛盾 ⇒
+  **与 R1 已登记的缺口⑥同一条**，归 D3 矩阵对账，本把未改；本把按 R-D39 只做了第 5 列的复核
+  （`real_regression` 复核为真，两条 `New-Case` 都在）与 note 口径核对（准确）；⑦Release 侧未验收
+  （未重编 ⇒ 这两条 GOLD 的 Release 凭据归 D4 收口门）。
+- **本把没做的事**：`src/` 除 Step3 取证外零改动（每臂当场 `cp` 还原 + `git hash-object` 对
+  `git rev-parse HEAD:` 贴 MATCH，**未用 `git checkout --`**，收尾 `git status` 空）；未新建腿 case；
+  未动 R3 三行；未动既有 GOLD；未跑全量 ctest；未动 Release 树；`data/` 只读
+  （收尾两件套见报告 §7）；受保护的 terrain blob 复核仍为 `588a42504ee19bcb551f8214e5c1adb68cea20e9`。
+
 
 `ctest -j 8` 的 Debug 全量实测出现 **3 条 `Timeout`**：`gui_vector_buffer_geographic_failure_offscreen`、
 `gui_spindex_ndmi_offscreen`、`gui_vector_singlepart_offscreen`；这三条**单跑 1.65 s / 1.92 s 通过**，
