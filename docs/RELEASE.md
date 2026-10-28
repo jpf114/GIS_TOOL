@@ -2712,10 +2712,14 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
   - A4 去掉 `cv::LUT`（等价于"直接拷归一化后的源"）：夹具红、腿红（`Mean` 落回 88.75 那一侧）。
   - A5 删 `-co BIGTIFF=IF_SAFER`：**夹具绿 + 腿绿 ⇒ 等价变异**。按 R1 的记法先问一句这个等价是谁决定的：
     是**本把夹具的尺寸**决定的（KB 级文件够不到 4 GB 那道闸），不是产品决定的。
-  - A7 删掉 `doBuildCog` 末尾那次 `writeProcessingMetadata`：同一夹具下
-    `The IFD has been rewritten at the end of the file, which breaks COG layout` 的出现次数 1 → 0
-    （两条臂的日志各 grep 一次）⇒ "写处理元数据那一步把 COG 布局作废"这条因果由**实测**成立，
-    不是从警告位置猜的。这条产品事实已写进 `docs/算法说明/栅格工具/COG 生成.md`。
+  - A7 删掉 `doBuildCog` 末尾那次 `writeProcessingMetadata`：同一夹具下窄串
+    `The IFD has been rewritten at the end of the file, which breaks COG layout` 的出现次数 1 → 0。
+    ⚠ **修复轮把这条的结论收回一半**：GDAL 对布局失效发**两条**警告，A7 里窄串归零的同时
+    `This file used to have optimizations in its layout, but those have been, at least partly,
+    invalidated by later changes` **仍 ×1**（A5 是 ×6）⇒ 那次元数据写只是**加剧项**，"把 COG 布局作废"
+    不能整条归给它。不改代码也能复现宽串：`raster_manage cog` 生成 → `raster_inspect info` 打开，
+    stderr 即印宽串（同时 `Overviews: 0`）⇒ **立案 N179**：本动作的产物连 GDAL 自己都不认是 COG 布局，
+    动作名与产物实际形态不一致；修法属拍板类，本批不改产品。文档 `COG 生成.md` 已按实测口径改准。
   - 反事实副本臂（只改期望常数、不碰产品；按分支名切片，避免撞到 R2 的 `overviews` 支——它判同一个 17.75）：
     cog `Mean 17.75→17.85`（残差 0.10）、hm `Mean 148.75→149.75`（残差 1.00）、
     hm `StdDev sqrt(8579.6875)→sqrt(9000)`（`actual=92.6266 expected=94.8683`）、

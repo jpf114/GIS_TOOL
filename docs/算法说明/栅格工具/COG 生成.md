@@ -28,8 +28,14 @@ COG 生成用于把普通栅格转换为 Cloud Optimized GeoTIFF。当前实现�
   层级，所以『生成的 COG 一定带概览』这句不成立；要看金字塔得先有比瓦片大一档的输入。
 - 生成之后产品还会**第二次打开输入**写处理元数据（含处理时间），这一步会把 IFD 重写到位图末尾，
   GDAL 当场印 `The IFD has been rewritten at the end of the file, which breaks COG layout`。
-  批次 D R3a 拿臂实测过因果：把那次元数据写去掉，同一夹具的这条警告计数从 1 变 0 ⇒ 布局失效
-  就是这一步造成的，不是翻译（GDALTranslate）本身。
+  ⚠ **但"布局失效全是这一步造成的"这句在修复轮被自己的臂日志否证，改成实测口径**：GDAL 对这件事发
+  **两条不同的警告**，①`The IFD has been rewritten at the end of the file, which breaks COG layout`
+  与 ②`This file used to have optimizations in its layout, but those have been, at least partly,
+  invalidated by later changes`。臂 A5（保留那次元数据写）里 ①×1 / ②×6；
+  臂 A7（**去掉**那次元数据写）里 ①×0 但 **②仍 ×1** ⇒ 那次写是**加剧项**，不是布局失效的唯一成因。
+  不改代码也能复现 ②：`gis-cli raster_manage cog` 生成，再用 `gis-cli raster_inspect info` 打开它，
+  stderr 就印 ②（控制器 2026-10-29 复跑，同时 `Overviews: 0`）。⇒ 已立案 **N179**：本动作的产物
+  连 GDAL 自己都认为不再是 COG 布局，"COG 生成"这个动作名与产物实际形态不一致（修法属拍板类，未改产品）。
 - 因此**比较两个产物只能比尺寸 / 块尺寸 / 金字塔层数 / 统计量，不能比 md5 或逐字节**：处理时间每次都变，
   而且上面那条布局改写的存在与否会直接改变字节布局。
 
