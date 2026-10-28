@@ -2205,12 +2205,12 @@ TEST_F(PluginTest, PansharpenNoGeoTransformSkipsExtentCheck) {
 //   驱动 ⇒ **一个字都不写**，未初始化数组原样进产物（Debug 下是 MSVC 栈填充 0xCC = -9.25596e+61）。
 // 两条都经由同一个 SetGeoTransform 落进**交付物**，所以变更在产物侧，不在成败侧。
 //
-// WHY 不改成硬失败（用户 2026-10-27 拍板 + 既有契约）：本文件 :1969/:1982 已把
+// WHY 不改成硬失败（用户 2026-10-27 拍板 + 既有契约）：本文件 PluginTest.PansharpenNoGeoTransformSkipsExtentCheck 的两条断言已把
 //   "拿不到地理变换不得当成失败 + 产物照常生成"钉成契约（无参考影像 = BMP/截图/中间产物今天照常能跑），
 //   拒绝执行会断整条链。⇒ 判据名字里是 **KeepsProduct**，不是 FailsWithout…：
 //   三条断言 = ①success 为真 ②产物在场 ③**产物没有 GeoTransform**。
 // 第③条必须用**第二个客户端**读（`rasterHasNoGeoTransform` 自己新开数据集、按 GetGeoTransform 的
-//   **返回值**判，:1918 定义），不许拿动作自报的 metadata 自证（exercised ≠ conformant）。
+//   **返回值**判；该前置检查的定义就在本文件 `rasterHasNoGeoTransform`），不许拿动作自报的 metadata 自证（exercised ≠ conformant）。
 // 三条里改前只有③红（①②改前改后都绿）——这正是"不许失败"与"不许伪造"能同时成立的唯一形态。
 // ============================================================================
 
@@ -2243,7 +2243,7 @@ TEST_F(PluginTest, ProcessingThresholdKeepsProductWithoutGeotransform) {
     params["band"] = 1;
 
     const auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "拿不到地理变换不得当成失败（契约同 :1969）：" << result.message;
+    EXPECT_TRUE(result.success) << "拿不到地理变换不得当成失败（契约同 PluginTest.PansharpenNoGeoTransformSkipsExtentCheck）：" << result.message;
     EXPECT_TRUE(fs::exists(output)) << "无参考输入的产物必须照常生成：" << result.message;
     EXPECT_TRUE(rasterHasNoGeoTransform(output))
         << "改前 opencv_wrapper.cpp:40 丢弃返回值、:44 无条件 SetGeoTransform(adfGT) ⇒ "
@@ -2277,7 +2277,7 @@ TEST_F(PluginTest, RasterMathReclassifyKeepsProductWithoutGeotransform) {
     params["keep_unmatched"] = false;
 
     const auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "拿不到地理变换不得当成失败（契约同 :1969）：" << result.message;
+    EXPECT_TRUE(result.success) << "拿不到地理变换不得当成失败（契约同 PluginTest.PansharpenNoGeoTransformSkipsExtentCheck）：" << result.message;
     EXPECT_TRUE(fs::exists(output)) << "无参考输入的产物必须照常生成：" << result.message;
     EXPECT_TRUE(rasterHasNoGeoTransform(output))
         << "改前 opencv_wrapper.cpp:87 丢弃返回值、:91 无条件 SetGeoTransform(adfGT) ⇒ 同位点 B 的两种伪造成品；"
@@ -14327,7 +14327,7 @@ TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
 //   -alt（:113）                     M3     实测红臂（D1-T1）：altitude/2 ⇒ 只 hillshade 红。
 //   -z（:107）                       MUT-ARM-Z       实测（D1-T1x）：`"-z", std::to_string(zFactor)`
 //        写成 `"-z", "1.0"` ⇒ 只 TerrainHillshadeHandValueOnUnitPlane 红（块 (6) 的 198 变 255，
-//        test_plugins.cpp:13580），其余 5 条夹具用例与真实腿全绿 ⇒ **诚实记账**：腿的 hillshade case
+//        见本文件 PluginTest.TerrainHillshadeHandValueOnUnitPlane 块 (6) 那条 198），其余 5 条夹具用例与真实腿全绿 ⇒ **诚实记账**：腿的 hillshade case
 //        本来就传 z_factor=1，所以 `-z` 这枚只有夹具的解析面钉子承重，腿判不到它。
 //   -az（:111）                      MUT-ARM-AZ      实测（D1-T1x）：把 azimuth 写成常量 "315"
 //        ⇒ 夹具 hillshade 一条红 7 枚（255→218、128→218、1→218、159→176、158→175、198→145），

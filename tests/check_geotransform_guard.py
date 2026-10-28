@@ -70,9 +70,11 @@ DOMAINS = [
         "exclude_parts": ("geotransform_guard_fixtures",),
         "allowlist_key": "test_entries",
         # ⚠ 第二域**刻意不钉** any / comment_line / block_comment / string_only 这四个字面量桶。
-        # 原因是实测撞上的：测试侧的解释性注释会原样引用缺陷行 —— 本刀新增的 B/C 用例头
-        #   （tests/test_plugins.cpp:2091）与 F 用例头（:15604）各引了一次改前原文，:15576 那条是
-        #   既有的（BASE 7241b49 上是 :15484）⇒ 测试域的注释桶天然随散文增长，钉死它就等于
+        # 原因是实测撞上的：测试侧的解释性注释会原样引用缺陷行 —— 位点 B/C 的两个用例头
+        #   （`ProcessingThresholdKeepsProductWithoutGeotransform`、
+        #   `RasterMathReclassifyKeepsProductWithoutGeotransform`）与位点 F 的用例头
+        #   （`TerrainMultiViewshedFailsWithoutGeotransform`）各引了一次改前原文，
+        #   `FillSinks…` 族里那条是既有的（`7241b49` 那一版就已经在引用）⇒ 测试域的注释桶天然随散文增长，钉死它就等于
         #   "以后每写一句注释都要来改守卫"，而那正是本仓记过账的坑：
         #   "为解释某事写的注释会污染数那件事的 grep"。
         # 不钉 ≠ 不判，三样兜底都在：①`any == code + comment_line + block_comment + string_only`

@@ -34,7 +34,7 @@ void okSiteBoolFromCompare(GDALDataset* ds) {
     }
 }
 
-// 形态 4：`return` 直接把比较式交出去（test_plugins.cpp:1922 同形）
+// 形态 4：`return` 直接把比较式交出去（本仓测试侧的同形件 = 前置检查 `rasterHasNoGeoTransform`）
 bool okSiteReturnCompare(GDALDataset* ds) {
     double gt[6];
     return ds->GetGeoTransform(gt) != CE_None;

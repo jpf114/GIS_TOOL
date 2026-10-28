@@ -39,7 +39,8 @@ void matToGdalTiff(const cv::Mat& mat, GDALDataset* srcDS,
     double adfGT[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     // 批次 D / Task 8（位点 B）：GetGeoTransform 的**返回值必须判**，取不到就不往产物写。
     // WHY 不改成失败：本函数有 40+ 调用点，"无参考输入照常出图"是既有契约
-    //   （tests/test_plugins.cpp:1969 断不失败、:1982 断产物存在），拒绝执行会断整条链。
+    //   （`PluginTest.PansharpenNoGeoTransformSkipsExtentCheck` 的"拿不到地理变换不得当成失败"
+    //   与"产物照常生成"两条断言钉着这条契约），拒绝执行会断整条链。
     // WHY 不能继续无条件 SetGeoTransform（改前形态）：GDAL 失败时**基类仍会把恒等阵
     //   (0,1,0,0,0,1) 写进数组**（gcore/gdaldataset.cpp:1506-1512），而自定义 GetGeoTransform
     //   且失败前不碰数组的驱动（实测 PNM）会让数组**保留调用方的初值**——改前这里是
