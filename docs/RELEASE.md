@@ -2509,7 +2509,7 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   但**别的分支没删**，那条口径归腿侧统一处理；⑥矩阵 `fixture` 列口径两种写法并存（`data` vs `not-consumed`），
   本机根本没有 `data/raster` ⇒ 归 D3 矩阵对账，本把未改；⑦**已撤销**（原写"`doHistogram`/`doRasterInfo`
   都未判 `openRaster` 返回值"）：控制器现读 `gis::core::openRaster` ⇒ 它 `if (!ds) throw GisError(...)`，
-  **根本没有返回值可判**；且 `GetRasterBand` 判了 `if (!rasterBand)`、`ComputeStatistics` 的 `CPLErr`
+  **失败时它抛 `GisError`、调用方拿不到空指针** ⇒ "应当判返回值"这条要求对它不成立（判空是死代码）；且 `GetRasterBand` 判了 `if (!rasterBand)`、`ComputeStatistics` 的 `CPLErr`
   也接成了 `statsErr` ⇒ 本条不成立、**不立案**（是复审前的控制器自查否证的）。
 - **本把没做的事**：`src/` 除 Step3 取证外零改动（当场还原、`git status` 空）；未新建腿 case；
   未动 `raster_manage,overviews`/`raster_render,colormap`（R2）与 `cog`/`zonal_stats`/`histogram_match`（R3）；
