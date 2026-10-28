@@ -221,6 +221,12 @@ function Assert-TextContains {
 # lets "89.98" satisfy an expectation of "8" (and "899" satisfy "89"), which is exactly the
 # vacuous-judge shape the registry header forbids. Here the label is anchored to its own
 # column and the captured token must parse as a full number, then we compare numerically.
+# SCOPE (D1-T1x, reviewer R3): [regex]::Match returns the FIRST match, so on a multi-band
+# product this judges band 1 only and never says so. Reachable gap today -- every block that
+# uses it reads a single-band product (measured "Size: 48 x 48 x 1 bands") -- but the moment a
+# multi-band case is added, either loop the label per band or make this function fail closed.
+# Same root as the terrain "-b" lever being undecidable on the fixture pool (see the ledger in
+# tests/test_plugins.cpp above the terrain HandValue cases; left for #164 / multi-band fixtures).
 function Get-InfoStatValue {
     param(
         [string]$Text,

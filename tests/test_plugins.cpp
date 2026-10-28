@@ -13247,6 +13247,36 @@ TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
 // tpi/tri/curvature 走本仓 runLocalTerrainProcess（OpenCV 3x3，BORDER_REPLICATE）。
 // 全部期望值先由独立参考实现算出（Horn/ESRI 公式写在注释里），再与产物逐像元对撞；
 // 容差 1e-3 只吸收 float32/double 的口径差（任何算法常数级改动都会把值挪动 ≥0.5）。
+//
+// ── 可达杠杆 × 变异臂台账（D1-T1x 补齐；证据等级按本仓口径分"实测红臂 / 只有推导"两档）──────
+// DEM 路（slope/aspect/hillshade）产品侧只有 5 枚可达杠杆 = terrain_plugin.cpp:104-114 拼出的参数，
+// 局部路（tpi/tri/curvature）另有补边与邻域计数两处。逐枚的判别变异：
+//   process name（:1488/:1502）      M1/M2  实测红臂（D1-T1）：slope↔aspect 互换 ⇒ 各自本条红。
+//   -alt（:113）                     M3     实测红臂（D1-T1）：altitude/2 ⇒ 只 hillshade 红。
+//   -z（:107）                       MUT-ARM-Z       实测（D1-T1x）：`"-z", std::to_string(zFactor)`
+//        写成 `"-z", "1.0"` ⇒ 只 TerrainHillshadeHandValueOnUnitPlane 红（块 (6) 的 198 变 255，
+//        test_plugins.cpp:13580），其余 5 条夹具用例与真实腿全绿 ⇒ **诚实记账**：腿的 hillshade case
+//        本来就传 z_factor=1，所以 `-z` 这枚只有夹具的解析面钉子承重，腿判不到它。
+//   -az（:111）                      MUT-ARM-AZ      实测（D1-T1x）：把 azimuth 写成常量 "315"
+//        ⇒ 夹具 hillshade 一条红 7 枚（255→218、128→218、1→218、159→176、158→175、198→145），
+//        **真实腿也红**（terrain_hillshade min mismatch actual=148 expected=105）。
+//        这条红臂是新选点换来的：腿原来就传 az=315 = GDAL 缺省 ⇒ 旧参数据下"整条 -az 不进"恒不红。
+//   补边模式（:218 tpi / :221 curvature）MUT-ARM-BORDER-1/-2 实测（D1-T1x）：BORDER_REPLICATE →
+//        BORDER_DEFAULT ⇒ 1 号只 TerrainTpiHandValueOnUnitPlane 红（±0.375→±0.75、z=2 的 ±0.75→±1.5）
+//        且真实腿红（terrain_tpi min mismatch actual=-2.475 expected=-1.237502）；
+//        2 号只 TerrainCurvatureHandValueOnUnitPlane 红（边缘 ±4→±8）——两条同臂互不累加，
+//        因为 tpi 支与 curvature 支在 runLocalTerrainProcess 里是互斥的 else if。
+//   -b（:106 波段选择）              **判不到，且不是漏跑**：本节三幅夹具 DEM 与腿的 TerrainRaster
+//        全是单波段（`createMultiBand*Raster` 的波段数由 values/baseAndStep 长度给，terrain 三处都只填 1；
+//        `createTerrainRaster` 硬编码 1 波段），`-b 1` 与"没有 -b"/"随便一个 -b"在同一副输入上产物相同 ⇒
+//        任何"钉 -b"的断言都会是恒真断言。这一枚只能等多波段 DEM 夹具（挂 #164 / 后续基建），
+//        本批**不造**该断言。真实腿侧的同一口径写进 tests/run_real_raster_regression.ps1 的
+//        Get-InfoStatValue 注释里（它只取第一个匹配 ⇒ 多波段产物上今天会静默少判）。
+//   tri 的 std::clamp 邻域（:263-264）  **只有推导**：边缘钉子 0.61237244 = sqrt(3/8) 就是为它设计的
+//        （改成越界跳过 ⇒ neighborCount 变 5、值变 sqrt(3/5)=0.7746），D1-T1x 没跑这一臂，不写成取证。
+//   各向异性像元步长（slope 块末尾的 A/B/C/D 四幅）  产品码里**没有 dx/dy 赋值点**（Horn 核在 GDAL 内部），
+//        ⇒ 红臂只能落在喂给 GDAL 的 GeoTransform 上：把 A 的 GT 写成 B 的口径 ⇒ slope 用例红
+//        （像元实测 45 vs 钉的 63.4349488）。这条判的是"钉子把两种步长口径分开了"，别再往上加声称。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 TEST_F(PluginTest, TerrainSlopeHandValueOnUnitPlane) {
