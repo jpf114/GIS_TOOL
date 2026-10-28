@@ -813,15 +813,24 @@ function Validate-CaseOutputs {
             #   => floor(16.533) = 16 and ceil(24.382) = 25 => dstW = dstH = 9 (both axes carry the same
             #   300 m span, so the row count follows the same arithmetic).
             # Every covered pixel gets alpha 255 and the rest stay 0 => mean = 255 * 81 / (256 * 256).
-            # Tolerance 1e-5 is per-branch: raster_inspect info prints 6 significant digits, so the worst
-            #   rounding error here is 5e-7 * 1.26 = 6.4e-7, three orders inside the tolerance, while ONE
-            #   pixel of drift in dstW moves the mean by 255 * 18 / 65536 = 0.070 (256x the tolerance).
+            # Tolerance 1e-5 is ABSOLUTE and the argument must hold PER BRANCH, not once for the pair.
+            #   raster_inspect info prints 6 significant digits, so for a value in [10^e, 10^(e+1)) the
+            #   quantisation step is 10^(e-5) and the worst rounding error is half of that:
+            #     this branch expects 0.3151702880859375 (e=-1) => step 1e-6, worst 5e-7 => 20x margin
+            #       (the actually printed 0.315170 is off by 2.88e-7 => 34.7x);
+            #     the ts=128 branch below expects 1.26068115234375 (e=0) => step 1e-5, worst 5e-6 =>
+            #       only 2x margin (printed 1.26068 is off by 1.15e-6 => 8.7x). That is the TIGHT arm;
+            #       do not read this branch's 20x as covering both (same defect class as #171 F-3).
+            #   What makes the branch load-bearing is sensitivity, not margin: one pixel of drift in
+            #     dstW moves the mean by 255 * 18 / 65536 = 0.070038 => 7004x the tolerance.
             Assert-InfoBandStatNear -Text $info -Band 4 -Label "Mean" -Expected (255.0 * 81.0 / 65536.0) -Tolerance 1e-5 -Message "cutting_tile ts=256 alpha mean"
             # Second pass on the same input with tile_pixel_size=128, run inside this branch because the
-            #   judgement is the PAIR: halving the tile size halves res, so the auto band must go one
-            #   level DEEPER (12 -> 13) while the same 300 m span covers the same 9x9 pixel block in a
-            #   128-pixel container => the alpha mean must DOUBLE. A grid that hardcodes 256 loses the
-            #   extra level; a container that hardcodes 256 loses the doubled mean. Each arm is named.
+            #   judgement is the PAIR. res(z, ts) = 2*pi*a / (ts * 2^z), so halving ts DOUBLES res at the
+            #   same z and computeMaxZoom must walk one level DEEPER (12 -> 13) to come back to the same
+            #   res (res(12,256) = res(13,128) = 38.2185 m/px). Same res => the 300 m span still covers a
+            #   9x9 covered block, while the container shrinks to 128*128 = 16384 pixels =>
+            #   the alpha mean is QUADRUPLED (65536 / 16384 = 4), NOT doubled. A grid that hardcodes 256
+            #   loses the extra level; a container that hardcodes 256 loses the x4 mean. Arms are named.
             $tileRoot128 = $script:CuttingTileTs128Root
             $runText = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "cutting", "tile",
