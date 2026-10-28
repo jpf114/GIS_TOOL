@@ -105,14 +105,14 @@ raster_inspect,histogram,raster,data,real_regression,gold,C15,腿走合成兜底
 raster_inspect,info,raster,data,real_regression,gold,C15,腿走合成兜底
 raster_manage,overviews,raster,data,real_regression,gold,C5,腿走合成兜底
 raster_manage,nodata,raster,not-consumed,real_regression,relation,C5,腿走合成兜底
-raster_manage,cog,raster,data,none,gold,C5,夹具来源为启发式判定，开批前核对
+raster_manage,cog,raster,data,real_regression,gold,C5,腿走合成兜底（R3a 现读：输入 = tmp/raster_benchmark/generated_data/step_level_input.tif 的副本，由 gui_test_data_helper 生成，本腿不读 data/ 原件）
 raster_manage,zonal_stats,raster,data,none,gold,C5,夹具来源为启发式判定，开批前核对
 raster_manage,proximity,raster,data,none,relation,C5,夹具来源为启发式判定，开批前核对
 raster_math,band_math,raster,data,real_regression,gold,C6,腿走合成兜底
 raster_math,reclassify,raster,data,none,relation,C6,夹具来源为启发式判定，开批前核对
 raster_math,raster_overlay,raster,data,none,relation,C6,夹具来源为启发式判定，开批前核对
 raster_render,colormap,raster,data,real_regression,gold,C10,腿走合成兜底
-raster_render,histogram_match,raster,data,none,gold,C10,夹具来源为启发式判定，开批前核对
+raster_render,histogram_match,raster,data,real_regression,gold,C10,腿走合成兜底（R3a 现读：输入 = step_level_input.tif 的副本，参照 = histmatch_reference_input.tif，本把新建 makeHistMatchReferenceRaster 生成，都在 tmp/raster_benchmark/generated_data）
 spindex,ndvi,multispectral,not-consumed,real_regression,gold,C8,腿走合成兜底
 spindex,ndmi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
 spindex,evi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
