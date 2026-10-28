@@ -2659,6 +2659,75 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
 ⇒ 净结论：**只有 #2 与 #3 是真冲突**（同一 `getTestDir()/` 平铺路径被两个用例块写），把它们分开 + 保证不并发构建，
 才谈得上开 `-j`；其余命中都是"同名字符串出现在不同路径"的假阳性。
 
+### 批次 D 覆盖晋升 R3a（2026-10-29，`raster_manage.cog`·`raster_render.histogram_match` 两条 PENDING→GOLD）
+
+射程**两行**：`tests/action_gold_cases.txt` 的 `raster_manage,cog` 与 `raster_render,histogram_match`。
+这两条与 R1/R2 不同形：今天腿上**连 case 都没有**——现读 `raster_manage_cog`、`raster_render_histogram_match`
+两个名字既不在 `$cases` 也不在 `$rasterGateAllowlist` ⇒ 本把的 Step 2 是**从零新建 `New-Case`**，
+不是"给既有 case 补判据"，也**没有**走豁免通道（`allowlisted` / `allowlist-table` 改后仍 21/21 未动）。
+
+- **夹具侧凭据**（两块都是扩写既有 `TEST_F`，**未新增块** ⇒ 全库 `Total Tests:` 802 不变）：
+  - `PluginTest.RasterManageCogExecution`：夹具由 `createTestRaster(64,64)`（方阵 + `i%256` 斜坡，
+    宽高互换读不出差别）换成 `createStepLevelRaster(64,40)`（非方三级平台，
+    多重集 `{0^640, 10^1280, 51^640}`，n=2560）。**推得**：`Mean = 45440/2560 = 17.75`、
+    `E[x²] = 700.25`、`StdDev = sqrt(385.1875) = 19.626194231179920`；四角像元 = 夹具字面量。
+    结构侧的期望值全部来自**实跑现读**（临时探针三档尺寸一致）：`GetBlockSize = 512 x 512`
+    （**不是** GDAL 文档常被引用的 128）、数据集级 `IMAGE_STRUCTURE/COMPRESSION = LZW`
+    （波段级同键读不到，两个位置都探过）。
+  - `PluginTest.RasterRenderHistogramMatchExecution`：输入换非方 48x32 三平台，参照新建
+    `createFourPlateauRaster(48,32, 0/17/34/51)`——**不同分布**是刻意的，`source == reference` 时
+    两侧 CDF 逐档相等 ⇒ LUT 恒等，与"根本没匹配"不可区分（等价变异，不能当判据）。
+    256 档 LUT 按现读的取档规则**先推成表再跑首读**（顺序不能倒）：`0→0`、`50..254→170`、`255→255`
+    ⇒ 产物 `{0^384, 170^768, 255^384}`、**推得** `Mean 148.75`、`StdDev sqrt(8579.6875) = 92.626602550239312`；
+    首读**实跑**逐字相符（`min=0 max=255 mean=148.750000000 stddev=92.626602550`）。
+- **腿侧凭据**：新建 `raster_manage_cog`（输入 = `step_level_input.tif` 的副本，判非方 40x24x1 /
+  Float32 / `Min 0`·`Max 51`·`Mean 17.75`·`StdDev sqrt(385.1875)` / `Origin` / `Pixel Size`）与
+  `raster_render_histogram_match`（参照用**本把新建的第二代腿侧夹具** `histmatch-reference-raster`，
+  40x24 四平台 0/17/34/51 各 240 像元；判 `Min 0`·`Max 255`·`Mean 148.75`·`StdDev sqrt(8579.6875)`
+  + 尺寸 + Float32 + 地理参考）。为什么要新建夹具而不是用腿上已有的件：参照必须"与输入不同分布 +
+  与输入同尺寸 + 平台可数"三条同时成立，腿上今天没有一件满足（尺寸不等就先走 `cv::resize(INTER_LINEAR)`，
+  参照直方图就不再手推得动）。
+- **闸读数（实跑两遍，改前/改后同一命令 `ctest -R "^real_data_raster$" -V`）**：
+  `registered/ran 70/70 → 72/72`、`judged 49 → 51`、`allowlisted/table 21/21` 未动、
+  `branch-labels 50 → 52`、`conditional-registrations 1` 未动、`dead-branches 0`，
+  不变量 `51 + 21 = 72` 成立；腿 **12.10 s → 12.46 s = 1.03×**（2.5× 线按这一对照算，未触）。
+  定向配方 43 条 → 43 条（未新增 `TEST_F`），全库 `Total Tests: 802 → 802`。
+  ⚠ 本把给两块各加了一处"判了返回值"的 `GetGeoTransform` ⇒ `geotransform_guard` 测试域期望数同笔按现读
+  改成 `code 8→10 / checked 7→9`（`violations/dead` 仍 0/0，产品域 `20 CODE / 18 CHECKED` 未动，R-D38）。
+- **臂清单**（每臂日志都 tee 成文件，落 `build/tmp/batchD/r3a/arms/`；`src/` 每臂当场 `cp` 还原，
+  `git hash-object` 对 `git rev-parse HEAD:` **逐臂 MATCH**；全程没用 `git stash` / `checkout --` / `reset --hard`）：
+  - A1 `-of COG` → `-of GTiff`：夹具红在 `GetBlockSize`（实测 64×32 vs 期望 512×512 两支）；**腿绿**
+    ⇒ 瓦片化在腿上没有任何读数，这一支只有夹具侧承重。
+  - A2 `COMPRESS=LZW` → `COMPRESS=NONE`：夹具红在 `COMPRESSION` 元数据（`ASSERT_NE(compress, nullptr)`
+    拿到 NULL）；**腿绿**（同上，info 不印压缩）。
+  - A3 并列取法 `<` → `<=`：夹具四支同刻红（`Min` 差 85、`Mean` 差 63.75、`StdDev` 差 19.014、
+    逐像元 85/85/255），**腿同时红**（`Min actual=85 expected=0`）。残差与 A3 之前**推得**的对照表逐字相同。
+  - A4 去掉 `cv::LUT`（等价于"直接拷归一化后的源"）：夹具红、腿红（`Mean` 落回 88.75 那一侧）。
+  - A5 删 `-co BIGTIFF=IF_SAFER`：**夹具绿 + 腿绿 ⇒ 等价变异**。按 R1 的记法先问一句这个等价是谁决定的：
+    是**本把夹具的尺寸**决定的（KB 级文件够不到 4 GB 那道闸），不是产品决定的。
+  - A7 删掉 `doBuildCog` 末尾那次 `writeProcessingMetadata`：同一夹具下
+    `The IFD has been rewritten at the end of the file, which breaks COG layout` 的出现次数 1 → 0
+    （两条臂的日志各 grep 一次）⇒ "写处理元数据那一步把 COG 布局作废"这条因果由**实测**成立，
+    不是从警告位置猜的。这条产品事实已写进 `docs/算法说明/栅格工具/COG 生成.md`。
+  - 反事实副本臂（只改期望常数、不碰产品；按分支名切片，避免撞到 R2 的 `overviews` 支——它判同一个 17.75）：
+    cog `Mean 17.75→17.85`（残差 0.10）、hm `Mean 148.75→149.75`（残差 1.00）、
+    hm `StdDev sqrt(8579.6875)→sqrt(9000)`（`actual=92.6266 expected=94.8683`）、
+    cog 期望宽度 `40→41`（`width actual=40 expected=41`）四支**全红**，零改动对照臂**全绿**
+    ⇒ 两条腿分支确实在比数值，不是在打印。
+- **缺口（照实登记，不当凭据）**：
+  ① `-of COG` 与 `COMPRESS=LZW` 只有夹具侧承重，腿上无读数器（产物 `Driver` 仍印 `GTiff`、也不印压缩）；
+  ② 字节数代理不成立：实测 40×24 的产物 **4096 B 大于**原始样点 3840 B（512 瓦片头吃掉 LZW 收益），
+     所以"产物比输入小"这种上界在这条腿上是夹具形状的偶然，本把没写；
+  ③ `cv::resize(INTER_LINEAR)` 那条"参照尺寸不等"的分支今天没有判据（两侧同尺寸才推得动 CDF）；
+  ④ 金字塔层数实测四档（40×24 / 64×40 / 130×66 / 300×200）全是 0 ⇒ 红不了任何缺陷，夹具里那一行只作记录；
+  ⑤ "游标每档重置 vs 单调前进"这一支**没有实跑**：由"输入 CDF 单调不减"对任何夹具都成立可**推出**两者等价，
+     故按推得登记，不写成实测；
+  ⑥ 同一支里 `result.metadata["compression"] = "LZW"` 是源码写死的字面量，A2 臂下它**照样绿**
+     ⇒ 它不是产物事实的凭据，产物事实只由 `IMAGE_STRUCTURE/COMPRESSION` 那一支在钉；
+  ⑦ Release 树未重编 ⇒ 本把两条在 Release 侧**未验收**；
+  ⑧ `tests/real_data_matrix.txt` 第 4 列 `fixture` 仍写 `data`，而该文件头注释说 raster 腿走合成兜底
+     应标 `not-consumed`：本把与同腿 R2 的两行读法保持一致没动，交 D3 矩阵对账。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
