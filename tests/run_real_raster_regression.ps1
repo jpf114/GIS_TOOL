@@ -581,6 +581,33 @@ function Validate-CaseOutputs {
             Assert-TextContains -Text $info -Expected "Band 12:" -Message "cutting_merge_bands band count mismatch"
             Assert-TextContains -Text $info -Expected "Mean:   110" -Message "cutting_merge_bands final band mean mismatch"
         }
+        # ---- D1-F (task 15): raster_math_band_math value-level branch ----
+        # Before this knife the switch had NO branch for this case name: the case ran (the CLI call
+        # and the expected-output existence check happen in Invoke-Case) but nothing judged the
+        # product, and because the switch has no `default` arm, deleting a branch -- or the case
+        # name -- stays silently green. This block is what makes that gap closed for band_math.
+        # Fixture: gui_test_data_helper.cpp makePansharpenInputs -> 30 x 30 x 3 Float32 with
+        #   B1 == 30.0, B2 == 50.0, B3 == 70.0 everywhere; case args pass "--expression=B1+B2".
+        # Expectations are DERIVED, not measured: doBandMath builds one CV_32F band of the same
+        #   width/height (raster_math_plugin.cpp: cv::Mat result(height, width, CV_32F) and
+        #   matToGdalTiff(result, input, output, 1)), and 30.0f + 50.0f == 80.0f is exact in float32,
+        #   so size is 30 x 30 x 1 and every pixel is 80.
+        # Min == Max == Mean pins it per-pixel: a product whose average is 80 but whose pixels are
+        #   not would fail here while a mean-only pin would not.
+        # Value-level on purpose: Assert-TextContains "Mean:   80" is also satisfied by 800 or 80.5
+        #   (prefix eating), the shape the registry header forbids, so the numbers go through
+        #   Assert-InfoStatNear, which anchors the label to its own column and parses the token.
+        # Liveness proof (same knife): replacing the evaluated value with the first operand
+        #   (result.at<float>(y,x) = values[0]) turns this branch red with actual=30.
+        "raster_math_band_math" {
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "band_math_output.tif"))
+            )
+            Assert-TextContains -Text $info -Expected "Size:   30 x 30 x 1 bands" -Message "raster_math_band_math raster size mismatch"
+            Assert-InfoStatNear -Text $info -Label "Min" -Expected 80.0 -Tolerance 1e-06 -Message "raster_math_band_math B1+B2 min mismatch"
+            Assert-InfoStatNear -Text $info -Label "Max" -Expected 80.0 -Tolerance 1e-06 -Message "raster_math_band_math B1+B2 max mismatch"
+            Assert-InfoStatNear -Text $info -Label "Mean" -Expected 80.0 -Tolerance 1e-06 -Message "raster_math_band_math B1+B2 mean mismatch"
+        }
         "processing_pansharpen" {
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "raster_inspect", "info", ("--input=" + (Join-Path $ResolvedOutputRoot "pansharpen_output.tif"))
