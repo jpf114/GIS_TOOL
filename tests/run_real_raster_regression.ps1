@@ -771,6 +771,82 @@ function Validate-CaseOutputs {
             $tile11 = Get-NamedRasterInfo -ResolvedCliPath $ResolvedCliPath -Directory $tilesDir -FileName "tile_1_1"
             Assert-InfoSizeExact -Text $tile11 -ExpectedWidth 2 -ExpectedHeight 2 -ExpectedBands 1 -Message "cutting_split_overlap tile_1_1 shape"
         }
+        "cutting_tile" {
+            Mark-Judged -Name $Case.Name
+            # ---- D1-C2 (batch D promotion): value-level readings for cutting tile, DERIVED not measured ----
+            # The input is $data.ClassificationRaster: 6 x 6 x 1 EPSG:3857 with
+            #   GeoTransform {12935000, 50, 0, 4852300, 0, -50} (its own raster_inspect info prints
+            #   Origin (1.2935e+07, 4.8523e+06) and Pixel Size (50, -50)) => the envelope is
+            #   x in [12935000, 12935300], y in [4852000, 4852300] and doTile reads pixelSize = 50.
+            # Expectations use the spherical Web Mercator constants only:
+            #   2*pi*a = 40075016.685578488 (a = 6378137), tileWidthM(z) = 2*pi*a / 2^z,
+            #   res(z, ts) = tileWidthM(z) / ts, and the auto level is the first z from 30 downwards with
+            #   res(z, ts) >= pixelSize * 0.5 = 25:
+            #     ts=256: res(12) = 38.218514 >= 25 while res(13) = 19.109257 < 25  => max_zoom = 12
+            #     ts=128: res(13) = 38.218514 >= 25 while res(14) = 19.109257 < 25  => max_zoom = 13
+            #   min_zoom keeps its plugin default 0, and 300 m < tileWidthM(z) for every z <= 13, so each
+            #   level holds exactly one tile => level COUNT = max_zoom + 1 (13 and 14).
+            # Tile indices come from the same metric derivation as the plugin's levelTileBounds:
+            #   x = floor((12935000 + 20037508.342789244) / tileWidthM(z))
+            #   y = floor((20037508.342789244 - 4852300) / tileWidthM(z))
+            #   z=12 => x = 3370, y = 1552    z=13 => x = 6740, y = 3104
+            # x != y on this fixture (unlike the square unit-test fixture), so a wrong axis order cannot
+            #   hide behind the names here either.
+            # WHY --skip_blank=false: the plugin default (true) drops tiles with at most 4 opaque pixels,
+            #   which is what the LOW levels of this 300 m fixture produce (z=9 -> 2x2 = 4 pixels).
+            #   That tolerance is judged by PluginTest.TileBlankGuardsAndSkipBlankCombination; leaving it
+            #   on would mix a blank-guard branch into the level COUNT asserted below.
+            $tileRoot = $script:CuttingTileRoot
+            $levels = @(Get-ChildItem $tileRoot -Directory -ErrorAction Stop | ForEach-Object { [int]$_.Name })
+            $levelText = (@($levels | Sort-Object) -join ",")
+            Assert-Condition -Condition ($levelText -eq "0,1,2,3,4,5,6,7,8,9,10,11,12") -Message (
+                "cutting_tile level set mismatch (actual=[" + $levelText + "] expected=[0..12], derived max_zoom=12 for pixelSize=50 with tile_pixel_size=256)")
+            $deepPath = Join-Path $tileRoot "12\3370\1552.png"
+            Assert-Condition -Condition (Test-Path $deepPath) -Message ("cutting_tile missing the derived deepest tile: " + $deepPath)
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $deepPath)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 256 -ExpectedHeight 256 -ExpectedBands 4 -Message "cutting_tile ts=256 deepest tile shape"
+            # Alpha (band 4) mean: the covered sub-rectangle is dstW x dstH output pixels, and
+            #   dstW = ceil((12935300 - tileMinX)/res(12,256)) - floor((12935000 - tileMinX)/res(12,256))
+            #   with tileMinX = -20037508.342789244 + 3370 * tileWidthM(12) = 12934368.097...
+            #   => floor(16.533) = 16 and ceil(24.382) = 25 => dstW = dstH = 9 (both axes carry the same
+            #   300 m span, so the row count follows the same arithmetic).
+            # Every covered pixel gets alpha 255 and the rest stay 0 => mean = 255 * 81 / (256 * 256).
+            # Tolerance 1e-5 is per-branch: raster_inspect info prints 6 significant digits, so the worst
+            #   rounding error here is 5e-7 * 1.26 = 6.4e-7, three orders inside the tolerance, while ONE
+            #   pixel of drift in dstW moves the mean by 255 * 18 / 65536 = 0.070 (256x the tolerance).
+            Assert-InfoBandStatNear -Text $info -Band 4 -Label "Mean" -Expected (255.0 * 81.0 / 65536.0) -Tolerance 1e-5 -Message "cutting_tile ts=256 alpha mean"
+            # Second pass on the same input with tile_pixel_size=128, run inside this branch because the
+            #   judgement is the PAIR: halving the tile size halves res, so the auto band must go one
+            #   level DEEPER (12 -> 13) while the same 300 m span covers the same 9x9 pixel block in a
+            #   128-pixel container => the alpha mean must DOUBLE. A grid that hardcodes 256 loses the
+            #   extra level; a container that hardcodes 256 loses the doubled mean. Each arm is named.
+            $tileRoot128 = $script:CuttingTileTs128Root
+            $runText = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "cutting", "tile",
+                ("--input=" + $data.ClassificationRaster),
+                ("--output=" + $tileRoot128),
+                "--tile_pixel_size=128",
+                "--skip_blank=false"
+            )
+            $levels128 = @(Get-ChildItem $tileRoot128 -Directory -ErrorAction Stop | ForEach-Object { [int]$_.Name })
+            $levelText128 = (@($levels128 | Sort-Object) -join ",")
+            Assert-Condition -Condition ($levelText128 -eq "0,1,2,3,4,5,6,7,8,9,10,11,12,13") -Message (
+                "cutting_tile ts=128 level set mismatch (actual=[" + $levelText128 + "] expected=[0..13], derived max_zoom=13)")
+            $deepPath128 = Join-Path $tileRoot128 "13\6740\3104.png"
+            Assert-Condition -Condition (Test-Path $deepPath128) -Message ("cutting_tile ts=128 missing the derived deepest tile: " + $deepPath128)
+            $info128 = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $deepPath128)
+            )
+            Assert-InfoSizeExact -Text $info128 -ExpectedWidth 128 -ExpectedHeight 128 -ExpectedBands 4 -Message "cutting_tile ts=128 deepest tile shape"
+            Assert-InfoBandStatNear -Text $info128 -Band 4 -Label "Mean" -Expected (255.0 * 81.0 / 16384.0) -Tolerance 1e-5 -Message "cutting_tile ts=128 alpha mean"
+            # The progress line is NOT used as evidence (same scope rule as the R-T17-8
+            #   product-only judgement); this last line only records that the two passes really
+            #   produced two different grids (13 levels vs 14).
+            Assert-Condition -Condition ($levels128.Count - $levels.Count -eq 1) -Message (
+                "cutting_tile ts=128 must add exactly one level over ts=256 (actual=" + $levels128.Count + " vs " + $levels.Count + ")")
+        }
         "cutting_merge_bands" {
             Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -1693,6 +1769,27 @@ $cases += New-Case -Name "cutting_split_overlap" -CaseArgs @(
     "--overlap=2"
 ) -ExpectedOutputs @(
     (Join-Path $ResolvedOutputRoot "cutting_split_overlap_tiles")
+)
+
+# D1-C2 (batch D promotion of cutting,tile): tile writes a DIRECTORY tree (z/x/y.png), and the shared
+# output root tmp\raster_regression is a fixed path reused across runs -- a stale tree from an earlier
+# run would pad the level count and could mask exactly the level-count change this case asserts. One
+# run tag per leg invocation keeps both tile trees write-once; the judged branch reads the same two
+# script-scope paths, so no name is spelled twice.
+$CuttingTileRunTag = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+$script:CuttingTileRoot = Join-Path $ResolvedOutputRoot ("cutting_tile_" + $CuttingTileRunTag)
+$script:CuttingTileTs128Root = Join-Path $ResolvedOutputRoot ("cutting_tile_ts128_" + $CuttingTileRunTag)
+
+# Plugin defaults are what the unit case cannot reach from the CLI, so only the tested key and the
+# blank-guard decoupling flag are passed: max_zoom stays unset (its -1 default is the auto band under
+# test) and tile_pixel_size keeps its default 256 in this first pass.
+$cases += New-Case -Name "cutting_tile" -CaseArgs @(
+    "cutting", "tile",
+    ("--input=" + $data.ClassificationRaster),
+    ("--output=" + $script:CuttingTileRoot),
+    "--skip_blank=false"
+) -ExpectedOutputs @(
+    $script:CuttingTileRoot
 )
 
 $cases += New-Case -Name "cutting_merge_bands" -CaseArgs @(
