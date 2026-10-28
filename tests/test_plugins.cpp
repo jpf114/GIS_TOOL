@@ -2640,8 +2640,8 @@ TEST_F(PluginTest, RasterInspectInfoExecution) {
     //   StdDev = sqrt(5461.25) = 73.9002706…（产品走默认 6 位有效印法 ⇒ 印 "73.9003"）
     // Extent 手推：minX = 116、maxX = 116 + 64*0.001 = 116.064、
     //             minY = 40 + 32*(-0.001) = 39.968、maxY = 40。
-    // 尺寸这行在本夹具下宽 64 ≠ 高 32 ⇒ 它与 Extent 的 maxX/minY 一起**能**看见"宽高写反"
-    // （写反时 Size 报 32 x 64、maxX 变 116.032）。而 Origin(116 vs 40) 与 PixelSize(+0.001 vs
+    // 尺寸这行在本夹具下宽 64 ≠ 高 32 ⇒ "宽高写反"在两处各自可红：Size 的打印序（臂 A9 ⇒ 两格各差 32）
+    // 与 Extent 的算式（臂 A10/A10b ⇒ minY 变 39.936、maxX 变 116.032，各差 0.032）。而 Origin(116 vs 40) 与 PixelSize(+0.001 vs
     // −0.001) 两支判的是**另一类**缺陷——GeoTransform 槽位写反（这两支根本不读 width/height）。
     // 上一版把这两类混成一句"轴写反由 Origin/PixelSize 承担"，是复审抓到的措辞越界。
     const auto sizeFields = infoLineNumbers(result.message, "Size");
