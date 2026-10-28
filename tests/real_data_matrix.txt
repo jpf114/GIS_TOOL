@@ -106,7 +106,7 @@ raster_inspect,info,raster,data,real_regression,gold,C15,腿走合成兜底
 raster_manage,overviews,raster,data,real_regression,gold,C5,腿走合成兜底
 raster_manage,nodata,raster,not-consumed,real_regression,relation,C5,腿走合成兜底
 raster_manage,cog,raster,data,real_regression,gold,C5,腿走合成兜底（R3a 现读：输入 = tmp/raster_benchmark/generated_data/step_level_input.tif 的副本，由 gui_test_data_helper 生成，本腿不读 data/ 原件）
-raster_manage,zonal_stats,raster,data,none,gold,C5,夹具来源为启发式判定，开批前核对
+raster_manage,zonal_stats,raster,data,real_regression,gold,C5,腿走合成兜底（R3b 现读：栅格 = analysis_input.tif 的副本，由 gui_test_data_helper 的 makeAnalysisRaster 生成 32x32x3，本腿不读 data/ 原件；区域 = 本腿手写的 GeoJSON 矩形 manage_zonal_zones.geojson，不是 data/vector 里的既有矢量。R3b 之前第 5 列是 none 的成因是本腿上根本没有这条 case，不是有 case 却缺判据）
 raster_manage,proximity,raster,data,none,relation,C5,夹具来源为启发式判定，开批前核对
 raster_math,band_math,raster,data,real_regression,gold,C6,腿走合成兜底
 raster_math,reclassify,raster,data,none,relation,C6,夹具来源为启发式判定，开批前核对
