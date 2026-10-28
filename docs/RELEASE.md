@@ -2129,10 +2129,14 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   ⇒ 断言写成 `EXPECT_NEAR(0.0, 值, 1e-6)`，**不写** `EXPECT_DOUBLE_EQ`，**也不写**"不许是精确 0"那种非零断言。
   ⚠ 承重面如实登记：原点是 4326↔3857 的**不动点**，这一档结构上抓不到轴序丢失与源/目标互换
   （**MF-T1 臂下它确实是绿的**，见下），它抓的是原点处 NaN/Inf/异常偏移。
-- **`info` 的判据形态换了**（不是放弃判据）：现读 `doInfo` 的 metadata 只有 `width/height/bands/wkt` 四枚，
-  **不发** pixel_size / extent ⇒ "像元尺寸 + 包框四边"改成从 `doInfo` 自己发的 message 文本取
-  `Origin:` / `Pixel Size:` 两支的数，再由 GT × 已判读的行列数推包框右下两边；期望全部来自
-  `createTestRaster` 的 `adfGT` 字面量 `{116.0, 0.001, 0.0, 40.0, 0.0, -0.001}`（20×10 ⇒ 116.000/116.020/39.990/40.000）。
+- **`info` 的判据形态**（修复轮 1 改准）：现读 `doInfo` 的 metadata 只有 `width/height/bands/wkt` 四枚，
+  **不发** pixel_size / extent，message 也只印 GeoTransform 的三对读数（`Origin:` / `Pixel Size:` / `Rotation:`）、
+  **不印包框** ⇒ `PluginTest.ProjectionInfoExecution` 判的是这**六枚**文本读数（期望全部来自 `createTestRaster` 的
+  `adfGT` 字面量 `{116.0, 0.001, 0.0, 40.0, 0.0, -0.001}`）+ `wkt` 读回的权威码恰 `4326`。
+  **包框四边今天两侧都没有判据**：Step3 那版写的"再由 GT × 已判读的行列数推包框右下两边"不是判据——那四行里
+  两枚与 Origin 逐字重复（同期望同实测侧同容差），两枚在 Origin/Pixel Size 绿的前提下差值**恒等于 0**
+  （容差可加性只剩 `2e-11` 的独立窗口，再被 `doInfo` 的 6 位有效印法量化：Origin 档步长 1e-3、Pixel Size 档步长 1e-8）
+  ⇒ 修复轮 1 已把这四行删掉、换成产品真印而此前无人读的 `Rotation:` 两枚，并把四边**登记为缺口**（见下面"缺口"④）。
 - **四条凭据**（证据用例都写进登记表第 4 列）：`info`→`PluginTest.ProjectionInfoExecution`、
   `transform`→`PluginTest.ProjectionTransformExecution`、`assign_srs`→`PluginTest.ProjectionAssignSrsExecution`、
   `reproject`→`PluginTest.ProjectionVectorReprojectExecution`。晋升前四块的"剥注释后数值断言数"实测**全是 0**
@@ -2149,7 +2153,10 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   **像元三支与权威码支绿**；`MF-A2` 只把 (3,5) 一个像元写成 7.0f ⇒ 红该像元的手算支与赋前对撞支，
   **GT 十支与另两枚像元支绿** ⇒ 这两臂合起来才等于"GT 支与像元支各自可红、互不遮蔽"；
   `MF-I1` `doInfo` 的 Origin 打印 x/y 写反 ⇒ 红六支（全为差 76），**Pixel Size 两支与 width/height/bands、
-  `wkt` 权威码 4326 支绿**；`MF-R1` 矢量支 `-t_srs` → `-a_srs`（只声明系、不真变换）⇒ 红八支
+  `wkt` 权威码 4326 支绿**；⚠ 修复轮 1 复核：那六支里**只有两枚是 Origin 自己的判据**，另四枚（两枚逐字重复 +
+  两枚算术推论）同因同刻红 ⇒ "红六支"这个计数是被非独立行撑起来的；删掉那四行后同一臂只会红两支——
+  这是按现存臂日志（`build/tmp/batchD/d1p/mf_a2_i1_r1.log`）的红点集合**推得**，本轮硬约束不许改 `src/`、
+  未重编变异二进制，故**没有重跑该臂**；`MF-R1` 矢量支 `-t_srs` → `-a_srs`（只声明系、不真变换）⇒ 红八支
   （四顶点 + 包框四边，残差量级 1.3e7），**输出权威码 3857 与 `IsProjected()` 绿**
   ⇒ "CRS 声明对了"不等于"坐标真变了"，两类判据必须同在场。
   还原证明：`projection_plugin.cpp` 回到 `9c473e2b4fe8ebf21b8e55acd7b0ac90bcee921d`、
@@ -2160,7 +2167,8 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   本刀给 `projection_info` 补两枚**由生成器字面量独立可推**的读数
   （`makeClassRaster` 的 `Create(…, 6, 6, 1, …)` + `geotransform {12935000.0, 50.0, 0.0, 4852300.0, 0.0, -50.0}`
   ⇒ `"Pixel Size: (50, -50)"` 与 `"Origin: (1.2935e+07, 4.8523e+06)"`，后者是 message 默认 6 位有效数字的印法）。
-  包框四边腿侧判不到（doInfo 不发 extent 键也不印包框）⇒ 钉在 Debug 单测里，这个边界已写进 `.ps1` 注释。
+  包框四边**腿侧与单测两侧都判不到**（`doInfo` 不发 extent 键、message 也不印包框，而单测里那四行推论不承重、
+  修复轮 1 已删）⇒ 按"无判据"登记为缺口（下面"缺口"④），不再写"钉在 Debug 单测里"；`.ps1` 分支注释同批改准。
   **反事实副本臂**（证这两枚真在比、不是"分支会红"）：把期望改成 `"Pixel Size: (50, 50)"` ⇒
   `real_data_raster` **Failed 5.35 s**、带 `D1P-COUNTERFACTAL pixel size mismatch`、退出码非 0；改回后连跑两支绿。
   腿侧闸读数（`ctest -V` 现读）：`registered=67 ran=67 judged=43 allowlisted=24 … dead-branches=0`
@@ -2176,11 +2184,15 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   （本把只补断言、**没有新增 `TEST_F`**；新增的是一个文件级 `static` 期望算子 `expectedWebMercatorXY`，不产生用例）。
 - ⚠ **Release 侧未验收**：四条晋升一律只在 Debug 取证，Release 树本批未重编 ⇒ 归 D4 收口门补凭据。
 - **缺口（照实登记）**：①原点档的承重面按构造就窄（不动点），已由 §R-D31 那节的 MF-T1 现读坐实，不为它造非零断言；
-  ②`info` 的 `Origin`/`Pixel Size` 判据依赖 message 的**默认精度印法**（6 位有效 ⇒ `1.2935e+07`），
+  ②`info` 的 `Origin`/`Pixel Size`/`Rotation` 六枚判据依赖 message 的**默认精度印法**（6 位有效 ⇒ `1.2935e+07`），
   属"文本契约"而非纯数值契约 —— 若将来 `doInfo` 改精度，腿侧与单测两侧会同时红，这是有意为之但要知道；
   ③`#155`（projection 输出先删后写）与 `#164/#172`（可见参数有效性 / CLI 区间闸与 ParamSpec 分叉）
   都在本把射程之外，**产品行为一字未改**（`doTransform` 的 `x/y` ParamSpec 区间 `-1e9..1e9` 与
   真实墨卡托值的关系、`reproject` 的先删后写都没动）。
+  ④**`projection.info` 的包框四边：腿侧与单测两侧都无判据**（本把由"已钉在 Debug 单测"改判为缺口）。
+  现读两条出路都不在本把射程：a) 让 `doInfo` 发 extent 键或把包框印进 message 是**改可观测行为** ⇒ 要过裁定门；
+  b) 换判据载体——`raster_inspect` 的 info 文本确实印 `Extent: (minX, minY) - (maxX, maxY)`，
+  但那是另一个动作的契约，拿它替 `projection.info` 记覆盖就是把账记到别人头上。
 
 ### `ctest -j` 并行：现在开会得到假失败
 

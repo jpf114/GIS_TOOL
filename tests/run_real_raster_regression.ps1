@@ -547,9 +547,14 @@ function Validate-CaseOutputs {
             #     message with an ostringstream at default precision (6 significant digits), which renders
             #     those two as 1.2935e+07 and 4.8523e+06.
             # The derived envelope is x in [12935000, 12935000 + 6*50 = 12935300],
-            # y in [4852300 - 6*50 = 4852000, 4852300] - the same box as the generator's polygon ring,
-            # but doInfo emits no extent key, so the four sides are asserted in the Debug unit case
-            # PluginTest.ProjectionInfoExecution instead of here.
+            # y in [4852300 - 6*50 = 4852000, 4852300] - the same box as the generator's polygon ring.
+            # GAP (batch D D1-P fix round 1, corrects what an earlier comment here claimed): doInfo emits
+            # no extent key and prints no envelope, and the Debug unit case
+            # PluginTest.ProjectionInfoExecution does NOT pin the four sides either - its right/bottom rows
+            # were only origin + n*pixelSize built from the values its Origin/Pixel Size rows already pin,
+            # so with those rows green the difference is exactly zero and they can never go red on their
+            # own. The four sides are therefore judged on NEITHER side today and are registered as a gap;
+            # the unit case pins Origin, Pixel Size and Rotation (doInfo prints all three pairs).
             Assert-TextContains -Text $text -Expected "Pixel Size: (50, -50)" -Message "projection_info pixel size mismatch"
             Assert-TextContains -Text $text -Expected "Origin: (1.2935e+07, 4.8523e+06)" -Message "projection_info origin mismatch"
         }
