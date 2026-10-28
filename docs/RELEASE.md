@@ -2752,7 +2752,7 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
   与 `doZonalStats` 空 map 的写出形状（`"{\n"` + 零条目 + `"\n}\n"`）逐字节一致。
   静态那半也同刻对上：`createTestRaster` 的 GT `{116, 0.001, 0, 40, 0, -0.001}` 配
   `createPolygonVectorDataset` 写死的 `x∈[0,100]` 环 ⇒ `colEnd = min(29, (int)((100-116)/0.001)) = -16000`
-  小于 `colStart = 0`；**同一对夹具的 `rowStart` 也大于 `rowEnd`**（两道闸同时命中，任务书只写了列那道）。
+  小于 `colStart = 0`；⚠ **修复轮更正**：第一版这里写「同一对夹具的 `rowStart` 也大于 `rowEnd`、两道闸同时命中」，是**没算过的说法**。代进去算 ⇒ `rowStart = max(0, trunc((100-40)/-0.001)) = 0`、`rowEnd = min(29, trunc((0-40)/-0.001)) = min(29, 40000) = 29` ⇒ **行向不命中**（环带 y 完全覆盖栅格），只有列向那道触发 `continue`。控制器与复审席各自独立算得同一结论。
   ⇒ 结论：该用例**自批次 A 起就在空跑**，"跑过"不等于"跑到统计支"。
   **结案口径**：改夹具让两者相交属于测试面（本把做了），`doZonalStats` 的静默 `continue` 属于产品语义
   （本把一字未动，反过来把它钉成回归判据）。
@@ -2790,7 +2790,7 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
   `registered/ran 72/72 → 73/73`、`judged 51 → 52`、`allowlisted/table 21/21` 未动、
   `allowlist-gated-not-registered 0` 未动、`branch-labels 52 → 53`、`conditional-registrations 1` 未动、
   `dead-branches 0`，不变量 `52 + 21 = 73` 成立；腿 **15.27 s → 14.20 s = 0.93×**（跑前 `tasklist`
-  里 `MSBuild|gis_tests|ctest|gis-cli` 计数 = 0；2.5× 线按这一对照算 = 35.7 s，未触，未抬 TIMEOUT，未减断言）。
+  里 `MSBuild|gis_tests|ctest|gis-cli` 计数 = 0；2.5× 拆腿触发线按**改前**那一档算 = 15.27 × 2.5 = **38.175 s**（第一版写 35.7 s 是拿改后 14.20 乘的、私有报告另一处写 37.5 s，两处都不对，一并改准），未触，未抬 TIMEOUT，未减断言）。
   定向配方 **43 条 → 43 条**（未新增 `TEST_F`），全库 `Total Tests: 802 → 802`，43/43 全绿。
   `geotransform_guard` 现读 test 域 `code=10 / checked=9`、产品域 `code=20 / checked=18`
   —— **这两数是 R3a 的 `67067ed` 改的，本把 diff 未碰守卫**（`git log -1 -- tests/check_geotransform_guard.py`）。
@@ -2811,9 +2811,14 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
     `10c+r, c∈2..5, r∈2..3 扣掉 NoData` 逐字相同）、**腿绿 = 该臂在腿上是 no-op**
     （腿那侧 colStart/rowStart 都是 0）。承重只在夹具侧，如实分档。
   - **A4** `static_cast<int>` → `std::floor`：**夹具绿 + 腿绿 ⇒ 等价变异**。按 R1/R-D41 的记法先问这个等价
-    是谁决定的：**是产品决定的，不是我把矩形挑成这样挑出来的**——`colStart`/`rowStart` 外侧有 `max(0, ·)`
+    是谁决定的：⚠ **修复轮撤回第一版的归因**（原文写「**是产品决定的，不是我把矩形挑成这样挑出来的**」）——
+    **这个等价是本把挑的四个矩形决定的**，不是产品决定的。分叉形状存在且已被两方独立算出：
+    用本把夹具（`writeFloatBandsRaster` GT 原点 `100/200`、`pixelSize = 1.0`、W=7）取矩形
+    `MinX=48, MaxX=99.5, MinY=197, MaxY=199` ⇒ `trunc` 给 `colEnd = min(6, trunc(-0.5)) = min(6, 0) = 0`
+    ⇒ `colStart(0) > colEnd(0)` **不成立 ⇒ 不跳过**（出一条空统计行），而 `floor` 给 `min(6, -1) = -1` ⇒ **跳过**。
+    ⇒ 这条等价臂**不能当免检牌**：`trunc → floor` 这类改动在真实分叉形状上至今无判据（就是下面登记的那条缺口）。`colStart`/`rowStart` 外侧确实有 `max(0, ·)` 钳制——
     钳制（负商不管 trunc 还是 floor 都被钳成 0），而要素要活过 `colStart > colEnd || rowStart > rowEnd`
-    那道闸就必须 `colEnd`/`rowEnd` 的商 ≥ 0（商为负时 `min(w-1, 商) < 0 ≤ colStart` ⇒ 必被跳过），
+    那道闸就必须 `colEnd`/`rowEnd` 的商 ≥ 0（⚠ 第一版括号里那句「商为负时 `min(w-1, 商) < 0 ≤ colStart` ⇒ 必被跳过」**已被上面那个反例否证并撤回**：`trunc(-0.5) = 0`，并不小于 `colStart = 0`，与它自己下面那句「唯一能分开两者的形状是环整体在原点西侧、且离原点不足一个像元宽」直接矛盾——同一段里前后打架），
     商非负时 trunc 与 floor 恒等 ⇒ **凡窗口非空两口径必等价**。唯一能分开两者的形状是
     "环整体在原点西侧、且离原点不足一个像元宽"（trunc 留一个空统计的区、floor 直接跳过），
     本把没有夹具覆盖它 ⇒ 登记成缺口，不写成判据。
