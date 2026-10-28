@@ -3,13 +3,17 @@
 # WHY THIS FILE EXISTS (batch D / R-D33, the bare-switch problem):
 #   All three real-data regression runners dispatch their value-level judgements through a
 #   `switch ($Case.Name)` that has NO `default` arm, and Invoke-Case only checks the exit code
-#   plus "expected output exists". So deleting a judgement branch -- or deleting a New-Case --
-#   keeps the whole suite green while silently removing coverage. This gate makes that visible
-#   on every leg, in both directions:
+#   plus "expected output exists". So deleting a judgement branch -- or deleting the New-Case an
+#   allowlist entry points at -- keeps the whole suite green while silently removing coverage.
+#   This gate makes that visible on every leg, in three directions:
 #     forward : every case registered in THIS run must be judged, or be on the allowlist;
 #     reverse: every judgement branch declared by THIS runner must belong to a case that
 #               exists (registered now, conditionally registered, or in a runtime roster),
-#               otherwise it is a decorative branch nobody can reach.
+#               otherwise it is a decorative branch nobody can reach;
+#     allow  : every allowlist entry must still name a case that THIS run registers, or one whose
+#               registration site provably exists in the runner source behind a Mode/Group/build
+#               gate (the AST-derived ConditionalCase declaration). A name that is simply "not
+#               found" is NOT exempted -- that would turn the exception into a pass-on-nothing hole.
 #
 # CONTRACT WITH THE RUNNERS (four hooks only):
 #   Register-Case   -- called from inside each runner's New-Case, so EVERY registration path is
@@ -28,7 +32,12 @@
 #   (4) a judgement branch no case can reach (dead branch), unless its registration is derived
 #       as conditional (Mode/Group/build-flag gated, read off the AST) or it lives in a runtime
 #       roster the runner handed over;
-#   (5) on a Group=all leg, a registered case that never reached Invoke-Case.
+#   (5) on a Group=all leg, a registered case that never reached Invoke-Case;
+#   (6) an allowlist entry whose case is neither registered in this run nor backed by a gated
+#       registration site in the runner source -- i.e. the exempt case was deleted out from
+#       under the entry;
+#   (7) judged + exempted-this-run != ran (the counter partition is arithmetic, so a lying
+#       hook cannot hide behind a green run).
 #
 # SCOPE STATEMENT (R-D33 item 8): the gate judges THIS run's roster, not the static universe.
 # quick/full modes and the Debug lightweight gates register different case sets, and several
@@ -187,7 +196,11 @@ function Assert-AllCasesJudged {
     #   (3) an allowlist entry that is no longer needed (someone added the branch and forgot the
     #       entry) -- hand-copied lists rot by keeping stale members, so necessity is asserted;
     #   (4) a judgement branch that no case can reach (dead branch), unless its registration is
-    #       derived as conditional or it lives in a runtime roster the runner handed over.
+    #       derived as conditional or it lives in a runtime roster the runner handed over;
+    #   (5) on a Group=all leg, a registered case that never reached Invoke-Case;
+    #   (6) an allowlist entry that names no case of this run's roster and has no gated
+    #       registration site -- the exemption list may not outlive the case it exempts;
+    #   (7) judged + exempted-this-run != ran.
     param(
         [string]$RunnerName,
         [string]$RunnerPath,
@@ -256,6 +269,24 @@ function Assert-AllCasesJudged {
     if ($SelectedGroup -eq "all") {
         $notRun = @($registered | Where-Object { $ranCases -notcontains $_ })
     }
+    # (6) MF-1: each allowlist entry must still name a case this run registers. The one lawful way
+    #     an entry can point at a case that is missing from THIS run's roster is a declared
+    #     conditional registration: Get-RegressionGateBranchFacts found a New-Case /
+    #     New-DerivedCase / New-CheckCase call site for exactly that literal name, sitting inside
+    #     an if that gates on Mode / Group / a build-config flag. That is positive proof read off
+    #     the source, not "lookup failed so let it pass": delete the gated block and the key
+    #     disappears, so the entry becomes an orphan and the leg goes red. Without this check,
+    #     deleting the New-Case of an EXEMPT case shrinks the roster silently and the leg prints
+    #     a green line (measured: registered 67 -> 66, allowlisted unchanged, zero errors).
+    $orphanAllow = @($allowNames | Where-Object {
+        ($registered -notcontains $_) -and (-not $facts.ConditionalCase.ContainsKey($_)) })
+    # (7) MF-2: counter semantics. "allowlisted" means the entries this leg actually consulted to
+    #     exempt a case that ran -- not the length of the table, which also counts entries whose
+    #     case never registered in this config. Only the first reading makes the partition
+    #     judged + allowlisted == ran checkable; the table size is printed next to it, labelled.
+    $exemptedThisRun = @($ranCases | Where-Object { $allowNames -contains $_ })
+    $exemptNotRegistered = @($allowNames | Where-Object { $registered -notcontains $_ })
+    $partitionSum = $judged.Count + $exemptedThisRun.Count
 
     $problems = @()
     if ($unjudged.Count -gt 0) {
@@ -275,18 +306,39 @@ function Assert-AllCasesJudged {
         $problems += ($notRun.Count.ToString() + " registered case(s) never reached Invoke-Case on a " +
                      "Group=all leg: " + ($notRun -join ","))
     }
+    if ($orphanAllow.Count -gt 0) {
+        $problems += ($orphanAllow.Count.ToString() + " allowlist entry(ies) name no case of this " +
+                     "run's roster and have no gated registration site in " + $RunnerPath + " -- the " +
+                     "exempt case was deleted (or moved out of its Mode/Group/build gate), so the " +
+                     "entry is a ghost and must be deleted with it: " + ($orphanAllow -join ","))
+    }
+    if ($partitionSum -ne $ranCases.Count) {
+        $problems += ("counter partition is broken: judged=" + $judged.Count + " + allowlisted(this " +
+                     "run, ran-but-not-judged)=" + $exemptedThisRun.Count + " = " + $partitionSum +
+                     " but ran=" + $ranCases.Count + "; a judgement or run hook is not accounting " +
+                     "for every case that ran")
+    }
     if ($problems.Count -gt 0) {
         throw ("regression gate[" + $RunnerName + "] FAILED -- " + ($problems -join " || ") +
                " || scope: this run only (Mode-registered roster), not the static universe || " +
                "registered=" + $registered.Count + " ran=" + $ranCases.Count +
-               " judged=" + $judged.Count + " allowlisted=" + $allowNames.Count +
+               " judged=" + $judged.Count + " allowlisted=" + $exemptedThisRun.Count +
+               " allowlist-table=" + $allowNames.Count +
+               " allowlist-gated-not-registered=" + $exemptNotRegistered.Count +
                " branch-labels=" + $branches.Count)
     }
 
     # One line, printed only when the gate actually passed.
+    # allowlisted = entries this leg consulted for a case that ran and has no branch (so
+    # judged + allowlisted == ran here); allowlist-table = the list handed over by the runner;
+    # the difference between those two is exactly the entries whose case is gated out of this
+    # config and is only lawful while the gated registration site still exists (check (6)).
     Write-Host ("regression-gate[" + $RunnerName + "]: registered=" + $registered.Count +
                 " ran=" + $ranCases.Count + " judged=" + $judged.Count +
-                " allowlisted=" + $allowNames.Count + " branch-labels=" + $branches.Count +
+                " allowlisted=" + $exemptedThisRun.Count +
+                " allowlist-table=" + $allowNames.Count +
+                " allowlist-gated-not-registered=" + $exemptNotRegistered.Count +
+                " branch-labels=" + $branches.Count +
                 " conditional-registrations=" + $facts.ConditionalCase.Keys.Count +
                 " dead-branches=0 (scope: this run only, Group=" + $SelectedGroup + ")")
 }

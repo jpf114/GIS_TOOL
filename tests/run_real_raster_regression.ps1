@@ -1711,8 +1711,16 @@ foreach ($case in $cases) {
 
 # Allowlist for the shared ran-must-be-judged gate (tests/regression_case_gate.ps1).
 # One entry per case that this leg runs but does not judge, each with the reason for the
-# missing judgement. The gate asserts the reverse necessity too: the moment a branch is
-# added for one of these names, the stale entry turns the leg red, so this list cannot
+# missing judgement. The gate asserts the reverse necessity in BOTH directions: the moment
+# a branch is added for one of these names the stale entry turns the leg red, and an entry whose
+# case is neither registered in this run nor backed by a gated registration site in this file
+# turns the leg red too. So this list can neither rot forward (a branch appears and the entry is
+# forgotten) nor be orphaned backwards (someone deletes the New-Case the entry excuses).
+# The gate's printed "allowlisted=" is the number of entries this leg actually consulted for a
+# case that ran, not the size of the table below. On this leg the two agree (measured 24/24 on the
+# Debug quick leg), because this file has exactly one gated registration site (the gate prints it
+# as conditional-registrations=1) and that name is not one of the entries below; the two counters
+# are printed separately so a leg where they differ cannot be read as a coverage number.
 $rasterGateAllowlist = @(
     [pscustomobject]@{ Name = "spindex_evi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },
     [pscustomobject]@{ Name = "spindex_savi"; Reason = "fixture-side GOLD in tests/action_gold_cases.txt via PluginTest.SpindexOtherIndicesExecution; this leg still has no independently derived expectation for its generated 24x24 input" },

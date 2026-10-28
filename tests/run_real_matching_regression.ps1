@@ -455,8 +455,18 @@ foreach ($case in $cases) {
 }
 
 # Allowlist for the shared ran-must-be-judged gate (tests/regression_case_gate.ps1).
-# Each entry states why this leg runs the case without judging it; the gate also fails on a
-# stale entry, so adding a branch here must be paired with deleting the entry.
+# Two kinds of lawful entry live here, and the old wording ("one entry per case that this leg
+# runs but does not judge") only described the first, which is why it read as false on Debug:
+#   (a) a case this leg really runs and does not judge -- matching_change, on every config;
+#   (b) a case whose registration site exists in this file but is gated out of the current build
+#       config -- matching_ecc_register and matching_stitch live inside
+#       if (-not $isDebugCliBuild), so a Debug leg neither registers nor runs them at all
+#       (R-D25 lightweight gate; they only become (a)-style entries on a non-Debug CLI build).
+# (b) is not a "lookup failed, so let it pass" exception: the gate requires a gated registration
+# site for exactly that literal name, so deleting that block turns the entry into an orphan and
+# the leg goes red. The printed counters keep the two readings apart -- allowlisted counts (a) as
+# consulted this run, allowlist-table is the size of the list below, and the difference is
+# allowlist-gated-not-registered -- which is what makes judged + allowlisted == ran hold here.
 $matchingGateAllowlist = @(
     [pscustomobject]@{ Name = "matching_change"; Reason = "fixture-side GOLD via PluginTest.MatchingChangeExecutionReportsChangedPixels; the leg has no independently derived changed-pixel count for its generated pair" }
     [pscustomobject]@{ Name = "matching_ecc_register"; Reason = "PENDING in tests/action_gold_cases.txt; the case only registers on a non-Debug CLI build (R-D25 lightweight gate), and no judgement branch exists for it yet" }
