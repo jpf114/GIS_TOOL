@@ -651,9 +651,17 @@ function Validate-CaseOutputs {
                 "colormap green stddev should be sqrt(9629.6875) = 98.1309711558996")
         }
         # ---- D1-T1: terrain value-level judgements (batch D first promotion knife) ----
-        # Input for all six blocks below is the generated terrain DEM:
-        #   48 x 48 Float32, z(x,y) = x*1.5 + y*0.8 + ((x*y)%11)*0.2   (gui_test_data_helper.cpp:595-624)
-        #   cell size 0.0005 x 0.0005, no CRS, no source NODATA          (gui_test_data_helper.cpp:612-615)
+        # Input for all six blocks below is the generated terrain DEM.  The citation is given by
+        # FUNCTION NAME plus the literal text it writes, never by line number (R-D34): a bare
+        # ":595" here survived its own move in this very file pair, because the line it drifted to
+        # is another fixture in the same helper that also uses 0.0005 -- a stale anchor that keeps
+        # self-confirming is worse than no anchor at all.
+        #   makeTerrainRaster in tests/gui_test_data_helper.cpp writes:
+        #     driver->Create(outputPath.c_str(), 48, 48, 1, GDT_Float32, nullptr)
+        #     dem[y * 48 + x] = x * 1.5 + y * 0.8 + ((x * y) % 11) * 0.2
+        #     double geotransform[6] = { 116.0, 0.0005, 0.0, 40.0, 0.0, -0.0005 }   // cell 0.0005
+        #   and that function calls SetGeoTransform only -- no SRS/projection call and no
+        #   SetNoDataValue on the band, so the DEM arrives with no CRS and no source NODATA.
         # Every expected number below is produced by an independent reference implementation of the
         # documented formulas (Horn first differences + GDAL slope/aspect/hillshade, Riley TIN TRI,
         # center-minus-8-neighbour-mean TPI, cv::Laplacian ksize=3 = d2/dx2 + d2/dy2), not read back
@@ -786,7 +794,12 @@ function Validate-CaseOutputs {
             Assert-InfoStatNear -Text $info -Label "Mean" -Expected 1.718467 -Tolerance 2e-3 -Message "terrain_tri mean mismatch"
         }
         # ---- D1-T2: curvature family / roughness raised from type-level to value level ----
-        # Same generated DEM as the six blocks above (gui_test_data_helper.cpp:595-624). These three
+        # Same generated DEM as the six blocks above -- cited by function name and by the literal
+        # text it writes, not by line number (R-D34; see the note above the D1-T1 block):
+        # makeTerrainRaster in tests/gui_test_data_helper.cpp, Create(path, 48, 48, 1, GDT_Float32),
+        # dem[y*48 + x] = x*1.5 + y*0.8 + ((x*y)%11)*0.2, geotransform
+        # {116.0, 0.0005, 0.0, 40.0, 0.0, -0.0005}, no SRS call and no band SetNoDataValue.
+        # These three
         # actions are this repo's own code, not GDAL: terrain_plugin.cpp:222-250 (profile/plan
         # curvature from five cv::Sobel derivatives) and :274-279 (roughness = dilate(3x3) - erode(3x3),
         # both BORDER_REPLICATE). Every expected number below comes from an independent

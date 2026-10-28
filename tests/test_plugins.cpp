@@ -14295,7 +14295,7 @@ TEST_F(PluginTest, TerrainSlopeAspectAndHillshadeExecution) {
 //   DEM-P（单位斜坡）= createMultiBandGradientRaster("...", 16, 16, {{0,1}}, 116.0, 40.0, /*pixelSize=*/1.0)
 //       z(x,y) = 0 + 1.0*x ⇒ 逐列 0,1,2,…,15，逐行不变；像元边长 1.0 ⇒ dz/dx = 1、dz/dy = 0。
 //   DEM-F（平地）    = createMultiBandConstantRaster("...", 16, 16, {5.0f}, 116.0, 40.0, 1.0) ⇒ dz/dx = dz/dy = 0。
-//   DEM-N（噪声斜坡）= createTerrainRaster("...")（:306，48x48、像元 0.001）
+//   DEM-N（噪声斜坡）= createTerrainRaster("...")（48x48、像元 0.001，出处只认函数名）
 //       z(x,y) = x*1.5 + y*0.8 + ((x*y)%11)*0.2 —— 每条算术都在下面逐点摊开。
 // slope/aspect/hillshade 走 GDALDEMProcessing（Horn 一阶差分 + ESRI 光照模型），
 // tpi/tri/curvature 走本仓 runLocalTerrainProcess（OpenCV 3x3，BORDER_REPLICATE）。
@@ -14390,7 +14390,7 @@ TEST_F(PluginTest, TerrainSlopeHandValueOnUnitPlane) {
     //   （或把 dx 用成 dy）一定挪动这个数"，复审席已证伪，我也独立复算确认）：
     //     ① atan(hypot(u,v)) 对两分量**对称**，hypot(1525.0001,924.9997)=hypot(924.9997,1525.0001)
     //        ⇒ 互换核之后这个数逐位不变；
-    //     ② 本夹具像元步长各向同性（createTerrainRaster :309 的 GT 用同一个标量 0.001 填 x/y）
+    //     ② 本夹具像元步长各向同性（createTerrainRaster 的 GT 用同一个标量 0.001 填 x/y）
     //        ⇒ "把 dx 用成 dy"是空操作。
     //   ⇒ 这两枚双分量钉子判的是"两个分量都非零、不是退化的一元斜面"（把 dzdy 写成常数面那种退化才红），
     //     判不到上面那一整类变异；那一类里判得到的是**方向角**（同一点 aspect 301.23921 在互换下变
@@ -14407,9 +14407,16 @@ TEST_F(PluginTest, TerrainSlopeHandValueOnUnitPlane) {
     // 为什么必须拆步长：slope = atan(z*√(dzdx²+dzdy²)) 只看模长、且各向同性时 8*dx 与 8*dy 是同一个数
     //   ⇒ "分母拿错"在旧夹具上是空操作（旧注释的错就错在这里）。拆开 x/y 步长后同一个错误会给出
     //   **另一个数**，钉子才判得到。
-    // 夹具没有新增生成器：仍用库里的 createMultiBandGradientRaster(:184)/createTerrainRaster(:306)，
-    //   生成后按本文件 :13351 的既有先例 openRaster(path, false) + SetGeoTransform 把 GT 的 x/y 步长拆成
+    // 夹具没有新增生成器：仍用库里的 createMultiBandGradientRaster / createTerrainRaster 两个夹具函数，
+    //   生成后按本文件里"openRaster(path, false) 拿更新句柄 + SetGeoTransform"这一既有先例，把 GT 的 x/y 步长拆成
     //   两个值（GDAL 的 Horn 核按 GT[1]=dx、GT[5]=-dy 分别进两个分母）。
+    //   ⚠ 上两行原来各自挂着一个裸行号锚点（旧号 184、306 与 309、以及指向本文件另一处的 13351，
+    //     这里故意不写成"文件名:号"的形状，免得下一个人拿 grep 捞锚点时把它们当成活锚）。
+    //     批次 D R2 那把在本文件头部插了 createStepLevelRaster ⇒ 两个夹具函数的定义行各往下推了
+    //     57 行，旧号 306/309 现在落在别的块上；而那个 13351 **在 R2 开工前就已经指错**（它当时落在
+    //     BandMathDivisionFailureInvalidatesWholePixel 里，与"拆 GT 步长"这个先例毫无关系）。
+    //     这就是 R-D34 只认"函数名 + 判据原文"的原因：锚漂了不会自己报警，漂到另一个看着也对的
+    //     位置上还会自我确认。下面不要再补新行号。
     // 产品侧可达性要如实说：Horn 核在 GDAL 内部（本仓只有 terrain_plugin.cpp:104-114 那 5 枚杠杆），
     //   产品码里**没有可改的 dx/dy 赋值点** ⇒ 这一类变异的红臂只能落在"喂给 GDAL 的 GeoTransform"上，
     //   即下面 A/B 两幅**同一份 z 数组、只把 GT 的 x/y 步长对调**的夹具（红臂读数见 D1-T1x 报告 §2）。
@@ -14884,7 +14891,7 @@ TEST_F(PluginTest, TerrainCurvatureHandValueOnUnitPlane) {
 // 独立参考实现 = build/tmp/batchD/d1t2/ref_model.py（只读源码公式、不读产物），
 // 对撞脚本同目录 probe3/probe6/probe7/probe8；实测最大互差 9.2e-5（Float32 累积口径差），
 // ⇒ 下面 1e-3 容差有 10 倍以上余量，任何算式级改动（换核、丢符号、丢分母）都会挪 ≥0.07。
-// 三幅 DEM 沿用前两把刀同一套：DEM-P（z=x、像元 1.0）、DEM-F（z=5）、DEM-N（:306，48×48、像元 0.001）。
+// 三幅 DEM 沿用前两把刀同一套：DEM-P（z=x、像元 1.0）、DEM-F（z=5）、DEM-N（createTerrainRaster，48×48、像元 0.001）。
 //
 // 判别变异（本刀实测三臂，全部还原后 git hash-object = 588a42504ee19bcb551f8214e5c1adb68cea20e9）：
 //   MUT-ARM-SWAP（:238 两支公式对调）⇒ profile 与 plan 两条用例同时红（左边缘 2.86↔0、噪声点挪
@@ -14896,8 +14903,15 @@ TEST_F(PluginTest, TerrainCurvatureHandValueOnUnitPlane) {
 //     解析面（DEM-P/DEM-F）一枚都不红（那里 zxy≡0）⇒ 只有 DEM-N 的四枚承重，这点如实记账。
 // 单位口径（写死在这里，免得下一个人当物理量读）：局部路经 gdalBandToMat 取像元阵后**完全不读
 // 地理参考**（profile_extract 是唯一例外，它必须用 GT 反算像元号），所以 dz/dx 的单位是
-// "每像元"而不是"每地面单位"；同一份像元阵配 0.001（夹具）与 0.0005（腿的 terrain_input.tif，
-// gui_test_data_helper.cpp:612）两种像元时，曲率族/roughness 产物逐像元相同（本刀探针实测互差 0）。
+// "每像元"而不是"每地面单位"；同一份像元阵配 0.001（单测侧 createTerrainRaster 写出的那张，它的
+// adfGT 用同一个标量 0.001 填 x/y）与 0.0005（腿的 terrain_input.tif = tests/gui_test_data_helper.cpp
+// 里 makeTerrainRaster 写出的那张，它的 geotransform = {116.0, 0.0005, 0.0, 40.0, 0.0, -0.0005}）
+// 两种像元时，曲率族/roughness 产物逐像元相同（本刀探针实测互差 0）。
+// ⚠ 上面这三行原来在括号里挂的是一个**裸行号锚点**（形如 "gui_test_data_helper.cpp 的第 6xx 行"）。
+//   R2 那把往同一个 helper 里插了 makeStepLevelRaster，把 makeTerrainRaster 整段往下推 ⇒
+//   那个号已经指不到它；更糟的是锚漂完落到的位置恰好还是另一张用 0.0005 的夹具，所以它**漂了还会
+//   自我确认**（R-D34 记的就是这一型）。一律改成"函数名 + 写出的字面量"，不要再写新行号，
+//   也不在这里抄旧号——抄下来它就又变成一个会被 grep 当成活锚的字符串。
 // ⇒ 本批 GOLD 只声称"算式与产物一致"，不声称结果是地面单位下的物理曲率。
 //
 // 偏导核口径（:67-73 五枚 cv::Sobel，全部 BORDER_REPLICATE；核形状由解析面实测反定）：
