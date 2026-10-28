@@ -13318,6 +13318,92 @@ TEST_F(PluginTest, TerrainSlopeHandValueOnUnitPlane) {
     ASSERT_TRUE(noiseResult.success) << noiseResult.message;
     EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), 89.96788f, 1e-3f);
     EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 89.97145f, 1e-3f);
+
+    // ── D1-T1x 加固：各向异性像元步长对（把上面"判不到"的那一整类变异变成判得到）─────────────
+    // 为什么必须拆步长：slope = atan(z*√(dzdx²+dzdy²)) 只看模长、且各向同性时 8*dx 与 8*dy 是同一个数
+    //   ⇒ "分母拿错"在旧夹具上是空操作（旧注释的错就错在这里）。拆开 x/y 步长后同一个错误会给出
+    //   **另一个数**，钉子才判得到。
+    // 夹具没有新增生成器：仍用库里的 createMultiBandGradientRaster(:184)/createTerrainRaster(:306)，
+    //   生成后按本文件 :13351 的既有先例 openRaster(path, false) + SetGeoTransform 把 GT 的 x/y 步长拆成
+    //   两个值（GDAL 的 Horn 核按 GT[1]=dx、GT[5]=-dy 分别进两个分母）。
+    // 产品侧可达性要如实说：Horn 核在 GDAL 内部（本仓只有 terrain_plugin.cpp:104-114 那 5 枚杠杆），
+    //   产品码里**没有可改的 dx/dy 赋值点** ⇒ 这一类变异的红臂只能落在"喂给 GDAL 的 GeoTransform"上，
+    //   即下面 A/B 两幅**同一份 z 数组、只把 GT 的 x/y 步长对调**的夹具（红臂读数见 D1-T1x 报告 §2）。
+    // 算式（A/B 与 C/D 各是同一份 z 数组、GT 步长对调）：
+    //   A：z=2.0*x，dx=1.0、dy=2.0 ⇒ dzdx=((c+2f+i)-(a+2d+g))/(8*1.0)=16/8=2.0、dzdy=0
+    //      ⇒ slope = atan(2.0)*180/π = 63.4349488
+    //   B：z=2.0*x，dx=2.0、dy=1.0 ⇒ dzdx = 16/(8*2.0) = 1.0 ⇒ slope = atan(1.0) = 45.0000000
+    //      ⇒ 同一份数据、只有步长口径换了，产物从 63.4349488 变 45.0000000（Δ=18.4349°=18434×容差）；
+    //        各向同性时这两幅会给出同一个数（我实测 dx=dy=1.0 时产物 = 63.434948，与 A 同值）⇒ 判不到。
+    //   C：DEM-N（z=1.5x+0.8y+((xy)%11)*0.2，两个分量都非零），dx=0.1、dy=0.2
+    //      ⇒ (13,7)：dzdx=12.2/(8*0.1)=15.25、dzdy=7.4/(8*0.2)=4.625 ⇒ slope=atan(√(15.25²+4.625²))=86.4093194
+    //      ⇒ (41,41)：dzdx=13.8/0.8=17.25、dzdy=8.2/1.6=5.125 ⇒ slope=86.8193279
+    //   D：同一份 DEM-N，dx=0.2、dy=0.1 ⇒ (13,7)：dzdx=7.625、dzdy=9.25 ⇒ 85.2314629；(41,41) ⇒ 85.7308407
+    //      ⇒ C/D 这一对是**双分量**版：它同时把两个方向的拿错都变成可判——
+    //        "dzdx 的分母拿 dy" ⇒ C 变 atan(√(7.625²+4.625²))=83.6020131（Δ2.8073°）；
+    //        "dzdy 的分母拿 dx" ⇒ C 变 atan(√(15.25²+9.25²))=86.7910031（Δ0.3817°），
+    //        两者分别是 1e-3 容差的 2807 倍与 382 倍。纯 x 斜坡那一版（A/B）判不到后一个方向，因为 dzdy 恒为 0。
+    const std::string anisoPlaneA = createMultiBandGradientRaster("d1x_slope_aniso_plane_a.tif", 16, 16, {{0.0f, 2.0f}}, 116.0, 40.0, 1.0);
+    const std::string anisoPlaneB = createMultiBandGradientRaster("d1x_slope_aniso_plane_b.tif", 16, 16, {{0.0f, 2.0f}}, 116.0, 40.0, 1.0);
+    const std::string anisoNoiseC = createTerrainRaster("d1x_slope_aniso_noise_c.tif");
+    const std::string anisoNoiseD = createTerrainRaster("d1x_slope_aniso_noise_d.tif");
+    {
+        auto ds = gis::core::openRaster(anisoPlaneA, false);
+        ASSERT_NE(ds, nullptr);
+        double gt[6] = {116.0, 1.0, 0.0, 40.0, 0.0, -2.0};      // dx=1.0, dy=2.0
+        EXPECT_EQ(ds->SetGeoTransform(gt), CE_None);
+        ds->FlushCache();
+    }
+    {
+        auto ds = gis::core::openRaster(anisoPlaneB, false);
+        ASSERT_NE(ds, nullptr);
+        double gt[6] = {116.0, 2.0, 0.0, 40.0, 0.0, -1.0};      // dx=2.0, dy=1.0（与 A 对调）
+        EXPECT_EQ(ds->SetGeoTransform(gt), CE_None);
+        ds->FlushCache();
+    }
+    {
+        auto ds = gis::core::openRaster(anisoNoiseC, false);
+        ASSERT_NE(ds, nullptr);
+        double gt[6] = {116.0, 0.1, 0.0, 40.0, 0.0, -0.2};      // dx=0.1, dy=0.2
+        EXPECT_EQ(ds->SetGeoTransform(gt), CE_None);
+        ds->FlushCache();
+    }
+    {
+        auto ds = gis::core::openRaster(anisoNoiseD, false);
+        ASSERT_NE(ds, nullptr);
+        double gt[6] = {116.0, 0.2, 0.0, 40.0, 0.0, -0.1};      // dx=0.2, dy=0.1（与 C 对调）
+        EXPECT_EQ(ds->SetGeoTransform(gt), CE_None);
+        ds->FlushCache();
+    }
+
+    std::map<std::string, gis::framework::ParamValue> anisoParams = params;
+    anisoParams["z_factor"] = 1.0;
+    const std::string outAnisoPlaneA = utf8PathString(getTestDir() / "d1x_slope_aniso_plane_a_out.tif");
+    const std::string outAnisoPlaneB = utf8PathString(getTestDir() / "d1x_slope_aniso_plane_b_out.tif");
+    const std::string outAnisoNoiseC = utf8PathString(getTestDir() / "d1x_slope_aniso_noise_c_out.tif");
+    const std::string outAnisoNoiseD = utf8PathString(getTestDir() / "d1x_slope_aniso_noise_d_out.tif");
+    anisoParams["input"] = anisoPlaneA;
+    anisoParams["output"] = outAnisoPlaneA;
+    ASSERT_TRUE(p->execute(anisoParams, progress_).success);
+    anisoParams["input"] = anisoPlaneB;
+    anisoParams["output"] = outAnisoPlaneB;
+    ASSERT_TRUE(p->execute(anisoParams, progress_).success);
+    anisoParams["input"] = anisoNoiseC;
+    anisoParams["output"] = outAnisoNoiseC;
+    ASSERT_TRUE(p->execute(anisoParams, progress_).success);
+    anisoParams["input"] = anisoNoiseD;
+    anisoParams["output"] = outAnisoNoiseD;
+    ASSERT_TRUE(p->execute(anisoParams, progress_).success);
+
+    EXPECT_NEAR(readRasterPixel(outAnisoPlaneA, 7, 7), 63.4349488f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outAnisoPlaneA, 1, 1), 63.4349488f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outAnisoPlaneA, 0, 0), -9999.0f, 1e-3f);   // 边框 NODATA 与步长无关
+    EXPECT_NEAR(readRasterPixel(outAnisoPlaneB, 7, 7), 45.0000000f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outAnisoPlaneB, 14, 14), 45.0000000f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outAnisoNoiseC, 13, 7), 86.4093194f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outAnisoNoiseC, 41, 41), 86.8193279f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outAnisoNoiseD, 13, 7), 85.2314629f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outAnisoNoiseD, 41, 41), 85.7308407f, 1e-3f);
 }
 
 TEST_F(PluginTest, TerrainAspectHandValueOnUnitPlane) {
