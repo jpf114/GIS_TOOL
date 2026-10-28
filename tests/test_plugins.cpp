@@ -9,6 +9,7 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_error.h>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <opencv2/core.hpp>
@@ -17,6 +18,7 @@
 #include <cctype>
 #include <charconv>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -2534,20 +2536,145 @@ TEST_F(PluginTest, ProcessingUnknownAction) {
     EXPECT_FALSE(result.success);
 }
 
+// ── R1（批次 D）：raster_inspect 的 info / histogram 两条晋升共用的读数器 ──────────
+// WHY 解析成数、不写 message.find("Min:    1") 这类子串判据：子串会被**长数字前缀吃**
+//（真实值 116.032 那行同样含 "1"，"Min:    1" 于是为真），这条形状在本仓"假绿发生器"
+// 清单里点过名。下面两个读点都要求 token 被**完整**消费：行缺失、token 带字母尾巴
+//（"12x"）、个数不对，一律回 nullopt 由调用方 ASSERT 掉 ⇒ "读不到"不许当成 0。
+// 口径与腿侧 tests/run_real_raster_regression.ps1 的 Get-InfoBandStatValue 同一形状
+//（标签锚到行首、数值锚到行尾），两边各自独立实现，一边写歪不会把另一边一起洗白。
+// SCOPE：返回**第一条**匹配行的所有数，多波段产物要靠 "Band N:" 块头再切一层
+//（本文件的 info 用例判的是单波段夹具，多波段的块归属判据在腿侧）。
+static std::optional<std::vector<double>> infoLineNumbers(const std::string& text,
+                                                           const std::string& label) {
+    const std::string needle = label + ":";
+    std::vector<double> numbers;
+    size_t lineStart = 0;
+    while (lineStart <= text.size()) {
+        size_t lineEnd = text.find('\n', lineStart);
+        const bool lastLine = (lineEnd == std::string::npos);
+        if (lastLine) {
+            lineEnd = text.size();
+        }
+        const size_t body = text.find_first_not_of(" \t\r", lineStart);
+        if (body != std::string::npos && body < lineEnd &&
+            text.compare(body, needle.size(), needle) == 0) {
+            size_t pos = body + needle.size();
+            while (pos < lineEnd) {
+                const unsigned char ch = static_cast<unsigned char>(text[pos]);
+                const bool startsNumber = std::isdigit(ch) != 0 ||
+                    (text[pos] == '-' && pos + 1 < lineEnd &&
+                     std::isdigit(static_cast<unsigned char>(text[pos + 1])) != 0);
+                if (!startsNumber) {
+                    ++pos;
+                    continue;
+                }
+                char* tail = nullptr;
+                const double value = std::strtod(text.c_str() + pos, &tail);
+                const size_t consumed = static_cast<size_t>(tail - text.c_str()) - pos;
+                if (consumed == 0) {
+                    return std::nullopt;
+                }
+                // 拒绝 "12x" 这种半个 token；") , 空格 行尾"都是合法边界。
+                if (tail < text.c_str() + lineEnd &&
+                    std::isalpha(static_cast<unsigned char>(*tail)) != 0) {
+                    return std::nullopt;
+                }
+                numbers.push_back(value);
+                pos += consumed;
+            }
+            return numbers;
+        }
+        if (lastLine) {
+            break;
+        }
+        lineStart = lineEnd + 1;
+    }
+    return std::nullopt;
+}
+
+static std::optional<double> infoSingleNumber(const std::string& text, const std::string& label) {
+    const auto numbers = infoLineNumbers(text, label);
+    if (!numbers.has_value() || numbers->size() != 1) {
+        return std::nullopt;
+    }
+    return numbers->front();
+}
+
 TEST_F(PluginTest, RasterInspectInfoExecution) {
     auto* p = mgr_.find("raster_inspect");
     if (!p) {
         FAIL() << "plugin not loaded: raster_inspect";
     }
 
-    std::string input = createTestRaster("e2e_util_info_input.tif", 30, 30);
+    std::string input = createTestRaster("e2e_util_info_input.tif", 32, 32);
+    // PAM 边车按文件名匹配：上一跑留下的 .aux.xml 里缓存的统计会让 ComputeStatistics
+    // **不重读像元**直接回缓存（与 N133 夹具里同一口径的防御），于是"改了像素读路径"
+    // 这一类产物动改动在本用例里读不出差别 ⇒ 先删边车，判的是现算。
+    std::error_code infoPamEc;
+    fs::remove(input + ".aux.xml", infoPamEc);
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("info");
     params["input"] = input;
 
     auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "Raster inspect info failed: " << result.message;
+    ASSERT_TRUE(result.success) << "Raster inspect info failed: " << result.message;
+
+    // ── R1（批次 D）：把"只判成功"升级成解析成数再比 ──────────────────────────
+    // 夹具字面量（createTestRaster 的函数体，行主序 data[i] = float(i % 256)、
+    // adfGT = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001}、单波段 Float32、不写 NoData）：
+    //   32*32 = 1024 个像元 = 4 轮完整的 0..255 ⇒ Min = 0、Max = 255，每个值恰好出现 4 次。
+    //   Mean  = (4 * Σ_{0..255} k)/1024 = (4 * 32640)/1024 = 130560/1024 = 127.5
+    //   E[x²] = (4 * Σ_{0..255} k²)/1024 = (4 * 255*256*511/6)/1024 = 22238720/1024 = 21717.5
+    //   Var（GDAL 的 StdDev 是**总体**标准差 = sqrt(E[x²] - Mean²)，同一公式已在
+    //        analysis_input.tif 的 PAM 边车上独立对撞：sqrt(170.5) = 13.057564857201 逐位相同）
+    //       = 21717.5 - 127.5² = 21717.5 - 16256.25 = 5461.25
+    //   StdDev = sqrt(5461.25) = 73.9002706…（产品走默认 6 位有效印法 ⇒ 印 "73.9003"）
+    // Extent 手推：minX = 116、maxX = 116 + 32*0.001 = 116.032、
+    //             minY = 40 + 32*(-0.001) = 39.968、maxY = 40。
+    // 尺寸这行的宽与高在本夹具下相等（32 x 32 是方的）⇒ 它单独判不出"轴写反"，
+    // 只能判出"维度读错/波段数读错"；轴写反由下面 Origin(116 vs 40) 与
+    // PixelSize(+0.001 vs -0.001) 两支的**不对称值**判出（四支合起来才盖住这一类）。
+    const auto sizeFields = infoLineNumbers(result.message, "Size");
+    ASSERT_TRUE(sizeFields.has_value()) << result.message;
+    ASSERT_EQ(sizeFields->size(), 3u) << "Size 行要三个数，实际文本: " << result.message;
+    EXPECT_NEAR((*sizeFields)[0], 32.0, 1e-9) << "info 报出的宽不等于夹具字面量 32";
+    EXPECT_NEAR((*sizeFields)[1], 32.0, 1e-9) << "info 报出的高不等于夹具字面量 32";
+    EXPECT_NEAR((*sizeFields)[2], 1.0, 1e-9) << "info 报出的波段数不等于夹具字面量 1";
+
+    const auto originFields = infoLineNumbers(result.message, "Origin");
+    ASSERT_TRUE(originFields.has_value()) << result.message;
+    ASSERT_EQ(originFields->size(), 2u) << result.message;
+    EXPECT_NEAR((*originFields)[0], 116.0, 1e-9) << "Origin 的第一个数不是 adfGT[0] = 116";
+    EXPECT_NEAR((*originFields)[1], 40.0, 1e-9) << "Origin 的第二个数不是 adfGT[3] = 40";
+
+    const auto pixelSizeFields = infoLineNumbers(result.message, "Pixel Size");
+    ASSERT_TRUE(pixelSizeFields.has_value()) << result.message;
+    ASSERT_EQ(pixelSizeFields->size(), 2u) << result.message;
+    EXPECT_NEAR((*pixelSizeFields)[0], 0.001, 1e-12) << "Pixel Size 的第一个数不是 adfGT[1]";
+    EXPECT_NEAR((*pixelSizeFields)[1], -0.001, 1e-12) << "Pixel Size 的第二个数不是 adfGT[5]";
+
+    const auto extentFields = infoLineNumbers(result.message, "Extent");
+    ASSERT_TRUE(extentFields.has_value()) << result.message;
+    ASSERT_EQ(extentFields->size(), 4u) << "Extent 行要四个数，实际文本: " << result.message;
+    EXPECT_NEAR((*extentFields)[0], 116.0, 1e-9) << result.message;
+    EXPECT_NEAR((*extentFields)[1], 39.968, 1e-9) << "minY 不等于 40 + 32*(-0.001)" << result.message;
+    EXPECT_NEAR((*extentFields)[2], 116.032, 1e-9) << "maxX 不等于 116 + 32*0.001" << result.message;
+    EXPECT_NEAR((*extentFields)[3], 40.0, 1e-9) << result.message;
+
+    const auto bandMin = infoSingleNumber(result.message, "Min");
+    ASSERT_TRUE(bandMin.has_value()) << "info 的 Min 行没读到一个完整数值: " << result.message;
+    const auto bandMax = infoSingleNumber(result.message, "Max");
+    ASSERT_TRUE(bandMax.has_value()) << "info 的 Max 行没读到一个完整数值: " << result.message;
+    const auto bandMean = infoSingleNumber(result.message, "Mean");
+    ASSERT_TRUE(bandMean.has_value()) << "info 的 Mean 行没读到一个完整数值: " << result.message;
+    const auto bandStdDev = infoSingleNumber(result.message, "StdDev");
+    ASSERT_TRUE(bandStdDev.has_value()) << "info 的 StdDev 行没读到一个完整数值: " << result.message;
+    EXPECT_NEAR(*bandMin, 0.0, 1e-9) << result.message;
+    EXPECT_NEAR(*bandMax, 255.0, 1e-9) << result.message;
+    EXPECT_NEAR(*bandMean, 127.5, 1e-9) << result.message;
+    EXPECT_NEAR(*bandStdDev, std::sqrt(5461.25), 2e-4) << result.message;
 }
 
 TEST_F(PluginTest, RasterManageOverviewsExecution) {
@@ -2713,6 +2840,10 @@ TEST_F(PluginTest, RasterInspectHistogramExecution) {
 
     const std::string input = createTestRaster("e2e_util_hist_input.tif", 32, 32);
     const std::string output = utf8PathString(getTestDir() / "e2e_util_hist_output.json");
+    // 同 info 那条：PAM 边车命中时 min/max 不重读像元（直方图缓存只被带 bForce 的重载复用，
+    // 插件走的是总是重算的八参 GetHistogram，但 min/max 是统计调用，仍要先清边车）。
+    std::error_code histPamEc;
+    fs::remove(input + ".aux.xml", histPamEc);
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("histogram");
@@ -2724,6 +2855,46 @@ TEST_F(PluginTest, RasterInspectHistogramExecution) {
     EXPECT_TRUE(result.success) << result.message;
     EXPECT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("bins"), "16");
+
+    // ── R1（批次 D）：从"metadata 字符串相等"升级成逐桶数值判据 ─────────────────
+    // 夹具字面量手推（createTestRaster 行主序 data[i] = float(i % 256)，32*32 = 1024 个像元
+    // = **4 轮完整的 0..255** ⇒ 每个值恰好出现 4 次）：
+    //   min = 0、max = 255；min != max ⇒ effectiveBins = bins = 16、
+    //   桶宽 = (255 - 0)/16 = 15.9375（= 255/16，是 k/16 型 dyadic，边界在 double 里精确）。
+    //   第 i 桶覆盖 [15.9375i, 15.9375(i+1))：i=0 → 整数 0..15、i=1 → 16..31 … i=14 → 224..239、
+    //   i=15 → 240..255（255 恰等于桶上界，GDAL 把算出的 iBucket = 16 夹回最后一桶）⇒
+    //   **每桶恰好 16 个不同值 × 4 次 = 64**。
+    //   "夹回"这一步是本判据唯一的承重来源：一旦 IncludeOutOfRange 那枚实参从 TRUE 改成 FALSE，
+    //   末桶会丢掉值 255 ⇒ 64 变 60，其余 15 桶不动 —— 这就是能红它的产物改动。
+    EXPECT_NEAR(std::stod(result.metadata.at("min")), 0.0, 1e-9) << result.message;
+    EXPECT_NEAR(std::stod(result.metadata.at("max")), 255.0, 1e-9) << result.message;
+
+    std::ifstream jsonIfs(output, std::ios::binary);
+    ASSERT_TRUE(jsonIfs.is_open()) << output;
+    const std::string fileContent((std::istreambuf_iterator<char>(jsonIfs)),
+                                  std::istreambuf_iterator<char>());
+    // 产物是"三行文本头 + JSON 体"，JSON 从第一个 '{' 起（头三行不含花括号）；
+    // 取不到花括号就红，不许把"整个没写出来"读成空数组（与腿侧 Read-JsonPayload 同一口径）。
+    const size_t jsonStart = fileContent.find('{');
+    ASSERT_NE(jsonStart, std::string::npos) << fileContent;
+    const std::string jsonBody = fileContent.substr(jsonStart);
+    const QByteArray jsonBytes(jsonBody.data(), static_cast<qsizetype>(jsonBody.size()));
+    const QJsonDocument document = QJsonDocument::fromJson(jsonBytes);
+    ASSERT_TRUE(document.isObject()) << jsonBody;
+    const QJsonArray buckets = document.object().value("histogram").toArray();
+    // 数组长度这一行判的是"分箱数被凭空放大/缩小"：逐桶对撞只看前 16 个位置，
+    // 第 17 个桶整个多出来时那 16 行仍会绿 ⇒ 这一行不被它们蕴含，是独立的一格。
+    ASSERT_EQ(buckets.size(), 16) << jsonBody;
+    for (int i = 0; i < 16; ++i) {
+        const QJsonObject bucket = buckets[i].toObject();
+        EXPECT_NEAR(bucket.value("count").toDouble(), 64.0, 1e-9)
+            << "bin " << i << " 的像元数不是手推的 64；产物 JSON: " << jsonBody;
+    }
+    // 不写 total 的对撞：产品码里 total 就是这 16 个桶的求和 ⇒ 本把的 16 行已经把它钉死，
+    // 再写一行等于逐字重复同一件事（登记表头禁的"被其他支算术蕴含的推论行"）。
+    // 同理不写 bins[i]["bin"] == i：那个字段就是循环变量本身，恒真。
+    // "NoData 不参与计数"（12 与 16 之分）这一类缺陷本夹具判不出（夹具没有 NoData），
+    // 由 RasterInspectHistogramAcceptsConstantRaster 的臂 2 承担，见报告。
 }
 
 // ── N133：raster_inspect 把常数栅格判成"没有值域" ────────────────────────────────
