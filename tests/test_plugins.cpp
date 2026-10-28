@@ -13790,6 +13790,11 @@ TEST_F(PluginTest, TerrainCurvatureHandValueOnUnitPlane) {
     EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), -4.4f, 1e-3f);
 
     // ── D1-T2 补两件事：z_factor 在局部路上真生效（与 N163 的 slope 路相反）、产物是 Float32 ──
+    // 取证（本刀实测，台账见 task-13b-report.md §6）：
+    //   MUT-ARM-CURVBORDER（:221 BORDER_REPLICATE→BORDER_DEFAULT）⇒ 只本条红（边缘 ±4/±8 五枚挪 2 倍），
+    //     且真实腿红在 terrain_curvature min mismatch (actual=-26.4 expected=-16.000015) ⇒ 腿的值级判据承重。
+    //   MUT-ARM-LOCALZ（:202-204 整段去掉 elevation *= zFactor）⇒ 本条与 roughness 两条红（z=2 的 ±8→±4、
+    //     4.0→2.0），腿**保持绿**——腿的每条 terrain case 都传 --z_factor=1 ⇒ z 这枚只有显式 z=2 的块判得出。
     // Laplacian 是线性算子 ⇒ 高程整体 ×2 让每个像元 ×2：DEM-P 左列 +4→+8、右列 -4→-8、内部仍 0。
     // 这一枚同时是"局部路吃 -z/吃 z_factor"的正证：slope 那条 z_factor 空参（#163）在这条路上不存在。
     const std::string outPlaneZ2 = utf8PathString(getTestDir() / "d1_curv_plane_out_z2.tif");
@@ -13822,7 +13827,15 @@ TEST_F(PluginTest, TerrainCurvatureHandValueOnUnitPlane) {
 // ⇒ 下面 1e-3 容差有 10 倍以上余量，任何算式级改动（换核、丢符号、丢分母）都会挪 ≥0.07。
 // 三幅 DEM 沿用前两把刀同一套：DEM-P（z=x、像元 1.0）、DEM-F（z=5）、DEM-N（:306，48×48、像元 0.001）。
 //
-// 单位口径（先写死，免得下一个人当物理量读）：局部路经 gdalBandToMat 取像元阵后**完全不读
+// 判别变异（本刀实测三臂，全部还原后 git hash-object = 588a42504ee19bcb551f8214e5c1adb68cea20e9）：
+//   MUT-ARM-SWAP（:238 两支公式对调）⇒ profile 与 plan 两条用例同时红（左边缘 2.86↔0、噪声点挪
+//     0.19~2.80），tpi/tri/curvature/roughness 绿；腿红在 terrain_profile_curvature min
+//     (actual=-9.18331 expected=-2.385005) ⇒ -9.18331 正是 plan 的 Min ⇒ 对调在腿上也看得见。
+//   MUT-ARM-PLANSIGN（:247 丢掉负号）⇒ **只** plan 红（profile 绿，归属唯一）；腿红在
+//     terrain_plan_curvature min (actual=-12.0662 = 符号翻转后的 -Max)。
+//   MUT-ARM-ZXY（:73 混导尺度 1/4→-1/4）⇒ profile 与 plan 同时红、curvature/tpi/tri/roughness 绿；
+//     解析面（DEM-P/DEM-F）一枚都不红（那里 zxy≡0）⇒ 只有 DEM-N 的四枚承重，这点如实记账。
+// 单位口径（写死在这里，免得下一个人当物理量读）：局部路经 gdalBandToMat 取像元阵后**完全不读
 // 地理参考**（profile_extract 是唯一例外，它必须用 GT 反算像元号），所以 dz/dx 的单位是
 // "每像元"而不是"每地面单位"；同一份像元阵配 0.001（夹具）与 0.0005（腿的 terrain_input.tif，
 // gui_test_data_helper.cpp:612）两种像元时，曲率族/roughness 产物逐像元相同（本刀探针实测互差 0）。
@@ -14011,7 +14024,14 @@ TEST_F(PluginTest, TerrainRoughnessHandValueOnUnitPlane) {
     EXPECT_NEAR(readRasterPixel(outFlat, 0, 0), 0.0f, 1e-4f);
 
     // DEM-N：(13,7) 窗口 24.0…28.6 ⇒ 28.6-24.0=4.6；(41,41) 93.0…97.4 ⇒ 4.4；
-    // 左边缘 (0,0) 复制列 ⇒ 窗口只剩 {0·?…} ⇒ 2.5；右下角 (24,47) ⇒ 5.2。
+    // 左边缘 (0,0) 复制列 ⇒ 2.5；右下角 (24,47) ⇒ 5.2。
+    //
+    // 补边模式**在这组钉子上判不到**（MUT-ARM-ROUGHBORDER 实测，不是推导）：把 :277/:278 两处
+    // cv::BORDER_REPLICATE 一起换成 cv::BORDER_CONSTANT 后，TerrainTpi/TerrainTri/TerrainCurvature/
+    // TerrainRoughness 四条夹具用例与 real_data_raster **全部保持绿**。机制：OpenCV 形态学的默认
+    // borderValue 让越界邻居"不参与 max/min"，而复制进来的恰是与边缘同值的那一列 ⇒ 两者在这三幅
+    // DEM 上逐像元相同。⇒ 上面那些"边缘钉子"判的是极差的**数值**（改算式必红，见 §6 的 ROUGHSUB 臂），
+    // 不判补边模式；要判它需要一幅边缘值就是窗口极值的 DEM（各向异性/单调到边界的面都判不出）。
     // 与 tri 的分工：tri 是 √(Σ(邻-心)²/8)（:251-273，另一条 else if 支），本条是极差，
     // 同一点上 4.6 vs 1.63631 ⇒ 两支各自承重，一把"√→²"的变异只会打红 tri、不会打红本条。
     std::map<std::string, gis::framework::ParamValue> noiseParams = params;
@@ -14034,6 +14054,14 @@ TEST_F(PluginTest, TerrainRoughnessHandValueOnUnitPlane) {
 // 采样算式（:835-890）：pixelStep = max(1e-9, min(hypot(gt1,gt2), hypot(gt4,gt5)))；
 //   每段 steps = max(1, ceil(len/pixelStep))，t = k/steps（第一段 k=0..steps，后续段 k=1..steps）；
 //   x = x0+(x1-x0)t、distance = 已累计长度 + len·t；像元号 = lround(仿射逆坐标)，越界即 continue（不写行）。
+// 判别变异（本刀实测三臂）：
+//   MUT-ARM-PESTEPS（:857 ceil→floor）⇒ 本用例红（sample_count 14→13、rows1.size() 14→13），
+//     腿红在 terrain_profile_extract row count should be 49 (actual=47)。
+//   MUT-ARM-PEDIST（:867 丢掉 cumulativeDistance）⇒ 本用例红（行 14/22 的 distance 各少一个累计量），
+//     腿红在 terrain_profile_extract segment-2 first distance should be len1+len2/25=0.01189（行 24 那枚；
+//     行 48 的断言排在它后面，腿按首条 FATAL 报出）。
+//   MUT-ARM-PEMAX（:837 std::min→把两轴取 max）⇒ 只有本用例的第 (4) 块红（各向异性那幅 12 行→7 行），
+//     腿**保持绿**：腿的 DEM 两轴同长 ⇒ min==max ⇒ 这枚在真实腿上是结构性判不到，只有各向异性夹具能判。
 // CSV 由 ostream 缺省精度写出 ⇒ **6 位有效数字**：距离 ~1.3e-2 时末位是 1e-7、舍入误差 ≤5e-8
 // ⇒ 距离钉子一律用 1e-6：是打印分辨率的 20 倍，却比任何算式级改动小 4 个数量级
 // （漏加累计长度挪 1.3e-2；取整方向一变，整个行序列都换）。x/y 在 116.x 上只剩 1e-3 分辨率
