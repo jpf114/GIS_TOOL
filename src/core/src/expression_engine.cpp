@@ -41,7 +41,14 @@ constexpr size_t kMaxCompiledProgramSize = 512;
 // 前提假定波段量级 ≳1e-14（DN / 反射率口径）——在此量级下，分母比操作数低两三个数量级时
 // 该指数已是噪声，判 NoData 比放行 1e15 级离群值更科学（后者会污染 min/max、拉伸范围与下游分类）。
 // 量级更小的数据（如某些物理量纲的浮点波段）在这个阈值下会把条件良好的 NDVI 0.5 误判为 NoData，
-// 需要改走相对判据另行处理，本轮不动判据形态。实测边界：除数 1e-15 接受、0.99999e-15 拒绝。
+// 需要改走相对判据另行处理，本轮不动判据形态。"实测边界"要按除数的来源分两层口径（批次 D D1-T3 项 7 复算）：
+// 波段除数在 raster_math_plugin.cpp 里取的是 bandMats[b].at<float>(y, x) 升上来的 double，而 1e-15 本身不落在
+// float32 网格上（离它最近的那个 float32 升上来是 1.0000000036274937e-15）⇒ |除数| 恰等 1e-15 这个等号对任何
+// 波段数据按构造取不到，`<` 与 `<=` 在波段除数上恒同解（这正是把判据从 `<` 改成 `<=` 的等价变异实测全绿的根因）。
+// 能取到等号的只有表达式字面量除数（Number 节点经 std::strtod 保持 double，例如 "B1/1e-15"），那不属于波段
+// 口径，且今天没有夹具钉它。今天真有夹具的是两侧而非等号点：
+// PluginTest.BandMathDivisorThresholdBoundaryIsPinned 用两个波段值各钉一头——1.000001e-15 升 double 后仍高于
+// 本阈值（正常求值得 ~1e15），0.999999e-15 低于本阈值（判 evaluationFailed）。
 constexpr double kNearZeroDivisorEpsilon = 1e-15;
 
 } // namespace
