@@ -16840,6 +16840,313 @@ TEST_F(PluginTest, MatchingRegisterExecutionProducesAlignedOutput) {
     EXPECT_EQ(outDs->GetRasterYSize(), 96);
 }
 
+// ============================================================================
+// 批次 D / D1-M（task-14）：matching 四条晋升的值级判据。
+// 判据形状全部按任务书 §2 —— 只钉"能由参数/判据文本/库契约手算推出"的关系：
+//   §2.1 上限阶梯（corner：两支都在够候选时截到 maxCorners，与影像内容无关）；
+//   §2.2 空输入零点（平坦图经 toUint8 后恒为全 0，ORB/SIFT 按定义无极值可报）；
+//   §2.3 比值闸零点（判据原文 m[0].distance < ratioTest * m[1].distance，距离非负
+//        ⇒ ratio=0 恒假 ⇒ 恰好 0；0<=t 的接受集单调 ⇒ 阶梯不增反向=不减）；
+//   §2.4 恒等变换（reference==input ⇒ 对应点自洽 ⇒ 变换=恒等 ⇒ 产物与输入逐像元相等）。
+// ⚠ 检测器内部计数（10/22/48/29/47/114 那族实测值）一律**不钉常量**——那是批次 C N108 自指期望同族。
+// ============================================================================
+
+namespace {
+
+// 统计 haystack 中 needle 的出现次数（JSON 自洽判据用，不引第三方解析器）。
+size_t countSubstringOccurrences(const std::string& haystack, const std::string& needle) {
+    size_t n = 0;
+    size_t pos = 0;
+    while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+        ++n;
+        pos += needle.size();
+    }
+    return n;
+}
+
+} // namespace
+
+TEST_F(PluginTest, MatchingDetectCapLadderAndFlatZeroPoint) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    // —— §2.1 上限关系（库契约）：cv::ORB::create(nTopFeatures) 的返回数**至多** nTopFeatures。
+    //    注意这是"不超上限"而不是"恰好等于"：夹具候选不足/近边界丢弃时实读 10/22/48 都低于档（§1 现读），
+    //    所以钉不得"等于"。变异臂 ORB::create(maxPoints)→ORB::create() 时 max_points=20 档会吐 48 ⇒ 本判据红。
+    const std::string input = createPatternRaster("matching_detect_cap_input.tif");
+    auto runDetect = [&](const std::string& method, int maxPoints, const std::string& tag) {
+        const std::string output = utf8PathString(getTestDir() / ("matching_detect_cap_" + tag + ".json"));
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("detect");
+        params["input"] = input;
+        params["output"] = output;
+        params["method"] = std::string(method);
+        params["max_points"] = maxPoints;
+        const auto result = p->execute(params, progress_);
+        EXPECT_TRUE(result.success) << tag << ": " << result.message;
+        return std::stoi(result.metadata.at("keypoint_count"));
+    };
+    const int capped20 = runDetect("orb", 20, "orb20");
+    const int capped1000 = runDetect("orb", 1000, "orb1000");
+    EXPECT_LE(capped20, 20) << "ORB 上限契约被破坏：max_points=20 却出 " << capped20;
+    EXPECT_LE(capped1000, 1000) << "ORB 上限契约被破坏：max_points=1000 却出 " << capped1000;
+
+    // —— §2.2 空输入零点：恒定值(无纹理)夹具。产品链路 readBandAsMat→CV_32F，
+    //    toUint8 对 max-min<1e-10 的图像**恒置全 0**（opencv_wrapper.cpp:162），
+    //    平坦图上 ORB/SIFT 按定义没有梯度与尺度极值 ⇒ 计数恰好 0（不是"很少"）。
+    const std::string flat = createConstantRaster("matching_detect_flat_input.tif", 96, 96, 7.0f);
+
+    {
+        const std::string output = utf8PathString(getTestDir() / "matching_detect_flat_orb.json");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("detect");
+        params["input"] = flat;
+        params["output"] = output;
+        params["method"] = std::string("orb");
+        params["max_points"] = 200;
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        const int flatOrb = std::stoi(result.metadata.at("keypoint_count"));
+        EXPECT_NEAR(static_cast<double>(flatOrb), 0.0, 0.0)
+            << "平坦图 ORB 必须恰好 0 个特征点（§2.2 空输入零点）";
+        std::ifstream ifs(output);
+        ASSERT_TRUE(ifs.is_open());
+        const std::string content((std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        EXPECT_NE(content.find("\"count\":0"), std::string::npos) << content;
+        EXPECT_EQ(countSubstringOccurrences(content, "\"x\":"), 0u)
+            << "keypoints 数组必须为空，count 与数组自洽";
+    }
+    {
+        const std::string output = utf8PathString(getTestDir() / "matching_detect_flat_sift.json");
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("detect");
+        params["input"] = flat;
+        params["output"] = output;
+        params["method"] = std::string("sift");
+        params["max_points"] = 200;
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        const int flatSift = std::stoi(result.metadata.at("keypoint_count"));
+        EXPECT_NEAR(static_cast<double>(flatSift), 0.0, 0.0)
+            << "平坦图 SIFT 必须恰好 0 个特征点（§2.2 空输入零点）";
+        std::ifstream ifs(output);
+        ASSERT_TRUE(ifs.is_open());
+        const std::string content((std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        EXPECT_NE(content.find("\"count\":0"), std::string::npos) << content;
+        EXPECT_EQ(countSubstringOccurrences(content, "\"x\":"), 0u)
+            << "keypoints 数组必须为空，count 与数组自洽";
+    }
+}
+
+TEST_F(PluginTest, MatchingMatchRatioTestLadderAndZeroPoint) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    const std::string reference = createPatternRaster("matching_match_ratio_ref.tif");
+    const std::string input = reference; // 自匹配：判据文本推得出"阶梯单调"，不依赖具体计数
+
+    auto runMatch = [&](double ratioTest, const std::string& tag) {
+        const std::string output = utf8PathString(getTestDir() / ("matching_match_rt_" + tag + ".json"));
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("match");
+        params["reference"] = reference;
+        params["input"] = input;
+        params["output"] = output;
+        params["method"] = std::string("orb");
+        params["match_method"] = std::string("bf");
+        params["max_points"] = 200;
+        params["ratio_test"] = ratioTest;
+        const auto result = p->execute(params, progress_);
+        EXPECT_TRUE(result.success) << tag << ": " << result.message;
+        std::ifstream ifs(output);
+        EXPECT_TRUE(ifs.is_open());
+        const std::string content((std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        // JSON 内部自洽：matches 数组条数 == count 字段
+        EXPECT_EQ(countSubstringOccurrences(content, "\"idx1\":"),
+            static_cast<size_t>(std::stoi(result.metadata.at("match_count")))) << tag;
+        return std::stoi(result.metadata.at("match_count"));
+    };
+
+    // —— §2.3 比值闸零点：判据原文 m[0].distance < ratioTest * m[1].distance，
+    //    距离非负 ⇒ ratio=0 时右端恒 0、左端 >=0 ⇒ 恒假 ⇒ **恰好 0 条**。
+    //    （CLI 够不到这一档：action_validation.cpp:574 把 ratio_test 的合法区间钉成 (0,1]，
+    //     0 会被参数校验拒掉；本用例走 PluginManager 直连所以可达。腿侧那条晋升不了，已如实记。）
+    const int zero = runMatch(0.0, "rt0");
+    EXPECT_NEAR(static_cast<double>(zero), 0.0, 0.0)
+        << "ratio_test=0 必须一条匹配都不留（判据文本直接推出，与影像内容无关）";
+
+    // —— 阶梯：接受集随 ratioTest 单调不减（t1<=t2 ⇒ {d0<t1*d1} ⊆ {d0<t2*d1}，d1>=0）。
+    const int mid = runMatch(0.5, "rt05");
+    const int top = runMatch(1.0, "rt10"); // double 边界档
+    EXPECT_LE(zero, mid);
+    EXPECT_LE(mid, top);
+    // 三档不许全等（全等 = ratio_test 没被消费）；top>0 由自匹配 d0=0<d1 保证。
+    EXPECT_NE(zero, top) << "ratio_test=0 与 =1 计数相等 ⇒ 参数未被消费";
+    EXPECT_GT(top, 0) << "比值=1 时只要两描述子距离不等就接受，自匹配夹具必须留下东西";
+}
+
+TEST_F(PluginTest, MatchingCornerMaxCornersCapLadder) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    // —— §2.1 上限阶梯（候选充足夹具上恰好截到 max_corners，两支的截断都写在判据文本里：
+    //    shi_tomasi 交给 goodFeaturesToTrack(…, maxCorners, …)；harris 支抑制循环
+    //    `if (corners.size() >= maxCorners) break;`）。夹具用 createPatternRaster（纹理密集，
+    //    50 档现读远超 3，候选 >= 3 成立）。变异臂 goodFeaturesToTrack 传写死大数 ⇒ 本判据红。
+    const std::string input = createPatternRaster("matching_corner_cap_input.tif");
+    auto runCorner = [&](const std::string& method, int maxCorners, const std::string& tag) {
+        const std::string output = utf8PathString(getTestDir() / ("matching_corner_cap_" + tag + ".json"));
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("corner");
+        params["input"] = input;
+        params["output"] = output;
+        params["corner_method"] = std::string(method);
+        params["max_corners"] = maxCorners;
+        const auto result = p->execute(params, progress_);
+        EXPECT_TRUE(result.success) << tag << ": " << result.message;
+        const int count = std::stoi(result.metadata.at("corner_count"));
+        std::ifstream ifs(output);
+        EXPECT_TRUE(ifs.is_open());
+        const std::string content((std::istreambuf_iterator<char>(ifs)),
+            std::istreambuf_iterator<char>());
+        // JSON 自洽：keypoints 数组里的 "x" 字段数 == corner_count（结构性，不钉内容读数）
+        EXPECT_EQ(countSubstringOccurrences(content, "\"x\":"), static_cast<size_t>(count)) << tag;
+        return count;
+    };
+
+    for (int mc : {1, 2, 3}) {
+        EXPECT_NEAR(static_cast<double>(runCorner("shi_tomasi", mc, "st" + std::to_string(mc))),
+            static_cast<double>(mc), 0.0)
+            << "shi_tomasi 上限阶梯：max_corners=" << mc << " 必须恰好 " << mc;
+        EXPECT_NEAR(static_cast<double>(runCorner("harris", mc, "ha" + std::to_string(mc))),
+            static_cast<double>(mc), 0.0)
+            << "harris 上限阶梯：max_corners=" << mc << " 必须恰好 " << mc;
+    }
+
+    // —— §2.2 平坦图角点支：harris 支**可由判据文本推出**（全零响应图 maxVal=0、
+    //    thresh = maxVal*quality = 0，条件 `> thresh` 是严格大于 ⇒ 候选空）；
+    //    shi_tomasi 支的 qualityLevel 阈值来自响应图自身归一化，属退化情形，
+    //    0 是**实测值**（控制器 CLI + 本席 CLI 平坦夹具各复跑一次都是 0），不是推演值。
+    const std::string flat = createConstantRaster("matching_corner_flat_input.tif", 96, 96, 7.0f);
+    {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("corner");
+        params["input"] = flat;
+        params["output"] = utf8PathString(getTestDir() / "matching_corner_flat_harris.json");
+        params["corner_method"] = std::string("harris");
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_NEAR(static_cast<double>(std::stoi(result.metadata.at("corner_count"))), 0.0, 0.0)
+            << "平坦图 harris 支：全零响应 + 严格大于 ⇒ 恰好 0（判据文本可推）";
+    }
+    {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("corner");
+        params["input"] = flat;
+        params["output"] = utf8PathString(getTestDir() / "matching_corner_flat_st.json");
+        params["corner_method"] = std::string("shi_tomasi");
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << result.message;
+        EXPECT_NEAR(static_cast<double>(std::stoi(result.metadata.at("corner_count"))), 0.0, 0.0)
+            << "平坦图 shi_tomasi 支：钉的是实测 0（归一化退化情形，见上方注释），非手推";
+    }
+}
+
+TEST_F(PluginTest, MatchingRegisterIdentityTransformKeepsRasterPixels) {
+    auto* p = mgr_.find("matching");
+    ASSERT_NE(p, nullptr);
+
+    // —— §2.4 恒等变换主判据：reference==input ⇒ 自匹配对应点逐点相同 ⇒
+    //    estimateAffine2D(pts,pts) 解为恒等 ⇒ warpAffine(INTER_LINEAR) 不引入新值 ⇒
+    //    产物与输入**逐像元相等**（0/255 经 Float32 转换是精确值，无带宽；
+    //    若实测出现中间值才允许放宽，首跑读数记在报告）。
+    const std::string reference = createPatternRaster("matching_register_id_ref.tif");
+    const std::string input = reference;
+    const std::string output = utf8PathString(getTestDir() / "matching_register_id_output.tif");
+    std::error_code ec;
+    fs::remove(output, ec);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("register");
+    params["reference"] = reference;
+    params["input"] = input;
+    params["output"] = output;
+    params["method"] = std::string("orb");
+    params["match_method"] = std::string("bf");
+    params["transform"] = std::string("affine");
+    params["max_points"] = 200;
+    params["ratio_test"] = 0.95;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+    // 阈值判据（非内容读数）：doRegister 的闸门原文 goodMatches.size() < 4 ⇒ 失败，
+    // 所以成功支必然 match_count >= 4 —— 这是由产品判据文本推出的下界，不是实图计数。
+    EXPECT_GE(std::stoi(result.metadata.at("match_count")), 4);
+    EXPECT_EQ(result.metadata.at("transform"), "affine");
+    // 幻象键防御：doRegister **不发** warp_matrix（只有 doEccRegister 发）。
+    EXPECT_EQ(result.metadata.count("warp_matrix"), 0u)
+        << "register 若开始发 warp_matrix 属于可观测行为变更，须另立账，不许顺手";
+
+    // 逐像元对撞：产物 == 输入。
+    auto readAll = [](const std::string& path) {
+        std::vector<float> vals;
+        auto ds = gis::core::openRaster(path, true);
+        if (!ds) return vals;
+        auto* band = ds->GetRasterBand(1);
+        if (!band) return vals;
+        const int w = band->GetXSize();
+        const int h = band->GetYSize();
+        vals.assign(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+        if (band->RasterIO(GF_Read, 0, 0, w, h,
+                vals.data(), w, h,
+                GDT_Float32, 0, 0) != CE_None) {
+            vals.clear();
+        }
+        return vals;
+    };
+    const auto inVals = readAll(reference);
+    const auto outVals = readAll(output);
+    ASSERT_EQ(inVals.size(), 96u * 96u);
+    ASSERT_EQ(outVals.size(), inVals.size());
+    double maxAbsDiff = 0.0;
+    size_t diffCount = 0;
+    for (size_t i = 0; i < inVals.size(); ++i) {
+        const double d = std::fabs(static_cast<double>(inVals[i]) - static_cast<double>(outVals[i]));
+        if (d > 0.0) ++diffCount;
+        if (d > maxAbsDiff) maxAbsDiff = d;
+    }
+    EXPECT_NEAR(maxAbsDiff, 0.0, 0.0)
+        << "恒等配准产物与输入最大逐像元偏差实测 " << maxAbsDiff << "（差异像元 " << diffCount << "）";
+    // 代表像元直接钉值（红态定位用）。
+    EXPECT_NEAR(readRasterPixel(output, 20, 20), readRasterPixel(reference, 20, 20), 0.0); // 实心方块内
+    EXPECT_NEAR(readRasterPixel(output, 8, 8), readRasterPixel(reference, 8, 8), 0.0);     // 对角线 x==y
+    EXPECT_NEAR(readRasterPixel(output, 0, 0), 0.0f, 0.0);                                  // 纹理圈外恒 0
+
+    // —— §2.3 register 的比值闸零点：ratio=0 ⇒ 恒假 ⇒ goodMatches=0 < 4 ⇒ 走失败支。
+    //    产品现状（照实钉，不改产品凑判据）：success=false、文案带 ": 0"、不产文件。
+    const std::string zeroOutput = utf8PathString(getTestDir() / "matching_register_zero_output.tif");
+    fs::remove(zeroOutput, ec);
+    std::map<std::string, gis::framework::ParamValue> zeroParams;
+    zeroParams["action"] = std::string("register");
+    zeroParams["reference"] = reference;
+    zeroParams["input"] = input;
+    zeroParams["output"] = zeroOutput;
+    zeroParams["method"] = std::string("orb");
+    zeroParams["match_method"] = std::string("bf");
+    zeroParams["transform"] = std::string("affine");
+    zeroParams["max_points"] = 200;
+    zeroParams["ratio_test"] = 0.0;
+    const auto zeroResult = p->execute(zeroParams, progress_);
+    EXPECT_FALSE(zeroResult.success) << "ratio_test=0 时匹配数为 0，不足以解仿射，产品必须走失败支";
+    EXPECT_NE(zeroResult.message.find("Not enough good matches for registration: 0"),
+        std::string::npos) << zeroResult.message;
+    EXPECT_FALSE(fs::exists(zeroOutput)) << "失败路径不得留下产物";
+}
+
 TEST_F(PluginTest, MatchingPluginDebugLightweightActionsFailFast) {
     auto* p = mgr_.find("matching");
     ASSERT_NE(p, nullptr);
