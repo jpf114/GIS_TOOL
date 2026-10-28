@@ -21744,6 +21744,166 @@ TEST_F(PluginTest, TileAlphaMaskFilterAppliesToEveryBand) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// 批次 D / D1-C2：cutting.tile 的 GOLD 晋升证据用例
+// 判两件**改前没有任何 Tile 用例判过**的量（现读：`grep -n "tile_pixel_size" tests/test_plugins.cpp`
+// 零命中；`grep -n "max_zoom" tests/test_plugins.cpp` 的命中**全部**是显式赋值）：
+//   (a) `max_zoom` 取缺省 -1 时的**自动档**（`computeMaxZoom`：从 z=30 往下第一个满足
+//       `mercatorResolution(z, tileSize) >= pixelSize * 0.5` 的 z）；
+//   (c) `tile_pixel_size` 进产品的**两处不同消费点**：网格分辨率 `res` 里的 `1/tileSize`
+//       （⇒ 决定自动档落哪一档）与每瓦片输出像元数（⇒ 决定同一地理边落在第几列）。
+// WHY 动作槽写在本块体内而不是走 `t17BaseTileParams`：`CoverageMeta.GoldEvidenceIsAuditable`
+//   要的是同一个 TEST 块里既出现 "cutting" 又出现把 "tile" 送进 ["action"] 的形状，
+//   helper 体内的动作槽审计看不见（台账 R-D26 / tracker #168）⇒ 整族既有 Tile 用例结构上登不上 GOLD。
+//   这里把 `t17BaseTileParams` 的那几行**内联**（不复制调用），并且**故意一个 zoom 键都不传**，
+//   这样缺省 -1 才可达 —— 传了 `max_zoom` 就等于把本用例要判的那条分支绕开。
+// ════════════════════════════════════════════════════════════════════════════════════
+TEST_F(PluginTest, TileAutoMaxZoomBandAndTilePixelSizeGrid) {
+    auto* p = mgr_.find("cutting");
+    ASSERT_NE(p, nullptr);
+
+    // 夹具：EPSG:3857、64×64、geotransform {0, 1000, 0, 0, 0, -1000}
+    // ⇒ 源包络 x∈[0, 64000]、y∈[-64000, 0]，`pixelSize = |geoTransform[1]| = 1000`。
+    // WHY 不声明 NoData、不加 NoData 带：本用例判的是**档位**与**网格像元数**，
+    //   既有用例 #296 那两条 NoData 带是它为"源行/列放置"变异准备的，放在这里只会让
+    //   "哪些档整张被跳过"混进期望集（那条路径由 TileCountersMatchWrittenTileFiles 判）。
+    // WHY 东缘与南缘都是 64000（夹具对 x=y 对称）：**如实登记**——本夹具抓不到轴序写反
+    //   （列/行两个方向的期望数会同值），轴序的判别力在 TileUserExtent… 与
+    //   TileMetadataBoundsKeepTraditionalLonLatOrder 那两条非对称夹具上，本用例不冒充。
+    gis::tests::RasterFixtureOptions options;
+    options.crs = gis::tests::FixtureCrs::Epsg3857;
+    options.originX = 0.0; options.originY = 0.0; options.pixelSize = 1000.0;
+    std::vector<float> data(64 * 64, 0.0f);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 32; ++x) data[static_cast<size_t>(y) * 64 + x] = 200.0f;
+    const std::string input =
+        gis::tests::writeFloatRaster(getTestDir(), "d1c2_autozoom_input.tif", 64, 64, data, options);
+
+    // ── 期望全部从这里**手推**（不许从产物目录回填）────────────────────────────────
+    // 球面口径：a = 6378137、a·π = 20037508.342789244 ⇒ 2π·a = 40075016.685578488
+    //（与 src/core/src/tile_grid.cpp 的 kMaxWebMercator、doTile 的 clamp 常数同一个口径）。
+    // 逐档单瓦片米宽 tileWidthM(z) = 2π·a / 2^z；网格分辨率 res(z, ts) = tileWidthM(z) / ts。
+    const double kTwoPiA = 2.0 * M_PI * 6378137.0;
+    const double kPixelSize = 1000.0;
+    const double kSourceEdgeM = 64000.0;   // 夹具东缘 = 64 像元 × 1000 m
+    auto tileWidthM = [kTwoPiA](int z) { return kTwoPiA / static_cast<double>(1 << z); };
+    auto autoMaxZoom = [tileWidthM, kPixelSize](int ts) {
+        for (int z = 30; z >= 0; --z) {
+            if (tileWidthM(z) / static_cast<double>(ts) >= kPixelSize * 0.5) return z;
+        }
+        return 0;
+    };
+    // 期望算式自己的对撞（**不判产品**，只把"半个像元"那一步的边界档摆在明面上）：
+    //   ts=256：res(8)=611.4962262814 ≥ 500 而 res(9)=305.7481131407 < 500 ⇒ 8
+    //   ts=128：res(9)=611.4962262814 ≥ 500 而 res(10)=305.7481131407 < 500 ⇒ 9
+    //   丢掉 `* 0.5`（阈值退回 1000）⇒ 两档各浅一层：7 与 8 ⇒ 下面的期望集会缺最深层。
+    ASSERT_EQ(autoMaxZoom(256), 8);
+    ASSERT_EQ(autoMaxZoom(128), 9);
+
+    // 逐档瓦片索引（同一条度量推导：idx = floor((x - worldMinX)/tileWidthM)，worldMinX = -a·π）：
+    //   west 边 idx = floor(a·π / tileWidthM(z)) = floor(2^z / 2) = 2^(z-1)（z=0 时 floor(0.5)=0）
+    //   east 边 idx = 上面那一项 + floor(64000/tileWidthM(z)) 的**小数**，而
+    //     64000/tileWidthM(z) = 64000·2^z/(2π·a) = 2^z·1.5970e-3 < 1 对 z ≤ 9 成立
+    //     （z=9 ⇒ 0.81766；z=10 ⇒ 1.63532 ⇒ 会多一张，所以本夹具的最深可用档恰好在自动档之内）
+    //   ⇒ 每档**恰好 1 张**，行号同理（南缘 |y| = 64000 ⇒ 同一个小数）⇒ 张数 = maxZoom - 0 + 1。
+    auto expectedTileSet = [tileWidthM, kSourceEdgeM, kTwoPiA](int maxZoom) {
+        std::set<std::string> expected;
+        for (int z = 0; z <= maxZoom; ++z) {
+            const int idx = (z == 0) ? 0 : (1 << (z - 1));
+            // 前提自查：这一档必须真的只有 1 张（东缘落在同一张瓦片内）。
+            EXPECT_LT(kSourceEdgeM / tileWidthM(z), 1.0) << "z=" << z << " 这一档会多出一张，夹具口径变了";
+            expected.insert(std::to_string(z) + "/" + std::to_string(idx) + "/" +
+                            std::to_string(idx) + ".png");
+        }
+        return expected;
+    };
+    // 覆盖缘在第几列（源东缘 x=64000 换算进"该瓦片输出的像元列"）：
+    //   edgeCol(z, ts) = kSourceEdgeM / tileWidthM(z) · ts = kSourceEdgeM / res(z, ts)
+    //   z=8,ts=256 ⇒ 104.66131637；z=8,ts=128 ⇒ 52.33065819；z=9,ts=128 ⇒ 104.66131637
+    // 容差 1.0 的**逐支**论证（本用例三个数据点各自成立，不是"一支通用"）：
+    //   实到列数 = ceil(edgeCol)（实现向外取整：dx1 = ceil((ax1-rect.minX)/tileResX) 再钳到 ts），
+    //   所以 |实到 - 手推| = 1 - frac(edgeCol)：
+    //     支 1（z=8, ts=256）edgeCol=104.66131637 ⇒ 实到 105 ⇒ Δ=0.33868
+    //     支 2（z=8, ts=128）edgeCol= 52.33065819 ⇒ 实到  53 ⇒ Δ=0.66934   ← 三支里最大
+    //     支 3（z=9, ts=128）edgeCol=104.66131637 ⇒ 实到 105 ⇒ Δ=0.33868
+    //   三支都 < 1.0，且除取整外只剩 float64 舍入（相对 1e-16 ⇒ 列量级 1e-14）；
+    //   反过来任何把网格像元距写歪一档的变异挪的是**整个 edgeCol**（支 2 挪 52.3 列），
+    //   1.0 既不会把它挡在容差外，也不会把取整本身当缺陷报红。
+    auto opaqueColsInRow = [](const T18TileBands& tile, int row) {
+        int cols = 0;
+        const std::vector<uchar>& alpha = tile.data.back();
+        for (int c = 0; c < tile.width; ++c) {
+            if (alpha[static_cast<size_t>(row) * static_cast<size_t>(tile.width) + c] > 0) ++cols;
+        }
+        return cols;
+    };
+
+    // 两档 tile_pixel_size 各跑一次；除 ts 之外**所有键都走插件缺省**（动作槽内联在本块体内）。
+    // 唯一显式给的键是 skip_blank=false：插件缺省 true 会把"不透明像元 ≤ 4"的近空瓦片整张丢掉
+    // （低档 0/1/2 就是这么被吞的），那是判空容差的事、已由 TileBlankGuardsAndSkipBlankCombination
+    // 的档 B 判，混进来只会让本用例的期望集多一个与自动档无关的分支。
+    std::set<std::string> produced[2];
+    T18TileBands deepest[2];      // 各档的最深层瓦片（ts=256 ⇒ 8/128/128；ts=128 ⇒ 9/256/256）
+    T18TileBands z8ForTs128;      // ts=128 那档的 z=8 瓦片：与 ts=256 的同一张**地理范围**
+    const int sizes[2] = {256, 128};
+    for (int run = 0; run < 2; ++run) {
+        const int ts = sizes[run];
+        const fs::path output = getTestDir() / ("d1c2_autozoom_ts" + std::to_string(ts) + "_output");
+        fs::remove_all(output);
+
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("tile");
+        params["input"] = input;
+        params["output"] = utf8PathString(output);
+        params["tile_pixel_size"] = ts;
+        params["skip_blank"] = false;
+
+        const auto result = p->execute(params, progress_);
+        ASSERT_TRUE(result.success) << "ts=" << ts << ": " << result.message;
+
+        produced[run] = t17CollectTileFiles(output);
+        const std::set<std::string> expected = expectedTileSet(autoMaxZoom(ts));
+        ASSERT_EQ(expected.size(), static_cast<size_t>(run == 0 ? 9 : 10))
+            << "ts=" << ts << " 的手推张数不再是 9/10（自动档算式或夹具像素尺寸变了），本臂的期望集作废";
+        EXPECT_EQ(produced[run], expected)
+            << "ts=" << ts << " 的自动档/逐档索引集合不对，实际 [" << t17JoinFiles(produced[run]) << "]";
+
+        const int deepestZ = autoMaxZoom(ts);
+        const int deepestIdx = (deepestZ == 0) ? 0 : (1 << (deepestZ - 1));
+        const std::string deepestName = std::to_string(deepestZ) + "/" +
+            std::to_string(deepestIdx) + "/" + std::to_string(deepestIdx) + ".png";
+        deepest[run] = t18ReadTile(output / fs::path(deepestName));
+        ASSERT_TRUE(deepest[run].ok()) << deepestName;
+        EXPECT_EQ(deepest[run].width, ts) << "ts=" << ts << " 的最深层瓦片宽度不是 ts 像元";
+        EXPECT_EQ(deepest[run].height, ts) << "ts=" << ts << " 的最深层瓦片高度不是 ts 像元";
+        EXPECT_NEAR(static_cast<double>(opaqueColsInRow(deepest[run], 0)),
+                    kSourceEdgeM / tileWidthM(deepestZ) * static_cast<double>(ts), 1.0)
+            << "ts=" << ts << " 的 z=" << deepestZ << " 覆盖缘列数与手推不符（res 里那个 1/tileSize）";
+
+        if (ts == 128) {
+            // 同一张地理范围（z=8 的第 128 列那张）在 ts=128 下必须只有**一半**不透明列：
+            // 手推 52.33065819（ts=256 那档是 104.66131637）⇒ 判的是"同一公里数摊到的输出像元数"。
+            z8ForTs128 = t18ReadTile(output / fs::path("8/128/128.png"));
+            ASSERT_TRUE(z8ForTs128.ok());
+            EXPECT_NEAR(static_cast<double>(opaqueColsInRow(z8ForTs128, 0)),
+                        kSourceEdgeM / tileWidthM(8) * 128.0, 1.0)
+                << "ts=128 的 z=8 覆盖缘列数与手推不符 ⇒ tile_pixel_size 没被用进网格像元距";
+        }
+    }
+
+    // 容器波段数（盘上事实，**不是** add_alpha 两档的判别式：既有锚
+    // TileAddAlphaChangesTransparencyForPartialBandNoData 现读 EXPECT_EQ(tile.bands, 4) 两档都成立）。
+    EXPECT_EQ(deepest[0].bands, 4) << "ts=256 最深层容器波段数";
+    EXPECT_EQ(deepest[1].bands, 4) << "ts=128 最深层容器波段数";
+
+    // 反手一钉：ts=256 那档**不该**有 z=9（自动档停在 8），ts=128 那档**该**有。
+    // 这一条与上面的"恰等于"不重复：它是把"`* 0.5` 被丢 ⇒ 两档各浅一层"和
+    // "`computeMaxZoom(pixelSize, 256)` 写死 ⇒ 只有 ts=128 那档浅一层"分开的**最小载体**，
+    // 红态时读哪一档缺 z 就能认出是哪只变异手。
+    EXPECT_EQ(produced[0].count("9/256/256.png"), 0u) << "ts=256 不该走到 z=9（res(8,256)=611.496≥500、res(9,256)=305.748<500）";
+    EXPECT_EQ(produced[1].count("9/256/256.png"), 1u) << "ts=128 该走到 z=9（res(9,128)=611.496≥500）";
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // C3n-1：矢量输出的失败契约「先写同目录临时件 → 全部成功 → 显式关闭 → 替换目标」
 // ════════════════════════════════════════════════════════════════════════════════════
 // 契约出处：用户 2026-10-23 的裁定，原文登记在 docs/RELEASE.md 的 N137 条目。要治的病是
