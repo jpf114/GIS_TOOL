@@ -1512,9 +1512,9 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
     EXPECT_TRUE(result.metadata.count("mean") > 0);
 }
 
-// 批次 D P1：本块由"只跑一次 + 断产物存在"扩成阈值语义的承重判据（改前 3 条断言、值级 0 条 ⇒
-// 过不了 CoverageMeta.GoldEvidenceIsAuditable 的第二条"剥完注释后块里必须有
-// EXPECT_NEAR/EXPECT_FLOAT_EQ/EXPECT_DOUBLE_EQ"）。登记表 processing,threshold 那行的第 4 列指本块。
+// 批次 D P1：本块由「只跑一次 + 断产物存在」扩成阈值语义的承重判据（改前 3 条断言、值级 0 条 ⇒
+// 过不了 CoverageMeta.GoldEvidenceIsAuditable 的第二条（剥完注释后块里必须有 EXPECT_NEAR、
+// EXPECT_FLOAT_EQ 或 EXPECT_DOUBLE_EQ 之一）。登记表 processing,threshold 那行的第 4 列指本块。
 //
 // 推导链（doThreshold / gis::core::toUint8 / gis::core::matToGdalTiff 三处逐字现读）：
 //   raw v --toUint8--> u8 = cv::normalize(mat, u8, 0, 255, cv::NORM_MINMAX, CV_8U)
@@ -1522,16 +1522,19 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
 //         --result.convertTo(outFloat, CV_32F, 1.0/255.0)--> 单波段 Float32
 // ⇒ (a) **threshold_value 比的是归一后的 0..255 尺度，不是原始像元值**（这条是 A1/A2 与"去掉归一"
 //     变异臂互相咬合的地方）；
-// ⇒ (b) **产物值域 = [0, max_value/255]**：max_value 同时进 cv::threshold 的 upper，而除数 255 写死
-//     在 convertTo 里 ⇒ A7（max_value=102 ⇒ 高档读回 0.4 而不是 1.0）钉的就是"值域谁定"；
-//     truncate/tozero 两支 max_value 不进产物（OpenCV 的 THRESH_TRUNC/THRESH_TOZERO 不用 upper），
-//     所以 A5/A6 的期望里没有它。
+// ⇒ (b) **产物上界分两族，"max_value/255"不是全称**：binary / binary_inv / otsu / adaptive_gaussian /
+//     adaptive_mean 五支把 max_value 当赋值上限（otsu 与两支 adaptive 走各自的 maxValue 实参），
+//     而除数 255 写死在 convertTo 里 ⇒ A7（max_value=102 ⇒ 高档读回 0.4 而不是 1.0）钉的就是"值域谁定"；
+//     truncate / tozero 两支 max_value 不进产物（OpenCV 的 THRESH_TRUNC/THRESH_TOZERO 不用 upper），
+//     所以 A5/A6 的期望里没有它 ⇒ 控制器 2026-10-29 修复轮在同一件上复跑坐实：
+//     truncate + tv=100 配 max_value∈{255,102,50} 产物逐字相同（Max 0.392157 = tv/255），
+//     truncate + tv=250 配 {255,12} 都是 0.980392；tozero 配 {255,102,7} 恒 Max 1 / Mean 0.25。
 // ⇒ (c) toUint8 还有一条 maxVal-minVal < 1e-10 ⇒ 整幅恒置 0 的退化支（单值栅格），A11/A12 两支一起
 //     把落点钉成"恰好是 0"（若落点是 255，两支同时反转）；
 // ⇒ (d) toUint8 开头还有一条 `mat.type() == CV_8U ⇒ clone`（8 位输入不归一）——**本动作到不了那里**，
 //     因为 gdalBandToMat 固定 RasterIO 进 GDT_Float32 的 CV_32F 矩阵 ⇒ 不给它写断言（写了就是恒真）。
 //
-// 夹具与手推档值（全部在首读之前写定，见 task-p1-report §3.1 的同一张表）：
+// 夹具与手推档值（全部在首读之前写定；下面这张就是写定那份的抄录，凭据不依赖任何私有文件）：
 //   F1 = createStepLevelRaster 40×24 象限平台，raw 0/10/51，min 0 max 51 ⇒ 标度 255/51 = 5.0
 //        （二进制精确）⇒ u8 = 0(240 像元) / 50(480) / 255(240)。10*5.0、51*5.0 都不落在
 //        就近取整与截断的分叉上，所以本表不依赖取整口径。
