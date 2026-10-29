@@ -1970,22 +1970,26 @@ TEST_F(PluginTest, ProcessingEnhanceExecution) {
     ASSERT_FALSE(f4.empty());
     ASSERT_FALSE(f5.empty());
 
-    // ---- E1~E5：equalize（F1；乙约定逐档钉死 + 三条与约定无关的判据）----
+    // ---- E1~E5：equalize（F1；乙约定逐档钉死 + 两条与 LUT 约定无关的判据 E3/E4）----
+    //   E1/E2/E5 的期望值**依赖甲乙之争**（甲约定给 0.250980 / 0.749020 / 均值 0.687255），
+    //   只有 E3（Max 恰 1.0）与 E4（恰 3 个不同值）在两种约定下都成立 ⇒ 组标题只算两条。
     const std::string outEq = utf8PathString(dir / "d1p2a_enh_equalize_f1.tif");
     const auto runEq = runEnhance(f1, outEq, "equalize", 1, false, 0.0, false, 0.0);
     EXPECT_TRUE(runEq.success) << "E 组 equalize/F1 失败: " << runEq.message;
     ASSERT_TRUE(fs::exists(outEq)) << "E 组没落产物 " << outEq;
     // 手推：u8 档 0(240)/50(480)/255(240)，total=960，i0=0，cdf_min=hist[0]=240，
     //   scale = float32(255/(960-240)) = 0.35416665673255920
-    //   lut[0] = 0；lut[50] = round(480*scale) = round(169.99999523 积落 float32 = 170.0) = **170**；
-    //   lut[255] = round(720*scale) = round(254.99999285 积落 float32 = 255.0) = **255**
+    //   lut[0] = 0（上游显式赋）；lut[50]：480*scale 的积**按 float32 求值 = 恰好 170.0**
+    //     （换到 double 视角才是 169.99999523，C++ 里 `int sum * float scale` 不走那条路）⇒ 就近与截断都给 170；
+    //   lut[255]：720*scale 的积按 float32 求值 = 恰好 255.0（double 视角 254.99999285）⇒ 两种取整都给 255
     // 甲约定会在同一坐标给出 64/255 = 0.250980 与 191/255 = 0.749020 ⇒ E1/E2 就是甲乙之争的观察点。
     EXPECT_NEAR(readRasterPixel(outEq, 5, 5), 0.0, kEps)
         << "E1 u8 档 0 是第一个占用档 ⇒ 上游显式 lut[i0]=0 ⇒ 0/255；甲约定这里会是 0.250980";
     EXPECT_NEAR(readRasterPixel(outEq, 30, 5), 170.0 / 255.0, kEps)
         << "E2 u8 档 50 的 cdf-cdf_min = 480 ⇒ lut=170 ⇒ 0.666667；甲约定这里会是 191/255 = 0.749020";
     EXPECT_NEAR(readRasterPixel(outEq, 5, 20), 1.0, kEps)
-        << "E3 最高档 cdf-cdf_min = total-cdf_min ⇒ lut=255 ⇒ **Max 恰为 1.0**（甲乙两约定都成立，与约定无关）";
+        << "E3 最高档 cdf-cdf_min = total-cdf_min ⇒ 积恰好 255.0 ⇒ lut=255 ⇒ **Max 恰为 1.0**"
+           "（甲乙两约定都给 255 ⇒ 与 LUT 约定无关；且积是 float32 的精确整数 ⇒ 对就近/截断也不敏感）";
     const auto eqPx = bandPixels(outEq, 1);
     ASSERT_EQ(eqPx.size(), 960u) << "E4/E5 需要整幅 960 个像元才能数档数与均值";
     std::set<float> eqDistinct(eqPx.begin(), eqPx.end());
