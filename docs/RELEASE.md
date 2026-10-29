@@ -2841,6 +2841,71 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
   而 `doZonalStats` 三个键任一为空就 `fail` ⇒ 属 #146"声明必填 vs 实为必填"跨插件同族论域。
 - **缺口（照实登记，不当判据）**：见下一节列表。Release 树未重编 ⇒ **R3b 全部结论只验收 Debug 侧**。
 
+### 批次 D 覆盖晋升 P1（2026-10-29，`processing.threshold` 一条 PENDING→GOLD；P 族第一把，续作席收口）
+
+射程**一行**：`tests/action_gold_cases.txt` 的 `processing,threshold`。刀序相对台账有一处改动已在工单里登记：
+台账把 P1 写成 `threshold` + `enhance` 两条，两者都是多模式算子 ⇒ 一把一条，`enhance` 另起（本把没碰它）。
+本把跨两把席位：前席在 Step 2 中途被平台报错打断（`8458db7` = Step 1 已提交、`.ps1` 的 +79 行在途），
+续作席从 `8458db7` 接手，**未回退在途改动**，收口 Step 2/3/4/5/6。四笔 = `8458db7`（Step1 单测）+
+Step2 腿侧 + Step4 登记 + Step5 文档。
+
+- **产品面现读**（`ProcessingPlugin::doThreshold`，与工单 §1 一致，另多读到三件）：键 `band`=1 /
+  `method`=`otsu` / `threshold_value`=128.0 / `max_value`=255.0；先 `gis::core::toUint8` 归一再比较，
+  所以**阈值值比的是归一后的 0..255**；写出是 `convertTo(CV_32F, 1/255)` ⇒ **产物值域 = max_value/255**，
+  除数 255 是字面量、与 `max_value` 无关（工单 §2.4 那句"max_value 同时进 upper 与 /255 缩放"经实测**否证**：
+  它只进 `cv::threshold` 的 upper）；`writeMatOutput → matToGdalTiff` 建的是单波段 Float32 ⇒ 产物恒 1 波段，
+  `band` 只用于选输入。`toUint8` 的 `CV_8U` 直接 clone 支在本动作不可达（`gdalBandToMat` 恒按 `GDT_Float32` 读），
+  没为它写恒真断言。
+- **夹具**四张，全部**非方 40x24**（三档/四档平台，R1 纪律 3：方夹具上"宽高互换"是等价变异 = 自我盲区）；
+  归一标度 `255/(51-0)=5.0` 二进制精确 ⇒ 档值 0/50/150/255 落在任何"就近取整 vs 截断"的分叉之外。
+  Otsu 用**四峰**夹具：类间方差三个间隙手算 `3098.78 / 5041.00 / 5162.67` ⇒ 唯一最优分区
+  `{0,50,150}|{255}`，间隙 `[150,254]` 整体在 spec 默认 128 的右侧 ⇒ 这一档能把"数据定阈值"和
+  "常数阈值"分开（三峰夹具做不到：归一后 min/max 恒 0/255 ⇒ 最优间隙必含 127.5，与默认阈值不可分）。
+- **单测**：扩写既有块 ⇒ 全库 `Total Tests: 802` 不变、`PluginTest.Processing*` 仍 30、`PluginTest.Raster*` 仍 19。
+  值级断言 **35 条 `EXPECT_NEAR`**（口径：直接数块内代码行；按 `git show` 新增行数=36、按出现次数=38 都含
+  同一行注释里的三个宏名 ⇒ 都不是条数；`8458db7` message 里那个 42 无读数量得支持，禁 `--amend` 故历史保留、
+  更正落在私有报告 §3.3）。期望表 13 档在**首读之前**落盘，首读逐格命中、未改一个期望。
+- **腿侧**：新建 `New-Case -Name processing_threshold`（该动作此前在本腿**连 case 都没有**）+ 一条值级分支，
+  输入是 `step_level_input.tif` 的**副本**（`data/` 原件只读），分支判 `40 x 24 x 1` 分开、dtype Float32、
+  `Min 0 / Max 1 / Mean 0.75`（`720/960`，六个有效数字打成 `0.75` ⇒ 零舍入残差）。
+  **StdDev 故意不判**：该形态下 `sigma = sqrt(p(1-p))`、`p = Mean` ⇒ 同一计数的第二次读，是推论不是判据。
+  分支开头删产物 `.aux.xml`：PAM 边车按文件名缓存 band 统计，中断过的一跑会让后一读判缓存而不是像素。
+- **反事实副本臂**（R-D34：只改期望常数、不碰产品）：`cf/` 副本把 Mean 的 `0.75` 改成 `0.74` ⇒ **腿红**，
+  抛出行带 `actual=0.75`；副本与工作树**逐行只差那一处**、`regression_case_gate.ps1` 与仓库版 sha256 相同。
+- **臂清单**（十支，单实例串行；`src/plugins/processing/processing_plugin.cpp` 全程 `cp` 还原 + 三项对拍）：
+  M1 去掉 `toUint8` 前置归一 ⇒ 单测红 11 格、腿红（Mean 0.25 对 0.75）；M2 `binary` 写成 `BINARY_INV` ⇒ 红 20 格、腿红；
+  M3 去掉 `1/255` ⇒ 红 16 格、腿红（Max 255）；M9 吃掉 `threshold_value` 键 ⇒ 红 5 格、腿红；
+  M5 吃掉 `band` 键 ⇒ 红在 A9 那一格、**腿绿**（腿发 `--band=1`）；M6 吃掉 `max_value` 键 ⇒ 红在 A7 那一格
+  （实到 1 对期望 0.4）、**腿绿**；M7 `TRUNC` 写成 `TOZERO` ⇒ 红 2 格、腿绿；M8 未知 method 的 `fail` 吞成 `ok`
+  ⇒ 红 2 格、腿绿；M10 摘掉 `THRESH_OTSU` 标志 ⇒ 恰好红在 A10 那一格、腿绿。
+  **M4（往 OTSU 调用里传 `threshVal`）单测与腿双绿 ⇒ 等价变异**，归因**上游**（`THRESH_OTSU` 下 `thresh` 是出参）
+  而不是本把挑的夹具：能推翻该等价的形状是"入参被 honor ⇒ A10 必红"，而 A10 的承重由**另一支** M10 单独证明，
+  两支不互相顶名。腿的敏感度全部实测：红 = M1/M2/M3/M9，绿 = M4/M5/M6/M7/M8/M10（覆盖边界登记在缺口，不当缺陷写）。
+  还原凭据（10/10 全过）：动手前 `.BASE` 与干净树对拍 identical=True，工作树裸 sha256
+  `169bc45df938525b8309ab70338e604df275971b226f341baf7536856ac63402` 在每臂还原后逐字相同、
+  `git hash-object`（套 filter）== `HEAD` blob `dd4fdeea702e72071917c6f8a7a65262de6e43b4`、`git status` 空；
+  终态另加受保护 `terrain_plugin.cpp` blob 仍 `588a42504ee19bcb551f8214e5c1adb68cea20e9`。
+  每臂**改完都重编再跑**，臂批结束后再 `--target gis_tests` 一次（否则 DLL 会带着最后一支臂的变异报绿）。
+- **登记**：本行 PENDING→GOLD，第 4 列 `PluginTest.ProcessingThresholdExecution`（**不是**
+  `ProcessingThresholdKeepsProductWithoutGeotransform` —— 那块值级 0 条、钉的是地理参考契约）。
+  五张计数 `gold_rows 108→109` / `pending_rows 18→17` / `gold_rows_all_lines 109→110` /
+  `gold_rows_table_driven 15` 未动 / `gold_rows_literal_slot 93→94`、`data_rows 126` 未动、
+  `kPendingCeiling 18→17`；PENDING 分布 `processing 15→14`（matching 2 / spindex 1 未动）。
+  **R-D39 同笔**：`tests/real_data_matrix.txt` 本行第 5 列 `none→real_regression`；note 那句
+  "夹具来源为启发式判定"核对结果 = 本 case 实际消费的是 helper 现生成的 `step_level_input.tif`
+  （仓库无 `data/raster`），所以该行第 4 列 `fixture=data` 与腿侧实际取的合成兜底件互相矛盾 ⇒
+  矩阵无机器判据、列义属批次 C 定稿口径，本把不动它，登记给 D3 矩阵对账。
+- **读数**：`ctest -R "^real_data_raster$" -V` 改后闸九字段 = `registered=74` / `ran=74` / `judged=53` /
+  `allowlisted=21` / `allowlist-table=21` / `allowlist-gated-not-registered=0` / `branch-labels=54` /
+  `conditional-registrations=1` / `dead-branches=0` ⇒ 不变量 `53 + 21 = 74` 成立、与工单 §0 预期逐字段命中；
+  腿墙钟 13.14 s（2.5× 拆腿触发线按**改前那一档** 15.27 s 算 = **38.175 s**，未触，未抬 TIMEOUT）。
+  定向配方 **43/43 全绿**、`PluginTest.Processing*` 族 **30/30 全绿**、`Total Tests: 802`、
+  `geotransform_guard` 两域读数本把未动（未新增判了返回值的 `GetGeoTransform(` 位点）。
+- **缺口（照实登记）**：`adaptive_gaussian` / `adaptive_mean` 两支**无判据也无臂**（blockSize/C 写死、
+  期望要自己复算局部邻域积分 ⇒ 宁少一条不造恒真断言）；`toUint8` 退化支（整幅同值 ⇒ 置 0）没有专属臂
+  （在 `src/core`，改它波及别的动作）；非整数 `threshold_value` 的取整方向未取证；本把全部结论
+  **只验收 Debug 侧**（Release 树未重编）。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
