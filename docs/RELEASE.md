@@ -2923,6 +2923,120 @@ Step 2 腿侧 + Step 4 登记 + Step 5 文档 + Step 6 回归读数回写。Step
   给同一结果 ⇒ 在本动作不可分辨，所以只登记观测、不写因果）；本把全部结论
   **只验收 Debug 侧**（Release 树未重编）。
 
+### 批次 D 覆盖晋升 P2a（2026-10-29，`processing.enhance` 一条 PENDING→GOLD；P 族第二把，**只做单测侧，不碰腿**）
+
+射程**一行**：`tests/action_gold_cases.txt` 的 `processing,enhance`。按 R-D45 的刀序，P2 已按交付面切成两把：
+本把 = P2a 单测侧；**腿侧 case 与值级分支是 P2b**（要新造输入件与反事实臂，另一种尺寸）。
+`tests/run_real_raster_regression.ps1` 本把**一字未改**（现读 `New-Case -Name "processing` 仍是 7 条、无 enhance），
+allowlist 两侧计数也不该动 ⇒ 腿侧九计数本把**不引用**（没跑就没有"前后两个数"可摆）。
+
+- **上游定约（本把最硬的一条凭据，也是控制器底稿里"没定约成功"的那条）**：`cv::equalizeHist` 的 LUT 走的是
+  **乙约定** `(cdf − cdf_min) × 255 ÷ (total − cdf_min)`，甲约定 `cdf × 255 ÷ total` **被源码否证**。
+  载体是控制器没试过的第三条路：jsDelivr 的 GitHub CDN 镜像（与 `raw.githubusercontent.com` 不同主机，本机出网未被重置）
+  `https://cdn.jsdelivr.net/gh/opencv/opencv@4.14.0/modules/imgproc/src/histogram.cpp`（HTTP 200 / 3444 行全文到手，
+  `cv::equalizeHist` 在第 3227 行起，正落在 `WebFetch` 会截断的位置之后）。逐字关键三行：
+  `float scale = (hist_sz - 1.f)/(total - hist[i]);` / `for (lut[i++] = 0; i < hist_sz; ++i)` /
+  `sum += hist[i]; lut[i] = saturate_cast<uchar>(sum * scale);`，其中 `i` 由 `while (!hist[i]) ++i;` 定成第一个占用档
+  ⇒ `sum` 从 `i0+1` 起累加，就是 `cdf[i] − cdf_min`；另有单档短路支 `if (hist[i] == total) { dst.setTo(i); return; }`。
+  ⚠ **这是上游源码，不是本仓产物的实测** ⇒ 文档与注释按"上游定义"口径写，不写成"实测"。
+  取整口径另定约：`https://cdn.jsdelivr.net/gh/opencv/opencv@4.14.0/modules/core/include/opencv2/core/saturate.hpp`
+  的 `template<> inline uchar saturate_cast<uchar>(float v) { int iv = cvRound(v); … }`
+  + 本机安装头 `opencv2/core/fast_math.hpp` 的 `cvRound(float)` 在 MSVC x64 走 `_mm_cvtss_si32`（就近含偶）。
+  版本口径：本机 vcpkg `opencv2/core/version.hpp` = 4/14/0 ⇒ tag `4.14.0`；`buildtrees/opencv4/` 只剩 config 日志、无源码。
+  ⚠ 一处与控制器底稿**不同**的复算结论：`scale` 是 float32 的 `255/720 = 0.35416665673255920`，比精确值略小，
+  所以**在 double 视角下**最高档的积是 `254.9999928474` ⇒ 若取整口径是"纯截断"，`Max 恰为 1.0` 这一条
+  **并非与约定无关**（会是 `254/255`）。C++ 里那个积本身是 float32 运算、会吸附成整数 `255.0`，
+  故 E3 成立是靠**已定约的取整口径**，不是靠"两约定都成立"。控制器 §3.5 第 5 条那句"两约定下最高档 ⇒ 255"在本夹具上不成立，
+  此处摆出前后两个说法，不静默采纳。
+- **产品面现读**（`ProcessingPlugin::doEnhance`）：键 `input`/`output`/`band`=1/`enhance_type`=`equalize`/
+  `clip_limit`=2.0/`gamma`=1.0，六个键**全部被读** ⇒ GUI 可见键这侧今天没有缺口。
+  出口 `writeMatOutput → matToGdalTiff` 建的是 `createRaster(dst, mat.cols, mat.rows, 1, GDT_Float32)` ⇒ 产物恒 1 波段；
+  `GIS_PROCESSING_TIME` 使产物字节不可比 ⇒ 本把只比尺寸/像元/档数。`enhance` 不发任何计数 metadata。
+- **夹具五张，全部非方**（40×24 / 24×40 互为转置对照 / 30×18）：`equalize` 与 `clahe` 用
+  `createStepLevelRaster(40,24)`（raw 0/10/51、象限计数 240/480/240、`toUint8` 标度 `255/51 = 5.0` 二进制精确）；
+  `normalize`/`log`/`gamma` 用 `createColumnPlateauRaster(40,24,{0,10,20,40},…)` 的三张变体——
+  **含 53 的那张**（`{0,10,53}`）是刻意选的：`255/53` 不精确 ⇒ `48/255 ≠ 10/53`（Δ 4.44e-4），
+  这一差是"三支不量化"的**唯一**观察点；⚠ 反过来在 40×24 三档件上 `50/255 = 10/51` **数学相同** ⇒
+  那件上判不出量化与否（是**夹具形状**导致的等价，不是产品决定的，R-D44 口径）；
+  **含负值那张** `{-20,5,40}` 是 DF-2 专造的新件（现成件全是非负 ⇒ `cv::max` 那一行今天跑不到能区分它的输入）；
+  常量件 `createConstantRaster(30,18,200.0)` 供 DF-3 的两支退化判据；两波段件 `{{0,10,53},{53,0,10}}` 供 `band` 臂
+  （`createTestRaster` 各波段同值，在它那上面 band 臂是等价变异）。
+  ⚠ 换件的代价本把**实际付了一次**：首跑红了一条 Z6——我拿 band1 的列坐标 `x=15` 去问 band2，
+  那里 band2 的 raw 是 0 不是 10 ⇒ 期望 `170/255` 而产物 `0.0`。修法是探针点跟着波段重数，
+  并补一条 Z6b 把 `x=15` 的 `0.0` 也钉成等号判据；这是**我的探针点错**，不是产品与期望的分叉，记在这儿不改写。
+- **单测**：扩写既有块（不新增 TEST_F）⇒ 全库 `Total Tests: 802` 不变、`PluginTest.Processing*` 仍 30、定向配方仍 43。
+  块内 **36 条 `EXPECT_NEAR`**（口径：花括号配对抽出块体，剥注释前后各数一遍，两个口径同为 36 ⇒ 块里没有靠注释顶替的数值断言）。
+  期望表在**首跑之前**落盘归档（内容只含夹具字面量与上游公式的复算，不含任何产物读数），
+  实测侧另用第二客户端回读产物像元对账（**本机 cv2 4.13.0 只用来读产物、不参与任何期望或行为判定**，
+  产品链接的是 4.14.0 C++）：21 个读数点最大残差 `2.36e-7`（=`ln(201)` 那一支，float32 在 5.3 量级的半 ulp，
+  **0.24×kEps，是全表最紧的一点**），最小"另一种可分辨结局"的间距 `4.44e-4`（= 444×kEps，`normalize` 的量化与否）。
+  ⇒ 容差夹心**逐支点各算**，没有共用句式。
+- **五条缺陷的处置**：
+  DF-1（文档方向反）已复算已改文档已配 G1/G4 两条承重断言（`128/255 → ^0.5 = 0.708492` 提亮、
+  `→ ^2 = 0.251965` 压暗；本把夹具上 `10/53 → 0.434372 / 0.035600`，方向同）；
+  DF-2（`log` 的"平移"因果错）已改文档 + 新造负值件 + L4 承重（臂 M6 实测把该行读成 `-nan(ind)`）；
+  DF-3（常量两支退化不一致）已各配判据（G5/G6 全 0 vs L7/L8 `ln(201)`）并写进文档；
+  DF-4（精度口径两支不同）已按**支**写进文档、并在 N1/L1/G1 三处各有观察点；
+  DF-5（`clip_limit` 下界探针）用**真二进制**（单测直调插件，不是 python cv2）探完：
+  `0.0` 不抛不失败、产物**真的不同**（单格 `lut[0] = 255` ⇒ 该点 `1.0`，而 `2.0` 给 `0.133333`）；
+  `0.001` 与 `2.0` 被上游 `int(clip_limit × 格子面积 ÷ 256)` 折到同一个整数 1 ⇒ 产物相同。
+  "非单调"的来由给出的是这条**可复算的整数化公式**，不是探针印象。
+- **本把新立 N181**（只登记，不修产品）：`clip_limit` 的 ParamSpec 下界 `0.0` 放行到消费点。
+  现读 `src/framework/src/action_validation.cpp` 的 `if (actionKey == "enhance")` 块体**只有** `gamma <= 0` 一条闸；
+  上游 `clahe.cpp` 的 `if (clipLimit_ > 0.0)` 与 `if (clipLimit_ > 0)` 使 `0` 走进"完全不裁剪"那一支，
+  与用户读到的"对比度**受限**"相反 ⇒ 属 #164 家族（区间声明与消费点行为不一致），本把不改 `src/`。
+- **臂清单**（13 支，单实例串行；每臂跑前重新 `git status --porcelain` 确认树上只有那一处改动，
+  日志逐臂 tee 成文件；还原 = `git show HEAD:<path>` 写回 + 按原行尾归一，凭据三条一起用：
+  `git diff` 空 + `git status --porcelain` 空 + **与动手前记下的工作树裸 sha256 逐臂对拍相同**，13/13 全过）：
+  M1 `equalizeHist` 改恒等 ⇒ 红 E2（残差 0.470588，实测 0.196078 = `50/255` 原样）/E5（0.235294）/Z5/Z6；
+  M2 `enhance_type` 写死 `normalize` ⇒ 红 21 条 —— ⚠ **同一消费点的扇出，不是 21 件独立凭据**（诊断法：同因同刻），
+  五支各自的承重由下面七条分支臂分开证明；M3 `band` 写死 1 ⇒ 红 Z6/Z6b/Z7（0.333333 / 0.333334 / 1.0）；
+  M4 `clip_limit` 写死 2.0 ⇒ **恰好红 C2/C5**（0.066667 / 0.866667），C1/C3/C4 绿是**设计如此**
+  （它们钉的就是"折到同一个整数上限"）；M5 指数 `1/gamma` 写成 `gamma` ⇒ 红 G1/G4（对称残差同为 0.398772），
+  **Z0 绿 ⇒ 实测坐实它是不动点、不承重**（我在写这条断言的注释时就是按这个理由标它"推论行"的）；
+  M6 删 `cv::max` 截断 ⇒ 红 L4（`-nan(ind)`）/L5（实测 `-9.17e-9`），**L6 绿** ⇒ 如实登记：端点判据对该臂不敏感，
+  DF-2 的承重全在 L4/L5；M7 给 `normalize` 强行加 8 位量化 ⇒ 红 N1（4.44e-4 = 444×kEps）/N4（9.80e-4），N2/N3/N5 绿（端点不动）；
+  M8a 常量支 `zeros` 改 `ones` ⇒ 红 G5/G6（各 1.0）；M8b 拆掉 `log` 的 `1e-10` 门 ⇒ 红 L7/L8（`-nan(ind)`，除 0）；
+  M9 **反事实副本臂**（只改测试侧期望常数 `170/255 → 64/255`）⇒ 红 E2 一条（实测 0.666667 对 0.250980）
+  ⇒ 证明 E2 在比数而不是恒绿；M10 `matToGdalTiff` 的 `createRaster(…, mat.cols, mat.rows, …)` 宽高互换 ⇒
+  **红 38 条**（含 Z1/Z2 四条尺寸等号与全部读像元的行）⇒ 非方夹具这条纪律的实测回报；
+  M11 后置除数 `1/255` 写成 `1/254` ⇒ 红 E3（0.003937）等 7 条；M12 `equalize` 整体改走带插值的 CLAHE ⇒
+  红 E1（0.133333）与 **E4 的 `uniq` 等号（实到 15 对期望 3）**。
+  ⚠ M1 之后 E1/E3/E4 三支**没有任何臂能红**，按 §4 Step 1 那句话（"指不出能红它的产物改动 ⇒ 换形态或写不承重"）
+  我没有留账，当场补了 M11/M12 两条针对性臂把它们钉红。
+- **取证工具自己的两个坑（产出过假证据，登记在此以免重犯）**：
+  ①第一版把 `ctest -R '…(\.|$)'` 拼成 shell 字符串交给 cmd.exe，**cmd 不认单引号** ⇒ ctest 根本没跑、
+  退出码 255 被读成"臂红了"（表现为 `RED(0)`）。修法：构建与 ctest 一律走 argv + 程序内重定向，
+  并加硬闸——臂日志里没有 `[ RUN ]` 就中止整轮，"臂没跑"不许冒充"臂红/臂绿"。
+  ②M4/M10 的第一版锚点没带句尾分号 ⇒ 注入的注释把 `;` 吃掉、编译失败（表现为 BUILD-FAIL 而非静默绿，
+  驱动当场还原并复位）。⇒ **我自己写的取证脚本同样是待验断言**。
+- **登记**：`processing,enhance` PENDING→GOLD，第 4 列 `PluginTest.ProcessingEnhanceExecution`
+  （判据与动作槽在同一块内，块体现读 `params["action"] = std::string("enhance");` + 36 条 `EXPECT_NEAR`）。
+  五张计数当场复跑：`data_rows 126`（未动）/ `gold_rows 109→110` / `pending_rows 17→16` /
+  `gold_rows_all_lines 110→111`（这条**不排注释**，新写文字一律用 `[:]GOLD` 避开 `,GOLD` 字面量，实测只涨该涨的那 1 格）/
+  `gold_rows_table_driven 15`（未动）/ `gold_rows_literal_slot 94→95`；`kPendingCeiling 17→16` **同笔**
+  （`RegistryHeaderCountsMatchData` 里有 `EXPECT_EQ(COUNT pending_rows, kPendingCeiling)` 钉这一对，分两笔会红在中间态）。
+  `tests/real_data_matrix.txt` 的 `processing,enhance` 行**本把一字未改**：第 5 列 `current_coverage=none`
+  （腿没这条 case，改 `real_regression` 就是假登记）、第 6 列 `target_tier=gold`（表头写明它是**目标档不是现状态**）、
+  第 4 列 `fixture=data` 核对结论 = **不改、登记**：`data/image/` 确有 7 件真实 TIFF（本席位用纯 `open('rb')`
+  解析 TIFF 头复算，未用 GDAL 打开原件 ⇒ 不落 `.aux.xml`），"资源可用"这一义为真；而表头 ⚠ 那条规则的第二义
+  "腿已消费 data/"对 enhance **无对象**（今天没有腿 case）。同一格在 threshold 行上是**可证伪的**——
+  它的腿取的是 `$ResolvedOutputRoot\processing_threshold_input.tif`（脚本自造的合成件）却写着 `data`
+  ⇒ 这条分叉**不是本把的新发现**，P1 那节已按 R-D39/D1-C2 既有账登记并交给 D3 矩阵对账，本把引用同一份账、不另立新案。
+- **读数**：定向配方 **43/43 全绿**、`PluginTest.Processing*` 族 **30/30 全绿**、`ctest -R "^CoverageMeta"` **19/19 全绿**、
+  `Total Tests: 802`（与基线同值，本把零新增注册）；`geotransform_guard` 本把**没碰**（新代码只 `RasterIO` 读像元、
+  不判 `GetGeoTransform` 返回值），改前改后 test 域读数逐字相同 =
+  `any=13 code=10 comment_line=3 checked=9 unchecked=1 allowlisted=1 violations=0 dead=0 RESULT PASS`；
+  `source_mojibake_guard` / `docs_match_cli` 见下面 Step 5 的复跑行；受保护 `terrain_plugin.cpp` blob 仍
+  `588a42504ee19bcb551f8214e5c1adb68cea20e9`；`data/` 两件套 = 改动文件数 0 且 `BASELINE: 88 CURRENT: 88 DIFFS: 0`。
+  ⚠ **Debug 侧专属**：Release 树本把未重编 ⇒ 以上全部只验收 Debug。
+- **缺口（照实登记，宁少一支不造恒真断言）**：见本报告 §8 的 G-1~G-7 逐条，摘要五条——
+  clahe 的**跨格插值区**没有独立期望（只有单格 clamp 探针那 4 条，插值权重区只判了"产物档数多于输入"这种形状）；
+  与 normalize 的产物差异这一条**没写成断言**（三档件上 `50/255 = 10/51` 数学相同 ⇒ 判据挪到 F2/F3 的中间档）；
+  `normalize` 常量输入的行为本把**不判**（上游未文档化，推不出独立期望）；
+  NaN→NoData 传播支不可达（夹具无 NoData ⇒ 臂里那个 NaN 是**臂的读数**，不是产品行为）；
+  `band` 只在 equalize 支判过，其余四支的 band 读取共享同一行代码 ⇒ 一次 M3 覆盖五支，不重复充数。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
