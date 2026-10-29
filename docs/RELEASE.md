@@ -3048,6 +3048,146 @@ allowlist 两侧计数也不该动 ⇒ 腿侧九计数本把**不引用**（没�
       复审席裁定**算过门**（`band` 只有两处分支链外的共用消费点：`readBandAsMat` 与 `writeMatOutput`），
       但写死 `getParam` 会令读写两侧同变 ⇒ M3 分离不了写侧，这一条是门本身的局限不是本把的偷懒。
 
+### 批次 D 覆盖晋升 P2b（2026-10-29，`processing.enhance` 的**真实腿**case 与值级分支；**不动登记表、不动 `kPendingCeiling`**）
+
+P2a 只做单测侧 ⇒ 这一把补腿。改前现读：`tests/run_real_raster_regression.ps1` 里
+`grep -n 'New-Case -Name "processing'` = pansharpen / gabor_filter / glcm_texture / mean_shift_filter /
+skeleton / connected_components / threshold **七条，没有 enhance** ⇒ 这条动作在腿上"绿"在构造上不可能。
+**射程 = 腿侧 + `tests/real_data_matrix.txt` 第 5 列那一格 + 本节**；`tests/test_plugins.cpp` 一字未改，
+`tests/action_gold_cases.txt` 与 `kPendingCeiling` 未动（P2a 已翻 GOLD）。
+
+- **N = 4 条 case**：`enhance_type` = `equalize` / `normalize` / `log` / `gamma`（后者带 `--gamma=2.0`）。
+  **`clahe` 本把明确不建 case**（不是漏）：`cv::createCLAHE(clipLimit, cv::Size(8, 8))` 的 `Size` 是**格子数**
+  ⇒ 40×24 被切成 8×8 个 5×3 的格，而三档按 20×12 的象限铺、分档线 `x=20` / `y=12` **落在两格中心之间**
+  ⇒ 边界带上的像元是两个不同 per-tile LUT 的双线性混合，`raster_inspect info` 只有一个整幅 Mean，
+  **推不出独立期望**；腿上加它只能写形状判据 = 给已知不承重的分支刷 `Mark-Judged`（就是 P2a 自己登记的 G-1）。
+  **宁少一条。**
+- **一张输入件、四条 case**：`Copy-Item $data.StepLevelRaster` 到 `$ResolvedOutputRoot` 的
+  `processing_enhance_input.tif`（40×24 单波段 Float32，档值 0/10/51、计数 240/480/240，n=960），
+  **未开 `data/` 原件**；输入件与四个产物各删一次 `.aux.xml`（`raster_inspect info` 的统计会被 PAM 边车缓存；
+  读侧 `gdalBandToMat` 是纯 `RasterIO` 不查 PAM，不受边车影响）。
+- **判据形状**：每支 5 个点 = `Assert-InfoSizeExact 40/24/1`（宽高分开比，非方夹具才看得见轴序写反；
+  不用 `Assert-TextContains "Size:…"`，子串从不比数）+ `Get-InfoBandLabelText -Label "Type"` 判 `Float32`
+  单独一条（0.0/1.0 也落得进 8 位波段）+ Min/Max/Mean 三条 `Assert-InfoBandStatNear`。
+  **StdDev 四支都不判**，理由不是"没必要"而是**可证**：三档计数固定 240/480/240 ⇒
+  `Min = m0`、`Max = m2`、`Mean = 0.25*m0 + 0.5*m1 + 0.25*m2` ⇒ `m1 = 2*(Mean - 0.25*Min - 0.25*Max)`，
+  所以**这三个打印数恰好是三个档值的双射重编码**（各承一个自由度、没有一个是另一个的推论），
+  而 `sigma^2 = 0.25*(m0^2+m2^2) + 0.5*m1^2 - Mean^2` 是同一组值的**第二次读** ⇒ 推论行。
+  本把首跑实测把这条推论关系**逐支反算坐实**：打印 StdDev `0.363242 / 0.384827 / 0.357569 / 0.354708`
+  与按三档算出的 sigma 差 ≤ 1e-6（= 打印量化本身）⇒ 判它不增判别力。
+- **容差按数据点分档，两条数量级并存是有意的**（`raster_inspect info` 走 **6 位有效**，实测打印
+  `Mean:   0.75` 与 `StdDev: 0.433013`；在 [0.1,1) 档步长 = 1e-6、半格 = 5e-7）：
+  · `Min 0` / `Max 1` 是 **float32 精确整数**、零舍入 ⇒ 容差 `1e-9`，只吸收读回噪声；
+  · 四条 `Mean` 的**打印量化残差本身**是 `2.157e-7` / `4.942e-7` / `2.786e-7` / `3.333e-7`
+    ⇒ **容差必须大于自身打印残差**，取 `1e-6`；最紧的一支是 `log`：它的精确 Mean `0.55343550582843593`
+    只比 6 位有效的**打印中点** `0.5534355` 高 `5.83e-9`，而产物侧 float32 噪声量级 1e-8
+    ⇒ 打印侧可能翻到 `0.553435`（残差 5.058e-7）⇒ **容差下界是被两侧打印残差顶出来的，不是我选的**。
+    **照抄 P1 的 `1e-9` 会让这四条 Mean 红在打印机上而不是红在缺陷上**；P1 那把的期望是零舍入整数量才配得起 `1e-9`。
+  · 每条都写了"量级 → 步长 → 最坏舍入 → 与最小可分辨缺陷的倍数"：最小可分辨缺陷 =
+    `equalize` 甲约定 Δ0.104（1.04e5× 容差）、`normalize` 差一个 8 位档 Δ1.961e-3（1961×）、
+    `log` 走量化 Δ5.109e-2（5.1e4×）、`gamma` 指数写成 γ 本身 Δ0.2022（2.02e5×）/ γ 没读 Δ0.1234（1.23e5×）。
+- **期望常数全部落笔在先，首跑对撞在后**（由夹具字面量 + OpenCV 4.14 语义推得，不从产物回填）：
+
+  | 支 | 三档（推） | Mean 闭式（推得的 double） | 推的 6 位打印 | **首跑实测打印** | 实测残差 |
+  |---|---|---|---|---|---|
+  | `equalize` | `0 / 170/255 / 1.0`（乙约定；甲约定给 `0.250980/0.749020/1.0`） | `7/12 = 0.58333333333333337` | `0.583333` | **`0.583333`** | 3.333e-07 |
+  | `normalize` | `0 / 10/51 / 1.0` | `71/204 = 0.34803921568627449` | `0.348039` | **`0.348039`** | 2.157e-07 |
+  | `log` | `0 / ln11/ln52 / 1.0` | `0.25+0.5*ln11/ln52 = 0.55343550582843593` | `0.553436` | **`0.553436`** | 4.942e-07 |
+  | `gamma` (2.0) | `0 / sqrt(10/51) / 1.0` | `0.25+0.5*sqrt(10/51) = 0.47140372138502384` | `0.471404` | **`0.471404`** | 2.786e-07 |
+
+  四支的 `Min: 0` / `Max: 1` / `Size: 40 x 24 x 1 bands` / `Type: Float32` 也逐字命中（8/8 点，0 个靠改常数命中）。
+  `equalize` 那一条在腿上是一次**独立的约定对撞**：甲约定会把 Min 推到 `0.250980`、Mean 推到 `0.687255`。
+- **反事实臂 17 臂**（每臂一份日志、串行单实例、每臂跑前重取 `git status`；rc 单独取，不走 `$(… | tail -1)`）：
+  · **(a) 族 13 臂 = 改坏期望常数**，载体是**腿脚本的副本**（连同闸文件复制、显式传全部路径参数）
+    ⇒ **被跟踪文件全程 0 行脏**。A00 无改动复现臂 rc=0 且九计数逐字不变（证明副本载体本身不产生红）；
+    A01~A12 全部 rc=1，每臂的 `actual=` 都是同一串绿值：equalize Mean→0.687255 / −1e-3 / Min→0.250980，
+    normalize Mean→+1e-3 / −1e-3 / Min→`1e-6`（**这一臂专测 1e-9 那档容差真在卡东西**：`actual=0` 也红），
+    log Mean→0.604526 / −1e-3 / Max→3.9512437，gamma Mean→0.26922337562476 / −1e-3 / Max→7.141428。
+    ⇒ 四条分支各有 Mean 两向（偏大/偏小）+ 三条 Min/Max 近失 ⇒ **12 条分支级臂覆盖 4 支 × 3 点**。
+  · **(b) 族 4 臂 = 改坏产品消费点**（`src/plugins/processing/processing_plugin.cpp`，只重编 `plugin_processing`，
+    当场还原）：B01 `convertTo(…, 1.0/255.0)`→`1.0/256.0` ⇒ equalize **Max 红 `actual=0.996094`**（= 255/256）；
+    B02 `cv::normalize(…, 0, 1, …)`→`0, 0.5` ⇒ normalize **Max 红 `actual=0.5`**；
+    B03 `shifted + 1.0`→`+ 2.0` ⇒ log **Min 红 `actual=3.84217E-09`**（**与我事前预测不符**，我预测的是 Mean 红，
+    见本节末 G-6，只登记读数不编机制）；B04 `cv::pow(normalized, 1.0/gammaVal)`→`gammaVal` ⇒ gamma **Mean 红
+    `actual=0.269223`**，而 `0.269223` 正是我**事前推的另一种实现值** `0.26922337562475973` 的 6 位有效打印
+    ⇒ A10 那个常数不是猜的、被变异臂独立复现。⇒ **四支的断言读的都是产品，不是夹具自己**；
+    B04 同时是 DF-1「指数是 `1/gamma` 而非 `gamma`」在腿上的承重证明。
+  · **还原证明（两条一起用）**：动手前工作树裸 `sha256 = 169bc45d…63402`（CRLF 1556 行 / 77282 字节）；
+    `git show HEAD:<path>` + 按原行尾归一 **预演**（不写盘）⇒ 与工作树字节相同；四臂各自 `restore:
+    bytes_equal=True diff_empty=True tree_dirty_lines=0`；末了干净重编 rc=0 再验一次同上，且工作树裸 sha
+    与动手前**逐字相同**。⚠ 全程**未**用 `git hash-object --no-filters` 对 blob 当"字节相同"证据
+    （blob `5af602d2…`/75726 字节 vs 工作树 77282 字节，差的正是 1556 个 CR ⇒ 该口径在 autocrlf 下必假）。
+- **腿九计数前后两串**（现跑口径 = `ctest --test-dir build/debug -C Debug -R "^real_data_raster$" -V` 的
+  `regression-gate[raster]:` 那一行；改前三跑逐字相同、改后四跑逐字相同）：
+
+  ```
+  改前  registered=74 ran=74 judged=53 allowlisted=21 allowlist-table=21
+        allowlist-gated-not-registered=0 branch-labels=54 conditional-registrations=1 dead-branches=0
+  改后  registered=78 ran=78 judged=57 allowlisted=21 allowlist-table=21
+        allowlist-gated-not-registered=0 branch-labels=58 conditional-registrations=1 dead-branches=0
+  不变量  judged + allowlisted = 53 + 21 = 74 = ran（改前）;  57 + 21 = 78 = ran（改后）
+  ```
+
+  `allowlisted` / `allowlist-table` 都是 21 ⇒ `$rasterGateAllowlist` 的 21 条**一字未动**
+  （`git diff HEAD~1 HEAD` 里 `rasterGateAllowlist`/`Name = "…"` 命中数 = 0，现跑）；
+  `dead-branches=0` ⇒ 每条新分支都对应一条在名单里的 case。
+  ⚠ `branch-labels` 恒比 `judged` 多 1（改前 54/53、改后 58/57）是**改前既有形状**、不是本把引入：
+  `classification_feature_stats_csv` 的 `New-Case` 站在 `if ($Mode -eq "full")` 里而 `real_data_raster`
+  用 `-DMODE=quick` 起 ⇒ 它有分支标签但本次没跑，闸把它算进 `conditional-registrations=1`；
+  我用独立复算确认本文件 `switch ($Case.Name)` **1 个 / 54 个不重名标签 / 54 个体首行全是 `Mark-Judged`**
+  ⇒ 没有"有分支不判"的漏。
+- **腿墙钟前后两串 + 余量算法**（同一棵树、同一二进制、每跑前 `tasklist` 硬门控 = 0）：
+
+  ```
+  改前  18.15（首跑，冷）/ 16.05 / 16.37            warm 均值 16.21
+  改后  20.72（首跑，冷）/ 16.53 / 16.90 / 19.98（还原后补跑）  warm 均值 16.72
+  同位对  冷 +2.57 s（首回要新碰 4 个产物名）   warm +0.51 s（8 次进程派生 ≈ 64 ms/次）
+  触发线  改前档最大值 × 2.5 = 18.15 × 2.5 = 45.375 s  >  改后最大 20.72 s  ⇒ 未跌破，余量 2.19×
+  TIMEOUT 60 未抬：60 / 20.72 = 2.90×（改前 60 / 18.15 = 3.31×）；warm 档另算 16.90 × 2.5 = 42.25 s < 60
+  ```
+
+  ⚠ **本机比控制器档慢**：控制器 10:3x 的改前档散布 13.14~15.19 s，我三跑是 16.05~18.15 s，
+  `tests/CMakeLists.txt` 的腿墙钟表另记 `real_data_raster 13.25 / 11.02` ⇒ 同一串判据、同一棵树下的宿主负载/缓存差；
+  **2.5× 线一律用我自己的改前档，不借控制器的 15.27**（否则会把环境差算成本把的开销）。
+- **回归复跑（Debug 树，现跑）**：全库 `ctest -N` `Total Tests: 802`（改前改后同值，本把不新增注册用例）；
+  定向配方（含四条守卫 + `CoverageMeta*` + `PluginTest.Raster*` + `real_data_raster`）`Total Tests: 43` ⇒
+  **43/43 全绿，42.77 s**；`^PluginTest\.Processing` 族 **30 条 / 30 绿，5.29 s**（本把不改单测 ⇒ 应仍 30，实跑命中）。
+  `geotransform_guard` 本把**没碰**：新增代码只在腿侧 `raster_inspect info` 上判，不判 `GetGeoTransform` 返回值。
+- **矩阵同笔**：`tests/real_data_matrix.txt` 的 `processing,enhance` 行第 5 列 `none → real_regression`
+  （现跑 `git diff --numstat` = 1 1，整表只动这一行、只动这一格；依据 = 表头对第 5 列的逐字定义
+  "动作已出现在某条 real_*_regression 的 `New-Case` 里"）。第 6 列 `target_tier=gold` 是**目标档不是现状态** ⇒ 不动。
+  第 4 列 `fixture=data` 本把重新复核过：按表头后半段定义（"raster 腿一直走合成兜底 ⇒ 覆盖行标 not-consumed"）
+  本行应记 `not-consumed`——输入件实际是 `gui_test_data_helper` 生成的 `step_level_input.tif`，
+  且 `data/` 现读只有 `dem image vector` 三个子目录、**没有 `data/raster`**；但**同一列 85 行都写 `data`**
+  （`awk -F,` 现读分布 = synthetic 7 / data 85 / not-consumed 34），而 `raster_manage,cog`（R3a）、
+  `raster_manage,zonal_stats`（R3b）、`processing,threshold`（P1）四行已提交先例都是 `data + real_regression`
+  ⇒ **不在本把单点改**（改要在同笔里对 85 行一致处理），归 D3 的矩阵对账。矩阵**没有任何机器判据**
+  （`grep -rn real_data_matrix` 排除 build 现跑 = 0 命中）⇒ 这类格子只能靠人同笔，改错没人拦。
+- **文本合规**：`tests/run_real_raster_regression.ps1` 改后逐文件现读 **CRLF 2975 / 裸 LF 0 / 非 ASCII 0 字节 /
+  `Parser::ParseFile` 0 错**；`tests/real_data_matrix.txt` **CRLF 184 / 裸 LF 0**；`docs/RELEASE.md` **CRLF 未变**。
+  新增注释无裸行号锚点（一律"函数名 + 判据原文片段"），无对被 gitignore 的私有报告/产物的引用。
+  ⚠ 提交前自查抓到一处**误改 P1 已提交注释**（`sqrt(p*(1-p))` 被我手打成 `sqrt(p(1-p))`，
+  `git diff --stat` 的 `1 deletion` 暴露了它）⇒ 单独还原后才提交，最终 `git diff --numstat` = **268 0**（纯新增、删除 0 行）。
+- **缺口（照实登记 8 条，不引任何私有文件）**：
+  G-1 `clahe` 在腿上**没有 case**：跨格插值区推不出独立期望（与本节 P2a 的 G-1 同一条，腿侧继承）。
+  G-2 `normalize` 的"不经 8 位量化"在半腿夹具上**无可观察量**：`toUint8` 标度恰 `255/51 = 5.0` ⇒
+      中间档落 50，而 `50/255 = 10/51` 是同一有理数 ⇒ 两种实现打印逐字相同（P2a 的 G-3 已记过这条等价，
+      且裁定"等价是夹具决定的、不是产品决定的"；本把只把它从单测面复述到腿面）。
+  G-3 `log` 的截断支 `cv::max(mat, 0.0, clamped)` 在本夹具**恒等**（三档全非负）⇒ "截断 vs 平移"在腿上分不开，
+      只有单测 F3（含 `-20` 档）能判。
+  G-4 本把四条 case **不判 `band`**（腿侧夹具只有 1 个波段）⇒ 腿侧 band 零覆盖，band 的承重只在单测 Z5~Z8。
+  G-5 矩阵第 4 列 `fixture` 的启发式（本行按定义应为 `not-consumed`）与 note 的"开批前核对"结论
+      **都只活在复核里、没进 tracked 文本**（射程只给了第 5 列）⇒ 归 D3 矩阵对账。
+  G-6 B03 臂（`log` 支 `+1.0`→`+2.0`）实测最低档打印是 `3.84217E-09` 而**不是我预测的 `0`**，
+      机制本把没解释清楚（只登记读数；它不改动绿腿——干净产物实测 `Min: 0` 逐字为 0）。
+  G-7 `gamma` 在腿上只走 **γ=2.0（提亮向）**；γ<1 压暗向无腿 case（单测 G4 有），
+      且 γ 的失败契约（`gamma <= 0`）与常量输入退化支在腿上不可达（本夹具三档非常量）。
+  G-8 **Release 树本把未重编** ⇒ 上面全部只验收 Debug；Release 侧结论一律未验收。
+  ⚠ 另记一条**载体归属纠正**（不是缺口）：`$data.StepLevelRaster` 的造件函数 `makeStepLevelRaster`
+  在 `tests/gui_test_data_helper.cpp`（**C++**，经 `Invoke-Helper` 的 `step-level-raster` 子命令调用），
+  与单测侧的 `createStepLevelRaster` **同属 C++**、只差前缀；早前工作底稿把它写成"PowerShell 侧造件"是错的，
+  且 `grep -n makeStepLevelRaster tests/run_real_raster_regression.ps1` 实测 **6 处、全在注释里**（底稿写 13 处）。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
