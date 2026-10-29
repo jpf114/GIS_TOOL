@@ -3097,13 +3097,14 @@ skeleton / connected_components / threshold **七条，没有 enhance** ⇒ 这�
 
   四支的 `Min: 0` / `Max: 1` / `Size: 40 x 24 x 1 bands` / `Type: Float32` 也逐字命中（8/8 点，0 个靠改常数命中）。
   `equalize` 那一条在腿上是一次**独立的约定对撞**：甲约定会把 Min 推到 `0.250980`、Mean 推到 `0.687255`。
-- **反事实臂 17 臂**（每臂一份日志、串行单实例、每臂跑前重取 `git status`；rc 单独取，不走 `$(… | tail -1)`）：
-  · **(a) 族 13 臂 = 改坏期望常数**，载体是**腿脚本的副本**（连同闸文件复制、显式传全部路径参数）
+- **反事实臂 18 臂 = (a) 族 14 + (b) 族 4**（每臂一份日志、串行单实例、每臂跑前重取 `git status`；rc 单独取，不走 `$(… | tail -1)`）：
+  · **(a) 族 14 臂（A00 复现臂 + A01~A13 共 13 条改坏期望常数的臂）**，载体是**腿脚本的副本**（连同闸文件复制、显式传全部路径参数）
     ⇒ **被跟踪文件全程 0 行脏**。A00 无改动复现臂 rc=0 且九计数逐字不变（证明副本载体本身不产生红）；
-    A01~A12 全部 rc=1，每臂的 `actual=` 都是同一串绿值：equalize Mean→0.687255 / −1e-3 / Min→0.250980，
+    A01~A13 全部 rc=1，每臂的 `actual=` 都是同一串绿值：equalize Mean→0.687255 / −1e-3 / Min→0.250980，
     normalize Mean→+1e-3 / −1e-3 / Min→`1e-6`（**这一臂专测 1e-9 那档容差真在卡东西**：`actual=0` 也红），
-    log Mean→0.604526 / −1e-3 / Max→3.9512437，gamma Mean→0.26922337562476 / −1e-3 / Max→7.141428。
-    ⇒ 四条分支各有 Mean 两向（偏大/偏小）+ 三条 Min/Max 近失 ⇒ **12 条分支级臂覆盖 4 支 × 3 点**。
+    log Mean→0.604526 / −1e-3 / Max→3.9512437，gamma Mean→0.26922337562476 / −1e-3 / **+1e-3**（A13，
+    补跑这一条是因为 A10/A11 两支都落在偏小侧 ⇒ "偏大/偏小各一"在 gamma 上缺一边，补上才对得起那句话）/ Max→7.141428。
+    ⇒ **每支都齐了 Mean 的偏大与偏小两向**，另加四臂专测 Min/Max 那两档 `1e-9` 的行不是装饰。
   · **(b) 族 4 臂 = 改坏产品消费点**（`src/plugins/processing/processing_plugin.cpp`，只重编 `plugin_processing`，
     当场还原）：B01 `convertTo(…, 1.0/255.0)`→`1.0/256.0` ⇒ equalize **Max 红 `actual=0.996094`**（= 255/256）；
     B02 `cv::normalize(…, 0, 1, …)`→`0, 0.5` ⇒ normalize **Max 红 `actual=0.5`**；
@@ -3164,7 +3165,7 @@ skeleton / connected_components / threshold **七条，没有 enhance** ⇒ 这�
   ⇒ **不在本把单点改**（改要在同笔里对 85 行一致处理），归 D3 的矩阵对账。矩阵**没有任何机器判据**
   （`grep -rn real_data_matrix` 排除 build 现跑 = 0 命中）⇒ 这类格子只能靠人同笔，改错没人拦。
 - **文本合规**：`tests/run_real_raster_regression.ps1` 改后逐文件现读 **CRLF 2975 / 裸 LF 0 / 非 ASCII 0 字节 /
-  `Parser::ParseFile` 0 错**；`tests/real_data_matrix.txt` **CRLF 184 / 裸 LF 0**；`docs/RELEASE.md` **CRLF 未变**。
+  `Parser::ParseFile` 0 错**；`tests/real_data_matrix.txt` **CRLF 184 / 裸 LF 0**；`docs/RELEASE.md` 本节定稿后现读 **CRLF 3985 / 裸 LF 0**（改前 3844 ⇒ 本节净增 141 行；这是**本文档自己的总行数**，随后续任何编辑就变，所以只当定稿值、不当引用锚）。
   新增注释无裸行号锚点（一律"函数名 + 判据原文片段"），无对被 gitignore 的私有报告/产物的引用。
   ⚠ 提交前自查抓到一处**误改 P1 已提交注释**（`sqrt(p*(1-p))` 被我手打成 `sqrt(p(1-p))`，
   `git diff --stat` 的 `1 deletion` 暴露了它）⇒ 单独还原后才提交，最终 `git diff --numstat` = **268 0**（纯新增、删除 0 行）。
