@@ -2852,9 +2852,18 @@ Step 2 腿侧 + Step 4 登记 + Step 5 文档 + Step 6 回归读数回写。Step
 
 - **产品面现读**（`ProcessingPlugin::doThreshold`，与工单 §1 一致，另多读到三件）：键 `band`=1 /
   `method`=`otsu` / `threshold_value`=128.0 / `max_value`=255.0；先 `gis::core::toUint8` 归一再比较，
-  所以**阈值值比的是归一后的 0..255**；写出是 `convertTo(CV_32F, 1/255)` ⇒ **产物值域 = max_value/255**，
-  除数 255 是字面量、与 `max_value` 无关（工单 §2.4 那句"max_value 同时进 upper 与 /255 缩放"经实测**否证**：
-  它只进 `cv::threshold` 的 upper）；`writeMatOutput → matToGdalTiff` 建的是单波段 Float32 ⇒ 产物恒 1 波段，
+  所以**阈值值比的是归一后的 0..255**；写出是 `convertTo(CV_32F, 1/255)` ⇒ 除数 255 是字面量、
+  与 `max_value` 无关（工单 §2.4 那句"max_value 同时进 upper 与 /255 缩放"经实测**否证**）。
+  ⚠ **产物上界要分两族，"= max_value/255"不是全称**（复审席立案 MF-1；控制器 2026-10-29 修复轮用
+  shipped Debug CLI 零 src 改动独立复跑坐实，同一张 40x24 三档件、`threshold_value=100` 除注明外）：
+  `binary`/`binary_inv`/`otsu`/`adaptive_gaussian`/`adaptive_mean` 五支把 `max_value` 当赋值上限
+  （**`max_value` 除进 `cv::threshold` 的 upper，也进两支 `cv::adaptiveThreshold` 的 `maxValue`**）；
+  `truncate` 把超阈值像元**截到阈值本身**、`tozero` **保留归一后的原值**，两支都不读 `max_value`
+  —— 实测 `truncate` 配 `max_value∈{255,102,50}` 产物逐字相同（`Max 0.392157 = 100/255`）、
+  `truncate + threshold_value=250` 配 `{255,12}` 都是 `Max 0.980392`、`tozero` 配 `{255,102,7}` 恒
+  `Max 1 / Mean 0.25`；对照 `binary` 配 `102` 给 `Max 0.4`、配 `7` 给 `Max 0.027451`。
+  ⇒ 三处已提交文本（`阈值分割.md` 两处、`test_plugins.cpp` 推导链 (b) 一处、本节原先那句）
+  都写成了全称，本轮一并收口；`writeMatOutput → matToGdalTiff` 建的是单波段 Float32 ⇒ 产物恒 1 波段，
   `band` 只用于选输入。`toUint8` 的 `CV_8U` 直接 clone 支在本动作不可达（`gdalBandToMat` 恒按 `GDT_Float32` 读），
   没为它写恒真断言。
 - **夹具**四张，全部**非方 40x24**（三档/四档平台，R1 纪律 3：方夹具上"宽高互换"是等价变异 = 自我盲区）；
@@ -2864,8 +2873,9 @@ Step 2 腿侧 + Step 4 登记 + Step 5 文档 + Step 6 回归读数回写。Step
   "常数阈值"分开（三峰夹具做不到：归一后 min/max 恒 0/255 ⇒ 最优间隙必含 127.5，与默认阈值不可分）。
 - **单测**：扩写既有块 ⇒ 全库 `Total Tests: 802` 不变、`PluginTest.Processing*` 仍 30、`PluginTest.Raster*` 仍 19。
   值级断言 **35 条 `EXPECT_NEAR`**（口径：直接数块内代码行；按 `git show` 新增行数=36、按出现次数=38 都含
-  同一行注释里的三个宏名 ⇒ 都不是条数；`8458db7` message 里那个 42 无读数量得支持，禁 `--amend` 故历史保留、
-  更正落在私有报告 §3.3）。期望表 13 档在**首读之前**落盘，首读逐格命中、未改一个期望。
+  同一行注释里的三个宏名 ⇒ 都不是条数；`8458db7` message 里那个 42 无读数量得支持，禁 `--amend` 故历史保留，
+  更正以本句为准——那条注释位于 `TEST_F` **之上**、不在块体内，所以"新增行剥注释"与"块内代码行"
+  是两个不同总体，只是这一把恰好同值 35）。期望表 13 档在**首读之前**落盘，首读逐格命中、未改一个期望。
 - **腿侧**：新建 `New-Case -Name processing_threshold`（该动作此前在本腿**连 case 都没有**）+ 一条值级分支，
   输入是 `step_level_input.tif` 的**副本**（`data/` 原件只读），分支判 `40 x 24 x 1` 分开、dtype Float32、
   `Min 0 / Max 1 / Mean 0.75`（`720/960`，六个有效数字打成 `0.75` ⇒ 零舍入残差）。
@@ -2879,9 +2889,10 @@ Step 2 腿侧 + Step 4 登记 + Step 5 文档 + Step 6 回归读数回写。Step
   M5 吃掉 `band` 键 ⇒ 红在 A9 那一格、**腿绿**（腿发 `--band=1`）；M6 吃掉 `max_value` 键 ⇒ 红在 A7 那一格
   （实到 1 对期望 0.4）、**腿绿**；M7 `TRUNC` 写成 `TOZERO` ⇒ 红 2 格、腿绿；M8 未知 method 的 `fail` 吞成 `ok`
   ⇒ 红 2 格、腿绿；M10 摘掉 `THRESH_OTSU` 标志 ⇒ 恰好红在 A10 那一格、腿绿。
-  **M4（往 OTSU 调用里传 `threshVal`）单测与腿双绿 ⇒ 等价变异**，归因**上游**（`THRESH_OTSU` 下 `thresh` 是出参）
+  **M4（往 OTSU 调用里传 `threshVal`）单测绿 ⇒ 等价变异**，归因**上游**（`THRESH_OTSU` 下 `thresh` 是出参）
   而不是本把挑的夹具：能推翻该等价的形状是"入参被 honor ⇒ A10 必红"，而 A10 的承重由**另一支** M10 单独证明，
-  两支不互相顶名。腿的敏感度全部实测：红 = M1/M2/M3/M9，绿 = M4/M5/M6/M7/M8/M10（覆盖边界登记在缺口，不当缺陷写）。
+  两支不互相顶名。⚠ **腿侧那一格不计入等价证据**：本腿 `grep -c otsu` = 0、只发 `--method=binary`，
+  OTSU 调用点对本腿是**结构不可达**，不是"第二次独立证明"（等价牌只发单测那一份）。腿的敏感度全部实测：红 = M1/M2/M3/M9，绿 = M4/M5/M6/M7/M8/M10（覆盖边界登记在缺口，不当缺陷写）。
   还原凭据（10/10 全过）：动手前 `.BASE` 与干净树对拍 identical=True，工作树裸 sha256
   `169bc45df938525b8309ab70338e604df275971b226f341baf7536856ac63402` 在每臂还原后逐字相同、
   `git hash-object`（套 filter）== `HEAD` blob `dd4fdeea702e72071917c6f8a7a65262de6e43b4`、`git status` 空；
@@ -2894,17 +2905,22 @@ Step 2 腿侧 + Step 4 登记 + Step 5 文档 + Step 6 回归读数回写。Step
   `kPendingCeiling 18→17`；PENDING 分布 `processing 15→14`（matching 2 / spindex 1 未动）。
   **R-D39 同笔**：`tests/real_data_matrix.txt` 本行第 5 列 `none→real_regression`；note 那句
   "夹具来源为启发式判定"核对结果 = 本 case 实际消费的是 helper 现生成的 `step_level_input.tif`
-  （仓库无 `data/raster`），所以该行第 4 列 `fixture=data` 与腿侧实际取的合成兜底件互相矛盾 ⇒
-  矩阵无机器判据、列义属批次 C 定稿口径，本把不动它，登记给 D3 矩阵对账。
+  （仓库无 `data/raster`），所以该行第 4 列 `fixture=data` 与腿侧实际取的合成兜底件互相矛盾
+  ——**这不是本把的新发现**：同族账已记在 R-D39 与 D1-C2（`cutting,tile` / `terrain,curvature` 两格自批次 C 起
+  没人改），矩阵无机器判据、列义属批次 C 定稿口径 ⇒ 本把不动它，**引用既有账**给 D3 矩阵对账
+  （#184：D3 数条目时别把它算成两条新账）。
 - **读数**：`ctest -R "^real_data_raster$" -V` 改后闸九字段 = `registered=74` / `ran=74` / `judged=53` /
   `allowlisted=21` / `allowlist-table=21` / `allowlist-gated-not-registered=0` / `branch-labels=54` /
   `conditional-registrations=1` / `dead-branches=0` ⇒ 不变量 `53 + 21 = 74` 成立、与工单 §0 预期逐字段命中；
-  腿墙钟 = Step 6 复跑两跑 `13.52` / `13.59 s` ⇒ 取最慢 **13.59 s**（Step 2 收口那一次读 13.14 s，同一状态）。2.5× 拆腿触发线按**改前那一档** 15.27 s 算 = **38.175 s** ⇒ 余量 2.81×，未触，未抬 TIMEOUT，未减断言。⚠ 红臂那四跑（10.70 / 11.60 / 11.87 / 11.98）是中途抛错退出的跑，不计入这条腿的散布。
+  腿墙钟（**五跑**，含修复轮）= `13.14`（Step 2 收口）/ 复审席复跑 `13.41` / Step 6 复跑 `13.52` / `13.59` / 修复轮复跑 **`15.19 s`** ⇒ 最慢 **15.19 s**。2.5× 拆腿触发线按**改前那一档** 15.27 s 算 = **38.175 s** ⇒ 余量 38.175 / 15.19 = **2.51×**，未触，未抬 TIMEOUT，未减断言。⚠ 这五跑不是同一台面：`15.19` 与改前那档 `15.27` 同量级，成因未证 ⇒ 不外推，只登记散布变宽。⚠ 红臂那四跑（10.70 / 11.60 / 11.87 / 11.98）是中途抛错退出的跑，不计入这条腿的散布。
   定向配方 **43/43 全绿**、`PluginTest.Processing*` 族 **30/30 全绿**、`Total Tests: 802`、
   `geotransform_guard` 两域现读**逐字未动** = test 域 `any=13 code=10 comment_line=3 checked=9 unchecked=1 allowlisted=1 violations=0 dead=0`，product 域 `any=21 code=20 comment_line=1 checked=18 unchecked=2 allowlisted=2 violations=0 dead=0` ⇒ 本把没有新增判了返回值的 `GetGeoTransform(` 位点，也没有放宽任何一侧。
 - **缺口（照实登记）**：`adaptive_gaussian` / `adaptive_mean` 两支**无判据也无臂**（blockSize/C 写死、
   期望要自己复算局部邻域积分 ⇒ 宁少一条不造恒真断言）；`toUint8` 退化支（整幅同值 ⇒ 置 0）没有专属臂
-  （在 `src/core`，改它波及别的动作）；非整数 `threshold_value` 的取整方向未取证；本把全部结论
+  （在 `src/core`，改它波及别的动作）；**非整数 `threshold_value` 这一条本轮当场结案**
+  （修复轮实测，零 src 改动：`tv=49.0 / 49.4 / 49.6` 都给 `Mean 0.75`、`50.5 / 50.6` 都给 `0.25`
+  ⇒ 观测上**等价于向下取整后再比**；但机制层"直接按小数比"与"先取整再比"对**恒为 8 位整数**的被比如元
+  给同一结果 ⇒ 在本动作不可分辨，所以只登记观测、不写因果）；本把全部结论
   **只验收 Debug 侧**（Release 树未重编）。
 
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
