@@ -2846,8 +2846,9 @@ R3 三行（`cog`/`zonal_stats`/`histogram_match`，要先新建腿 case）一�
 射程**一行**：`tests/action_gold_cases.txt` 的 `processing,threshold`。刀序相对台账有一处改动已在工单里登记：
 台账把 P1 写成 `threshold` + `enhance` 两条，两者都是多模式算子 ⇒ 一把一条，`enhance` 另起（本把没碰它）。
 本把跨两把席位：前席在 Step 2 中途被平台报错打断（`8458db7` = Step 1 已提交、`.ps1` 的 +79 行在途），
-续作席从 `8458db7` 接手，**未回退在途改动**，收口 Step 2/3/4/5/6。四笔 = `8458db7`（Step1 单测）+
-Step2 腿侧 + Step4 登记 + Step5 文档。
+续作席从 `8458db7` 接手，**未回退在途改动**，收口 Step 2/3/4/5/6。五笔 = `8458db7`（Step 1 单测）+
+Step 2 腿侧 + Step 4 登记 + Step 5 文档 + Step 6 回归读数回写。Step 3 没有仓库提交：它的产物是 `src/` 的
+临时变异（已还原并三项对拍）与 `build/tmp` 里的臂日志，凭据写进 Step 4/5 两笔的 message 与正文。
 
 - **产品面现读**（`ProcessingPlugin::doThreshold`，与工单 §1 一致，另多读到三件）：键 `band`=1 /
   `method`=`otsu` / `threshold_value`=128.0 / `max_value`=255.0；先 `gis::core::toUint8` 归一再比较，
@@ -2898,9 +2899,9 @@ Step2 腿侧 + Step4 登记 + Step5 文档。
 - **读数**：`ctest -R "^real_data_raster$" -V` 改后闸九字段 = `registered=74` / `ran=74` / `judged=53` /
   `allowlisted=21` / `allowlist-table=21` / `allowlist-gated-not-registered=0` / `branch-labels=54` /
   `conditional-registrations=1` / `dead-branches=0` ⇒ 不变量 `53 + 21 = 74` 成立、与工单 §0 预期逐字段命中；
-  腿墙钟 13.14 s（2.5× 拆腿触发线按**改前那一档** 15.27 s 算 = **38.175 s**，未触，未抬 TIMEOUT）。
+  腿墙钟 = Step 6 复跑两跑 `13.52` / `13.59 s` ⇒ 取最慢 **13.59 s**（Step 2 收口那一次读 13.14 s，同一状态）。2.5× 拆腿触发线按**改前那一档** 15.27 s 算 = **38.175 s** ⇒ 余量 2.81×，未触，未抬 TIMEOUT，未减断言。⚠ 红臂那四跑（10.70 / 11.60 / 11.87 / 11.98）是中途抛错退出的跑，不计入这条腿的散布。
   定向配方 **43/43 全绿**、`PluginTest.Processing*` 族 **30/30 全绿**、`Total Tests: 802`、
-  `geotransform_guard` 两域读数本把未动（未新增判了返回值的 `GetGeoTransform(` 位点）。
+  `geotransform_guard` 两域现读**逐字未动** = test 域 `any=13 code=10 comment_line=3 checked=9 unchecked=1 allowlisted=1 violations=0 dead=0`，product 域 `any=21 code=20 comment_line=1 checked=18 unchecked=2 allowlisted=2 violations=0 dead=0` ⇒ 本把没有新增判了返回值的 `GetGeoTransform(` 位点，也没有放宽任何一侧。
 - **缺口（照实登记）**：`adaptive_gaussian` / `adaptive_mean` 两支**无判据也无臂**（blockSize/C 写死、
   期望要自己复算局部邻域积分 ⇒ 宁少一条不造恒真断言）；`toUint8` 退化支（整幅同值 ⇒ 置 0）没有专属臂
   （在 `src/core`，改它波及别的动作）；非整数 `threshold_value` 的取整方向未取证；本把全部结论
