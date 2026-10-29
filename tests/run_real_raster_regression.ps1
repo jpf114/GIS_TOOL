@@ -1451,6 +1451,155 @@ function Validate-CaseOutputs {
             # the PluginTest.ProcessingThresholdExecution unit block, which is the leg/unit split this
             # seat registers as a coverage boundary rather than padding the leg with a duplicate row.
         }
+        # ------------------------------------------------------------------------------------
+        # P2b (batch D): the four processing.enhance cases registered below.
+        # SHARED REASONING for all four (stated once here rather than copied four times, so a future
+        # edit cannot let the copies drift apart):
+        #   * size / dtype: all four products come from the SAME writer (writeMatOutput -> matToGdalTiff
+        #     -> createRaster(dst, mat.cols, mat.rows, 1, GDT_Float32)), so these two rows judge the
+        #     WRITER, not the enhance_type. They are asserted per branch because each branch reads a
+        #     different file, but their discriminating power is one shared shape, and the per-branch
+        #     load-bearing rows are the three statistics below them.
+        #   * Assert-InfoSizeExact instead of Assert-TextContains "Size:   40 x 24 x 1 bands": the
+        #     substring never compares the numbers, and width and height are compared SEPARATELY so an
+        #     axis swap (mat.cols/mat.rows written the other way round) is visible on this non-square
+        #     fixture (a square one is an x/y reflexive invariant and cannot see it).
+        #   * dtype is its own judgement: 0.0 / 0.666667 / 1.0 would also fit an 8-bit band, so "Type"
+        #     is not a corollary of Min/Max/Mean.
+        #   * tolerance, per data point (raster_inspect info prints at SIX SIGNIFICANT digits, measured
+        #     on this carrier, verbatim: "Mean:   0.75" and "StdDev: 0.433013"):
+        #       - Min 0 / Max 1 are whole integers that the float32 pipeline produces EXACTLY
+        #         (0*x -> 0.0; the top plateau's convertTo scale 1/255 and the normalisation x/x both
+        #         land on 1.0), so their print residual is zero and 1e-9 only buys float32 read-back
+        #         noise <= 1 ulp. Nearest defects are >= 2.5e-1 away => >= 2.5e8 times the tolerance.
+        #       - the four Means are NOT zero-rounding quantities: at magnitude ~0.3-0.6 the six-digit
+        #         step is 1e-6 and the half-step is 5e-7, so the tolerance MUST be larger than the
+        #         point's own print residual. 1e-6 is used, and per branch the sandwich is written
+        #         below the assertion it covers. Do not "tighten" these to 1e-9: that would make them
+        #         red on the printer, not on a defect.
+        #   * StdDev is not asserted in any of the four: sigma^2 = 0.25*(m0^2+m2^2) + 0.5*m1^2 - Mean^2
+        #     is the same three plateau values read a second time (corollary row, same reasoning P1 used).
+        #   * clahe has no branch here on purpose -- see the block comment at the New-Case sites.
+        # ------------------------------------------------------------------------------------
+        "processing_enhance_equalize" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($processingEnhanceEqualizeOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingEnhanceEqualizeOutput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 40 -ExpectedHeight 24 -ExpectedBands 1 -Message (
+                "processing_enhance_equalize did not write the 40 x 24 x 1 band product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_enhance_equalize product must be Float32 (convertTo(CV_32F, 1/255) then matToGdalTiff)")
+            # Sandwich, equalize: Min 0 and Max 1 are exact float32 integers -> zero print residual,
+            # 1e-9 only absorbs read-back noise. Nearest defects: lut[0] not forced to 0 (the other CDF
+            # convention) -> Min 0.250980 (|d| = 0.251 = 2.5e8 x tol); lut[255] = 254 instead of 255 ->
+            # Max 0.996078 (|d| = 3.92e-3 = 3.9e6 x tol). SCOPE LIMIT worth stating: a ONE-ulp drift of
+            # Max below 1.0 prints as "1" at six significant digits and is not resolvable on this
+            # carrier at all -- that exactness is what the per-pixel unit probe (E3) is for.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "processing_enhance_equalize lowest u8 level is the first occupied one, upstream assigns lut[i0]=0")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 1 -Tolerance 1e-9 -Message (
+                "processing_enhance_equalize highest u8 level must map to lut=255 -> 255/255 = 1.0 exactly")
+            # Sandwich, Mean 7/12 = 0.58333333333333337: magnitude in [0.5,1) -> step 1e-6, half-step
+            # 5e-7; the product's own mean is 0.5833333432 (float32 170/255 accumulated over 480 px adds
+            # <= 2.5e-8), which prints 0.583333 -> |printed - expected| = 3.33e-7, worst case with the
+            # float32 term 3.58e-7 (2.8 x headroom). Even if the printer rounded UP to 0.583334 the
+            # distance would be 6.7e-7 (1.5 x headroom), so no false red either way. Smallest
+            # distinguishable defect: the other CDF convention gives Mean 0.687255, |d| = 0.103922 =
+            # 1.04e5 x the tolerance.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (7.0 / 12.0) -Tolerance 1e-6 -Message (
+                "processing_enhance_equalize mean should be 7/12 = (240*0 + 480*170/255 + 240*1)/960 (beta CDF convention)")
+        }
+        "processing_enhance_normalize" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($processingEnhanceNormalizeOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingEnhanceNormalizeOutput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 40 -ExpectedHeight 24 -ExpectedBands 1 -Message (
+                "processing_enhance_normalize did not write the 40 x 24 x 1 band product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_enhance_normalize product must be Float32 (NORM_MINMAX with CV_32F as the destination type)")
+            # Sandwich, normalize: Min 0 / Max 1 are the NORM_MINMAX alpha/beta landed on float32
+            # exactly (51 * (1/51) is the double 0.99999999999999989, whose nearest float32 is 1.0), so
+            # zero print residual and 1e-9 absorbs read-back noise only. Nearest defect: alpha/beta
+            # swapped or a non-zero alpha -> Min/Max move by >= 1e-2 (>= 1e7 x tol).
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "processing_enhance_normalize raw min plateau (0, 240 px) must map to NORM_MINMAX alpha 0")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 1 -Tolerance 1e-9 -Message (
+                "processing_enhance_normalize raw max plateau (51, 240 px) must map to NORM_MINMAX beta 1")
+            # Sandwich, Mean 71/204 = 0.34803921568627449: magnitude in [0.1,1) -> step 1e-6, half-step
+            # 5e-7. The product's own mean is 0.3480392173 (float32 10/51 adds <= 3e-9), which prints
+            # 0.348039 -> |printed - expected| = 2.16e-7, worst case 2.19e-7 (4.6 x headroom); it sits
+            # 2.83e-7 below the rounding midpoint 0.3480395, far outside the float32 term, so the print
+            # side is not in question here. Smallest distinguishable defect on this row: the middle
+            # plateau off by one 8-bit level (50/255 -> 51/255) moves the Mean by 0.5*(1/255) =
+            # 1.961e-3 = 1961 x the tolerance.
+            # NOTE the honest scope limit: on THIS fixture an 8-bit-detoured normalize is NOT separable,
+            # because 50/255 and 10/51 are the same rational -- see the block comment at the New-Case.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (71.0 / 204.0) -Tolerance 1e-6 -Message (
+                "processing_enhance_normalize mean should be 71/204 = (480*10/51 + 240*1)/960")
+        }
+        "processing_enhance_log" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($processingEnhanceLogOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingEnhanceLogOutput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 40 -ExpectedHeight 24 -ExpectedBands 1 -Message (
+                "processing_enhance_log did not write the 40 x 24 x 1 band product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_enhance_log product must be Float32 (cv::log on CV_32F then the min/max gate)")
+            # Sandwich, log Min/Max: ln(0+1) = 0 and the gate divides maxVal by itself -> exactly 1.0 in
+            # float32, so zero print residual and 1e-9 absorbs read-back noise only. Max is the load
+            # bearing one here: if the (maxVal-minVal) > 1e-10 normalisation were skipped, Max would be
+            # ln(52) = 3.9512437 -> printed 3.95124 (|d| = 2.95 = 2.95e9 x tol) and Mean 3.17457.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "processing_enhance_log lowest plateau is ln(0+1) = 0 and it is also the min used by the gate")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 1 -Tolerance 1e-9 -Message (
+                "processing_enhance_log must have divided by (maxVal-minVal); an un-normalised product would end at ln(52)")
+            # Sandwich, Mean 0.25 + 0.5*ln(11)/ln(52): exact double 0.55343550582843593, magnitude in
+            # [0.5,1) -> step 1e-6. THIS point sits 5.83e-9 ABOVE the six-digit rounding midpoint
+            # 0.5534355, and the float32 route (cv::log is a table look-up, then a multiply by the
+            # reciprocal of ln(52)) perturbs it by ~1e-8, so the printer may legitimately emit 0.553435
+            # (|d| = 5.06e-7) or 0.553436 (|d| = 4.94e-7). The tolerance is therefore pinned by the
+            # WORST of the two print sides, not chosen: it must exceed 5.06e-7, and 1e-6 is the tightest
+            # power of ten above that (1.98x). Smallest distinguishable defect: routing this branch
+            # through toUint8 would give ln(51)/ln(256) as the middle level -> Mean 0.604526,
+            # |d| = 5.11e-2 = 5.1e4 x the tolerance.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (0.25 + 0.5 * ([math]::Log(11.0) / [math]::Log(52.0))) -Tolerance 1e-6 -Message (
+                "processing_enhance_log mean should be 0.25 + 0.5*ln(11)/ln(52) from the three plateaus 0 / ln11/ln52 / 1")
+        }
+        "processing_enhance_gamma" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($processingEnhanceGammaOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingEnhanceGammaOutput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 40 -ExpectedHeight 24 -ExpectedBands 1 -Message (
+                "processing_enhance_gamma did not write the 40 x 24 x 1 band product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_enhance_gamma product must be Float32 (cv::pow on the normalised CV_32F band)")
+            # Sandwich, gamma Min/Max: 0^(1/2) = 0 and 1^(1/2) = 1, both exact in float32 -> zero print
+            # residual, 1e-9 for read-back noise only. Max pins that the normalisation ran BEFORE the
+            # power: pow on the raw band would stop at 51^(1/2) = 7.14143 (|d| = 6.14, 6.14e9 x tol).
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "processing_enhance_gamma min plateau stays 0 under any exponent (0^(1/gamma) = 0)")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 1 -Tolerance 1e-9 -Message (
+                "processing_enhance_gamma max plateau stays 1 because the band is normalised before cv::pow")
+            # Sandwich, Mean 0.25 + 0.5*sqrt(10/51) = 0.47140372138502384: magnitude in [0.1,1) -> step
+            # 1e-6, half-step 5e-7, so the printed value is 0.471404 and |printed - expected| = 2.79e-7
+            # (0.28 x tol). The point is 2.21e-7 ABOVE the rounding midpoint 0.4714035, and cv::pow with
+            # a non-integer exponent goes through the float FastPow (log/exp) path, good to a few ulp at
+            # magnitude 0.44 where 1 ulp = 5.96e-8 -> <= 3 ulp = 1.8e-7 on the plateau, <= 9e-8 on the
+            # Mean. Worst case if that perturbation did flip the print side: 0.471403 -> 7.21e-7, still
+            # inside 1e-6 (1.39 x headroom); without a flip the headroom is 2.7 x. Nearest defects:
+            # exponent written as gammaVal (x^2) -> 0.26922338, |d| = 0.20218035 = 2.02e5 x tol; gamma
+            # not read (default 1.0) -> 0.34803922, |d| = 0.12336451 = 1.23e5 x tol.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (0.25 + 0.5 * [math]::Sqrt(10.0 / 51.0)) -Tolerance 1e-6 -Message (
+                "processing_enhance_gamma mean should be 0.25 + 0.5*sqrt(10/51): the exponent is 1/gamma, so gamma=2.0 brightens")
+        }
         "georef_dos_correction" {
             Mark-Judged -Name $Case.Name
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
@@ -2495,6 +2644,125 @@ $cases += New-Case -Name "processing_threshold" -CaseArgs @(
     "--max_value=255"
 ) -ExpectedOutputs @(
     $processingThresholdOutput
+)
+
+# P2b (batch D): processing.enhance had NO case on this leg before this seat (grep of this file for
+# "processing_enhance" returned 0 hits when the seat started), so no leg-side green for it was possible
+# by construction -- P2a promoted the registry row from the UNIT side only.
+# One input fixture, four cases (four enhance_type values; clahe is left out, see the why below).
+#
+# WHY three statistics rows are three judgements here, and why a fourth row is left out:
+# the fixture has exactly three distinct raw values (0 x240 / 10 x480 / 51 x240, n = 960) sitting in
+# three different x/y quadrants, and every branch of doEnhance maps a whole plateau to one value, so
+#   Min = m0,  Max = m2,  Mean = 0.25*m0 + 0.5*m1 + 0.25*m2  =>  m1 = 2*(Mean - 0.25*Min - 0.25*Max)
+# i.e. the three printed numbers are a BIJECTION of the three plateau values: each carries one degree
+# of freedom and none is a corollary of the others. StdDev is NOT asserted in any of the four branches
+# because sigma^2 = 0.25*(m0^2 + m2^2) + 0.5*m1^2 - Mean^2 -- the same three values read a second time
+# (this is the reasoning P1 used to drop its own StdDev row, and it applies here a fortiori).
+#
+# WHY clahe gets no leg case: cv::createCLAHE(clip_limit, cv::Size(8, 8)) passes those numbers as the
+# TILE COUNT, so the 40 x 24 input splits into 8 x 8 tiles of 5 x 3 px with tile centres at
+# x = 2.5 + 5i, y = 1.5 + 3j; the plateaus split at x = 20 and y = 12, which fall BETWEEN centres, so
+# every pixel in the bands around those splits is a bilinear blend of two different per-tile LUTs.
+# "raster_inspect info" gives one whole-image Mean for that -- no independently derivable number exists,
+# so a clahe branch could only carry a shape judgement. P2a registered exactly that hole as its own gap
+# (no expectation for the interpolation region); copying it onto the leg would pad a non-load-bearing
+# branch with a Mark-Judged, so this seat ships four cases rather than five.
+#
+# Input = ONE copy of $data.StepLevelRaster under $ResolvedOutputRoot (shared by the four cases), never
+# the original: the original is read by several other cases, and a sidecar keyed to this product name
+# would answer band statistics from cache instead of from pixels. The read side itself is not affected
+# by any sidecar -- gdalBandToMat is a plain RasterIO and does not consult PAM -- but raster_inspect
+# info's statistics ARE cached, so every branch below deletes its own product sidecar before reading.
+$processingEnhanceInput = Join-Path $ResolvedOutputRoot "processing_enhance_input.tif"
+Copy-Item $data.StepLevelRaster $processingEnhanceInput -Force
+Remove-Item ($processingEnhanceInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$processingEnhanceEqualizeOutput = Join-Path $ResolvedOutputRoot "processing_enhance_equalize_output.tif"
+Remove-Item ($processingEnhanceEqualizeOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$processingEnhanceNormalizeOutput = Join-Path $ResolvedOutputRoot "processing_enhance_normalize_output.tif"
+Remove-Item ($processingEnhanceNormalizeOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$processingEnhanceLogOutput = Join-Path $ResolvedOutputRoot "processing_enhance_log_output.tif"
+Remove-Item ($processingEnhanceLogOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$processingEnhanceGammaOutput = Join-Path $ResolvedOutputRoot "processing_enhance_gamma_output.tif"
+Remove-Item ($processingEnhanceGammaOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+
+# equalize: toUint8 first (cv::normalize to CV_8U, scale 255/(51-0) = 5.0, exactly representable, so the
+# raw plateaus land on u8 levels 0 / 50 / 255 off any round-versus-truncate boundary), then
+# cv::equalizeHist, then convertTo(CV_32F, 1/255). Upstream 4.14.0 histogram.cpp: i0 = first occupied
+# level = 0, scale = float32(255/(960-240)) = 0.35416665673255920, lut[0] = 0 is assigned explicitly,
+# lut[50] = round(480*scale) and lut[255] = round(720*scale), and those two products evaluate to exactly
+# 170.0 and 255.0 IN FLOAT32 (the double view would be 169.99999523 / 254.99999285), so nearest-rounding
+# and truncation give the same pair and the expectation does not depend on the rounding mode.
+#   plateaus 0 / 170/255 / 1.0  =>  Mean = (240*0 + 480*170/255 + 240*1)/960 = 560/960 = 7/12
+# This is a real convention collision, not an arithmetic exercise: the OTHER CDF convention
+# (lut = cdf*255/total, "A") would give Min 0.250980 and Mean 0.687255, i.e. |dMean| = 0.104.
+$cases += New-Case -Name "processing_enhance_equalize" -CaseArgs @(
+    "processing", "enhance",
+    ("--input=" + $processingEnhanceInput),
+    ("--output=" + $processingEnhanceEqualizeOutput),
+    "--band=1",
+    "--enhance_type=equalize"
+) -ExpectedOutputs @(
+    $processingEnhanceEqualizeOutput
+)
+
+# normalize: cv::normalize(mat, result, 0, 1, NORM_MINMAX, CV_32F) straight on the raw floats.
+#   plateaus 0 / 10/51 / 1.0  =>  Mean = (480*10/51 + 240*1)/960 = 71/204
+# WHAT THIS BRANCH CANNOT JUDGE (leg-side gap, do not read it as covering DF-4): on THIS fixture the
+# "is normalize quantised to 8 bits or not" question has no observable. toUint8's scale is exactly
+# 255/(51-0) = 5.0, so the raw plateaus land on u8 levels 0 / 50 / 255 and 50/255 = 10/51 is the SAME
+# RATIONAL as the un-quantised middle level -- the two candidate implementations print identical
+# Min / Mean / Max here. The discriminator exists only on a fixture whose max is not a divisor of 255
+# (the unit side uses max = 53, where 10*255/53 truncates to 48 and 48/255 differs from 10/53 by
+# 7.84e-4). So this case pins that enhance_type=normalize reaches the CLI, reads the band, runs the
+# min/max normalisation and round-trips through GDAL's statistics; the "not quantised" half of DF-4
+# stays unit-side only and is registered as a leg-side gap in the seat report.
+$cases += New-Case -Name "processing_enhance_normalize" -CaseArgs @(
+    "processing", "enhance",
+    ("--input=" + $processingEnhanceInput),
+    ("--output=" + $processingEnhanceNormalizeOutput),
+    "--band=1",
+    "--enhance_type=normalize"
+) -ExpectedOutputs @(
+    $processingEnhanceNormalizeOutput
+)
+
+# log: cv::max(mat, 0.0, clamped) then +1.0 then cv::log, then min/max normalisation behind a
+# (maxVal - minVal) > 1e-10 gate. All three plateaus are non-negative here, so the clamp is the identity
+# and the levels are ln(1)=0 / ln(11) / ln(52); 0 is the min and ln(52) the max, so after normalising
+#   plateaus 0 / ln(11)/ln(52) / 1.0  =>  Mean = 0.25 + 0.5*ln(11)/ln(52) = 0.55343550582843593
+# Max = 1 is what makes the 1e-10 gate observable: gate removed / always-normalise on a constant band is
+# a different branch, and here a dropped normalisation would leave Max at ln(52) = 3.95124.
+# Had this branch been routed through toUint8, the middle level would be ln(51)/ln(256) = 0.709053 and
+# the Mean 0.604526 -- delta 5.109e-2 from the expectation below.
+$cases += New-Case -Name "processing_enhance_log" -CaseArgs @(
+    "processing", "enhance",
+    ("--input=" + $processingEnhanceInput),
+    ("--output=" + $processingEnhanceLogOutput),
+    "--band=1",
+    "--enhance_type=log"
+) -ExpectedOutputs @(
+    $processingEnhanceLogOutput
+)
+
+# gamma: the constant branch normalises first and then applies pow(., 1.0/gammaVal) -- the exponent is
+# RECIPROCAL, which is what makes gamma > 1 BRIGHTEN (the shipped algorithm doc said the opposite until
+# P2a corrected it). With --gamma=2.0 on this fixture:
+#   plateaus 0 / sqrt(10/51) / 1.0  =>  Mean = 0.25 + 0.5*sqrt(10/51) = 0.47140372138502384
+# The two nearest mis-implementations are both far outside the tolerance used below: exponent written as
+# gammaVal itself (x^2) gives Mean 0.26922337562475973 (delta 0.20218035), and gamma silently ignored
+# (staying at the ParamSpec default 1.0, where pow(x,1) collapses onto the normalize branch) gives
+# 0.34803921568627449 (delta 0.12336451). Min 0 / Max 1 also pin that the normalisation ran BEFORE the
+# power: skipping it would put Max at sqrt(51) = 7.14143.
+$cases += New-Case -Name "processing_enhance_gamma" -CaseArgs @(
+    "processing", "enhance",
+    ("--input=" + $processingEnhanceInput),
+    ("--output=" + $processingEnhanceGammaOutput),
+    "--band=1",
+    "--enhance_type=gamma",
+    "--gamma=2.0"
+) -ExpectedOutputs @(
+    $processingEnhanceGammaOutput
 )
 
 $cases += New-Case -Name "georef_dos_correction" -CaseArgs @(
