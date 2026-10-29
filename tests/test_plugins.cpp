@@ -1874,19 +1874,306 @@ TEST_F(PluginTest, ProcessingEnhanceExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
 
-    std::string input = createTestRaster("e2e_enhance_input.tif", 50, 50);
-    std::string output = (getTestDir() / "e2e_enhance_output.tif").string();
+    // ===================== 批次 D P2a：processing.enhance 的五支值级判据 =====================
+    // 期望全部由「夹具字面量 + 上游 OpenCV 4.14.0 源码算术」在首跑之前推得，**不从产物回填**。
+    // 上游出处（逐字片段与 URL 印在 docs/RELEASE.md 批次 D 的 P2a 条）：
+    //   · equalizeHist 的 LUT：tag 4.14.0 的 modules/imgproc/src/histogram.cpp 里 cv::equalizeHist ——
+    //       i0 = 第一个占用档（`while (!hist[i]) ++i;`）；scale = (hist_sz - 1.f)/(total - hist[i0])；
+    //       lut[i0] = 0；其后 `sum += hist[i]; lut[i] = saturate_cast<uchar>(sum * scale);`
+    //       而 sum = Σ_{j=i0+1..i} hist[j] = cdf[i] - hist[i0] = cdf[i] - cdf_min
+    //       ⇒ 本仓链接的上游走的是「乙」约定 (cdf-cdf_min)*255/(total-cdf_min)，**不是**甲约定 cdf*255/total。
+    //   · 取整口径：saturate.hpp 里 `saturate_cast<uchar>(float v) { int iv = cvRound(v); ... }`，
+    //       cvRound(float) 在 MSVC x64 走 `_mm_cvtss_si32`（就近含偶）。本块三条 LUT 积（85/170/255）
+    //       在 float32 里**恰为整数**（float32 的 scale 略低于精确值，但乘完再落 float32 会被吸附到整数），
+    //       所以「就近」与「纯截断」给同一个数 ⇒ 期望不依赖取整口径，这一条是可复算的、不是实测出来的。
+    //   · clahe：tag 4.14.0 的 modules/imgproc/src/clahe.cpp —— createCLAHE(clipLimit, tileGridSize) 把
+    //       tileGridSize.width/height 存成 tilesX_/tilesY_ ⇒ **cv::Size(8, 8) 是格子数、不是格子尺寸**；
+    //       尺寸被格子数整除时不走 copyMakeBorder；整数裁剪上限
+    //       `clipLimit = static_cast<int>(clipLimit_ * tileSizeTotal / histSize); clipLimit = std::max(clipLimit, 1);`
+    //       只在 `clipLimit_ > 0.0` 时计算，否则保持 0，而裁剪整段被 `if (clipLimit_ > 0)` 跳过（DF-5 的落点）。
+    //
+    // 夹具（**全部非方**：产物尺寸 = createRaster(dst, mat.cols, mat.rows) ⇒ 方件上宽高写反是等价变异）：
+    //   F1 = createStepLevelRaster(40,24)：象限计数 240/480/240，raw 0/10/51；toUint8 标度 255/(51-0)=5.0 精确 ⇒ u8 档 0/50/255
+    //   F2 = createColumnPlateauRaster(40,24, edges {0,10,20,40}, {{0,10,53}})：段计数 240/240/480；
+    //        u8 中间档 = 10*255/53 = 48.113 → 48 ⇒ **48/255 ≠ 10/53（Δ 4.44e-4）** = 「256 级量化痕迹」的观察点（DF-4）
+    //   F3 = 同 edges 的 {{-20,5,40}}：含负值档 ⇒ `cv::max(mat, 0.0, clamped)` 第一次跑到能区分它的输入（DF-2）
+    //   F4 = createConstantRaster(30,18,200.0)：常量退化支（DF-3：gamma 出全 0，log 出**不归一**的 ln(201)）
+    //   F5 = 同 edges 的两波段 {{0,10,53},{53,0,10}}：band 臂（同一坐标给出 85/255 与 170/255）
+    //   B  = createStepLevelRaster(24,40)：与 F1 互为转置尺寸的对照件（轴序臂的载体）
+    //
+    // 容差口径（**逐支逐点**，不共用句式；详细夹心表写在报告 §5 与 docs/RELEASE.md）：
+    //   kEps = 1e-6 的下界侧是「期望 double 字面量 vs float32 读数」的量化噪声，本块最大一支是 ln(201)
+    //   的 2.36e-7（= float32 在 5.3 量级的半 ulp 2.38e-7，0.24×kEps），其余各点 ≤ 1.3e-7（≤ 0.13×kEps）；
+    //   上界侧是「最近的另一种可分辨结局」，本块最小一支是 F2 的 normalize「若走 8 位量化」Δ = 4.44e-4
+    //   （= 444×kEps），其余各支 ≥ 6.6e-2（≥ 6.6e4×kEps）。⇒ 1e-6 既不会因 float32 舍入假红，也不洗白任何一次分档变化。
+    constexpr double kEps = 1e-6;
 
-    std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("enhance");
-    params["input"] = input;
-    params["output"] = output;
-    params["enhance_type"] = std::string("equalize");
-    params["band"] = 1;
+    std::error_code ec;
+    const fs::path dir = getTestDir();
+    auto staleClean = [&ec](const std::string& path) {
+        fs::remove(path, ec);
+        fs::remove(path + ".aux.xml", ec);
+    };
 
-    auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "Enhance failed: " << result.message;
-    EXPECT_TRUE(fs::exists(output));
+    // sendClipLimit / sendGamma 为 false 时**不发那个键** ⇒ 走 ParamSpec 声明的默认值（clip_limit 2.0、gamma 1.0）。
+    auto runEnhance = [&](const std::string& input,
+                          const std::string& output,
+                          const std::string& enhanceType,
+                          int band,
+                          bool sendClipLimit,
+                          double clipLimit,
+                          bool sendGamma,
+                          double gamma) {
+        staleClean(output);
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("enhance");
+        params["input"] = input;
+        params["output"] = output;
+        params["enhance_type"] = enhanceType;
+        params["band"] = band;
+        if (sendClipLimit) params["clip_limit"] = clipLimit;
+        if (sendGamma) params["gamma"] = gamma;
+        return p->execute(params, progress_);
+    };
+
+    // 逐像元直读（RasterIO，不查 GetStatistics/ComputeStatistics ⇒ 与 .tif.aux.xml 的统计缓存无关）
+    auto bandPixels = [](const std::string& path, int bandIndex) -> std::vector<float> {
+        auto ds = gis::core::openRaster(path, true);
+        if (!ds) return {};
+        const int w = ds->GetRasterXSize();
+        const int h = ds->GetRasterYSize();
+        auto* band = ds->GetRasterBand(bandIndex);
+        if (!band) return {};
+        std::vector<float> px(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+        if (band->RasterIO(GF_Read, 0, 0, w, h, px.data(), w, h, GDT_Float32, 0, 0) != CE_None) return {};
+        return px;
+    };
+    auto rasterSize = [](const std::string& path) -> std::pair<int, int> {
+        auto ds = gis::core::openRaster(path, true);
+        if (!ds) return {-1, -1};
+        return {ds->GetRasterXSize(), ds->GetRasterYSize()};
+    };
+
+    const std::string f1 = createStepLevelRaster("d1p2a_enh_f1_40x24.tif", 40, 24);
+    const std::string f1Transposed = createStepLevelRaster("d1p2a_enh_b_24x40.tif", 24, 40);
+    const std::string f2 = createColumnPlateauRaster(
+        "d1p2a_enh_f2.tif", 40, 24, {0, 10, 20, 40}, {{0.0f, 10.0f, 53.0f}});
+    const std::string f3 = createColumnPlateauRaster(
+        "d1p2a_enh_f3.tif", 40, 24, {0, 10, 20, 40}, {{-20.0f, 5.0f, 40.0f}});
+    const std::string f4 = createConstantRaster("d1p2a_enh_f4.tif", 30, 18, 200.0f);
+    const std::string f5 = createColumnPlateauRaster(
+        "d1p2a_enh_f5.tif", 40, 24, {0, 10, 20, 40}, {{0.0f, 10.0f, 53.0f}, {53.0f, 0.0f, 10.0f}});
+    ASSERT_FALSE(f1.empty());
+    ASSERT_FALSE(f1Transposed.empty());
+    ASSERT_FALSE(f2.empty());
+    ASSERT_FALSE(f3.empty());
+    ASSERT_FALSE(f4.empty());
+    ASSERT_FALSE(f5.empty());
+
+    // ---- E1~E5：equalize（F1；乙约定逐档钉死 + 三条与约定无关的判据）----
+    const std::string outEq = utf8PathString(dir / "d1p2a_enh_equalize_f1.tif");
+    const auto runEq = runEnhance(f1, outEq, "equalize", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runEq.success) << "E 组 equalize/F1 失败: " << runEq.message;
+    ASSERT_TRUE(fs::exists(outEq)) << "E 组没落产物 " << outEq;
+    // 手推：u8 档 0(240)/50(480)/255(240)，total=960，i0=0，cdf_min=hist[0]=240，
+    //   scale = float32(255/(960-240)) = 0.35416665673255920
+    //   lut[0] = 0；lut[50] = round(480*scale) = round(169.99999523 积落 float32 = 170.0) = **170**；
+    //   lut[255] = round(720*scale) = round(254.99999285 积落 float32 = 255.0) = **255**
+    // 甲约定会在同一坐标给出 64/255 = 0.250980 与 191/255 = 0.749020 ⇒ E1/E2 就是甲乙之争的观察点。
+    EXPECT_NEAR(readRasterPixel(outEq, 5, 5), 0.0, kEps)
+        << "E1 u8 档 0 是第一个占用档 ⇒ 上游显式 lut[i0]=0 ⇒ 0/255；甲约定这里会是 0.250980";
+    EXPECT_NEAR(readRasterPixel(outEq, 30, 5), 170.0 / 255.0, kEps)
+        << "E2 u8 档 50 的 cdf-cdf_min = 480 ⇒ lut=170 ⇒ 0.666667；甲约定这里会是 191/255 = 0.749020";
+    EXPECT_NEAR(readRasterPixel(outEq, 5, 20), 1.0, kEps)
+        << "E3 最高档 cdf-cdf_min = total-cdf_min ⇒ lut=255 ⇒ **Max 恰为 1.0**（甲乙两约定都成立，与约定无关）";
+    const auto eqPx = bandPixels(outEq, 1);
+    ASSERT_EQ(eqPx.size(), 960u) << "E4/E5 需要整幅 960 个像元才能数档数与均值";
+    std::set<float> eqDistinct(eqPx.begin(), eqPx.end());
+    EXPECT_EQ(eqDistinct.size(), 3u)
+        << "E4 三档占用 ⇒ 三条 CDF 平台 ⇒ 产物**恰有 3 个不同像元值**（与约定无关；"
+           "若 equalizeHist 被换成逐像元恒等映射，raw 只有 3 档但值会变成 0/50/255 的档集合，本行仍 3 ⇒ "
+           "本行的判别力在「非 LUT 形状」的改动上，档值本身由 E1/E2/E3 钉）";
+    double eqSum = 0.0;
+    for (const float v : eqPx) eqSum += static_cast<double>(v);
+    EXPECT_NEAR(eqSum / static_cast<double>(eqPx.size()), 7.0 / 12.0, kEps)
+        << "E5 闭式 (240*0 + 480*170/255 + 240*255/255)/960 = 560/960 = 7/12 = 0.583333"
+           "（甲约定的闭式均值是 0.687255 ⇒ 差 0.104，本行同样能分辨甲乙）";
+
+    // ---- C1~C6：clahe（F1；第一步 = 两个不同 clip_limit 产出两个不同产物；第二步 = 手推单格 LUT）----
+    // 手推：40×24 被 8×8 格子整除 ⇒ tileSize = (40/8, 24/8) = (5,3)，面积 15，**不补边**；
+    //   lutScale = float(255/15) = 17.0（精确）；每格内是单一档 ⇒ 直方图只有一个占用档。
+    //   clip_limit=2.0 ⇒ int(2.0*15/256)=0 ⇒ max(,1)=1 ⇒ hist[0] 裁到 1、clipped=14、redistBatch=0、
+    //     residual=14 ⇒ residualStep = max(256/14,1)=18 ⇒ 档 0,18,...,234 各 +1 ⇒ hist[0] = 1+1 = 2 ⇒ lut[0]=2*17=**34**
+    //   clip_limit=40.0 ⇒ int(40*15/256)=2 ⇒ hist[0]=2、clipped=13、residual=13、step=19 ⇒ hist[0]=3 ⇒ lut[0]=**51**
+    //   clip_limit=0.001 ⇒ int(0.001*15/256)=0 ⇒ max(,1)=1 ⇒ 与 2.0 **同一整数裁剪上限** ⇒ 同 34
+    //   clip_limit=0.0 ⇒ `clipLimit_ > 0.0` 不成立 ⇒ clipLimit 保持 0 ⇒ 裁剪整段跳过 ⇒ hist[0]=15 ⇒ lut[0]=15*17=**255**
+    //   探针 (2,1)：x=2 ⇒ txf = 2/5-0.5 = -0.1 ⇒ tx1=-1→夹到 0、tx2=0 ⇒ 水平两侧同格；y=1 ⇒ tyf=-0.1667 ⇒ 同样夹到 0
+    //   ⇒ 该像元由**单格 LUT** 决定，无插值混合，可逐位推。
+    const std::string outCl20 = utf8PathString(dir / "d1p2a_enh_clahe_clip20_f1.tif");
+    const auto runCl20 = runEnhance(f1, outCl20, "clahe", 1, true, 2.0, false, 0.0);
+    EXPECT_TRUE(runCl20.success) << "C1 clahe/clip_limit=2.0 失败: " << runCl20.message;
+    EXPECT_NEAR(readRasterPixel(outCl20, 2, 1), 34.0 / 255.0, kEps)
+        << "C1 clip_limit=2.0 → 整数裁剪上限 1 → 单格 lut[0]=34 → 0.133333";
+    const std::string outCl40 = utf8PathString(dir / "d1p2a_enh_clahe_clip40_f1.tif");
+    const auto runCl40 = runEnhance(f1, outCl40, "clahe", 1, true, 40.0, false, 0.0);
+    EXPECT_TRUE(runCl40.success) << "C2 clahe/clip_limit=40.0 失败: " << runCl40.message;
+    EXPECT_NEAR(readRasterPixel(outCl40, 2, 1), 51.0 / 255.0, kEps)
+        << "C2 clip_limit=40.0 → 整数裁剪上限 2 → 单格 lut[0]=51 → 0.2；与 C1 的 0.133333 差 0.066667"
+           "（66667×kEps）⇒ 这一对就是「两个不同 clip_limit 产出两个不同产物」，把 clip_limit 的读取写死 2.0 时本行红";
+    const std::string outClDefault = utf8PathString(dir / "d1p2a_enh_clahe_default_f1.tif");
+    const auto runClDefault = runEnhance(f1, outClDefault, "clahe", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runClDefault.success) << "C3 clahe 不发 clip_limit 失败: " << runClDefault.message;
+    EXPECT_NEAR(readRasterPixel(outClDefault, 2, 1), 34.0 / 255.0, kEps)
+        << "C3 不发键 ⇒ ParamSpec 默认 2.0 ⇒ 整数裁剪上限 1 ⇒ 与 C1 同档。判别力是**粗粒度**的："
+           "默认值若被读成 ≥17.1（int(17.1*15/256)=1 仍同档，≥17.1 才换档）本行才红 ⇒ 本行只钉「默认值落在裁剪上限 1 那一档」，"
+           "不钉 2.0 这个数字本身（写清楚，免得被当成精确判据）";
+    const std::string outCl001 = utf8PathString(dir / "d1p2a_enh_clahe_clip0001_f1.tif");
+    const auto runCl001 = runEnhance(f1, outCl001, "clahe", 1, true, 0.001, false, 0.0);
+    EXPECT_TRUE(runCl001.success) << "C4 clahe/clip_limit=0.001 失败: " << runCl001.message;
+    EXPECT_NEAR(readRasterPixel(outCl001, 2, 1), 34.0 / 255.0, kEps)
+        << "C4（DF-5 探针①）0.001 与 2.0 被 `static_cast<int>(clipLimit*tileSizeTotal/histSize)` 折到同一个整数 1"
+           " ⇒ 这就是任务书 §2 DF-5 里 python 探针「非单调」的可能来由；本行钉的是上游整数化，不是产物回填";
+    const std::string outClZero = utf8PathString(dir / "d1p2a_enh_clahe_clip0_f1.tif");
+    const auto runClZero = runEnhance(f1, outClZero, "clahe", 1, true, 0.0, false, 0.0);
+    EXPECT_TRUE(runClZero.success)
+        << "C5（DF-5 探针②）clip_limit=0.0 直达 cv::createCLAHE(0.0,...)：框架的 `if (actionKey == \"enhance\")` 块"
+           "只闸 gamma<=0、不闸 clip_limit ⇒ 既不抛也不失败，动作成功返回";
+    EXPECT_NEAR(readRasterPixel(outClZero, 2, 1), 1.0, kEps)
+        << "C5（DF-5 探针③）clipLimit_ = 0 ⇒ 整数上限保持 0 ⇒ 上游 `if (clipLimit_ > 0)` 跳过裁剪"
+           " ⇒ 单格 hist[0]=15 ⇒ lut[0]=255 ⇒ 1.0，与 C1 的 0.133333 差 0.866667 ⇒ **产物真的不同**";
+
+    // ---- N1~N3：normalize（F2/F3；**不经 8 位量化**，DF-4 的观察点）----
+    const std::string outNorm = utf8PathString(dir / "d1p2a_enh_normalize_f2.tif");
+    const auto runNorm = runEnhance(f2, outNorm, "normalize", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runNorm.success) << "N 组 normalize/F2 失败: " << runNorm.message;
+    EXPECT_NEAR(readRasterPixel(outNorm, 15, 5), 10.0 / 53.0, kEps)
+        << "N1 原始 float 口径 (10-0)/(53-0) = 0.188679；若这一支也走 toUint8 会是 48/255 = 0.188235"
+           "（Δ 4.44e-4 = 444×kEps）⇒ 本行是「normalize 不量化」的唯一观察点（DF-4，只点名 normalize）";
+    EXPECT_NEAR(readRasterPixel(outNorm, 5, 5), 0.0, kEps) << "N2 min 档 ⇒ 0.0";
+    EXPECT_NEAR(readRasterPixel(outNorm, 35, 5), 1.0, kEps) << "N3 max 档 ⇒ 1.0";
+    const std::string outNormNeg = utf8PathString(dir / "d1p2a_enh_normalize_f3.tif");
+    const auto runNormNeg = runEnhance(f3, outNormNeg, "normalize", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runNormNeg.success) << "normalize/F3 失败: " << runNormNeg.message;
+    EXPECT_NEAR(readRasterPixel(outNormNeg, 15, 5), 25.0 / 60.0, kEps)
+        << "N4 含负 min：(5-(-20))/(40-(-20)) = 25/60 = 0.416667 ⇒ 与 L2 的 0.482489 差 0.0658（65823×kEps）"
+           "⇒ 同一件夹具上 normalize 与 log 给出不同中间档 ⇒ enhance_type 真被读（这一条不依赖甲乙之争）";
+    EXPECT_NEAR(readRasterPixel(outNormNeg, 5, 5), 0.0, kEps) << "N5 负值档在 normalize 支是 min ⇒ 0.0（**不是** NaN）";
+
+    // ---- L1~L5：log（F2/F3 截断 vs 平移 = DF-2；F4 常量不归一 = DF-3）----
+    const std::string outLog = utf8PathString(dir / "d1p2a_enh_log_f2.tif");
+    const auto runLog = runEnhance(f2, outLog, "log", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runLog.success) << "L 组 log/F2 失败: " << runLog.message;
+    // 手推：非负档截断是恒等 ⇒ +1 ⇒ ln(1)=0 / ln(11) / ln(54) ⇒ min=0,max=ln(54) ⇒ 中间档 = ln(11)/ln(54)
+    EXPECT_NEAR(readRasterPixel(outLog, 15, 5), std::log(11.0) / std::log(54.0), kEps)
+        << "L1 原始 float 口径；若这一支走 toUint8 会是 ln(49)/ln(256) = 0.701839（Δ 0.1007）⇒ 点名 log 不量化";
+    EXPECT_NEAR(readRasterPixel(outLog, 5, 5), 0.0, kEps) << "L2 ln(0+1)=0 且它恰是 min ⇒ 归一后 0.0";
+    EXPECT_NEAR(readRasterPixel(outLog, 35, 5), 1.0, kEps) << "L3 ln(54) 是 max ⇒ 归一后 1.0";
+    const std::string outLogNeg = utf8PathString(dir / "d1p2a_enh_log_f3.tif");
+    const auto runLogNeg = runEnhance(f3, outLogNeg, "log", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runLogNeg.success) << "log/F3 失败: " << runLogNeg.message;
+    EXPECT_NEAR(readRasterPixel(outLogNeg, 5, 5), 0.0, kEps)
+        << "L4（DF-2 承重）负值档走 `cv::max(mat, 0.0, clamped)` 被**截断**成 0 ⇒ ln(1)=0 ⇒ 归一后仍是最低档 0.0。"
+           "若把那一行删掉只做 `+1.0` 平移：-20+1 = -19 ⇒ log 定义域为负 ⇒ NaN ⇒ 本行红；"
+           "若「平移」指把 min 抬到 0（整体加 20）：档值会成 ln(20)/ln(60) ⇒ 本行也红 ⇒ 截断与两种平移都可被本行分辨";
+    EXPECT_NEAR(readRasterPixel(outLogNeg, 15, 5), std::log(6.0) / std::log(41.0), kEps)
+        << "L5 非负两档 ln(6)/ln(41) = 0.482489 ⇒ 与 N4 的 0.416667 差 0.0658";
+    EXPECT_NEAR(readRasterPixel(outLogNeg, 35, 5), 1.0, kEps) << "L6 max 档 ⇒ 1.0";
+    const std::string outLogFlat = utf8PathString(dir / "d1p2a_enh_log_f4.tif");
+    const auto runLogFlat = runEnhance(f4, outLogFlat, "log", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runLogFlat.success) << "log/F4 失败: " << runLogFlat.message;
+    // 常量输入：min==max ⇒ `maxVal - minVal > 1e-10` 不成立 ⇒ **不归一化**，产物留 ln(200+1) 原值
+    EXPECT_NEAR(readRasterPixel(outLogFlat, 7, 3), std::log(201.0), kEps)
+        << "L7（DF-3 的 log 半边）常量支产物 = ln(201) = 5.303305，**不在 [0,1] 内**；"
+           "若那一门被改成恒归一化 ⇒ 除以 0 ⇒ inf/NaN ⇒ 本行红";
+    EXPECT_NEAR(readRasterPixel(outLogFlat, 22, 14), std::log(201.0), kEps)
+        << "L8 第二格排除「只处理首行/首列」这种部分写出形状（常量夹具上两点同值，取值理由与 P1 块里那条相同）";
+
+    // ---- G1~G5：gamma（F2 方向 = DF-1；F4 常量出全 0 = DF-3 的另一半）----
+    const std::string outGam2 = utf8PathString(dir / "d1p2a_enh_gamma_g2_f2.tif");
+    const auto runGam2 = runEnhance(f2, outGam2, "gamma", 1, false, 0.0, true, 2.0);
+    EXPECT_TRUE(runGam2.success) << "G 组 gamma/g=2 失败: " << runGam2.message;
+    // 指数是 1.0/gammaVal ⇒ g=2 时归一档 10/53 取 ^(1/2)
+    EXPECT_NEAR(readRasterPixel(outGam2, 15, 5), std::sqrt(10.0 / 53.0), kEps)
+        << "G1（DF-1 承重）0.434372 > normalize 支的 0.188679 ⇒ **γ>1 是提亮**，与文档「大于 1 压暗亮部」相反；"
+           "若指数被写成 gammaVal 本身（^2）会得 0.035600 ⇒ 本行红";
+    EXPECT_NEAR(readRasterPixel(outGam2, 5, 5), 0.0, kEps) << "G2 min 档 0^(1/2) = 0.0（端点不随 γ 动）";
+    EXPECT_NEAR(readRasterPixel(outGam2, 35, 5), 1.0, kEps) << "G3 max 档 1^(1/2) = 1.0（同上）";
+    const std::string outGam05 = utf8PathString(dir / "d1p2a_enh_gamma_g05_f2.tif");
+    const auto runGam05 = runEnhance(f2, outGam05, "gamma", 1, false, 0.0, true, 0.5);
+    EXPECT_TRUE(runGam05.success) << "gamma/g=0.5 失败: " << runGam05.message;
+    EXPECT_NEAR(readRasterPixel(outGam05, 15, 5), (10.0 / 53.0) * (10.0 / 53.0), kEps)
+        << "G4（DF-1 反向半边）1/0.5 = 2 ⇒ ^(2) = 0.035600 < 0.188679 ⇒ **γ<1 是压暗**；"
+           "与 G1 的 0.434372 差 0.398772 ⇒ γ 是承重的可见参数（指数写成 gammaVal 时这两行同时反转）";
+    const std::string outGamFlat = utf8PathString(dir / "d1p2a_enh_gamma_f4.tif");
+    const auto runGamFlat = runEnhance(f4, outGamFlat, "gamma", 1, false, 0.0, true, 2.0);
+    EXPECT_TRUE(runGamFlat.success) << "gamma/F4 失败: " << runGamFlat.message;
+    EXPECT_NEAR(readRasterPixel(outGamFlat, 7, 3), 0.0, kEps)
+        << "G5（DF-3 的 gamma 半边）常量支走 `result = cv::Mat::zeros(...)` ⇒ 全 0；"
+           "同一件 F4 上 log 给 5.303305（L7）⇒ 两支都有 1e-10 门但走法相反，这条不一致现在**有判据**了";
+    EXPECT_NEAR(readRasterPixel(outGamFlat, 22, 14), 0.0, kEps) << "G6 第二格同上";
+    const std::string outGamBad = utf8PathString(dir / "d1p2a_enh_gamma_nonpositive_f2.tif");
+    const auto runGamBad = runEnhance(f2, outGamBad, "gamma", 1, false, 0.0, true, 0.0);
+    EXPECT_FALSE(runGamBad.success)
+        << "G7 gamma=0 必须失败（doEnhance 自己的 `if (gammaVal <= 0)`；ProcessingPlugin::execute 不做参数校验 ⇒ 直达）";
+    EXPECT_NE(runGamBad.message.find("gamma must be positive"), std::string::npos)
+        << "G7 失败消息要点名原文，实读是：" << runGamBad.message;
+    EXPECT_FALSE(fs::exists(outGamBad)) << "G7 失败支不得留产物";
+
+    // ---- Z1~Z4：尺寸/轴序、band 承重、未知 enhance_type 的失败形状 ----
+    const std::string outGamDefault = utf8PathString(dir / "d1p2a_enh_gamma_default_f2.tif");
+    const auto runGamDefault = runEnhance(f2, outGamDefault, "gamma", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runGamDefault.success) << "gamma 不发键（默认 1.0）失败: " << runGamDefault.message;
+    // ⚠ 这一条**不承重**，按任务书 §3.3 明确标注：pow(x, 1.0/1.0) = x 使 γ=1 的产物与 normalize 支在数学上恒等，
+    //   它是被 N1 那一支蕴含的**推论行**（N1 红 ⇒ 本行必红，反之不然），所以只当「γ 默认值确实落进 1.0 那一档」的旁证。
+    EXPECT_NEAR(readRasterPixel(outGamDefault, 15, 5), 10.0 / 53.0, kEps)
+        << "Z0 推论行（不承重，理由见上一行注释）：默认 gamma=1.0 ⇒ 指数 1 ⇒ 值等于归一档";
+
+    const std::string outEqT = utf8PathString(dir / "d1p2a_enh_equalize_b24x40.tif");
+    const auto runEqT = runEnhance(f1Transposed, outEqT, "equalize", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runEqT.success) << "equalize/B(24×40) 失败: " << runEqT.message;
+    const auto sizeA = rasterSize(outEq);
+    const auto sizeB = rasterSize(outEqT);
+    EXPECT_EQ(sizeA.first, 40) << "Z1 F1 宽 40 ⇒ 产物 createRaster(dst, mat.cols, mat.rows) 的第一维必须是 40";
+    EXPECT_EQ(sizeA.second, 24) << "Z1 F1 高 24 ⇒ 第二维必须是 24（宽高写反在这对非方件上立刻红）";
+    EXPECT_EQ(sizeB.first, 24) << "Z2 B 宽 24 ⇒ 与 Z1 同一判据在转置尺寸件上也要成立";
+    EXPECT_EQ(sizeB.second, 40) << "Z2 B 高 40";
+    EXPECT_NEAR(readRasterPixel(outEq, 10, 15), 1.0, kEps)
+        << "Z3 A(40×24) 的 (10,15)：x<20 且 y>=12 ⇒ raw 51 ⇒ u8 255 ⇒ lut 255 ⇒ 1.0";
+    EXPECT_NEAR(readRasterPixel(outEqT, 10, 15), 0.0, kEps)
+        << "Z4 B(24×40) 的 (10,15)：x<12 且 y<20 ⇒ raw 0 ⇒ u8 0 ⇒ lut[0]=0 ⇒ 0.0。"
+           "同一坐标在两件事上给出 1.0 与 0.0 ⇒ 行主序/列主序写反（或把 cols/rows 传反）必然打掉 Z3/Z4 之一";
+
+    const std::string outBand1 = utf8PathString(dir / "d1p2a_enh_band1_f5.tif");
+    const auto runBand1 = runEnhance(f5, outBand1, "equalize", 1, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runBand1.success) << "band=1 失败: " << runBand1.message;
+    const std::string outBand2 = utf8PathString(dir / "d1p2a_enh_band2_f5.tif");
+    const auto runBand2 = runEnhance(f5, outBand2, "equalize", 2, false, 0.0, false, 0.0);
+    EXPECT_TRUE(runBand2.success) << "band=2 失败: " << runBand2.message;
+    // 手推（同一 scale = float32(255/720)，两波段的 cdf_min 都是 240）：
+    //   band1 档值按列 {0,10,53} ⇒ u8 档计数 0:240 / 48:240 / 255:480 ⇒ lut[48] = round(240*scale) = 85
+    //   band2 档值按列 {53,0,10} ⇒ u8 档计数 0:240 / 48:480 / 255:240 ⇒ lut[48] = round(480*scale) = 170
+    //   ⚠ 两波段的**同一 raw 值落在不同列**，所以探针点必须按波段各数一遍列段（首跑就在这里错过一次：
+    //     拿 band1 的 x=15 去问 band2，那里 band2 的 raw 是 0 不是 10 ⇒ 期望 170/255 而产物 0.0）。
+    EXPECT_NEAR(readRasterPixel(outBand1, 15, 5), 85.0 / 255.0, kEps)
+        << "Z5 band1 第二列 raw 10 ⇒ u8 48，其 cdf-cdf_min = 240 ⇒ lut 85 ⇒ 0.333333";
+    EXPECT_NEAR(readRasterPixel(outBand2, 25, 5), 170.0 / 255.0, kEps)
+        << "Z6 band2 第三列 raw 10 ⇒ u8 48，但它的 cdf-cdf_min = 480 ⇒ lut 170 ⇒ 0.666667。"
+           "与 Z5 同一 raw 值、同一 u8 档、不同的累计计数 ⇒ 这一对既钉 band 的读取、也钉 CDF 是按波段各算一次的"
+           "（把 band 的读取写死 1 ⇒ 本行读到 band1 的 0.333333 ⇒ 红）";
+    EXPECT_NEAR(readRasterPixel(outBand2, 15, 5), 0.0, kEps)
+        << "Z6b band2 第二列 raw 0 ⇒ u8 0 是第一个占用档 ⇒ lut[i0]=0 ⇒ 0.0，而 band1 同坐标是 0.333333"
+           "（同一坐标两波段差 0.333333 ⇒ band 改产物的第二格观察点）";
+    EXPECT_NEAR(readRasterPixel(outBand2, 5, 5), 1.0, kEps)
+        << "Z7 band2 首列 raw 53 ⇒ u8 255 ⇒ 最高档 cdf = total ⇒ 1.0（band1 同坐标 Z8 是 0.0 ⇒ 第三格差异点）";
+    EXPECT_NEAR(readRasterPixel(outBand1, 5, 5), 0.0, kEps) << "Z8 band1 首列 raw 0 ⇒ lut[0]=0 ⇒ 0.0";
+
+    const std::string outUnknown = utf8PathString(dir / "d1p2a_enh_unknown_type_f1.tif");
+    const auto runUnknown = runEnhance(f1, outUnknown, "not_a_real_enhance_type", 1, false, 0.0, false, 0.0);
+    EXPECT_FALSE(runUnknown.success)
+        << "Z9 未知 enhance_type 必须 fail（走 doEnhance 的 else 支，不回落 equalize 默认）";
+    EXPECT_NE(runUnknown.message.find("Unknown enhance type: not_a_real_enhance_type"), std::string::npos)
+        << "Z9 失败消息必须点名类型名，实读是：" << runUnknown.message;
+    EXPECT_FALSE(fs::exists(outUnknown)) << "Z9 失败支不得留产物";
 }
 
 TEST_F(PluginTest, ProcessingSkeletonExecution) {
