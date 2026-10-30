@@ -1484,6 +1484,123 @@ function Validate-CaseOutputs {
             Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (24000.0 / 159120.0) -Tolerance 1e-6 -Message (
                 "processing_edge mean must be 24000/159120 = 0.15083 (600 interior pixels at 40/255 over 624)")
         }
+
+        # ------------------------------------------------------------------------------------
+        # P3c (batch D): the three processing.filter cases whose New-Case sites sit right after the
+        # processing_edge case. SHARED REASONING, stated once here so three copies cannot drift:
+        #   * size and dtype judge the WRITER (all three products go through writeMatOutput ->
+        #     matToGdalTiff -> createRaster(dst, cols, rows, 1, GDT_Float32)), not the filter_type;
+        #     they are repeated per branch because each branch opens its own file, and the
+        #     load-bearing per-branch rows are the three statistics below them.
+        #   * Assert-InfoSizeExact instead of Assert-TextContains "Size:   52 x 12 x 1 bands": the
+        #     substring never compares the numbers; width and height are compared SEPARATELY on this
+        #     NON-SQUARE ramp (52 != 12) so an axis swap in the writer is visible.
+        #   * the .aux.xml removal before reading: raster_inspect info caches band statistics per
+        #     file name in a PAM sidecar, so a sidecar left by an earlier run would answer from cache
+        #     instead of from the pixels this run wrote.
+        #   * the tolerance is pinned PER POINT, never globally: raster_inspect info prints six
+        #     significant digits, so the print step moves with the magnitude and each row below
+        #     states its own measured print residual, its own half-step and its own nearest defect.
+        #   * the three branches together are the dispatch witness: the three Means sit >= 0.0380845
+        #     apart (>= 3.8e4 times any tolerance used here), so a branch that read another
+        #     filter_type's product goes red on its own Mean row, and the mismatch arm of this seat
+        #     measured exactly that.
+        # ------------------------------------------------------------------------------------
+        "processing_filter_dilate" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($processingFilterDilateOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingFilterDilateOutput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 52 -ExpectedHeight 12 -ExpectedBands 1 -Message (
+                "processing_filter_dilate did not write the 52 x 12 x 1 band product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_filter_dilate product must be Float32 (toUint8 -> morphologyEx -> convertTo(CV_32F, 1/255))")
+            # Sandwich, Min 10/255 = 0.0392156862745098. Measured print on this carrier: "0.0392157",
+            # residual 1.37e-8. At magnitude 3.9e-2 the six-digit step is 1e-7 and the half-step 5e-8,
+            # so a 1e-9 tolerance here would be red on the PRINTER and not on a defect -- this is the
+            # row that breaks a uniform constant, which is why the tolerance is written per point.
+            # 1e-6 buys 73x over the residual and 19x over the half-step. Nearest defect: the identity
+            # profile (the median branch) puts Min at 0 -> |d| = 3.92e-2 = 3.9e4 x tol. What the row
+            # judges: with a centred 5x5 anchor and virtual samples that never win a max, column 0
+            # takes its max from x = 2, so a non-zero Min IS the dilation shift.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected (10.0 / 255.0) -Tolerance 1e-6 -Message (
+                "processing_filter_dilate min must be 10/255 = 5*(0+2)/255: column 0 dilates to the level two steps to its right")
+            # Sandwich, Max 1: 255 * (1/255) lands on float32 1.0 exactly and prints "1", so the print
+            # residual is zero and 1e-9 only absorbs float32 read-back noise. Nearest defect: an erode
+            # profile stops at 245/255 -> |d| = 3.92e-2 = 3.9e7 x tol.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 1 -Tolerance 1e-9 -Message (
+                "processing_filter_dilate max must be 255/255 = 1.0 (the /255 scale, not a raw 255 band)")
+            # Sandwich, Mean 7135/13260 = 0.5380844645550528. Measured print: "0.538084", residual
+            # 4.65e-7; magnitude in [0.1,1) -> step 1e-6, half-step 5e-7, so the tolerance must EXCEED
+            # the point's own print residual -> 1e-6 (2.15x), and had the print gone UP to 0.538085 the
+            # distance would be 5.35e-7 (1.87x), so neither side can produce a false red. Nearest
+            # defects: the identity profile -> |d| = 3.81e-2; the erode profile -> |d| = 7.62e-2.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (7135.0 / 13260.0) -Tolerance 1e-6 -Message (
+                "processing_filter_dilate mean should be 7135/13260 = 5*(2+3+...+51 + 51+51)/(52*255) from the +2 column shift")
+        }
+        "processing_filter_erode" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($processingFilterErodeOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingFilterErodeOutput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 52 -ExpectedHeight 12 -ExpectedBands 1 -Message (
+                "processing_filter_erode did not write the 52 x 12 x 1 band product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_filter_erode product must be Float32 (toUint8 -> morphologyEx -> convertTo(CV_32F, 1/255))")
+            # Sandwich, Min 0: float32 0.0 prints "0" with zero residual -> 1e-9 absorbs read-back noise
+            # only. This row is the mirror of the dilate Min row: columns 0, 1 and 2 erode to the domain
+            # column 0 because the virtual samples take the erosion border value (255 in 8-bit) and can
+            # never win a min. Nearest defect: the dilate profile -> |d| = 3.92e-2 = 3.9e7 x tol.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "processing_filter_erode min must be 0: the three leftmost columns all reach the domain column 0 inside the window")
+            # Sandwich, Max 245/255 = 0.9607843137254902. Measured print: "0.960784", residual 3.14e-7
+            # (magnitude in [0.1,1) -> half-step 5e-7, so 1e-6 is the tightest power of ten above it,
+            # 3.19x; had the print gone up to 0.960785 the distance would be 6.86e-7, still inside
+            # 1e-6). Nearest defect: Max at 255/255 (no erosion shift) -> |d| = 3.92e-2 = 3.9e4 x tol.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected (245.0 / 255.0) -Tolerance 1e-6 -Message (
+                "processing_filter_erode max must be 245/255 = 5*(51-2)/255, not 255/255 (the last column loses 2 steps)")
+            # Sandwich, Mean 6125/13260 = 0.4619155354449472. Measured print: "0.461916", residual
+            # 4.65e-7 -> 1e-6 (2.15x). Self-check that also pins the two morph rows against each other:
+            # 7135 + 6125 = 13260 = 2*6630, so dilate and erode sit EXACTLY symmetric about the identity
+            # mean 0.5 (each off-centre by 505/13260 = 0.038084464555) -- an asymmetric measurement would
+            # point at the window (kernel size / anchor / border), not at floating point.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (6125.0 / 13260.0) -Tolerance 1e-6 -Message (
+                "processing_filter_erode mean should be 6125/13260 = 5*(1+2+...+49)/(52*255) from the -2 column shift")
+        }
+        "processing_filter_median" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($processingFilterMedianOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingFilterMedianOutput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 52 -ExpectedHeight 12 -ExpectedBands 1 -Message (
+                "processing_filter_median did not write the 52 x 12 x 1 band product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_filter_median product must be Float32 (toUint8 -> medianBlur -> convertTo(CV_32F, 1/255))")
+            # Sandwich, Min 0 / Max 1: both float32 exact and both print as whole tokens ("0", "1") ->
+            # zero print residual, 1e-9 for read-back noise. Nearest defect on Max: the erode profile
+            # stops at 245/255 (|d| = 3.92e-2 = 3.9e7 x tol).
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "processing_filter_median must keep the ramp's own floor 0 (BORDER_REPLICATE repeats the first column, so the 13th sample is still level 0)")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 1 -Tolerance 1e-9 -Message (
+                "processing_filter_median must keep the ramp's own ceiling 255/255 (the last 25-sample window still holds five copies of level 255)")
+            # Sandwich, Mean 0.5 EXACT (6630/13260): measured print "0.5" -> zero print residual, so 1e-9
+            # would pass today. 1e-6 is used instead and NOT for slack: the accumulated mean of the 624
+            # float32 levels carries a measured +9.8e-9 drift (each 5x/255 is a float32 rounding), and
+            # the summation order is the writer's and GDAL's business, not this case's, so a constant
+            # tighter than the printer's 5e-7 absorption band would judge accumulation order rather
+            # than the filter. Nearest defect: either morph profile -> |d| = 3.81e-2 = 3.8e4 x tol.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected 0.5 -Tolerance 1e-6 -Message (
+                "processing_filter_median mean should be 0.5 = 5*(0+1+...+51)/(52*255): a 25-sample window on a y-constant ramp is pointwise identity")
+            # SCOPE LIMIT (do not read this branch as "the leg identified the operator"): on a monotone
+            # ramp the median is the identity, and so is a box mean of a symmetric window -- the three
+            # numbers above are ALSO what a mean filter of this fixture prints. What this branch
+            # actually judges is the quantisation scale, the /255 divide, the size, the dtype and that
+            # filter_type=median reaches the right branch through the CLI. Separating median from blur
+            # is carried by the narrow-island probes of the unit block, not by this leg row.
+        }
         # ------------------------------------------------------------------------------------
         # P2b (batch D): the four processing.enhance cases registered below.
         # SHARED REASONING for all four (stated once here rather than copied four times, so a future
@@ -2836,6 +2953,91 @@ $cases += New-Case -Name "processing_edge" -CaseArgs @(
     "--sobel_dy=0"
 ) -ExpectedOutputs @(
     $processingEdgeOutput
+)
+
+# P3c (batch D): three leg cases for processing.filter. The registry row was promoted to GOLD one
+# knife earlier (P3b), on the UNIT side -- PluginTest.ProcessingFilterExecution holds the seven
+# value-level criteria -- so this seat only adds the leg witnesses that the same consumption point is
+# reachable through the CLI. The registry, kPendingCeiling and tests/test_plugins.cpp are untouched
+# here on purpose: a promotion knife may move one surface at a time.
+#
+# WHY THREE cases and not five: morph_open and morph_close are the IDENTITY on this ramp
+#   open  = erode then dilate = 5*max(0, min(51, x)) = 5x
+#   close = dilate then erode = the same, because the plateau is flat between the two shifts
+# so a leg branch for either would print the median branch's three numbers to the digit. That
+# degeneracy is decided by THIS FIXTURE, not by the product, so it is registered as a coverage
+# boundary (docs/RELEASE.md, batch D knife P3c) rather than padded with two branches that cannot be
+# red. The discriminating evidence for open/close is the narrow-island fixture of P3b's unit block,
+# where only those two arms go red.
+#
+# WHY each case regenerates its OWN ramp instead of sharing one file (and instead of reusing the
+# processing_edge name): a cached copy would survive a fixture-generator change and silently keep
+# judging the old shape; a name shared across cases hides which case touched the file and lets two
+# cases' sidecar removals fight each other. Same generated fixture as the edge case (52 x 12
+# Float32, value(x,y) = x, geotransform present), three copies, three products.
+#
+# The derived expectations, all computed BEFORE the first run from the fixture literals:
+#   toUint8 scale = 255/(51-0) = 5.0 (binary exact) -> identity level(x) = 5*x, printed value = 5x/255
+#   sum over the 52 columns of the identity  = 0+1+...+51 = 1326 -> 5*1326 = 6630
+#   dilate (5x5 RECT, centred anchor, virtual samples never win a max): level(x) = 5*min(51, x+2)
+#     -> sum = 5*(2+3+...+51) + 5*(51+51) = 5*1427 = 7135 -> Mean 7135/13260 = 0.5380844645550528
+#   erode (mirror: virtual samples never win a min): level(x) = 5*max(0, x-2)
+#     -> sum = 5*(1+2+...+49) = 5*1225 = 6125 -> Mean 6125/13260 = 0.4619155354449472
+#   median (25 samples, BORDER_REPLICATE, y constant): the 13th sorted sample is the centre column at
+#     every x including the borders -> identity -> Mean 6630/13260 = 0.5 exactly
+#   cross-check: 7135 + 6125 = 13260 = 2*6630, so the two morph means are EXACTLY symmetric about the
+#     identity mean; each is off-centre by 505/13260 = 0.038084464555, and the three means are separated
+#     by 0.0380845 at minimum -- 3.8e4 times the loosest tolerance used in the three branches.
+# WHAT THESE CASES DO NOT JUDGE: whether kernel_size is honoured at all. All three pass the ParamSpec
+# default 5, so a silently-ignored kernel_size still prints this exact profile; that half is carried by
+# the k-sweep of the unit block. Recorded as a leg-side boundary, not claimed as coverage.
+$processingFilterDilateInput = Join-Path $ResolvedOutputRoot "processing_filter_dilate_input.tif"
+Remove-Item ($processingFilterDilateInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+# Always regenerate (deterministic 52 x 12 ramp) -- never judge a file left behind by an earlier run.
+Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("edge-ramp-raster", $processingFilterDilateInput)
+$processingFilterDilateOutput = Join-Path $ResolvedOutputRoot "processing_filter_dilate_output.tif"
+Remove-Item ($processingFilterDilateOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "processing_filter_dilate" -CaseArgs @(
+    "processing", "filter",
+    ("--input=" + $processingFilterDilateInput),
+    ("--output=" + $processingFilterDilateOutput),
+    "--band=1",
+    "--filter_type=morph_dilate",
+    "--kernel_size=5"
+) -ExpectedOutputs @(
+    $processingFilterDilateOutput
+)
+
+$processingFilterErodeInput = Join-Path $ResolvedOutputRoot "processing_filter_erode_input.tif"
+Remove-Item ($processingFilterErodeInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("edge-ramp-raster", $processingFilterErodeInput)
+$processingFilterErodeOutput = Join-Path $ResolvedOutputRoot "processing_filter_erode_output.tif"
+Remove-Item ($processingFilterErodeOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "processing_filter_erode" -CaseArgs @(
+    "processing", "filter",
+    ("--input=" + $processingFilterErodeInput),
+    ("--output=" + $processingFilterErodeOutput),
+    "--band=1",
+    "--filter_type=morph_erode",
+    "--kernel_size=5"
+) -ExpectedOutputs @(
+    $processingFilterErodeOutput
+)
+
+$processingFilterMedianInput = Join-Path $ResolvedOutputRoot "processing_filter_median_input.tif"
+Remove-Item ($processingFilterMedianInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("edge-ramp-raster", $processingFilterMedianInput)
+$processingFilterMedianOutput = Join-Path $ResolvedOutputRoot "processing_filter_median_output.tif"
+Remove-Item ($processingFilterMedianOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "processing_filter_median" -CaseArgs @(
+    "processing", "filter",
+    ("--input=" + $processingFilterMedianInput),
+    ("--output=" + $processingFilterMedianOutput),
+    "--band=1",
+    "--filter_type=median",
+    "--kernel_size=5"
+) -ExpectedOutputs @(
+    $processingFilterMedianOutput
 )
 
 $cases += New-Case -Name "georef_dos_correction" -CaseArgs @(

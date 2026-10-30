@@ -82,7 +82,7 @@ matching,ecc_register,image_pair,data,real_regression,gold,C14,腿走合成兜�
 matching,corner,raster,data,real_regression,gold,C14,腿走合成兜底
 matching,stitch,image_pair,data,real_regression,gold,C14,腿走合成兜底
 processing,threshold,raster,data,real_regression,gold,C4,夹具来源为启发式判定，开批前核对
-processing,filter,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
+processing,filter,raster,data,real_regression,gold,C4,夹具来源为启发式判定，开批前核对
 processing,enhance,raster,data,real_regression,gold,C4,夹具来源为启发式判定，开批前核对
 processing,stats,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
 processing,edge,raster,data,real_regression,gold,C4,夹具来源为启发式判定，开批前核对
