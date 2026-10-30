@@ -3456,6 +3456,10 @@ action 级校验要求「不小于 3 的奇数」并**直接失败**；GUI 的 `
 都会同时改 `--help` 的可视区间与 GUI 的滑动范围 = 改可观测行为，需要用户拍板。
 本把只做两件：**把"纠正段只在进程内直调可达"钉成判据**（S10 + A11/A12）+ **文档诚实化**
 （`空间滤波.md` 的参数表与流程第 2 步现在写明"谁在哪一层拦"，不再让读者以为存在静默纠正路径之外的正常入口）。
+⚠ **成色更正（复审 Q2(a)，控制器独立复现）**：A11 那臂红成**未捕获的 `CV_Assert((ksize % 2 == 1))`**，这只发生在**单元直调 `plugin.execute`** 这条路上；
+产品三入口 `src/cli/main.cpp`、`src/framework/src/workflow.cpp`、`src/gui/execute_worker.cpp` 全部经 `framework::executeGuarded`，
+其中 `catch (const std::exception&)` 接得住 `cv::Exception`（它派生自 `std::exception`）⇒ **N182 的第四写者是"死支防御"，不是可达的崩溃路径**；
+又因偶数/<3 在同一批入口更前面就被 action 级校验拒掉，纠正段从外部**双重不可达**。本把不据此改任何产品码。
 
 **#164 家族追加一条**：`filter` 的 `sigma` 是 GUI `filter` 面板的**可见键**，`doFilter` 把它读出来，
 但**只有 `gaussian` 一支消费它**，另外六支读而不用（S11 的"σ=0.1 与 σ=1000 逐点相同"就是这条的正面见证）。
@@ -3466,14 +3470,15 @@ action 级校验要求「不小于 3 的奇数」并**直接失败**；GUI 的 `
 
 **回归（Debug 树，现跑）**
 - `Total Tests: 802`（扩写既有 `TEST_F`，未新增注册用例）。
-- 定向 43 条配方（逐字、单引号）：**43/43 绿**——首次 50.01 s（Step3/Step4 落地后），**终盘复跑 54.68 s**
+- 定向 43 条配方（逐字、单引号）：**43/43 绿**——**安静态散布 38.2~42.8 s**（控制器 42.83 与修复轮复跑 38.23、复审席 41.48 与 38.58，
+  五跑门控均为 0）；本席自跑的 50.01 / 54.68 是**带负载读数**（Step3/Step4 落地前后与提交串行交错），**不入散布、不当基线**
   （三笔提交全部落完、`git status` 干净之后再跑一次，口径同 `ctest -C Debug -R` 该配方的 `Total Tests` 那行）；
   `^PluginTest\.Processing` 族 **30/30 绿，7.33 s**。
 - 腿单跑 `ctest -R '^real_data_raster(\.|$)' -V` 通过，九字段**逐字未动**：
   `registered=79 ran=79 judged=58 allowlisted=21 allowlist-table=21 allowlist-gated-not-registered=0
   branch-labels=59 conditional-registrations=1 dead-branches=0`（本把没加腿 case ⇒ 该串与改前同）。
-- 腿墙钟单跑 **18.98 s**（该 case 的 `Test timeout computed to be: 60`）⇒ 余量 60 ÷ 18.98 = **3.16×**；
-  ⚠ 这是**安静态单跑**一把的读数，不是多跑散布的最大值 ⇒ 不据它改 TIMEOUT（本把 TIMEOUT 未抬、断言一条未减）。
+- 腿墙钟按 **R-D52 口径**取安静态多跑最大值：本批同一条腿安静态现读 14.15 / 14.19 / 14.84 / 15.66 / 16.22 / 17.13 / **17.64** s（门控 0）⇒ 余量 `60 ÷ 17.64 = **3.40×**`，未跌破 2.5× 拆腿触发线；
+  本席单跑 **18.98 s** 是**带负载读数**（step5 那几把腿串行相隔 15~19 s，缓存被前一把吃掉）⇒ **不入散布、不据它改 TIMEOUT**（本把 TIMEOUT 未抬、断言一条未减）。
 - 三条守卫仍在 43 条里跑到且绿：`source_mojibake_guard`、`docs_match_cli`
   （`actions=126 docs_checked=126 missing_doc=0 rows=594 matched=593 drift=0 allowed=7` ⇒ 参数表未增删行、
   必填列与默认值列未动）、`geotransform_guard`（两域读数与改前**逐字相同**：product `any=21 code=20 checked=18
@@ -3484,25 +3489,30 @@ action 级校验要求「不小于 3 的奇数」并**直接失败**；GUI 的 `
   `check_data_baseline.py` = `BASELINE: 88  CURRENT: 88  DIFFS: 0`（本把不需要真实影像，未开任何原件）。
 - 文本行尾现读（python `newline=''` 数，不按目录惯例推）：`tests/test_plugins.cpp` 26258 CRLF / 0 裸 LF；
   `tests/action_gold_cases.txt` 177 / 0；`docs/算法说明/影像处理与分析/空间滤波.md` **81** / 0（改前 69）；
-  `docs/RELEASE.md` 4283 / 0（改前 4119）；均 UTF-8 无 BOM。
+  `tests/test_coverage_meta.cpp` 1825 / 0（本把只改 1 行）；均 UTF-8 无 BOM。⚠ **本文件自身的行数不在此列**：它是我正在写的这份文档，落笔即自变（改前基线 `7e2dd24` = 4119 行、`c7cb453` 落定时 4299），**写一个"本文件 N 行"的数进本文件必然漂** ⇒ 复审 MF-1 就是把席位那个没有载体的 `4283` 删掉，换成这条口径声明。
 - Release 树本把**未重编** ⇒ 以上全部只验收 Debug，Release 侧一律**未验收**。
 
-**缺口（照实登记 8 条）**
+**缺口（照实登记 10 条，复审后补 G-9/G-10）**
 - G-1 `bilateral` 的**非平坦区逐点期望**拿不出：需要上游 `bilateral_filter` 的 LUT 化口径（范围核权重表 +
   定点化），本把只写"严格落在两侧档之间 + 仍是 `k/255` 格点"两条夹心 ⇒ 这一支的承重只有平坦区恒等那三条。
-- G-2 形态学 `open`/`close` 的**边界带逐点期望**没写：虽然 §4 把 borderValue 定约成域极值（理论上可推），
-  但我只为 `dilate`/`erode` 各写了一条边界见证（x=0、x=51），复合运算的边界带登记为未判。
-- G-3 `gaussian` 的边界列（x<2 与 x>49）不判：`BORDER_REFLECT_101` 下亮线件的两端会引入镜像采样，
-  推得期望要额外一条"反射象"的算式，本把不铺。
+  复审席另用"erode 补 `UCHAR_MAX` / dilate 补 0"独立把边界 4 列推得与盘上产物相符 ⇒ 这条是**可判而未判的推迟**（本把只为 `dilate`/`erode` 各写一条边界见证 x=0、x=51）。
+- G-3 `gaussian` 的边界列（x<2 与 x>49）不判：`BORDER_REFLECT_101` 下亮线件两端引入镜像采样，要多一条"反射象"算式；
+  复审席已按该口径独立推出并与盘上产物相符 ⇒ 同样是**可判而未判**，本把不铺。
 - G-4 `medianBlur` 的 `ksize>5` 路径与 `<=5` 路径**等价性未在上游源码里读到断言** ⇒ 本把没加 k=7 的臂；
   后续要加必须先实测钉一遍。
-- G-5 `sigma <= 0` 的分支（上游硬编码二项式核）不判：`ParamSpec` 的 σ 下界是 `0.0` ⇒ 0 是合法输入，
-  但 action 级校验不拦它，而本把三条 gaussian 锚点都用 σ>0 ⇒ "σ=0 会静默换成一族二项式核"这件事今天没位点判。
+- G-5 `sigma <= 0` 的分支（上游硬编码**二项式**核）**从 CLI 就可达**且期望可手推，本把没判：`ParamSpec` 的 σ 下界是 `0.0`
+  ⇒ `--sigma=0` 合法；action 级校验的 `sigma > 0` 只挂在 `gabor_filter` 上、**不覆盖 `filter`**；GUI 又把 σ 下界抬到 `0.000001`
+  （⇒ 同一个键三处口径，与 **N182 同形**，一并归该号拍板）。上游 `sigma <= 0` 走按 `ksize` 索引的硬编码表（4.14.0 现读
+  `k=5` 行 = `1/16, 4/16, 6/16, 4/16, 1/16`）⇒ 1 列亮线中心可手推 `51 × 6/16 = 19.125`，**是"可判而未判"，不是推不动**。
 - G-6 输出的**地理参考透传**本把不判（任务书裁定：`geotransform_guard` 的 test 域把 `code/checked/unchecked`
   写死成期望数，新增"判 `GetGeoTransform` 返回值"的位点要同笔改守卫 ⇒ 第二份行为）。
   ⇒「输入的 GT 必须原样进 `processing.filter` 产物」这一半**今天仍没位点判**，是已知未判项，不是与产品无关。
 - G-7 腿侧零改动：`processing,filter` 在 `real_data_matrix.txt` 第 5 列仍是 `none`（腿还没这条 case，
   改成 `real_regression` 就是假登记）⇒ 归 P3c。
+- G-9 GUI 侧那条 σ 文案**本把没改**：`src/gui/gui_data_support.cpp` 里 `sigma` 的说明串现读仍是"**高斯等**滤波的 sigma 参数"，
+  与本把在 `空间滤波.md` 写死的"只有 `gaussian` 消费"分叉 ⇒ 属 #164 同族的**文案半边**；改那句串 = 改用户可见文案，**归 D3 拍板**，本把不动 `src/`。
+- G-10 本块体里没有"输入打不开/路径非法"与"NaN→NoData 回写"两类位点（控制器现读本块 434 行内 `nonexistent|NaN|NoData` **0 命中**）
+  ⇒ `filter` 的失败契约与三态传播今天仍只有"成功路径 + 产物存在"级别，登记为未判而非声称判过。
 - G-8 Release 树未重编 ⇒ Release 侧**未验收**。
 
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
