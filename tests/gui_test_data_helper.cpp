@@ -616,6 +616,67 @@ int makeStepLevelRaster(const std::string& outputPath) {
     return 0;
 }
 
+// P3 (batch D): 真实腿 processing_edge 的输入件。52 x 12 单波段 Float32，value(x,y) = x（raw 0..51）。
+// 为什么是斜坡而不是与其它用例共享的 step-level 平台件：toUint8 把全幅 min/max 拉到 0/255，
+// **阶跃**处 Sobel dx=1 的响应 = 4 x 255 = 1020，被 convertScaleAbs 饱和到 255 ⇒ 产物恒 1.0，
+// 逐点期望就退化成上界型恒真（本把的 H-1）。这张斜坡的标度 255/(51-0) = 5.0 可精确表示 ⇒
+// 每个 u8 步长恰 5；ksize=3 的导数核 [-1,0,1] 比较的是 x-1 与 x+1（两像元中心差分）⇒
+// 内部 Sobel 响应 = 4 x (5 x 2) = 40 ⇒ 40/255 = 0.1568627，远低于饱和。
+// 52 != 12（轴序写反可见）；首末列在 BORDER_REFLECT_101 下为 0（x=-1 映到 x=1）。
+// 整幅 52 x 12 的统计：24 个 0 + 600 个 40/255 ⇒ Max = 40/255 = 0.156863、
+// Mean = 24000/159120 = 0.15083（raster_inspect info 的六位有效打印值）。
+int makeEdgeRampRaster(const std::string& outputPath) {
+    gis::core::initRuntimeEnvironment();
+    GDALAllRegister();
+
+    ensureParentDir(outputPath);
+    GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver) {
+        std::cerr << "Missing GTiff driver\n";
+        return 1;
+    }
+
+    const int width = 52;
+    const int height = 12;
+    GDALDataset* ds = driver->Create(outputPath.c_str(), width, height, 1, GDT_Float32, nullptr);
+    if (!ds) {
+        std::cerr << "Failed to create edge ramp raster: " << outputPath << "\n";
+        return 1;
+    }
+
+    double geotransform[6] = {
+        116.0, 0.001, 0.0,
+        40.0, 0.0, -0.001
+    };
+    ds->SetGeoTransform(geotransform);
+
+    std::vector<float> band1(static_cast<size_t>(width) * static_cast<size_t>(height), 0.0f);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            band1[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] =
+                static_cast<float>(x);
+        }
+    }
+
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    if (!band) {
+        GDALClose(ds);
+        std::cerr << "Failed to get edge ramp raster band\n";
+        return 1;
+    }
+    if (band->RasterIO(
+            GF_Write, 0, 0, width, height,
+            band1.data(), width, height, GDT_Float32,
+            0, 0, nullptr) != CE_None) {
+        GDALClose(ds);
+        std::cerr << "Failed to write edge ramp raster band\n";
+        return 1;
+    }
+
+    GDALClose(ds);
+    return 0;
+}
+
 // R3a (batch D): reference fixture for the raster_render_histogram_match leg branch.
 // Four equal plateaus 0 / 17 / 34 / 51 on a NON-SQUARE 40 x 24 canvas (four 20 x 12 quadrants,
 // 240 pixels each), so its normalized 8-bit levels are 0 / 85 / 170 / 255 with cumulative
@@ -1307,6 +1368,9 @@ int main(int argc, char* argv[]) {
     }
     if (command == "step-level-raster") {
         return makeStepLevelRaster(argv[2]);
+    }
+    if (command == "edge-ramp-raster") {
+        return makeEdgeRampRaster(argv[2]);
     }
     if (command == "histmatch-reference-raster") {
         return makeHistMatchReferenceRaster(argv[2]);

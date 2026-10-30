@@ -1451,6 +1451,39 @@ function Validate-CaseOutputs {
             # the PluginTest.ProcessingThresholdExecution unit block, which is the leg/unit split this
             # seat registers as a coverage boundary rather than padding the leg with a duplicate row.
         }
+        "processing_edge" {
+            Mark-Judged -Name $Case.Name
+            # Statistics are cached per file name in a PAM sidecar; delete it and judge the pixels.
+            Remove-Item ($processingEdgeOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingEdgeOutput)
+            )
+            # WHY Assert-InfoSizeExact and not Assert-TextContains "Size:   52 x 12 x 1 bands": the
+            # substring never compares the numbers. Width and height are compared separately on a
+            # NON-SQUARE fixture (52 != 12) so an axis swap is visible.
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 52 -ExpectedHeight 12 -ExpectedBands 1 -Message (
+                "processing_edge did not write the 52 x 12 x 1 band product")
+            # dtype is its own judgement: 0.0 / 0.156863 would also fit an 8-bit band, so "Type" is
+            # not a corollary of the three statistics below.
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_edge product must be Float32 (convertTo(CV_32F, 1/255) then matToGdalTiff)")
+            # Tolerance sandwich, per data point (raster_inspect info prints SIX significant digits):
+            #   Min 0 -- exact integer, zero print residual; 1e-9 only absorbs float32 read-back noise.
+            #   Max -- product float32(40/255) = 0.1568627506, printed "0.156863", residual 2.49e-7;
+            #     the six-digit half-cell at this magnitude is 5e-7, so the tolerance must be larger
+            #     than the print residual => 1e-6. Nearest defects: 20/255 = 0.0784314 (adjacent
+            #     single-pixel difference used instead of the two-pixel central difference, |d| = 0.0784,
+            #     7.8e4 x the tolerance); dy defaulted to 1 (mixed derivative) gives Max 0 (|d| = 0.157).
+            #   Mean -- printed "0.15083", exact 24000/159120 = 0.1508295626, residual 4.37e-7 => 1e-6.
+            #     Nearest defects: all-zero product (Mean 0, |d| = 0.1508); border columns not zeroed
+            #     (Mean 40/255 = 0.156863, |d| = 6.03e-3).
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "processing_edge low plateau (the two BORDER_REFLECT_101 columns) must be 0.0")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected (40.0 / 255.0) -Tolerance 1e-6 -Message (
+                "processing_edge max must be 40/255 = 0.156863 (u8 step 5, Sobel ksize=3 dx=1 two-pixel central difference x 4)")
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (24000.0 / 159120.0) -Tolerance 1e-6 -Message (
+                "processing_edge mean must be 24000/159120 = 0.15083 (600 interior pixels at 40/255 over 624)")
+        }
         # ------------------------------------------------------------------------------------
         # P2b (batch D): the four processing.enhance cases registered below.
         # SHARED REASONING for all four (stated once here rather than copied four times, so a future
@@ -2765,6 +2798,44 @@ $cases += New-Case -Name "processing_enhance_gamma" -CaseArgs @(
     "--gamma=2.0"
 ) -ExpectedOutputs @(
     $processingEnhanceGammaOutput
+)
+
+# P3 (batch D): processing.edge had NO case on this leg before this seat (grep of this file for
+# "processing_edge" returned 0 hits when the seat started), so a leg-side green was impossible by
+# construction. The four unit-side criteria in PluginTest.ProcessingEdgeExecution are the registry
+# evidence; this case is the leg witness that the same consumption point runs through the CLI.
+#
+# WHY the input is a GENERATED ramp and NOT a copy of $data.StepLevelRaster: toUint8 maps a band's
+# min/max onto 0/255. At a STEP edge Sobel dx=1 responds 4 * 255 = 1020 and convertScaleAbs saturates
+# that to 255, so the product is a constant 1.0 and any per-point expectation degenerates into an
+# upper-bound tautology (H-1). The ramp is 52 x 12 Float32 with value(x,y) = x (raw 0..51):
+# scale 255/(51-0) = 5.0 exactly, so every u8 step is 5; the ksize=3 derivative kernel [-1,0,1]
+# compares x-1 with x+1 (a TWO-pixel central difference), hence interior = 4 * (5*2) = 40.
+# BORDER_REFLECT_101 turns the two border columns into 0 (x=-1 maps to x=1), so the whole frame is
+#   24 zeros + 600 * 40/255  =>  Min 0, Max 40/255 = 0.156863, Mean = 24000/159120 = 0.15083
+# (both are derived from the fixture above, not read back from the product; raster_inspect info prints
+# six significant digits).
+#
+# WHY sobel_dy is passed explicitly as 0: the ParamSpec default is 1, and dx=1/dy=1 is the mixed
+# derivative d2/dxdy, which is identically 0 on a ramp that only varies with x -- leaving the default
+# would make this a case that only judges zeros.
+$processingEdgeInput = Join-Path $ResolvedOutputRoot "processing_edge_input.tif"
+Remove-Item ($processingEdgeInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+# Always regenerate (deterministic 52 x 12): a cached copy would survive a fixture-generator change
+# and silently keep judging the old shape.
+Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("edge-ramp-raster", $processingEdgeInput)
+$processingEdgeOutput = Join-Path $ResolvedOutputRoot "edge_sobel_output.tif"
+Remove-Item ($processingEdgeOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "processing_edge" -CaseArgs @(
+    "processing", "edge",
+    ("--input=" + $processingEdgeInput),
+    ("--output=" + $processingEdgeOutput),
+    "--band=1",
+    "--edge_method=sobel",
+    "--sobel_dx=1",
+    "--sobel_dy=0"
+) -ExpectedOutputs @(
+    $processingEdgeOutput
 )
 
 $cases += New-Case -Name "georef_dos_correction" -CaseArgs @(
