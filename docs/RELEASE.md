@@ -3466,7 +3466,9 @@ action 级校验要求「不小于 3 的奇数」并**直接失败**；GUI 的 `
 
 **回归（Debug 树，现跑）**
 - `Total Tests: 802`（扩写既有 `TEST_F`，未新增注册用例）。
-- 定向 43 条配方（逐字、单引号）：**43/43 绿，50.01 s**；`^PluginTest\.Processing` 族 **30/30 绿，7.33 s**。
+- 定向 43 条配方（逐字、单引号）：**43/43 绿**——首次 50.01 s（Step3/Step4 落地后），**终盘复跑 54.68 s**
+  （三笔提交全部落完、`git status` 干净之后再跑一次，口径同 `ctest -C Debug -R` 该配方的 `Total Tests` 那行）；
+  `^PluginTest\.Processing` 族 **30/30 绿，7.33 s**。
 - 腿单跑 `ctest -R '^real_data_raster(\.|$)' -V` 通过，九字段**逐字未动**：
   `registered=79 ran=79 judged=58 allowlisted=21 allowlist-table=21 allowlist-gated-not-registered=0
   branch-labels=59 conditional-registrations=1 dead-branches=0`（本把没加腿 case ⇒ 该串与改前同）。
