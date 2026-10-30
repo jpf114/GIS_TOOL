@@ -3197,6 +3197,126 @@ skeleton / connected_components / threshold **七条，没有 enhance** ⇒ 这�
   与单测侧的 `createStepLevelRaster` **同属 C++**、只差前缀；早前工作底稿把它写成"PowerShell 侧造件"是错的，
   且 `grep -n makeStepLevelRaster tests/run_real_raster_regression.ps1` 实测 **6 处、全在注释里**（底稿写 13 处）。
 
+### 批次 D 覆盖晋升 P3（2026-10-30，`processing.edge` 四支值级判据 + 一条真实腿 case；登记/计数/上限/矩阵同笔）
+
+本把 = **一个动作** `processing.edge`（`processing.filter` 留给 P4，不在本把）。改前现读：登记表
+`processing,edge,PENDING`；矩阵第 5 列 `none`；`tests/run_real_raster_regression.ps1` 里
+`grep -n 'New-Case -Name "processing_edge"'` = **0** ⇒ 这条动作在腿上"绿"在构造上不可能。
+射程 = 单测四支 + 腿一条 case + 登记晋升 + 矩阵第 5 列 + `边缘检测.md` 正文 + 本节。
+
+**饱和陷阱：判据形状的由来（算术复算，非产品实测）**
+- `toUint8` 对非 8 位输入按全幅 min/max 线性拉到 0..255 ⇒ 两级输入归一后差恒为 255。**阶跃**处
+  Sobel ksize=3、dx=1 的响应 = 4×255 = **1020**，三档 0/50/255 的 50→255 跳 = 4×205 = **820**，
+  Scharr = 16×255 = **4080**；`convertScaleAbs` 的语义是**先取绝对值、再饱和到 0..255** ⇒ 强边产物恒 1.0，
+  逐点期望退化成上界型恒真。**所以不用三档平台件判跳变处**。
+- 本把的两张夹具都不在阶跃上取值：
+  1. **52×12 Float32 斜坡** `value(x,y)=x`（raw 0..51）：标度 255/(51−0) = 5.0 可精确表示 ⇒ u8 步长恰 5；
+     Sobel ksize=3、dx=1 的导数核 `[-1,0,1]` 比较的是 **x−1 与 x+1**（两像元中心差分）⇒ 内部 4×(5×2) = **40**；
+     Scharr 平滑核 `[3,10,3]` ⇒ 16×(5×2) = **160**，都 < 255。⚠ 底稿候选值 `4×5 = 20` 与复算 **40** 不一致，
+     两数并列：底稿乘的是单像元步长，中心差分跨两像元。首跑产物命中 **40/255 = 0.1568627**。
+     首末列受 `BORDER_REFLECT_101` 影响（x=−1 映到 x=1）⇒ 边界单独判 0。
+  2. **20×12 Float32 脉冲**（全 0、第 0 列 255、像素 (10,6)=10）：min/max 已钉 0/255 ⇒ 归一恒等；
+     Laplacian ksize=3 预测中心 **80/255**、四角 **20/255**、四邻 **0**。
+- `laplacian` 的核从上游取逐字（tag 4.14.0，`modules/imgproc/src/deriv.cpp` 的 `cv::Laplacian`）：
+  ```
+  if( ksize == 1 || ksize == 3 )
+  {
+      static const double K[2][9] =
+      {
+          { 0, 1, 0, 1, -4, 1, 0, 1, 0 },
+          { 2, 0, 2, 0, -8, 0, 2, 0, 2 }
+      };
+  ```
+  ⇒ ksize=3 是第二行（角 2 / 中心 −8 / 边 0），**不是**经典四邻域 `[[0,1,0],[1,-4,1],[0,1,0]]`（那是 ksize=1）。
+  单测用"中心 / 四角 / 四邻"三组点把核归属钉死。
+
+**单测（扩写既有 `PluginTest.ProcessingEdgeExecution`，不新增 `TEST_F` ⇒ `Total Tests` 不变）**
+- E1 `sobel` dx=1/dy=0：内部 **40/255**（首行/中间/末行三点）、边界列 0；
+- E2 `sobel` 默认 dy=1：混合二阶导在只随 x 变的斜坡上恒 **0**（dy 是可见参数，被忽略会读成 40/255）；
+- E3 `laplacian`：中心 **80/255**、对角 **20/255**、四邻 **0**（H-2 定核）；
+- E4 `scharr` dx=1/dy=0：**160/255**（退回 Sobel 的 4× 权重会读成 40/255）；
+- E5 `canny`（H-3，不造逐点）：产物取值 ⊆ {0,1}；默认阈值有边且 Min=0/Max=1；low 10/50 与 high 300/150
+  两条非严格单调（本夹具预期**相等** 1344，是性质判据不是计数期望）；**high=10000 ⇒ 边缘像元数 0**
+  （阈值真被消费；产品若写死 50/150 会读到 1344）。
+
+**推得 vs 实跑（分开写；"实测"只用于真跑过的）**
+
+| 判据点 | 推得（写死常数） | 首跑实测（产物回读） |
+|---|---|---|
+| sobel 内部 3 点 | 40/255 = 0.156862745 | **0.156862751 ×3** |
+| sobel 边界 2 点 / 默认 dy=1 | 0 / 0 | **0 / 0**、**0 / 0** |
+| laplacian 中心 | 80/255 = 0.313725490 | **0.313725501** |
+| laplacian 对角 2 点 / 四邻 2 点 | 20/255 = 0.078431373 / 0 | **0.078431375 ×2** / **0 / 0** |
+| scharr 内部 2 点 | 160/255 = 0.627450980 | **0.627451003 ×2** |
+| canny 默认：边缘数 / 取值集 / Min / Max | >0 / ⊆{0,1} / 0 / 1 | **1344 / {0.0,1.0} / 0 / 1** |
+| canny low=10 / high=300 / high=10000 | ≥1344 / ≤1344 / 0 | **1344 / 1344 / 0** |
+
+**腿（一条 `New-Case -Name "processing_edge"` + 一条值级分支）**
+- `gui_test_data_helper` 新子命令 `edge-ramp-raster`：把 52×12 斜坡造进 `$ResolvedOutputRoot` 的
+  `processing_edge_input.tif`（每次重建，防止缓存件在生成器改动后继续被旧形状判；`data/` 原件零接触）。
+- case 参数：`processing edge --band=1 --edge_method=sobel --sobel_dx=1 --sobel_dy=0`。
+  分支判 `Size 52×12×1`（宽高分开比，非方夹具才看得见轴序写反）、`Type Float32`（单独一条，0/0.156863
+  也落得进 8 位波段）、`Min 0`、`Max 40/255`、`Mean 24000/159120`（整幅 = 24 个 0 + 600 个 40/255，
+  六位有效打印 0.15083；容差 1e-9 / 1e-6 / 1e-6 与打印残差夹心写在分支注释里）。
+  **产物实测打印**：`Min: 0 / Max: 0.156863 / Mean: 0.15083`。
+- `sobel_dy=0` 显式给：`ParamSpec` 默认是 1，dx=1/dy=1 是混合导、在斜坡上恒 0，不显式给就只判到零。
+
+**反事实臂 11 条（单实例；每臂前 `git status` 重查；rc 单独取，不塞管道）**
+- 产品侧 4 臂（改 `processing_plugin.cpp`，只重编 `plugin_processing`，当场还原）：
+  A01 sobel ksize 3→1 ⇒ 单测红（实际 10/255，差 30/255）、**腿也红**（`actual=0.0392157 expected=0.156863`）；
+  A02 laplacian ksize 3→1 ⇒ 中心/四角/四邻五点全红；A03 scharr→sobel ⇒ 实际 40/255（差 120/255）；
+  A04 canny 阈值写死 50/150 ⇒ `countAbsurd = 1344`（应 0）。
+- 期望侧 8 臂（改 `tests/test_plugins.cpp`，**偏小/偏大两向各一**）：sobel 20/255 与 60/255、
+  laplacian 40/255 与 160/255、scharr 40/255 与 200/255、canny 默认边缘数 0 与 2000 ⇒ 8/8 rc=8，
+  实际值与首跑逐字一致。
+- 腿侧 3 臂（脚本副本载体 + 显式传全部路径；被跟踪文件 0 行脏）：C00 无改动复现 **rc=0** 且九计数逐字不变；
+  C01 `Max` 期望改 20/255 ⇒ rc=1 `actual=0.156863`；C02 `Mean` 期望改 40/255 ⇒ rc=1 `actual=0.15083`。
+- 还原证明：`git show HEAD:<path>` + 按原行尾归一写回；`processing_plugin.cpp` 每臂后工作树 sha256 回到
+  `169bc45d…63402`（77282 字节 / 1556 CRLF），`test_plugins.cpp` 回到 `b8a683b3…45832e`（25847 CRLF / 0 裸 LF）；
+  每轮还原后干净重编、单测再绿。**未用** `git hash-object --no-filters` 当字节证据（autocrlf 下必假）。
+
+**登记表五数 + ceiling 前后（同笔）**
+```
+改前  126 行 / GOLD 110 / PENDING 16 / all_lines 111 / table_driven 15 / literal_slot 95 / kPendingCeiling 16
+改后  126 行 / GOLD 111 / PENDING 15 / all_lines 112 / table_driven 15 / literal_slot 96 / kPendingCeiling 15
+```
+第 4 列 = `PluginTest.ProcessingEdgeExecution`；新注释无 `,GOLD` 字面量 ⇒ `gold_rows_all_lines` 只涨 1。
+矩阵 `processing,edge` 行第 5 列 `none → real_regression`（依据 = 表头对该列的逐字定义；第 6 列 `gold` 是目标档
+**不动**；第 4 列 `fixture=data` 按 P2b 的复核先例**不单点改**，归 D3 的矩阵对账）。
+
+**腿九计数前后两串**
+```
+改前  registered=78 ran=78 judged=57 allowlisted=21 allowlist-table=21
+      allowlist-gated-not-registered=0 branch-labels=58 conditional-registrations=1 dead-branches=0
+改后  registered=79 ran=79 judged=58 allowlisted=21 allowlist-table=21
+      allowlist-gated-not-registered=0 branch-labels=59 conditional-registrations=1 dead-branches=0
+不变量 57+21=78=ran（改前）、58+21=79=ran（改后）；$rasterGateAllowlist 21 条一字未动；dead-branches=0
+```
+`branch-labels` 比 `judged` 多 1 是**改前既有形状**（`classification_feature_stats_csv` 在 Mode=quick 下不跑、
+闸计入 conditional-registrations），不是本把引入。
+
+**回归（Debug 树，现跑）**
+- `Total Tests: 802` 改前改后同值（扩写既有 `TEST_F`，不新增注册用例）。
+- 定向 43 条配方 **43/43 绿，44.63 s**（含 `docs_match_cli` 与 `CoverageMeta*`）；`^PluginTest\.Processing`
+  **30/30 绿，6.18 s**。
+- 腿墙钟：改前 **13.92 s**、改后 **15.02 s**（安静态 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0 时起跑）
+  ⇒ 余量 60 ÷ 15.02 = **3.995×**（改前 4.31×）；**TIMEOUT 60 未抬、断言一条未减**。
+- `data/` 只读两件套（开批时刻 2026-10-30 14:51:26）：`find data -type f -newermt` = **0**；
+  `check_data_baseline.py` = `BASELINE: 88  CURRENT: 88  DIFFS: 0`。
+- 文本：`test_plugins.cpp` 25847 CRLF / 0 裸 LF；`run_real_raster_regression.ps1` 3048 CRLF / 0 裸 LF /
+  `Parser::ParseFile` 0 错；`边缘检测.md` 72 CRLF / 0 裸 LF；参数表未动、`docs_match_cli` 绿。
+
+**缺口（照实登记 8 条）**
+- G-1 `canny` 的逐点像素集不可手推（Sobel+NMS+双阈值滞后）⇒ 只有结构/单调判据；本夹具上 low/high 两条单调的
+  预期读数是**相等**（1344），真正承重的是 high=10000 ⇒ 0 与取值集/Min/Max。
+- G-2 `sobel` 的 N41 静默钳制（越界→1、`(0,0)`→dx=1）本把**不修、不判**（任务书明令）。
+- G-3 `scharr` 的 dx=0/dy=1（垂直求导）没有单测：斜坡只沿 x 变，垂直方向恒 0，判不出东西。
+- G-4 腿侧只判 `sobel` 一支；`canny`/`laplacian`/`scharr` 无腿 case（本把只要求动作出现在一条 real 腿里）。
+- G-5 矩阵第 4 列 `fixture=data` 按 P2b 复核先例不单点改（整列语义归 D3 矩阵对账 #184）。
+- G-6 `canny` 的 `low_threshold` 没有承重臂：产品写死 50/150 时 low=10 那行读数仍是 1344 ⇒ 该单调行不红。
+- G-7 边界列判 0 依赖 `BORDER_REFLECT_101`，没有单独改 borderType 的臂（A01 只覆盖内部点）。
+- G-8 Release 树本把未重编 ⇒ 以上全部只验收 Debug；Release 侧一律**未验收**。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
