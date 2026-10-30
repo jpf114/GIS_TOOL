@@ -2714,9 +2714,11 @@ $cases += New-Case -Name "processing_enhance_equalize" -CaseArgs @(
 # RATIONAL as the un-quantised middle level -- the two candidate implementations print identical
 # Min / Mean / Max here. The discriminator exists only on a fixture whose max is not a divisor of 255
 # (the unit side uses max = 53, where 10*255/53 truncates to 48 and 48/255 differs from 10/53 by
-# 7.84e-4). So this case pins that enhance_type=normalize reaches the CLI, reads the band, runs the
-# min/max normalisation and round-trips through GDAL's statistics; the "not quantised" half of DF-4
-# stays unit-side only and is registered as a leg-side gap in the seat report.
+# 4.43951e-4 -- so the discriminating tolerance must sit BELOW 4.44e-4, otherwise the quantised
+# implementation would pass green on that fixture). So this case pins that enhance_type=normalize
+# reaches the CLI, reads the band, runs the min/max normalisation and round-trips through GDAL's
+# statistics; the "not quantised" half of DF-4 stays unit-side only, and THIS paragraph is its whole
+# leg-side record (no private report and no git-ignored log is cited as evidence).
 $cases += New-Case -Name "processing_enhance_normalize" -CaseArgs @(
     "processing", "enhance",
     ("--input=" + $processingEnhanceInput),
