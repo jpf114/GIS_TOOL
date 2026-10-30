@@ -1486,9 +1486,9 @@ function Validate-CaseOutputs {
         }
 
         # ------------------------------------------------------------------------------------
-        # P3c (batch D): the three processing.filter cases whose New-Case sites sit right after the
-        # processing_edge case. SHARED REASONING, stated once here so three copies cannot drift:
-        #   * size and dtype judge the WRITER (all three products go through writeMatOutput ->
+        # P3c + P3c-b (batch D): the five processing.filter cases whose New-Case sites sit right after
+        # the processing_edge case. SHARED REASONING, stated once here so five copies cannot drift:
+        #   * size and dtype judge the WRITER (all five products go through writeMatOutput ->
         #     matToGdalTiff -> createRaster(dst, cols, rows, 1, GDT_Float32)), not the filter_type;
         #     they are repeated per branch because each branch opens its own file, and the
         #     load-bearing per-branch rows are the three statistics below them.
@@ -1501,10 +1501,12 @@ function Validate-CaseOutputs {
         #   * the tolerance is pinned PER POINT, never globally: raster_inspect info prints six
         #     significant digits, so the print step moves with the magnitude and each row below
         #     states its own measured print residual, its own half-step and its own nearest defect.
-        #   * the three branches together are the dispatch witness: the three Means sit >= 0.0380845
-        #     apart (>= 3.8e4 times any tolerance used here), so a branch that read another
-        #     filter_type's product goes red on its own Mean row, and the mismatch arm of this seat
-        #     measured exactly that.
+        #   * the five branches together are the dispatch witness, and after P3c-b the binding pair is
+        #     NOT the one P3c quoted: the smallest gap between two distinct Means is 0.0011312217
+        #     (median <-> open and median <-> close), while 0.0761689291 (dilate <-> erode) is the
+        #     LARGEST. At the 1e-6 used on those rows the smallest gap is still 1.13e3 -> three orders
+        #     of magnitude, so a branch that read another filter_type's product still goes red on its
+        #     own Mean row; the mismatch arms measured exactly that.
         # ------------------------------------------------------------------------------------
         "processing_filter_dilate" {
             Mark-Judged -Name $Case.Name
@@ -1594,12 +1596,97 @@ function Validate-CaseOutputs {
             # than the filter. Nearest defect: either morph profile -> |d| = 3.81e-2 = 3.8e4 x tol.
             Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected 0.5 -Tolerance 1e-6 -Message (
                 "processing_filter_median mean should be 0.5 = 5*(0+1+...+51)/(52*255): a 25-sample window on a y-constant ramp is pointwise identity")
-            # SCOPE LIMIT (do not read this branch as "the leg identified the operator"): on a monotone
-            # ramp the median is the identity, and so is a box mean of a symmetric window -- the three
-            # numbers above are ALSO what a mean filter of this fixture prints. What this branch
-            # actually judges is the quantisation scale, the /255 divide, the size, the dtype and that
-            # filter_type=median reaches the right branch through the CLI. Separating median from blur
-            # is carried by the narrow-island probes of the unit block, not by this leg row.
+            # SCOPE LIMIT, narrowed by P3c-b (do not read this branch as "the leg identified the
+            # operator"): on a monotone ramp the median is the identity, and so is a box mean of a
+            # symmetric window -- so the MEAN row above is indistinguishable from what a mean filter
+            # prints on this fixture. The Min/Max rows are NOT. Measured on this carrier, the four
+            # non-identity profiles of this family are dilate (Min 0.0392157 / Max 1), erode (Min 0 /
+            # Max 0.960784), open (Min 0 / Max 0.960784) and close (Min 0.0392157 / Max 1), while a
+            # box mean of this ramp keeps BOTH edges at 0 and 1 and so cannot reproduce any of them.
+            # What this branch judges is the quantisation scale, the /255 divide, the size, the dtype
+            # and that filter_type=median reaches the right branch through the CLI; separating median
+            # from blur is carried by the narrow-island probes of the unit block, not by this leg row.
+            # COROLLARY that the two new branches earn: median's boundary identity is carried by these
+            # Min/Max rows, NOT by its Mean. The boundary deviations of open and close are antisymmetric
+            # about 0.5 (15/13260 down, 15/13260 up), so a Mean row alone is BLIND to a boundary error
+            # the ramp happens to mirror; "Min 0" and "Max 1" above are the rows that say the edges were
+            # really kept rather than averaged back to the middle.
+        }
+        # P3c-b (batch D): the two boundary branches P3c left out. Same fixture, same writer, same
+        # per-point tolerance discipline; the profiles are derived in the block comment at the
+        # New-Case sites above. Each row below states which OTHER branch prints the same number, so a
+        # reader can see which rows carry the branch and which only carry the fill rule.
+        "processing_filter_open" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($processingFilterOpenOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingFilterOpenOutput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 52 -ExpectedHeight 12 -ExpectedBands 1 -Message (
+                "processing_filter_open did not write the 52 x 12 x 1 band product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_filter_open product must be Float32 (toUint8 -> morphologyEx(MORPH_OPEN) -> convertTo(CV_32F, 1/255))")
+            # Sandwich, Min 0. Measured print on this carrier: "0" -> zero print residual, so 1e-9 only
+            # absorbs float32 read-back noise. HONEST SCOPE, written because this row is NOT what
+            # identifies the branch: erode and median print Min 0 too (open clips the RIGHT edge only).
+            # What it does carry is the fill rule: a dilate-first profile, or any 0-fill reaching the
+            # erode step, lifts the left columns to 10/255 -> |d| = 3.92e-2 = 3.9e7 x tol.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected 0 -Tolerance 1e-9 -Message (
+                "processing_filter_open min must be 0: the erode step runs first and its virtual samples (domain maximum) can never win a min, so column 0 keeps level 0")
+            # Sandwich, Max 245/255 = 0.9607843137254902. Measured print: "0.960784", residual 3.14e-7;
+            # magnitude in [0.1,1) -> six-digit step 1e-6, half-step 5e-7, so the tolerance has to
+            # EXCEED this point's own print residual -> 1e-6 (3.19x); had the print gone up to
+            # 0.960785 the distance would be 6.86e-7, still inside 1e-6, so neither print side can go
+            # falsely red. THIS is the row that says open is not median: after the erode clip the
+            # dilate window at x = 50, 51 can only reach level 5*(51-2), so any profile that keeps the
+            # ramp's ceiling (median, dilate, close) prints 1 -> |d| = 3.92e-2 = 3.9e4 x tol. Shared
+            # with erode, whose Max is 245/255 for the mirror reason; the Mean row below splits them.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected (245.0 / 255.0) -Tolerance 1e-6 -Message (
+                "processing_filter_open max must be 245/255 = 5*(51-2)/255, not 255/255: the erode step clips the two right columns before dilate can see level 51")
+            # Sandwich, Mean 6615/13260 = 0.4988687782805429. Measured print: "0.498869", residual
+            # 2.22e-7 -- below the 5e-7 half-step, so the print side is not in question -- and 1e-6 is
+            # 4.5x that residual. THE BINDING ROW OF THIS KNIFE: the nearest other mean is median's 0.5
+            # at |d| = 0.0011312217 = 1.13e3 x tol (three orders of magnitude, not the 3.8e4 P3c
+            # quoted for its three branches), and the next is erode at 490/13260 = 3.70e-2 -- open and
+            # erode share BOTH Min and Max, so this row alone is what separates them.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (6615.0 / 13260.0) -Tolerance 1e-6 -Message (
+                "processing_filter_open mean should be 6615/13260 = (5*(0+1+...+49) + 245 + 245)/(52*255): 15 u8 units under the identity, all of it in the two clipped right columns")
+        }
+        "processing_filter_close" {
+            Mark-Judged -Name $Case.Name
+            Remove-Item ($processingFilterCloseOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+            $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
+                "raster_inspect", "info", ("--input=" + $processingFilterCloseOutput)
+            )
+            Assert-InfoSizeExact -Text $info -ExpectedWidth 52 -ExpectedHeight 12 -ExpectedBands 1 -Message (
+                "processing_filter_close did not write the 52 x 12 x 1 band product")
+            Assert-Condition -Condition ((Get-InfoBandLabelText -Text $info -Band 1 -Label "Type") -eq "Float32") -Message (
+                "processing_filter_close product must be Float32 (toUint8 -> morphologyEx(MORPH_CLOSE) -> convertTo(CV_32F, 1/255))")
+            # Sandwich, Min 10/255 = 0.0392156862745098. Measured print: "0.0392157", residual 1.37e-8;
+            # at magnitude 3.9e-2 the six-digit step is 1e-7 and the half-step 5e-8, so a uniform
+            # "integers get 1e-9" constant would be RED ON THE PRINTER here (1.37e-8 > 1e-9) and not on
+            # a defect -- the second row in this family that breaks such a constant, which is why the
+            # tolerance is written per point. 1e-6 buys 73x over the residual. Nearest defect: the
+            # three profiles that keep the floor (median, erode, open) print 0 -> |d| = 3.92e-2 =
+            # 3.9e4 x tol. Shared with dilate, whose Min is 10/255 for the mirror reason, and the Mean
+            # row below is what splits the two.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Min" -Expected (10.0 / 255.0) -Tolerance 1e-6 -Message (
+                "processing_filter_close min must be 10/255 = 5*(0+2)/255: the dilate step runs first and lifts columns 0, 1, 2 to the level two steps to their right")
+            # Sandwich, Max 1: 255 * (1/255) lands on float32 1.0 exactly and prints "1", so the print
+            # residual is zero and 1e-9 only absorbs read-back noise. HONEST SCOPE: shared with median
+            # and dilate (close clips the LEFT edge only), so this row does not identify the branch --
+            # it pins that the right edge was NOT eroded away: the two profiles that lose the ceiling
+            # (erode, open) print 245/255 -> |d| = 3.92e-2 = 3.9e7 x tol.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Max" -Expected 1 -Tolerance 1e-9 -Message (
+                "processing_filter_close max must be 255/255 = 1.0 (the /255 scale, not a raw 255 band): the last column still reaches level 51 inside its window")
+            # Sandwich, Mean 6645/13260 = 0.5011312217194570. Measured print: "0.501131", residual
+            # 2.22e-7 -> 1e-6 (4.5x). THIS IS THE PAIR THAT SETS THE SANDWICH for the whole family:
+            # |0.5011312217 - 0.5| = 0.0011312217 = 1.13e3 x tol is the SMALLEST gap between two
+            # distinct means of the five (0.0761689291, dilate minus erode, is the LARGEST -- P3c
+            # labelled it the minimum and that is what the review seat's MF-4 caught). Next nearest:
+            # open at 30/13260 = 2.26e-3, then dilate at 490/13260 = 3.70e-2.
+            Assert-InfoBandStatNear -Text $info -Band 1 -Label "Mean" -Expected (6645.0 / 13260.0) -Tolerance 1e-6 -Message (
+                "processing_filter_close mean should be 6645/13260 = (10+10+10 + 5*(3+4+...+51))/(52*255): 15 u8 units over the identity, all of it in the three lifted left columns")
         }
         # ------------------------------------------------------------------------------------
         # P2b (batch D): the four processing.enhance cases registered below.
@@ -2961,20 +3048,29 @@ $cases += New-Case -Name "processing_edge" -CaseArgs @(
 # reachable through the CLI. The registry, kPendingCeiling and tests/test_plugins.cpp are untouched
 # here on purpose: a promotion knife may move one surface at a time.
 #
-# WHY THREE cases and not five: morph_open and morph_close are the IDENTITY on this ramp
-#   open  = erode then dilate = 5*max(0, min(51, x)) = 5x
-#   close = dilate then erode = the same, because the plateau is flat between the two shifts
-# so a leg branch for either would print the median branch's three numbers to the digit. That
-# degeneracy is decided by THIS FIXTURE, not by the product, so it is registered as a coverage
-# boundary (docs/RELEASE.md, batch D knife P3c) rather than padded with two branches that cannot be
-# red. The discriminating evidence for open/close is the narrow-island fixture of P3b's unit block,
-# where only those two arms go red.
+# WHY FIVE cases and not three: this seat (P3c-b) CORRECTS the knife before it. P3c wrote that
+# morph_open and morph_close are the IDENTITY on this ramp and would therefore print the median
+# branch's three numbers to the digit. Re-derived here from the product's own window semantics, that
+# is wrong -- in the boundary columns only:
+#   open  = dilate AFTER erode. The erode step clips the right edge (its virtual samples take the
+#           domain maximum and can never win a min), and the following dilate -- virtual samples at
+#           the domain minimum 0 -- cannot recover it:
+#           open(x) = 5x (x <= 49), 245 (x = 50, 51)
+#   close = erode AFTER dilate, the mirror. The dilate step lifts the left columns (virtual samples
+#           at 0 never win a max), and the following erode cannot bring them back down:
+#           close(x) = 10 (x = 0, 1, 2), 5x (x >= 3)   [x = 2 is 10 either way -- the plateau spans
+#           three columns but only displaces two from the identity]
+# Both follow from the P3b virtual-sample rule, so the difference IS the boundary and IS value-level:
+# open sits 15 u8 units UNDER the identity (245+245 where the ramp has 250+255) and close 15 OVER
+# (10+10+10 where it has 0+5+10). What made those two branches absent was this seat's SCOPE (P3c
+# took three), not a fixture-decided degeneracy, so they are added here rather than registered as a
+# coverage boundary. The narrow-island fixture of P3b's unit block still carries the per-pixel half.
 #
 # WHY each case regenerates its OWN ramp instead of sharing one file (and instead of reusing the
 # processing_edge name): a cached copy would survive a fixture-generator change and silently keep
 # judging the old shape; a name shared across cases hides which case touched the file and lets two
 # cases' sidecar removals fight each other. Same generated fixture as the edge case (52 x 12
-# Float32, value(x,y) = x, geotransform present), three copies, three products.
+# Float32, value(x,y) = x, geotransform present), five copies, five products.
 #
 # The derived expectations, all computed BEFORE the first run from the fixture literals:
 #   toUint8 scale = 255/(51-0) = 5.0 (binary exact) -> identity level(x) = 5*x, printed value = 5x/255
@@ -2985,12 +3081,30 @@ $cases += New-Case -Name "processing_edge" -CaseArgs @(
 #     -> sum = 5*(1+2+...+49) = 5*1225 = 6125 -> Mean 6125/13260 = 0.4619155354449472
 #   median (25 samples, BORDER_REPLICATE, y constant): the 13th sorted sample is the centre column at
 #     every x including the borders -> identity -> Mean 6630/13260 = 0.5 exactly
-#   cross-check: 7135 + 6125 = 13260 = 2*6630, so the two morph means are EXACTLY symmetric about the
-#     identity mean; each is off-centre by 505/13260 = 0.038084464555, and the three means are separated
-#     by 0.0380845 at minimum -- 3.8e4 times the loosest tolerance used in the three branches.
-# WHAT THESE CASES DO NOT JUDGE: whether kernel_size is honoured at all. All three pass the ParamSpec
+#   open (erode then dilate): sum = 5*(0+1+...+49) + 245 + 245 = 6125 + 490 = 6615
+#     -> Mean 6615/13260 = 0.4988687782805429 (measured print 0.498869, print residual 2.22e-7)
+#   close (dilate then erode): sum = 10 + 10 + 10 + 5*(3+4+...+51) = 30 + 6615 = 6645
+#     -> Mean 6645/13260 = 0.5011312217194570 (measured print 0.501131, print residual 2.22e-7)
+#   cross-checks, exact in integers: 7135 + 6125 = 13260 = 2*6630 AND 6615 + 6645 = 13260 = 2*6630,
+#     so both morph pairs are EXACTLY symmetric about the identity mean -- dilate/erode off-centre by
+#     505/13260 = 0.038084464555 each, open/close by only 15/13260 = 0.0011312217194570 each. An
+#     asymmetric measurement points at the window (kernel / anchor / border fill), not at floating
+#     point, and the first run of this seat confirmed the symmetry for the new pair too.
+#   WHAT P3c GOT WRONG AND THIS SEAT FIXES (the tolerance sandwich changes binding pair): its block
+#     claimed "the three means are separated by 0.0380845 at minimum". Across the five branches the
+#     SMALLEST gap between two distinct means is |0.5011312217 - 0.5| = 0.0011312217 (median <-> close,
+#     and the same number median <-> open by that symmetry); 0.0761689291101055 is the LARGEST gap
+#     (dilate <-> erode) and was mis-labelled the minimum. 1e-6 still sandwiches the new pair --
+#     0.0011312217 / 1e-6 = 1.13e3, three orders of magnitude -- and is re-derived per point below,
+#     never asserted globally.
+# WHAT THESE CASES DO NOT JUDGE: whether kernel_size is honoured at all. All five pass the ParamSpec
 # default 5, so a silently-ignored kernel_size still prints this exact profile; that half is carried by
 # the k-sweep of the unit block. Recorded as a leg-side boundary, not claimed as coverage.
+#   CANDIDATE FOR A LATER KNIFE, derived here and deliberately NOT laid in this one: the same family
+#   at --kernel_size=3 gives dilate level(x) = 5*min(51, x+1), i.e. sum = 5*(0+1+...+51) + 5*51 =
+#   6630 + 255 = 6885 -> Mean 6885/13260 = 0.5192307692307692 (would print 0.519231). That sits
+#   0.019231 from median and 0.018853 from this family's dilate row, so a k=3 case is value-level
+#   distinct from all five branches above. Adding it is a scope decision for a future seat.
 $processingFilterDilateInput = Join-Path $ResolvedOutputRoot "processing_filter_dilate_input.tif"
 Remove-Item ($processingFilterDilateInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
 # Always regenerate (deterministic 52 x 12 ramp) -- never judge a file left behind by an earlier run.
@@ -3038,6 +3152,39 @@ $cases += New-Case -Name "processing_filter_median" -CaseArgs @(
     "--kernel_size=5"
 ) -ExpectedOutputs @(
     $processingFilterMedianOutput
+)
+
+$processingFilterOpenInput = Join-Path $ResolvedOutputRoot "processing_filter_open_input.tif"
+Remove-Item ($processingFilterOpenInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+# Always regenerate (deterministic 52 x 12 ramp) -- never judge a file left behind by an earlier run.
+Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("edge-ramp-raster", $processingFilterOpenInput)
+$processingFilterOpenOutput = Join-Path $ResolvedOutputRoot "processing_filter_open_output.tif"
+Remove-Item ($processingFilterOpenOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "processing_filter_open" -CaseArgs @(
+    "processing", "filter",
+    ("--input=" + $processingFilterOpenInput),
+    ("--output=" + $processingFilterOpenOutput),
+    "--band=1",
+    "--filter_type=morph_open",
+    "--kernel_size=5"
+) -ExpectedOutputs @(
+    $processingFilterOpenOutput
+)
+
+$processingFilterCloseInput = Join-Path $ResolvedOutputRoot "processing_filter_close_input.tif"
+Remove-Item ($processingFilterCloseInput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+Invoke-Helper -ResolvedHelperPath $ResolvedHelperPath -Arguments @("edge-ramp-raster", $processingFilterCloseInput)
+$processingFilterCloseOutput = Join-Path $ResolvedOutputRoot "processing_filter_close_output.tif"
+Remove-Item ($processingFilterCloseOutput + ".aux.xml") -Force -ErrorAction SilentlyContinue
+$cases += New-Case -Name "processing_filter_close" -CaseArgs @(
+    "processing", "filter",
+    ("--input=" + $processingFilterCloseInput),
+    ("--output=" + $processingFilterCloseOutput),
+    "--band=1",
+    "--filter_type=morph_close",
+    "--kernel_size=5"
+) -ExpectedOutputs @(
+    $processingFilterCloseOutput
 )
 
 $cases += New-Case -Name "georef_dos_correction" -CaseArgs @(
