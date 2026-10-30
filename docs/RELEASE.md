@@ -3323,6 +3323,186 @@ skeleton / connected_components / threshold **七条，没有 enhance** ⇒ 这�
 - G-7 边界列判 0 依赖 `BORDER_REFLECT_101`，没有单独改 borderType 的臂（A01 只覆盖内部点）。
 - G-8 Release 树本把未重编 ⇒ 以上全部只验收 Debug；Release 侧一律**未验收**。
 
+### 批次 D 覆盖晋升 P3b（2026-10-30，`processing.filter` 一条 PENDING→GOLD；**只做单测面，不碰腿**）
+
+本把 = **一个动作** `processing.filter` 的单测面晋升（腿侧 case 归 P3c，本把 `tests/run_real_raster_regression.ps1`
+与 `tests/real_data_matrix.txt` **一字未改**）。改前现读：登记表 `processing,filter,PENDING`（3 列）、
+`kPendingCeiling = 15`、`Total Tests: 802`、`Processing*` 族 30 条、定向配方 43 条。
+
+**凭据（判据载体 = 既有 `TEST_F(PluginTest, ProcessingFilterExecution)` 的块内扩写，未新增 `TEST_F`）**
+四件夹具全部由 `tests/test_plugins.cpp` 里的 `createColumnPlateauRaster` 造（不用象限布局的 `createStepLevelRaster`，
+不用腿侧 `gui_test_data_helper.cpp` 的 `makeStepLevelRaster`）：
+①**三档平台件** 52×12、`{0,20,30,52}`、原始档值 `0/10/51` ⇒ `toUint8` 标度 `255/51 = 5.0` 二进制精确 ⇒ u8 档 `0/50/255`；
+②**窄岛件** 52×12、`{0,10,12,30,33,52}`、档值 `0/51/0/51/0` ⇒ 一座 2 列岛 + 一座 3 列岛；
+③**两带件**（同形状、两带档值表不同 `{0,10,51}` 与 `{0,51,10}`）；④**亮线件** `{0,25,26,52}`、`0/51/0`（gaussian 专用）。
+断言行数现读（口径 = 该 `TEST_F` 块体内以 `EXPECT_` 开头的行数 / 其中值级 `EXPECT_NEAR|FLOAT_EQ|DOUBLE_EQ`）
+= **117 / 61**。
+
+**为什么必须有第②件夹具（本把的夹具侧发现，不是产品侧）**：三档平台件的档宽（10 列 / 20 列）远大于 `2r = 4`，
+于是 `median` 的多数票、`morph_open` 的 erode→dilate、`morph_close` 的 dilate→erode **在该件上逐列剖面完全相同**
+（都等于输入档）⇒ 只看这件夹具，"把 open 写成 close"这类分派错误**在数值上是不可见的**。窄岛件把它拆开：
+2 列岛被 `median`（10/25 采样 < 13）抹掉但被 `close` 逐列复原；3 列岛被 `open`（岛宽 < k）抹掉但被 `median` 保留。
+⇒ A04/A05 两臂只在岛件上红，反证这条登记不是空话。
+
+**推得 vs 实跑（分开写；"实测"只用于真跑过的）**
+期望在首跑之前推得，实测列**另用一条纯 python 的 GeoTIFF 读出器**直接读盘上产物（与断言不同代码路径，
+避免"期望从产物回填"）：
+
+| 判据 | 推得（写死的常数与算式） | 首跑实测（7 位有效） |
+|---|---|---|
+| dilate x=17 / **18** / 25 / **28** / **0** | 0 / 50/255 / 50/255 / 255/255 / **0**（边界见证） | 0.0000000 / 0.1960784 / 0.1960784 / 1.0000000 / 0.0000000 |
+| erode x=19 / 20 / **22** / **32** / **51** | 0 / 0 / 50/255 / 255/255 / **255/255**（边界见证） | 0.0000000 / 0.0000000 / 0.1960784 / 1.0000000 / 1.0000000 |
+| median x=19 / 20 / 25 / 29 / 30（**采样数 15:10 多数票**） | 0 / 50/255 / 50/255 / 50/255 / 255/255 | 全等 |
+| open / close x=19 / 20 / 29 / 30 | 0 / 50/255 / 50/255 / 255/255 | 全等（与 median 同剖面 ⇒ 见上面的夹具侧发现） |
+| 岛件 dilate x=7 / 8 | 0 / 255/255（向外长 r=2 列） | 0.0000000 / 1.0000000 |
+| 岛件 close x=11 / 12 / 29 / 31 | 255/255 / 0 / 0 / 255/255（原岛逐列复原） | 1.0000000 / 0 / 0 / 1.0000000 |
+| 岛件 median x=11 / 29 / 31 | 0（2 列岛）/ 0 / 255/255（3 列岛） | 0.0000000 / 0.0000000 / 1.0000000 |
+| bilateral 平坦区 x=5 / 25 / 40 | 0 / 50/255 / 255/255（窗口内 u8 全等 ⇒ 权重归一后恒等） | 0.0000000 / 0.1960784 / 1.0000000 |
+| bilateral 夹心 x=20 / x=30 | `0<v<50/255` / `50/255<v<1.0`，且 `255v` 落在整数格点 | **0.1450980 = 37/255** / **0.9921569 = 253/255** |
+| gaussian σ=1000 x=23/25/27 与 22/28 | **10.2**（= 51×5/25，均匀核极限）与 **0**（窗口不含亮线） | 10.1999893 / 10.2000103 / 10.1999893；0.0000000 / 0.0000000 |
+| gaussian σ=0.5 x=25 / 24 / 23 / 22 | 51×w(0) = **40.1151**、51×w(1) = **5.4290**、51×w(2) = **0.013457**、0 | 40.1151085 / 5.4289894 / 0.0134571 / 0.0000000 |
+| gaussian σ=0.1 x=25 / 24 | **51.0**（`w(0)→1`、`w(1)=exp(-50)=1.9e-22`）与 0 | 51.0000000 / 0.0000000 |
+| 纠正段 median k=4 ≡ k=5、dilate k=1 ≡ k=2 ≡ k=3 | 逐点 0 处差异（52×12 = 624 像元） | `countPixelDiffs = 0`（三组都是） |
+| 托底：dilate k=3 vs k=5（防"相同"恒真） | x=18：0 vs 50/255；x=28：50/255 vs 255/255 | 0.0000000 vs 0.1960784；0.1960784 vs 1.0000000 |
+| sigma 六支不变（median / dilate 在 σ=0.1 与 σ=1000） | 逐点 0 处差异 | `countPixelDiffs = 0`（两支都是） |
+| band=1 vs band=2（dilate，两带档值表不同） | x=18：50/255 vs 255/255；x=35：255/255 vs 50/255 | 0.1960784 / 1.0000000；1.0000000 / 0.1960784 |
+| 形状（轴序唯一凭据） | 块数 1、`cols==52 && rows==12` | 1 / 52 / 12 |
+| 值域不对称 | gaussian Max > 1.0；六支 ≤ 1.0 | 40.1151 / 51.0 / 10.2；六支 Max 全 = 1.0 |
+| else 支（进程内直调） | `success=false` + 文案前缀 `Unknown filter type:` + 不留产物 | `Unknown filter type: sobel`、无产物 |
+
+容差口径：量化六支 `1e-6`（值在 `k/255` 格点，float32 间隔 ~6e-8；相邻两种结局最小间隔 `50/255 = 0.196`）；
+gaussian `1e-4`（值域 0~51 ⇒ float 核每权 ~6e-8 相对 + 竖直 `Σk_y` 残差 + 均匀核极限偏离上界
+`5 × 2e-7 × 51 = 5.1e-5`）。**E03 臂把这个口径钉成了实测**：把 `1e-4` 改成 `1e-7` ⇒ gaussian 8 条红
+（实测残差 1.03e-5），量化六支不受影响 ⇒ 不是抄来的数。
+
+**臂清单 16 臂 = 产品侧 13（A01~A13）+ 期望侧 3（E01~E03）**（单实例驱动；每臂跑前重查 `git status`；
+臂日志 tee 成文件；还原后与工作树基线**字节对拍**：`processing_plugin.cpp` 回到 `169bc45d…` / 77282 字节 / 1556 CRLF，
+`test_plugins.cpp` 回到 `a6081f2e…` / 26258 CRLF / 0 裸 LF，16/16 全部对拍通过；
+⚠ **未**用 `git hash-object --no-filters` 对 blob 当还原证据——autocrlf 下恒不等）。
+- 七支各一臂改坏消费点 ⇒ 该支红：A01 gaussian 丢 σ 数值（11 条红，线中心读 19.125 = 51×0.375，
+  即上游 `sigma<=0` 的硬编码二项式核）、A02 `medianBlur`→`blur`（7 条，x=19 读 20/255）、
+  A03 双边核退化成 1×1（2 条夹心上界红，x=20 恰读 50/255）、A04 `OPEN`→`CLOSE`（2 条，**只在岛件**）、
+  A05 `CLOSE`→`OPEN`（2 条，**只在岛件**）、A06 `DILATE`→`ERODE`、A07 `ERODE`→`DILATE`。
+- 四个可见参数各一臂：A09 `band` 不消费（恒读第 1 带 ⇒ S12 三条红）、A10 `filter_type` 写死 `gaussian`
+  （**57 条红**，远超"至少两支"）、A11/A12 各删一行 `kernel_size` 纠正、sigma 臂 = A01
+  （gaussian 红、六支仍绿 ⇒ 正是"只对一支有效"的形状）。
+- **A11 的红形态是实测而不是引用**：删掉"偶数加一"那行 ⇒ 偶数核进 `cv::medianBlur` ⇒
+  `OpenCV(4.14.0) Error: Assertion failed ((ksize % 2 == 1) && (_src0.dims() <= 2 )) in cv::medianBlur …
+  median_blur.dispatch.cpp … (-215:Assertion failed) … thrown in the test body`
+  ⇒ 用例级失败、**该点之后的断言不再执行**（OpenCV 没有再兜一层，也没有被供应商代码接住——
+  `processing_plugin.cpp` 全文无 `try/catch`）。A12（删"小于 3 抬到 3"）红的是 `dilate k=1 ≡ k=3` 那一行。
+- A13 = 任务书 §5.5-②：doFilter 内**三处** `convertTo(..., 1.0/255.0)` → `1.0/256.0` ⇒ 六支量化 32 条红、
+  gaussian 11 条仍绿；E01 = §5.5-①（`50/255` → `51/255` 只红那一行）；E02 = gaussian 常数改坏（只红那一行）。
+- 全部臂跑完后单测复跑 **1/1 绿**（0.7~1.6 s 级）⇒ 无残留变异；受保护位点
+  `src/plugins/terrain/terrain_plugin.cpp` 的 blob 现读仍是 `588a42504ee19bcb551f8214e5c1adb68cea20e9`。
+
+**上游定约（tag 4.14.0，jsDelivr 的 GitHub 镜像；⚠ 任务书给的三个候选路径在 4.14.0 里都不含 `getGaussianKernel`——
+`imgwarp.cpp`/`filterengine.hpp` 现读 grep 各 0 命中、`comp.cpp` 直接 404；真实载体是 `smooth.dispatch.cpp`，
+形态学是 `morph.dispatch.cpp`、中值是 `median_blur.dispatch.cpp` + `.simd.hpp`）**
+1. `modules/imgproc/src/smooth.dispatch.cpp` 的 `getGaussianKernelBitExact` ⇒ 定约成功：
+   ```
+   softdouble sd_minus_0_125 = softdouble::fromRaw(0xbfc0000000000000);  // -0.5*0.25
+   softdouble sigmaX = sigma > 0 ? softdouble(sigma) : mulAdd(softdouble(n), sd_0_15, sd_0_35);
+   softdouble scale2X = sd_minus_0_125/(sigmaX*sigmaX);
+   for (int i = 0, x = 1 - n; i < n2_; i++, x+=2) { softdouble t = exp(softdouble(x*x)*scale2X); … }
+   sum *= softdouble(2);  sum += softdouble::one();
+   ```
+   ⇒ `x` 是像元偏移的 2 倍，`exp(x²·(-0.125/σ²)) = exp(-d²/(2σ²))`；归一 `Z = 1 + 2Σt`（n 为奇数时**不**再加第二项）。
+   同文件 `createGaussianKernels`：`ksize.width > 0` 时不按 σ 反推尺寸，并有
+   `CV_Assert(ksize.width > 0 && ksize.width % 2 == 1)`；核类型 `std::max(depth, CV_32F)`；
+   `GaussianBlur` 的定点 bit-exact 分支只在 `sdepth == CV_8U/CV_16U` 进 ⇒ CV_32F 输入落到末尾
+   `sepFilter2D(..., borderType)`（默认 `BORDER_REFLECT_101`）⇒ **gaussian 的期望只取窗口完整落在图内的列**。
+   `sigma <= 0` 另有一条硬编码二项式核分支（`n==5` 给 `0.0625/0.25/0.375/0.25/0.0625`）——本把不判它（缺口 G-5）。
+2. `modules/imgproc/src/morph.dispatch.cpp` 的 `createMorphFilter` ⇒ 定约成功：
+   ```
+   if( op == MORPH_ERODE )
+       borderValue = Scalar::all( depth == CV_8U ? (double)UCHAR_MAX : … );
+   else
+       borderValue = Scalar::all( depth == CV_8U || depth == CV_16U ? 0. : … );
+   ```
+   `morphologyEx` 里 `case MORPH_OPEN: erode(src,dst,…); dilate(dst,dst,…);` 与
+   `case MORPH_CLOSE: dilate(…); erode(…);`（两步同一个 borderValue），且声明默认
+   `borderType = BORDER_CONSTANT, borderValue = morphologyDefaultBorderValue()`
+   ⇒ 虚采样是 8 位域的**另一端极值**、永不改变窗口 max/min ⇒ **边界列可写逐点期望**
+   （`dilate@x=0 → 0`、`erode@x=51 → 1.0` 两条见证据此写下，A06/A07 把它们钉住）。
+3. `modules/imgproc/src/median_blur.dispatch.cpp` ⇒ **部分定约**：
+   `CV_Assert((ksize % 2 == 1) && (_src0.dims() <= 2 ))` 与边界
+   `copyMakeBorder(…, BORDER_REPLICATE|BORDER_ISOLATED)` 两条钉死（前者就是 A11 的红形态来源）；
+   `ksize <= 5` 与 `> 5` 两条路径（`medianBlur_8u_Om` / `medianBlur_8u_O1`）的分发条件在盘上是
+   **按图像Mp数自适应的性能阈值**，不是语义阈值，但源码里没有一句"两者逐像元等价"的断言 ⇒
+   本把只用 k=5，没加 k=7 的臂，这条不确定性不进入任何期望（缺口 G-4）。
+   `bilateral` 的 LUT 化按任务书**不要求定约**，本把只写夹心不写逐点。
+
+**登记晋升（同笔六键 + ceiling，全部当场用登记表头部声明的现读命令跑）**
+```
+改前 126 / 111 / 15 / 112 / 15 / 96 / kPendingCeiling 15
+改后 126 / 112 / 14 / 113 / 15 / 97 / kPendingCeiling 14    不变量 112 + 14 = 126 ✓
+```
+键序 = `data_rows / gold_rows / pending_rows / gold_rows_all_lines / gold_rows_table_driven / gold_rows_literal_slot`。
+第 4 列 = `PluginTest.ProcessingFilterExecution`；新写文本一律用 `[:]GOLD` 这种写法、不出现"逗号紧跟 GOLD"的字面量 ⇒ `gold_rows_all_lines` 只涨 1；
+`gold_rows_table_driven` 不动（那族靠 `SpindexOtherIndicesExecution` 计数）。
+PENDING 14 行 = processing 11 + matching 2 + spindex 1；processing 族另 11 行、P1 的 `threshold`、
+P2a/P2b 的 `enhance`、P3 的 `edge` 全部一字未改。
+⚠ `kPendingCeiling` 在 `tests/test_coverage_meta.cpp`，不在任务书 §9 的"射程四文件"清单里，但同文件有一条
+`EXPECT_EQ(头部 pending_rows, kPendingCeiling)` ⇒ 不改它晋升本身就红，属 Step3 的必需组成而非第二份行为（改 1 行）。
+
+**N182 立案（本把新号，改前现读 `grep -rn "N182" docs tests src gui` = 0 命中）**
+`kernel_size` 的四处口径**分叉**：`ParamSpec` 声明 `Int`、默认 `5`、区间 **`1..101`（含偶数、含 1/2）**；
+action 级校验要求「不小于 3 的奇数」并**直接失败**；GUI 的 `buildEffectiveGuiParamSpecs` 只把下界抬到 **3**（奇偶不管）；
+`doFilter` 内部则**静默改写**（偶数加一、小于 3 抬到 3，不告警、不改返回状态）。
+⇒ 同一份 `--kernel_size=4`：CLI/工作流/GUI 三条路都被拒（用户看得见错误），**进程内直调**却被悄悄折成 5
+（调用方拿到 `success=true`，且实际用的核不是他给的那一个）。
+归 **N172 同族**（声明区间与消费点行为不一致）。**修法不在本把**——把 `ParamSpec` 下界改成 3、或把偶数列入非法值，
+都会同时改 `--help` 的可视区间与 GUI 的滑动范围 = 改可观测行为，需要用户拍板。
+本把只做两件：**把"纠正段只在进程内直调可达"钉成判据**（S10 + A11/A12）+ **文档诚实化**
+（`空间滤波.md` 的参数表与流程第 2 步现在写明"谁在哪一层拦"，不再让读者以为存在静默纠正路径之外的正常入口）。
+
+**#164 家族追加一条**：`filter` 的 `sigma` 是 GUI `filter` 面板的**可见键**，`doFilter` 把它读出来，
+但**只有 `gaussian` 一支消费它**，另外六支读而不用（S11 的"σ=0.1 与 σ=1000 逐点相同"就是这条的正面见证）。
+⇒ 属 #164（可见参数声明有效但实际无效）家族，**不另立案**；本把的臂 A01 给出该族的红形态
+（gaussian 红、六支仍绿 ⇒ "只对一支有效"的形状）。⚠ 同时登记一条已知盲区：
+`param_guard_visible_keys_all_read` 本把仍绿，因为它只看"键有没有被读"，**看不见"读了不用"** ⇒ 这条守卫
+对 #164 族是漏判的（不是本把引入，本把只是把它写进账）。
+
+**回归（Debug 树，现跑）**
+- `Total Tests: 802`（扩写既有 `TEST_F`，未新增注册用例）。
+- 定向 43 条配方（逐字、单引号）：**43/43 绿，50.01 s**；`^PluginTest\.Processing` 族 **30/30 绿，7.33 s**。
+- 腿单跑 `ctest -R '^real_data_raster(\.|$)' -V` 通过，九字段**逐字未动**：
+  `registered=79 ran=79 judged=58 allowlisted=21 allowlist-table=21 allowlist-gated-not-registered=0
+  branch-labels=59 conditional-registrations=1 dead-branches=0`（本把没加腿 case ⇒ 该串与改前同）。
+- 腿墙钟单跑 **18.98 s**（该 case 的 `Test timeout computed to be: 60`）⇒ 余量 60 ÷ 18.98 = **3.16×**；
+  ⚠ 这是**安静态单跑**一把的读数，不是多跑散布的最大值 ⇒ 不据它改 TIMEOUT（本把 TIMEOUT 未抬、断言一条未减）。
+- 三条守卫仍在 43 条里跑到且绿：`source_mojibake_guard`、`docs_match_cli`
+  （`actions=126 docs_checked=126 missing_doc=0 rows=594 matched=593 drift=0 allowed=7` ⇒ 参数表未增删行、
+  必填列与默认值列未动）、`geotransform_guard`（两域读数与改前**逐字相同**：product `any=21 code=20 checked=18
+  unchecked=2 allowlisted=2 violations=0 dead=0`；test `any=13 code=10 comment_line=3 checked=9 unchecked=1
+  allowlisted=1 violations=0 dead=0` ⇒ 本把没有新增"判 `GetGeoTransform` 返回值"的位点，无需同笔改 `expect`）。
+- `param_guard_visible_keys_all_read` 仍绿 ⇒ 它的"看不见读而不用"这条盲区已写进上面的 #164 追加。
+- `data/` 只读两件套（开批时刻 2026-10-30 16:37:38）：`find data -type f -newermt` = **0**；
+  `check_data_baseline.py` = `BASELINE: 88  CURRENT: 88  DIFFS: 0`（本把不需要真实影像，未开任何原件）。
+- 文本行尾现读（python `newline=''` 数，不按目录惯例推）：`tests/test_plugins.cpp` 26258 CRLF / 0 裸 LF；
+  `tests/action_gold_cases.txt` 177 / 0；`docs/算法说明/影像处理与分析/空间滤波.md` **81** / 0（改前 69）；
+  `docs/RELEASE.md` 4283 / 0（改前 4119）；均 UTF-8 无 BOM。
+- Release 树本把**未重编** ⇒ 以上全部只验收 Debug，Release 侧一律**未验收**。
+
+**缺口（照实登记 8 条）**
+- G-1 `bilateral` 的**非平坦区逐点期望**拿不出：需要上游 `bilateral_filter` 的 LUT 化口径（范围核权重表 +
+  定点化），本把只写"严格落在两侧档之间 + 仍是 `k/255` 格点"两条夹心 ⇒ 这一支的承重只有平坦区恒等那三条。
+- G-2 形态学 `open`/`close` 的**边界带逐点期望**没写：虽然 §4 把 borderValue 定约成域极值（理论上可推），
+  但我只为 `dilate`/`erode` 各写了一条边界见证（x=0、x=51），复合运算的边界带登记为未判。
+- G-3 `gaussian` 的边界列（x<2 与 x>49）不判：`BORDER_REFLECT_101` 下亮线件的两端会引入镜像采样，
+  推得期望要额外一条"反射象"的算式，本把不铺。
+- G-4 `medianBlur` 的 `ksize>5` 路径与 `<=5` 路径**等价性未在上游源码里读到断言** ⇒ 本把没加 k=7 的臂；
+  后续要加必须先实测钉一遍。
+- G-5 `sigma <= 0` 的分支（上游硬编码二项式核）不判：`ParamSpec` 的 σ 下界是 `0.0` ⇒ 0 是合法输入，
+  但 action 级校验不拦它，而本把三条 gaussian 锚点都用 σ>0 ⇒ "σ=0 会静默换成一族二项式核"这件事今天没位点判。
+- G-6 输出的**地理参考透传**本把不判（任务书裁定：`geotransform_guard` 的 test 域把 `code/checked/unchecked`
+  写死成期望数，新增"判 `GetGeoTransform` 返回值"的位点要同笔改守卫 ⇒ 第二份行为）。
+  ⇒「输入的 GT 必须原样进 `processing.filter` 产物」这一半**今天仍没位点判**，是已知未判项，不是与产品无关。
+- G-7 腿侧零改动：`processing,filter` 在 `real_data_matrix.txt` 第 5 列仍是 `none`（腿还没这条 case，
+  改成 `real_regression` 就是假登记）⇒ 归 P3c。
+- G-8 Release 树未重编 ⇒ Release 侧**未验收**。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
