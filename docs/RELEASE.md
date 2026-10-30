@@ -3261,7 +3261,8 @@ skeleton / connected_components / threshold **七条，没有 enhance** ⇒ 这�
   **产物实测打印**：`Min: 0 / Max: 0.156863 / Mean: 0.15083`。
 - `sobel_dy=0` 显式给：`ParamSpec` 默认是 1，dx=1/dy=1 是混合导、在斜坡上恒 0，不显式给就只判到零。
 
-**反事实臂 11 条（单实例；每臂前 `git status` 重查；rc 单独取，不塞管道）**
+**反事实臂 15 条 = 产品侧 4 + 期望侧 8 + 腿侧 3（单实例；每臂前 `git status` 重查；rc 单独取，不塞管道）**
+⚠ 本节初版写"11 条"，而同段枚举是 4+8+3——那个 11 恰好等于 8+3，会让**四个改产品的臂从总数里消失**，等于把"改坏消费点"这一类覆盖凭证漏报。控制器现数盘上唯一臂号 = **15**（复审议 MF-1 逮出）。
 - 产品侧 4 臂（改 `processing_plugin.cpp`，只重编 `plugin_processing`，当场还原）：
   A01 sobel ksize 3→1 ⇒ 单测红（实际 10/255，差 30/255）、**腿也红**（`actual=0.0392157 expected=0.156863`）；
   A02 laplacian ksize 3→1 ⇒ 中心/四角/四邻五点全红；A03 scharr→sobel ⇒ 实际 40/255（差 120/255）；
@@ -3271,9 +3272,14 @@ skeleton / connected_components / threshold **七条，没有 enhance** ⇒ 这�
   实际值与首跑逐字一致。
 - 腿侧 3 臂（脚本副本载体 + 显式传全部路径；被跟踪文件 0 行脏）：C00 无改动复现 **rc=0** 且九计数逐字不变；
   C01 `Max` 期望改 20/255 ⇒ rc=1 `actual=0.156863`；C02 `Mean` 期望改 40/255 ⇒ rc=1 `actual=0.15083`。
-- 还原证明：`git show HEAD:<path>` + 按原行尾归一写回；`processing_plugin.cpp` 每臂后工作树 sha256 回到
+- 还原方式：`git show HEAD:<path>` + 按原行尾归一写回，每轮还原后干净重编、单测再绿；
+  两条工作树基准值 `processing_plugin.cpp = 169bc45d…63402`（77282 字节 / 1556 CRLF）、
+  `test_plugins.cpp = b8a683b3…45832e`（25847 CRLF / 0 裸 LF）是**终态对拍用**的，不是逐臂读数。
   `169bc45d…63402`（77282 字节 / 1556 CRLF），`test_plugins.cpp` 回到 `b8a683b3…45832e`（25847 CRLF / 0 裸 LF）；
-  每轮还原后干净重编、单测再绿。**未用** `git hash-object --no-filters` 当字节证据（autocrlf 下必假）。
+  ⚠ **逐臂 sha 没有落盘**：在臂日志目录里检索两个 sha 值 = **0 行**（控制器现跑；该目录按 `.gitignore` 不入库，故本条只记结论、不写路径），所以上一句不能读成"每臂都量过"——盘上只有 **A01 / A04 / B04 / B08 四个还原检查点**。
+  ⇒ 隔离成立靠的是**失败集互斥**：A 族四臂的失败集两两不相交（各只打红自己那一处），若某臂之后漏还原，下一臂会带上前一臂的变异 ⇒ 红集必然重叠。复审席按此补齐 10 组论证。
+  **终态**由控制器现量：工作树与 `HEAD` 逐字节一致（`git status` 空、`git diff -- src gui` 空）。
+  **未用** `git hash-object --no-filters` 当字节证据（autocrlf 下必假）。
 
 **登记表五数 + ceiling 前后（同笔）**
 ```
@@ -3299,8 +3305,8 @@ skeleton / connected_components / threshold **七条，没有 enhance** ⇒ 这�
 - `Total Tests: 802` 改前改后同值（扩写既有 `TEST_F`，不新增注册用例）。
 - 定向 43 条配方 **43/43 绿，44.63 s**（含 `docs_match_cli` 与 `CoverageMeta*`）；`^PluginTest\.Processing`
   **30/30 绿，6.18 s**。
-- 腿墙钟：改前 **13.92 s**、改后 **15.02 s**（安静态 `tasklist | grep -cE 'MSBuild|gis_tests|ctest'` = 0 时起跑）
-  ⇒ 余量 60 ÷ 15.02 = **3.995×**（改前 4.31×）；**TIMEOUT 60 未抬、断言一条未减**。
+- 腿墙钟：改前 **13.92 s**；改后安静态**五跑散布 14.33~17.17 s**（逐跑见下一行）。
+  ⇒ **R-D52 口径：余量 = TIMEOUT ÷ 安静态多跑里的最大值**（分母不许取单跑最优）。本把安静态改后共 5 跑：15.02（席位）／ 16.48、17.17（控制器）／ 14.33、14.92（复审席）⇒ 取最大 **17.17 s** ⇒ 余量 60 ÷ 17.17 = **3.49×**（改前 13.92 ⇒ 4.31×）；**TIMEOUT 60 未抬、断言一条未减**。
 - `data/` 只读两件套（开批时刻 2026-10-30 14:51:26）：`find data -type f -newermt` = **0**；
   `check_data_baseline.py` = `BASELINE: 88  CURRENT: 88  DIFFS: 0`。
 - 文本：`test_plugins.cpp` 25847 CRLF / 0 裸 LF；`run_real_raster_regression.ps1` 3048 CRLF / 0 裸 LF /
