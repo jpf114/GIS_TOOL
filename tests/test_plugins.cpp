@@ -312,6 +312,31 @@ static std::string createMultiBandGradientRaster(const std::string& name,
     return path;
 }
 
+// 批次 D P3（processing.edge / laplacian 定核）：一张**非斜坡、非阶跃饱和**的脉冲夹具。
+// 20 x 12 单波段 Float32：全 0、第 0 列 = 255（把 toUint8 的 min/max 钉死成 0/255 ⇒ 归一化是恒等映射）、
+// 像素 (10,6) = 10。选它而不是三档平台件的原因：平台件的档间跳变在 Sobel/Laplacian 上会被
+// convertScaleAbs 饱和（4×255 = 1020 → 255），产物恒 1.0 ⇒ 逐点期望变成上界型恒真；
+// 这里的脉冲只有 10，ksize=3 的 Laplacian 中心响应 −8×10 = −80、四角 +2×10 = +20，都不触 255。
+// 读数（首跑前推、见用例体）：中心 80/255、四邻 0、四角 20/255；ksize=1 的经典四邻核会给 40/255、10/255、0
+// ⇒ 三格全不同，所以这张夹具是"核是哪一套"的承重点。
+static std::string createEdgeImpulseRaster(const std::string& name, int w = 20, int h = 12) {
+    std::string path = (getTestDir() / name).string();
+    auto ds = gis::core::createRaster(path, w, h, 1, GDT_Float32);
+    double adfGT[6] = {116.0, 0.001, 0.0, 40.0, 0.0, -0.001};
+    ds->SetGeoTransform(adfGT);
+
+    std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+    for (int y = 0; y < h; ++y) {
+        data[static_cast<size_t>(y) * static_cast<size_t>(w)] = 255.0f;
+    }
+    data[static_cast<size_t>(6) * static_cast<size_t>(w) + static_cast<size_t>(10)] = 10.0f;
+
+    auto* band = ds->GetRasterBand(1);
+    band->RasterIO(GF_Write, 0, 0, w, h, data.data(), w, h, GDT_Float32, 0, 0);
+    band->FlushCache();
+    return path;
+}
+
 static std::string createTwoClassTrainingRaster(const std::string& name, int w = 24, int h = 12) {
     std::string path = (getTestDir() / name).string();
     auto ds = gis::core::createRaster(path, w, h, 2, GDT_Float32);
@@ -708,6 +733,25 @@ static float readRasterPixel(const std::string& path, int bandIndex, int x, int 
     float value = 0.0f;
     EXPECT_EQ(band->RasterIO(GF_Read, x, y, 1, 1, &value, 1, 1, GDT_Float32, 0, 0), CE_None);
     return value;
+}
+
+// 批次 D P3（processing.edge / canny）：整幅一次读出。canny 的判据是"取值只在 {0,1}"与"边缘像元数"，
+// 逐像元调 readRasterPixel 要开 9216 次数据集（每次 GDALOpen），所以这里一次 RasterIO 读整带。
+static std::vector<float> readRasterBandF32(const std::string& path, int& width, int& height) {
+    width = 0;
+    height = 0;
+    auto ds = gis::core::openRaster(path, true);
+    EXPECT_NE(ds, nullptr);
+    if (!ds) return {};
+    width = ds->GetRasterXSize();
+    height = ds->GetRasterYSize();
+    std::vector<float> data(static_cast<size_t>(width) * static_cast<size_t>(height));
+    auto* band = ds->GetRasterBand(1);
+    EXPECT_NE(band, nullptr);
+    if (!band) return {};
+    EXPECT_EQ(band->RasterIO(GF_Read, 0, 0, width, height,
+                             data.data(), width, height, GDT_Float32, 0, 0), CE_None);
+    return data;
 }
 
 // D1-P（Task 16）：projection 的三条值级判据共用的**独立推算**期望，不从产物回填。
@@ -1769,23 +1813,228 @@ TEST_F(PluginTest, ProcessingFilterExecution) {
     EXPECT_TRUE(fs::exists(output));
 }
 
+// ===================== 批次 D P3：processing.edge 四支值级判据 =====================
+// 期望全部由「夹具字面量 + OpenCV 4.14.0 上游核 + toUint8 的 NORM_MINMAX 标度」在首跑之前推得，
+// **不从产物回填**。上游出处（逐字片段与 URL 印在 docs/RELEASE.md 批次 D 的 P3 条）：
+//   deriv.cpp::getSobelKernels（ksize=3, order=1）⇒ 导数核 [-1,0,1]、平滑核 [1,2,1] ⇒ 内部 = 4×中心差分；
+//   deriv.cpp::getScharrKernels ⇒ 平滑核 [3,10,3]、导数核 [-1,0,1] ⇒ 内部 = 16×中心差分；
+//   deriv.cpp::cv::Laplacian 的 `ksize == 1 || ksize == 3` 分支 ⇒ ksize=3 用第二行
+//   { 2, 0, 2, 0, -8, 0, 2, 0, 2 }（角 2 / 中心 −8 / 边 0），不是经典四邻域 { 0,1,0, 1,-4,1, 0,1,0 }。
+// **饱和陷阱（本块两张夹具都避开它）**：toUint8 把全幅 min/max 拉到 0/255，于是**阶跃**处的
+// Sobel dx=1 响应 = 4×255 = 1020、三档 50→255 那跳 = 4×205 = 820，都被 convertScaleAbs 饱和到 255
+// ⇒ 产物恒 1.0、逐点期望变成上界型恒真。本块用 52×12 线性斜坡（u8 步长 5，中心差分 10）与
+// 20×12 小脉冲（Laplacian 响应 80/20），两张都不触 255。
 TEST_F(PluginTest, ProcessingEdgeExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
 
-    std::string input = createTestRaster("e2e_edge_input.tif", 50, 50);
-    std::string output = (getTestDir() / "e2e_edge_output.tif").string();
+    // 容差夹心：产物是 float32，`u8*(1/255)` 在 0.15~0.63 档的 float32 间隔约 1.5e-8~6e-8，
+    // GDAL Float32 写读是逐位往返 ⇒ 1e-6 比浮点残差大 ~20 倍；本块任意两个不同结局的最小间隔是
+    // Laplacian 的 20/255 = 0.078431（四角 vs 四邻 0）⇒ 容差不吞任何一次分档变化。
+    constexpr double kEps = 1e-6;
 
-    std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("edge");
-    params["input"] = input;
-    params["output"] = output;
-    params["edge_method"] = std::string("canny");
-    params["band"] = 1;
+    std::error_code ec;
+    const fs::path dir = getTestDir();
+    auto staleClean = [&ec](const std::string& path) {
+        fs::remove(path, ec);
+        fs::remove(path + ".aux.xml", ec);
+    };
 
-    auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "Edge detection failed: " << result.message;
-    EXPECT_TRUE(fs::exists(output));
+    // 只发显式给的键：sobel_dx/sobel_dy 与 low/high 的默认值由 doEdge 的 getParam 兜底（与 spec 声明同值 1/1、50/150）。
+    auto runEdge = [&](const std::string& input,
+                       const std::string& output,
+                       const std::string& method,
+                       bool sendSobel,
+                       int dx,
+                       int dy,
+                       bool sendCannyThresholds,
+                       double low,
+                       double high) {
+        staleClean(output);
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("edge");
+        params["input"] = input;
+        params["output"] = output;
+        params["band"] = 1;
+        params["edge_method"] = method;
+        if (sendSobel) {
+            params["sobel_dx"] = dx;
+            params["sobel_dy"] = dy;
+        }
+        if (sendCannyThresholds) {
+            params["low_threshold"] = low;
+            params["high_threshold"] = high;
+        }
+        return p->execute(params, progress_);
+    };
+
+    // F1：52×12 单波段 Float32，value(x,y) = x（raw 0..51）。toUint8 标度 255/51 = 5.0 精确
+    //     ⇒ u8 = 5x（步长恰 5，0/10/.../255 全落整数，无 round-truncate 分叉）。
+    //     非方（52≠12）⇒ 轴序写反可见；只判内部像元，首末列受 BORDER_REFLECT_101 影响单独判 0。
+    const std::string rampInput = createMultiBandGradientRaster(
+        "d1p3_edge_ramp.tif", 52, 12, {{0.0f, 1.0f}});
+    // F2：20×12 单波段 Float32，全 0、第 0 列 255、像素 (10,6) = 10；归一化是恒等映射。
+    const std::string impulseInput = createEdgeImpulseRaster("d1p3_edge_impulse.tif");
+    // F3：96×96 单波段 Byte 0/255 图样（既有 createPatternRaster；0/255 ⇒ 归一化恒等）。
+    const std::string patternInput = createPatternRaster("d1p3_edge_pattern.tif");
+    ASSERT_FALSE(rampInput.empty());
+    ASSERT_FALSE(impulseInput.empty());
+    ASSERT_FALSE(patternInput.empty());
+
+    // ---- E1：sobel 值级（dx=1 / dy=0；ksize 写死 3）----
+    // u8 行内 0,5,10,...；Sobel ksize=3 dx=1 的等效 3×3 = [[-1,0,1],[-2,0,2],[-1,0,1]]
+    // ⇒ 内部 = 4×(u(x+1)-u(x-1)) = 4×10 = 40 ⇒ 40/255 = 0.1568627450980392。
+    const std::string outSobel = utf8PathString(dir / "d1p3_edge_sobel_dx1.tif");
+    auto runSobel = runEdge(rampInput, outSobel, "sobel", true, 1, 0, false, 0.0, 0.0);
+    EXPECT_TRUE(runSobel.success) << "E1 sobel dx=1/dy=0 failed: " << runSobel.message;
+    ASSERT_TRUE(fs::exists(outSobel)) << "E1 produced no product at " << outSobel;
+    EXPECT_NEAR(readRasterPixel(outSobel, 1, 0), 40.0 / 255.0, kEps)
+        << "E1 首行内部列 x=1 必须是 40/255 = 0.1568627（4×中心差分 10）；"
+           "若读到 20/255 = 0.0784314，说明把相邻单步差 5 当了差分（丢了平滑核 1,2,1 的 2 倍与行权和 4 的一支）";
+    EXPECT_NEAR(readRasterPixel(outSobel, 25, 6), 40.0 / 255.0, kEps) << "E1 中间行/列 40/255";
+    EXPECT_NEAR(readRasterPixel(outSobel, 50, 11), 40.0 / 255.0, kEps)
+        << "E1 末行内部列 x=50 仍是 40/255（斜坡逐行常数，垂直平滑核权和恒 4，行反射不改值）";
+    EXPECT_NEAR(readRasterPixel(outSobel, 0, 6), 0.0, kEps)
+        << "E1 首列 0：BORDER_REFLECT_101 把 x=-1 映到 x=1 ⇒ f(1)-f(1)=0；若换成 REPLICATE 会读成 4×5=20";
+    EXPECT_NEAR(readRasterPixel(outSobel, 51, 6), 0.0, kEps) << "E1 末列同上（x=52 映到 x=50）";
+
+    // ---- E2：sobel 的 dy 是可见参数（不发 sobel_dy ⇒ getParam 兜底 1）----
+    // dx=1/dy=1 是混合二阶导 ∂²/∂x∂y；斜坡只随 x 变 ⇒ 先对 x 差分得常数、再对 y 差分差回 0，
+    // 等效 3×3 = [[1,0,-1],[0,0,0],[-1,0,1]] 的**列和**恒 0 ⇒ 整幅 0。
+    const std::string outSobelMixed = utf8PathString(dir / "d1p3_edge_sobel_dx1dy_default.tif");
+    auto runSobelMixed = runEdge(rampInput, outSobelMixed, "sobel", false, 0, 0, false, 0.0, 0.0);
+    EXPECT_TRUE(runSobelMixed.success) << "E2 sobel default dy failed: " << runSobelMixed.message;
+    ASSERT_TRUE(fs::exists(outSobelMixed)) << "E2 produced no product at " << outSobelMixed;
+    EXPECT_NEAR(readRasterPixel(outSobelMixed, 25, 6), 0.0, kEps)
+        << "E2 默认 dx=1/dy=1 在斜坡上必须 0；读到 40/255 说明 dy 被忽略（退化成 dx=1/dy=0）";
+    EXPECT_NEAR(readRasterPixel(outSobelMixed, 1, 6), 0.0, kEps) << "E2 第二格同上（排除只写出一行 0）";
+
+    // ---- E3：laplacian 的核是 ksize=3 那一套（H-2：角 2 / 中心 −8 / 边 0）----
+    // F2 归一化恒等；脉冲 10 在 (10,6)：
+    //   中心 = −8×10 = −80 ⇒ 80/255 = 0.3137254901960784；
+    //   四邻（边权重 0）= 0；四角（权重 2）= 2×10 = 20 ⇒ 20/255 = 0.0784313725490196。
+    // 若实现改成 ksize=1 的经典四邻域 [[0,1,0],[1,-4,1],[0,1,0]]：中心 40/255、四邻 10/255、四角 0
+    // ⇒ 下面三组点全红，所以这条是核归属的承重判据。
+    const std::string outLaplacian = utf8PathString(dir / "d1p3_edge_laplacian.tif");
+    auto runLaplacian = runEdge(impulseInput, outLaplacian, "laplacian", false, 0, 0, false, 0.0, 0.0);
+    EXPECT_TRUE(runLaplacian.success) << "E3 laplacian failed: " << runLaplacian.message;
+    ASSERT_TRUE(fs::exists(outLaplacian)) << "E3 produced no product at " << outLaplacian;
+    EXPECT_NEAR(readRasterPixel(outLaplacian, 10, 6), 80.0 / 255.0, kEps)
+        << "E3 脉冲中心必须是 80/255 = 0.3137255（ksize=3 核的中心系数 −8 × 10）；"
+           "读到 40/255 说明用了经典四邻域核（中心 −4）";
+    EXPECT_NEAR(readRasterPixel(outLaplacian, 11, 5), 20.0 / 255.0, kEps)
+        << "E3 对角 (11,5) 必须是 20/255 = 0.0784314（ksize=3 核的四角系数 2 × 10）；"
+           "读到 0 说明四角没权重（经典四邻域核）";
+    EXPECT_NEAR(readRasterPixel(outLaplacian, 9, 7), 20.0 / 255.0, kEps) << "E3 另一个对角同上";
+    EXPECT_NEAR(readRasterPixel(outLaplacian, 11, 6), 0.0, kEps)
+        << "E3 右邻必须是 0（ksize=3 核的四边系数 0）；经典四邻域核会给 10/255 = 0.0392157";
+    EXPECT_NEAR(readRasterPixel(outLaplacian, 10, 5), 0.0, kEps) << "E3 上邻同上";
+
+    // ---- E4：scharr 值级（dx=1 / dy=0；ksize 固定 3）----
+    // 平滑核 [3,10,3]、导数核 [-1,0,1] ⇒ 内部 = 16×(u(x+1)-u(x-1)) = 16×10 = 160
+    // ⇒ 160/255 = 0.6274509803921569。
+    const std::string outScharr = utf8PathString(dir / "d1p3_edge_scharr_dx1.tif");
+    auto runScharr = runEdge(rampInput, outScharr, "scharr", true, 1, 0, false, 0.0, 0.0);
+    EXPECT_TRUE(runScharr.success) << "E4 scharr dx=1/dy=0 failed: " << runScharr.message;
+    ASSERT_TRUE(fs::exists(outScharr)) << "E4 produced no product at " << outScharr;
+    EXPECT_NEAR(readRasterPixel(outScharr, 25, 6), 160.0 / 255.0, kEps)
+        << "E4 内部 160/255 = 0.627451（16×中心差分 10）；读到 40/255 说明 scharr 退回了 sobel 的 4×权重";
+    EXPECT_NEAR(readRasterPixel(outScharr, 1, 0), 160.0 / 255.0, kEps) << "E4 首行内部列同上";
+    EXPECT_NEAR(readRasterPixel(outScharr, 0, 6), 0.0, kEps) << "E4 首列 0（BORDER_REFLECT_101，同 E1）";
+
+    // ---- E5：canny 只判结构与单调（H-3：Sobel+NMS+双阈值滞后，逐点像素集不可手推）----
+    // 发一个 96×96 的 0/255 图样：默认阈值 50/150 首跑前推得"有边"，但**边缘像元数不当期望常数**
+    // （1344 是复算读数，不是手推量）；只判 (a) 取值集、(b) 有边且 Max/Min、(c) 单调、(d) 阈值真被消费。
+    auto summarizeCanny = [](const std::vector<float>& pixels,
+                             int& edgeCount, float& minVal, float& maxVal, int& offBinary) {
+        edgeCount = 0;
+        minVal = 1.0e30f;
+        maxVal = -1.0e30f;
+        offBinary = 0;
+        for (float v : pixels) {
+            if (v == 1.0f) {
+                ++edgeCount;
+            } else if (v != 0.0f) {
+                ++offBinary;
+            }
+            minVal = std::min(minVal, v);
+            maxVal = std::max(maxVal, v);
+        }
+    };
+
+    const std::string outCannyDefault = utf8PathString(dir / "d1p3_edge_canny_default.tif");
+    auto runCannyDefault = runEdge(patternInput, outCannyDefault, "canny", false, 0, 0, false, 0.0, 0.0);
+    EXPECT_TRUE(runCannyDefault.success) << "E5 canny default failed: " << runCannyDefault.message;
+    ASSERT_TRUE(fs::exists(outCannyDefault)) << "E5 produced no product at " << outCannyDefault;
+    int cannyW = 0;
+    int cannyH = 0;
+    const std::vector<float> cannyDefault = readRasterBandF32(outCannyDefault, cannyW, cannyH);
+    ASSERT_EQ(cannyW, 96) << "E5 canny 产物宽必须是夹具的 96";
+    ASSERT_EQ(cannyH, 96) << "E5 canny 产物高必须是夹具的 96";
+    ASSERT_FALSE(cannyDefault.empty()) << "E5 读不出 canny 产物像素";
+    int countDefault = 0;
+    float minDefault = 0.0f;
+    float maxDefault = 0.0f;
+    int offBinaryDefault = 0;
+    summarizeCanny(cannyDefault, countDefault, minDefault, maxDefault, offBinaryDefault);
+    EXPECT_EQ(offBinaryDefault, 0)
+        << "E5 产物只能取 0.0 与 1.0（convertScaleAbs 前是 0/255，出口乘字面量 1/255）；"
+           "读到 0.996094 = 255/256 说明除数是 256 而不是 255";
+    EXPECT_GT(countDefault, 0) << "E5 默认阈值下图样必须有边缘（Canny 真跑了）";
+    EXPECT_FLOAT_EQ(minDefault, 0.0f) << "E5 有边 ⇒ 背景必须给出 Min 0";
+    EXPECT_FLOAT_EQ(maxDefault, 1.0f) << "E5 有边 ⇒ 最强边必须给出 Max 1（255/255）";
+
+    // 单调 (c)：固定 high 降 low 只可能加边（滞后弱边集变大）；固定 low 升 high 只可能减边。
+    // 本图样的预期读数是**相等**（强边梯度饱和，三档都留同样 1344 个），相等也是合法读数，
+    // 这两行是性质判据，不是计数期望；把它们改成严格不等式就是伪期望。
+    const std::string outCannyLow = utf8PathString(dir / "d1p3_edge_canny_low10.tif");
+    auto runCannyLow = runEdge(patternInput, outCannyLow, "canny", false, 0, 0, true, 10.0, 150.0);
+    EXPECT_TRUE(runCannyLow.success) << "E5 canny low=10 failed: " << runCannyLow.message;
+    ASSERT_TRUE(fs::exists(outCannyLow)) << "E5 produced no product at " << outCannyLow;
+    int lowW = 0;
+    int lowH = 0;
+    const std::vector<float> cannyLow = readRasterBandF32(outCannyLow, lowW, lowH);
+    ASSERT_FALSE(cannyLow.empty()) << "E5 读不出 low=10 产物像素";
+    int countLow = 0;
+    float minLow = 0.0f;
+    float maxLow = 0.0f;
+    int offBinaryLow = 0;
+    summarizeCanny(cannyLow, countLow, minLow, maxLow, offBinaryLow);
+    EXPECT_GE(countLow, countDefault) << "E5 low 10→50 后边缘像元数不得增加（双重阈值滞后性质）";
+
+    const std::string outCannyHigh = utf8PathString(dir / "d1p3_edge_canny_high300.tif");
+    auto runCannyHigh = runEdge(patternInput, outCannyHigh, "canny", false, 0, 0, true, 50.0, 300.0);
+    EXPECT_TRUE(runCannyHigh.success) << "E5 canny high=300 failed: " << runCannyHigh.message;
+    ASSERT_TRUE(fs::exists(outCannyHigh)) << "E5 produced no product at " << outCannyHigh;
+    int highW = 0;
+    int highH = 0;
+    const std::vector<float> cannyHigh = readRasterBandF32(outCannyHigh, highW, highH);
+    ASSERT_FALSE(cannyHigh.empty()) << "E5 读不出 high=300 产物像素";
+    int countHigh = 0;
+    float minHigh = 0.0f;
+    float maxHigh = 0.0f;
+    int offBinaryHigh = 0;
+    summarizeCanny(cannyHigh, countHigh, minHigh, maxHigh, offBinaryHigh);
+    EXPECT_LE(countHigh, countDefault) << "E5 high 150→300 后边缘像元数不得增加（滞后性质）";
+
+    // (d) 阈值真被消费：high=10000 > 单方向 Sobel 上限 4×255 = 1020、L1 上限 2040 ⇒ 不可能有强边 ⇒ 0 边缘。
+    // 产品若把阈值写死成 50/150（或忽略 high），这一行会是 1344 个边缘像元 ⇒ 红。
+    const std::string outCannyAbsurd = utf8PathString(dir / "d1p3_edge_canny_high10000.tif");
+    auto runCannyAbsurd = runEdge(patternInput, outCannyAbsurd, "canny", false, 0, 0, true, 50.0, 10000.0);
+    EXPECT_TRUE(runCannyAbsurd.success) << "E5 canny high=10000 failed: " << runCannyAbsurd.message;
+    ASSERT_TRUE(fs::exists(outCannyAbsurd)) << "E5 produced no product at " << outCannyAbsurd;
+    int absurdW = 0;
+    int absurdH = 0;
+    const std::vector<float> cannyAbsurd = readRasterBandF32(outCannyAbsurd, absurdW, absurdH);
+    ASSERT_FALSE(cannyAbsurd.empty()) << "E5 读不出 high=10000 产物像素";
+    int countAbsurd = 0;
+    float minAbsurd = 0.0f;
+    float maxAbsurd = 0.0f;
+    int offBinaryAbsurd = 0;
+    summarizeCanny(cannyAbsurd, countAbsurd, minAbsurd, maxAbsurd, offBinaryAbsurd);
+    EXPECT_EQ(countAbsurd, 0)
+        << "E5 high=10000 必须没有任何边缘像元（阈值真的送进了 cv::Canny，不是写死的 50/150）；"
+           "读到 1344 说明 high_threshold 被忽略";
 }
 
 // Task 15 / R-T15-2：下面三条改前的红形态是**未捕获异常导致的进程级失败**——异常逃出 execute()，
