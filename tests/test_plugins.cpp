@@ -1811,6 +1811,417 @@ TEST_F(PluginTest, ProcessingFilterExecution) {
     auto result = p->execute(params, progress_);
     EXPECT_TRUE(result.success) << "Filter failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
+
+    // ===================== 批次 D P3b：processing.filter 的七支值级判据 =====================
+    // 期望全部在**首跑之前**由「夹具字面量 + toUint8 的 NORM_MINMAX 标度 + OpenCV 4.14.0 上游实现」推得，
+    // **不从产物回填**。上游出处（逐字片段与 tag 内路径印在 docs/RELEASE.md 批次 D 的 P3b 条）：
+    //   smooth.dispatch.cpp::getGaussianKernelBitExact ⇒ sigma>0 时 `scale2X = -0.125/(sigma*sigma)`、
+    //     循环 `for (int i = 0, x = 1 - n; i < n2_; i++, x+=2)`（`x` 是像元偏移的 **2 倍**）⇒
+    //     `exp(x*x*scale2X) = exp(-d*d/(2*sigma*sigma))`，归一 `sum = 1 + 2*Σt`（n 为奇数时不加第二项）；
+    //     createGaussianKernels ⇒ `ksize.width > 0` 时**不**按 sigma 反推尺寸，核类型 = `max(depth, CV_32F)`；
+    //     GaussianBlur ⇒ 定点 bit-exact 分支只进 `sdepth == CV_8U/CV_16U`，CV_32F 落到末尾
+    //     `sepFilter2D(..., borderType)` 且默认 `BORDER_REFLECT_101` ⇒ 本注释下所有 gaussian 期望只取
+    //     **窗口完整落在图内的列**（x∈[2,49]），边界列不判。
+    //   morph.dispatch.cpp::createMorphFilter ⇒ `MORPH_ERODE` 的默认 borderValue = `UCHAR_MAX`(255)、
+    //     dilate 的 = `0.` ⇒ 虚采样是 8 位域的两个极值，**永不改变** max/min ⇒ 边界列可判，
+    //     且 `dilate@x=0 → 0` 与 `erode@x=51 → 1.0` 两条就是这条边界语义的见证（反向假设会读成 1.0 / 0.0）。
+    //     morphologyEx ⇒ `MORPH_OPEN` = erode 再 dilate、`MORPH_CLOSE` = dilate 再 erode（两步同一个 borderValue）。
+    //   median_blur.dispatch.cpp ⇒ `CV_Assert((ksize % 2 == 1) …)` ⇒ **偶数核抛异常**（本把的 kernel_size
+    //     纠正段因此只有「直调插件」时才被真正消费）；median_blur.simd.hpp ⇒ 边界 =
+    //     `copyMakeBorder(..., BORDER_REPLICATE|BORDER_ISOLATED)` ⇒ 边缘复制同列同值。
+    // `toUint8` 的标度 = 255/(max-min) = 255/51 = **二进制精确的 5.0** ⇒ u8 档恰为 0/50/255；
+    //   换一件 max 不是 51 的夹具，下面每个常数都要重推（这是**夹具决定的**，不是产品决定的）。
+    // ⚠ 三档平台件上 `median`/`morph_open`/`morph_close` 的逐列剖面**相同**（档宽 ≥ 2r ⇒ 无损还原），
+    //   所以那三支的两两区分靠第二件**窄岛**夹具（2 列岛 + 3 列岛）：中值按「同一档 ≥ 13/25 采样」存活，
+    //   开运算把宽度 < k 的岛整个抹掉，闭运算把原岛逐列复原。
+
+    // 容差夹心：量化六支的产物恒在 `k/255` 格点（float32 在该量级间隔 ~6e-8、GDAL Float32 逐位往返），
+    // 相邻两种结局的最小间隔 = `50/255 = 0.196078` ⇒ 1e-6 夹得住；
+    // gaussian 的值域是 0~51（原始 float、不量化），float 核的每权 ~6e-8 相对误差 + 竖直方向 `Σk_y` 残差
+    // + 均匀核极限的偏离上界 `5 × 2e-7 × 51 = 5.1e-5` ⇒ 那一支单独用 1e-4（顺手写 1e-6 会假红）。
+    constexpr double kEps = 1e-6;
+    constexpr double kEpsRaw = 1e-4;
+    // 夹心判据的格点容差：`255*v` 与整数的距离；相邻两档之间最小可用间隔是 50 个格点 ⇒ 1e-3 夹得住。
+    constexpr double kGridTol = 1e-3;
+
+    std::error_code ec;
+    const fs::path dir = getTestDir();
+    auto staleClean = [&ec](const std::string& path) {
+        fs::remove(path, ec);
+        fs::remove(path + ".aux.xml", ec);
+    };
+
+    // k、sigma、band 一律显式发（三者都是 doFilter 的读键）⇒「没消费」会读成不同值，而不是巧合相同。
+    auto runFilter = [&](const std::string& in,
+                         const std::string& out,
+                         const std::string& filterType,
+                         int k,
+                         double sigma,
+                         int bandIndex) {
+        staleClean(out);
+        std::map<std::string, gis::framework::ParamValue> q;
+        q["action"] = std::string("filter");
+        q["input"] = in;
+        q["output"] = out;
+        q["band"] = bandIndex;
+        q["filter_type"] = filterType;
+        q["kernel_size"] = k;
+        q["sigma"] = sigma;
+        return p->execute(q, progress_);
+    };
+
+    // 产物字节不可比（出口写 GIS_PROCESSING_TIME）⇒「相同」只比像元与形状，不比 md5。
+    auto countPixelDiffs = [](const std::string& a, const std::string& b, double tol) -> int {
+        int aw = 0;
+        int ah = 0;
+        int bw = 0;
+        int bh = 0;
+        const std::vector<float> pa = readRasterBandF32(a, aw, ah);
+        const std::vector<float> pb = readRasterBandF32(b, bw, bh);
+        if (aw != bw || ah != bh || pa.size() != pb.size() || pa.empty()) return -1;
+        int diffs = 0;
+        for (size_t i = 0; i < pa.size(); ++i) {
+            if (std::abs(static_cast<double>(pa[i]) - static_cast<double>(pb[i])) > tol) ++diffs;
+        }
+        return diffs;
+    };
+
+    auto productMax = [](const std::string& path) -> float {
+        int w = 0;
+        int h = 0;
+        const std::vector<float> v = readRasterBandF32(path, w, h);
+        float m = -1.0e30f;
+        for (float x : v) m = std::max(m, x);
+        return m;
+    };
+
+    // F-A：三档平台件（承重件），u8 剖面 `0 (x≤19) / 50 (20≤x≤29) / 255 (x≥30)`、沿 y 恒定、非方 52×12。
+    // F-D：窄岛件，用来拆开 `median`/`morph_open`/`morph_close`；u8：列 {10,11}（2 列岛）与
+    //      {30,31,32}（3 列岛）= 255，其余 0。
+    // F-A2：同形状的两波段件（两带档值表不同）⇒ `band` 的读点判据（各波段同值的件判不出 band）。
+    // F-C：1 列宽亮线件（gaussian 专用，那一支不量化）。
+    const std::string plateauInput = createColumnPlateauRaster(
+        "p3b_filter_plateau.tif", 52, 12, {0, 20, 30, 52}, {{0.0f, 10.0f, 51.0f}});
+    const std::string islandInput = createColumnPlateauRaster(
+        "p3b_filter_islands.tif", 52, 12, {0, 10, 12, 30, 33, 52}, {{0.0f, 51.0f, 0.0f, 51.0f, 0.0f}});
+    const std::string twoBandInput = createColumnPlateauRaster(
+        "p3b_filter_plateau_2band.tif", 52, 12, {0, 20, 30, 52},
+        {{0.0f, 10.0f, 51.0f}, {0.0f, 51.0f, 10.0f}});
+    const std::string lineInput = createColumnPlateauRaster(
+        "p3b_filter_line.tif", 52, 12, {0, 25, 26, 52}, {{0.0f, 51.0f, 0.0f}});
+    ASSERT_FALSE(plateauInput.empty());
+    ASSERT_FALSE(islandInput.empty());
+    ASSERT_FALSE(twoBandInput.empty());
+    ASSERT_FALSE(lineInput.empty());
+
+    // 取值点一律取 y=6（竖直窗口行 4..8 全在图内 ⇒ 不混入边界语义）；
+    // 只有标出「边界见证」的两点（x=0 与 x=51）按设计压在边界上。
+    constexpr int kRow = 6;
+
+    // ---- S0：形状见证（轴序的唯一凭据）----
+    // 非方夹具（52≠12）+ 沿 y 恒定 + 方形对称核 ⇒「x/y 写反」在六支的**数值**上是等价变异，
+    // 只有形状判据看得见 ⇒ 这条只判形状，不判核的轴。
+    const std::string outDilateShape = utf8PathString(dir / "p3b_filter_shape_dilate.tif");
+    auto runDilateShape = runFilter(plateauInput, outDilateShape, "morph_dilate", 5, 1.5, 1);
+    EXPECT_TRUE(runDilateShape.success) << "S0 dilate failed: " << runDilateShape.message;
+    ASSERT_TRUE(fs::exists(outDilateShape)) << "S0 produced no product";
+    {
+        auto ds = gis::core::openRaster(outDilateShape, true);
+        ASSERT_NE(ds, nullptr) << "S0 打不开产物";
+        EXPECT_EQ(ds->GetRasterCount(), 1) << "S0 产物必须恒为 1 波段（doFilter 的出口只写一带）";
+        EXPECT_EQ(ds->GetRasterXSize(), 52) << "S0 产物宽必须是夹具的 52（宽高写反会读成 12）";
+        EXPECT_EQ(ds->GetRasterYSize(), 12) << "S0 产物高必须是夹具的 12";
+    }
+
+    // ---- S1：morph_dilate = 5 列窗口的最大值（k=5 ⇒ r=2；档边界整体**左移 2 列**）----
+    EXPECT_NEAR(readRasterPixel(outDilateShape, 17, kRow), 0.0, kEps)
+        << "S1 x=17 窗口 [15,19] 全在最低档 ⇒ 0";
+    EXPECT_NEAR(readRasterPixel(outDilateShape, 18, kRow), 50.0 / 255.0, kEps)
+        << "S1 x=18 窗口 [16,20] 第一次够到中间档 ⇒ 50/255 = 0.1960784"
+           "（膨胀把档边界从 x=20 推到 x=18；读到 0 说明核半径丢了）";
+    EXPECT_NEAR(readRasterPixel(outDilateShape, 25, kRow), 50.0 / 255.0, kEps)
+        << "S1 x=25 平台内部 ⇒ 最大值仍是 50/255（档宽 10 列 > k）";
+    EXPECT_NEAR(readRasterPixel(outDilateShape, 28, kRow), 1.0, kEps)
+        << "S1 x=28 窗口 [26,30] 第一次够到最高档 ⇒ 255/255 = 1.0";
+    EXPECT_NEAR(readRasterPixel(outDilateShape, 0, kRow), 0.0, kEps)
+        << "S1 边界见证：dilate 的默认 borderValue 是 0（8 位域最小值），x=0 有两列在图外也不改变 max ⇒ 0；"
+           "若 borderValue 是 255 这里会读成 1.0";
+
+    // ---- S2：morph_erode = 5 列窗口的最小值（档边界整体**右移 2 列**）----
+    const std::string outErode = utf8PathString(dir / "p3b_filter_erode.tif");
+    auto runErode = runFilter(plateauInput, outErode, "morph_erode", 5, 1.5, 1);
+    EXPECT_TRUE(runErode.success) << "S2 erode failed: " << runErode.message;
+    ASSERT_TRUE(fs::exists(outErode)) << "S2 produced no product";
+    EXPECT_NEAR(readRasterPixel(outErode, 19, kRow), 0.0, kEps)
+        << "S2 x=19 窗口 [17,21] 仍含最低档 ⇒ min = 0";
+    EXPECT_NEAR(readRasterPixel(outErode, 20, kRow), 0.0, kEps)
+        << "S2 x=20 腐蚀要窗口整块落在中间档内，[18,22] 里 18/19 还是 0 ⇒ 0"
+           "（这一列是 erode 与 open/close/median 的分歧点）";
+    EXPECT_NEAR(readRasterPixel(outErode, 22, kRow), 50.0 / 255.0, kEps)
+        << "S2 x=22 窗口 [20,24] 全在中间档 ⇒ 50/255（档边界从 20 右移到 22）";
+    EXPECT_NEAR(readRasterPixel(outErode, 32, kRow), 1.0, kEps)
+        << "S2 x=32 窗口 [30,34] 全在最高档 ⇒ 255/255";
+    EXPECT_NEAR(readRasterPixel(outErode, 51, kRow), 1.0, kEps)
+        << "S2 边界见证：erode 的默认 borderValue 是 255（8 位域最大值），图外虚采样不降低 min ⇒ 1.0；"
+           "若 borderValue 是 0 这里会读成 0";
+
+    // ---- S3：median = 25 采样的中位数（档宽 ≥ 3 列 ⇒ 多数票）----
+    const std::string outMedian = utf8PathString(dir / "p3b_filter_median.tif");
+    auto runMedian = runFilter(plateauInput, outMedian, "median", 5, 1.5, 1);
+    EXPECT_TRUE(runMedian.success) << "S3 median failed: " << runMedian.message;
+    ASSERT_TRUE(fs::exists(outMedian)) << "S3 produced no product";
+    // x=19：窗口列 [17,18,19,20,21] ⇒ 最低档 3 列 = 15 采样、中间档 2 列 = 10 采样
+    //        ⇒ 25 个排序后第 13 位（下标 12）= 最低档 ⇒ 0
+    EXPECT_NEAR(readRasterPixel(outMedian, 19, kRow), 0.0, kEps)
+        << "S3 x=19 多数票 15:10 判给最低档 ⇒ 0";
+    EXPECT_NEAR(readRasterPixel(outMedian, 20, kRow), 50.0 / 255.0, kEps)
+        << "S3 x=20 多数票 15:10 翻给中间档 ⇒ 50/255（与 x=19 一起把档边界钉在 20，即**不平移**）";
+    EXPECT_NEAR(readRasterPixel(outMedian, 25, kRow), 50.0 / 255.0, kEps)
+        << "S3 x=25 平台中心 ⇒ 25 采样全是 50";
+    EXPECT_NEAR(readRasterPixel(outMedian, 29, kRow), 50.0 / 255.0, kEps)
+        << "S3 x=29 窗口 [27,31] ⇒ 中间档 3 列 = 15、最高档 2 列 = 10 ⇒ 中位 50/255";
+    EXPECT_NEAR(readRasterPixel(outMedian, 30, kRow), 1.0, kEps)
+        << "S3 x=30 窗口 [28,32] ⇒ 最高档 3 列 = 15 > 中间档 10 ⇒ 255/255";
+
+    // ---- S4：morph_open = erode 再 dilate（F-A 的内部列）----
+    const std::string outOpen = utf8PathString(dir / "p3b_filter_open.tif");
+    auto runOpen = runFilter(plateauInput, outOpen, "morph_open", 5, 1.5, 1);
+    EXPECT_TRUE(runOpen.success) << "S4 open failed: " << runOpen.message;
+    ASSERT_TRUE(fs::exists(outOpen)) << "S4 produced no product";
+    EXPECT_NEAR(readRasterPixel(outOpen, 19, kRow), 0.0, kEps)
+        << "S4 x=19：腐蚀把中间档缩到 [22,28]，再膨胀只回到 [20,30] ⇒ x=19 仍是 0";
+    EXPECT_NEAR(readRasterPixel(outOpen, 20, kRow), 50.0 / 255.0, kEps)
+        << "S4 x=20：开运算把被腐蚀掉的档宽逐列补回 ⇒ 50/255（与 erode 在同一列的 0 相对）";
+    EXPECT_NEAR(readRasterPixel(outOpen, 29, kRow), 50.0 / 255.0, kEps) << "S4 x=29 同上（另一侧）";
+    EXPECT_NEAR(readRasterPixel(outOpen, 30, kRow), 1.0, kEps) << "S4 x=30 已进最高档 ⇒ 255/255";
+
+    // ---- S5：morph_close = dilate 再 erode（F-A 的内部列）----
+    const std::string outClose = utf8PathString(dir / "p3b_filter_close.tif");
+    auto runClose = runFilter(plateauInput, outClose, "morph_close", 5, 1.5, 1);
+    EXPECT_TRUE(runClose.success) << "S5 close failed: " << runClose.message;
+    ASSERT_TRUE(fs::exists(outClose)) << "S5 produced no product";
+    EXPECT_NEAR(readRasterPixel(outClose, 19, kRow), 0.0, kEps)
+        << "S5 x=19：膨胀让中间档扩到 [18,32] 后腐蚀收回，x=19 的窗口 [17,21] 仍含最低档 ⇒ 0";
+    EXPECT_NEAR(readRasterPixel(outClose, 20, kRow), 50.0 / 255.0, kEps) << "S5 x=20 ⇒ 50/255";
+    EXPECT_NEAR(readRasterPixel(outClose, 29, kRow), 50.0 / 255.0, kEps) << "S5 x=29 ⇒ 50/255";
+    EXPECT_NEAR(readRasterPixel(outClose, 30, kRow), 1.0, kEps) << "S5 x=30 ⇒ 255/255";
+
+    // ---- S6：窄岛件把 median / open / close 两两拆开 ----
+    //   dilate ⇒ 255 落在 [8,13] ∪ [28,34]（向外长 2 列）
+    //   erode  ⇒ 两岛宽度 2、3 都 < k=5 ⇒ 整幅 0
+    //   open   = dilate(erode(全 0)) ⇒ 整幅 0
+    //   close  = erode(dilate) ⇒ 腐蚀把 dilate 长的 2 列收回 ⇒ **原岛逐列复原** {10,11} ∪ {30,31,32}
+    //   median ⇒ 存活条件「同一档 ≥ 13/25 采样」：2 列岛只有 10 采样 ⇒ 整岛抹掉；
+    //            3 列岛 15 采样 ⇒ 原样保留（列 30,31,32；x=29 的窗口 [27,31] 只 2 列 ⇒ 0）
+    const std::string outDilateIsland = utf8PathString(dir / "p3b_filter_dilate_islands.tif");
+    const std::string outErodeIsland = utf8PathString(dir / "p3b_filter_erode_islands.tif");
+    const std::string outOpenIsland = utf8PathString(dir / "p3b_filter_open_islands.tif");
+    const std::string outCloseIsland = utf8PathString(dir / "p3b_filter_close_islands.tif");
+    const std::string outMedianIsland = utf8PathString(dir / "p3b_filter_median_islands.tif");
+    auto runDilateIsland = runFilter(islandInput, outDilateIsland, "morph_dilate", 5, 1.5, 1);
+    auto runErodeIsland = runFilter(islandInput, outErodeIsland, "morph_erode", 5, 1.5, 1);
+    auto runOpenIsland = runFilter(islandInput, outOpenIsland, "morph_open", 5, 1.5, 1);
+    auto runCloseIsland = runFilter(islandInput, outCloseIsland, "morph_close", 5, 1.5, 1);
+    auto runMedianIsland = runFilter(islandInput, outMedianIsland, "median", 5, 1.5, 1);
+    EXPECT_TRUE(runDilateIsland.success) << "S6 dilate(island) failed: " << runDilateIsland.message;
+    EXPECT_TRUE(runErodeIsland.success) << "S6 erode(island) failed: " << runErodeIsland.message;
+    EXPECT_TRUE(runOpenIsland.success) << "S6 open(island) failed: " << runOpenIsland.message;
+    EXPECT_TRUE(runCloseIsland.success) << "S6 close(island) failed: " << runCloseIsland.message;
+    EXPECT_TRUE(runMedianIsland.success) << "S6 median(island) failed: " << runMedianIsland.message;
+    ASSERT_TRUE(fs::exists(outCloseIsland)) << "S6 produced no product";
+    EXPECT_NEAR(readRasterPixel(outDilateIsland, 8, kRow), 1.0, kEps)
+        << "S6 dilate 在 x=8（岛左邻 2 列）必须长出来 ⇒ 1.0";
+    EXPECT_NEAR(readRasterPixel(outDilateIsland, 7, kRow), 0.0, kEps)
+        << "S6 dilate 只向外长 r=2 列 ⇒ x=7 仍 0（与 x=8 一起把半径钉死）";
+    EXPECT_NEAR(readRasterPixel(outErodeIsland, 11, kRow), 0.0, kEps)
+        << "S6 erode 要求窗口整块落在岛内，岛宽 2 < 5 ⇒ 0";
+    EXPECT_NEAR(readRasterPixel(outOpenIsland, 11, kRow), 0.0, kEps) << "S6 open 先把岛腐蚀成 0 ⇒ 0";
+    EXPECT_NEAR(readRasterPixel(outOpenIsland, 31, kRow), 0.0, kEps)
+        << "S6 open 与 median 的分歧点：3 列岛被开运算抹掉 ⇒ 0（median 在同一列是 1.0）";
+    EXPECT_NEAR(readRasterPixel(outCloseIsland, 11, kRow), 1.0, kEps)
+        << "S6 close 把 2 列岛逐列复原 ⇒ 1.0（median 在同一列是 0 ⇒ 这两条拆开 close 与 median）";
+    EXPECT_NEAR(readRasterPixel(outCloseIsland, 31, kRow), 1.0, kEps) << "S6 close 对 3 列岛同样复原 ⇒ 1.0";
+    EXPECT_NEAR(readRasterPixel(outCloseIsland, 12, kRow), 0.0, kEps)
+        << "S6 close 复原只到原岛宽度 ⇒ x=12（岛外一列）必须回到 0";
+    EXPECT_NEAR(readRasterPixel(outCloseIsland, 29, kRow), 0.0, kEps) << "S6 close 同上（另一座岛的左侧）";
+    EXPECT_NEAR(readRasterPixel(outMedianIsland, 11, kRow), 0.0, kEps)
+        << "S6 median 在 2 列岛上 = 10 个 255 采样 vs 15 个 0 ⇒ 中位 0（整岛消失）";
+    EXPECT_NEAR(readRasterPixel(outMedianIsland, 31, kRow), 1.0, kEps)
+        << "S6 median 在 3 列岛上 = 15 个 255 vs 10 个 0 ⇒ 中位 255/255";
+    EXPECT_NEAR(readRasterPixel(outMedianIsland, 29, kRow), 0.0, kEps)
+        << "S6 median 的 x=29 窗口 [27,31] 只覆盖 2 列 ⇒ 0（把岛的左边界钉在 30）";
+
+    // ---- S7：bilateral 只判平坦区恒等 + 非平坦区夹心（逐点期望要上游 LUT 化口径，本把不追）----
+    const std::string outBilateral = utf8PathString(dir / "p3b_filter_bilateral.tif");
+    auto runBilateral = runFilter(plateauInput, outBilateral, "bilateral", 5, 1.5, 1);
+    EXPECT_TRUE(runBilateral.success) << "S7 bilateral failed: " << runBilateral.message;
+    ASSERT_TRUE(fs::exists(outBilateral)) << "S7 produced no product";
+    EXPECT_NEAR(readRasterPixel(outBilateral, 5, kRow), 0.0, kEps)
+        << "S7 平坦区恒等：窗口内 u8 全等 ⇒ 邻域权重全同 ⇒ 加权和/权重和 = 该档，再 /255";
+    EXPECT_NEAR(readRasterPixel(outBilateral, 25, kRow), 50.0 / 255.0, kEps)
+        << "S7 中间档恒等 ⇒ 50/255 = 0.1960784；读到 0.1953125 = 50/256 说明出口除数是 256 不是 255";
+    EXPECT_NEAR(readRasterPixel(outBilateral, 40, kRow), 1.0, kEps) << "S7 最高档恒等 ⇒ 255/255 = 1.0";
+    // x=20 的窗口只取到 {0, 50} 两档、x=30 只取到 {50, 255} ⇒ 双边滤波是**正权重加权平均**
+    // ⇒ 结果严格落在两侧档之间且不等于任一档（等于两侧之一就是权重退化）。
+    const float bShortSide = readRasterPixel(outBilateral, 20, kRow);
+    EXPECT_GT(bShortSide, 0.0f) << "S7 x=20 夹心下界：非平坦区必须被拉离最低档 ⇒ > 0";
+    EXPECT_LT(bShortSide, 50.0f / 255.0f) << "S7 x=20 夹心上界：窗口只含 {0,50} 两档 ⇒ 必须 < 50/255";
+    EXPECT_LT(std::abs(bShortSide * 255.0f - static_cast<float>(std::lround(bShortSide * 255.0f))), kGridTol)
+        << "S7 x=20 仍必须是 k/255 格点（u8 产物再 /255）；落不到格点说明中间过程被提前转成浮点";
+    const float bLongSide = readRasterPixel(outBilateral, 30, kRow);
+    EXPECT_GT(bLongSide, 50.0f / 255.0f) << "S7 x=30 窗口只含 {50,255} ⇒ 严格 > 50/255";
+    EXPECT_LT(bLongSide, 1.0f) << "S7 x=30 严格 < 1.0（不等于最高档）";
+    EXPECT_LT(std::abs(bLongSide * 255.0f - static_cast<float>(std::lround(bLongSide * 255.0f))), kGridTol)
+        << "S7 x=30 仍是 k/255 格点";
+
+    // ---- S8：gaussian 全程原始 float（不量化、不 /255），三组可手算锚点 ----
+    const std::string outGaussWide = utf8PathString(dir / "p3b_filter_gauss_sigma1000.tif");
+    auto runGaussWide = runFilter(lineInput, outGaussWide, "gaussian", 5, 1000.0, 1);
+    EXPECT_TRUE(runGaussWide.success) << "S8 gaussian sigma=1000 failed: " << runGaussWide.message;
+    ASSERT_TRUE(fs::exists(outGaussWide)) << "S8 produced no product";
+    // sigma=1000、k=5 ⇒ 每权与 1/5 的偏离 ≤ 2e-7（上游复核值），2D 窗口里只有 5 个非零采样
+    // ⇒ |Δ| ≤ 5 × 2e-7 × 51 = 5.1e-5 ⇒ 容差取 1e-4。均匀核极限下 = 51 × 5/25 = **10.2**。
+    EXPECT_NEAR(readRasterPixel(outGaussWide, 23, kRow), 10.2, kEpsRaw)
+        << "S8 x=23 窗口 [21,25] 刚好含住亮线 ⇒ 均匀核极限 10.2";
+    EXPECT_NEAR(readRasterPixel(outGaussWide, 25, kRow), 10.2, kEpsRaw)
+        << "S8 线中心同样 10.2（1 列宽亮线在每个覆盖列只贡献 1 个非零采样）";
+    EXPECT_NEAR(readRasterPixel(outGaussWide, 27, kRow), 10.2, kEpsRaw) << "S8 x=27 窗口 [25,29] 含亮线 ⇒ 10.2";
+    EXPECT_NEAR(readRasterPixel(outGaussWide, 22, kRow), 0.0, kEpsRaw)
+        << "S8 x=22 窗口 [20,24] 不含第 25 列 ⇒ 0（与 10.2 的夹心间隔 = 10.2 ≫ 1e-4）";
+    EXPECT_NEAR(readRasterPixel(outGaussWide, 28, kRow), 0.0, kEpsRaw) << "S8 x=28 窗口 [26,30] 同上";
+
+    const std::string outGaussTight = utf8PathString(dir / "p3b_filter_gauss_sigma0p5.tif");
+    auto runGaussTight = runFilter(lineInput, outGaussTight, "gaussian", 5, 0.5, 1);
+    EXPECT_TRUE(runGaussTight.success) << "S8 gaussian sigma=0.5 failed: " << runGaussTight.message;
+    ASSERT_TRUE(fs::exists(outGaussTight)) << "S8 produced no product";
+    // sigma=0.5 ⇒ Z = 1 + 2exp(-2) + 2exp(-8) = 1.2713414917
+    // ⇒ w(0)=0.7865707、w(1)=0.1064508、w(2)=0.0002639 ⇒ 51×w = 40.1151 / 5.4290 / 0.013457。
+    EXPECT_NEAR(readRasterPixel(outGaussTight, 25, kRow), 40.1151, kEpsRaw)
+        << "S8 线中心 = 51×w(0) = 40.1151；读到 10.2 说明 sigma 没送进核（退化成均匀核）";
+    EXPECT_NEAR(readRasterPixel(outGaussTight, 24, kRow), 5.4290, kEpsRaw) << "S8 相邻列 = 51×w(1) = 5.4290";
+    EXPECT_NEAR(readRasterPixel(outGaussTight, 26, kRow), 5.4290, kEpsRaw) << "S8 另一侧对称";
+    EXPECT_NEAR(readRasterPixel(outGaussTight, 23, kRow), 0.013457, kEpsRaw) << "S8 隔两列 = 51×w(2) = 0.013457";
+    EXPECT_NEAR(readRasterPixel(outGaussTight, 22, kRow), 0.0, kEpsRaw) << "S8 x=22 窗口不含亮线 ⇒ 0";
+
+    const std::string outGaussTiny = utf8PathString(dir / "p3b_filter_gauss_sigma0p1.tif");
+    auto runGaussTiny = runFilter(lineInput, outGaussTiny, "gaussian", 5, 0.1, 1);
+    EXPECT_TRUE(runGaussTiny.success) << "S8 gaussian sigma=0.1 failed: " << runGaussTiny.message;
+    ASSERT_TRUE(fs::exists(outGaussTiny)) << "S8 produced no product";
+    // sigma=0.1 ⇒ exp(-d²/0.02)：d=1 → exp(-50)=1.9e-22、d=2 → exp(-200) 下溢 ⇒ Z≈1、w(0)≈1
+    // ⇒ 线中心保持原始 51.0（「几乎不平滑」），邻列 0。这条同时是「sigma 的数值真被消费」的见证。
+    EXPECT_NEAR(readRasterPixel(outGaussTiny, 25, kRow), 51.0, kEpsRaw)
+        << "S8 sigma=0.1 ⇒ 核退化成中心抽头 ⇒ 线中心 51.0（把 sigma 当开关用会读成 10.2 或 40.1151）";
+    EXPECT_NEAR(readRasterPixel(outGaussTiny, 24, kRow), 0.0, kEpsRaw) << "S8 sigma=0.1 的邻列 ⇒ 0";
+
+    // ---- S9：值域不对称见证（gaussian 在原始量级，六支量化在 [0,1]）----
+    EXPECT_GT(productMax(outGaussTight), 1.0f)
+        << "S9 gaussian 产物 Max 必须 >> 1.0（原始 float 域，最大 ≈ 40.12）；被误接进 toUint8 会 ≤ 1.0";
+    EXPECT_GT(productMax(outGaussTiny), 1.0f) << "S9 sigma=0.1 的 gaussian 产物 Max ≈ 51.0 ⇒ 同样 > 1.0";
+    EXPECT_GT(productMax(outGaussWide), 1.0f) << "S9 sigma=1000 的 gaussian 产物 Max ≈ 10.2 ⇒ 仍 > 1.0";
+    EXPECT_LE(productMax(outMedian), 1.0f) << "S9 median 产物 Max ≤ 1.0（出口 /255）";
+    EXPECT_LE(productMax(outDilateShape), 1.0f) << "S9 dilate 产物 Max ≤ 1.0";
+    EXPECT_LE(productMax(outErode), 1.0f) << "S9 erode 产物 Max ≤ 1.0";
+    EXPECT_LE(productMax(outOpen), 1.0f) << "S9 open 产物 Max ≤ 1.0";
+    EXPECT_LE(productMax(outClose), 1.0f) << "S9 close 产物 Max ≤ 1.0";
+    EXPECT_LE(productMax(outBilateral), 1.0f) << "S9 bilateral 产物 Max ≤ 1.0";
+    EXPECT_FLOAT_EQ(productMax(outDilateIsland), 1.0f) << "S9 量化支在窄岛件上仍取到满幅 1.0（不是被压成 0）";
+
+    // ---- S10：kernel_size 的静默纠正段（只有**进程内直调**可达）----
+    // doFilter 里紧挨着两行：`if (kernelSize % 2 == 0) kernelSize++;` 与 `if (kernelSize < 3) kernelSize = 3;`。
+    // CLI / 工作流 / GUI 的三处 Run 入口都先过 action 级校验（「不小于 3 的奇数」⇒ 直接失败），
+    // 所以这两行在真实命令行上进不来 ⇒ 本把把它**钉成「进程内直调才有的行为」**，不当正常路径
+    // （四处口径分叉立 N182，修法不在本把）。
+    const std::string outMedianK4 = utf8PathString(dir / "p3b_filter_median_k4.tif");
+    const std::string outMedianK5 = utf8PathString(dir / "p3b_filter_median_k5.tif");
+    auto runMedianK4 = runFilter(plateauInput, outMedianK4, "median", 4, 1.5, 1);
+    auto runMedianK5 = runFilter(plateauInput, outMedianK5, "median", 5, 1.5, 1);
+    EXPECT_TRUE(runMedianK4.success) << "S10 median k=4 failed: " << runMedianK4.message;
+    EXPECT_TRUE(runMedianK5.success) << "S10 median k=5 failed: " << runMedianK5.message;
+    EXPECT_EQ(countPixelDiffs(outMedianK4, outMedianK5, kEps), 0)
+        << "S10 k=4 被第一行折成 5 ⇒ 与 k=5 逐点相同（52×12 = 624 像元、0 处差异）；"
+           "删掉那一行就会带着偶数核进 cv::medianBlur，而上游是 CV_Assert(ksize % 2 == 1)";
+
+    const std::string outDilateK1 = utf8PathString(dir / "p3b_filter_dilate_k1.tif");
+    const std::string outDilateK2 = utf8PathString(dir / "p3b_filter_dilate_k2.tif");
+    const std::string outDilateK3 = utf8PathString(dir / "p3b_filter_dilate_k3.tif");
+    const std::string outDilateK5 = utf8PathString(dir / "p3b_filter_dilate_k5.tif");
+    auto runDilateK1 = runFilter(plateauInput, outDilateK1, "morph_dilate", 1, 1.5, 1);
+    auto runDilateK2 = runFilter(plateauInput, outDilateK2, "morph_dilate", 2, 1.5, 1);
+    auto runDilateK3 = runFilter(plateauInput, outDilateK3, "morph_dilate", 3, 1.5, 1);
+    auto runDilateK5 = runFilter(plateauInput, outDilateK5, "morph_dilate", 5, 1.5, 1);
+    EXPECT_TRUE(runDilateK1.success) << "S10 dilate k=1 failed: " << runDilateK1.message;
+    EXPECT_TRUE(runDilateK2.success) << "S10 dilate k=2 failed: " << runDilateK2.message;
+    EXPECT_TRUE(runDilateK3.success) << "S10 dilate k=3 failed: " << runDilateK3.message;
+    EXPECT_TRUE(runDilateK5.success) << "S10 dilate k=5 failed: " << runDilateK5.message;
+    EXPECT_EQ(countPixelDiffs(outDilateK1, outDilateK3, kEps), 0)
+        << "S10 k=1（`1 % 2 != 0` 走不到第一行）由**第二行**折成 3 ⇒ 与 k=3 逐点相同";
+    EXPECT_EQ(countPixelDiffs(outDilateK2, outDilateK3, kEps), 0)
+        << "S10 k=2 由**第一行**折成 3 ⇒ 与 k=3 逐点相同";
+    EXPECT_EQ(countPixelDiffs(outDilateK5, outDilateShape, kEps), 0)
+        << "S10 显式 k=5 与 S0/S1 的 k=5 产物一致（同一夹具同一支，交叉核对读盘口径本身）";
+    // 「相同」的三行必须有「不同」托着，否则它们是恒真：r 从 1 变 2 会让档边界平移 2 列。
+    EXPECT_NEAR(readRasterPixel(outDilateK3, 18, kRow), 0.0, kEps)
+        << "S10 dilate k=3 的 x=18 窗口 [16,18] 全在最低档 ⇒ 0（k=5 同一列是 50/255 ⇒ 核尺寸真被消费）";
+    EXPECT_NEAR(readRasterPixel(outDilateK5, 18, kRow), 50.0 / 255.0, kEps) << "S10 dilate k=5 的 x=18 = 50/255";
+    EXPECT_NEAR(readRasterPixel(outDilateK3, 28, kRow), 50.0 / 255.0, kEps)
+        << "S10 dilate k=3 的 x=28 窗口 [26,28] 还没够到 x=30 的最高档 ⇒ 50/255（k=5 同一列是 1.0）";
+    EXPECT_NEAR(readRasterPixel(outDilateK5, 28, kRow), 1.0, kEps) << "S10 dilate k=5 的 x=28 = 1.0";
+
+    // ---- S11：sigma 的「读而不用」正面见证（六支）＋反面（gaussian 必须变）----
+    const std::string outMedianS01 = utf8PathString(dir / "p3b_filter_median_sigma0p1.tif");
+    const std::string outMedianS1000 = utf8PathString(dir / "p3b_filter_median_sigma1000.tif");
+    auto runMedianS01 = runFilter(plateauInput, outMedianS01, "median", 5, 0.1, 1);
+    auto runMedianS1000 = runFilter(plateauInput, outMedianS1000, "median", 5, 1000.0, 1);
+    EXPECT_TRUE(runMedianS01.success) << "S11 median sigma=0.1 failed: " << runMedianS01.message;
+    EXPECT_TRUE(runMedianS1000.success) << "S11 median sigma=1000 failed: " << runMedianS1000.message;
+    EXPECT_EQ(countPixelDiffs(outMedianS01, outMedianS1000, kEps), 0)
+        << "S11 median 读了 sigma 但不消费它 ⇒ 0.1 与 1000.0 的产物逐点相同";
+    const std::string outDilateS01 = utf8PathString(dir / "p3b_filter_dilate_sigma0p1.tif");
+    const std::string outDilateS1000 = utf8PathString(dir / "p3b_filter_dilate_sigma1000.tif");
+    auto runDilateS01 = runFilter(plateauInput, outDilateS01, "morph_dilate", 5, 0.1, 1);
+    auto runDilateS1000 = runFilter(plateauInput, outDilateS1000, "morph_dilate", 5, 1000.0, 1);
+    EXPECT_TRUE(runDilateS01.success) << "S11 dilate sigma=0.1 failed: " << runDilateS01.message;
+    EXPECT_TRUE(runDilateS1000.success) << "S11 dilate sigma=1000 failed: " << runDilateS1000.message;
+    EXPECT_EQ(countPixelDiffs(outDilateS01, outDilateS1000, kEps), 0)
+        << "S11 morph_dilate 同样不消费 sigma ⇒ 逐点相同";
+    // 反面对照（承重）：gaussian 在同两个 sigma 下**必须不同**，否则上面两行只是「什么都没发生」。
+    EXPECT_NEAR(readRasterPixel(outGaussTiny, 25, kRow), 51.0, kEpsRaw)
+        << "S11 gaussian sigma=0.1 ⇒ 51.0";
+    EXPECT_NEAR(readRasterPixel(outGaussWide, 25, kRow), 10.2, kEpsRaw)
+        << "S11 gaussian sigma=1000 ⇒ 10.2（与 51.0 的夹心间隔 40.8 ≫ 1e-4）";
+
+    // ---- S12：band 的读点判据（两带档值表不同 ⇒ 同一列两个不同的推得值，不是只判「不相等」）----
+    // band1 的 u8 档 = {0,50,255}；band2 的档值表 {0,51,10} 在同一标度 5 下 ⇒ u8 = {0,255,50}
+    // ⇒ dilate 的推得读数：x=18 处 band1 = 50/255、band2 = 1.0；x=35 处 band1 = 1.0、band2 = 50/255。
+    const std::string outBand1 = utf8PathString(dir / "p3b_filter_band1_dilate.tif");
+    const std::string outBand2 = utf8PathString(dir / "p3b_filter_band2_dilate.tif");
+    auto runBand1 = runFilter(twoBandInput, outBand1, "morph_dilate", 5, 1.5, 1);
+    auto runBand2 = runFilter(twoBandInput, outBand2, "morph_dilate", 5, 1.5, 2);
+    EXPECT_TRUE(runBand1.success) << "S12 band=1 failed: " << runBand1.message;
+    EXPECT_TRUE(runBand2.success) << "S12 band=2 failed: " << runBand2.message;
+    ASSERT_TRUE(fs::exists(outBand1)) << "S12 band=1 produced no product";
+    ASSERT_TRUE(fs::exists(outBand2)) << "S12 band=2 produced no product";
+    EXPECT_NEAR(readRasterPixel(outBand1, 18, kRow), 50.0 / 255.0, kEps)
+        << "S12 band=1 的 x=18 = 50/255（档序 0/50/255）";
+    EXPECT_NEAR(readRasterPixel(outBand2, 18, kRow), 1.0, kEps)
+        << "S12 band=2 的 x=18 = 1.0（band2 的中间档原始值是 51 ⇒ u8 255）；读到 50/255 说明 band 被忽略、恒读第 1 带";
+    EXPECT_NEAR(readRasterPixel(outBand1, 35, kRow), 1.0, kEps) << "S12 band=1 的 x=35 = 1.0";
+    EXPECT_NEAR(readRasterPixel(outBand2, 35, kRow), 50.0 / 255.0, kEps)
+        << "S12 band=2 的 x=35 = 50/255（两列一起钉死「读的是哪一带」）";
+    EXPECT_NE(countPixelDiffs(outBand1, outBand2, kEps), 0)
+        << "S12 两带档值表不同 ⇒ 产物必须存在差异（等于 0 就是 band 没进 readBandAsMat）";
+
+    // ---- S13：filter_type 的 else 支（**只有进程内直调可达**）----
+    // `filter_type` 的 ParamSpec 是 Enum、Options 就是那七个名字；CLI 与工作流派发前都过
+    // validateParams 的枚举成员闸（validateParamValue），GUI 的 Run 走同一条链 ⇒ 非法值进不到 doFilter。
+    // 所以这条的口径是「进程内直调才判得到」，不是「用户能打出这条错误」。
+    const std::string outUnknown = utf8PathString(dir / "p3b_filter_unknown_type.tif");
+    auto runUnknown = runFilter(plateauInput, outUnknown, "sobel", 5, 1.5, 1);
+    EXPECT_FALSE(runUnknown.success)
+        << "S13 非 Options 枚举的 filter_type 在直调路径上必须失败（产品里是 Result::fail 而不是静默走某一支）";
+    EXPECT_NE(runUnknown.message.find("Unknown filter type:"), std::string::npos)
+        << "S13 失败文案必须是 `Unknown filter type: ` 前缀，实际 message = " << runUnknown.message;
+    EXPECT_FALSE(fs::exists(outUnknown)) << "S13 失败路径不得留产物";
 }
 
 // ===================== 批次 D P3：processing.edge 四支值级判据 =====================
