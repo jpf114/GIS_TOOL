@@ -3508,12 +3508,110 @@ action 级校验要求「不小于 3 的奇数」并**直接失败**；GUI 的 `
   写死成期望数，新增"判 `GetGeoTransform` 返回值"的位点要同笔改守卫 ⇒ 第二份行为）。
   ⇒「输入的 GT 必须原样进 `processing.filter` 产物」这一半**今天仍没位点判**，是已知未判项，不是与产品无关。
 - G-7 腿侧零改动：`processing,filter` 在 `real_data_matrix.txt` 第 5 列仍是 `none`（腿还没这条 case，
-  改成 `real_regression` 就是假登记）⇒ 归 P3c。
+  改成 `real_regression` 就是假登记）⇒ 归 P3c。**（P3c 已落：第 5 列现为 `real_regression`，改写版见下面 P3c 那条的 G-7——腿面判 3 支，`morph_open`/`morph_close` 因夹具退化不判）**
 - G-9 GUI 侧那条 σ 文案**本把没改**：`src/gui/gui_data_support.cpp` 里 `sigma` 的说明串现读仍是"**高斯等**滤波的 sigma 参数"，
   与本把在 `空间滤波.md` 写死的"只有 `gaussian` 消费"分叉 ⇒ 属 #164 同族的**文案半边**；改那句串 = 改用户可见文案，**归 D3 拍板**，本把不动 `src/`。
 - G-10 本块体里没有"输入打不开/路径非法"与"NaN→NoData 回写"两类位点（控制器现读本块 434 行内 `nonexistent|NaN|NoData` **0 命中**）
   ⇒ `filter` 的失败契约与三态传播今天仍只有"成功路径 + 产物存在"级别，登记为未判而非声称判过。
 - G-8 Release 树未重编 ⇒ Release 侧**未验收**。
+
+### 批次 D 覆盖晋升 P3c（2026-10-30，`processing.filter` 真实腿三条 case；**只加腿，不重复晋升**）
+
+本把射程 = 腿面（`processing.filter` 的晋升已在上一刀 P3b 从单测侧落定，登记表行 `processing,filter` 已是 GOLD、证据用例名不变）。
+改前现读（HEAD `ab86552`，全部现场复现）：登记表六键 `126 / 112 / 14 / 113 / 15 / 97`、`kPendingCeiling = 14`、`Total Tests: 802`、
+定向配方 43 条、`^PluginTest\.Processing` 族 30 条、腿九字段
+`registered=79 ran=79 judged=58 allowlisted=21 allowlist-table=21 allowlist-gated-not-registered=0 branch-labels=59 conditional-registrations=1 dead-branches=0`、
+矩阵 `processing,filter` 行第 5 列 `none` / 第 6 列 `gold`。
+`tests/action_gold_cases.txt`、`kPendingCeiling`、`tests/test_plugins.cpp`、`src/`、`gui/` **一字未改**。
+
+**夹具与载体**：腿里已有的 52×12 单调斜坡件（`tests/gui_test_data_helper.cpp` 的 `makeEdgeRaster` 族函数
+`makeEdgeRampRaster`，verb `edge-ramp-raster`，`GDT_Float32`、像元值 `v(x,y) = x`、原始 0..51、带地理变换），
+产品的 `toUint8` 标度 `255/(51-0) = 5.0` 二进制精确 ⇒ u8 档 `5x`、写回 `5x/255`。
+三条 case 各自**重新生成自己那份输入件**（`processing_filter_dilate_input.tif` / `_erode_input.tif` / `_median_input.tif`），
+产物件各自独立，输入与产物两侧判前都删同名 `.aux.xml`（`raster_inspect info` 把统计缓存在 PAM 边车里，不删就是拿上一次的统计判这一次的产品）。
+
+**三行期望：全部在首跑之前推得，实跑列是真跑出来的**（`raster_inspect info` 印 6 位有效；值只随 x 变、y 方向恒定 ⇒ 逐列求和乘 12 后在 Mean 里约掉，`Mean = Σu8/(52·255) = Σu8/13260`）
+
+| `filter_type` | 推得的逐列剖面（窗口语义） | 推得的 Mean 算式 | 实跑 Mean | 推得 Min / 实跑 Min | 推得 Max / 实跑 Max |
+|---|---|---|---|---|---|
+| `morph_dilate` | `5·min(51, x+2)`（5×5 方核、anchor 居中；虚采样取域下界，永不胜 max） | `Σ = 5·(2+3+…+51) + 5·(51+51) = 5·1427 = 7135` ⇒ `7135/13260 = 0.5380844645550528` | `0.538084` | `10/255 = 0.0392156862745098` / 实跑 `0.0392157` | `1.0` / 实跑 `1` |
+| `morph_erode` | `5·max(0, x−2)`（镜像：虚采样取域上界，永不胜 min） | `Σ = 5·(1+2+…+49) = 5·1225 = 6125` ⇒ `6125/13260 = 0.4619155354449472` | `0.461916` | `0.0` / 实跑 `0` | `245/255 = 0.9607843137254902` / 实跑 `0.960784` |
+| `median` | `5x`（25 采样、y 恒定 ⇒ 排序后第 13 个样本恒是中心列；`BORDER_REPLICATE` 下边界列同样恒等） | `Σ = 5·(0+1+…+51) = 5·1326 = 6630` ⇒ `6630/13260 = 0.5`（恰好） | `0.5` | `0.0` / 实跑 `0` | `1.0` / 实跑 `1` |
+
+自洽检查（首跑前算出、首跑后仍成立）：`7135 + 6125 = 13260 = 2·6630` ⇒ 两个形态学 Mean 关于恒等 Mean **严格对称**，
+各偏 `505/13260 = 0.038084464555`；三条 Mean 的最小间隔 `0.076168`。**若实测不对称，该查剖面（核/锚点/边界）而不是查浮点**——本把实测对称。
+三支的尺寸与 dtype 全部为 `Size: 52 x 12 x 1 bands` / `Type: Float32`（宽高**分开**比：件非方，轴交换才看得见；dtype 是独立一判，`0.0`/`1.0` 也能塞进 8 位带）。
+
+**容差逐点写，不是一条常量糊三支**（本把唯一一处"量级换档"的容差行就是 dilate 的 Min）：
+- dilate `Min 10/255`：实跑印 `0.0392157`，对期望的残差 **1.37e-8**；量级 3.9e-2 处 6 位有效的步长是 1e-7、半格 5e-8
+  ⇒ 若沿用"整数就用 1e-9"的统一口径，**这一行会在打印机上红而不是在缺陷上红** ⇒ 取 `1e-6`（残差的 73 倍、半格的 19 倍）；最近缺陷 = 恒等剖面的 `Min 0`，`|d| = 3.92e-2` = 3.9e4 倍容差。
+- dilate `Mean`：印 `0.538084`，残差 4.65e-7；量级 [0.1,1) 的半格 5e-7 ⇒ 容差必须**大于自身打印残差** ⇒ `1e-6`（2.15 倍；若打印进位到 `0.538085` 则 5.35e-7，仍 inside 1e-6，两侧都不会假红）。
+- erode `Max 245/255`：印 `0.960784`，残差 3.14e-7 ⇒ `1e-6`（3.19 倍；进位侧 6.86e-7 仍 inside）。erode `Mean` 同 dilate Mean（残差 4.65e-7）。
+- 三条 `0.0` 与 `1.0` 的整数点：float32 精确、打印残差为零 ⇒ `1e-9` 只吸收读回噪声。
+- median `Mean 0.5`：印 `0.5`（零打印残差，`1e-9` 今天也能过），仍取 `1e-6` 且**不是为了松**：624 个 float32 档值累加出的均值实测带 `+9.8e-9` 漂移，而求和顺序是写入器与 GDAL 的事、不是本 case 的判据，比打印机 5e-7 吸收带更紧的常量判的是累加顺序而不是滤波。最近缺陷 = 任一形态学剖面，`|d| = 3.81e-2` = 3.8e4 倍容差。
+
+**九字段前后（`-V` 现读，逐字）**
+```
+前 registered=79 ran=79 judged=58 allowlisted=21 allowlist-table=21 allowlist-gated-not-registered=0 branch-labels=59 conditional-registrations=1 dead-branches=0
+后 registered=82 ran=82 judged=61 allowlisted=21 allowlist-table=21 allowlist-gated-not-registered=0 branch-labels=62 conditional-registrations=1 dead-branches=0
+```
+增量 = `registered 79→82`、`ran 79→82`、`judged 58→61`、`branch-labels 59→62`，其余四字段不动；
+不变量 `judged + allowlisted = ran` ⇒ **`61 + 21 = 82`** ✓；`$rasterGateAllowlist` 的 21 条**一字未改**（`git diff` 里那段没有 hunk）。
+
+**矩阵第 5 列（与新增 `New-Case` 同一笔提交）**
+```
+前 processing,filter,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
+后 processing,filter,raster,data,real_regression,gold,C4,夹具来源为启发式判定，开批前核对
+```
+第 6 列 `gold` 是**目标档不是现状态**，未随晋升动。
+
+**臂清单（4 臂 + 1 附带读数；每臂 tee 成文件并在末行记 `EXIT_CODE=`；载体 = `run_real_raster_regression.ps1` 与 `regression_case_gate.ps1` 的完整副本 + 各自独立的输出根，
+显式传 `-CliPath / -WorkspaceRoot / -OutputRoot / -DataHelperPath / -Mode quick`。⚠ 探针目录是被 gitignore 的私有路径，按本批口径不把它的绝对路径写进本文，登记在席位报告）**
+- A0 控制臂（副本一字未改）：**绿**，九字段与主腿逐字相同，`EXIT_CODE=0` ⇒ "从副本跑"这件事本身不致红，后面几条红的是判据不是机制。
+- **A1 改期望的反事实副本臂**：dilate 分支的 `-Expected (7135.0 / 13260.0)` → `-Expected 0.5` ⇒
+  红形态 `processing_filter_dilate mean should be 7135/13260 = 5*(2+3+...+51 + 51+51)/(52*255) from the +2 column shift (band=1 actual=0.538084 expected=0.5 tolerance=1E-06)`，`EXIT_CODE=1`。
+- **B1 错配臂（产物是别的 `filter_type` 的结果）**：erode 分支改读 dilate 产物 ⇒
+  红形态 `processing_filter_erode min must be 0: the three leftmost columns all reach the domain column 0 inside the window (band=1 actual=0.0392157 expected=0 tolerance=1E-09)`，`EXIT_CODE=1`。
+- B2 错配臂（第二支）：median 分支改读 dilate 产物 ⇒
+  红形态 `processing_filter_median must keep the ramp's own floor 0 (BORDER_REPLICATE repeats the first column, so the 13th sample is still level 0) (band=1 actual=0.0392157 expected=0 tolerance=1E-09)`，`EXIT_CODE=1`。
+- C1 附带读数（错配的反方向）：dilate 分支改读 erode 产物，而 erode 那条 case 此时**还没跑** ⇒ 红在
+  `CLI validation command failed: raster_inspect info --input=…processing_filter_erode_output.tif`（"文件还没写"而不是值级），`EXIT_CODE=1`
+  ⇒ 顺带把 case 的执行/校验顺序（dilate → erode → median）钉住：错配只能往先前已写出的产物上错。
+⇒ B1/B2 的红都落在**该分支自己的值级判据**上、且尺寸与 dtype 两行在两处错配里都**没**拦住（同一写入器），这就是"分支真在按 case 名派发"而不是恒绿的实测形态。
+另记一次非本意的反向证据：Step1 第一次插入时 case 声明块因锚点错位没落上，腿当场以 `dead-branch(es) no case can reach … processing_filter_dilate,processing_filter_erode,processing_filter_median` 红 ⇒ 反向闸在跑，"有分支无 case"这条不是装饰。
+
+**两条口径限制（写成"腿判算子"就是越论域）**
+1. `median` 的 `Mean 0.5` 与"均值滤波"在这件单调斜坡上**不可分辨**（线性件的 box 均值也等于中心值）⇒ 这条分支判的是量化标度、`/255`、尺寸、dtype 与 CLI 派发；`median ≠ blur` 的承重只在单测侧那一臂（P3b 的 A02），本把不声称腿判算子身份。
+2. `morph_open` / `morph_close` 在本件上**恒等于输入**（`open = erode→dilate = 5·max(0, min(51,x)) = 5x`；`close = dilate→erode` 同理）⇒ 这是**夹具决定的退化，不是产品决定的**，所以本把不给这两支加腿 case：它们的分支会打印与 `median` 支逐位相同的三个数 = 永不可能红的装饰臂。这两支的承重留在 P3b 的窄岛件（A04/A05 只在岛件红）。
+
+**缺口（P3c 登记）**
+- **G-7（改写上一刀那条"腿侧零改动 ⇒ 归 P3c"）**：腿面现覆盖 `filter` 七支里的 **3 支**（`morph_dilate` / `morph_erode` / `median`）；
+  `morph_open` / `morph_close` 两支**因本夹具退化而不判**（⇒ 腿不判，不是判不过），`gaussian`（无手推 Mean 载体，边界列另受反射限制）与
+  `bilateral`（逐点期望需上游 LUT 口径，P3b 已登记为不可得）两支本把不碰
+  ⇒ 第 5 列 `real_regression` 说的是"该动作已有真实腿 case 与值级判据"，**不是**"七支都判"。
+- 腿不判 `kernel_size` 是否真被消费：三支都传 `ParamSpec` 默认 5 ⇒ 一个静默忽略 `kernel_size` 的实现照样打印这三条剖面。那半边承重是 P3b 的纠正段 + 两臂。
+- 输入的地理变换透传仍没位点判（P3b 该半边未销）：本把没新增判 `GetGeoTransform` 返回值的位点，守卫两域读数与改前**逐字相同**（见下面回归）。
+- Release 树本把未重编 ⇒ Release 侧**未验收**。
+
+**回归（Debug 树，现跑）**
+- `Total Tests: 802`（本把没新增注册用例）；`-N` 的定向配方 `Total Tests: 43`（不变）。
+- 定向 43 条配方：**43/43 绿**，`Total Test time (real) = 39.19 s`（落在上一刀记录的安静态散布 38.2~42.8 s 内）。
+- `^PluginTest\.Processing` 族 **30/30 绿**，5.69 s。
+- 腿单跑 `ctest -R '^real_data_raster(\.|$)' -V` 通过，九字段见上面。
+- 腿墙钟（改完、跑前门控 `tasklist` 全 0）三跑 **15.09 / 15.28 / 14.84 s**，取最大值 **15.28 s** ⇒ 余量 `60 ÷ 15.28 = **3.93×**`，未跌破 2.5× 拆腿触发线
+  ⇒ **TIMEOUT 未抬、断言一条未减、腿未拆**。改前基线单跑 14.78 s，同腿本批散布 14.15~17.64 s ⇒ 三跑全落在既有散布内，不读成"加了三条 case 反而更快"。
+- `docs_match_cli` 现读 `actions=126 docs_checked=126 missing_doc=0 rows=594 matched=593 drift=0 allowed=7` ⇒ 本把没动参数表（没改 `src/`、没改文档正文）。
+- `geotransform_guard` 两域现读与改前逐字相同：product `any=21 code=20 checked=18 unchecked=2 allowlisted=2 violations=0 dead=0`；
+  test `any=13 code=10 comment_line=3 checked=9 unchecked=1 allowlisted=1 violations=0 dead=0`。
+- `.ps1` 三条硬规矩现读：`Parser::ParseFile` 三参重载对 `tests/run_real_raster_regression.ps1` 打 **errors=0**；
+  ⚠ 只带一个 `[ref]` 的两参写法在本机 PowerShell 5.1 **绑不到重载**（`MethodCountCouldNotFindBest`）却照样打印 `errors=0`
+  （`$e` 仍是 `$null` ⇒ `.Count` 空读成 0）⇒ 那是**假绿**，本把改跑三参形式并配一份故意写坏的副本当负控（现读 `errors=2`）才让 0 有意义。
+- 行尾与字面量现读（python `newline=''` 数，不按目录惯例推）：`tests/run_real_raster_regression.ps1` 3250 CRLF / 0 裸 LF / **0 个非 ASCII 字节**；
+  `tests/real_data_matrix.txt` 184 CRLF / 0 裸 LF；`git diff --stat` = 202 insertions / 0 deletions + 矩阵 1 行改（纯新增，没删任何既有判据）。
+  ⚠ 本文件自身行数不写进本文件（落笔即自变，上一刀刚为此删过一条没有载体的自计数）。
+- `data/` 只读两件套（开批时刻 2026-10-30 18:19:50）：`find data -type f -newermt` = **0**；
+  `check_data_baseline.py` = `BASELINE: 88  CURRENT: 88  DIFFS: 0`（本把全部用 helper 造件，未开任何原件）。
+- 受保护位点 `src/plugins/terrain/terrain_plugin.cpp` 的 blob 现读仍是 `588a42504ee19bcb551f8214e5c1adb68cea20e9`。
 
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
