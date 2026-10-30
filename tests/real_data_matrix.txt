@@ -85,7 +85,7 @@ processing,threshold,raster,data,real_regression,gold,C4,夹具来源为启发�
 processing,filter,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
 processing,enhance,raster,data,real_regression,gold,C4,夹具来源为启发式判定，开批前核对
 processing,stats,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
-processing,edge,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
+processing,edge,raster,data,real_regression,gold,C4,夹具来源为启发式判定，开批前核对
 processing,contour,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
 processing,template_match,raster,data,none,gold,C4,夹具来源为启发式判定，开批前核对
 processing,pansharpen,raster,data,real_regression,gold,C4,腿走合成兜底
