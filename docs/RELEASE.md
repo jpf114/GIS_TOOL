@@ -3952,6 +3952,106 @@ gold_rows_literal_slot 98`，`kPendingCeiling` 由 14 同步下调到 **13**，�
   "所有走打开那一步的入口都会读回"这个更宽的论域是**机制上的合理猜测、不是实测**，本把不写进文本。
   能改变交付产物这一格最重 ⇒ N184 的论域宽窄由控制器据上面这几条读数裁定，本轮不代它下结论。
 
+### 批次 D 覆盖晋升 P4c（2026-11-02，`processing.contour` 一条 PENDING→GOLD；**只做单测面，不碰腿、不碰矩阵**）
+
+射程 = `tests/test_plugins.cpp`（既有 `TEST_F` 内扩写，**没新增用例**）+ `tests/action_gold_cases.txt` 登记行 +
+`tests/test_coverage_meta.cpp` 的 `kPendingCeiling` 一行 + `docs/算法说明/影像处理与分析/轮廓提取.md` + 本节。
+开批现读：分支 `fix/batch-d-nonvector-promotion`、HEAD `f1a40f7`、树干净；登记表六键 `126/113/13/114/15/98`、
+`kPendingCeiling = 13`、`Total Tests: 802`、定向 43、`^PluginTest\.Processing` 30、`(CoverageMeta|CoverageMetaJudge)` 19、
+腿九字段 `84/84/63/21/21/0/64/1/0`；`轮廓提取.md` 改前行尾 CRLF 60 / 裸 LF 0 / 无 BOM。
+改前块体只有 `result.success` + `fs::exists(output)` 两条弱断言 ⇒ 值级 0 条，这正是它留在 PENDING 的原因。
+
+**两条上游定约（都定约成功；tag `4.14.0`，取源通道 = `https://cdn.jsdelivr.net/gh/opencv/opencv@4.14.0/modules/imgproc/src/<路径>`）**
+
+1. Otsu 的扫描顺序 / 区间 / 并列 tie-break —— 载体 `modules/imgproc/src/thresh.cpp` 的模板 `getThreshVal_Otsu`
+   （`getThreshVal_Otsu_8u` 只是它 `<uchar, 256u, false>` 的转发壳）。逐字要点：
+   `const int N = std::numeric_limits<T>::max() + 1;`（u8 ⇒ 256 桶）、`for(i = 0; i < N; i++ )` 升序、
+   `if( std::min(q1,q2) < FLT_EPSILON || std::max(q1,q2) > 1. - FLT_EPSILON ) continue;`、
+   `sigma = q1*q2*(mu1 - mu2)*(mu1 - mu2); if( sigma > max_sigma ) { max_sigma = sigma; max_val = i; }`
+   ⇒ **并列时严格大于 ⇒ 保留最小下标**，返回值是一个真实存在的档值；随后 `THRESH_BINARY` 的口径是
+   `src > thresh`（严格大于）⇒ **阈值那一档自己归背景**。
+2. `contourArea` 的鞋带与 `CHAIN_APPROX_SIMPLE` 是否改变顶点集 —— 面积载体**不在** `contours.cpp`
+   （该 tag 上 `grep -i area` 命中 0 处，那文件现在只剩 `findContours_legacy`），真实定义点是
+   `modules/imgproc/src/shapedescr.cpp` 的 `double cv::contourArea( InputArray _contour, bool oriented )`：
+   `a00 += (double)prev.x * p.y - (double)prev.y * p.x;` … `a00 *= 0.5; if( !oriented ) a00 = fabs(a00);`
+   顶点是像元中心格点 ⇒ W×H 实心矩形给 `(W-1)(H-1)` 而不是 `W*H`。顶点压缩与边界处理在
+   `modules/imgproc/src/contours_new.cpp`：`ContourScanner_::isSimple()` 按 mode 判、
+   `const bool isDirect = (this->approx_method1 == CHAIN_APPROX_NONE);` ⇒ SIMPLE 只在方向改变处 `addPoint`
+   ⇒ **只删共线中间点、鞋带面积不变**；`copyMakeBorder(_image, image, 1, 1, 1, 1, BORDER_CONSTANT | BORDER_ISOLATED, Scalar(0))`
+   加 `ContourScanner_::create(..., offset + Point(-1,-1))` ⇒ 贴边前景与内部前景同规格（"贴边被裁"这种夹具决定项不成立）。
+   定位载体用的是 `https://api.github.com/repos/opencv/opencv/contents/modules/imgproc/src?ref=4.14.0` 的目录清单
+   （该 tag 把 contours 拆成了 `contours_new.cpp / contours_common.cpp / contours_approx.cpp / geometry.cpp / shapedescr.cpp`）。
+
+**推得与实跑分开**（"推得"是首跑前写进报告的、含算式；"实跑"是首跑读数）
+
+| 观察点 | 推得（首跑前写定） | 实跑 |
+|---|---|---|
+| f1 = 40×24 三级平台（u8 档 0/50/255，计数 240/480/240）的 Otsu 界 | `i=0` 处 `0.25*0.75*118.3333^2 = 2624.88`，`i=50` 处 `0.1875*221.6667^2 = 9217.58` ⇒ **界 = 50** | 命中（右半那一格 `(30,5)` 判背景） |
+| f1 产物 | 前景 = 左下象限 240 像元、`Mean = 240/960 = 0.25`、`total = 1` | 逐字相同 |
+| **209 保留 / 210 丢弃** | `(20-1)(12-1) = 209`，像素数 240 ⇒ 209 保留、210 整块丢弃、240 也丢弃 | **按此翻转**（两条形变臂各自把这三档打红） |
+| fOtsu = 40×12（u8 档 0/100/255，计数 240/192/48） | `i=0` 处 `8281.25 > i=100` 处 `3990.03` ⇒ **界 = 0** ⇒ 中间档进前景、`Mean = 240/480 = 0.5` | 命中（onepx 240、Mean 0.5） |
+| ⚠ 我的一处推算被自己的臂更正 | 原写"常数 127 在 fOtsu 上给 `Mean = 48/480 = 0.1`" | **实测是 0** ⇒ 那 4×12 窄岛面积 `(4-1)(12-1) = 33 < 100` 被 `min_area` 整条丢掉，我漏问了一层消费点 |
+| 岛件 52×12（u8 只有 0/255 两档） | `total = 2`、面积 `1*11 = 11` 与 `2*11 = 22` ⇒ `min_area` 0/11/12/23 的 kept 阶梯 2/2/1/0、onepx 60/60/36/0 | 逐字相同（12 档 `(31,6)=1.0` 对 `(11,6)=0.0`） |
+| 环件 40×24（外 24×16、内洞 12×8） | `RETR_EXTERNAL` ⇒ `total=1`、面积 345、`FILLED` 把洞填掉 ⇒ onepx 384、`Mean=0.4`、洞心 `(15,9)=1.0` | 逐字相同 |
+| band 件（两波段镜像 `{51,0}` / `{0,51}`） | 两带各自 `total=1`、onepx 480、`Mean=0.5`，只有 `(5,12)` 与 `(30,12)` 互换 | 逐字相同 |
+| 越界 `min_area`（-5 与 1e9+1） | 直调插件不过框架的 `validateParams` + `executeGuarded`（闸在 CLI/GUI 层）⇒ 两支都 success，分别 kept 1 / 0 | 命中（两支都 success） |
+| 失败契约四种形态 | 空 input ⇒ `fail:input is required`；缺 output ⇒ `fail:output is required`；不存在的件与取不到的波段 ⇒ 走 core 抛出的 `thrown:` 分支 | 命中（首跑那三条红是我自己的参数拼装错：漏给 `band` 键、`noOutput` 从 `noInput` 拷贝时带着 output 键；补齐后 A0 全绿） |
+
+**臂清单与红条数**（口径 = `grep -oE "test_plugins\.cpp\(([0-9]+)\)" <日志> | sort -u | wc -l`，**括号不是冒号**；
+每臂日志都 tee 成文件并留 `EXIT_CODE=`，驱动单实例；`src/` 取证一律 `git show HEAD:<path>` + LF→CRLF 归一 +
+与工作树基线裸 sha 对拍，七臂每次还原都 `MATCH_BASELINE` 且 `git status` 空。日志留本机会话工作区，不入库）
+
+| 臂 | 唯一改动 | 红条数 | 落点 |
+|---|---|---|---|
+| A0 干净对照 | 无 | **0**（`EXIT_CODE=0`） | 全绿底座；七臂跑完再跑一次 A0b 仍 0 |
+| ARM1 `min_area` 不消费 | `area >= minArea` 改成 `area >= minArea` 恒真 | **15** | B 族四档 + D 族阶梯 + 两条计数文案 |
+| ARM2 面积换像素数口径 | `cv::contourArea(contours[i])` → `cv::boundingRect(contours[i]).area()` | **14** | 与 ARM1 同形但少一条（`min_area=1e9+1` 那支：两种口径都丢光 ⇒ 不红） |
+| ARM3 `RETR_EXTERNAL`→`RETR_LIST` | findContours 的 mode 实参 | **2** | **只有环件**的 total 与 kept；另四件同产物 ⇒ 环件是唯一承重载体 |
+| ARM4 `cv::FILLED` → 线宽 1 | drawContours 的 thickness 实参 | **24** | 全族（A 族 onepx 240→60、E 族 384→76） |
+| ARM5 去掉 `/255` | `convertTo(outFloat, CV_32F, 1.0/255.0)` → `convertTo(outFloat, CV_32F)` | **15** | 均值与 `1.0` 探针（残差 254/127/63.5）；整数 `onepx` 判据不红（`>0.5` 的口径对 255 同样为数 ⇒ 口径选择，不是漏判） |
+| ARM6 `OTSU` → 固定 127 | 把 `THRESH_BINARY 加 THRESH_OTSU` 与实参 0 换成 `THRESH_BINARY` 与实参 127 | **5** | **只在 fOtsu 那一族**；f1 与岛/环/band 四件同产物 ⇒ "跑 Otsu"与"写常数"在那些夹具上不可分辨，已照实写进文档 |
+| ARM7 `band` 被写死 1 | doContour 内 `readBandAsMat(input, band, …)` → `(input, 1, …)`（全文 6 处同名行只中本函数那 1 处） | **4** | F 族两格 + G 族 `band=9` 两条（连错误路径都不再发生） |
+| ARM8 改期望常数（只改测试，不动 `src/`） | `Mean` 0.25→0.5、`kept`(210) 0→1、`total`(A 族) 1→2 | **3** | 三处逐字对应我改的三个期望 ⇒ 三条断言都是活的，不是恒绿装饰 |
+
+负结论配的正控：ARM6 那条"f1 上 Otsu 与常数不承重"是**否证性**结论，配的正控是同一批 A 族行号在
+ARM4/ARM5/ARM8 里确实红过，且 `TEST_F` 是单一函数体（C 族之后的断言在同一次运行里跑到）⇒ 不是"那一族没跑"。
+
+**登记晋升（同笔：六键 + ceiling，全部按登记表头部声明的那五条命令逐条现读）**
+`data_rows 126 / gold_rows 114 / pending_rows 12 / gold_rows_all_lines 115 / gold_rows_table_driven 15 /
+gold_rows_literal_slot 99`（= `gold_rows - gold_rows_table_driven`），不变量 `114 + 12 = 126` 成立；
+`kPendingCeiling` 13→**12**；登记行改成 `processing,contour` 指 `PluginTest.ProcessingContourExecution`。
+新注释一律 `[:]GOLD` 写法 ⇒ 裸计数只随那条数据行一起 +1（文件内"逗号紧跟 GOLD"的字面量除数据行外未增加）。
+矩阵 `tests/real_data_matrix.txt` 的 `processing,contour` 那格**本把不改**：本把没加腿 New-Case ⇒ R-D39 不适用，
+留 D3 矩阵对账复核这一格。
+
+**落账读数（Debug 侧）** `Total Tests: 802`（没新增用例）、定向配方现读 **43** 条注册、**43/43 绿**
+（`source_mojibake_guard` / `docs_match_cli` / `geotransform_guard` 与四条 CoverageMeta 都在里面跑到）、
+`-R '^PluginTest\.Processing[A-Za-z0-9_]*(\.|$)'` **30/30 绿**、`^(CoverageMeta|CoverageMetaJudge)` **19/19 绿**、
+腿九字段现读 `84/84/63/21/21/0/64/1/0` 与开批**逐字相同**（本把没动腿）。
+块体计数（口径 = python 取本 `TEST_F` 到下一个 `TEST_F` 之间文本、正则 `\bEXPECT_[A-Z]+\(` 出现次数）：
+块 333 行、`EXPECT_*` **85** 条，其中 `EXPECT_NEAR` **26** 条（过 `GoldEvidenceIsAuditable` 第二条的就是这一类）。
+行尾逐文件 python `newline=''` 现读后按工作树 CRLF 写回、UTF-8 无 BOM：`test_plugins.cpp` CRLF 26877 / 裸 LF 0、
+`action_gold_cases.txt` CRLF 177 / 裸 LF 0、`test_coverage_meta.cpp` CRLF 1825 / 裸 LF 0、
+`轮廓提取.md` CRLF 85 / 裸 LF 0（改前 60）。
+
+**缺口（P4c 登记，不改判据）**
+- C-1 **f1 上"跑了 Otsu"与"用了常数阈值"产物同形**（三档 0/50/255，界落在 [50,255) 内任何值都给同一张二值图）。
+  本把靠**另造一件 fOtsu**（40×12、u8 档 0/100/255、计数 240/192/48）把它变承重，而不是替换 f1 ⇒
+  f1 那几族的判据里不含这一维，别把它读成"Otsu 已被全面钉住"。
+- C-2 `RETR_EXTERNAL` 与 `RETR_LIST` 只在**带洞的环件**上可分辨（其余四件同产物）⇒ 这一维的覆盖等于那一条 case；
+  环套环只判到"洞不独立成环"，没判"同心环只留最外圈"的更深情形。
+- C-3 计数消息只走 `progress.onMessage`，`CliProgress::onMessage` 打印即丢，`Result::message` 里是
+  `writeMatOutput` 那句通用文案 ⇒ 本把靠块内一个局部捕获式 reporter 才读到 `Contour extraction: … (area >= N)`；
+  这条契约今天只被这一个用例读，没进真实腿、也没进 `--help` 面。
+- C-4 `writeMatOutput` 的 NoData 传播支（输入声明过 NoData 且产物是 CV_32F 时把 NaN 换成声明值）本把**没有夹具**：
+  四件夹具都不声明 NoData，`toUint8` 也不产生 NaN ⇒ 该支今天不判（照实登记为"未做"，不是"做不了"）。
+- C-5 本把**没测**同名 `.aux.xml` 边车把 `<NoDataValue>` 读回那条链（P4a 缺口里登记过的那一族）；
+  只把"产物路径先清边车"写进用例前置，避免残留边车冒充判据。
+- C-6 `min_area` 的 ParamSpec 区间 `[0.0, 1e9]` 只在**直调层**判到"不拦"；CLI 层是否真拦、以及 `--help` 与
+  中文文档的区间描述是否一致，本把未取证 ⇒ 归参数边界口径那笔账，不在本把改判据。
+- C-7 Release 树本把未重编 ⇒ **Release 侧未验收**（D1~D3 全段同样未验收）。
+- C-8 腿与矩阵未动 ⇒ `processing,contour` 的真实数据侧仍无 case；processing 余 **12** 条 PENDING（全表同为 12）。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
