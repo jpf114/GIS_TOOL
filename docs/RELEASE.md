@@ -4063,6 +4063,75 @@ gold_rows_literal_slot 99`（= `gold_rows - gold_rows_table_driven`），不变�
   `RETR_EXTERNAL` 给 `total=1`、多边形面积 32（不是两个 16）、`FILLED` 填 50 像元 ⇒ “两个目标被算成一个”这一维今天没有任何
   判据（本块四件夹具全是列平台/矩形，任何两块至少隔着一列背景）。
 
+### 批次 D 覆盖晋升 P5a（2026-11-02，`processing.template_match` 一条 PENDING→GOLD；**只做单测面，不碰腿、不碰矩阵**）
+
+射程 = `tests/test_plugins.cpp`（既有 `TEST_F(PluginTest, ProcessingTemplateMatchExecution)` 内扩写，**没新增用例**）+
+`tests/action_gold_cases.txt` 登记行与五条 COUNT 声明行 + `tests/test_coverage_meta.cpp` 的 `kPendingCeiling` 一行 +
+`docs/算法说明/影像处理与分析/模板匹配.md` 注意事项两条 + 本节。
+开批现读：分支 `fix/batch-d-nonvector-promotion`、HEAD `5544ffe`、`git status --porcelain` 0 行；登记表六键
+`126/114/12/115/15/99`、`kPendingCeiling = 12`、`Total Tests: 802`、定向 43、`^PluginTest\.Processing` 30、
+`(CoverageMeta|CoverageMetaJudge)` 19、腿九字段 `84/84/63/21/21/0/64/1/0`；`test_plugins.cpp` 工作区行尾 CRLF 26886 /
+裸 LF 0 / 无 BOM；`模板匹配.md` 改前 CRLF 82 / 裸 LF 0 / 无 BOM。八项与任务书声称值零差异（开批八行对撞见席位报告 §1）。
+改前块体只有 `result.success` + `fs::exists(output)` + 两条 `metadata.count` 的 ASSERT ⇒ 值级断言 0 条，这正是它留在 PENDING 的原因。
+
+**夹具事实与本刀第一处纠正**：既有块从 `createPatternRaster` 的 96×96 图案件上切 `Rect(18,18,16,16)` 当模板，而那一段
+整个落在 helper 第一条实心方块条件 `x∈[18,34] && y∈[18,34]` 里 ⇒ **模板是恒定的**。`toUint8` 对恒定件走
+`maxVal - minVal < 1e-10` 的 `cv::Mat::zeros` 支（所以"恒定 255"会被抹成"恒定 0"，任务书"仍是恒定 16×16（255）"的措辞
+在这里要改口，结论不变）；零方差模板让 `TM_CCOEFF_NORMED` 对全部格都给满分，`cv::minMaxLoc` 停在行主序第一格 ⇒
+产品侧实到 `match_x/match_y = (0,0)`、`match_score = "1.000000"`、响应图 6561 格全为 1.0。⇒ 晋升的前提是换成**非恒定**窗口。
+
+**本刀选 `Rect(16,16,16,16)` 而不是任务书的 `Rect(12,12,16,16)`**，理由只有一条，且两档都在产品侧同一只二进制里
+（OpenCV 4.14 + GDAL，`build/debug/tests/Debug/gis_tests.exe` 直接跑本块，不经 python cv2）测过：两档的峰值唯一性
+（"等于最大值的格数 = 1"）都成立，但 (12,12) 档的峰是 `0.99999952`，距 `std::to_string` 的 `%.6f` 舍入界 `0.9999995`
+只剩 **2e-8**（约 1/3 个 float ULP），等于把 `match_score == "1.000000"` 架在一个 OpenCV 小版本就可能翻过去的余量上；
+(16,16) 档的峰逐位等于 `1.0f`，印法余量为无穷。只能标定的量（6561、`0.99999952`、`-0.69621348`、3777、argmax `(59,27)`
+与峰值 `14240475.0`）一律只进注释与臂日志，不进断言期望；进断言的数值全部有推导链（`matchTemplate` 输出尺寸契约、
+`TM_CCOEFF_NORMED` 的余弦定义与 `[-1,1]` 值域、`toUint8` 在 {0,255} 两档上的标度 `255/(255-0)=1.0` 是二进制精确常数、
+`%.6f` 印法、`doTemplateMatch` 函数体里的原文文案）。
+
+**八族判据**（全在同一块内，一条都不是恒真）：A1 唯一峰值定位（`match_x/match_y == "16"` + `match_score == "1.000000"`，
+另用测试自己行主序扫出的 argmax 与 metadata 互校跨通道一致性）；A2 min/max 选支双向可红（同对件跑 `sqdiff` ⇒
+`match_x/y` 仍 `"16"`、`EXPECT_NEAR(score, 0.0, 1e-5)` 值级断 + `match_score == "0.000000"`，并独立钉一条
+"sqdiff 响应图 argmax = (59,27)、且峰谷异位异值" ⇒ 删掉 `if (method == TM_SQDIFF || …) matchLoc = minLoc;` 那一支时
+`match_x` 必须变 59、score 必须变 14240475.000000，A2 才有变红的能力）；A3 产物是响应图且本动作不做 `/255`
+（`ASSERT_EQ` 两维 `== 81`、`EXPECT_NEAR(峰值, 1.0, 1e-5)` 夹在实现残差 4.8e-7 与误补缩放后的 0.0039216 之间、
+`EXPECT_LT(min, 0)` + `EXPECT_GT(负格数, 0)` + `EXPECT_GT((0,0.5) 开区间格数, 0)` 三条合判"不是 0/1 掩膜"、
+`EXPECT_NE(产物左上角格值, 1.0)` 把本刀与"恒定模板处处满分退回 (0,0)"那档切开）；A4 模板大于源（24×24 源 + 40×40 模板 ⇒
+`fail:Template is larger than source image` + 产物不存在 + **源/模板对调正控必须成功且落盘**）；A5 三个必填键早退三条
+（`fail:input is required` / `fail:output is required` / `fail:template_file is required`，均在 `writeMatOutput` 之前 ⇒
+与成功文案是两套，三条各配一条"不许留产物"）；A6 `band` 同用于模板这一次要读点（2 波段源先 `ASSERT count==2`，
+`band=1` 正控成功且产物 `25×9` 顺手复核非方件上的尺寸公式，`band=2` ⇒ 实到 `thrown:Cannot get band 2`；
+注释写明另一支候选 `无法读取模板栅格数据: ` 为何构造性不可达——那句要 `readBandAsMat` 返回空 Mat，而带号越界在
+`gdalBandToMat` 的 `GetRasterBand` 空指针处先抛）；A7 两套文案通道（`message` 只取 `writeMatOutput` 那句 +
+遍历 metadata 值扫不到 `Template match found` / `Running template matching` + 两通道不许互顶）；A8 metadata 五键齐全 +
+`template_width/template_height == "16"`（取自夹具 Rect，格点值）。夹具自检两条：模板非恒定 `ASSERT_GT(tplMax, tplMin)`
+与档值只 {0,255} 两档 `ASSERT_DOUBLE_EQ`。测试侧另修一处伪信号：`cleanStale` 现在对"同名残留删不掉"当场 `ADD_FAILURE`
+——Windows 下未放开的 GDAL 数据集句柄会让 `fs::remove` 静默失败，本刀第一跑就是这样把三条"产物不许存在"顶红的。
+
+**登记为未判项（本刀不判，写在这里以免丢失）**
+
+- **D1 地理参考**：产物是 81×81 的响应图，但 `writeMatOutput → matToGdalTiff(mat, inputPath, …)` 无条件沿用输入的 GT，
+  臂实到 `gt = [116, 0.001, 0, 40, 0, -0.001]` ⇒ 声明包络 `0.081°×0.081°`，比输入本体的 `0.096°×0.096°` **少一个模板步长**
+  （`0.015°`）。**方向纠正**：任务书写的是"产物声明的范围比实际覆盖大"，实到是**偏小**；且响应格的语义是"以该格为左上角的
+  16×16 窗口的相似度"，用逐像元 GT 去声明本身就错位（每格的空间支撑是 `0.016°`，不是 `0.001°`）。不判的理由照批次 D 既有
+  裁定：`geotransform_guard` 把 `code/checked/unchecked` 写死成期望数，新增判 GT 的位点要同笔改守卫。
+- **D2 NoData 传播**：`writeMatOutput` 的 `srcHasNoData` 支只对 `std::isnan(row[c])` 的格换成 NoData 值；响应图里没有 NaN
+  （两轮臂各档的 min/max 都是有限值，恒定档 6561 格逐格 `==` 比较成立本身就排除了 NaN）。⇒ 输入声明 NoData 时产物里的
+  0 值响应**不是** NoData。本刀夹具（图案件）根本不声明 NoData ⇒ 那一支在覆盖面上空转，判它要先造带 NoData 的源，属另一条射程。
+- **D3 恒定模板 ⇒ 处处满分且位置退回左上角**：产品对零方差模板**没有任何防护或提示**，且两条分支同时坏——`ccoeff_normed`
+  档 6561 格全为满分、位置退回 `(0,0)`；`sqdiff` 档最小值落在 `(0,43)`（2 格并列、值 `715275.0`），而真正的方块位置 `(18,18)`
+  反而是**最大值**所在（4 格并列、量级 `1.66e7`）⇒ 用户拿一张平坦区当模板会得到"位置看着挺像那么回事"的假最优。
+  A1 的诊断臂把它钉成事实，但"该不该拦/该不该报"属可观测行为变更 ⇒ **立案候选交控制器定编号**，本刀不预先安号码。
+
+**验收配方实到**（`MSBUILDDISABLENODEREUSE=1 cmake --build build/debug --config Debug --target gis_tests` 后逐字跑）：
+定向大集合 43/43 全绿 40.08 s；`^PluginTest\.Processing` 30/30 全绿 6.25 s（本刀不新增 `TEST_F`，条数不变）；
+`(CoverageMeta|CoverageMetaJudge)` 19/19 全绿 2.45 s；`ctest -C Debug -N` 的 `Total Tests:` 仍 802；
+真实腿九字段仍 `84/84/63/21/21/0/64/1/0`（`tests/real_data_matrix.txt` 第 5 列 `processing,template_match` 保持 `none`，
+本刀不改腿脚本与矩阵——改成 `real_regression` 就是假登记，R-D39）。三计数对撞（口径：`^TEST_F` 按行首计数、
+`EXPECT_`/`ASSERT_` 为全文件出现次数含注释与字符串，改前从 `git show HEAD:tests/test_plugins.cpp` 的 blob 现读、
+改后从工作区现读）：`TEST_F` 350→350、`EXPECT_` 2851→2896（+45）、`ASSERT_` 2012→2027（+15）。
+登记表六键改后 `126/115/11/116/15/100`（逐条用声明行行尾自带命令复跑，不重打 grep）。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
