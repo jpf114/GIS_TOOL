@@ -3419,15 +3419,18 @@ TEST_F(PluginTest, ProcessingContourExecution) {
     //   (1) Otsu = modules/imgproc/src/thresh.cpp 的 getThreshVal_Otsu：256 桶、桶下标升序扫描、
     //       `if( sigma > max_sigma )` 是**严格大于**（并列取最小下标），返回的 max_val 是一个真实档值；
     //       随后 THRESH_BINARY 的口径是 `src > thresh`（严格大于）⇒ **阈值那一档自己归背景**。
+    //       前提：`getThreshVal_Otsu_8u` 头上有 `CV_IPP_RUN_FAST`（up_thresh.cpp），上面四条只约束**非 IPP 分支**；
+    //       本构建是否走 IPP 未证（dll 里搜串证明不了，内部函数名根本搜不到）⇒ 只能写"实测落点与该 C++ 分支推导一致"。
     //   (2) contourArea = modules/imgproc/src/shapedescr.cpp 的鞋带 `a00 += prev.x*p.y - prev.y*p.x`
     //       再 `a00 *= 0.5`，顶点是像元中心格点 ⇒ W×H 实心矩形给 (W-1)(H-1) 而不是 W*H；
     //       CHAIN_APPROX_SIMPLE（载体 contours_new.cpp 的 icvFetchContourEx，isDirect=false）只删共线
     //       中间点 ⇒ 顶点集变少但鞋带面积不变。findContours 先 copyMakeBorder 补一圈 1 像元零边、
     //       再以 offset+Point(-1,-1) 搬回原图系 ⇒ 贴边前景与内部前景同规格。
-    // 容差夹心（两端都要成立）：下界侧产物是 float32，期望 1.0 那一档即使实现端把 255*(1/255) 落成
-    //   0.99999994 也只剩 6e-8 的格点误差、按 240 格求和后摊到均值是 1.5e-8 ⇒ 1e-6 比它大四个量级；
-    //   上界侧本表任意两个**不同结局**的均值最小间隔是 60/624 与 36/624 之差 0.03846，比容差大 3.8e4 倍
-    //   ⇒ 1e-6 既不会假红，也不会把任何一次 kept/丢弃翻转洗成同一个数。
+    // 容差夹心（按族拆开写，两端都要成立）：产物实测唯一值只有 0.0 与 1.0 ⇒ A/C/E/F 的期望均值是 onepx/像元总数的
+    //   **格点值**，下界余量远超 1e-6；只有 D 族的 60/624 与 36/624 是**非格点值**，float32 逐格 1.0 求和摊进均值
+    //   仍带 ~1e-9 的求和残差，余量约 1.8e2 倍 ⇒ 两族下界余量的来源不同，不是一回事；上界写成全局陈述：任意两个
+    //   **不同结局**的均值最小间隔 60/624 - 36/624 = 0.038462，比容差大 3.8e4 倍 ⇒ 1e-6 既不会假红，
+    //   也不会把任何一次 kept/丢弃翻转洗成同一个数。
     constexpr double kEps = 1e-6;
 
     std::error_code ec;
@@ -3439,8 +3442,10 @@ TEST_F(PluginTest, ProcessingContourExecution) {
         fs::remove(path + ".aux.xml", ec);
     };
 
-    // 局部捕获式 reporter：doContour 的两个计数只进 progress.onMessage（CliProgress 打印即丢），
-    // 要钉"min_area 被消费且回显进计数文案"只能自带缓冲区。
+    // 局部捕获式 reporter：doContour 的两个计数有两条通道——`Result::metadata` 的 total_contours/kept_contours
+    // （本块 metaCount 断言判的就是这两键，CLI 也把它们打到 stdout），与 progress.onMessage 那句计数文案
+    // （CliProgress 把它写进 **stderr** 并进 Logger 环形缓冲，不进 Result::message/stdout/metadata）⇒
+    // 要钉"min_area 被消费且回显进计数文案"只能自带捕获缓冲区。
     struct CapturingProgress : gis::core::ProgressReporter {
         std::vector<std::string> messages;
         void onProgress(double) override {}
@@ -3529,8 +3534,11 @@ TEST_F(PluginTest, ProcessingContourExecution) {
     fillRasterRect(fRing, 14, 8, 12, 8, 0.0f);
 
     // ==================== A 族：Otsu 把界落在 50 与 255 之间（f1）====================
-    // 推得：类间方差在 i=50 处 9217.58 > i=0 处 2624.88 ⇒ max_val=50；THRESH_BINARY 走严格 `>`
+    // 推得：类间方差在 i=50 处 9213.02 > i=0 处 2625.52 ⇒ max_val=50；THRESH_BINARY 走严格 `>`
     // ⇒ u8 档 50（右半 480 像元）归背景，前景只剩左下象限 20×12 = 240 像元。
+    // tie-break 的因果边界：档 51-254 为空使 i=50..254 全同分区、方差并列同值（i=254 实算同为 9213.02）；
+    // "严格大于取最小下标"只决定返回值写作 50 而非 254，而 src>50 与 src>254 的前景集都只有档 255 ⇒ 产物不变
+    // ⇒ 本族 Mean=0.25 承重于"阈值那一档归背景"的严格 `>`，不承重于并列 tie-break 规则。
     const std::string outA = utf8PathString(dir / "d1p4c_contour_a_f1_min209.tif");
     CapturingProgress probe;
     const auto runA = runContour(f1, outA, 1, true, 209.0, probe);
@@ -3602,8 +3610,9 @@ TEST_F(PluginTest, ProcessingContourExecution) {
     EXPECT_EQ(metaCount(runHi, "kept_contours"), "0") << "B 族 1e9+1 > 209 ⇒ 丢弃";
 
     // ==================== C 族：Otsu 不等于任何常数阈值（fOtsu）====================
-    // 推得：i=0 处 sigma = 0.25*131^2 = 8281.25 > i=100 处 0.09*210.5556^2 = 3990.03 ⇒ max_val=0
-    // ⇒ 档 100 与 255 一起进前景（列 [20,40) = 240 像元，均值 0.5）；常数 127 只会给 48 像元、均值 0.1。
+    // 推得：i=0 处 sigma = 0.25*131^2 = 4290.25 > i=100 处 0.09*210.5556^2 = 3990.03 ⇒ max_val=0
+    // ⇒ 档 100 与 255 一起进前景（列 [20,40) = 240 像元，均值 0.5）；常数 127 只会给档 255 的 4×12 = 48 像元，
+    // 而那条窄岛的多边形面积 (4-1)(12-1) = 33 < 默认 min_area 100 ⇒ 整条被丢 ⇒ 产物全零、均值 0（不是 0.1）。
     const std::string outC = utf8PathString(dir / "d1p4c_contour_c_fotsu_default.tif");
     const auto runC = runPlain(fOtsu, outC, 1, false, 0.0);
     EXPECT_TRUE(runC.success) << "C 族 fOtsu 失败: " << runC.message;
@@ -3611,8 +3620,8 @@ TEST_F(PluginTest, ProcessingContourExecution) {
     const MaskFacts factsC = maskFacts(outC);
     EXPECT_EQ(factsC.width, 40) << "C 族宽 40";
     EXPECT_EQ(factsC.height, 12) << "C 族高 12（与 f1 的 24 互换即红）";
-    EXPECT_EQ(factsC.onepx, 240) << "C 族前景 = 列 [20,40) 共 20 列 × 12 行 = 240；若按常数 127 阈值只有 48";
-    EXPECT_NEAR(factsC.mean, 0.5, kEps) << "C 族均值 = 240/480 = 0.5（常数阈值口径这里是 0.1）";
+    EXPECT_EQ(factsC.onepx, 240) << "C 族前景 = 列 [20,40) 共 20 列 × 12 行 = 240；常数 127 口径只有档 255 的 48 像元、面积 33 先被 min_area 丢掉";
+    EXPECT_NEAR(factsC.mean, 0.5, kEps) << "C 族均值 = 240/480 = 0.5（常数 127 口径这里是 0：48 像元的窄岛面积 33 < 默认 min_area 100 ⇒ 整条被丢、产物全零）";
     EXPECT_NEAR(readRasterPixel(outC, 25, 6), 1.0, kEps)
         << "C 族 u8 档 100 那一列段必须进前景 ⇒ 这一格就是 Otsu 与 127 的分辨点";
     EXPECT_NEAR(readRasterPixel(outC, 37, 6), 1.0, kEps) << "C 族 u8 档 255 那一列段同样进前景";
