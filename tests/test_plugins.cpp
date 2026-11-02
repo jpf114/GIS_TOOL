@@ -3405,18 +3405,333 @@ TEST_F(PluginTest, ProcessingContourExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
 
-    std::string input = createTestRaster("e2e_contour_input.tif", 50, 50);
-    std::string output = (getTestDir() / "e2e_contour_output.tif").string();
+    // 批次 D P4c：本块由「跑一次 + 两条弱断言（result.success + fs::exists）」扩成 processing.contour
+    // 的承重判据；改前块体里值级断言 0 条，过不了 CoverageMeta.GoldEvidenceIsAuditable 的第二条。
+    // 登记表 processing,contour 那一行的第 4 列指本块。
+    //
+    // 现读 ProcessingPlugin::doContour 的链路（下面每个期望都从这条链推，不从产物回填）：
+    //   readBandAsMat(input, band) -> gis::core::toUint8 -> cv::threshold(gray, binary, 0, 255,
+    //   THRESH_BINARY | THRESH_OTSU)（阈值由 Otsu 现算，第 3/4 个实参只是 maxval）->
+    //   cv::findContours(binary, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE) ->
+    //   逐条 cv::contourArea(...) 与 min_area 比 -> cv::drawContours(resultImg, contours, i,
+    //   Scalar(255), cv::FILLED) 画到一张全零图 -> convertTo(CV_32F, 1.0/255.0) -> writeMatOutput。
+    // 上游定约两条（tag 4.14.0 逐字核对，取源通道见 docs/RELEASE.md 的 P4c 条目）：
+    //   (1) Otsu = modules/imgproc/src/thresh.cpp 的 getThreshVal_Otsu：256 桶、桶下标升序扫描、
+    //       `if( sigma > max_sigma )` 是**严格大于**（并列取最小下标），返回的 max_val 是一个真实档值；
+    //       随后 THRESH_BINARY 的口径是 `src > thresh`（严格大于）⇒ **阈值那一档自己归背景**。
+    //   (2) contourArea = modules/imgproc/src/shapedescr.cpp 的鞋带 `a00 += prev.x*p.y - prev.y*p.x`
+    //       再 `a00 *= 0.5`，顶点是像元中心格点 ⇒ W×H 实心矩形给 (W-1)(H-1) 而不是 W*H；
+    //       CHAIN_APPROX_SIMPLE（载体 contours_new.cpp 的 icvFetchContourEx，isDirect=false）只删共线
+    //       中间点 ⇒ 顶点集变少但鞋带面积不变。findContours 先 copyMakeBorder 补一圈 1 像元零边、
+    //       再以 offset+Point(-1,-1) 搬回原图系 ⇒ 贴边前景与内部前景同规格。
+    // 容差夹心（两端都要成立）：下界侧产物是 float32，期望 1.0 那一档即使实现端把 255*(1/255) 落成
+    //   0.99999994 也只剩 6e-8 的格点误差、按 240 格求和后摊到均值是 1.5e-8 ⇒ 1e-6 比它大四个量级；
+    //   上界侧本表任意两个**不同结局**的均值最小间隔是 60/624 与 36/624 之差 0.03846，比容差大 3.8e4 倍
+    //   ⇒ 1e-6 既不会假红，也不会把任何一次 kept/丢弃翻转洗成同一个数。
+    constexpr double kEps = 1e-6;
 
-    std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("contour");
-    params["input"] = input;
-    params["output"] = output;
-    params["band"] = 1;
+    std::error_code ec;
+    const fs::path dir = getTestDir();
+    auto staleClean = [&ec](const std::string& path) {
+        fs::remove(path, ec);
+        // 边车必须先清：本仓入口会把同名 .aux.xml 里的 NoDataValue 读回并可能固化进产物，
+        // 残留边车会让"产物声明变了"冒充成判据。
+        fs::remove(path + ".aux.xml", ec);
+    };
 
-    auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "Contour failed: " << result.message;
-    EXPECT_TRUE(fs::exists(output));
+    // 局部捕获式 reporter：doContour 的两个计数只进 progress.onMessage（CliProgress 打印即丢），
+    // 要钉"min_area 被消费且回显进计数文案"只能自带缓冲区。
+    struct CapturingProgress : gis::core::ProgressReporter {
+        std::vector<std::string> messages;
+        void onProgress(double) override {}
+        void onMessage(const std::string& msg) override { messages.push_back(msg); }
+        bool isCancelled() const override { return false; }
+    };
+
+    struct MaskFacts {
+        int width = 0;
+        int height = 0;
+        int onepx = 0;      // 产物里 >0.5 的像元数（填充面积，整数计数 = 无印法量化的观察点）
+        double mean = 0.0;  // 整带均值（= onepx / 像元总数，浮点观察点）
+    };
+    auto maskFacts = [](const std::string& path) {
+        MaskFacts f;
+        int w = 0;
+        int h = 0;
+        const std::vector<float> data = readRasterBandF32(path, w, h);
+        f.width = w;
+        f.height = h;
+        double sum = 0.0;
+        for (float v : data) {
+            sum += static_cast<double>(v);
+            if (v > 0.5f) ++f.onepx;
+        }
+        f.mean = data.empty() ? 0.0 : sum / static_cast<double>(data.size());
+        return f;
+    };
+    auto metaCount = [](const gis::framework::Result& r, const char* key) {
+        const auto it = r.metadata.find(key);
+        return it == r.metadata.end() ? std::string("<missing>") : it->second;
+    };
+
+    // sendMinArea=false ⇒ **不发** min_area 键，走 ParamSpec 声明的默认 100.0
+    auto runContour = [&](const std::string& input,
+                          const std::string& output,
+                          int band,
+                          bool sendMinArea,
+                          double minArea,
+                          gis::core::ProgressReporter& reporter) {
+        staleClean(output);
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("contour");
+        params["input"] = input;
+        params["output"] = output;
+        params["band"] = band;
+        if (sendMinArea) params["min_area"] = minArea;
+        return p->execute(params, reporter);
+    };
+    auto runPlain = [&](const std::string& input, const std::string& output,
+                        int band, bool sendMinArea, double minArea) {
+        return runContour(input, output, band, sendMinArea, minArea, progress_);
+    };
+    // 直调插件不过框架的 validateParams + executeGuarded（那两层只在 CLI/GUI 路径上）⇒
+    // 失败形态有三种（success / fail:… / thrown:…），这里归一成一个字符串，判的是"哪条分支挡的"。
+    auto contourOutcome = [&](const std::map<std::string, gis::framework::ParamValue>& callParams) {
+        try {
+            const auto r = p->execute(callParams, progress_);
+            return r.success ? std::string("success") : ("fail:" + r.message);
+        } catch (const std::exception& e) {
+            return std::string("thrown:") + e.what();
+        }
+    };
+
+    // 四件夹具的档值与计数（全部可由 toUint8 的线性标度 255/(51-0)=5.0 手推，标度是二进制精确常数）：
+    //   f1      = createStepLevelRaster(40,24)：raw 0/10/51 ⇒ u8 档 0/50/255，计数 240/480/240（象限：左上0、左下51、右半10）
+    //   fOtsu   = createColumnPlateauRaster(40,12) edges {0,20,36,40} raw {0,20,51} ⇒ u8 档 0/100/255，计数 240/192/48
+    //   fIslands= createColumnPlateauRaster(52,12) edges {0,10,12,30,33,52} raw {0,51,0,51,0} ⇒ u8 只有 0/255 两档，两条岛 2 列与 3 列宽
+    //   fBand   = createColumnPlateauRaster(40,24) edges {0,20,40} 两波段 {51,0} / {0,51}
+    //   fRing   = createConstantRaster(40,24,0) + 外矩形 x[8,32)×y[4,20) 填 51 + 洞 x[14,26)×y[8,16) 填 0
+    const std::string f1 = createStepLevelRaster("d1p4c_contour_f1_40x24.tif", 40, 24);
+    const std::string fOtsu = createColumnPlateauRaster(
+        "d1p4c_contour_fotsu_40x12.tif", 40, 12, {0, 20, 36, 40}, {{0.0f, 20.0f, 51.0f}});
+    const std::string fIslands = createColumnPlateauRaster(
+        "d1p4c_contour_islands_52x12.tif", 52, 12, {0, 10, 12, 30, 33, 52},
+        {{0.0f, 51.0f, 0.0f, 51.0f, 0.0f}});
+    const std::string fBand = createColumnPlateauRaster(
+        "d1p4c_contour_band_40x24.tif", 40, 24, {0, 20, 40}, {{51.0f, 0.0f}, {0.0f, 51.0f}});
+    ASSERT_FALSE(f1.empty());
+    ASSERT_FALSE(fOtsu.empty());
+    ASSERT_FALSE(fIslands.empty());
+    ASSERT_FALSE(fBand.empty());
+    const std::string fRing = createConstantRaster("d1p4c_contour_ring_40x24.tif", 40, 24, 0.0f);
+    ASSERT_FALSE(fRing.empty());
+    fillRasterRect(fRing, 8, 4, 24, 16, 51.0f);
+    fillRasterRect(fRing, 14, 8, 12, 8, 0.0f);
+
+    // ==================== A 族：Otsu 把界落在 50 与 255 之间（f1）====================
+    // 推得：类间方差在 i=50 处 9217.58 > i=0 处 2624.88 ⇒ max_val=50；THRESH_BINARY 走严格 `>`
+    // ⇒ u8 档 50（右半 480 像元）归背景，前景只剩左下象限 20×12 = 240 像元。
+    const std::string outA = utf8PathString(dir / "d1p4c_contour_a_f1_min209.tif");
+    CapturingProgress probe;
+    const auto runA = runContour(f1, outA, 1, true, 209.0, probe);
+    EXPECT_TRUE(runA.success) << "A 族 f1/min_area=209 失败: " << runA.message;
+    ASSERT_TRUE(fs::exists(outA)) << "A 族没有产物: " << outA;
+    const MaskFacts factsA = maskFacts(outA);
+    EXPECT_EQ(factsA.width, 40) << "A 族产物宽必须跟着 mat.cols（宽高写反在方阵夹具上是等价变异，故夹具取非方）";
+    EXPECT_EQ(factsA.height, 24) << "A 族产物高必须跟着 mat.rows";
+    EXPECT_EQ(factsA.onepx, 240) << "A 族前景只能是左下象限 20*12=240 像元；若 Otsu 把档 50 也划进前景则是 720";
+    EXPECT_NEAR(factsA.mean, 0.25, kEps) << "A 族均值 = 240/960 = 0.25（0.25 在 float32 里精确）";
+    EXPECT_NEAR(readRasterPixel(outA, 5, 20), 1.0, kEps) << "A 族左下象限（u8 档 255）必须是 1.0";
+    EXPECT_NEAR(readRasterPixel(outA, 30, 5), 0.0, kEps)
+        << "A 族右半是 u8 档 50，正是 Otsu 返回值那一档 ⇒ 严格 `>` 判给背景；判成 1.0 就说明阈值不是 Otsu 现算的";
+    EXPECT_NEAR(readRasterPixel(outA, 5, 5), 0.0, kEps) << "A 族左上 raw 0 ⇒ 背景";
+    EXPECT_NEAR(readRasterPixel(outA, 30, 20), 0.0, kEps) << "A 族右下 raw 10 ⇒ 同档 50 ⇒ 背景";
+    EXPECT_EQ(metaCount(runA, "total_contours"), "1")
+        << "A 族 RETR_EXTERNAL + 单一矩形前景 ⇒ 只有 1 条轮廓";
+    EXPECT_EQ(metaCount(runA, "kept_contours"), "1") << "A 族 min_area=209 必须保留";
+    {
+        std::string joined;
+        for (const auto& m : probe.messages) joined += m;
+        EXPECT_NE(joined.find("Contour extraction: 1 total, 1 kept (area >= 209)"), std::string::npos)
+            << "A 族计数文案必须把 min_area 回显出来（现读 oss << ... << minArea），实到：\n" << joined;
+    }
+
+    // ==================== B 族：面积口径是 (W-1)(H-1)，不是像素数 ====================
+    // 同一件前景 20×12 的鞋带面积推得 19*11 = 209，像素数是 240 ⇒ 209 与 210 这一对把两种口径分开。
+    const std::string outB210 = utf8PathString(dir / "d1p4c_contour_b_f1_min210.tif");
+    CapturingProgress probe210;
+    const auto runB210 = runContour(f1, outB210, 1, true, 210.0, probe210);
+    EXPECT_TRUE(runB210.success) << "B 族 min_area=210 失败: " << runB210.message;
+    ASSERT_TRUE(fs::exists(outB210)) << "B 族没有产物: " << outB210;
+    const MaskFacts factsB = maskFacts(outB210);
+    EXPECT_EQ(factsB.onepx, 0) << "B 族 210 > 209 ⇒ 整块丢弃 ⇒ 全零产物（像素数口径的实现这里会留 240 格）";
+    EXPECT_NEAR(factsB.mean, 0.0, kEps) << "B 族均值必须是 0";
+    EXPECT_NEAR(readRasterPixel(outB210, 5, 20), 0.0, kEps) << "B 族 A 族那一格 1.0 在这里必须翻转成 0.0";
+    EXPECT_EQ(metaCount(runB210, "total_contours"), "1")
+        << "B 族 total 不随 min_area 变（轮廓数是 findContours 给的）⇒ 只有 kept 这一半在消费 min_area";
+    EXPECT_EQ(metaCount(runB210, "kept_contours"), "0") << "B 族 kept 必须是 0";
+    {
+        std::string joined;
+        for (const auto& m : probe210.messages) joined += m;
+        EXPECT_NE(joined.find("Contour extraction: 1 total, 0 kept (area >= 210)"), std::string::npos)
+            << "B 族同一件只换 min_area ⇒ 文案里两个数与回显都要跟着翻，实到：\n" << joined;
+    }
+
+    // 240（像素数口径的档位）必须也丢 ⇒ 与 209/210 那一对配起来，三档一起才排掉"面积=像素计数"。
+    const std::string outB240 = utf8PathString(dir / "d1p4c_contour_b_f1_min240.tif");
+    const auto runB240 = runPlain(f1, outB240, 1, true, 240.0);
+    EXPECT_TRUE(runB240.success) << "B 族 min_area=240 失败: " << runB240.message;
+    EXPECT_EQ(metaCount(runB240, "kept_contours"), "0") << "B 族 240 > 209 ⇒ 丢弃（若面积按像素数 240 算则这里是 1）";
+    EXPECT_EQ(maskFacts(outB240).onepx, 0) << "B 族 240 档产物全零";
+
+    // 缺省档：**不发** min_area 键 ⇒ 走 ParamSpec 默认 100.0（100 <= 209 ⇒ 保留）。
+    const std::string outBdef = utf8PathString(dir / "d1p4c_contour_b_f1_default.tif");
+    const auto runBdef = runPlain(f1, outBdef, 1, false, 0.0);
+    EXPECT_TRUE(runBdef.success) << "B 族缺省 min_area 失败: " << runBdef.message;
+    EXPECT_EQ(metaCount(runBdef, "kept_contours"), "1") << "B 族缺省档 100 <= 209 ⇒ 保留";
+    EXPECT_EQ(maskFacts(outBdef).onepx, 240) << "B 族缺省档与 A 族同产物";
+
+    // 区间外的越界值：闸在框架的 validateParams（CLI/GUI 才走），直调插件可达 ⇒ 照实钉"这一层不拦"。
+    const std::string outLo = utf8PathString(dir / "d1p4c_contour_b_f1_minNeg5.tif");
+    const auto runLo = runPlain(f1, outLo, 1, true, -5.0);
+    EXPECT_TRUE(runLo.success) << "B 族 min_area=-5 直调必须可达（区间下界 0.0 的闸在 CLI 侧，不在 doContour）";
+    EXPECT_EQ(metaCount(runLo, "kept_contours"), "1") << "B 族 -5 让 209 稳稳通过";
+    const std::string outHi = utf8PathString(dir / "d1p4c_contour_b_f1_minOverSpec.tif");
+    const auto runHi = runPlain(f1, outHi, 1, true, 1e9 + 1.0);
+    EXPECT_TRUE(runHi.success) << "B 族 min_area=1e9+1（上界 1e9 之外）直调同样可达";
+    EXPECT_EQ(metaCount(runHi, "kept_contours"), "0") << "B 族 1e9+1 > 209 ⇒ 丢弃";
+
+    // ==================== C 族：Otsu 不等于任何常数阈值（fOtsu）====================
+    // 推得：i=0 处 sigma = 0.25*131^2 = 8281.25 > i=100 处 0.09*210.5556^2 = 3990.03 ⇒ max_val=0
+    // ⇒ 档 100 与 255 一起进前景（列 [20,40) = 240 像元，均值 0.5）；常数 127 只会给 48 像元、均值 0.1。
+    const std::string outC = utf8PathString(dir / "d1p4c_contour_c_fotsu_default.tif");
+    const auto runC = runPlain(fOtsu, outC, 1, false, 0.0);
+    EXPECT_TRUE(runC.success) << "C 族 fOtsu 失败: " << runC.message;
+    ASSERT_TRUE(fs::exists(outC)) << "C 族没有产物: " << outC;
+    const MaskFacts factsC = maskFacts(outC);
+    EXPECT_EQ(factsC.width, 40) << "C 族宽 40";
+    EXPECT_EQ(factsC.height, 12) << "C 族高 12（与 f1 的 24 互换即红）";
+    EXPECT_EQ(factsC.onepx, 240) << "C 族前景 = 列 [20,40) 共 20 列 × 12 行 = 240；若按常数 127 阈值只有 48";
+    EXPECT_NEAR(factsC.mean, 0.5, kEps) << "C 族均值 = 240/480 = 0.5（常数阈值口径这里是 0.1）";
+    EXPECT_NEAR(readRasterPixel(outC, 25, 6), 1.0, kEps)
+        << "C 族 u8 档 100 那一列段必须进前景 ⇒ 这一格就是 Otsu 与 127 的分辨点";
+    EXPECT_NEAR(readRasterPixel(outC, 37, 6), 1.0, kEps) << "C 族 u8 档 255 那一列段同样进前景";
+    EXPECT_NEAR(readRasterPixel(outC, 5, 6), 0.0, kEps) << "C 族 u8 档 0 归背景";
+    EXPECT_EQ(metaCount(runC, "total_contours"), "1") << "C 族前景是连成的 20×12 矩形 ⇒ 1 条轮廓";
+    EXPECT_EQ(metaCount(runC, "kept_contours"), "1") << "C 族面积 (20-1)*(12-1)=209 >= 100 ⇒ 保留";
+
+    // ==================== D 族：min_area 真被消费（两条窄岛，面积 11 与 22）====================
+    // 推得：u8 只有 0/255 两档 ⇒ Otsu 返回 0 ⇒ 两条岛都是前景；面积分别 (2-1)(12-1)=11 与 (3-1)(12-1)=22。
+    const std::string outD0 = utf8PathString(dir / "d1p4c_contour_d_islands_min0.tif");
+    const auto runD0 = runPlain(fIslands, outD0, 1, true, 0.0);
+    EXPECT_TRUE(runD0.success) << "D 族 min_area=0 失败: " << runD0.message;
+    ASSERT_TRUE(fs::exists(outD0)) << "D 族没有产物: " << outD0;
+    const MaskFacts factsD0 = maskFacts(outD0);
+    EXPECT_EQ(factsD0.width, 52) << "D 族宽 52";
+    EXPECT_EQ(factsD0.height, 12) << "D 族高 12";
+    EXPECT_EQ(metaCount(runD0, "total_contours"), "2") << "D 族两条分离的岛 ⇒ RETR_EXTERNAL 给 2 条轮廓";
+    EXPECT_EQ(metaCount(runD0, "kept_contours"), "2") << "D 族 min_area=0 ⇒ 全保留";
+    EXPECT_EQ(factsD0.onepx, 60) << "D 族填充像元 = 2*12 + 3*12 = 60";
+    EXPECT_NEAR(factsD0.mean, 60.0 / 624.0, kEps) << "D 族均值 = 60/624";
+
+    const std::string outD11 = utf8PathString(dir / "d1p4c_contour_d_islands_min11.tif");
+    const auto runD11 = runPlain(fIslands, outD11, 1, true, 11.0);
+    EXPECT_TRUE(runD11.success) << "D 族 min_area=11 失败: " << runD11.message;
+    EXPECT_EQ(metaCount(runD11, "kept_contours"), "2")
+        << "D 族 11 恰好等于窄岛的多边形面积 ⇒ `area >= min_area` 是闭区间，两条都留";
+    EXPECT_EQ(maskFacts(outD11).onepx, 60) << "D 族 11 档填充像元仍是 60";
+
+    const std::string outD12 = utf8PathString(dir / "d1p4c_contour_d_islands_min12.tif");
+    const auto runD12 = runPlain(fIslands, outD12, 1, true, 12.0);
+    EXPECT_TRUE(runD12.success) << "D 族 min_area=12 失败: " << runD12.message;
+    EXPECT_EQ(metaCount(runD12, "kept_contours"), "1")
+        << "D 族 12 > 11 ⇒ 2 列宽的岛被丢掉、3 列宽（面积 22）的留下 ⇒ 面积口径 = (列宽-1)*(高-1)";
+    const MaskFacts factsD12 = maskFacts(outD12);
+    EXPECT_EQ(factsD12.onepx, 36) << "D 族 12 档只剩 3×12=36 像元";
+    EXPECT_NEAR(factsD12.mean, 36.0 / 624.0, kEps) << "D 族 12 档均值 = 36/624";
+    EXPECT_NEAR(readRasterPixel(outD12, 31, 6), 1.0, kEps) << "D 族 12 档留下的是 x[30,33) 那条岛";
+    EXPECT_NEAR(readRasterPixel(outD12, 11, 6), 0.0, kEps) << "D 族 12 档被丢的是 x[10,12) 那条岛";
+
+    const std::string outD23 = utf8PathString(dir / "d1p4c_contour_d_islands_min23.tif");
+    const auto runD23 = runPlain(fIslands, outD23, 1, true, 23.0);
+    EXPECT_TRUE(runD23.success) << "D 族 min_area=23 失败: " << runD23.message;
+    EXPECT_EQ(metaCount(runD23, "kept_contours"), "0") << "D 族 23 > 22 ⇒ 两条岛全丢";
+    EXPECT_EQ(maskFacts(outD23).onepx, 0) << "D 族 23 档产物全零";
+    EXPECT_NEAR(maskFacts(outD23).mean, 0.0, kEps) << "D 族 23 档均值 0";
+    EXPECT_EQ(metaCount(runD23, "total_contours"), "2") << "D 族 total 恒为 2（min_area 不影响轮廓数）";
+
+    // ==================== E 族：RETR_EXTERNAL ⇒ 孔洞不生成独立轮廓，产物是填充区域 ====================
+    // 推得：外矩形 24×16 ⇒ 面积 (24-1)(16-1)=345 >= 100 ⇒ 1 条保留；洞不成为独立轮廓 ⇒ total=1；
+    // FILLED 把洞一起填掉 ⇒ 填充像元 = 24*16 = 384、均值 384/960 = 0.4、洞心 (15,9) = 1.0。
+    const std::string outE = utf8PathString(dir / "d1p4c_contour_e_ring_default.tif");
+    const auto runE = runPlain(fRing, outE, 1, false, 0.0);
+    EXPECT_TRUE(runE.success) << "E 族环件失败: " << runE.message;
+    ASSERT_TRUE(fs::exists(outE)) << "E 族没有产物: " << outE;
+    const MaskFacts factsE = maskFacts(outE);
+    EXPECT_EQ(metaCount(runE, "total_contours"), "1")
+        << "E 族 RETR_EXTERNAL 不把洞计成第二条轮廓（RETR_LIST 会给出 2 条：面积 345 与 115）";
+    EXPECT_EQ(metaCount(runE, "kept_contours"), "1") << "E 族外圈面积 345 >= 100 ⇒ 保留";
+    EXPECT_EQ(factsE.onepx, 384) << "E 族填充像元 = 外矩形 24*16 = 384（洞被填掉；轮廓线口径这里是几十格）";
+    EXPECT_NEAR(factsE.mean, 0.4, kEps) << "E 族均值 = 384/960 = 0.4";
+    EXPECT_NEAR(readRasterPixel(outE, 15, 9), 1.0, kEps)
+        << "E 族洞心在输入里是背景，产物里必须是 1.0 ⇒ 判的是 `FILLED` 填充 + 洞不独立成环这两件事";
+    EXPECT_NEAR(readRasterPixel(outE, 10, 5), 1.0, kEps) << "E 族外圈内、洞外的前景格保持 1.0";
+    EXPECT_NEAR(readRasterPixel(outE, 2, 2), 0.0, kEps) << "E 族外矩形之外仍是 0.0";
+
+    // ==================== F 族：band 参数真被消费（两波段镜像档值）====================
+    const std::string outF1 = utf8PathString(dir / "d1p4c_contour_f_band1.tif");
+    const std::string outF2 = utf8PathString(dir / "d1p4c_contour_f_band2.tif");
+    const auto runF1 = runPlain(fBand, outF1, 1, false, 0.0);
+    const auto runF2 = runPlain(fBand, outF2, 2, false, 0.0);
+    EXPECT_TRUE(runF1.success) << "F 族 band=1 失败: " << runF1.message;
+    EXPECT_TRUE(runF2.success) << "F 族 band=2 失败: " << runF2.message;
+    const MaskFacts factsF1 = maskFacts(outF1);
+    const MaskFacts factsF2 = maskFacts(outF2);
+    EXPECT_NEAR(readRasterPixel(outF1, 5, 12), 1.0, kEps) << "F 族 band=1 的左半（raw 51）是前景";
+    EXPECT_NEAR(readRasterPixel(outF1, 30, 12), 0.0, kEps) << "F 族 band=1 的右半是背景";
+    EXPECT_NEAR(readRasterPixel(outF2, 5, 12), 0.0, kEps) << "F 族 band=2 的档值镜像 ⇒ 同一格必须翻成 0.0";
+    EXPECT_NEAR(readRasterPixel(outF2, 30, 12), 1.0, kEps) << "F 族 band=2 的右半变成前景";
+    EXPECT_EQ(factsF1.onepx, 480) << "F 族 band=1 填充像元 = 20*24";
+    EXPECT_EQ(factsF2.onepx, 480) << "F 族 band=2 像元数相同 ⇒ 只有位置不同，这正是 band 被消费的形态";
+    EXPECT_NEAR(factsF1.mean, 0.5, kEps) << "F 族 band=1 均值 = 480/960";
+    EXPECT_NEAR(factsF2.mean, 0.5, kEps) << "F 族 band=2 均值同值（均值分不开两件，分不开才用逐格探针）";
+    EXPECT_EQ(metaCount(runF1, "kept_contours"), "1") << "F 族面积 (20-1)*(24-1)=437 >= 100 ⇒ 保留";
+
+    // ==================== G 族：两个 negative 分支的层级 ====================
+    std::map<std::string, gis::framework::ParamValue> noInput;
+    noInput["action"] = std::string("contour");
+    noInput["output"] = utf8PathString(dir / "d1p4c_contour_g_unused.tif");
+    EXPECT_EQ(contourOutcome(noInput), "fail:input is required")
+        << "G 族空/缺 input 必须走 doContour 自己的 `input.empty()` 分支，而不是靠 openRaster 抛";
+
+    std::map<std::string, gis::framework::ParamValue> noOutput;
+    noOutput["action"] = std::string("contour");
+    noOutput["input"] = f1;
+    EXPECT_EQ(contourOutcome(noOutput), "fail:output is required")
+        << "G 族缺 output 是 doContour 的第二条 `empty()` 分支（在 progress.throwIfCancelled 之前）";
+
+    const std::string ghost = utf8PathString(dir / "d1p4c_contour_ghost_does_not_exist.tif");
+    staleClean(ghost);
+    std::map<std::string, gis::framework::ParamValue> ghostParams;
+    ghostParams["action"] = std::string("contour");
+    ghostParams["input"] = ghost;
+    ghostParams["output"] = utf8PathString(dir / "d1p4c_contour_g_ghost_out.tif");
+    const std::string ghostOutcome = contourOutcome(ghostParams);
+    EXPECT_TRUE(ghostOutcome.rfind("fail:", 0) == 0 || ghostOutcome.rfind("thrown:", 0) == 0)
+        << "G 族不存在的件必须不成功，实到形态：" << ghostOutcome;
+    EXPECT_NE(ghostOutcome, "fail:input is required")
+        << "G 族必须真走到读带那一步（现读 readBandAsMat 是 `if (!ds) throw GisError(\"Cannot open raster: ...\")`），"
+           "不能是被空 input 顺手挡掉的，实到形态：" << ghostOutcome;
+
+    std::map<std::string, gis::framework::ParamValue> badBand = ghostParams;
+    badBand["input"] = f1;
+    badBand["band"] = 9;
+    const std::string badBandOutcome = contourOutcome(badBand);
+    EXPECT_NE(badBandOutcome, "success")
+        << "G 族单带件要带号 9 必须失败，实到形态：" << badBandOutcome;
+    EXPECT_NE(badBandOutcome.find("Cannot get band 9"), std::string::npos)
+        << "G 族取不到波段走 gdalBandToMat 的 `throw GisError(\"Cannot get band \" + std::to_string(bandIndex))`，"
+           "带号是拼进去的 ⇒ 实到形态：" << badBandOutcome;
 }
 
 TEST_F(PluginTest, ProcessingTemplateMatchExecution) {
