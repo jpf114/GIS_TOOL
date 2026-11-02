@@ -1552,20 +1552,31 @@ TEST_F(PluginTest, AllPluginsHaveActions) {
 // 追加的 NoData 一行；metadata 的 min/max/mean/stddev/width/height/type 六键恒填，
 // nodata 只在波段声明过 NoData 时才出现。**全程既不读 output 也不写文件。**
 //
-// ⚠ PAM 边车（同名 `<件>.tif.aux.xml`）—— 本把实测把"它一定咬人"这个预期**否证**了，别照抄：
-//   预期形态是"ComputeStatistics(bApproxOK=FALSE) 先读边车、命中就不重读像元 ⇒ 同一件反复跑判的是上一次的数"。
-//   实测相反：把夹具边车里的 STATISTICS_MINIMUM 手改成 -777、STATISTICS_STDDEV 手改成 12.345678900000
-//   （这两个数在本夹具上任何一支实现都印不出来），再跑同一条命令 ⇒ 打印仍是现算的 0 与 15.0083，
-//   跑完后边车被逐字重写回 0 / 15.008331019804（连键序都变了）。边车被重写这件事本身是"探针没跑空"的
-//   凭据 —— PAM 认的就是这个文件名，只是这条入口不取它的数。
-//   ⇒ 下面 pamClean 每次 execute 前删边车，在**本把**是防御性纪律、不承重：它防的是同目录里别的动作留下的
-//     边车被"会读缓存的那类入口"（GetStatistics 一路）取回去，防的不是本动作自己；承重的是下面那族手推常数
-//     （A3 臂把除数改成样本口径 ⇒ 实测红在 0.012040 上）。独占文件名仍是硬要求：两件共用一个名字时
-//     "这份边车是谁写的"就说不清了，而腿侧 run_real_raster_regression.ps1 里那些 Remove-Item 判的确实是缓存。
-//   ⇒ 由它派生的两条：①"缓存值 ≠ 重算值"的可分辨场景今天**造不出**（不是没找着边车，是这条入口不读它）；
+// ⚠ PAM 边车（同名 `<件>.tif.aux.xml`）—— "它一定咬人"这个预期本把实测**只否证了一半**，两半都得照准：
+//   ①**统计块（`STATISTICS_*` 那组 MDI 键）只写不读**：把夹具边车里的 STATISTICS_MINIMUM 手改成 -777、
+//     STATISTICS_STDDEV 手改成 12.345678900000（这两个数在本夹具上任何一支实现都印不出来），再跑同一条命令
+//     ⇒ 打印仍是现算的 0 与 15.0083，metadata 仍是 `min 0.000000 / stddev 15.008331`；跑完后那份边车被逐字
+//     重写回 0 / 15.008331019804（连键序都变了）。边车被重写本身就是"探针没跑空"的凭据 —— PAM 认的就是这个
+//     文件名，只是这一族键不被取用。`raster_inspect info` 那条入口同形态 ⇒ 本仓**没有任何入口**走"读缓存统计"
+//     那条 GDAL API（现读 `GetStatistics` 在 src/ 里 0 处命中；正控 `ComputeStatistics` 命中 4 个文件）。
+//   ②**但 `<NoDataValue>` 会被读回**：同一份边车里只加 `<NoDataValue>-9999.0</NoDataValue>` ⇒ 本动作打
+//     `NoData: -9999` 并填 `nodata` 键，`raster_inspect info` 同样打这一行；写出型动作还会把它**带进产物的
+//     声明 NoData**（实测 `processing filter --filter_type=median` 与 `raster_manage cog` 的产物都从"无声明"
+//     变成声明 -9999，四个统计量逐字不变 ⇒ 改变的是产物的自述、不是像元值：像元是裸 RasterIO 读进来的，
+//     NoData 像元不会被写成 NaN，所以 NoData→NaN 那条替换支在这里天然不活性）。
+//     读回**与"边车是谁写的"无关**：从没被任何工具打开过的副本上手写一份也读回。实测唯一"读不回"的手写形态
+//     是文件开头带 `<?xml … ?>` 声明那一种（GDAL 自己写出的边车不带这行）—— 先前两处读数相反就是这个形状差，
+//     别把"我手写的那份没生效"当成"产品不读边车"的证据。
+//   ⇒ 由①：下面 pamClean 每次 execute 前删边车，对**四个统计量**是防御性纪律、不承重。
+//     由②：它对 **NoData 那一族判据是承重的**（F1 的 `count("nodata") == 0` 与"F1 的消息里不该有 `NoData:` 行"
+//     两条都靠"这份边车里没有 NoData 声明"成立：同目录里别的动作或别的工具留下的边车能给一件无 NoData 的件
+//     伪声明出 NoData，那两条就会以"键不存在"的反面红）—— 早先记的"降级为防御性、不承重"覆盖过头，已收回。
+//     另有一条独立承重是手推常数族（A3 臂把除数改成样本口径 ⇒ 实测红在 0.012040 上）。
+//     独占文件名仍是硬要求：两件共用一个名字时"这份边车是谁写的"就说不清了。
+//   ⇒ 由①派生的两条：①'"缓存值 ≠ 重算值"'的可分辨场景今天**造不出**（不是没找着边车，是这条入口不取那族键）；
 //     ②A1 臂（false→true，放开 bApproxOK）实测**等价**，且这个等价的主因是**夹具决定的** —— 本把三件都是
-//     刚 Create 的无概算件，没有 overview 就没有"近似"可走，两条口径落到同一条全分辨率现算路径；
-//     要让这一支可分辨得先给夹具建概算边车，那判的就不是本动作的契约而是 GDAL 的概算选择了，本把不做。
+//     刚 Create 的无概算件，没有 overview 就没有"近似"可走；要让这一支可分辨得先给夹具建概算，那判的就不是
+//     本动作的契约而是 GDAL 的概算选择了，本把不做。（这一条只按"等价变异"登记，不作为交付证据。）
 //
 // 手推期望（首跑前写定；算式：夹具是 `value = base + step * x`、沿 y 恒定 ⇒ 每档恰重复 h 次 ⇒ 逐值等权 ⇒
 //   Mean = (min+max)/2、总体方差 = (n² − 1)/12 · step²（n = 档数）；样本口径要给总体方差乘 N/(N−1)，
@@ -1605,7 +1616,7 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
     auto runStats = [&](const std::string& input,
                         int band,
                         const std::string& output = std::string()) -> gis::framework::Result {
-        pamClean(input);   // 防御性：本动作这条入口不读边车（见上面那段否证），删掉只是不让别处留下的边车参与
+        pamClean(input);   // NoData 半边承重、统计块不承重（见上面那段两半口径），删掉是不让别处留下的边车伪声明
         std::map<std::string, gis::framework::ParamValue> params;
         params["action"] = std::string("stats");
         params["input"] = input;
@@ -1652,7 +1663,7 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
 
     // ---- F0：改前原样那一次（50×50 方阵，只留存在性判据）----
     // 为什么不当它已晋升：方阵 ⇒ width/height 轴序写反在上面不可分辨；档值是 `i % 256` 铺满 2500 个像元，
-    // 分布要逐档数才推得出，本把不在它身上挂手推期望。pamClean 只是纪律统一（本动作不读边车，见上面那段）。
+    // 分布要逐档数才推得出，本把不在它身上挂手推期望。pamClean 只是纪律统一（口径见上面那两段：统计块不读、NoData 读）。
     std::string input = createTestRaster("e2e_stats_input.tif", 50, 50);
     pamClean(input);
 
@@ -1763,8 +1774,10 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
         << "F3 两带 StdDev 必须不同，否则上面那族期望就是在判一件常量栅格";
 
     // ---- F4：type 那 8 支 switch 的第二支（GDT_Byte → "Byte (uint8)"）----
-    // 另 6 支（UInt16/Int16/UInt32/Int32/Float64/default "Unknown"）本把不判 ⇒ 已登记为缺口：
-    // 现成夹具生成器只出 Float32 与 Byte，这是**本把夹具决定的**，不是产品决定的。
+    // 另 6 支（UInt16/Int16/UInt32/Int32/Float64/default "Unknown"）本把不判 ⇒ 登记为缺口，且按**可判而未判**登记：
+    // 不是判不动——现成夹具生成器只出 Float32 与 Byte 是本把的选择，把同一件斜坡换一下数据类型就能出其余支
+    // （实测：对 52×12 斜坡逐支转类型后 stats 全 rc=0，Type 行与 metadata.type 分别给 `UInt16`/`Int16`/`UInt32`/
+    // `Int32`/`Float64`，复数型 `CInt16`/`CFloat32` 落 `Unknown` ⇒ 六支今天都可判）。
     const std::string byteInput = createTestRaster("d1p4a_stats_byte8x13.tif", 8, 13, 1, GDT_Byte);
     ASSERT_FALSE(byteInput.empty());
     auto byteRun = runStats(byteInput, 1);
