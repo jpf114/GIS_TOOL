@@ -3649,6 +3649,148 @@ dilate↔erode 的**最大**间隔，不是最小；本把这三支的相邻最�
   `check_data_baseline.py` = `BASELINE: 88  CURRENT: 88  DIFFS: 0`（本把全部用 helper 造件，未开任何原件）。
 - 受保护位点 `src/plugins/terrain/terrain_plugin.cpp` 的 blob 现读仍是 `588a42504ee19bcb551f8214e5c1adb68cea20e9`。
 
+### 批次 D 覆盖晋升 P3c-b（2026-10-30 开批 / 2026-11-02 交付，`processing.filter` 腿补 `open`/`close` 两条 case + 复审五条 must-fix 收口；**状态 DONE_WITH_CONCERNS，见下面腿墙钟条**）
+
+本把射程 = **两份文件**（`tests/run_real_raster_regression.ps1` + `docs/RELEASE.md`）。`tests/action_gold_cases.txt`、
+`kPendingCeiling`、`tests/real_data_matrix.txt`（第 5 列由上一把 P3c 翻成 `real_regression`，本把不再动）、
+`tests/test_plugins.cpp`、`src/`、`gui/` **一字未改**（两笔提交的 `git show --stat` 各自只有一个文件）。
+本把不重复晋升：`processing,filter` 的档位与证据用例名沿用 P3b/P3c，本把只补**腿面覆盖**（五支量化滤波里除
+`bilateral` 外的五支现在都有值级判据）。
+
+**改前现读**（本座用 `8a79a00` 那份 `.ps1` 的完整副本自己复现的，不是转抄工单）：
+```
+前 registered=82 ran=82 judged=61 allowlisted=21 allowlist-table=21 allowlist-gated-not-registered=0 branch-labels=62 conditional-registrations=1 dead-branches=0
+后 registered=84 ran=84 judged=63 allowlisted=21 allowlist-table=21 allowlist-gated-not-registered=0 branch-labels=64 conditional-registrations=1 dead-branches=0
+```
+增量 = `registered 82→84`、`ran 82→84`、`judged 61→63`、`branch-labels 62→64`，其余四字段不动；
+不变量 `judged + allowlisted = ran` ⇒ **`63 + 21 = 84`** ✓；`dead-branches = 0` ⇒ 新加的两条分支各有 case 可达；
+`$rasterGateAllowlist` 的 21 条**一字未改**（`git diff` 里那段 0 个 hunk，本座现数）。
+
+**剖面与两个 Mean 由本座独立重推**（任务书 §1 提醒控制器自己算错过两次 ⇒ 不照抄；结论**与控制器一致**，
+他给的 `6615 / 6645` 我这条推导路径复现得出来，他抄错的 `6650` 我推不出来）：
+5×5 RECT、anchor 居中、虚采样 dilate 取域最小 0 / erode 取域最大 255（P3b 定约）⇒ 单边移位 2 列，
+件 `v(x,y)=x`（x=0..51）、y 恒定 ⇒ `Mean = Σ列档值/(52·255) = Σ/13260`：
+- `open = dilate∘erode`：`erode(x)=5·max(0,x−2)` 之后再取窗口 max ⇒ `open(x) = 5x`（`x ≤ 49`）、`245`（`x = 50,51`）
+  ⇒ `Σ = 5·Σ_{0..49}x + 245 + 245 = 6125 + 490 = **6615**` ⇒ `Mean = 6615/13260 = **0.4988687782805429**`
+- `close = erode∘dilate`：`dilate(x)=5·min(51,x+2)` 之后再取窗口 min ⇒ `close(x) = 10`（`x = 0,1,2`）、`5x`（`x ≥ 3`）
+  （`x=2` 两边都是 `10` ⇒ 平台跨三列、真正被抬离恒等的只有两列）
+  ⇒ `Σ = 3·10 + 5·Σ_{3..51}x = 30 + 6615 = **6645**` ⇒ `Mean = 6645/13260 = **0.5011312217194570**`
+- 整数自洽：`6615 + 6645 = 13260 = 2·6630` ⇒ open/close 关于恒等 Mean **严格反对称**，各偏 `15/13260 = 0.0011312217194570`
+  （与 `7135 + 6125 = 13260`、各偏 `505/13260` 同形）。**若实测不对称，该查窗口（核/锚点/边界填充）而不是查浮点**——本把实测对称。
+
+**三行期望全部在首跑之前推得；实跑列是主腿产物上的现读**（`raster_inspect info` 印 6 位有效，删边车后读）：
+
+| `filter_type` | 推得 Min / 实跑 Min | 推得 Max / 实跑 Max | 推得 Mean 算式 / 实跑 Mean |
+|---|---|---|---|
+| `morph_open` | `0.0` / 实跑 `0` | `245/255 = 0.9607843137254902` / 实跑 `0.960784` | `6615/13260 = 0.4988687782805429` / 实跑 `0.498869` |
+| `morph_close` | `10/255 = 0.0392156862745098` / 实跑 `0.0392157` | `1.0` / 实跑 `1` | `6645/13260 = 0.5011312217194570` / 实跑 `0.501131` |
+
+⇒ 两支**不是**恒等：open 比恒等少 `15` 个 u8 档（全在右边被 erode 剪掉的两列），close 多 `15`（全在被 dilate 抬起来的左边三列）；
+差值就是上一把那句"恒等于输入"欠的账。两支各自的独立 CLI 复现（不经腿、先验推导）与主腿产物上的读数**逐字相同**。
+
+**容差逐点写，绑定项换了（复审 MF-4 的正面落地）**
+- 五个 Mean 的相邻**最小**间隔 = **`|0.5011312217 − 0.5| = 0.0011312217`**（median↔close，同一反对称给 median↔open 也是这个数）；
+  **最大**间隔 = `0.0761689291`（dilate↔erode）——上一把把后者写成了"最小"，已就地更正。
+- `1e-6` 对新绑定项的余量 = `0.0011312217 / 1e-6 = 1.13e3`（**三个数量级**，不是上一把引的 `3.8e4`）；对每个点自身的
+  打印残差是 4.5×（两个新 Mean，残差各 `2.22e-7`，在半格 5e-7 以下）/ 3.19×（open `Max 245/255`，残差 `3.14e-7`）/
+  73×（close `Min 10/255`，残差 `1.37e-8`）。
+- `close` 的 `Min 10/255` **不能用 1e-9**：打印残差 `1.37e-8 > 1e-9` ⇒ 会在**打印机**上红而不是在缺陷上红 ⇒ 这是本家族第二行
+  破"整数一律 1e-9"统一口径的点（第一行是 dilate 的 Min），所以容差写在判据点旁边而不是全局一条。
+- **承重行不承重的那一半也要写**（本座按行核过，不写成"每行都分派"）：open 的 `Min` 与 erode/median 同印 `0`、`Max` 与 erode
+  同印 `0.960784`；close 的 `Min` 与 dilate 同印 `0.0392157`、`Max` 与 median/dilate 同印 `1` ⇒ **把 open/close 与邻居分开的是 `Mean` 行**，
+  `Min`/`Max` 行判的是**边界填充方向**（写反了才红）。反过来上一把的 median 支"边界恒等"靠的正是 `Min`/`Max` 两行——
+  `Mean 0.5` 对反对称的边界偏差是**盲目的**（open 少 15、close 多 15，在均值上会互相抵消）。
+
+**夹具与载体**：两支各用自己的输入件与产物件（`processing_filter_open_input.tif` / `_output.tif`、`processing_filter_close_input.tif` / `_output.tif`），
+每条 case 都**重新生成**自己那份 52×12 斜坡件（缓存副本会活过夹具改动、静默判旧形状）；输入与产物两侧判前都删同名
+`.aux.xml`——`raster_inspect info` 把统计按文件名缓存在 PAM 边车里，不删就是拿上一次的统计判这一次写的像元。
+两条 case 追加在 `processing_filter_median` 之后 ⇒ 执行顺序 dilate→erode→median→open→close。
+
+**臂清单（4 臂；每臂 tee 成文件、末行记 `EXIT_CODE=`；载体 = 两份 `.ps1` 的完整副本 + 各自独立输出根，显式传全部路径；单实例顺序驱动）**
+
+| 臂 | 相对已提交态的唯一改动 | 红/绿与红形态 | `EXIT_CODE` |
+|---|---|---|---|
+| `A0_control` | 无（一字未改的副本） | **绿**，九字段与主腿**逐字相同** ⇒ 后面几条红的是判据不是"从副本跑"这个机制 | `0` |
+| `A1_open_expectation_broken` | open 支 Mean `-Expected (6615.0 / 13260.0)` → `0.5` | 红在**该支自己的值级 Mean 行**：`processing_filter_open mean should be 6615/13260 = … (band=1 actual=0.498869 expected=0.5 tolerance=1E-06)` | `1` |
+| `A2_close_expectation_broken` | close 支 Min `-Expected (10.0 / 255.0)` → `0` | 红在**该支自己的值级 Min 行**：`processing_filter_close min must be 10/255 = 5*(0+2)/255: … (band=1 actual=0.0392157 expected=0 tolerance=1E-06)` | `1` |
+| `A3_open_label_typo`（打卡反证） | open 支 Mean `-Label "Mean"` → `"Meen"` | 红在**字段读取**：`band 1 has no numeric 'Meen' line (block read: Band 1: Type: Float32 Min: 0 …)` ⇒ 该分支真在按标签读 `raster_inspect info` 的输出，不是 `Mark-Judged` 打卡 | `1` |
+
+⚠ 臂锚点唯一性的两个坑照实记：`A2` 的第一版锚点与 **dilate 支的 Min 行逐字节相同**（同一 `10/255`、同一 `1e-6`）⇒ 匹配数 2、
+准备脚本当场 assert 失败（**没有静默改成两处同改**），锚点扩到带上 close 自己的 message 行后才是单点；`A1`/`A3` 因带
+`6615.0 / 13260.0` 天然唯一。每条臂跑前 `git status --porcelain` = 空（Step 1 已提交 ⇒ 被跟踪文件 0 行脏），
+副本相对 `HEAD` 的 diff 逐臂现读 = **1 行**，两条读数都写进臂日志首行。
+隔离口径按复审建议③改成**构造性单点**（`$ErrorActionPreference = "Stop"` ⇒ 第一条红即停，每臂必然只有一处红；
+这不能反推臂间独立，真漏还原时下一臂同样只打一处红、只是红在没预期的那一行）。
+
+**MF-1~MF-5 与本把提交的对应**（文本已随 Step 3 提交，本节只登记"改成什么"）
+- **MF-1**：上一把的"口径限制"第 2 条从"**夹具决定的退化**"改写为"**本把否证上一把的论断**：虚采样规则使 open 差右边界两列、close 差左边界三列，
+  缺席的原因是上一把射程只取三支 ⇒ 本把补齐"，并把两个剖面与两个 Mean 写进正文；`.ps1` 里那段 `WHY THREE cases and not five` 同批改写为
+  `WHY FIVE cases and not three`。
+- **MF-2**：`改前基线单跑 14.78 s` 就地标"**仅控制台读数、未留载体**"（不删数、不改数、不写私有路径）。
+- **MF-3**：负控"现读 `errors=2`"改为**本座实测的成对读数**（正 `errors=0 tokens=17178` / 负 `errors=1 tokens=17181`，
+  负样本 = **整份 `.ps1` 复制**后追加一行未闭合字符串）；并登记旧负控是 16 字节存根（本座现跑 `errors=1 tokens=9`）⇒ `2` 无载体可复现。
+  两参写法的假绿也现跑坐实：stderr 出 `MethodCountCouldNotFindBest` 而 stdout 仍 `errors=0 tokens=0`、rc=0。
+- **MF-4**：`0.076168` 从"最小间隔"改判为 dilate↔erode 的**最大**间隔；最小间隔按支数分档写清（三支 `0.0380845`、五支 `0.0011312217`）。
+- **MF-5**：臂号 `B1_mismatch_dilate_reads_erode` → `C1_reverse_mismatch_dilate_reads_erode`（目录与日志两处 `mv`，
+  真 B1 是 `B1_erode_reads_dilate`）；⚠ 只动**文件名**，日志**正文**里那行仍是改名前的旧名 ⇒ 全文 grep "C1" 会在正文落空，
+  这与控制器那次 `find -iname "*C1*"` 假阴性同因（**搜索串翻车**），本把**不**因此降级 C1 那条结论。
+
+**门控串本身是待验断言（复审 Q7 的实质结论，本座复现并据此弃读数）**
+`tasklist | grep -cE 'MSBuild|gis_tests|ctest|gis-cli'` 是**点采样**：并发腿的主进程叫 `powershell.exe`（不在串里），
+`gis-cli` 只在子进程间歇出现 ⇒ **门控 0 ≠ 机器安静**。本把因此把串放宽成"再加 `powershell|python`"的扩展门控（`node.exe` **不**放进来：它是本机常驻进程、
+计入会让扩展门控恒非 0 ⇒ 没有任何读数可用，本把只把它当背景噪声），并把**跑前与跑后各读一次**、任一侧非 0 即弃该读数。
+探针的覆盖面也照实分级登记（不做"全都测过"的样子）：**12 跑全部有窄门控 0/0 两侧读数** ⇒ 按任务书口径无一条被弃；
+**扩展门控（加 `powershell|python`）只在最后 3 跑采到，也是 0/0**；中间 4 跑采的是"含 `node.exe` 的更宽串"，读到 `2/2`
+（就是那两个常驻 `node.exe`，不是测试进程）⇒ 那 4 跑的"安静"只有窄门控支撑；`29.43 s` 那一跑属于**只采了窄门控**的头 4 跑。
+
+**腿墙钟 ⇒ ⚠ 本把的 CONCERN 就在这条**（口径 = `ctest` 报的该腿自身用时；单跑 `-R '^(real_data_raster)$'`，无并发自己驱动）
+```
+14.84 / 29.43 / 20.69 / 18.81 / 18.38 / 19.43 / 18.96 / 19.83 / 19.44 / 20.33 / 19.06 / 20.30  s   （12 条有效读数，narrow 与 extended 门控两侧均 0）
+```
+- **max = 29.43 s** ⇒ `60 ÷ 29.43 = 2.04×` **< 2.5×** ⇒ 按任务书触发**停下报 DONE_WITH_CONCERNS**；
+  **TIMEOUT 未抬、断言一条未减、腿未拆**（三条都不许做，本把一条没做）。
+- 次高 `20.69 s` ⇒ `60 ÷ 20.69 = 2.90×`；本把众数带 **18.4~20.7 s**。
+- **本座不把这轮抬升算成自己这两条 case**：同窗口做 A/B 控制（**同一驱动 = 直接 `powershell -File` 跑副本、不经 `ctest`**，
+  所以这三档绝对值与上面那 12 跑**不同口径、不并列**；顺序单实例）——
+  `8a79a00` 那份**三条 case** 的副本 16.74 / 18.98 / 17.64 s，本把**五条 case** 的副本 21.46 / 18.26 / 17.83 s
+  ⇒ 中位差约 `+0.6 s`，与两个 helper 造件 + 两次 filter + 两次 info 的量级相称，**解释不了 +14 s**；
+  旁证：同机同窗口的**定向 43 条配方**本轮 `50.72 s`，而上一把同配方记的是 `39.19 s`。
+- **D4 前应引用的分母**：任务书写的是 `60 ÷ 15.28 = 3.93×`（上一把的安静态 max），本把现读的 max 比它高 ⇒
+  按"取各把安静态 max 里最大的那个"这条口径，**分母应换成 `60 ÷ 29.43 = 2.04×`**，并连同本条的 A/B 控制一起交给 D4 决定是否重测；
+  P3b 那条 `60 ÷ 17.64 = 3.40×` 与 P3c 那条 `3.93×` 都**保留原文**，各加了一句前向指针（算术没错，"安静态"这个标签按本条降级）。
+- ⚠ 未归因项照实登记：`29.43 s` 那一跑与本把另外 11 跑差 ~9 s，**本座拿不到当时的进程快照** ⇒ 既不能说它是并发腿，也不能说它是本把的 diff；
+  已用 A/B 控制排除"本把 diff"这一支，剩下的那支**留给 D4 或控制器在安静窗口重读**。
+
+**回归（Debug 树，本把现跑）**
+- `Total Tests: 802`（本把没新增注册用例）；定向配方 `-N` = **43** 条。
+- 定向 43 条（`CoverageMeta*|source_mojibake_guard|docs_match_cli|geotransform_guard|param_guard*|PluginTest.Raster*|real_data_raster`，
+  单引号是形状的一部分）：**43/43 绿**，`Total Test time (real) = 50.72 s`（⚠ 高于上一把记录的 39.19 s，见上面腿墙钟条的机器态讨论）。
+- `^PluginTest\.Processing` 族 **30/30 绿**，8.40 s。
+- 主腿 `ctest -R '^real_data_raster(\.|$)' -V` 通过，九字段见上面"前后"块。
+- `docs_match_cli` 现读 `actions=126 docs_checked=126 missing_doc=0 rows=594 matched=593 drift=0 allowed=7` ⇒ 参数表未动（本把没改 `src/`）。
+- `geotransform_guard` 两域现读与改前**逐字相同**：product `any=21 code=20 comment_line=1 checked=18 unchecked=2 allowlisted=2 violations=0 dead=0`；
+  test `any=13 code=10 comment_line=3 checked=9 unchecked=1 allowlisted=1 violations=0 dead=0`（本把没新增判 `GetGeoTransform` 返回值位点）。
+- `source_mojibake_guard` 在定向 43 条里跑到且绿 ⇒ 本把新增的 `.ps1` 文本没有引入编码问题。
+- `.ps1` 三条硬规矩现读：三参 `Parser::ParseFile` = `errors=0 tokens=17178`（配负控 `errors=1 tokens=17181`）；
+  字节态 **CRLF 与行数同源现数**：`3397` 行全 CRLF / **0 裸 LF** / **0 个非 ASCII 字节**（python 逐字节数，不按目录惯例推）。
+  ⚠ 这个 `3397` 是本把改后的**测量值**（不是锚点，后续刀必然漂），引它只为证明"按 CRLF 写回、字面量只用 ASCII"这两条真做过。
+- `data/` 只读两件套（**本座开批时刻 2026-10-30 19:29:35**）：`find data -type f -newermt <开批时刻>` = **0**；
+  `python check_data_baseline.py`（批次 D 收尾两件套之一，不入库）= `BASELINE: 88  CURRENT: 88  DIFFS: 0`（本把全部用 helper 造件，未开任何原件；
+  收尾时现读，未跑过任何基线生成脚本）。
+- 受保护位点 `src/plugins/terrain/terrain_plugin.cpp` 的 blob 收尾现读仍是 `588a42504ee19bcb551f8214e5c1adb68cea20e9`；
+  `git status` 空、射程外文件 0 改动。
+
+**缺口（P3c-b 登记，不改判据）**
+- `filter` 七支本把判到 **5 支**：`gaussian`（无手推 Mean 载体，边界列另受反射限制）与 `bilateral`（逐点期望需上游 LUT 口径，P3b 已登记为不可得）
+  两支仍不判 ⇒ 第 5 列 `real_regression` 说的是"该动作有真实腿 case 与值级判据"，**不是**"七支都判"。
+- 腿仍不判 `kernel_size` 是否真被消费：五支都传 `ParamSpec` 默认 5 ⇒ 静默忽略 `kernel_size` 的实现照样打印这五条剖面。
+  建议④的候选期望本把**不铺**，只登记：同一族 `--kernel_size=3` 的 dilate 剖面是 `5·min(51, x+1)` ⇒
+  `Σ = 5·Σ_{0..51}x + 5·51 = 6630 + 255 = 6885` ⇒ `Mean = 6885/13260 = 0.5192307692`（会印 `0.519231`，距 median `0.019231`、
+  距本族 dilate `0.018853` ⇒ 与现有五支都值级可分）。留给后续刀判是否加。
+- A3 的打卡反证只打了 **open 支的 Mean** 一处（`-Label` 拼错）⇒ 其余四条分支的"真读字段"仍靠各自的臂 + 错配臂承担，本把没逐支做拼错臂。
+- Release 树本把未重编 ⇒ **Release 侧未验收**（D1~D3 全段同样未验收）。
+- 本把的 CONCERN 只有一个，就是上面腿墙钟 `max = 29.43 s ⇒ 2.04×`：**未抬 TIMEOUT、未减断言、未拆腿**，留给控制器在安静窗口复读或改判口径。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
