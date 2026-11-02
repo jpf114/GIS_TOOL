@@ -6907,24 +6907,530 @@ TEST_F(PluginTest, VectorBufferRoundCapStadiumMatchesHandComputed) {
     expectStadium(farOutput, 50.0);
 }
 
+// 批次 D P5b：hough 的形状夹具工厂（实心矩形块，块内 255、块外 0，单波段 Float32）。
+//   画布一律**非方**：方阵上「宽高写反」是等价变异，会把尺寸判据变成自我制造的盲区。
+//   两档件的标度链路可推：gdalBandToMat 恒把波段读成 CV_32F ⇒ toUint8 的 minMax 拿到 {0,255}、
+//   NORM_MINMAX 的标度 255/(255-0)=1.0 是二进制精确常数 ⇒ 档值原样回到 {0,255}，不产生第三档。
+static std::string createBlockRaster(const std::string& name, int width, int height,
+                                     int x0, int y0, int x1, int y1) {
+    std::vector<float> data(static_cast<size_t>(width) * static_cast<size_t>(height), 0.0f);
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            data[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] = 255.0f;
+        }
+    }
+    return gis::tests::writeFloatRaster(getTestDir(), name, width, height, data);
+}
+
 TEST_F(PluginTest, ProcessingHoughExecution) {
+    // ==================== D1-P5b：processing.hough 的执行证据块（晋升 [:]GOLD） ====================
+    // 归属自证（CoverageMeta.GoldEvidenceIsAuditable 剥完注释后核的两条）：本块里 mgr_.find("processing")
+    //   给出插件名，`params["action"] = std::string("hough")` 给出动作槽，值级断言是下面那批 EXPECT_NEAR
+    //   （产物格值 {0,1} 与 /255 口径），不是注释。
+    // 为什么必须换夹具（「跑了不判」的实证）：本块原来那件 50x50 的 `i%256` 斜坡，在默认参数下
+    //   detect_count 实测 0（本刀臂日志 a0_ramp50_default），而旧块的三条弱断言（success / 产物存在 /
+    //   metadata 里有 detect_count 这个键）在 0 上照样全绿 ⇒ hough_threshold / min_line_length /
+    //   max_line_gap 三个键在旧块里空转。旧形状保留在下面当对照臂（没删），新判据全跑在实心块/实心盘上。
+    // 逐条「改了必红」论证与全部臂读数在批次 D 的 P5b 报告；这里只写落点，不重复抄表。
+    // ⚠ circles 支的判据一律**显式给正 max_radius**：默认 0 被产品映射成 INT_MAX，而上游 HOUGH_GRADIENT
+    //   只把 `maxRadius <= 0` 当「自动」，正数原样传进去 ⇒ 一旦 stage1 出一个候选圆心，就撞上按
+    //   (maxRadius-minRadius) 开的 bins 数组（天文数字分配）；一个候选都没有才走得到「成功且 0 检出」。
+    //   这条是 N185 已确诊缺陷（登记见 docs/RELEASE.md 本刀条目，留待拍板）：本刀不修 src/**，
+    //   也**不把「默认参数必失败」钉成契约**——那等于给缺陷发通行证。
+
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
 
-    std::string input = createTestRaster("e2e_hough_input.tif", 50, 50);
-    std::string output = (getTestDir() / "e2e_hough_output.tif").string();
+    const fs::path dir = getTestDir();
+    std::error_code ec;
+    // 删同名残留并且**必须确认真的删掉了**：Windows 下同进程里没放开的 GDAL 数据集句柄会让 fs::remove
+    //   静默失败，于是「失败档不许留产物」那几条会退化成「旧件还在所以判红」的伪信号（配方来自 P5a）。
+    auto cleanStale = [&ec](const std::string& path) {
+        fs::remove(path, ec);
+        fs::remove(path + ".aux.xml", ec);
+        if (fs::exists(path)) ADD_FAILURE() << "同名残留删不掉（有句柄没放）: " << path;
+    };
 
-    std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("hough");
-    params["input"] = input;
-    params["output"] = output;
-    params["hough_type"] = std::string("lines");
-    params["band"] = 1;
+    using Params = std::map<std::string, gis::framework::ParamValue>;
+    auto metaOf = [](const gis::framework::Result& r, const char* key) -> std::string {
+        auto it = r.metadata.find(key);
+        return it == r.metadata.end() ? std::string("<none>") : it->second;
+    };
+    // 各臂的公共骨架：input/hough_type/band 三件由 base 写死，臂自己往同一张表上补键；
+    //   output 由 runHough 统一覆盖，并且**跑前必清残留**。
+    auto runHough = [&](const std::string& out, Params params) {
+        params["output"] = out;
+        cleanStale(out);
+        return p->execute(params, progress_);
+    };
+    auto linesBase = [&](const std::string& in) {
+        Params params;
+        params["action"] = std::string("hough");
+        params["input"] = in;
+        params["hough_type"] = std::string("lines");
+        params["band"] = 1;
+        return params;
+    };
+    auto circlesBase = [&](const std::string& in) {
+        Params params;
+        params["action"] = std::string("hough");
+        params["input"] = in;
+        params["hough_type"] = std::string("circles");
+        params["band"] = 1;
+        return params;
+    };
 
-    auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << "Hough failed: " << result.message;
-    EXPECT_TRUE(fs::exists(output));
-    EXPECT_TRUE(result.metadata.count("detect_count") > 0);
+    // 整幅一次读出（逐格 readRasterPixel 要开 9600 次数据集），值域/计数/非零 bbox 都在这份缓冲上算。
+    struct ProductFacts {
+        int w = 0, h = 0;
+        int nzCells = 0;      // != 0.0 的格数
+        int oneCells = 0;     // == 1.0 的格数（1/255 口径的正面证据）
+        int otherCells = 0;   // 既不是 0.0 也不是 1.0 的格数（出现即说明标度或落笔宽度被动过）
+        // bbox 用 seen 标志而不是哨兵初值：0 检出的产物根本没有非零格，拿 -1 或 0 当「没扫到」的
+        //   读数会把一份全零产物读成一个假方框（P5a 修复轮坐实的那条同族陷阱的另一种形态）。
+        bool hasBox = false;
+        int minRow = 0, maxRow = 0, minCol = 0, maxCol = 0;
+        std::vector<float> cells;
+    };
+    auto productFacts = [&](const std::string& path, ProductFacts& f) {
+        f.cells = readRasterBandF32(path, f.w, f.h);
+        if (f.cells.empty()) {
+            ADD_FAILURE() << "产物读不出来: " << path;
+            return;
+        }
+        for (size_t i = 0; i < f.cells.size(); ++i) {
+            const float v = f.cells[i];
+            if (v == 0.0f) continue;
+            ++f.nzCells;
+            if (v == 1.0f) ++f.oneCells;
+            else ++f.otherCells;
+            const int y = static_cast<int>(i) / f.w;
+            const int x = static_cast<int>(i) % f.w;
+            if (!f.hasBox) {
+                f.hasBox = true;
+                f.minRow = f.maxRow = y;
+                f.minCol = f.maxCol = x;
+                continue;
+            }
+            if (y < f.minRow) f.minRow = y;
+            if (y > f.maxRow) f.maxRow = y;
+            if (x < f.minCol) f.minCol = x;
+            if (x > f.maxCol) f.maxCol = x;
+        }
+    };
+    // 列探针：某一列上被点亮的行号（升序），用来把「两条横边落在哪几行」变成可红的读数。
+    auto litRows = [](const ProductFacts& f, int col) {
+        std::vector<int> rows;
+        for (int y = 0; y < f.h; ++y) {
+            if (f.cells[static_cast<size_t>(y) * static_cast<size_t>(f.w) + col] != 0.0f) rows.push_back(y);
+        }
+        return rows;
+    };
+    // 两份产物的逐格比较（**不用 md5**：writeProcessingMetadata 往文件里写 GIS_PROCESSING_TIME ⇒ 字节不可比）。
+    //   返回不同的格数；格数不同记成 -1，让调用方把「形状不同」和「内容不同」分开口径报出来。
+    auto diffCells = [](const std::string& a, const std::string& b) -> long long {
+        int aw = 0, ah = 0, bw = 0, bh = 0;
+        const std::vector<float> A = readRasterBandF32(a, aw, ah);
+        const std::vector<float> B = readRasterBandF32(b, bw, bh);
+        if (A.size() != B.size()) return -1;
+        long long d = 0;
+        for (size_t i = 0; i < A.size(); ++i) {
+            if (A[i] != B[i]) ++d;
+        }
+        return d;
+    };
+    // 实心圆盘夹具：判据 `(x-cx)^2+(y-cy)^2 <= r^2`（半径闭区间），与臂侧生成脚本同式，
+    //   所以「真值半径 r / 真值圆心」是可推的构造量；cx2 < 0 表示只画一个盘。
+    auto diskRaster = [&](const std::string& name, int width, int height,
+                          int cx1, int cy1, int r1, int cx2, int cy2, int r2) {
+        std::vector<float> data(static_cast<size_t>(width) * static_cast<size_t>(height), 0.0f);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const long long d1 = 1LL * (x - cx1) * (x - cx1) + 1LL * (y - cy1) * (y - cy1);
+                const bool two = (cx2 >= 0);
+                const long long d2 = two ? (1LL * (x - cx2) * (x - cx2) + 1LL * (y - cy2) * (y - cy2)) : 0;
+                if (d1 <= 1LL * r1 * r1 || (two && d2 <= 1LL * r2 * r2)) {
+                    data[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] = 255.0f;
+                }
+            }
+        }
+        return gis::tests::writeFloatRaster(getTestDir(), name, width, height, data);
+    };
+
+    constexpr int kW = 120, kH = 80;
+    constexpr float kEps = 1e-6f;
+
+    // ==================== 对照臂：旧形状（保留，不删）====================
+    {
+        std::string input = createTestRaster("e2e_hough_input.tif", 50, 50);
+        std::string output = (getTestDir() / "e2e_hough_output.tif").string();
+        cleanStale(output);
+
+        Params params;
+        params["action"] = std::string("hough");
+        params["input"] = input;
+        params["output"] = output;
+        params["hough_type"] = std::string("lines");
+        params["band"] = 1;
+
+        auto result = p->execute(params, progress_);
+        EXPECT_TRUE(result.success) << "Hough failed: " << result.message;
+        EXPECT_TRUE(fs::exists(output));
+        EXPECT_TRUE(result.metadata.count("detect_count") > 0);
+        // 上面三条就是旧块的全部判据：0 检出也能三条全绿，所以这一族把「旧块不算证据」钉成读数。
+        EXPECT_EQ(metaOf(result, "detect_count"), "0")
+            << "斜坡件在默认参数下 0 检出（臂日志 a0_ramp50_default）⇒ 旧三条弱断言与那三个键无关";
+        ProductFacts ramp;
+        productFacts(output, ramp);
+        EXPECT_EQ(ramp.nzCells, 0) << "0 检出的产物是整幅全零而不是「没写」：文件照样落盘、尺寸照抄输入";
+        EXPECT_EQ(ramp.w, 50);
+        EXPECT_EQ(ramp.h, 50);
+    }
+
+    // ==================== A1：min_line_length 临界对（本刀主判据）====================
+    // 夹具与可推上界：
+    //   横块 barH 占 x∈[10,70)（60 列）、y∈[15,25)（10 行）⇒ 上/下两条边的边缘像元最多落在 x∈[10,69];
+    //   竖块 barV 占 x∈[10,20)（10 列）、y∈[15,70)（55 行）⇒ 左/右两条边最多落在 y∈[15,69]。
+    //   上游 HoughLinesP 的入选判据是 `|dx| >= minLineLength || |dy| >= minLineLength`
+    //   （**轴对齐跨度**，不是欧氏长度；minLineLength 是入参 cvRound 后的整数），而回描出的端点必须是
+    //   边缘像元 ⇒ barH 的任何候选线段 |dx| <= 69-10 = 59、|dy| <= 24-15 = 9；barV 的 |dy| <= 54、|dx| <= 9。
+    //   ⇒ min_line_length 取 60 / 55（= 块在该方向占的整格数）时四个方向全过不去 ⇒ 0 检出是**手推**的。
+    // 实测（默认 hough_threshold=50、max_line_gap=10；臂日志 a_bar120_* / a_barvert_*）：
+    //   barH：55/56/57 ⇒ 2，58/59 ⇒ 1，60/61/70 ⇒ 0；barV：20/50/52 ⇒ 2，53/54 ⇒ 1，55/56/60 ⇒ 0。
+    //   ⇒ 翻转落在「含上界那一格」：60/55 已经 0，而 59/54 还剩一条 ⇒ 判据是闭的 `>=`，与上游一致。
+    //     所以不许把上界写成「恰好等于块跨度就检出」，那会把闭判据读成开区间。
+    //   ⇒ 两条平行边的返回跨度**不相等**（barH 实测 {59,57}、barV 实测 {54,52}，都是 {n-1, n-3}）。
+    //     这条因果我没推出来（Canny 的取值行与非极大值抑制、累加器取峰、沿线回描端点三步都可能贡献），
+    //     因此只登记为**实测事实**，不冠「产品决定的」名号；两个方向的夹具同构，说明它不是某一件的偶然。
+    // 改了必红：把 cv::HoughLinesP 的 minLineLength 形参写死、或与 maxLineGap 互换 ⇒ 57/60（barV 52/55）
+    //   这一对不可能同时给出 2 和 0；中间档 58/53 单独把「两条边跨度不等」变成可红读数。
+    const std::string barH = createBlockRaster("p5b_bar_h60x10.tif", kW, kH, 10, 15, 70, 25);
+    const std::string barV = createBlockRaster("p5b_bar_v10x55.tif", kW, kH, 10, 15, 20, 70);
+    const std::string outA1in = utf8PathString(dir / "p5b_a1_ll57.tif");
+    const std::string outA1mid = utf8PathString(dir / "p5b_a1_ll58.tif");
+    const std::string outA1out = utf8PathString(dir / "p5b_a1_ll60.tif");
+
+    Params qH57 = linesBase(barH);
+    qH57["min_line_length"] = 57.0;
+    const auto rA1in = runHough(outA1in, qH57);
+    ASSERT_TRUE(rA1in.success) << rA1in.message;
+    ASSERT_TRUE(fs::exists(outA1in));
+    EXPECT_EQ(metaOf(rA1in, "detect_count"), "2")
+        << "上界 59（含）以内的档 ⇒ 两条横边都在；手推到得了这一档，实测读数见 a_bar120_ll57";
+
+    Params qH58 = linesBase(barH);
+    qH58["min_line_length"] = 58.0;
+    const auto rA1mid = runHough(outA1mid, qH58);
+    ASSERT_TRUE(rA1mid.success) << rA1mid.message;
+    EXPECT_EQ(metaOf(rA1mid, "detect_count"), "1")
+        << "两条边的跨度差 2（实测 {59,57}），58 夹在中间 ⇒ 只剩跨度大的那条";
+
+    Params qH60 = linesBase(barH);
+    qH60["min_line_length"] = 60.0;
+    const auto rA1out = runHough(outA1out, qH60);
+    ASSERT_TRUE(rA1out.success) << rA1out.message;
+    ASSERT_TRUE(fs::exists(outA1out)) << "0 检出的档仍然落盘（与对照臂同口径），判据是「格全零」不是「没有文件」";
+    EXPECT_EQ(metaOf(rA1out, "detect_count"), "0") << "60 = 块占的列数 ⇒ 上面那段上界推导说它必为 0";
+
+    Params qV52 = linesBase(barV);
+    qV52["min_line_length"] = 52.0;
+    const auto rV52 = runHough(utf8PathString(dir / "p5b_a1_v52.tif"), qV52);
+    ASSERT_TRUE(rV52.success) << rV52.message;
+    EXPECT_EQ(metaOf(rV52, "detect_count"), "2");
+
+    Params qV53 = linesBase(barV);
+    qV53["min_line_length"] = 53.0;
+    const auto rV53 = runHough(utf8PathString(dir / "p5b_a1_v53.tif"), qV53);
+    ASSERT_TRUE(rV53.success) << rV53.message;
+    EXPECT_EQ(metaOf(rV53, "detect_count"), "1");
+
+    Params qV55 = linesBase(barV);
+    qV55["min_line_length"] = 55.0;
+    const auto rV55 = runHough(utf8PathString(dir / "p5b_a1_v55.tif"), qV55);
+    ASSERT_TRUE(rV55.success) << rV55.message;
+    EXPECT_EQ(metaOf(rV55, "detect_count"), "0") << "竖块方向同构：55 = 块占的行数，界同样含在上界";
+
+    // ==================== A2：hough_threshold 阶梯（单调不增 + 归零）====================
+    // 三条臂都固定 min_line_length=20（远小于 A1 的上界，长度那一维不再参与筛选）：
+    //   实测（a2_bar120_th*）40 ⇒ 2、60 ⇒ 1、70 ⇒ 0；另外 55 ⇒ 2、65 ⇒ 0 把界夹在 (55,60] 与 (60,65]。
+    //   ⇒ 两条边的累加峰值一个落在 [60,65) 一个落在 [55,60)；**为什么**不同我没推出来（与 A1 的
+    //     {59,57} 跨度差同源），登记为实测事实，不编因果。
+    // 改了必红：threshold 形参写死 ⇒ 三档同值；写 0 或负 ⇒ 70 那档不归零；与 min_line_length 互换
+    //   ⇒ 40 档给不出 2（40 当作长度阈值时两条边都过、当作阈值时也不会归零，阶梯形状整个塌掉）。
+    Params q2lo = linesBase(barH);
+    q2lo["min_line_length"] = 20.0;
+    q2lo["hough_threshold"] = 40.0;
+    const auto r2lo = runHough(utf8PathString(dir / "p5b_a2_th40.tif"), q2lo);
+    ASSERT_TRUE(r2lo.success) << r2lo.message;
+    EXPECT_EQ(metaOf(r2lo, "detect_count"), "2");
+
+    Params q2mid = linesBase(barH);
+    q2mid["min_line_length"] = 20.0;
+    q2mid["hough_threshold"] = 60.0;
+    const auto r2mid = runHough(utf8PathString(dir / "p5b_a2_th60.tif"), q2mid);
+    ASSERT_TRUE(r2mid.success) << r2mid.message;
+    EXPECT_EQ(metaOf(r2mid, "detect_count"), "1");
+
+    Params q2hi = linesBase(barH);
+    q2hi["min_line_length"] = 20.0;
+    q2hi["hough_threshold"] = 70.0;
+    const auto r2hi = runHough(utf8PathString(dir / "p5b_a2_th70.tif"), q2hi);
+    ASSERT_TRUE(r2hi.success) << r2hi.message;
+    EXPECT_EQ(metaOf(r2hi, "detect_count"), "0")
+        << "同一夹具同一长度档，只涨这一个键就归零 ⇒ 它确实进了 HoughLinesP 的 threshold 形参";
+
+    // ==================== A3 / A4：产物的值域、/255 口径与尺寸 ====================
+    // 产物 = `resultImg.convertTo(outFloat, CV_32F, 1.0/255.0)`，而 resultImg 只被画过 255 ⇒ 值域只可能有
+    //   {0.0, 1.0}，且 count(==1.0) == count(!=0)。这与 template_match 的口径**相反**（动作块 doTemplateMatch
+    //   那句 convertTo 没有 1/255 因子，产物是原始相关系数）⇒ 这里是「本动作除 255」的钉桩位，两支互指对照。
+    // 尺寸 = 输入尺寸（resultImg 与 gray 同形状，写盘按输入画布），这一点也与 template_match 的响应图
+    //   (W-w+1)x(H-h+1) 相反 ⇒ 夹具特意取非方 120x80：方阵上「宽高写反」是等价变异，判据会自证。
+    ProductFacts fH;
+    productFacts(outA1in, fH);
+    EXPECT_EQ(fH.w, kW) << "产物宽 = 输入宽（A4）";
+    EXPECT_EQ(fH.h, kH) << "产物高 = 输入高；120 与 80 不等 ⇒ 写反必红";
+    EXPECT_GT(fH.nzCells, 0) << "检出臂必须有内容：这是后面所有「逐格相同」比较臂不退化成 0==0 的前提";
+    EXPECT_EQ(fH.otherCells, 0) << "值域只有 {0,1}：出现第三档 ⇒ 标度或落笔宽度被动过";
+    EXPECT_EQ(fH.oneCells, fH.nzCells) << "==1.0 的格数等于非零格数（/255 之后满值就是 1.0，不是 255 也不是 0.5）";
+    // 已知边的取点：横块上边界在行 14/15 之间、下边界在行 24/25 之间（块的 y∈[15,25) 是构造量），
+    //   thickness=2 的落笔沿法向各外溢 1 像元 ⇒ 列 40（在块的列范围内）被点亮的行恰好是两簇各 3 行。
+    const std::vector<int> wantRows = {13, 14, 15, 23, 24, 25};
+    EXPECT_EQ(litRows(fH, 40), wantRows)
+        << "列 40 上只有两条横边：簇中心就是块的两条边界行，±1 是落笔宽度（臂日志 a_bar120_ll57 同读数）";
+    EXPECT_NEAR(fH.cells[static_cast<size_t>(14) * kW + 40], 1.0, kEps) << "边上的格必须是 1.0（删掉 1/255 就是 255.0）";
+    EXPECT_NEAR(fH.cells[static_cast<size_t>(24) * kW + 40], 1.0, kEps) << "下边同档";
+    EXPECT_NEAR(fH.cells[static_cast<size_t>(19) * kW + 40], 0.0, kEps) << "块内部（两簇之间）不画东西 ⇒ 0.0";
+    EXPECT_NEAR(fH.cells[static_cast<size_t>(40) * kW + 40], 0.0, kEps) << "块下方远处不留碎屑";
+    EXPECT_NEAR(fH.cells[static_cast<size_t>(40) * kW + 5], 0.0, kEps) << "块左侧列 5：横边的 x 跨度到不了那里";
+
+    // ==================== A5：分支隔离（N182 同族「某键在本支被忽略」）====================
+    // doHough 把 10 个键全读出来（param_guard 钉着「每个 visibleKey 都要有读点」），但两支各消费一半：
+    //   lines 支只用 hough_threshold/min_line_length/max_line_gap；circles 支只用 circle_param2/
+    //   min_radius/max_radius ⇒ 另一边的键改动**不该**改变产物。
+    // 每条「相同」都由同支的正控撑住（改一个真生效的键 ⇒ 两份产物必须不同），否则比较臂就是恒真的 0==0；
+    //   再加参照产物与被比产物各自 nzCells > 0，双保险。比较用格数/宽高/逐格差值，不用 md5。
+    // ⚠ 本批夹具下 max_line_gap 在 lines 支「被消费但无可见后果」（边缘是连续实边，间距档 1 与 10 同产物），
+    //   所以它只进「circles 支忽略它」那一组，不进正控；这条登记在报告的「可判而未判」里。
+    Params qIsoCp10 = linesBase(barH);
+    qIsoCp10["min_line_length"] = 57.0;
+    qIsoCp10["circle_param2"] = 10.0;
+    const std::string outIsoCp10 = utf8PathString(dir / "p5b_a5_cp10.tif");
+    ASSERT_TRUE(runHough(outIsoCp10, qIsoCp10).success);
+
+    Params qIsoCp90 = linesBase(barH);
+    qIsoCp90["min_line_length"] = 57.0;
+    qIsoCp90["circle_param2"] = 90.0;
+    const std::string outIsoCp90 = utf8PathString(dir / "p5b_a5_cp90.tif");
+    ASSERT_TRUE(runHough(outIsoCp90, qIsoCp90).success);
+    EXPECT_EQ(diffCells(outA1in, outIsoCp10), 0) << "lines 支不碰 circle_param2：与参照逐格相同";
+    EXPECT_EQ(diffCells(outA1in, outIsoCp90), 0) << "circle_param2 换个更大的值仍旧相同";
+    EXPECT_EQ(diffCells(outIsoCp10, outIsoCp90), 0) << "两份非零产物之间也相同（参照臂不特殊）";
+
+    Params qIsoMinR = linesBase(barH);
+    qIsoMinR["min_line_length"] = 57.0;
+    qIsoMinR["min_radius"] = 9;
+    const std::string outIsoMinR = utf8PathString(dir / "p5b_a5_minr9.tif");
+    ASSERT_TRUE(runHough(outIsoMinR, qIsoMinR).success);
+    ProductFacts fIsoMinR;
+    productFacts(outIsoMinR, fIsoMinR);
+    EXPECT_GT(fIsoMinR.nzCells, 0) << "被比产物也非空 ⇒ 这条「相同」不是两份全零相同";
+    EXPECT_EQ(diffCells(outA1in, outIsoMinR), 0) << "min_radius 在 lines 支被忽略";
+
+    Params qIsoMaxR = linesBase(barH);
+    qIsoMaxR["min_line_length"] = 57.0;
+    qIsoMaxR["max_radius"] = 600;
+    const std::string outIsoMaxR = utf8PathString(dir / "p5b_a5_maxr600.tif");
+    ASSERT_TRUE(runHough(outIsoMaxR, qIsoMaxR).success);
+    EXPECT_EQ(diffCells(outA1in, outIsoMaxR), 0)
+        << "max_radius 在 lines 支被忽略；这一条顺带挡住「在 lines 支也走 circles 那套 0→INT_MAX 映射」的改动";
+
+    // lines 支正控：只动真生效的 min_line_length ⇒ 必须不同。
+    EXPECT_GT(diffCells(outA1in, outA1out), 0)
+        << "正控（min_line_length 57→60）：证明上面那套比较能区分产物，不是拿两份全零对撞出来的空真";
+
+    // circles 支的参照臂与三条「忽略」臂
+    const std::string disk20 = diskRaster("p5b_disk_r20.tif", kW, kH, 30, 30, 20, -1, 0, 0);
+    const std::string outCBase = utf8PathString(dir / "p5b_b1_circles.tif");
+    Params cBase = circlesBase(disk20);
+    cBase["circle_param2"] = 15.0;
+    cBase["min_radius"] = 10;
+    cBase["max_radius"] = 40;
+    const auto rC = runHough(outCBase, cBase);
+    ASSERT_TRUE(rC.success) << rC.message;
+    ASSERT_TRUE(fs::exists(outCBase));
+    ProductFacts fCRefCheck;
+    productFacts(outCBase, fCRefCheck);
+    EXPECT_GT(fCRefCheck.nzCells, 0) << "circles 参照臂非空 ⇒ 它下面三条「相同」不是 0==0";
+
+    Params cIsoTh = circlesBase(disk20);
+    cIsoTh["circle_param2"] = 15.0;
+    cIsoTh["min_radius"] = 10;
+    cIsoTh["max_radius"] = 40;
+    cIsoTh["hough_threshold"] = 999.0;
+    const std::string outCIsoTh = utf8PathString(dir / "p5b_a5_c_th999.tif");
+    ASSERT_TRUE(runHough(outCIsoTh, cIsoTh).success);
+
+    Params cIsoLen = circlesBase(disk20);
+    cIsoLen["circle_param2"] = 15.0;
+    cIsoLen["min_radius"] = 10;
+    cIsoLen["max_radius"] = 40;
+    cIsoLen["min_line_length"] = 9999.0;
+    const std::string outCIsoLen = utf8PathString(dir / "p5b_a5_c_len.tif");
+    ASSERT_TRUE(runHough(outCIsoLen, cIsoLen).success);
+
+    Params cIsoGap = circlesBase(disk20);
+    cIsoGap["circle_param2"] = 15.0;
+    cIsoGap["min_radius"] = 10;
+    cIsoGap["max_radius"] = 40;
+    cIsoGap["max_line_gap"] = 9999.0;
+    const std::string outCIsoGap = utf8PathString(dir / "p5b_a5_c_gap.tif");
+    ASSERT_TRUE(runHough(outCIsoGap, cIsoGap).success);
+    EXPECT_EQ(diffCells(outCBase, outCIsoTh), 0) << "hough_threshold 在 circles 支被忽略（HoughCircles 根本不收它）";
+    EXPECT_EQ(diffCells(outCBase, outCIsoLen), 0) << "min_line_length 同";
+    EXPECT_EQ(diffCells(outCBase, outCIsoGap), 0) << "max_line_gap 同";
+
+    // circles 支正控：动真生效的 circle_param2（15 ⇒ 1 检出，30 ⇒ 0）与 min_radius（20 ⇒ 1，21 ⇒ 0）。
+    Params cPosCp = circlesBase(disk20);
+    cPosCp["circle_param2"] = 30.0;
+    cPosCp["min_radius"] = 10;
+    cPosCp["max_radius"] = 40;
+    const std::string outCPos = utf8PathString(dir / "p5b_a5_c_cp30.tif");
+    const auto rCPos = runHough(outCPos, cPosCp);
+    ASSERT_TRUE(rCPos.success) << rCPos.message;
+    EXPECT_EQ(metaOf(rCPos, "detect_count"), "0")
+        << "默认 circle_param2=30 在这件硬边合成盘上检不出（实测事实；docs 注意事项里那条就是它）";
+    EXPECT_GT(diffCells(outCBase, outCPos), 0) << "circles 支正控：circle_param2 改动必须换产物";
+
+    Params cPosMinR = circlesBase(disk20);
+    cPosMinR["circle_param2"] = 15.0;
+    cPosMinR["min_radius"] = 21;
+    cPosMinR["max_radius"] = 40;
+    const std::string outCPosR = utf8PathString(dir / "p5b_a5_c_minr21.tif");
+    const auto rCPosR = runHough(outCPosR, cPosMinR);
+    ASSERT_TRUE(rCPosR.success) << rCPosR.message;
+    EXPECT_EQ(metaOf(rCPosR, "detect_count"), "0") << "min_radius 21 归零；对照 B1 参照臂的 min_radius 10 检出";
+    EXPECT_GT(diffCells(outCBase, outCPosR), 0) << "min_radius 也进正控：半径窗口是 circles 支自己消费的键";
+
+    // ==================== A6：失败契约与「失败档不许留产物」====================
+    // 三条失败分支都在 doHough 自己手里（绕开 CLI 的枚举闸与区间闸）：两个必填键的空判 + 未知 hough_type。
+    //   顺序也可判：input/output 的 empty() 检查在 readBandAsMat 之前 ⇒ 缺 input 不会被「打不开」抛穿。
+    {
+        Params miss = linesBase(barH);
+        miss["input"] = std::string("");
+        const std::string missOut = utf8PathString(dir / "p5b_a6_missing_input.tif");
+        const auto rMiss = runHough(missOut, miss);
+        EXPECT_FALSE(rMiss.success);
+        EXPECT_EQ(rMiss.message, "input is required") << "走的是 doHough 第一条 empty() 分支，不是 openRaster 抛";
+        EXPECT_EQ(rMiss.metadata.count("detect_count"), 0u);
+        EXPECT_FALSE(fs::exists(missOut)) << "失败档不留产物（跑前已确认真删掉残留）";
+
+        const Params missOutParams = linesBase(barH);   // 表里根本没有 output 键 ⇒ 取默认 ""
+        const auto rMissOut = p->execute(missOutParams, progress_);
+        EXPECT_FALSE(rMissOut.success);
+        EXPECT_EQ(rMissOut.message, "output is required") << "第二条 empty() 分支，同样在 throwIfCancelled 之前";
+    }
+    {
+        // 先在同名路径上种一个残留件，再删、再跑失败档：这样「产物不存在」才不是靠上一轮的旧件撑着。
+        const std::string staleOut = utf8PathString(dir / "p5b_a6_stale_target.tif");
+        createTestRaster("p5b_a6_stale_target.tif", 8, 8);
+        ASSERT_TRUE(fs::exists(staleOut)) << "残留件没种上，这一族的「删没删掉」就无从判起";
+        cleanStale(staleOut);
+        ASSERT_FALSE(fs::exists(staleOut)) << "cleanStale 自己要先兑现「删不掉就 ADD_FAILURE」";
+
+        Params bad = linesBase(barH);
+        bad["output"] = staleOut;
+        bad["hough_type"] = std::string("ellipse");   // 枚举只有 {lines, circles}：直调插件才绕得开 CLI 的枚举闸
+        const auto rBad = p->execute(bad, progress_);
+        EXPECT_FALSE(rBad.success);
+        EXPECT_EQ(rBad.message, "Unknown hough type: ellipse")
+            << "消息是「Unknown hough type: 」+ 未知值的拼接，未知值原样进消息 ⇒ 整串可比";
+        EXPECT_FALSE(fs::exists(staleOut))
+            << "失败档不留产物：跑前已确认真删掉残留，所以这里的「不存在」只能来自本次没写";
+        EXPECT_EQ(rBad.metadata.count("detect_count"), 0u)
+            << "两键写在成功路径末尾（fail 直接 return），失败结果不该有账目";
+        EXPECT_EQ(rBad.metadata.count("hough_type"), 0u);
+    }
+    // 两键的**入参回显**与两套通道的分界（同批 P4c 的 MF-3 口径）：
+    //   Result::message 恒为 Processing completed successfully；「Hough <type> detection: N detected」
+    //   只进 progress.onMessage（stderr + Logger），既不进 message 也不进 metadata。
+    EXPECT_EQ(rA1in.message, "Processing completed successfully");
+    EXPECT_EQ(rA1in.metadata.count("hough_type"), 1u);
+    EXPECT_EQ(rA1in.metadata.count("detect_count"), 1u);
+    EXPECT_EQ(rA1in.metadata.size(), 2u) << "Result::ok 起的是空表，doHough 只加这两键 ⇒ 多写一个就红";
+    EXPECT_EQ(metaOf(rA1in, "hough_type"), "lines") << "只是把入参回显成账目，坏实现照样写得漂漂亮亮 ⇒ 不单独当证据";
+    EXPECT_EQ(metaOf(rA1in, "detect_count"), "2")
+        << "值是裸计数：那句 onMessage 的文案若串进 metadata 或 message，这里就不是 2 而是整句话";
+    EXPECT_EQ(metaOf(rC, "hough_type"), "circles");
+    EXPECT_EQ(metaOf(rC, "detect_count"), "1");
+
+    // ==================== B1 / B2：circles 支的检出与画出来的几何 ====================
+    // 夹具：80 高 x 120 宽，圆心 (30,30)、真值半径 20 的实心盘（构造量见 diskRaster）。
+    // 参数：circle_param2=15（**低于默认 30**，默认档在这件盘上 0 检出 ⇒ 上面 circles 正控臂就是它）、
+    //   min_radius=10、max_radius=40（**显式给正数窗口**，理由见块头 N185 那一段）。
+    // 半径不是判据（禁止把 21/22 当期望值）：实测 min_radius 20 收 / 21 拒 ⇒ 检出的浮点半径夹在 [20,21)；
+    //   `cv::circle(center, cvRound(r), 255, 2)` 把它画到 21，thickness=2 的落笔再沿法向外溢 1
+    //   ⇒ 产物外沿半跨 22。相对真值 20 这是**高估**（与 template_match 那种"响应图"不同，画出来的环
+    //   比几何环宽），「HOUGH_GRADIENT 在硬边合成盘上半径高估约 1 像元」只作为实测事实登记（报告同口径）。
+    // 判据取不变量：环的行列跨度相等（是圆不是碎块）、bbox 中心 == 夹具真值圆心、圆心实心点
+    //   （代码里那句 `cv::circle(center, 2, FILLED)`）、环内空心（改成 FILLED 就红）。
+    ProductFacts fC;
+    productFacts(outCBase, fC);
+    EXPECT_EQ(fC.w, kW) << "circles 的产物尺寸同样等于输入（非方夹具 ⇒ 写反必红）";
+    EXPECT_EQ(fC.h, kH);
+    EXPECT_GT(fC.nzCells, 0) << "B1 的检出必须有内容";
+    EXPECT_EQ(fC.otherCells, 0) << "同 A3 的值域口径：两支共用那句 convertTo(1.0/255.0)";
+    EXPECT_EQ(fC.oneCells, fC.nzCells);
+    ASSERT_TRUE(fC.hasBox);
+    EXPECT_EQ(fC.maxRow - fC.minRow, fC.maxCol - fC.minCol)
+        << "非零 bbox 行列跨度相等 ⇒ 落笔各向同性（碎块/椭圆/只画半幅都会红）";
+    EXPECT_EQ((fC.minRow + fC.maxRow) / 2, 30) << "bbox 行中心 == 夹具真值圆心 y=30（构造量可推）";
+    EXPECT_EQ((fC.minCol + fC.maxCol) / 2, 30) << "bbox 列中心 == 夹具真值圆心 x=30";
+    EXPECT_NEAR(fC.cells[static_cast<size_t>(30) * kW + 30], 1.0, kEps)
+        << "圆心实心点来自那句 cv::circle(center, 2, FILLED)；删掉它 ⇒ (30,30) 变 0.0 ⇒ 红";
+    EXPECT_NEAR(fC.cells[static_cast<size_t>(20) * kW + 30], 0.0, kEps)
+        << "环内空心：距圆心 10 像元（真值半径 20 以内、圆心点之外）不该被点亮 ⇒ 画成 FILLED 就红";
+    EXPECT_NEAR(fC.cells[static_cast<size_t>(60) * kW + 30], 0.0, kEps)
+        << "环外（下方 30 像元，超出 bbox）不留痕";
+    ProductFacts fC21;
+    productFacts(outCPosR, fC21);
+    EXPECT_EQ(fC21.nzCells, 0) << "min_radius=21 的产物整幅全零 ⇒ 上面 [20,21) 夹逼的右半";
+
+    // ==================== B3：minDist 硬编码 20 的可见后果 ====================
+    // 两枚**全等且互不相交**的盘（半径 8，2r=16 < 中心距），只改中心距：17（< 20）⇒ 只剩 1 个，
+    //   25（> 20）⇒ 两个都在 ⇒ 「离得近的候选圆心会被吃掉一个」第一次变成可红判据。
+    // ⚠ 界不由「构造中心距」直接判：实测 d=19 仍给 2，且第二盘的画布中心相对真值偏 (+1,-2)
+    //   ⇒ 两候选圆心的欧氏距离比构造距离大 1~2 像元，合并界落在 (17,19]。本条**不**声称钉住了数字 20，
+    //   只钉住「有一条落在 17~25 之间的距离阈值」；精确界登记在报告的「可判而未判」。
+    // 改了必红：把那句硬编码 20 调小（例如 10）⇒ d=17 档变 2；调大（例如 40）⇒ d=25 档变 1。
+    {
+        const std::string near2 = diskRaster("p5b_twin_r8_d17.tif", kW, kH, 30, 30, 8, 47, 30, 8);
+        const std::string far2 = diskRaster("p5b_twin_r8_d25.tif", kW, kH, 30, 30, 8, 55, 30, 8);
+        Params pn = circlesBase(near2);
+        pn["circle_param2"] = 5.0;
+        pn["min_radius"] = 5;
+        pn["max_radius"] = 12;
+        const std::string outPn = utf8PathString(dir / "p5b_b3_near17.tif");
+        const auto rPn = runHough(outPn, pn);
+        ASSERT_TRUE(rPn.success) << rPn.message;
+        EXPECT_EQ(metaOf(rPn, "detect_count"), "1") << "相距 17 的两盘只回来一个 ⇒ 距离阈值生效";
+
+        Params pf = circlesBase(far2);
+        pf["circle_param2"] = 5.0;
+        pf["min_radius"] = 5;
+        pf["max_radius"] = 12;
+        const std::string outPf = utf8PathString(dir / "p5b_b3_far25.tif");
+        const auto rPf = runHough(outPf, pf);
+        ASSERT_TRUE(rPf.success) << rPf.message;
+        EXPECT_EQ(metaOf(rPf, "detect_count"), "2") << "同一半径、只把中心距拉开到 25 ⇒ 两盘各自成圆";
+
+        ProductFacts fPn;
+        productFacts(outPn, fPn);
+        ProductFacts fPf;
+        productFacts(outPf, fPf);
+        EXPECT_GT(fPn.nzCells, 0);
+        EXPECT_GT(fPf.nzCells, 0) << "两份都是非空产物 ⇒「1 对 2」不是「一份空、一份满」的取点差异";
+        EXPECT_GT(diffCells(outPn, outPf), 0);
+    }
 }
 
 TEST_F(PluginTest, ProcessingWatershedExecution) {
