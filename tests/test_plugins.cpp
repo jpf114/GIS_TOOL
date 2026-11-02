@@ -1552,14 +1552,20 @@ TEST_F(PluginTest, AllPluginsHaveActions) {
 // 追加的 NoData 一行；metadata 的 min/max/mean/stddev/width/height/type 六键恒填，
 // nodata 只在波段声明过 NoData 时才出现。**全程既不读 output 也不写文件。**
 //
-// ⚠ 本把最大的陷阱就在 bApproxOK=FALSE 这个入口：它会**先读 PAM 边车**（同名 `<件>.tif.aux.xml`，
-//   GeoTIFF 没有原生统计槽，上一次现算的结果就缓存在那里），命中时**不重读像元**、直接回缓存 ⇒
-//   同一件反复跑时判的是"上一次的数"，"改了统计口径"这类变异臂会绿着过去。边车探针实测：把该件边车里
-//   的 STDDEV 手改成一个本夹具不可能出现的值再跑同一条命令，打印值跟着变成边车值 ⇒ 缓存路径确实活着。
-//   于是下面两条纪律是**承重**的：每个夹具独占文件名 + 每次 execute 前删同名 .aux.xml（pamClean）。
-//   腿侧 run_real_raster_regression.ps1 里到处是 `Remove-Item (... + ".aux.xml")`，同一动机。
-//   为什么"判不动 false vs true 这一支"：bApproxOK 只决定"能不能接受 approximate 的缓存/概算"，
-//   而本把三件夹具都是刚 Create 出来的**无概算边车**件 ⇒ 两条口径都落到同一条全分辨率现算路径。
+// ⚠ PAM 边车（同名 `<件>.tif.aux.xml`）—— 本把实测把"它一定咬人"这个预期**否证**了，别照抄：
+//   预期形态是"ComputeStatistics(bApproxOK=FALSE) 先读边车、命中就不重读像元 ⇒ 同一件反复跑判的是上一次的数"。
+//   实测相反：把夹具边车里的 STATISTICS_MINIMUM 手改成 -777、STATISTICS_STDDEV 手改成 12.345678900000
+//   （这两个数在本夹具上任何一支实现都印不出来），再跑同一条命令 ⇒ 打印仍是现算的 0 与 15.0083，
+//   跑完后边车被逐字重写回 0 / 15.008331019804（连键序都变了）。边车被重写这件事本身是"探针没跑空"的
+//   凭据 —— PAM 认的就是这个文件名，只是这条入口不取它的数。
+//   ⇒ 下面 pamClean 每次 execute 前删边车，在**本把**是防御性纪律、不承重：它防的是同目录里别的动作留下的
+//     边车被"会读缓存的那类入口"（GetStatistics 一路）取回去，防的不是本动作自己；承重的是下面那族手推常数
+//     （A3 臂把除数改成样本口径 ⇒ 实测红在 0.012040 上）。独占文件名仍是硬要求：两件共用一个名字时
+//     "这份边车是谁写的"就说不清了，而腿侧 run_real_raster_regression.ps1 里那些 Remove-Item 判的确实是缓存。
+//   ⇒ 由它派生的两条：①"缓存值 ≠ 重算值"的可分辨场景今天**造不出**（不是没找着边车，是这条入口不读它）；
+//     ②A1 臂（false→true，放开 bApproxOK）实测**等价**，且这个等价的主因是**夹具决定的** —— 本把三件都是
+//     刚 Create 的无概算件，没有 overview 就没有"近似"可走，两条口径落到同一条全分辨率现算路径；
+//     要让这一支可分辨得先给夹具建概算边车，那判的就不是本动作的契约而是 GDAL 的概算选择了，本把不做。
 //
 // 手推期望（首跑前写定；算式：夹具是 `value = base + step * x`、沿 y 恒定 ⇒ 每档恰重复 h 次 ⇒ 逐值等权 ⇒
 //   Mean = (min+max)/2、总体方差 = (n² − 1)/12 · step²（n = 档数）；样本口径要给总体方差乘 N/(N−1)，
@@ -1599,7 +1605,7 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
     auto runStats = [&](const std::string& input,
                         int band,
                         const std::string& output = std::string()) -> gis::framework::Result {
-        pamClean(input);   // 判的是现算，不是上一次缓存的统计（见上面那条陷阱）
+        pamClean(input);   // 防御性：本动作这条入口不读边车（见上面那段否证），删掉只是不让别处留下的边车参与
         std::map<std::string, gis::framework::ParamValue> params;
         params["action"] = std::string("stats");
         params["input"] = input;
@@ -1646,7 +1652,7 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
 
     // ---- F0：改前原样那一次（50×50 方阵，只留存在性判据）----
     // 为什么不当它已晋升：方阵 ⇒ width/height 轴序写反在上面不可分辨；档值是 `i % 256` 铺满 2500 个像元，
-    // 分布要逐档数才推得出，本把不在它身上挂手推期望。加 pamClean 是为了让它别再吃上一次的缓存。
+    // 分布要逐档数才推得出，本把不在它身上挂手推期望。pamClean 只是纪律统一（本动作不读边车，见上面那段）。
     std::string input = createTestRaster("e2e_stats_input.tif", 50, 50);
     pamClean(input);
 
