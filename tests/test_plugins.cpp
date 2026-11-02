@@ -1537,11 +1537,118 @@ TEST_F(PluginTest, AllPluginsHaveActions) {
 
 // ── End-to-End Execution Tests ──
 
+// 批次 D P4a：本块由「跑一次 + 三条键存在性」扩成 processing.stats 的承重判据。改前块体里值级断言 0 条
+// （只有 `metadata.count("min") > 0` 那种**存在性**判据），过不了 CoverageMeta.GoldEvidenceIsAuditable 的
+// 第二条（剥完注释后块里必须有 EXPECT_NEAR / EXPECT_FLOAT_EQ / EXPECT_DOUBLE_EQ 之一）；
+// 登记表 processing,stats 那一行的第 4 列指本块。
+//
+// 本动作是**无产物动作** ⇒ 判据只能挂在「消息文本」与「metadata 键值」两层，产物存在性在这里没有意义。
+// 现读 ProcessingPlugin::doStats：只取 input 与 band（默认 1），input 空则走
+// `fail("input is required")`；openRaster 后 GetRasterBand(band) 取不到则
+// `fail("Cannot get band " + std::to_string(band))`；随后 ComputeStatistics(bApproxOK=FALSE) 取
+// min/max/mean/stddev，width/height 取栅格的 XSize/YSize，type 取波段的 GetRasterDataType 并过一个
+// 8 支 switch（GDT_Byte 印 "Byte (uint8)"、GDT_UInt16/Int16/UInt32/Int32/Float32/Float64 印同名、
+// default 印 "Unknown"）；消息是 Size/Type/Min/Max/Mean/StdDev 六行外加 GetNoDataValue(&ok) 为真时
+// 追加的 NoData 一行；metadata 的 min/max/mean/stddev/width/height/type 六键恒填，
+// nodata 只在波段声明过 NoData 时才出现。**全程既不读 output 也不写文件。**
+//
+// ⚠ 本把最大的陷阱就在 bApproxOK=FALSE 这个入口：它会**先读 PAM 边车**（同名 `<件>.tif.aux.xml`，
+//   GeoTIFF 没有原生统计槽，上一次现算的结果就缓存在那里），命中时**不重读像元**、直接回缓存 ⇒
+//   同一件反复跑时判的是"上一次的数"，"改了统计口径"这类变异臂会绿着过去。边车探针实测：把该件边车里
+//   的 STDDEV 手改成一个本夹具不可能出现的值再跑同一条命令，打印值跟着变成边车值 ⇒ 缓存路径确实活着。
+//   于是下面两条纪律是**承重**的：每个夹具独占文件名 + 每次 execute 前删同名 .aux.xml（pamClean）。
+//   腿侧 run_real_raster_regression.ps1 里到处是 `Remove-Item (... + ".aux.xml")`，同一动机。
+//   为什么"判不动 false vs true 这一支"：bApproxOK 只决定"能不能接受 approximate 的缓存/概算"，
+//   而本把三件夹具都是刚 Create 出来的**无概算边车**件 ⇒ 两条口径都落到同一条全分辨率现算路径。
+//
+// 手推期望（首跑前写定；算式：夹具是 `value = base + step * x`、沿 y 恒定 ⇒ 每档恰重复 h 次 ⇒ 逐值等权 ⇒
+//   Mean = (min+max)/2、总体方差 = (n² − 1)/12 · step²（n = 档数）；样本口径要给总体方差乘 N/(N−1)，
+//   N 是**像元数**不是档数）：
+//     F1/F2/F3 第一带 = 52×12、base 0 step 1 ⇒ 档 0..51、N=624
+//         Min 0 / Max 51 / Mean 25.5 / StdDev = sqrt(225.25) = 15.008331019803634
+//         （样本口径给的是 sqrt(225.25·624/623) = 15.020371399614042 ⇒ 距期望 0.012040 = 容差的 1.2 万倍，
+//           所以"除数是 n 还是 n−1"这个分叉不会被容差洗掉。注意别把它跟"把 52 个档值当 52 个样本"的
+//           sqrt(225.25·52/51) = 15.154757 混起来 —— 那个数在本夹具上任何一支实现都印不出来。）
+//     F3 第二带 = 同一件、base 10 step 2 ⇒ 档 10..112 ⇒ Min 10 / Max 112 / Mean 61 /
+//         StdDev = sqrt(4·225.25) = sqrt(901) = 30.016662039607269
+//     F4 = 8×13 的 Byte 件（createTestRaster 写的是线性序号 % 256，而 8*13 = 104 < 256 ⇒ 不折返）
+//         ⇒ 档 0..103、N=104 ⇒ Min 0 / Max 103 / Mean 51.5 / StdDev = sqrt(901.25) = 30.020826104556150
+//   width/height：三件全是**非方**件（52×12 与 8×13，且 52/12 与 8/13 是两组不同的数）⇒ 轴序写反必红；
+//   方阵件上这条是等价变异，所以本把不拿方阵件判尺寸（F0 那个 50×50 是改前遗留，只留存在性判据）。
 TEST_F(PluginTest, ProcessingStatsExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
 
+    // 容差口径（夹心两端都要成立）：
+    //   下界 —— metadata 的数值是 std::to_string(double) 印出来的，固定 6 位小数 ⇒ 最坏舍入 5e-7；
+    //          夹具档值全是整数（0..51 / 10..112 / 0..103），float32 逐位可表示、求和都在 2^53 内
+    //          ⇒ 现算侧零舍入。1e-6 只需要吞掉打印机那 5e-7（实测残差 ≤ 2e-8）。
+    //   上界 —— 本表最近的另一个**候选口径**（样本除数）在 F1 上差 0.012040、在 F3 第二带上差
+    //          0.024081 ⇒ 都容差的 1.2 万倍以上 ⇒ 容差不吞掉任何一次口径变化。
+    constexpr double kEps = 1e-6;
+    // "键不存在 / 值不可解析"的哨兵：本表所有期望都碰不到这个数，于是它红在同一行 EXPECT_NEAR 上，
+    // 不会被 value_or(0.0) 那种写法当成"读了个 0"蒙过去。
+    constexpr double kMissingKey = -12345.6789;
+
+    std::error_code pamEc;
+    const fs::path dir = getTestDir();
+    auto pamClean = [&pamEc](const std::string& path) {
+        fs::remove(path + ".aux.xml", pamEc);
+    };
+
+    auto runStats = [&](const std::string& input,
+                        int band,
+                        const std::string& output = std::string()) -> gis::framework::Result {
+        pamClean(input);   // 判的是现算，不是上一次缓存的统计（见上面那条陷阱）
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("stats");
+        params["input"] = input;
+        params["band"] = band;
+        if (!output.empty()) params["output"] = output;
+        return p->execute(params, progress_);
+    };
+
+    // metadata 数值：整串必须被 strtod 消费完，"12x" 这种半个 token 回哨兵 ⇒ "读到了"与"读歪了"不混。
+    auto metaNumber = [](const gis::framework::Result& r, const std::string& key) {
+        const auto it = r.metadata.find(key);
+        if (it == r.metadata.end()) return kMissingKey;
+        char* tail = nullptr;
+        const double value = std::strtod(it->second.c_str(), &tail);
+        if (tail != it->second.c_str() + it->second.size()) return kMissingKey;
+        return value;
+    };
+
+    // 消息行的读法：取**第一条**行首（跳掉缩进）正好是 `<标签>:` 的行，把冒号后面整行 trim 后返回。
+    // 为什么不写 message.find("Min:    0") 那种子串判据：子串会被更长的数字前缀吃掉（真实值 103 那行
+    // 同样含 "0"），这个形状在本仓"假绿发生器"清单里点过名。整行消费 ⇒ 值多一位就红。
+    auto messageField = [](const std::string& text,
+                           const std::string& label) -> std::optional<std::string> {
+        const std::string needle = label + ":";
+        size_t lineStart = 0;
+        while (lineStart <= text.size()) {
+            size_t lineEnd = text.find('\n', lineStart);
+            const bool lastLine = (lineEnd == std::string::npos);
+            if (lastLine) lineEnd = text.size();
+            const size_t body = text.find_first_not_of(" \t\r", lineStart);
+            if (body != std::string::npos && body < lineEnd &&
+                text.compare(body, needle.size(), needle) == 0) {
+                std::string value = text.substr(body + needle.size(), lineEnd - (body + needle.size()));
+                const size_t head = value.find_first_not_of(" \t\r");
+                if (head == std::string::npos) return std::string();
+                const size_t tail = value.find_last_not_of(" \t\r");
+                return value.substr(head, tail - head + 1);
+            }
+            if (lastLine) break;
+            lineStart = lineEnd + 1;
+        }
+        return std::nullopt;
+    };
+
+    // ---- F0：改前原样那一次（50×50 方阵，只留存在性判据）----
+    // 为什么不当它已晋升：方阵 ⇒ width/height 轴序写反在上面不可分辨；档值是 `i % 256` 铺满 2500 个像元，
+    // 分布要逐档数才推得出，本把不在它身上挂手推期望。加 pamClean 是为了让它别再吃上一次的缓存。
     std::string input = createTestRaster("e2e_stats_input.tif", 50, 50);
+    pamClean(input);
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("stats");
@@ -1554,6 +1661,184 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
     EXPECT_TRUE(result.metadata.count("min") > 0);
     EXPECT_TRUE(result.metadata.count("max") > 0);
     EXPECT_TRUE(result.metadata.count("mean") > 0);
+
+    // ---- F1：五个恒有键的值级对撞（type 的 Float32 支）+ NoData 半边（无声明 ⇒ 键必须**不存在**）----
+    const std::string rampInput =
+        createMultiBandGradientRaster("d1p4a_stats_ramp52x12.tif", 52, 12, {{0.0f, 1.0f}});
+    ASSERT_FALSE(rampInput.empty());
+    auto ramp = runStats(rampInput, 1);
+    ASSERT_TRUE(ramp.success) << "F1 stats failed: " << ramp.message;
+    for (const char* key : {"min", "max", "mean", "stddev", "width", "height", "type"}) {
+        EXPECT_EQ(ramp.metadata.count(key), 1u) << "F1 六键加 type 是恒填的，缺了 " << key;
+    }
+    EXPECT_NEAR(metaNumber(ramp, "min"), 0.0, kEps) << "F1 档值下界 = base = 0";
+    EXPECT_NEAR(metaNumber(ramp, "max"), 51.0, kEps) << "F1 档值上界 = base + step*(w-1) = 51";
+    EXPECT_NEAR(metaNumber(ramp, "mean"), 25.5, kEps) << "F1 逐值等权 ⇒ Mean = (0+51)/2";
+    // 本把最硬的一条：它判的是"哪一族公式"（除数 n 还是 n−1），不是"值对不对"。
+    EXPECT_NEAR(metaNumber(ramp, "stddev"), 15.008331019803634, kEps)
+        << "F1 StdDev = sqrt((52^2-1)/12) = sqrt(225.25)，钉住 GDAL 用**总体**除数；"
+           "样本口径会给 15.020371（差 0.012040）⇒ 两者不可能同时绿";
+    EXPECT_NEAR(metaNumber(ramp, "width"), 52.0, kEps) << "F1 width = GetRasterXSize() = 52";
+    EXPECT_NEAR(metaNumber(ramp, "height"), 12.0, kEps) << "F1 height = GetRasterYSize() = 12（非方件 ⇒ 与 width 是两组数）";
+    EXPECT_EQ(ramp.metadata.count("nodata"), 0u)
+        << "F1 夹具没声明 NoData ⇒ nodata 是**只在有 NoData 值时出现**的键；判'不存在'必须用 count()，"
+           "判空串会把'键在但值为空'这种形态也放过去";
+
+    // 消息侧同一批数（六行都要在，且整行消费）：Min/Max/Mean/StdDev 走 ostream 默认 6 位**有效数字**，
+    // 与 metadata 的 6 位**小数**不是同一个印法 ⇒ 15.0083310… 在消息里是 "15.0083"。
+    const char* kF1Lines[] = {"Size", "52 x 12", "Type", "Float32", "Min", "0",
+                              "Max", "51", "Mean", "25.5", "StdDev", "15.0083"};
+    for (size_t i = 0; i < 12; i += 2) {
+        const auto line = messageField(ramp.message, kF1Lines[i]);
+        ASSERT_TRUE(line.has_value()) << "F1 消息里没有 \"" << kF1Lines[i] << ":\" 这一行，原文：\n" << ramp.message;
+        EXPECT_EQ(*line, kF1Lines[i + 1]) << "F1 消息里 " << kF1Lines[i] << " 行的值不对（原文：\n" << ramp.message << ")";
+    }
+    EXPECT_FALSE(messageField(ramp.message, "NoData").has_value())
+        << "F1 无 NoData 声明 ⇒ 消息里不该多出那一行，实到原文：\n" << ramp.message;
+
+    // ---- F2：NoData 半边的另一件（有声明）----
+    // 与 F1 只差一次 SetNoDataValue(-9999)，而 -9999 不落在档值 0..51 里 ⇒ 本件的看点全在 nodata 键与
+    // NoData 行上。刻意**不重复** F1 那四条统计期望：逐字重复的期望在变异臂上不增加任何分辨力（装饰行）。
+    // ⚠ 顺序与 F1 相反：先删边车、**再**声明 NoData、然后直接 execute（不再删一次）。理由是若该声明按
+    //   PAM 落在边车里，"execute 前删边车"这条纪律会顺手把声明一起删掉 ⇒ 判据红在纪律上而不是红在产品上。
+    //   现读 GeoTIFF 有原生 GDAL_NODATA 槽（GTiff 声明 GDAL_OF_NODATA），所以两种落法这里都成立。
+    const std::string noDataInput =
+        createMultiBandGradientRaster("d1p4a_stats_ramp52x12_nodata.tif", 52, 12, {{0.0f, 1.0f}});
+    ASSERT_FALSE(noDataInput.empty());
+    pamClean(noDataInput);
+    {
+        auto upd = gis::core::openRaster(noDataInput, false);   // GA_Update
+        auto* updBand = upd->GetRasterBand(1);
+        ASSERT_NE(updBand, nullptr);
+        EXPECT_EQ(updBand->SetNoDataValue(-9999.0), CE_None) << "F2 夹具没能声明 NoData，后面的期望都不成立";
+        updBand->FlushCache();
+    }
+    std::map<std::string, gis::framework::ParamValue> noDataParams;
+    noDataParams["action"] = std::string("stats");
+    noDataParams["input"] = noDataInput;
+    noDataParams["band"] = 1;
+    auto noData = p->execute(noDataParams, progress_);
+    ASSERT_TRUE(noData.success) << "F2 stats failed: " << noData.message;
+    EXPECT_EQ(noData.metadata.count("nodata"), 1u) << "F2 声明过 NoData ⇒ nodata 键必须出现";
+    EXPECT_NEAR(metaNumber(noData, "nodata"), -9999.0, kEps)
+        << "F2 nodata 键的值必须等于**声明值**（std::to_string 的 6 位小数印成 \"-9999.000000\"）";
+    const auto noDataLine = messageField(noData.message, "NoData");
+    ASSERT_TRUE(noDataLine.has_value()) << "F2 消息里缺 NoData 那一行，原文：\n" << noData.message;
+    EXPECT_EQ(*noDataLine, "-9999") << "F2 消息的 NoData 行印的是声明值";
+
+    // ---- F3：band 臂（两带档值不同 ⇒ 同一件上换带必须换读数）----
+    // 为什么这一族的承重挂在**第二带**：F3 第一带与 F1 的档值逐字相同 ⇒ "取哪一带被写死成 1"这种实现
+    // 在 F1、F3 第一带上全绿，只有第二带那四条期望能把它否掉。
+    const std::string twoBandInput = createMultiBandGradientRaster(
+        "d1p4a_stats_two_band52x12.tif", 52, 12, {{0.0f, 1.0f}, {10.0f, 2.0f}});
+    ASSERT_FALSE(twoBandInput.empty());
+    auto band1 = runStats(twoBandInput, 1);
+    auto band2 = runStats(twoBandInput, 2);
+    ASSERT_TRUE(band1.success) << "F3 band=1 failed: " << band1.message;
+    ASSERT_TRUE(band2.success) << "F3 band=2 failed: " << band2.message;
+    EXPECT_NEAR(metaNumber(band2, "min"), 10.0, kEps) << "F3 第二带 base = 10";
+    EXPECT_NEAR(metaNumber(band2, "max"), 112.0, kEps) << "F3 第二带 base + step*(w-1) = 10 + 2*51";
+    EXPECT_NEAR(metaNumber(band2, "mean"), 61.0, kEps) << "F3 第二带 Mean = (10+112)/2";
+    EXPECT_NEAR(metaNumber(band2, "stddev"), 30.016662039607269, kEps)
+        << "F3 第二带 StdDev = sqrt(4*225.25) = sqrt(901)（step=2 ⇒ 方差乘 step²），"
+           "与第一带的 15.008331 差 15.008331 ⇒ 两带绝不可能同时绿";
+    EXPECT_NEAR(metaNumber(band2, "width"), 52.0, kEps) << "width/height 是栅格级属性，换带不该变";
+    EXPECT_NEAR(metaNumber(band2, "height"), 12.0, kEps) << "同上";
+    const auto band2SizeLine = messageField(band2.message, "Size");
+    ASSERT_TRUE(band2SizeLine.has_value()) << "F3 第二带消息里没有 Size 行，原文：\n" << band2.message;
+    EXPECT_EQ(*band2SizeLine, "52 x 12") << "F3 第二带的 Size 行与第一带同值（波段级不改栅格尺寸）";
+    EXPECT_NE(band2.message.find("(Band 2)"), std::string::npos)
+        << "F3 抬头那行的带号要跟请求一致，原文：\n" << band2.message;
+    EXPECT_EQ(band2.message.find("(Band 1)"), std::string::npos)
+        << "F3 请求 band=2 却打印 (Band 1) ⇒ 带号是拼进去的、不是硬编码";
+    EXPECT_NE(band1.message.find("(Band 1)"), std::string::npos) << "F3 第一带打印 (Band 1)";
+    // 两带互不相同这件事本身（不靠手推常数也能判的一层）：
+    EXPECT_NE(metaNumber(band1, "stddev"), metaNumber(band2, "stddev"))
+        << "F3 两带 StdDev 必须不同，否则上面那族期望就是在判一件常量栅格";
+
+    // ---- F4：type 那 8 支 switch 的第二支（GDT_Byte → "Byte (uint8)"）----
+    // 另 6 支（UInt16/Int16/UInt32/Int32/Float64/default "Unknown"）本把不判 ⇒ 已登记为缺口：
+    // 现成夹具生成器只出 Float32 与 Byte，这是**本把夹具决定的**，不是产品决定的。
+    const std::string byteInput = createTestRaster("d1p4a_stats_byte8x13.tif", 8, 13, 1, GDT_Byte);
+    ASSERT_FALSE(byteInput.empty());
+    auto byteRun = runStats(byteInput, 1);
+    ASSERT_TRUE(byteRun.success) << "F4 stats failed: " << byteRun.message;
+    EXPECT_EQ(byteRun.metadata.count("type"), 1u) << "F4 type 键恒填";
+    EXPECT_EQ(byteRun.metadata.at("type"), "Byte (uint8)")
+        << "F4 GDT_Byte 那一支印的是带后缀的 \"Byte (uint8)\"，不是 \"Byte\"";
+    EXPECT_NEAR(metaNumber(byteRun, "min"), 0.0, kEps) << "F4 档 0..103 的下界";
+    EXPECT_NEAR(metaNumber(byteRun, "max"), 103.0, kEps) << "F4 8*13 = 104 个像元、线性序号 % 256 不折返";
+    EXPECT_NEAR(metaNumber(byteRun, "mean"), 51.5, kEps) << "F4 Mean = (0+103)/2";
+    EXPECT_NEAR(metaNumber(byteRun, "stddev"), 30.020826104556150, kEps)
+        << "F4 StdDev = sqrt((104^2-1)/12) = sqrt(901.25)，同样是总体口径";
+    const auto byteSizeLine = messageField(byteRun.message, "Size");
+    ASSERT_TRUE(byteSizeLine.has_value()) << "F4 消息里没有 Size 行，原文：\n" << byteRun.message;
+    EXPECT_EQ(*byteSizeLine, "8 x 13")
+        << "F4 换一组**不同的**宽高数（F1 是 52/12）⇒ width↔height 写反在这两件上必红，"
+           "且'把常量 52/12 抄进实现'那种改法也过不了这一行";
+    EXPECT_NEAR(metaNumber(byteRun, "width"), 8.0, kEps) << "F4 width = 8";
+    EXPECT_NEAR(metaNumber(byteRun, "height"), 13.0, kEps) << "F4 height = 13";
+
+    // ---- F5：两个 negative 分支的文案（现读，逐字钉）----
+    // 直调插件**不过**框架的 execute_guarded（catch 在那一层里，只有 CLI/GUI 走得到）⇒ 不存在的件这里
+    // 大概率是抛 GisError("Cannot open raster: ...")。所以 statsOutcome 把三种形态归一成一个字符串，
+    // 判的是"哪条分支把这次调用否掉的"，不是笼统的 EXPECT_FALSE(success)。
+    auto statsOutcome = [&](const std::map<std::string, gis::framework::ParamValue>& callParams) {
+        try {
+            auto r = p->execute(callParams, progress_);
+            return r.success ? std::string("success") : ("fail:" + r.message);
+        } catch (const std::exception& e) {
+            return std::string("thrown:") + e.what();
+        }
+    };
+    std::map<std::string, gis::framework::ParamValue> noInputParams;
+    noInputParams["action"] = std::string("stats");
+    EXPECT_EQ(statsOutcome(noInputParams), "fail:input is required")
+        << "F5 空/缺 input 必须走 doStats 自己那条 `input.empty()` 分支，而不是靠 openRaster 抛出来";
+
+    std::map<std::string, gis::framework::ParamValue> ghostParams = noInputParams;
+    const std::string ghostInput = utf8PathString(dir / "d1p4a_stats_does_not_exist.tif");
+    pamClean(ghostInput);
+    ghostParams["input"] = ghostInput;
+    const std::string ghostOutcome = statsOutcome(ghostParams);
+    EXPECT_TRUE(ghostOutcome.rfind("fail:", 0) == 0 || ghostOutcome.rfind("thrown:", 0) == 0)
+        << "F5 不存在的件必须不成功，实到形态：" << ghostOutcome;
+    EXPECT_NE(ghostOutcome, "fail:input is required")
+        << "F5 必须真走到打开那一步（现读 openRaster 是 `if (!ds) throw GisError(\"Cannot open raster: ...\")`），"
+           "不能是被空 input 那一条顺手挡掉的，实到形态：" << ghostOutcome;
+
+    // ---- F6：取不到波段那一支，且那个带号是拼进去的 ----
+    auto badBand9 = runStats(rampInput, 9);
+    EXPECT_FALSE(badBand9.success) << "F6 band=9 打在单带件上应当失败，实到：\n" << badBand9.message;
+    EXPECT_EQ(badBand9.message, "Cannot get band 9")
+        << "F6 现读是 fail(\"Cannot get band \" + std::to_string(band))";
+    EXPECT_TRUE(badBand9.metadata.empty())
+        << "F6 失败结果不得带半成品统计（该分支在 ComputeStatistics 之前返回）";
+    auto badBand7 = runStats(rampInput, 7);
+    EXPECT_FALSE(badBand7.success) << "F6 band=7 同样应当失败";
+    EXPECT_EQ(badBand7.message, "Cannot get band 7")
+        << "F6 换一个带号文案跟着变 ⇒ 钉住 std::to_string(band) 那段拼接，不是硬编码的常量串";
+
+    // ---- F7：output 的三层口径（本把最重要的判据之一）----
+    // 上面每一次调用都**没发** output 键且全 success ⇒ "动作不消费 output"的前半已经钉住；这里钉后半：
+    // **发了**也不写文件。三层不一致（ParamSpec 的 output 是 required=true、该表被 processing 全部 16 个
+    // 动作共享；GUI 的 per-action visibleKeys 只有 {"input","band"}；doStats 既不读也不写）已立案 **N183**：
+    // CLI 不带 --output ⇒ rc=1、"参数"输出栅格"不能为空"；带 ⇒ rc=0 且那个路径根本不出现。
+    // 修法（把 output 从该动作的必填里摘掉，或让 CLI 的必填闸走 per-action 可见键）**改可观测行为**
+    // ⇒ 归用户拍板，本把不动 src/，只把"直调不传 output 仍 success、传了也不写文件"这一层钉成断言。
+    const std::string outputNever = utf8PathString(dir / "d1p4a_stats_must_not_be_written.tif");
+    std::error_code outEc;
+    fs::remove(outputNever, outEc);
+    fs::remove(outputNever + ".aux.xml", outEc);
+    auto withOutput = runStats(rampInput, 1, outputNever);
+    ASSERT_TRUE(withOutput.success) << "F7 带 output 的 stats 应当成功（动作不读这个键），实到：\n" << withOutput.message;
+    EXPECT_FALSE(fs::exists(outputNever))
+        << "F7 现读 doStats 不写任何文件 ⇒ 传进去的那个路径不该出现；出现了就是这动作被改成改写型";
+    EXPECT_FALSE(fs::exists(outputNever + ".aux.xml"))
+        << "F7 连 PAM 边车都不该有 —— 那个路径从头到尾没被打开过";
+    EXPECT_EQ(withOutput.message, ramp.message)
+        << "F7 同一件同一带，发不发 output 的读数必须逐字相同（本条没有配套变异臂 ⇒ 它算 F6 前半的旁证，"
+           "不算独立承重）";
 }
 
 // 批次 D P1：本块由「只跑一次 + 断产物存在」扩成阈值语义的承重判据（改前 3 条断言、值级 0 条 ⇒
