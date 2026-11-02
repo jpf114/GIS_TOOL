@@ -4139,6 +4139,100 @@ A2 的指纹位——把 59 翻成 55 那条当场红（实到 59 vs 55），写
 改后从工作区现读）：`TEST_F` 350→350、`EXPECT_` 2851→2896（+45）、`ASSERT_` 2012→2027（+15）。
 登记表六键改后 `126/115/11/116/15/100`（逐条用声明行行尾自带命令复跑，不重打 grep）。
 
+### 批次 D 覆盖晋升 P5b（2026-11-02，`processing.hough` 一条 PENDING→GOLD；**只做单测面，不碰腿、不碰矩阵**）
+
+射程 = `tests/test_plugins.cpp`（既有 `TEST_F(PluginTest, ProcessingHoughExecution)` 内扩写 + 一个新的小夹具 helper
+`createBlockRaster`，**没新增用例**）+ `tests/action_gold_cases.txt` 登记行与四条 COUNT 声明行 +
+`tests/test_coverage_meta.cpp` 的 `kPendingCeiling` 一行 + `docs/算法说明/影像处理与分析/霍夫变换.md`
+（算法内容改按两支陈述、参数表「最大半径」说明格改口、注意事项补五条）+ 本节。
+开批现读：分支 `fix/batch-d-nonvector-promotion`、HEAD `45fa6b0`、`git status --porcelain` 0 行；登记表六键
+`126/115/11/116/15/100`（逐条用声明行行尾自带命令复跑）、`kPendingCeiling = 11`、`ctest -N` 的 `Total Tests: 802`；
+三条定向配方 `-N` 预数 43 / 30 / 19；`test_plugins.cpp` 工作区行尾 CRLF 27148 / 裸 LF 0 / 无 BOM；
+`霍夫变换.md` 改前 CRLF 73 / 裸 LF 0 / 无 BOM；`RELEASE.md` 改前 CRLF 4935 / 裸 LF 0。七项与派发给的基线值零差异。
+改前块体只有 `result.success` + `fs::exists(output)` + 一条 `metadata.count("detect_count") > 0` ⇒ 值级断言 0 条。
+
+**「跑了不判」的实证（换夹具的理由）**：旧块用的 `createTestRaster("e2e_hough_input.tif", 50, 50)` 是 `i%256` 斜坡，
+产品 Debug 二进制在同形状件（120×80 之外的 50×50 同式斜坡）默认参数下实到 `detect_count: 0` 且产物整幅全零
+⇒ 旧三条弱断言在「0 检出」上照样全绿，`hough_threshold`/`min_line_length`/`max_line_gap` 三个键在旧块里空转。
+旧形状**保留**在块内当对照臂，并新增两条把这件事钉成读数的断言（`detect_count == "0"`、产物非零格数 == 0）。
+
+**产品事实（本席位独立复读，与派发一致）**：`doHough` 读 10 个键（GUI `visibleKeys` 同 10 个，`param_guard` 钉着），
+默认 `band=1 / hough_type=lines / hough_threshold=50.0 / min_line_length=50.0 / max_line_gap=10.0 / min_radius=1 /
+max_radius=0 / circle_param2=30.0`；链路 `readBandAsMat → toUint8 → cv::Canny(gray, edges, 50, 150)`（两阈值硬编码）
+⇒ `lines` 支把 **edges** 送 `HoughLinesP(edges, lines, 1, CV_PI/180, houghThresh, minLineLen, maxLineGap)`，
+`circles` 支把 **gray**（不是 edges）送 `HoughCircles(gray, …, HOUGH_GRADIENT, 1, 20, 100, circleParam2, minRadius,
+maxRadius>0?maxRadius:INT_MAX)`（`dp=1 / minDist=20 / param1=100` 三个值硬编码）；其它值 ⇒
+`Result::fail("Unknown hough type: " + houghType)`。产物 `resultImg.convertTo(outFloat, CV_32F, 1.0/255.0)` ⇒ 值域
+只 {0.0, 1.0}、尺寸 = 输入尺寸（与 `template_match` 两处口径都相反）；`Result.metadata` 只有 `hough_type`/`detect_count`
+两键，`message` 恒为 `Processing completed successfully`，`Hough <type> detection: N detected` 只进 `onMessage`（两套通道）。
+
+**判据族**（全在同一块体内，一条都不是恒真；进断言的数全部有推导链，标定值只进注释）：
+A1 `min_line_length` 临界对（本刀主判据）：横块占 `x∈[10,70)`（60 列）`y∈[15,25)`，竖块占 `y∈[15,70)`（55 行）`x∈[10,20)`；
+上游 `HoughLinesP` 的入选判据是 `|dx| >= minLineLength || |dy| >= minLineLength`（**轴对齐跨度**、`minLineLength =
+cvRound(入参)`），回描端点必须是边缘像元 ⇒ 横块任何候选线段 `|dx| <= 69-10 = 59`、`|dy| <= 9`，竖块 `|dy| <= 54`、`|dx| <= 9`
+⇒ **归零档 60 / 55 是手推的**（= 块在该方向占的整格数）。实测（默认 threshold/gap）横块 55/56/57⇒2、58/59⇒1、60/61/70⇒0，
+竖块 20/50/52⇒2、53/54⇒1、55/56/60⇒0 ⇒ 界**含在上界那一格**（60 已 0 而 59 仍剩一条）⇒ 判据是闭 `>=`。
+A2 `hough_threshold` 阶梯：同夹具固定 `min_line_length=20`，40⇒2、60⇒1、70⇒0（另 55⇒2、65⇒0 把界夹在 (55,60] 与 (60,65]）
+⇒ 单调不增且归零，该键确实进了 `threshold` 形参。A3/A4 值域与尺寸：`count(==1.0) == count(!=0)`、第三档格数 == 0、
+列 40 上被点亮的行恰为 {13,14,15,23,24,25}（块的两条边界行 ±1 落笔宽度）、产物 120×80 与输入同尺寸
+（夹具**特意非方**：方阵上宽高写反是等价变异）。A5 分支隔离 6 条「逐格相同」+ 3 条同支正控（见下）。
+A6 三条失败契约：`input is required` / `output is required`（都在 `readBandAsMat` 之前，缺 input 不被"打不开"抛穿）、
+`Unknown hough type: ellipse` 整串可比，三条各配一条「失败档不许留产物」，其中未知类型那条先在同名路径种残留件、
+`cleanStale` 对"删不掉"当场 `ADD_FAILURE`、事后判「不存在」。B1/B2 `circles` 检出与环几何不变量：非零 bbox 行列跨度相等、
+bbox 中心 == 夹具真值圆心 (30,30)、`m(30,30)==1.0`（`cv::circle(center, 2, FILLED)` 那句）、`m(20,30)==0.0`（环内空心，
+改成 FILLED 就红）、值域同 A3。B3 两枚全等且不相交的盘（半径 8，`2r=16 <` 中心距）只改中心距：17⇒1、25⇒2。
+
+**本刀推翻/收紧的派发放四处**（读数都在本席位自己的臂里，臂目录 `build/tmp/batchD/p5b/`，gitignored，
+复现方式 = 按本节末配方重编后跑块内对应臂）：
+1. **A1 的算式写歪了**：派发建议注释写成「块跨 x∈[10,70) ⇒ 边最多 60 像元 ⇒ 取 61 必 0」。实测取 **60 已经 0**，
+   而 59 仍剩一条 ⇒ 上界是 `跨度 = 69-10 = 59`（判据是轴对齐跨度而非像元个数），必零档是 60 不是 61。
+   本块按 60 写注释与臂，且把「闭区间」这件事写成可红的中间档 58/59。
+2. **阶梯的阈值组不是权威组**：派发 §2.2 的第一张表跑在 `hough_threshold=20` 上（界 55⇒2 / 60⇒0），第二张才是默认 50。
+   本刀主判据用默认 50 那一组（界 57⇒2 / 58⇒1 / 60⇒0），A2 另用 `min_line_length=20` 那一组跑阈值阶梯 ⇒ 两维各自单独翻。
+3. **B2 的「检出半径 ≈ 21」混了两件事**：`min_radius` 阶梯给的是 20 收 / 21 拒 ⇒ 检出的**浮点**半径夹在 `[20,21)`；
+   21 是 `cv::circle` 那一格 `cvRound` 后的**画布整型半径**，22 里还含 thickness=2 的一像元落笔外溢。
+   本节把这三段分开写，判据只用不变量（半径数不进断言）。
+4. **B3 的界不落在构造距离 20 上**：实测 d=19 仍给 2，且第二盘的画布中心相对真值偏 `(+1,-2)` ⇒ 合并界落在 `(17,19]`。
+   派发那句「detect_count 应少于盘的个数」成立，但**不能**据此声称钉住了硬编码的 20 ⇒ 判据取 17⇒1 / 25⇒2 这一对
+   （调小 ⇒ 近档翻成 2；调大 ⇒ 远档翻成 1，两个方向都可红），精确界登记进下面的未判项。
+
+**N185 立案复现（本刀只登记，不修 `src/**`，不把缺陷钉成契约；改前现读 `grep -rl "N185" docs tests src gui` = 1，
+唯一命中是本刀块内注释，docs/RELEASE.md 此前无该号条目 ⇒ 本节是仓库内首次登记）**：
+`max_radius` 默认 `0` 在产品里被写成 `INT_MAX`，而上游 `HOUGH_GRADIENT` 只对 `maxRadius <= 0` 走自动档
+（`maxRadius = std::max(rows, cols)`），正数**原样**进入半径估计阶段并按 `cvRound((maxRadius-minRadius)/dr*10)` 开
+`AutoBuffer<int> bins` ⇒ 天文数字分配 ⇒ `std::length_error("bad array new length")`；它前面还有一条早退
+`centerCnt == 0 return` ⇒ 用户视角的全部形态是「候选圆心一个都没有 ⇒ 成功且 `detect_count: 0`；命中至少一个 ⇒ 必抛」。
+本刀单变量对复现（120×80、圆心 (30,30)、真值半径 20 的实心盘，仓库内可复核的复现配方见本节末）：
+`--hough_type=circles --circle_param2=15 --min_radius=10` 留默认最大半径 ⇒ 进程 rc=1、stderr `bad array new length`、
+**产物不落盘**；同条命令加 `--max_radius=40` ⇒ rc=0、`detect_count: 1`；把 `circle_param2` 抬到 900（零候选）而留默认
+最大半径 ⇒ rc=0、`detect_count: 0`。⇒ 派发的因果链独立复现成立，一处补记：上游还有一条
+`if (nzSz < maxRadius * maxRadius)` 落在那条早退之后、`bins` 分配之前，`INT_MAX` 的平方在 `int` 里溢出，
+它不改变「一检出就抛」的结论，只说明这条路在早退之后还有第二处会被极大值碰到。
+**这条不是用法建议**：`circles` 支要给正 `max_radius` 是"当前唯一能拿到检出结果的路径"，缺陷本身留待拍板。
+
+**登记为未判项（本刀不判，写在这里以免丢失）**
+
+- **D2 Canny 阈值不可配**：`low_threshold`/`high_threshold` 两个键对 `hough` 不生效（产品的 Canny 硬编码 50/150），
+  文档参数表本来就没列这两键 ⇒ 不是漂移，但"边缘阈值不可配"今天没有任何判据（同 N182 家族）。
+- **`max_line_gap` 在本批夹具上「消费了但看不见」**：横/竖块的边缘都是连续实边，`max_line_gap` 取 1 与 10 产物逐格相同
+  ⇒ 它进了 `HoughLinesP` 的形参却没有可判的可见后果；要判得先造"边上有断口"的夹具（本刀不做）。
+- **B3 的精确合并界**：只钉住「阈值落在 17 与 25 之间」，`minDist=20` 那个字面值没被钉住（原因见上面第三处纠正）。
+- **地理参考**：`writeMatOutput → matToGdalTiff` 无条件沿用输入 GT，本刀不判产物 GT —— 照批次 D 既有裁定
+  （`geotransform_guard` 把期望数写死，新增判 GT 位点要同笔改守卫）。
+
+**验收配方实到**（`MSBUILDDISABLENODEREUSE=1 cmake --build build/debug --config Debug --target gis_tests` 后逐字跑）：
+定向大集合 43/43 全绿 41.80 s；`^PluginTest\.Processing` 30/30 全绿 6.07 s（本刀不新增 `TEST_F` ⇒ 条数不变）；
+`(CoverageMeta|CoverageMetaJudge)` 19/19 全绿（登记表改后复跑 2.60 s）；`ctest -C Debug -N` 的 `Total Tests:` 仍 802；
+真实腿九字段仍 `84/84/63/21/21/0/64/1/0`（`tests/real_data_matrix.txt` 第 5 列 `processing,hough` 保持 `none`
+——腿侧没有这条 case，改成 `real_regression` 就是假登记，R-D39；第 6 列 `gold` 是目标档不是现状态，没动）。
+三计数对撞（口径：`grep -c '^TEST_F'` 按行首、`grep -o 'EXPECT_'|wc -l` 与 `grep -o 'ASSERT_'|wc -l` 数出现次数含注释与
+字符串；改前从 `git show HEAD:tests/test_plugins.cpp` 的 blob 现读、改后从工作区现读，并与 python 按 `\r\n` 切分同口径对撞一致）：
+`TEST_F` 350→350、`EXPECT_` 2896→2972（+76）、`ASSERT_` 2027→2054（+27）；文件 27148→27654 个 CRLF、裸 LF 0、无 BOM。
+登记表六键改后 `126/116/10/117/15/101`（逐条用声明行行尾自带命令复跑，不重打 grep）。
+`data/` 两件套（开批时刻 = 本报告文件落笔时间 2026-11-02 20:00:13，现读 `python -c os.path.getmtime`）：
+`find data -type f -newermt "2026-11-02 20:00:13" | wc -l` = 0；`python build/tmp/batchD/check_data_baseline.py` 打印
+`BASELINE: 88 CURRENT: 88 DIFFS: 0`（本轮没运行 `gen_data_baseline.py`）。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
