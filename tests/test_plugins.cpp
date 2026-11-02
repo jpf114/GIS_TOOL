@@ -3820,7 +3820,9 @@ TEST_F(PluginTest, ProcessingTemplateMatchExecution) {
     struct GridFacts {
         int w = 0, h = 0;
         float minVal = 0.0f, maxVal = 0.0f;
-        cv::Point minLoc{-1, -1}, maxLoc{-1, -1};
+        // 两个 loc 必须与 minVal/maxVal 同种子取 (0,0)：极值恰好落在行主序第一格时严格 `>`/`<` 永不触发赋值，
+        // 此时 loc 会停在未赋值的哨兵值，而 `cv::minMaxLoc` 在同形状下返回 (0,0) ⇒ 跨通道互校会变成假分叉。
+        cv::Point minLoc{0, 0}, maxLoc{0, 0};
         int negativeCells = 0, openHalfCells = 0;
     };
     auto gridFacts = [&](const std::string& path, GridFacts& f) {
@@ -3872,7 +3874,9 @@ TEST_F(PluginTest, ProcessingTemplateMatchExecution) {
     EXPECT_EQ(metaOf(rCcoeff, "match_y"), std::to_string(kY0)) << "纵坐标同上一条推导";
     EXPECT_EQ(metaOf(rCcoeff, "match_score"), std::to_string(1.0))
         << "std::to_string(double) 是 %f 六位印法，1.0 是格点值。本刀臂日志实测该档峰值逐位等于 1.0f；"
-           "同族另一取法 (12,12) 的峰是 0.99999952，离舍入界 0.9999995 只剩 2e-8 ⇒ 取 (16,16) 就是为了不押那个余量";
+"同族另一取法 (12,12) 的峰是 0.99999952（= 1.0f − 8·2⁻²⁴，已是仍印成 1.000000 的最后一个格点），"
+           "离 %.6f 的舍入界 0.9999995 只剩 2.3163e-8（0.389 个 float ULP，再降一个格点就印成 0.999999）"
+           "⇒ 取 (16,16) 就是为了不押那个余量";
 
     // ==================== A3 产物是响应图、且本动作不做 /255 ===================
     auto outDs = gis::core::openRaster(output, true);
