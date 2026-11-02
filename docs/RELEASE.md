@@ -3970,6 +3970,9 @@ gold_rows_literal_slot 98`，`kPendingCeiling` 由 14 同步下调到 **13**，�
    `sigma = q1*q2*(mu1 - mu2)*(mu1 - mu2); if( sigma > max_sigma ) { max_sigma = sigma; max_val = i; }`
    ⇒ **并列时严格大于 ⇒ 保留最小下标**，返回值是一个真实存在的档值；随后 `THRESH_BINARY` 的口径是
    `src > thresh`（严格大于）⇒ **阈值那一档自己归背景**。
+   前提：`getThreshVal_Otsu_8u` 头上有 `CV_IPP_RUN_FAST`（`up_thresh.cpp`）⇒ 上面四条**只约束非 IPP 分支**；本构建是否走
+   IPP 未证，也不能拿“dll 里搜不到对应串”当证据（复审席正控：同一检索里 `getThreshVal` 也 0 命中，内部函数名根本不可按串
+   检索）⇒ 本文落点只写“实测落点（界 = 档 50 与档 0 各有一套实跑）与该 C++ 分支推导一致”，不承诺 IPP 分支同值。
 2. `contourArea` 的鞋带与 `CHAIN_APPROX_SIMPLE` 是否改变顶点集 —— 面积载体**不在** `contours.cpp`
    （该 tag 上 `grep -i area` 命中 0 处，那文件现在只剩 `findContours_legacy`），真实定义点是
    `modules/imgproc/src/shapedescr.cpp` 的 `double cv::contourArea( InputArray _contour, bool oriented )`：
@@ -3986,10 +3989,10 @@ gold_rows_literal_slot 98`，`kPendingCeiling` 由 14 同步下调到 **13**，�
 
 | 观察点 | 推得（首跑前写定） | 实跑 |
 |---|---|---|
-| f1 = 40×24 三级平台（u8 档 0/50/255，计数 240/480/240）的 Otsu 界 | `i=0` 处 `0.25*0.75*118.3333^2 = 2624.88`，`i=50` 处 `0.1875*221.6667^2 = 9217.58` ⇒ **界 = 50** | 命中（右半那一格 `(30,5)` 判背景） |
+| f1 = 40×24 三级平台（u8 档 0/50/255，计数 240/480/240）的 Otsu 界 | `i=0` 处 `0.25*0.75*118.3333^2 = 2625.52`，`i=50` 处 `0.1875*221.6667^2 = 9213.02` ⇒ **界 = 50**（档 51-254 为空 ⇒ i=50..254 全同分区同方差、i=254 实算同为 9213.02；严格大于取最小下标只决定返回值写作 50 而非 254，而 src>50 与 src>254 的前景集都只有档 255 ⇒ 产物不变 ⇒ tie-break 不是 Mean=0.25 成立的原因） | 命中（右半那一格 `(30,5)` 判背景） |
 | f1 产物 | 前景 = 左下象限 240 像元、`Mean = 240/960 = 0.25`、`total = 1` | 逐字相同 |
 | **209 保留 / 210 丢弃** | `(20-1)(12-1) = 209`，像素数 240 ⇒ 209 保留、210 整块丢弃、240 也丢弃 | **按此翻转**（两条形变臂各自把这三档打红） |
-| fOtsu = 40×12（u8 档 0/100/255，计数 240/192/48） | `i=0` 处 `8281.25 > i=100` 处 `3990.03` ⇒ **界 = 0** ⇒ 中间档进前景、`Mean = 240/480 = 0.5` | 命中（onepx 240、Mean 0.5） |
+| fOtsu = 40×12（u8 档 0/100/255，计数 240/192/48） | `i=0` 处 `4290.25 > i=100` 处 `3990.03` ⇒ **界 = 0** ⇒ 中间档进前景、`Mean = 240/480 = 0.5` | 命中（onepx 240、Mean 0.5） |
 | ⚠ 我的一处推算被自己的臂更正 | 原写"常数 127 在 fOtsu 上给 `Mean = 48/480 = 0.1`" | **实测是 0** ⇒ 那 4×12 窄岛面积 `(4-1)(12-1) = 33 < 100` 被 `min_area` 整条丢掉，我漏问了一层消费点 |
 | 岛件 52×12（u8 只有 0/255 两档） | `total = 2`、面积 `1*11 = 11` 与 `2*11 = 22` ⇒ `min_area` 0/11/12/23 的 kept 阶梯 2/2/1/0、onepx 60/60/36/0 | 逐字相同（12 档 `(31,6)=1.0` 对 `(11,6)=0.0`） |
 | 环件 40×24（外 24×16、内洞 12×8） | `RETR_EXTERNAL` ⇒ `total=1`、面积 345、`FILLED` 把洞填掉 ⇒ onepx 384、`Mean=0.4`、洞心 `(15,9)=1.0` | 逐字相同 |
@@ -3999,15 +4002,15 @@ gold_rows_literal_slot 98`，`kPendingCeiling` 由 14 同步下调到 **13**，�
 
 **臂清单与红条数**（口径 = `grep -oE "test_plugins\.cpp\(([0-9]+)\)" <日志> | sort -u | wc -l`，**括号不是冒号**；
 每臂日志都 tee 成文件并留 `EXIT_CODE=`，驱动单实例；`src/` 取证一律 `git show HEAD:<path>` + LF→CRLF 归一 +
-与工作树基线裸 sha 对拍，七臂每次还原都 `MATCH_BASELINE` 且 `git status` 空。日志留本机会话工作区，不入库）
+与工作树基线裸 sha 对拍，还原脚本与对拍逻辑在盘上留档，**逐臂对拍输出未留档**——本会话归档里检索不到任何一份逐臂还原的运行输出（该串只命中脚本本身与两份草稿文本；正控：`EXIT_CODE=` 命中 11 份臂日志，检索串对这类文件有效）⇒ 本节只主张“还原与对拍做过、逐臂输出未留档”。日志留本机会话工作区，不入库）
 
 | 臂 | 唯一改动 | 红条数 | 落点 |
 |---|---|---|---|
 | A0 干净对照 | 无 | **0**（`EXIT_CODE=0`） | 全绿底座；七臂跑完再跑一次 A0b 仍 0 |
-| ARM1 `min_area` 不消费 | `area >= minArea` 改成 `area >= minArea` 恒真 | **15** | B 族四档 + D 族阶梯 + 两条计数文案 |
+| ARM1 `min_area` 不消费 | `area >= minArea` 改成 `area >= minArea` 恒真 | **15** | B 族 210/240/1e9+1 三档 + D 族 0/11/12/23 阶梯里的 12/23 两档（缺省档与 -5 档、0/11 档两形皆绿不红）+ **一条**计数文案（210 档那条） |
 | ARM2 面积换像素数口径 | `cv::contourArea(contours[i])` → `cv::boundingRect(contours[i]).area()` | **14** | 与 ARM1 同形但少一条（`min_area=1e9+1` 那支：两种口径都丢光 ⇒ 不红） |
 | ARM3 `RETR_EXTERNAL`→`RETR_LIST` | findContours 的 mode 实参 | **2** | **只有环件**的 total 与 kept；另四件同产物 ⇒ 环件是唯一承重载体 |
-| ARM4 `cv::FILLED` → 线宽 1 | drawContours 的 thickness 实参 | **24** | 全族（A 族 onepx 240→60、E 族 384→76） |
+| ARM4 `cv::FILLED` → 线宽 1 | drawContours 的 thickness 实参 | **24** | A/B/C/D/E/F 六族（G 族失败契约 0 红；A 族 onepx 240→60、E 族 384→76） |
 | ARM5 去掉 `/255` | `convertTo(outFloat, CV_32F, 1.0/255.0)` → `convertTo(outFloat, CV_32F)` | **15** | 均值与 `1.0` 探针（残差 254/127/63.5）；整数 `onepx` 判据不红（`>0.5` 的口径对 255 同样为数 ⇒ 口径选择，不是漏判） |
 | ARM6 `OTSU` → 固定 127 | 把 `THRESH_BINARY 加 THRESH_OTSU` 与实参 0 换成 `THRESH_BINARY` 与实参 127 | **5** | **只在 fOtsu 那一族**；f1 与岛/环/band 四件同产物 ⇒ "跑 Otsu"与"写常数"在那些夹具上不可分辨，已照实写进文档 |
 | ARM7 `band` 被写死 1 | doContour 内 `readBandAsMat(input, band, …)` → `(input, 1, …)`（全文 6 处同名行只中本函数那 1 处） | **4** | F 族两格 + G 族 `band=9` 两条（连错误路径都不再发生） |
@@ -4030,6 +4033,8 @@ gold_rows_literal_slot 99`（= `gold_rows - gold_rows_table_driven`），不变�
 腿九字段现读 `84/84/63/21/21/0/64/1/0` 与开批**逐字相同**（本把没动腿）。
 块体计数（口径 = python 取本 `TEST_F` 到下一个 `TEST_F` 之间文本、正则 `\bEXPECT_[A-Z]+\(` 出现次数）：
 块 333 行、`EXPECT_*` **85** 条，其中 `EXPECT_NEAR` **26** 条（过 `GoldEvidenceIsAuditable` 第二条的就是这一类）。
+（修复轮只动注释与失败消息字面量：块 333→342 行、`EXPECT_*` 85 与 `EXPECT_NEAR` 26 不变；全文件三计数 `^TEST_F` 350 /
+`EXPECT_` 2851 / `ASSERT_` 2012 与 BASE 相同；`test_plugins.cpp` 行尾写回后现读 CRLF 26886 / 裸 LF 0 / 无 BOM。）
 行尾逐文件 python `newline=''` 现读后按工作树 CRLF 写回、UTF-8 无 BOM：`test_plugins.cpp` CRLF 26877 / 裸 LF 0、
 `action_gold_cases.txt` CRLF 177 / 裸 LF 0、`test_coverage_meta.cpp` CRLF 1825 / 裸 LF 0、
 `轮廓提取.md` CRLF 85 / 裸 LF 0（改前 60）。
@@ -4040,17 +4045,23 @@ gold_rows_literal_slot 99`（= `gold_rows - gold_rows_table_driven`），不变�
   f1 那几族的判据里不含这一维，别把它读成"Otsu 已被全面钉住"。
 - C-2 `RETR_EXTERNAL` 与 `RETR_LIST` 只在**带洞的环件**上可分辨（其余四件同产物）⇒ 这一维的覆盖等于那一条 case；
   环套环只判到"洞不独立成环"，没判"同心环只留最外圈"的更深情形。
-- C-3 计数消息只走 `progress.onMessage`，`CliProgress::onMessage` 打印即丢，`Result::message` 里是
-  `writeMatOutput` 那句通用文案 ⇒ 本把靠块内一个局部捕获式 reporter 才读到 `Contour extraction: … (area >= N)`；
-  这条契约今天只被这一个用例读，没进真实腿、也没进 `--help` 面。
-- C-4 `writeMatOutput` 的 NoData 传播支（输入声明过 NoData 且产物是 CV_32F 时把 NaN 换成声明值）本把**没有夹具**：
-  四件夹具都不声明 NoData，`toUint8` 也不产生 NaN ⇒ 该支今天不判（照实登记为"未做"，不是"做不了"）。
+- C-3 两个计数有**两条通道**：`Result::metadata` 的 `total_contours`/`kept_contours`（`writeMatOutput` 返回后写入，本块
+  `metaCount` 断言判的就是这两键，CLI 也把它们打到 stdout），与 `progress.onMessage` 那句计数文案（`CliProgress::onMessage`
+  写进 **stderr** 并记进 Logger 环形缓冲，不进 `Result::message`/stdout/metadata ⇒ 本把靠块内一个局部捕获式 reporter 才读到
+  `Contour extraction: … (area >= N)`；文案这条契约今天只被这一个用例读，没进真实腿、也没进 `--help` 面。
+- C-4 `writeMatOutput` 的 NoData 传播支（输入声明过 NoData 且产物是 CV_32F 时把 NaN 换成声明值）在 contour 上**构造性不可达**：
+  产物是 0/255 掩膜、`toUint8` 不产生 NaN ⇒ “该支不判”是支的性质、不是缺夹具。另开一条：**输入声明 NoData 时产物的 NoData
+  声明是否被带走**——这条才是今天可判的，本把无用例 ⇒ 登记为未判项。
 - C-5 本把**没测**同名 `.aux.xml` 边车把 `<NoDataValue>` 读回那条链（P4a 缺口里登记过的那一族）；
   只把"产物路径先清边车"写进用例前置，避免残留边车冒充判据。
-- C-6 `min_area` 的 ParamSpec 区间 `[0.0, 1e9]` 只在**直调层**判到"不拦"；CLI 层是否真拦、以及 `--help` 与
-  中文文档的区间描述是否一致，本把未取证 ⇒ 归参数边界口径那笔账，不在本把改判据。
+- C-6 `min_area` 的 ParamSpec 区间 `[0.0, 1e9]` 在**直调层**判到不拦。CLI 层真拦与否：**修复轮补实测**（直跑 Debug `gis-cli`）——
+  `--min_area=-5` 与 `1000000001` 都 rc=1 并打印“参数“最小面积”超出范围 [0, 1e+09]”，`0` 与 `1000000000` 放行 ⇒ 闸是**闭区间
+  [0, 1e9]、与 ParamSpec 声明同向**，不属“开口方向不一致”那族边界闸；`--help` 与中文文档都不印区间（两头缺、缺得一致）。
 - C-7 Release 树本把未重编 ⇒ **Release 侧未验收**（D1~D3 全段同样未验收）。
 - C-8 腿与矩阵未动 ⇒ `processing,contour` 的真实数据侧仍无 case；processing 余 **12** 条 PENDING（全表同为 12）。
+- C-9 第九条缺口（复审席实测、修复轮对档复核）：**8-连通对角接触的两块前景会被合成一条轮廓**——两块 5×5 仅角上相接时
+  `RETR_EXTERNAL` 给 `total=1`、多边形面积 32（不是两个 16）、`FILLED` 填 50 像元 ⇒ “两个目标被算成一个”这一维今天没有任何
+  判据（本块四件夹具全是列平台/矩形，任何两块至少隔着一列背景）。
 
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
