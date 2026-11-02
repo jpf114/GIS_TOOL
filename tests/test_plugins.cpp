@@ -3744,33 +3744,291 @@ TEST_F(PluginTest, ProcessingContourExecution) {
 }
 
 TEST_F(PluginTest, ProcessingTemplateMatchExecution) {
+    // ==================== D1-P5a：processing.template_match 的执行证据块（晋升 [:]GOLD） ====================
+    // 归属自证（CoverageMeta.GoldEvidenceIsAuditable 剥注释后核的两条）：本块里 `mgr_.find("processing")`
+    //   给出插件名，`params["action"] = std::string("template_match")` 给出动作槽，值级断言是下面的
+    //   EXPECT_NEAR（ccoeff 峰值那条与 sqdiff 谷值那条），不是注释。
+    // 夹具链（能推的部分全部写在这里，实测标定值只出现在注明「臂日志」的字面量旁边）：
+    //   源   = createPatternRaster 的 96x96 Byte 图案件（GT {116, 0.001, 0, 40, 0, -0.001}；255 只在
+    //          x,y 属于 [8, 87] 的窗口内由六条条件取并集置位，其中第一条是实心方块 x[18,34] 交 y[18,34]）；
+    //   模板 = 源在 (16,16) 处的 16x16 窗口。gdalBandToMat 把波段无条件读成 CV_32F，matToGdalTiff 走
+    //          CV_32F 支写出**单波段 Float32** 模板，档值仍是 {0.0, 255.0}；产品再 readBandAsMat 读回后
+    //          交给 toUint8，标度 255/(255-0) = 1.0 是二进制精确常数 ⇒ 档值原样回到 {0, 255}，不产生第三档。
+    //   取法必须是**非恒定**窗口：恒定窗口在 toUint8 里落进 `maxVal - minVal < 1e-10` 的 cv::Mat::zeros 支
+    //   （所以连「恒定 255」都会被抹成「恒定 0」），零方差模板让 TM_CCOEFF_NORMED 对每一格都给满分，
+    //   cv::minMaxLoc 于是在行主序第一格 (0,0) 收工 —— 那是假最优，不是定位。本刀的诊断臂把它钉成事实。
+    //   响应图尺寸取 OpenCV `matchTemplate` 的输出契约 (W-w+1)x(H-h+1)，跟源尺寸 96 不是一回事；
+    //   doTemplateMatch 在 `matchResult.convertTo(outFloat, CV_32F)` 这步**没有** 1.0/255 缩放因子
+    //   （对比 doContour/doHough 那些写了 `convertTo(..., 1.0/255.0)` 的动作）⇒ 产物值域是原始相关系数。
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
 
+    constexpr int kSrcSide = 96;
+    constexpr int kX0 = 16, kY0 = 16, kTplSide = 16;
+    constexpr int kGridSide = kSrcSide - kTplSide + 1;
+    constexpr int kSqdiffMaxX = 59, kSqdiffMaxY = 27;
+    // 峰值容差夹心：下界是浮点实现残差（同族另一取法实到 0.99999952，残差 4.8e-7 量级），
+    // 上界是「有人把 1.0/255 补进产品」后的 0.0039216（与 1.0 差 0.996，比容差大五个量级）。
+    constexpr double kPeakTol = 1e-5;
+
+    const fs::path dir = getTestDir();
+    std::error_code ec;
+    // 删同名残留并且**必须真删掉**：Windows 下只要还有一个数据集句柄攥着这个文件，fs::remove 就静默失败，
+    // 于是「产物不许存在」那几条会退化成「旧件还在所以判红」的假信号。所以这里把删除本身也钉住。
+    auto cleanStale = [&ec](const std::string& path) {
+        fs::remove(path, ec);
+        if (fs::exists(path)) ADD_FAILURE() << "同名残留删不掉（有句柄没放）: " << path;
+    };
+    // 直调插件不过框架的 validateParams + executeGuarded（那两层只在 CLI/GUI 路径上）⇒
+    // 失败形态有三种（success / fail:… / thrown:…），归一成一个字符串，判的是「哪条分支挡的」。
+    auto outcome = [&](const std::map<std::string, gis::framework::ParamValue>& callParams) {
+        try {
+            const auto r = p->execute(callParams, progress_);
+            return r.success ? std::string("success") : ("fail:" + r.message);
+        } catch (const std::exception& e) {
+            return std::string("thrown:") + e.what();
+        }
+    };
+    auto buildParams = [&](const std::string& in, const std::string& tplPath, const std::string& out,
+                           const std::string& method, int band) {
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("template_match");
+        params["input"] = in;
+        params["template_file"] = tplPath;
+        params["output"] = out;
+        if (!method.empty()) params["match_method"] = method;
+        if (band > 0) params["band"] = band;
+        return params;
+    };
+    auto runMatch = [&](const std::string& in, const std::string& tplPath, const std::string& out,
+                        const std::string& method, int band) {
+        cleanStale(out);
+        return p->execute(buildParams(in, tplPath, out, method, band), progress_);
+    };
+    auto outcomeOf = [&](const std::string& in, const std::string& tplPath, const std::string& out,
+                         const std::string& method, int band) {
+        cleanStale(out);
+        return outcome(buildParams(in, tplPath, out, method, band));
+    };
+    auto metaOf = [](const gis::framework::Result& r, const char* k) -> std::string {
+        auto it = r.metadata.find(k);
+        return it == r.metadata.end() ? std::string("<none>") : it->second;
+    };
+    // 整幅一次读出（逐格调 readRasterPixel 要开 6561 次数据集），行主序扫描求 argmax/argmin：
+    // 用严格 `>`/`<` ⇒ 并列时取行主序第一格，跟 cv::minMaxLoc 的取法同口径，
+    // 这样「测试自己扫出来的峰」才能跟产品报的峰直接对撞（A1 的跨通道一致性靠这个同口径才成立）。
+    struct GridFacts {
+        int w = 0, h = 0;
+        float minVal = 0.0f, maxVal = 0.0f;
+        cv::Point minLoc{-1, -1}, maxLoc{-1, -1};
+        int negativeCells = 0, openHalfCells = 0;
+    };
+    auto gridFacts = [&](const std::string& path, GridFacts& f) {
+        const std::vector<float> g = readRasterBandF32(path, f.w, f.h);
+        if (g.empty()) {
+            ADD_FAILURE() << "产物读不出来: " << path;
+            return;
+        }
+        f.minVal = g[0];
+        f.maxVal = g[0];
+        for (int i = 0; i < static_cast<int>(g.size()); ++i) {
+            const float v = g[i];
+            const int x = i % f.w, y = i / f.w;
+            if (v < f.minVal) { f.minVal = v; f.minLoc = cv::Point(x, y); }
+            if (v > f.maxVal) { f.maxVal = v; f.maxLoc = cv::Point(x, y); }
+            if (v < 0.0f) ++f.negativeCells;
+            if (v > 0.0f && v < 0.5f) ++f.openHalfCells;
+        }
+    };
+
     const std::string input = createPatternRaster("e2e_template_match_input.tif");
-    const std::string templatePath = utf8PathString(getTestDir() / "e2e_template_match_template.tif");
-    const std::string output = utf8PathString(getTestDir() / "e2e_template_match_output.tif");
+    const std::string templatePath = utf8PathString(dir / "e2e_template_match_template.tif");
+    const std::string output = utf8PathString(dir / "e2e_template_match_output.tif");
 
     auto inputDs = gis::core::openRaster(input, true);
     ASSERT_NE(inputDs, nullptr);
+    EXPECT_EQ(inputDs->GetRasterXSize(), kSrcSide) << "源尺寸是夹具的一部分，夹具被动了上面整段推导就不成立";
+    EXPECT_EQ(inputDs->GetRasterYSize(), kSrcSide);
     cv::Mat src = gis::core::gdalBandToMat(inputDs.get(), 1);
-    cv::Mat tpl = src(cv::Rect(18, 18, 16, 16)).clone();
+    cv::Mat tpl = src(cv::Rect(kX0, kY0, kTplSide, kTplSide)).clone();
+    // 夹具自检：模板必须非恒定（否则整个 A1 退化成假最优档），且档值必须只有 0/255 两个值
+    double tplMin = 0.0, tplMax = 0.0;
+    cv::minMaxLoc(tpl, &tplMin, &tplMax);
+    ASSERT_GT(tplMax, tplMin) << "模板非恒定是夹具性质，取法被改动时先在这里断掉";
+    ASSERT_DOUBLE_EQ(tplMin, 0.0) << "窗口必须含背景格，否则归一化走的是 maxVal-minVal < 1e-10 那一支";
+    ASSERT_DOUBLE_EQ(tplMax, 255.0);
     gis::core::matToGdalTiff(tpl, input, templatePath, 1);
+    auto tplDs = gis::core::openRaster(templatePath, true);
+    ASSERT_NE(tplDs, nullptr);
+    EXPECT_EQ(tplDs->GetRasterCount(), 1)
+        << "matToGdalTiff 恒写单波段 ⇒ A6 的「模板没有第二个波段」靠这一条立住";
 
-    std::map<std::string, gis::framework::ParamValue> params;
-    params["action"] = std::string("template_match");
-    params["input"] = input;
-    params["template_file"] = templatePath;
-    params["output"] = output;
-    params["match_method"] = std::string("ccoeff_normed");
+    // ==================== A1 唯一峰值定位（本刀主判据）====================
+    const auto rCcoeff = runMatch(input, templatePath, output, "ccoeff_normed", 0);
+    ASSERT_TRUE(rCcoeff.success) << "ccoeff_normed 档失败: " << rCcoeff.message;
+    ASSERT_TRUE(fs::exists(output)) << "成功档必须落盘: " << output;
+    EXPECT_EQ(metaOf(rCcoeff, "match_x"), std::to_string(kX0))
+        << "模板就是源在 (16,16) 的那扇窗口，完全重合处取相关最大值 ⇒ 报的横坐标必须是窗口起点";
+    EXPECT_EQ(metaOf(rCcoeff, "match_y"), std::to_string(kY0)) << "纵坐标同上一条推导";
+    EXPECT_EQ(metaOf(rCcoeff, "match_score"), std::to_string(1.0))
+        << "std::to_string(double) 是 %f 六位印法，1.0 是格点值。本刀臂日志实测该档峰值逐位等于 1.0f；"
+           "同族另一取法 (12,12) 的峰是 0.99999952，离舍入界 0.9999995 只剩 2e-8 ⇒ 取 (16,16) 就是为了不押那个余量";
 
-    const auto result = p->execute(params, progress_);
-    EXPECT_TRUE(result.success) << result.message;
-    EXPECT_TRUE(fs::exists(output));
-    ASSERT_TRUE(result.metadata.count("match_x"));
-    ASSERT_TRUE(result.metadata.count("match_y"));
+    // ==================== A3 产物是响应图、且本动作不做 /255 ===================
+    auto outDs = gis::core::openRaster(output, true);
+    ASSERT_NE(outDs, nullptr);
+    ASSERT_EQ(outDs->GetRasterXSize(), kGridSide) << "产物宽度是响应图契约 W-w+1 = 96-16+1，不是源宽 96";
+    ASSERT_EQ(outDs->GetRasterYSize(), kGridSide) << "两维各判一次，防「顺手只判一维」";
+    outDs.reset();   // 句柄要放，否则后面 reuse 同一个 output 名的档位删不掉残留
+    GridFacts cc;
+    gridFacts(output, cc);
+    EXPECT_NEAR(static_cast<double>(cc.maxVal), 1.0, kPeakTol)
+        << "峰值就是相关系数本身；若有人把 1.0/255 补进 doTemplateMatch，这里读到 0.0039216 ⇒ 必红";
+    EXPECT_EQ(cc.maxLoc.x, kX0) << "测试自己扫出来的峰位必须等于产品报的峰位（跨通道一致性）";
+    EXPECT_EQ(cc.maxLoc.y, kY0);
+    EXPECT_EQ(metaOf(rCcoeff, "match_x"), std::to_string(cc.maxLoc.x)) << "metadata 与产物不许各说一套";
+    EXPECT_EQ(metaOf(rCcoeff, "match_y"), std::to_string(cc.maxLoc.y));
+    // 「产物不是 0/1 掩膜」：TM_CCOEFF_NORMED 的定义是均值扣除后的两向量夹角余弦 ⇒ 值域 [-1,1]，
+    // 图案源里必然存在与这扇窗口反相关的位移 ⇒ 有负格；另有落在 (0,0.5) 开区间的格。
+    // 只判符号/开区间（「存在」），不押具体数：-0.69621348 与 3777 两个读数只进臂日志与本注释。
+    EXPECT_LT(static_cast<double>(cc.minVal), 0.0) << "响应图必须带负相关格，掩膜件不会";
+    EXPECT_GT(cc.negativeCells, 0) << "负格存在 ⇒ 产物不是 {0,1} 两档掩膜";
+    EXPECT_GT(cc.openHalfCells, 0) << "(0,0.5) 开区间内必须有格，否则产物退化成了阈值图";
+    EXPECT_NE(static_cast<double>(readRasterPixel(output, 0, 0)), 1.0)
+        << "峰值不在左上角：这一条把 A1 跟「恒定模板处处满分、位置退回 (0,0)」那档切开";
+
+    // ==================== A2 min/max 选支双向可红（本刀最重要的反事实判据）====================
+    const auto rSqdiff = runMatch(input, templatePath, output, "sqdiff", 0);
+    ASSERT_TRUE(rSqdiff.success) << "sqdiff 档失败: " << rSqdiff.message;
+    EXPECT_EQ(metaOf(rSqdiff, "match_x"), std::to_string(kX0))
+        << "同一对件换 sqdiff：完全重合处平方差取**最小值** ⇒ 产品必须走 minLoc 那一支";
+    EXPECT_EQ(metaOf(rSqdiff, "match_y"), std::to_string(kY0));
+    EXPECT_NEAR(static_cast<double>(rSqdiff.metadata.count("match_score")
+                    ? std::stod(metaOf(rSqdiff, "match_score")) : -1.0), 0.0, kPeakTol)
+        << "值级断言：sqdiff 峰值处的平方差数学值是 0（臂日志实到最小格 0.00000009，"
+           "是 OpenCV 分块展开式求和残差，离 %f 舍入界 5e-7 还有 5.6 倍余量）";
+    EXPECT_EQ(metaOf(rSqdiff, "match_score"), std::to_string(0.0))
+        << "印法口径同 match_score 那条：0.0 是格点值，六位在 1e-5 档内";
+    GridFacts sq;
+    gridFacts(output, sq);
+    EXPECT_EQ(sq.minLoc.x, kX0) << "测试自己扫出来的 argmin 必须等于产品报的格";
+    EXPECT_EQ(sq.minLoc.y, kY0);
+    // 这一条是 A2 不沦为恒真断言的承重件：把「最大值位置 ≠ 最小值位置」钉成独立期望。
+    // (59, 27) 是**臂日志实测标定值**（第二轮臂：等于最大值的格数 = 1、无并列，值 14240475.0），
+    // 它唯一的用途是写明「若删掉产品里 `if (method == TM_SQDIFF || method == TM_SQDIFF_NORMED)
+    // matchLoc = minLoc;` 这一支、改走 maxLoc，match_x/match_y 必须变成 59/27、score 变成
+    // 14240475.000000」⇒ 59/27 与 16/16 不同，上面三条才具备变红的能力。
+    EXPECT_EQ(cc.maxLoc.x, sq.minLoc.x) << "两档的峰必须落在同一格（ccoeff 的峰 == sqdiff 的谷）";
+    EXPECT_EQ(cc.maxLoc.y, sq.minLoc.y);
+    EXPECT_EQ(sq.maxLoc.x, kSqdiffMaxX) << "sqdiff 响应图的最大值格横坐标（标定值，口径见上一条注释）";
+    EXPECT_EQ(sq.maxLoc.y, kSqdiffMaxY);
+    EXPECT_NE(sq.maxLoc.x, sq.minLoc.x) << "同一张响应图上峰与谷不同位 ⇒ min/max 选支方向是可判的";
+    EXPECT_NE(static_cast<double>(sq.maxVal), static_cast<double>(sq.minVal))
+        << "峰谷取值也必须不同（谷是 1e-7 量级、峰是 1.4e7 量级）";
+    EXPECT_LT(static_cast<double>(cc.minVal), static_cast<double>(cc.maxVal))
+        << "ccoeff 档同样必须峰谷异值，防「整张响应图被抹成常数」这种退化混过 A2";
+
+    // ==================== A8 metadata 键齐全性 + 模板尺寸两键 ====================
+    for (const char* k : {"match_x", "match_y", "match_score", "template_width", "template_height"}) {
+        EXPECT_NE(rCcoeff.metadata.count(k), 0u) << "缺键 " << k;
+    }
+    EXPECT_EQ(metaOf(rCcoeff, "template_width"), std::to_string(kTplSide))
+        << "两键取自夹具构造时的 Rect 宽高，格点值、非标定";
+    EXPECT_EQ(metaOf(rCcoeff, "template_height"), std::to_string(kTplSide));
+
+    // ==================== A7 文案两套通道（照 P4c MF-3 已定口径，不自己发明）====================
+    EXPECT_EQ(rCcoeff.message, std::string("Processing completed successfully"))
+        << "成功文案只来自 writeMatOutput；`Template match found at (x, y) with score ...` 与 "
+           "`Running template matching...` 只调 progress.onMessage（stderr + Logger），不进 Result::message";
+    int sentenceLeak = 0;
+    for (const auto& kv : rCcoeff.metadata) {
+        if (kv.second.find("Template match found") != std::string::npos ||
+            kv.second.find("Running template matching") != std::string::npos) ++sentenceLeak;
+    }
+    EXPECT_EQ(sentenceLeak, 0) << "onMessage 文案也不许出现在 metadata 的任何值里";
+    EXPECT_NE(metaOf(rCcoeff, "match_score"), rCcoeff.message) << "两通道不许互相顶替";
+
+    // ==================== A4 模板大于源的失败契约 ====================
+    {
+        const std::string small = createPatternRaster("d1p5a_tm_small_src_24x24.tif", 24, 24);
+        const std::string smallOut = utf8PathString(dir / "d1p5a_tm_a4_out.tif");
+        const std::string bigTpl = utf8PathString(dir / "d1p5a_tm_big_template_40x40.tif");
+        gis::core::matToGdalTiff(src(cv::Rect(8, 8, 40, 40)).clone(), small, bigTpl, 1);
+        auto sds = gis::core::openRaster(small, true);
+        ASSERT_NE(sds, nullptr);
+        ASSERT_LT(sds->GetRasterXSize(), 40) << "本档前提是模板真比源大，前提破了判据就空转";
+        const std::string a4 = outcomeOf(small, bigTpl, smallOut, "ccoeff_normed", 0);
+        EXPECT_EQ(a4, std::string("fail:Template is larger than source image"))
+            << "尺寸早退在 writeMatOutput 之前，文案就是 doTemplateMatch 函数体里那一句原文";
+        EXPECT_FALSE(fs::exists(smallOut)) << "该支不产生产物（跑前已 fs::remove 同名残留，防旧件伪装成写了）";
+        // 承重方向：源/模板对调 ⇒ 40x40 源装 24x24 模板 ⇒ 该支不再触发 ⇒ 上面两条必红
+        const std::string swapOut = utf8PathString(dir / "d1p5a_tm_a4_swap_out.tif");
+        const auto swapped = runMatch(bigTpl, small, swapOut, "ccoeff_normed", 0);
+        EXPECT_TRUE(swapped.success) << "对调档应当正常成功: " << swapped.message;
+        EXPECT_TRUE(fs::exists(swapOut)) << "对调档必须落盘，否则上一条 success 是假的";
+        EXPECT_NE(swapped.metadata.count("template_width"), 0u)
+            << "对调后模板变成那个 24x24 的源，成功路径的 template_width 照旧要写";
+        EXPECT_EQ(metaOf(swapped, "template_width"), std::to_string(24))
+            << "两键取的是**模板**的宽高：对调档里模板是 24x24 ⇒ 这里顺手钉住「写的是模板尺寸不是源尺寸」";
+    }
+
+    // ==================== A5 三个必填键的失败契约（同族三条，早退不过 writeMatOutput）====================
+    {
+        std::map<std::string, gis::framework::ParamValue> base;
+        base["action"] = std::string("template_match");
+        base["input"] = input;
+        base["template_file"] = templatePath;
+        base["output"] = output;
+        const std::pair<const char*, const char*> expected[] = {
+            {"input", "fail:input is required"},
+            {"output", "fail:output is required"},
+            {"template_file", "fail:template_file is required"},
+        };
+        for (const auto& e : expected) {
+            auto q = base;
+            q.erase(e.first);
+            cleanStale(output);
+            EXPECT_EQ(outcome(q), std::string(e.second))
+                << "缺 " << e.first << " 走的是 doTemplateMatch 开头的 empty() 早退，"
+                   "不调 writeMatOutput ⇒ 文案与成功路径的 `Processing completed successfully` 是两套";
+            EXPECT_FALSE(fs::exists(output)) << "早退档不许留产物";
+        }
+    }
+
+    // ==================== A6 `band` 同用于模板这一次要读点（参数覆盖判据）====================
+    {
+        const std::string twoBand = createColumnPlateauRaster(
+            "d1p5a_tm_band_probe_40x24.tif", 40, 24, {0, 10, 20, 30, 40},
+            {{0.0f, 255.0f, 0.0f, 255.0f}, {255.0f, 0.0f, 255.0f, 0.0f}});
+        auto bandDs = gis::core::openRaster(twoBand, true);
+        ASSERT_NE(bandDs, nullptr);
+        ASSERT_EQ(bandDs->GetRasterCount(), 2) << "源必须有两个波段，否则 band=2 会在**源**上先抛同一句话";
+        const std::string bandTpl = utf8PathString(dir / "d1p5a_tm_band_template.tif");
+        cv::Mat band1Mat = gis::core::gdalBandToMat(bandDs.get(), 1);
+        gis::core::matToGdalTiff(band1Mat(cv::Rect(4, 4, kTplSide, kTplSide)).clone(), twoBand, bandTpl, 1);
+        const std::string bandOut = utf8PathString(dir / "d1p5a_tm_a6_out.tif");
+        // 同族正控：同一对件、只把 band 改回 1 ⇒ 必须成功 ⇒ 证明下面的失败是「模板没有波段 2」造成的
+        const auto okBand1 = runMatch(twoBand, bandTpl, bandOut, "ccoeff_normed", 1);
+        ASSERT_TRUE(okBand1.success) << "band=1 正控失败 ⇒ 是夹具坏了，不是参数覆盖问题: " << okBand1.message;
+        ASSERT_TRUE(fs::exists(bandOut));
+        {
+            auto b1Ds = gis::core::openRaster(bandOut, true);
+            ASSERT_NE(b1Ds, nullptr);
+            EXPECT_EQ(b1Ds->GetRasterXSize(), 40 - kTplSide + 1)
+                << "正控顺手复核尺寸公式在**非方形**件上的两维（40x24 源 + 16x16 模板 ⇒ 25x9）；"
+                   "两维取不同值是因为方阵上 (cols, rows) 写反是等价变异";
+            EXPECT_EQ(b1Ds->GetRasterYSize(), 24 - kTplSide + 1);
+        }   // 句柄在这里放掉，否则 band=2 那档的「产物不许半写」会被自己的残留句柄挡住
+        const std::string band2 = outcomeOf(twoBand, bandTpl, bandOut, "ccoeff_normed", 2);
+        // 实到形态是上游 gdalBandToMat 的 `throw GisError("Cannot get band " + std::to_string(bandIndex))`。
+        // 另一支候选 `无法读取模板栅格数据: ` 不会发生：那句的前置是 readBandAsMat **返回空 Mat**，
+        // 而带号越界在 gdalBandToMat 的 GetRasterBand 空指针处就先抛了；空 Mat 只可能来自 0 尺寸波段，
+        // TIFF 里没有那种形状 ⇒ 那句在本档构造性不可达（两轮臂各跑一次，只出现 thrown: 形态）。
+        EXPECT_EQ(band2, std::string("thrown:Cannot get band 2"))
+            << "源有波段 2（上面 ASSERT 过）、模板只有波段 1 ⇒ 抛点只能在模板那一次 readBandAsMat";
+        EXPECT_FALSE(fs::exists(bandOut)) << "抛点在读带阶段（在 writeMatOutput 之前），产物不许半写";
+    }
 }
-
 TEST_F(PluginTest, ProcessingPansharpenExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
