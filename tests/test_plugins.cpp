@@ -3405,8 +3405,14 @@ TEST_F(PluginTest, ProcessingConnectedComponentsHonoursConnectivityParameter) {
 
     // ── 批次 D P7a：登记行 `processing,connected_components` 的 [:]GOLD 证据位 ──
     // 上面两条只数"有几个组件"（走 metadata 字符串）。本段把同一件事钉到**标签格点**上：
-    // `cv::connectedComponents` 按行主序给每个新组件发下一个编号 ⇒ 含像元 (0,0) 的那块恒得标签 1，
-    // 背景恒为 0。夹具的四枚前景是 A={(0,0),(1,0)}、B={(2,1),(3,1)}，只对角相接 ⇒
+    // 背景恒为 0 是上游公开语义；"按行主序给每个新组件发下一个编号"**不是**——它是 OpenCV 4.14 的**实现细节**：
+    //   串行支由两遍扫描的第一遍按块行主序扫 + `flattenL` 里 `LabelT k = 1;` 起连续重编号；
+    //   并行支走另一套发号机器（`connectedComponents_sub1` 的 `is_parallel` 取 `cv::getNumThreads()` 与
+    //   `L.rows / nThreads >= 2`，一旦为真就改用 `stripeFirstLabel8Connectivity` 的条带首号）。
+    // ⇒ "含像元 (0,0) 的那块恒得标签 1"是**版本与线程数限定**的：换上游版本或换并行分派都可能红。
+    //   对用户只承诺"背景为 0、各区域标签是互不相同的正整数"；本块拿标签几何判的是 4 与 8 的**差异**，
+    //   不是编号顺序本身（这条与本块上方"不把 Otsu 的具体取值写进断言 = 不把上游实现细节当契约"同口径）。
+    // 夹具的四枚前景是 A={(0,0),(1,0)}、B={(2,1),(3,1)}，只对角相接 ⇒
     //   8 连通（含被归一的那些取值）⇒ A、B 并成同一标签 1；4 连通 ⇒ A=1、B=2。
     // ⇒ 这条承载不经 metadata 字符串，是"connectivity 根本没被读"的直接否证位。
     // 零容差为什么可行：产物是 `labels.convertTo(outFloat, CV_32F)` 的标签矩阵，
@@ -3466,10 +3472,17 @@ TEST_F(PluginTest, ProcessingConnectedComponentsHonoursConnectivityParameter) {
     EXPECT_DOUBLE_EQ(labelsOf(utf8PathString(getTestDir() / "cc_sep_4_output.tif"))[12], 2.0)
         << "分离件里 B 恒得标签 2（行主序第二块），与连通性取值无关";
 
-    // 边界档：全零前景 ⇒ 组件数必须是 0（常数件上 Otsu 取阈值 0 ⇒ 没有前景像元 ⇒
-    // `cv::connectedComponents` 只给出背景标签 0 ⇒ 产品减掉背景后报 0，而不是报 -1 或 1）。
-    // ⚠ 这一档**不是** `std::max(0, componentCount - 1)` 那个下界的载体：connectedComponents 恒返回 >= 1
-    //   （背景本身就占一个标签）⇒ N==0 不可达、下界是死防御 ⇒ 如实登记，不假装判它。
+    // 边界档：全零前景 ⇒ 组件数必须是 0。**第一因在 `toUint8` 而不在 Otsu**：`opencv_wrapper.cpp` 里 `toUint8`
+    //   的退化支（`maxVal - minVal < 1e-10` ⇒ 整幅 `Mat::zeros`）让**任何常数件**在进 Otsu 之前就已全 0——
+    //   本仓文档「处理流程」第 2 步早就把这一环写对了（"全幅为常数时整幅写 0"），注释此前把功劳记在 Otsu
+    //   头上 ⇒ 文档对、注释错，同一把刀内部不一致。其后 Otsu 在常数件上取阈值 0（4.14 里那个把每个 i 都
+    //   `continue` 掉的直方图判据 + `ithresh = 0` 不触发捷径 ⇒ `THRESH_BINARY` 的 `src > 0` 全不成立）
+    //   是**第二道**同向闸。⇒ `cv::connectedComponents` 只给出背景标签 0 ⇒ 产品减掉背景后报 0，而不是报 -1 或 1。
+    // ⚠ 别把这一档读成"Otsu 保证无前景"：它保证的是"常数件全 0"，两者不等价。
+    // ⚠ 这一档**不是** `std::max(0, componentCount - 1)` 那个下界的载体。`connectedComponents` 恒返回 ≥ 1 的
+    //   保证来自上游 `flattenL` 的 `LabelT k = 1;`（发号从 1 起连续，返回值是"最大标签 + 1"）——即使一格背景都
+    //   没有（前景铺满整幅）返回值也是 2 而不是 1，所以"背景本身就占一个标签"不是这里的依据。
+    //   ⇒ N==0 今天不可达、下界是死防御 ⇒ 如实登记，不假装判它。
     std::vector<float> allZero(16, 0.0f);
     const std::string zeroInput =
         gis::tests::writeFloatRaster(getTestDir(), "cc_allzero_input.tif", 4, 4, allZero, options);
@@ -7663,10 +7676,22 @@ TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
 // （`kNumericAssertions` = `EXPECT_NEAR / EXPECT_FLOAT_EQ / EXPECT_DOUBLE_EQ`）里没有 `EXPECT_EQ`
 // ⇒ 判过也不记数，这一行因此一直挂着 PENDING。本刀两件事一起做，只做前一件就是 shape gaming：
 //   ①（做账）把**已经有数值承载力**的整数判据改写成守卫认的宏族 ⇒ W2；
-//   ②（补真判据）把这块原先没判到的产品事实补上 ⇒ W1 谷线进产物、W3 正标签去重集合不被重新编号、
+//   ②（补真判据）把这块原先没判到的产品事实补上 ⇒ W1 上游的 -1 写法进产物、W3 正标签去重集合不被重新编号、
 //      W4 计数口径双向可红、W5 `marker_input` 恒读第 1 波段。
 // 已知**不承重**项（别拿本块去判这两条）：把 `doWatershed` 产出段那段 `label > 1` 去重计数搬到
-// `cv::watershed` **之前**是一个可存活的等价变异（实测变异轮 6/6 全绿、变异体已还原）⇒ W4 判"口径"不判"时序"；
+// `cv::watershed` **之前**，在**本块夹具几何**上是可存活的等价变异——条件句要写全：
+//   「每个 `> 1` 的标签至少有一格不在最外一圈」成立时，搬前搬后的正标签集合相等。
+// 依据是 4.14 上游的写入面：`segmentation.cpp` 里 `const int WSHED = -1;` 与那句
+//   「draw a pixel-wide border of dummy "watershed" (i.e. boundary) pixels」的两个循环**无条件**把最外一圈
+//   写成 -1（行首行尾各一次），此外对标记矩阵的赋值只有出队那句 `CV_Assert( lab != 0 ); m[0] = lab;`——
+//   而入队判据（同一文件里那四个 `if( m[...] == 0 )` 与初始阶段的 `m[0] == 0 && ...`）全要求**原值为 0**，
+//   另有一句 `if( m[0] < 0 ) m[0] = 0;` 只把**负**标记抹平。⇒ 上游不重新编号、不合并、不新增正标签，
+//   搬后的 `> 1` 集合 ⊆ 搬前的集合，相等 iff 没有哪枚正标签被最外一圈**独占**。
+// 本块实测：标签 2 与 5 各 25 格，两枚 rect 都在 [1,30]×[1,22] 内（离边框 ≥ 1 像元）⇒ 等价成立。
+// ⚠ 这句**不是无条件的**：外部标记支若把某枚种子整枚放进最外一圈，搬前会多算 1 ⇒ 本免责随即失效；
+//   自动标记支受同一条约束（它的标签是 `connectedComponents` 之后整体 +1 得到的 {2..k+1}，没有额外的不对称）。
+// ⚠ 先前记的"变异轮 6/6 全绿"**论域未定义**：那个 6 是 `ctest -R Watershed` 的名字过滤条数，**含 terrain
+//   插件的同名另一实现**（本刀在本节别处已纠正过它的归属），与本动作单实例族 5/5 不是同一论域 ⇒ 不能用它给本行签字。
 // 自动标记支的 `markers += 1` 顺序由同族的 `ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin` 块承担，本块不重复。
 TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels) {
     auto* p = mgr_.find("processing");
@@ -7720,17 +7745,25 @@ TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels) 
     // ── W2（做账）标记透传：三条整数判据从 `EXPECT_EQ` 换成 `EXPECT_DOUBLE_EQ`，判的内容一个字没变。──
     // 读成 `float` 而不是先 `static_cast<int>`：这条要钉的就是"产物里那枚浮点值"，先取整会把
     // "标签被当成连续量处理（写成 1.9999、或者带上了拉伸）"这一类缺陷吃掉。
-    // 零容差（用 `EXPECT_DOUBLE_EQ` 而不是 `EXPECT_NEAR(..., 1e-6)`）为什么安全——三步都在本仓源码里读得到：
+    // 零容差（用 `EXPECT_DOUBLE_EQ` 而不是 `EXPECT_NEAR(..., 1e-6)`）为什么安全——前两跳在本仓源码里读得到，
+    //   第三跳里"GTiff 拿默认"这一半**不在本仓**、只能在本刀产物上现读坐实（下面 (1) 标了各自的证据位）：
     //   (1) 产物波段是 `GDT_Float32` 单波段：`gis::core::matToGdalTiff` 先用
     //       `createRaster(dstPath, mat.cols, mat.rows, 1, GDT_Float32)` 建盘，再对 `CV_32F` 的标签矩阵按
-    //       `GDT_Float32` 整幅 `RasterIO(GF_Write, ...)`；`createRaster` 透给驱动的创建选项是 `nullptr`
-    //       ⇒ GTiff 走默认（不压缩、不量化）⇒ 没有"写进去的位被换掉"这条路。
+    //       `GDT_Float32` 整幅 `RasterIO(GF_Write, ...)`；`createRaster` 透给驱动的创建选项是 `nullptr`。
+    //       ⚠ 仓内能证到的只有"没给驱动任何创建选项"这一半；"GTiff 默认不压缩、不量化"是**驱动侧默认**，
+    //       本仓源码里读不到 ⇒ 改在本刀产物上现读坐实：`Compression=1`(None) / `BitsPerSample=32` /
+    //       `SampleFormat=3`(IEEE float) / `SamplesPerPixel=1` / `StripByteCounts=3072 = 32*24*4`。
+    //       ⇒ 结论（"写进去的位不会被换掉"）保留，但它的证据等级是"现读产物"，不是"仓内可推"。
     //   (2) 标签→float 无损：产品写的是 `static_cast<float>(label)`，而 IEEE754 binary32 的尾数（含隐藏位）
     //       共 24 位 ⇒ 所有 |n| <= 2^24 = 16777216 的整数逐位精确。本块产物的取值只有 -1、0 和标记给的
     //       1/2/5，最大绝对值 5 距那个上界还有 3355443 倍 ⇒ 一次舍入都不会发生。
     //   (3) 读回不缩放：`readRasterPixel` 与 `readRasterBandF32` 都按 `GDT_Float32` 缓冲读同类型波段、
     //       bufW/bufH 与窗口宽高相等（不重采样）；GDAL 的 `RasterIO` 不应用波段的 scale/offset，而
-    //       `matToGdalTiff` 全程没有 `SetScale/SetOffset`，夹具也没声明 NoData ⇒ 连 NoData 回填都不触发；
+    //       `matToGdalTiff` 全程没有 `SetScale/SetOffset`；回填 NoData 那段在 `writeMatOutput`（本动作走的就是它，
+    //       且只把 **NaN** 格换成源 NoData 值），继承 NoData 值那段才在 `matToGdalTiff`（`GetNoDataValue` 读源波段
+    //       再 `SetNoDataValue` 写给产物）——两处都要求**源波段声明过 NoData**，而夹具没声明
+    //       （`raster_fixture.h` 的 `RasterFixtureOptions` 默认 `hasNoData = false`，本块的 `writeFloatRaster`
+    //       一次都没传 options ⇒ 两条都不触发。
     //       float→double 的提升同样逐位精确。
     //   ⇒ 三跳合起来是"写进去的位和读出来的位是同一批位"，所以这里**该**用精确相等：加容差反而会放走
     //      "标签被当连续量处理"那一类缺陷。⚠ 这个论证只覆盖**整型标签**，不许外推到本插件的连续量产物
@@ -7760,12 +7793,19 @@ TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels) 
     EXPECT_EQ(productWidth, w) << observed;
     EXPECT_EQ(productHeight, h) << observed;
 
-    // ── W1（新增）谷线真的进了产物：产物里必须出现负值格，而且那个值就是 -1.0。──
-    // 判"存在"不判"几格"：谷线厚度由 `cv::watershed` 按梯度决定、随影像几何漂 ⇒ 把格数写成期望就是标定常量。
+    // ── W1（新增，补审轮改准归因）上游的 -1 写法进了盘：产物里必须出现负值格，而且那个值就是 -1.0。──
+    // ⚠ 载体口径：本夹具的负值格**全部**来自 `cv::watershed` 无条件写死的**最外一圈**（32*2 + 22*2 = 108 格），
+    //   不是"两个盆之间划了分界"——A、B 被确定背景标签 1 整圈隔开、从未相遇。两枚独立复算都给
+    //   `neg_total=108`、`neg_on_ring=108`、`neg_interior=0`（控制器一次、补审席一次）。
+    // ⇒ 这条钉的是"产品把 -1 原样透传进产物"，它在"两盆从不分界"的任何几何下都照样绿 ⇒ **不许**拿它当
+    //   "分水岭划出了分界"的证据（那是本块第一版写错的地方，登记在此防止被读回去）。
+    // 判"存在"不判"几格"：外圈格数虽然可推，但把它写成期望钉的是**上游的边框行为**、不是本动作的语义。
+    //   真要判"两盆分界"得另造一档让**未知(0)带夹在两枚种子之间**的标记件（现在这条未知带 y∈[10,12] 两侧
+    //   邻的都是标签 1，中间不可能相遇）⇒ 登记为**可判而未判**，配方写在这里，本刀不做。
     // "没扫到"与"扫到了但值不是 -1"必须是两条不同的红，所以发现用 `value < 0.0f`（判负）、
     // 钉值用 `EXPECT_DOUBLE_EQ(探针, -1.0)`（判等），两件事分开写。
-    // 探针初值取 NaN，**不取 -1**：这幅产物的合法取值里就有 -1（谷线本身），拿 -1 当"没找到"的哨兵会把
-    // "存在谷线"和"一格都没扫到"混成同一件事（`raster_fixture.h` 里 `unreadablePixelValue()` 取 NaN 是同一个理由）。
+    // 探针初值取 NaN，**不取 -1**：这幅产物的合法取值里就有 -1（边框本身），拿 -1 当"没找到"的哨兵会把
+    //   "存在负值"和"一格都没扫到"混成同一件事（`raster_fixture.h` 里 `unreadablePixelValue()` 取 NaN 是同一个理由）。
     int valleyCells = 0;
     float valleyProbe = std::numeric_limits<float>::quiet_NaN();
     for (const float value : product) {
@@ -7775,12 +7815,16 @@ TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels) 
         }
     }
     EXPECT_GT(valleyCells, 0)
-        << "产物里一个负值都没有 ⇒ 分水岭没在两盆之间划谷线（谷线格数=0、探针仍是 NaN=根本没扫到）" << observed;
+        << "产物里一个负值都没有 ⇒ 上游的 -1 写法没被透传到产物（本夹具的负值格全部来自 OpenCV 无条件写死的最外一圈："
+           "32*2+22*2=108 格；A、B 被确定背景标签 1 整圈隔开，本几何下不存在\"两盆之间\"的谷线）" << observed;
     EXPECT_DOUBLE_EQ(valleyProbe, -1.0)
         << "产物里出现的负值不是 -1 ⇒ 谷线的写法变了，实测探针=" << valleyProbe;
 
-    // 两枚种子所在块**整块**不许是谷线：被 -1 吃掉种子 = 分割把标记本身当成分界。
+    // 两枚种子所在块**整块**不许含负值：那钉的是"分割没把标记本身当成分界"，与上面 W1 的边框标记是两件事。
     // 这两条不等上面 W2 的三个取点——那三条钉"种子格的取值"，这两条钉"负值域不覆盖整个种子块"。
+    // ⚠ 前置条件（同 AutoMarkers 块那条"距 -1 谷线须 >= 2 像元"的写法）：两枚 rect 都离最外一圈 >= 1 像元。
+    //   把 rectAX0/rectAY0/rectBX1/rectBY1 挪到 x∈{0,31} 或 y∈{0,23}、或把 w/h 缩到让 rect 贴边，
+    //   **正确实现下也会假红**（上游无条件把最外一圈写 -1）⇒ 这是夹具几何决定的，不是产品对任意标记的承诺。
     const auto valleyCellsInRect = [&](int x0, int y0, int x1, int y1) {
         int n = 0;
         for (int y = y0; y <= y1; ++y) {
