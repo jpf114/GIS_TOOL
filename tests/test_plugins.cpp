@@ -3481,7 +3481,7 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
     //   所以本档既是"已细者不变"的反例档（含义：不是所有带状前景都保形），也与 S1/S2/叠加档
     //   同类——期望格数 != 前景格数，所以逐格段在这里独立承重。两条可自证的红点：
     //   格数期望改 14 → 13 ⇒ 只红"格数"那一格；把期望集改成 cellsOfRects(foreground) 而
-    //   格数不动 ⇒ 只红逐格（36 − 14 = 22 格错配，取决于"期望亮集"u4e0e"u5b9eu9645u4eaeu96c6"u7684u5deeu96c6uff09u3002
+    //   格数不动 ⇒ 只红逐格（36 − 14 = 22 格错配 = 期望亮集减实际亮集）。
     {
         const std::string s3cInput = writeMaskRaster("e2e_skeleton_s3c_input.tif", 20, 14, {{3, 5, 12, 3}});
         CaseExpectation s3c;
