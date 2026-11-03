@@ -3334,6 +3334,9 @@ TEST_F(PluginTest, ProcessingConnectedComponentsExecution) {
 // 只锚 component_count（= std::max(0, componentCount-1)，不含背景 0 号标签）：
 // 该 action 先 toUint8 再 THRESH_BINARY|THRESH_OTSU，把 Otsu 的具体取值写进断言
 // 等于把 OpenCV 的实现细节当契约。
+    //
+    // ── 批次 D P7a 起，本块同时是登记表 `processing,connected_components` 第 4 列指向的 [:]GOLD 证据块
+    //    （原候选 `ProcessingConnectedComponentsExecution` 只有 success + exists + 两条 EXPECT_GT，没有内容）──
 TEST_F(PluginTest, ProcessingConnectedComponentsHonoursConnectivityParameter) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -3399,6 +3402,85 @@ TEST_F(PluginTest, ProcessingConnectedComponentsHonoursConnectivityParameter) {
         << "显式传 spec 声明的默认值 8 ⇒ 仅对角相接的两块必须并成一个组件";
     EXPECT_EQ(run(std::nullopt, "cc_diag_specdefault_unset_output.tif"), "1")
         << "不传该键时的代码兜底与 paramSpecs() 声明的默认值分叉了（兜底漂移）";
+
+    // ── 批次 D P7a：登记行 `processing,connected_components` 的 [:]GOLD 证据位 ──
+    // 上面两条只数"有几个组件"（走 metadata 字符串）。本段把同一件事钉到**标签格点**上：
+    // `cv::connectedComponents` 按行主序给每个新组件发下一个编号 ⇒ 含像元 (0,0) 的那块恒得标签 1，
+    // 背景恒为 0。夹具的四枚前景是 A={(0,0),(1,0)}、B={(2,1),(3,1)}，只对角相接 ⇒
+    //   8 连通（含被归一的那些取值）⇒ A、B 并成同一标签 1；4 连通 ⇒ A=1、B=2。
+    // ⇒ 这条承载不经 metadata 字符串，是"connectivity 根本没被读"的直接否证位。
+    // 零容差为什么可行：产物是 `labels.convertTo(outFloat, CV_32F)` 的标签矩阵，
+    //   取值只有非负整数且远小于 2^24 ⇒ float32 逐位精确；读回按 `GDT_Float32` 同类型、不重采样。
+    auto labelsOf = [](const std::string& path) {
+        int width = 0, height = 0;
+        std::vector<float> grid = readRasterBandF32(path, width, height);
+        if (grid.size() != 16) {
+            ADD_FAILURE() << "标签产物应是 4x4=16 格，实到 " << width << "x" << height
+                          << "（下面各格判据会因 NaN 一起红，不再越界索引）: " << path;
+            return std::vector<float>(16, std::numeric_limits<float>::quiet_NaN());
+        }
+        return grid;
+    };
+    const std::vector<float> lab8 = labelsOf(utf8PathString(getTestDir() / "cc_diag_8_output.tif"));
+    const std::vector<float> lab4 = labelsOf(utf8PathString(getTestDir() / "cc_diag_4_output.tif"));
+    EXPECT_DOUBLE_EQ(lab8[0], 1.0) << "行主序第一个组件恒得标签 1（含像元 (0,0) 的那块）";
+    EXPECT_DOUBLE_EQ(lab8[6], 1.0) << "8 连通把对角相接的 B 并进同一组件 ⇒ 与 A 同标签";
+    EXPECT_DOUBLE_EQ(lab8[2], 0.0) << "(2,0) 不是前景 ⇒ 背景恒为标签 0，也不参与计数";
+    EXPECT_DOUBLE_EQ(lab4[0], 1.0) << "4 连通下 A 仍是行主序第一个组件";
+    EXPECT_DOUBLE_EQ(lab4[6], 2.0)
+        << "4 连通下对角不再相连 ⇒ B 拿下一个编号 2（若该键根本没被读，这里会停在 1）";
+
+    // 归一化支：产品写的是 `getParam(connectivity, 8) == 4 ? 4 : 8` ⇒ 除 4 之外一律按 8 走。
+    // 5 若被原样传给 `cv::connectedComponents` 会撞它的 CV_Assert，若被当成 4 则 B 变 2 ⇒ 两个方向都能红。
+    EXPECT_EQ(run(5, "cc_diag_5_output.tif"), "1") << "connectivity=5 应被归一到 8 连通 ⇒ 与主档同口径";
+    EXPECT_DOUBLE_EQ(labelsOf(utf8PathString(getTestDir() / "cc_diag_5_output.tif"))[6], 1.0)
+        << "归一后的标签几何必须与 8 连通一致（B 与 A 同标签）";
+
+    // 反向对照档：把两块**完全分开**（隔两行，任何连通性都不相连）⇒ 4 与 8 都必须报 2、几何也一致。
+    // 没有这一档，上面的 1/2 之差可能来自别的形状因素 ⇒ "对角接触"这个变量就没被隔离出来。
+    std::vector<float> sep(16, 0.0f);
+    sep[0] = 255.0f;
+    sep[1] = 255.0f;
+    sep[12] = 255.0f;
+    sep[13] = 255.0f;
+    const std::string sepInput =
+        gis::tests::writeFloatRaster(getTestDir(), "cc_sep_input.tif", 4, 4, sep, options);
+    auto runOn = [&](const std::string& whichInput, std::optional<int> conn, const char* outputName) {
+        const std::string output = utf8PathString(getTestDir() / outputName);
+        std::map<std::string, gis::framework::ParamValue> params;
+        params["action"] = std::string("connected_components");
+        params["input"] = whichInput;
+        params["output"] = output;
+        params["band"] = 1;
+        if (conn.has_value()) params["connectivity"] = *conn;
+        const auto result = p->execute(params, progress_);
+        EXPECT_TRUE(result.success) << "connectivity="
+                                    << (conn.has_value() ? std::to_string(*conn) : std::string("<unset>"))
+                                    << ": " << result.message;
+        const auto it = result.metadata.find("component_count");
+        return it == result.metadata.end() ? std::string() : it->second;
+    };
+    EXPECT_EQ(runOn(sepInput, 8, "cc_sep_8_output.tif"), "2") << "两块不相连时 8 连通也报 2";
+    EXPECT_EQ(runOn(sepInput, 4, "cc_sep_4_output.tif"), "2")
+        << "4 连通同报 2 ⇒ 上面 1/2 之差确实只由对角接触产生，不是别处来的";
+    EXPECT_DOUBLE_EQ(labelsOf(utf8PathString(getTestDir() / "cc_sep_4_output.tif"))[12], 2.0)
+        << "分离件里 B 恒得标签 2（行主序第二块），与连通性取值无关";
+
+    // 边界档：全零前景 ⇒ 组件数必须是 0（常数件上 Otsu 取阈值 0 ⇒ 没有前景像元 ⇒
+    // `cv::connectedComponents` 只给出背景标签 0 ⇒ 产品减掉背景后报 0，而不是报 -1 或 1）。
+    // ⚠ 这一档**不是** `std::max(0, componentCount - 1)` 那个下界的载体：connectedComponents 恒返回 >= 1
+    //   （背景本身就占一个标签）⇒ N==0 不可达、下界是死防御 ⇒ 如实登记，不假装判它。
+    std::vector<float> allZero(16, 0.0f);
+    const std::string zeroInput =
+        gis::tests::writeFloatRaster(getTestDir(), "cc_allzero_input.tif", 4, 4, allZero, options);
+    EXPECT_EQ(runOn(zeroInput, 8, "cc_allzero_output.tif"), "0")
+        << "无前景时组件数是 0，不是 -1、也不是把背景当成一个组件的 1";
+    double zeroSum = 0.0;
+    for (const float v : labelsOf(utf8PathString(getTestDir() / "cc_allzero_output.tif"))) {
+        zeroSum += v * v;   // 用平方和而不是绝对值：不额外依赖 <cmath>，且任一格非 0 或为 NaN 都会红
+    }
+    EXPECT_DOUBLE_EQ(zeroSum, 0.0)
+        << "全零件的产物应整幅为 0（冒出任何正标签说明背景被当成了组件；出现 NaN 说明产物没读出来）";
 }
 
 TEST_F(PluginTest, ProcessingContourExecution) {
