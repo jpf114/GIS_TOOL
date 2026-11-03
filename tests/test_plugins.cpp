@@ -3550,8 +3550,10 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
         EXPECT_EQ(s7.result.metadata.size(), 1u) << "S7(常数件) metadata 键数";
     }
 
-    // S8（band 双向档）：既有七档的夹具**全是单波段件** ⇒ 把产品改成"忽略 band、写死读第 1 波段"之后，
-    // 七档产物逐格不变、消息文案照旧（那句打的是 readBandAsMat 自己收到的形参）⇒ 本块照样全绿。
+    // S8（band 双向档）：既有八次执行（96×96 图样档 + S1 / S2 / 叠加 / S3a / S3b / S3c / S7）的夹具
+    // **全是单波段件**（createPatternRaster 与 createConstantRaster 各建 1 带、writeMaskRaster 走
+    // writeFloatRaster 也只建 1 带）⇒ 把产品改成"忽略 band、写死读第 1 波段"之后，那八档产物逐格不变、
+    // 消息文案照旧（那句打的是 readBandAsMat 自己收到的形参）⇒ 本块照样全绿。
     // 所以这里补**同一枚 2 波段件、只换 band 实参**的两档，两档各拿相反方向的红点：
     //   第 1 波段 = 1 像元宽横带 {2, 10, 9, 1}（x∈[2,10]、y=10 ⇒ 前景 9 格）；
     //   第 2 波段 = 6×6 孤立方块 {12, 2, 6, 6}（x∈[12,17]、y∈[2,7] ⇒ 前景 36 格）。
