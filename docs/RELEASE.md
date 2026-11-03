@@ -4246,6 +4246,31 @@ MF-2「参照产物与被比产物各自 `nzCells > 0`，双保险」与代码�
 `find data -type f -newermt "2026-11-02 20:00:13" | wc -l` = 0；`python build/tmp/batchD/check_data_baseline.py` 打印
 `BASELINE: 88 CURRENT: 88 DIFFS: 0`（本轮没运行 `gen_data_baseline.py`）。
 
+### 批次 D 覆盖晋升 P6（2026-11-02，`processing.watershed` 一条 PENDING→GOLD；**只做单测面，不碰腿、不碰矩阵、不碰文档**）
+
+本刀由**控制器自跑**完成（派发席位在 66 次工具后因账户配额耗尽中断，属第四种断线形态；它已交回"现读基线对撞"与"载体块为什么选它"两节全文，外加一份未提交的 `tests/test_plugins.cpp` 在途改动 +255/−12 ⇒ 属"丢证据不丢实现"，控制器在其基础上续作，见下"席位与我各错了哪一处"）。⚠ 因此**本刀没有独立复审席**，缺一层否证，待配额恢复后补审（三臂证据见"反事实"段）。
+
+射程 = `tests/test_plugins.cpp`（既有 `TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels)` 内扩写，**没新增用例**）+ `tests/action_gold_cases.txt` 登记行与四条 COUNT 声明行 + `tests/test_coverage_meta.cpp` 的 `kPendingCeiling` 一行。开批现读（席位跑，与控制器派发词给的六个数零漂移）：HEAD `b469c34`、`git status` 0 行、六键 `126/116/10/117/15/101`、`kPendingCeiling = 10`、`Total Tests: 802`、三配方 `-N` 条数 43/30/19、watershed 单实例族 `-N` 5 条。
+
+**这条 PENDING 挂着的成因不是"没判过"**（新记法，登记以免后人重复调查）：`CoverageMeta.GoldEvidenceIsAuditable` 的数值断言名单 `kNumericAssertions` 只有 `EXPECT_NEAR / EXPECT_FLOAT_EQ / EXPECT_DOUBLE_EQ` 三项（`tests/test_coverage_meta.cpp` 里 `kNumericAssertions` 那张名单本身），`EXPECT_EQ` 一律不计 ⇒ 同族四块（`AutoMarkersKeepBackgroundAsOwnBasin` 86 行、本载体块 59 行、`WithoutSeedsCountsZeroSegments` 45 行、`RejectsMarkerInputWithMismatchedSize` 57 行）早就用 `EXPECT_EQ` 钉住了标签透传（1/2/5）、`segment_count` 口径（报 2 不报最大标签 5）、无种子 0 段 + 产物无正标签、尺寸守卫文案与两个尺寸串的先后，值级宏计数却全是 0 ⇒ 判过也不顶数。⇒ 本刀两件事一起做：①（做账）把已有数值承载力的整数判据换成守卫认的宏族；②（补真判据）补 W1/W3/W4/W5。只做①就是 shape gaming。
+
+**为什么另三块不能当载体**（派发席位给的选定理由，控制器复核后接受）：`AutoMarkers` 块跨两支看判据条数最多，但它承载的是**自动标记支**（`markers += 1` 与 unknown 归零的顺序），且块内已注明其 `EXPECT_EQ(background, 1)` 是行为锁而非鉴别证据 ⇒ 在那块上换宏等于把没鉴别力的锁升级成 GOLD 凭据；`WithoutSeeds` 块的对象是"没有正标签"，没有 W3/W4 可判的东西；`RejectsMarkerInput` 块产物根本不落盘。
+
+**五条判据与承重**：W2 三条 `EXPECT_DOUBLE_EQ(background/seedA/seedB, 1/2/5)`（零容差的三步论证在块注释里，每步都能在本仓源码读到：产物 `GDT_Float32` 单波段且创建选项 `nullptr` ⇒ 不压缩不量化；`static_cast<float>(label)` 对 |n| ≤ 2^24 逐位精确，本块取值只有 -1/0/1/2/5；读回按同类型缓冲、不重采样、无 scale/offset、夹具不声明 NoData ⇒ 三跳合起来"写进去的位=读出来的位"；并限定该论证**不外推**到 `template_match` 那种拉伸过的响应值）；W1 谷线进产物——发现用 `value < 0.0f`、钉值用 `EXPECT_DOUBLE_EQ(探针, -1.0)` 两件分开，**探针初值取 NaN 不取 -1**（这幅产物的合法取值里就有 -1，用 -1 当哨兵会把"存在谷线"和"一格没扫到"混成同一件事），另判两枚种子块整块不含负值；W3 产物正标签去重集合与**从夹具 markers 缓冲导出的**期望集合双向对撞 + {1.0, 2.0, 5.0} 逐个钉死（期望不从产物读回来抄，否则洗成恒真）；W4 计数口径加一档"只把 B 的标签 5 换成 3、几何与期望都不动"⇒ 两档都必须报 2，错写法"取最大标签值"会分别报 5 与 3，同档配正控（对照产物 B 读到 3、A 仍是 2）；W5 `marker_input` 恒读第 1 波段：档一 2 波段标记（第 1 波段真标记 1/2/5、第 2 波段诱饵 4/9）+ `band = 2` ⇒ 正标签集合仍是 {1,2,5} 且诱饵一格不出现；档二正控把标记第 1 波段整幅置 0 ⇒ `segment_count` 必须 0、产物无正标签。注释点名 W5 与 `processing.template_match`（模板同受 `band`）**相反**，不是通用规律。
+
+**反事实三臂**（控制器跑，日志 `CF-A/CF-B/CF-C.log` 直跑 `gis_tests.exe --gtest_filter` 取 gtest 明细（对拍输出不在仓库内，`build/` 被 gitignore；复现方式就是下面写的三处各改一格再跑本块），每臂 `cp` 备份还原、工作树 sha256 与 `.BASE` 对拍一致）：W1 探针 `-1.0 → 0.0` ⇒ 恰好 1 条红（谷线钉值那条）；W3 期望列表补一枚标签 `{1,2,3,5}` ⇒ 恰好 1 条红（第三个取值 `5 vs 3`）；W4 主档计数 `"2" → "5"` ⇒ 恰好 1 条红。
+⚠ **CF-B 的实测驳回了在途注释一句**：原写"改期望列表 ⇒ 集合个数那条与取值那条各红一次"，实到只有取值断言红——个数那条数的是从标记缓冲导出的集合，与这个字面量无关 ⇒ 注释已按实测改准（这条注入口的承重面是"取值逐个钉死"，不是"个数"）。
+
+**文档面对撞三处 = 零改动**（不许为了有交付而硬改）：`docs/算法说明/影像处理与分析/分水岭分割.md` 现读已写清①标记栅格"只用第 1 波段"且只比像元行列数、不比对地理变换（W5：「标记输入要求」里"只用标记栅格的第 1 波段"那句）；②分水岭线写 `-1`、确定背景 `1` 照样写进输出（W1：「处理流程」与「输出内容」两处都写着"分水岭线写为 -1、确定背景 1 照样写进输出"）；③`segment_count` 统计的是输出里 `>= 2` 的不同区域标签个数、**不是最大标签值**，外部标记编号不连续时也不会把标签空洞算进区域数（W3/W4：「输出内容」里"统计的是输出里 >= 2 的那些不同区域标签个数（不是最大标签值）"那句）⇒ 三处都与产品一致，本刀不动该文档。
+
+**已知不承重项（登记）**：把 `doWatershed` 产出段那段 `label > 1` 去重计数搬到 `cv::watershed` **之前**是**可存活的等价变异**（块注释记录前人实测变异轮 6/6 全绿、变异体已还原）⇒ W4 判"口径"不判"时序"；两枚种子取同一标签时个数会变成 1，那一档本刀不判（要另造一幅标记，且它判的是另一件事）。
+
+**D3 议题一条（本刀只登记、不改守卫）**：守卫认的宏族里没有 `EXPECT_EQ` ⇒ 存在"块里有真数值判据却永久 PENDING"的一类行。两条处置各有代价：扩宏族到"数值型 `EXPECT_EQ`"会瞬间让多行具备晋升条件、需逐条复核（blast radius 大，且会放走"字符串比较伪装成数值比较"这一类）；或立一条机器判据去抓"块里有数值 `EXPECT_EQ` 却仍记 PENDING"。⇒ 与 #180（腿侧 `Mark-Judged` 不要求值级期望）、#181（裸行号锚无守卫）同族，归 D3 拍。
+
+**验收实到**（重编 `gis_tests`，BUILD_EXIT_CODE=0、error 0）：watershed 单实例族 **5/5 绿**；定向大集合 **43/43 绿**；`^PluginTest\.Processing` **30/30 绿**；`(CoverageMeta|CoverageMetaJudge)` **19/19 绿**；`Total Tests:` 仍 **802**；腿九字段逐字 `84/84/63/21/21/0/64/1/0`；`real_data_raster` 单条 **17.96 s**（在 16.48~20.35 s 的已认证带内 ⇒ 本轮 43 条配方读到 56.23 s（上一只是 38.72 s）**不是腿漂**，差值未归因，D4 前按安静态双闸复测）。三计数（口径：`^TEST_F` 按行首、`EXPECT_`/`ASSERT_` 按全文件出现次数含注释与字符串）`350→350`、`2972→3004`（+32）、`2054→2063`（+9）；登记表六键改后 `126/117/9/118/15/102`（逐条用声明行行尾自带命令复跑）；`tests/real_data_matrix.txt` 第 5 列 `processing,watershed` 保持 `none`（腿侧无这条 case，改 `real_regression` 就是假登记，R-D39）。
+
+**席位与控制器各错了哪一处**：席位否证派发词两处——①派发把第六块 `WatershedOnSingleRowOrColumnRasterDoesNotThrow` 算进"processing.watershed 的六条块"并打勾"有动作槽"，实际它自己写着 `mgr_.find("terrain")`、测的是 `terrain_plugin.cpp` 里同名不同实现的 `doWatershed` ⇒ 归属别的行，与 #168 的"helper 里动作槽看不见"**无关**（本刀论域内没有该族实例）；②派发说载体块"承载最厚"，跨两支看并非如此（`AutoMarkers` 86 行、关系式判据更多）。控制器自跑后又纠正席位一处（CF-B 注释）。另记一条还原纪律的分叉：派发词"还原用 git 自己的 smudge"对`tests/test_coverage_meta.cpp` **不成立**——该文件工作树今天就是 LF（席位 dry-run 实测 `smudge(blob) == 工作树` 对它 False、其余四支 True），对它该按裸 LF 读写；本刀全程用 `cp` 字节备份还原，不触碰 smudge。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
