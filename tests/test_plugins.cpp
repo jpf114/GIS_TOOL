@@ -3144,6 +3144,43 @@ TEST_F(PluginTest, ProcessingEnhanceExecution) {
     EXPECT_FALSE(fs::exists(outUnknown)) << "Z9 失败支不得留产物";
 }
 
+// ── 批次 D P7b：`processing,skeleton` 晋升 [:]GOLD 的值级承载（S1~S7）──
+// 本块是 tests/action_gold_cases.txt 里 `processing,skeleton` 第 4 列指向的块。晋升前它只有
+//   `ASSERT_NE(p, nullptr)` + `EXPECT_TRUE(result.success)` + `EXPECT_TRUE(fs::exists(output))`
+//   + `EXPECT_GT(readRasterPixel(output, 48, 48), 0.0f)` 四条，没有一条判"值是多少"⇒ 那四条原样留着
+//   （96×96 那片图样上的既有覆盖不许顺手删），下面 S1~S7 才是补上去的承载；与 P6/P7a 不同，
+//   同族没有可借的已判姊妹块（watershed 的判据绑在标签矩阵的计数上、connected_components 绑在
+//   component_count 上，本动作产物里两者都没有），期望只能自己推。
+//
+// 产品算法（`ProcessingPlugin::doSkeleton` 逐条读源码所得）：
+//   readBandAsMat → toUint8（常数件走 `maxVal - minVal < 1e-10` 的 `Mat::zeros` 支 ⇒ 整幅写 0）
+//   → cv::threshold(..., 0, 255, THRESH_BINARY | THRESH_OTSU)
+//   → 主循环：kernel = getStructuringElement(MORPH_CROSS, Size(3,3))（= 4 个直邻）；
+//     erode(work)→eroded；dilate(eroded)→opened；temp = work − opened；skeleton |= temp；
+//     work = eroded；countNonZero(work) == 0 时 break
+//   → skeleton.convertTo(outFloat, CV_32F, 1.0 / 255.0) ⇒ 值域只有 {0.0, 1.0}，尺寸 = 输入尺寸；
+//   metadata 只有 `action` 一键，**没有** component_count 之类的计数。
+//
+// 期望全部来自下面这张手推表（不是标定值，更不是"跑一遍看看"）：核是 4 直邻 ⇒
+//   erode(Q_n) = 内缩一圈的 Q_{n−2}；而 open(Q_n) = dilate(erode(Q_n)) **剥掉方块的四个角**
+//   （角像元既不在"同一行内缩"的那条带里、也不在"同一列内缩"的那条带里）⇒ 每轮 temp 恰是"当前方块的四个角"，
+//   边长逐轮减 2：
+//     · 6×6（n 偶）→ 4 + 4 + (2×2 四格全算角) = 12 = 2n，形状 = 该方块的两条对角线，正中没有格；
+//     · 5×5（n 奇）→ 4 + 4 + (1×1 只剩中心) = 9 = 2n−1，两条对角线**共享中心那一格**，只能数一次；
+//     · 1 像元宽横线、2 像元厚带 → 没有任何像元凑齐四个直邻 ⇒ erode = ∅ ⇒ open = ∅ ⇒ temp₀ = 整个输入
+//       ⇒ 骨架**逐格等于**输入的二值前景（⚠ "已细"的上限就是 2 像元厚：3 像元厚的带 erode 得中间那一行，
+//       产物不再是输入，所以这里不许写成"薄带即可"）；
+//     · 全常数输入 → toUint8 整幅 0 ⇒ 无前景 ⇒ 整幅 0，且第一轮就退。
+//   成立前提是"孤立"：每块前景四周留 ≥1 像元背景且不贴栅格边界——贴边时 erode 的虚采样按域另一端极值处理，
+//   靠边那一圈会整排消失（本机 cv2 同形状实测：贴左贴顶的 6×6 从 12 格变 6 格），所以本块不排贴边档。
+//   两枚方块只要 4 邻域互不相邻（背景间隔 ≥1 像元列/行），erode 与 dilate 都对并集逐块分配 ⇒ 骨架 = 两块
+//   各自骨架的并、格数可加（叠加档就是这么设计的）；间隔 0（共边并成一块 11×6）时该前提失效，本块不排。
+//
+// 夹具取值口径：前景只写 255.0、背景只写 0.0 两档 ⇒ toUint8 是恒等映射，且 Otsu 在只有两档的直方图上
+//   无论把阈值落在哪一格都把两档分开 ⇒ "输入的二值前景"= 夹具画出来的矩形集，可手推而不必回读产物
+//   （S3 的"逐格等于输入"与 S4 的子集判据都靠这一点，否则就成了拿产物当期望的反演自证）。
+// 夹具一律 20×14（宽 != 高）：产物尺寸由写入侧的 (cols, rows) 决定，方阵上"宽高写反"是等价变异 ⇒ 尺寸判据
+//   只有在非方夹具上承重（同 createStepLevelRaster / createColumnPlateauRaster 那两处的前置条件）。
 TEST_F(PluginTest, ProcessingSkeletonExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -3161,6 +3198,291 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
     EXPECT_TRUE(result.success) << "Skeleton failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
     EXPECT_GT(readRasterPixel(output, 48, 48), 0.0f);
+
+    // ── 以下 S1~S7：夹具一律"两档前景矩形 + 20×14 非方幅面"，期望一律手推 ──
+    struct Rect { int x; int y; int w; int h; };  // 左闭右开
+    auto inRects = [](const std::vector<Rect>& rects, int x, int y) {
+        for (const auto& r : rects) {
+            if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return true;
+        }
+        return false;
+    };
+    auto cellsOfRects = [](const std::vector<Rect>& rects) {
+        std::vector<std::pair<int, int>> out;
+        for (const auto& r : rects) {
+            for (int y = r.y; y < r.y + r.h; ++y) {
+                for (int x = r.x; x < r.x + r.w; ++x) out.emplace_back(x, y);
+            }
+        }
+        return out;
+    };
+    auto inPairs = [](const std::vector<std::pair<int, int>>& cells, int x, int y) {
+        for (const auto& c : cells) {
+            if (c.first == x && c.second == y) return true;
+        }
+        return false;
+    };
+    auto writeMaskRaster = [&](const char* name, int w, int h, const std::vector<Rect>& rects) {
+        std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                if (inRects(rects, x, y)) {
+                    data[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = 255.0f;
+                }
+            }
+        }
+        return gis::tests::writeFloatRaster(getTestDir(), name, w, h, data, gis::tests::RasterFixtureOptions{});
+    };
+
+    // 消息通道要数条数，而夹具用的 CliProgress 只把文案写进 stderr、不回读 ⇒ 自带捕获缓冲。
+    // ⚠ doSkeleton **函数体**里 onMessage 是 0 次，但"本动作不产生 onMessage 文案"是错的：
+    //   它先经 readBandAsMat（"Reading band <n> from <path>"）、后经 writeMatOutput（"Writing output: <path>"），
+    //   两条都不是本动作专属文案。下面的期望按这两条实到形态写（不是照抄 hough / contour 的措辞）。
+    struct CapturingProgress : gis::core::ProgressReporter {
+        std::vector<std::string> messages;
+        void onProgress(double) override {}
+        void onMessage(const std::string& msg) override { messages.push_back(msg); }
+        bool isCancelled() const override { return false; }
+    };
+
+    struct SkeletonRun {
+        gis::framework::Result result;
+        std::vector<float> cells;
+        std::vector<std::string> messages;
+        std::string outputPath;
+        int width = 0;
+        int height = 0;
+    };
+    auto runSkeleton = [&](const std::string& inputPath, const char* outputName) {
+        SkeletonRun run;
+        run.outputPath = (getTestDir() / outputName).string();
+        std::map<std::string, gis::framework::ParamValue> skeletonParams;
+        skeletonParams["action"] = std::string("skeleton");
+        skeletonParams["input"] = inputPath;
+        skeletonParams["output"] = run.outputPath;
+        skeletonParams["band"] = 1;
+        CapturingProgress capture;
+        run.result = p->execute(skeletonParams, capture);
+        run.messages = std::move(capture.messages);
+        EXPECT_TRUE(run.result.success)
+            << "skeleton 执行失败（input=" << inputPath << "）：" << run.result.message;
+        run.cells = readRasterBandF32(run.outputPath, run.width, run.height);
+        EXPECT_EQ(run.cells.size(), static_cast<size_t>(run.width) * static_cast<size_t>(run.height))
+            << "整带读出像元数 != 产物宽×高（读出失败时是 0，下面的逐格扫描会因此空转，这条是补位）";
+        return run;
+    };
+
+    struct CaseExpectation {
+        const char* tag = "";
+        const char* outputName = "";
+        std::vector<Rect> foreground;                     // 输入的二值前景（夹具矩形，手推）
+        std::vector<std::pair<int, int>> skeleton;        // 手推的骨架格集（(x, y)）
+        std::vector<Rect> windows;                        // 逐格判的坐标窗口
+        int expectedWidth = 0;
+        int expectedHeight = 0;
+        int expectedSkeletonCells = 0;                    // 全图 1.0 格数（2n / 2n−1 / 前景格数，推出来的）
+    };
+    auto runCase = [&](const std::string& inputPath, const CaseExpectation& c) {
+        SkeletonRun run = runSkeleton(inputPath, c.outputName);
+
+        // S5（尺寸）：产物宽高 == 输入宽高；非方夹具上 (cols, rows) 写反必红这两格。
+        EXPECT_EQ(run.width, c.expectedWidth) << c.tag << " 产物宽度 != 输入宽度";
+        EXPECT_EQ(run.height, c.expectedHeight)
+            << c.tag << " 产物高度 != 输入高度（宽高写反在这两格现形）";
+
+        // S5（值域）：产物只取 {0.0, 1.0}；把 convertTo 的 `1.0 / 255` 删掉就到处读到 255 ⇒ 这一格红。
+        int foreignValues = 0;
+        for (float v : run.cells) {
+            if (v != 0.0f && v != 1.0f) ++foreignValues;
+        }
+        EXPECT_EQ(foreignValues, 0) << c.tag << " 产物里 {0.0, 1.0} 之外的取值个数";
+
+        // S1/S2/S3（逐格相等）：窗口内逐格判，期望集是手推表的坐标，不是产物回填。
+        // 窗口越出产物尺寸时不许"读到 0"糊过去，当场 ADD_FAILURE 报出尺寸。
+        for (const auto& win : c.windows) {
+            for (int y = win.y; y < win.y + win.h; ++y) {
+                for (int x = win.x; x < win.x + win.w; ++x) {
+                    const size_t idx = static_cast<size_t>(y) * static_cast<size_t>(run.width)
+                                     + static_cast<size_t>(x);
+                    if (x < 0 || y < 0 || x >= run.width || y >= run.height || idx >= run.cells.size()) {
+                        ADD_FAILURE() << c.tag << " 逐格窗口越出产物（x=" << x << ", y=" << y
+                                      << ", 产物 " << run.width << "x" << run.height
+                                      << ", 读出 " << run.cells.size() << " 个像元）";
+                        continue;
+                    }
+                    const double expected = inPairs(c.skeleton, x, y) ? 1.0 : 0.0;
+                    EXPECT_DOUBLE_EQ(expected, static_cast<double>(run.cells[idx]))
+                        << c.tag << " 第 (" << x << ", " << y << ") 格，期望 " << expected;
+                }
+            }
+        }
+
+        // S1/S2（格数）：全图 1.0 的格数 == 手推的 2n / 2n−1。它与上一段合起来才等于"整幅逐格"——
+        // 窗口内的错配在逐格那一段现形，窗口外冒出来的亮格在这里现形。
+        int skeletonCells = 0;
+        for (float v : run.cells) {
+            if (v == 1.0f) ++skeletonCells;
+        }
+        EXPECT_EQ(skeletonCells, c.expectedSkeletonCells)
+            << c.tag << " 全图 1.0 格数（手推 " << c.expectedSkeletonCells << "）";
+
+        // S4（子集不变量，弱判据、只补强）：产物为 1.0 的格必须都是该档输入的二值前景格。
+        // 推导：temp_k = work_k \ open(work_k) ⊆ work_k，而 work_k = erode^k(binary) ⊆ binary。
+        // ⚠ 不许拿它替 S1/S2：把实现改成"直接把二值图当骨架输出"，这一条照样绿（前景 ⊆ 前景）。
+        int outsideForeground = 0;
+        if (run.width > 0) {
+            for (size_t idx = 0; idx < run.cells.size(); ++idx) {
+                const int x = static_cast<int>(idx % static_cast<size_t>(run.width));
+                const int y = static_cast<int>(idx / static_cast<size_t>(run.width));
+                if (run.cells[idx] == 1.0f && !inRects(c.foreground, x, y)) ++outsideForeground;
+            }
+        }
+        EXPECT_EQ(outsideForeground, 0) << c.tag << " 骨架落在输入前景之外的格数（子集不变量）";
+
+        // S6（metadata 与消息通道）：metadata 只有 action 一键且值 = "skeleton"；
+        // Result::message 成功时是 writeMatOutput 给的 "Processing completed successfully"；
+        // 消息通道恰两条、顺序固定（readBandAsMat 在前、writeMatOutput 在后）。
+        EXPECT_EQ(run.result.metadata.size(), 1u)
+            << c.tag << " metadata 键数（本动作只写 action 一键）";
+        const auto actionIt = run.result.metadata.find("action");
+        EXPECT_TRUE(actionIt != run.result.metadata.end()) << c.tag << " metadata 里没有 action 键";
+        if (actionIt != run.result.metadata.end()) {
+            EXPECT_EQ(actionIt->second, "skeleton") << c.tag << " metadata 的 action 值";
+        }
+        EXPECT_EQ(run.result.message, "Processing completed successfully")
+            << c.tag << " 成功时的 Result::message（实读：" << run.result.message << "）";
+        const std::vector<std::string> expectedMessages = {
+            "Reading band 1 from " + inputPath,
+            "Writing output: " + run.outputPath,
+        };
+        EXPECT_EQ(run.messages, expectedMessages)
+            << c.tag << " 消息通道实到形态（条数或文案与本动作的调用链不符）";
+        return run;
+    };
+
+    // S1：6×6 孤立方块（占 x∈[2,7]、y∈[2,7]）⇒ 两条对角线共 **12** 格（= 2n，n 偶 ⇒ 正中没有格）。
+    // 手推逐轮 temp：temp0 = {(2,2),(7,2),(2,7),(7,7)}；temp1（内缩一圈的 4×4）= {(3,3),(6,3),(3,6),(6,6)}；
+    //   temp2（内缩两圈的 2×2，四格全算角）= {(4,4),(5,4),(4,5),(5,5)}。
+    {
+        const std::string s1Input = writeMaskRaster("e2e_skeleton_s1_input.tif", 20, 14, {{2, 2, 6, 6}});
+        CaseExpectation s1;
+        s1.tag = "S1(6x6 方块)";
+        s1.outputName = "e2e_skeleton_s1_output.tif";
+        s1.foreground = {{2, 2, 6, 6}};
+        s1.skeleton = {{2, 2}, {3, 3}, {4, 4}, {5, 5}, {6, 6}, {7, 7},
+                       {7, 2}, {6, 3}, {5, 4}, {4, 5}, {3, 6}, {2, 7}};
+        s1.windows = {{2, 2, 6, 6}};
+        s1.expectedWidth = 20;
+        s1.expectedHeight = 14;
+        s1.expectedSkeletonCells = 12;
+        runCase(s1Input, s1);
+    }
+
+    // S2：5×5 孤立方块（占 x∈[2,6]、y∈[2,6]）⇒ 两条对角线共 **9** 格（= 2n−1：主对角 5 格 + 反对角 5 格
+    // 共享中心 (4,4) ⇒ 中心只数一次）。手推逐轮 temp：temp0 = 四角、temp1（3×3）= 四角、temp2 = {(4,4)}。
+    // 与 S1 成对的意义：实现改成"直接把二值图当骨架输出"⇒ 两档分别得 36 / 25 格 ⇒ 红；
+    //   改成"只走一轮"⇒ 两档都只剩最外 4 角 ⇒ 红；奇偶两档各自钉住 2n 与 2n−1 那个"中心数一次"的分叉。
+    {
+        const std::string s2Input = writeMaskRaster("e2e_skeleton_s2_input.tif", 20, 14, {{2, 2, 5, 5}});
+        CaseExpectation s2;
+        s2.tag = "S2(5x5 方块)";
+        s2.outputName = "e2e_skeleton_s2_output.tif";
+        s2.foreground = {{2, 2, 5, 5}};
+        s2.skeleton = {{2, 2}, {3, 3}, {4, 4}, {5, 5}, {6, 6},
+                       {6, 2}, {5, 3}, {3, 5}, {2, 6}};
+        s2.windows = {{2, 2, 5, 5}};
+        s2.expectedWidth = 20;
+        s2.expectedHeight = 14;
+        s2.expectedSkeletonCells = 9;
+        runCase(s2Input, s2);
+    }
+
+    // 叠加档（两枚方块同幅、背景间隔 1 像元列）：erode / dilate 对"4 邻域互不相邻"的并集逐块分配
+    // ⇒ 骨架 = S1 与 S2 两套对角线的并、格数可加 12 + 9 = **21**。它钉的是"手推表只在孤立形状上成立"
+    // 这条前提本身：谁把前景改成共边（间隔 0 ⇒ 并成 11×6 一块），期望的 21 格与逐格都会红。
+    {
+        const std::string s12Input = writeMaskRaster(
+            "e2e_skeleton_s12_input.tif", 20, 14, {{2, 2, 6, 6}, {9, 2, 5, 5}});
+        CaseExpectation s12;
+        s12.tag = "S1+S2(叠加档，背景间隔 1 像元)";
+        s12.outputName = "e2e_skeleton_s12_output.tif";
+        s12.foreground = {{2, 2, 6, 6}, {9, 2, 5, 5}};
+        s12.skeleton = {{2, 2}, {3, 3}, {4, 4}, {5, 5}, {6, 6}, {7, 7},
+                        {7, 2}, {6, 3}, {5, 4}, {4, 5}, {3, 6}, {2, 7},
+                        {9, 2}, {10, 3}, {11, 4}, {12, 5}, {13, 6},
+                        {13, 2}, {12, 3}, {10, 5}, {9, 6}};
+        s12.windows = {{2, 2, 6, 6}, {9, 2, 5, 5}};
+        s12.expectedWidth = 20;
+        s12.expectedHeight = 14;
+        s12.expectedSkeletonCells = 21;
+        runCase(s12Input, s12);
+    }
+
+    // S3（已细者不变，1 像元宽横线）：任一像元都缺上/下直邻 ⇒ erode = ∅ ⇒ temp0 = 整个输入 ⇒
+    // 产物与输入的二值前景**逐格相等**（不是"相似"），且全图格数 = 前景格数 12。
+    // 逐格窗口取"矩形外扩一圈"（14×3 = 42 格，线本身 12 格 + 一圈全 0 格）：窗口逐格 + 全图格数两格
+    // 合起来等于整幅逐格（窗口外的亮格只能从格数那格现形），所以这里不铺满 280 个 EXPECT。
+    {
+        const std::string s3aInput = writeMaskRaster("e2e_skeleton_s3a_input.tif", 20, 14, {{3, 5, 12, 1}});
+        CaseExpectation s3a;
+        s3a.tag = "S3(1 像元宽横线)";
+        s3a.outputName = "e2e_skeleton_s3a_output.tif";
+        s3a.foreground = {{3, 5, 12, 1}};
+        s3a.skeleton = cellsOfRects(s3a.foreground);   // 手推：temp0 = 整个输入 ⇒ 期望集就是输入前景集
+        s3a.windows = {{2, 4, 14, 3}};
+        s3a.expectedWidth = 20;
+        s3a.expectedHeight = 14;
+        s3a.expectedSkeletonCells = 12;
+        runCase(s3aInput, s3a);
+    }
+
+    // S3（已细者不变，2 像元厚带）：上行像元缺上直邻、下行像元缺下直邻 ⇒ erode = ∅ ⇒ 同上 ⇒
+    // 产物逐格等于输入前景，格数 12×2 = **24**。这条同时把"细化会不会把已有的带啃断"钉住；
+    // ⚠ 厚度必须正好 2——3 像元厚的带 erode 得到中间那一行、产物就不是输入（已在本机 cv2 上实测过对照）。
+    {
+        const std::string s3bInput = writeMaskRaster("e2e_skeleton_s3b_input.tif", 20, 14, {{3, 5, 12, 2}});
+        CaseExpectation s3b;
+        s3b.tag = "S3(2 像元厚带)";
+        s3b.outputName = "e2e_skeleton_s3b_output.tif";
+        s3b.foreground = {{3, 5, 12, 2}};
+        s3b.skeleton = cellsOfRects(s3b.foreground);
+        s3b.windows = {{2, 4, 14, 4}};
+        s3b.expectedWidth = 20;
+        s3b.expectedHeight = 14;
+        s3b.expectedSkeletonCells = 24;
+        runCase(s3bInput, s3b);
+    }
+
+    // S7（常数件退化档）：整幅同一个常数 ⇒ toUint8 的 `maxVal - minVal < 1e-10` 支把整幅写成 0
+    // ⇒ threshold 之后**根本没有前景**（不是"前景被保形保留"）⇒ 期望是**整幅 0.0**、平方和 0.0，
+    //   且主循环第一轮 erode = ∅ 就退（本块能跑完就是"不死循环"的证据；期望写成"骨架 == 输入"
+    //   的那位后人请重新读 toUint8 那一支，这一档不是退化保形）。
+    // 复用 S6 的三条通道口径：尺寸仍 == 输入、值域仍 ⊆ {0.0, 1.0}（这里退化成只有 0.0）。
+    {
+        const std::string s7Input = createConstantRaster("e2e_skeleton_s7_input.tif", 20, 14, 7.0f);
+        SkeletonRun s7 = runSkeleton(s7Input, "e2e_skeleton_s7_output.tif");
+        EXPECT_EQ(s7.cells.size(), static_cast<size_t>(20 * 14)) << "S7(常数件) 读出的像元数";
+        EXPECT_EQ(s7.width, 20) << "S7(常数件) 产物宽度 != 输入宽度";
+        EXPECT_EQ(s7.height, 14) << "S7(常数件) 产物高度 != 输入高度";
+        double sumSquares = 0.0;
+        int s7ForeignValues = 0;
+        for (float v : s7.cells) {
+            const double d = static_cast<double>(v);
+            sumSquares += d * d;
+            if (v != 0.0f && v != 1.0f) ++s7ForeignValues;
+        }
+        EXPECT_DOUBLE_EQ(sumSquares, 0.0)
+            << "S7(常数件) 产物整幅平方和：无前景 ⇒ 全 0（手推，不是标定值）";
+        EXPECT_EQ(s7ForeignValues, 0) << "S7(常数件) 产物里 {0.0, 1.0} 之外的取值个数";
+        const std::vector<std::string> s7ExpectedMessages = {
+            "Reading band 1 from " + s7Input,
+            "Writing output: " + s7.outputPath,
+        };
+        EXPECT_EQ(s7.messages, s7ExpectedMessages) << "S7(常数件) 消息通道实到形态";
+        EXPECT_EQ(s7.result.message, "Processing completed successfully")
+            << "S7(常数件) 成功时的 Result::message（实读：" << s7.result.message << "）";
+        EXPECT_EQ(s7.result.metadata.size(), 1u) << "S7(常数件) metadata 键数";
+    }
 }
 
 TEST_F(PluginTest, ProcessingGaborFilterExecution) {
