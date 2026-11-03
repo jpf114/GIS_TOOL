@@ -3199,7 +3199,8 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
     EXPECT_TRUE(fs::exists(output));
     EXPECT_GT(readRasterPixel(output, 48, 48), 0.0f);
 
-    // ── 以下 S1~S7（含修复轮补的 S3c 档）：夹具一律"两档前景矩形 + 20×14 非方幅面"，期望一律手推 ──
+    // ── 以下 S1~S8（含修复轮补的 S3c 档与 S8 的 band 双向档）：夹具一律"两档前景矩形 + 20×14 非方幅面"，
+    //     期望一律手推；S8 的夹具是同一枚 2 波段件、两档只换 band 实参（口径见该档段头）。
     struct Rect { int x; int y; int w; int h; };  // 左闭右开
     auto inRects = [](const std::vector<Rect>& rects, int x, int y) {
         for (const auto& r : rects) {
@@ -3233,6 +3234,22 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
         }
         return gis::tests::writeFloatRaster(getTestDir(), name, w, h, data, gis::tests::RasterFixtureOptions{});
     };
+    // S8 用的波段缓冲生成器：与 writeMaskRaster 同一套掩膜语义（前景 255.0 / 背景 0.0、行主序、
+    // 矩形左闭右开），只是不落盘——返回的缓冲交给 writeFloatBandsRaster 拼成多波段件。
+    // WHY 不用 createMultiBandConstantRaster / createMultiBandGradientRaster：常量件整幅同值，进
+    // toUint8 的 `maxVal - minVal < 1e-10` 支被抹成全 0（没有前景，判不出 band 选没选对）；梯度件
+    // 二值化后的前景贴边，erode 的边界虚采样立刻进期望，就不再是纯手推。
+    auto bandMask = [&](const std::vector<Rect>& rects, int w, int h) {
+        std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                if (inRects(rects, x, y)) {
+                    data[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = 255.0f;
+                }
+            }
+        }
+        return data;
+    };
 
     // 消息通道要数条数，而夹具用的 CliProgress 只把文案写进 stderr、不回读 ⇒ 自带捕获缓冲。
     // ⚠ doSkeleton **函数体**里 onMessage 是 0 次，但"本动作不产生 onMessage 文案"是错的：
@@ -3253,14 +3270,16 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
         int width = 0;
         int height = 0;
     };
-    auto runSkeleton = [&](const std::string& inputPath, const char* outputName) {
+    // band 由常量 1 改成**带默认值的形参**：既有调用点（runCase 与 S7）都不写第三个实参 ⇒
+    // 取默认 1，实参与消息文案与改前逐字节相同；只有 S8 两档显式传 1 / 2。
+    auto runSkeleton = [&](const std::string& inputPath, const char* outputName, int band = 1) {
         SkeletonRun run;
         run.outputPath = (getTestDir() / outputName).string();
         std::map<std::string, gis::framework::ParamValue> skeletonParams;
         skeletonParams["action"] = std::string("skeleton");
         skeletonParams["input"] = inputPath;
         skeletonParams["output"] = run.outputPath;
-        skeletonParams["band"] = 1;
+        skeletonParams["band"] = band;
         CapturingProgress capture;
         run.result = p->execute(skeletonParams, capture);
         run.messages = std::move(capture.messages);
@@ -3281,9 +3300,10 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
         int expectedWidth = 0;
         int expectedHeight = 0;
         int expectedSkeletonCells = 0;                    // 全图 1.0 格数（2n / 2n−1 / 前景格数，推出来的）
+        int band = 1;                                     // 喂给动作的波段号（默认 1；只有 S8 两档分别取 1 / 2）
     };
     auto runCase = [&](const std::string& inputPath, const CaseExpectation& c) {
-        SkeletonRun run = runSkeleton(inputPath, c.outputName);
+        SkeletonRun run = runSkeleton(inputPath, c.outputName, c.band);
 
         // S5（尺寸）：产物宽高 == 输入宽高；非方夹具上 (cols, rows) 写反必红这两格。
         EXPECT_EQ(run.width, c.expectedWidth) << c.tag << " 产物宽度 != 输入宽度";
@@ -3355,7 +3375,9 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
         EXPECT_EQ(run.result.message, "Processing completed successfully")
             << c.tag << " 成功时的 Result::message（实读：" << run.result.message << "）";
         const std::vector<std::string> expectedMessages = {
-            "Reading band 1 from " + inputPath,
+            // 波段号取**本档声明的实参** c.band（既不是产物读数、也不是写死的 1）：readBandAsMat 打的
+            // 就是它收到的那个 bandIndex，所以"参数说 2、实际读 1"这类形态在这里也现形一次。
+            "Reading band " + std::to_string(c.band) + " from " + inputPath,
             "Writing output: " + run.outputPath,
         };
         EXPECT_EQ(run.messages, expectedMessages)
@@ -3526,6 +3548,66 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
         EXPECT_EQ(s7.result.message, "Processing completed successfully")
             << "S7(常数件) 成功时的 Result::message（实读：" << s7.result.message << "）";
         EXPECT_EQ(s7.result.metadata.size(), 1u) << "S7(常数件) metadata 键数";
+    }
+
+    // S8（band 双向档）：既有七档的夹具**全是单波段件** ⇒ 把产品改成"忽略 band、写死读第 1 波段"之后，
+    // 七档产物逐格不变、消息文案照旧（那句打的是 readBandAsMat 自己收到的形参）⇒ 本块照样全绿。
+    // 所以这里补**同一枚 2 波段件、只换 band 实参**的两档，两档各拿相反方向的红点：
+    //   第 1 波段 = 1 像元宽横带 {2, 10, 9, 1}（x∈[2,10]、y=10 ⇒ 前景 9 格）；
+    //   第 2 波段 = 6×6 孤立方块 {12, 2, 6, 6}（x∈[12,17]、y∈[2,7] ⇒ 前景 36 格）。
+    // 形状互不重合（最近的像是 (10,10) 与 (12,7)，4 邻域下不同行不同列 ⇒ 不相邻，谁把两波段按位或也
+    // 拼不出任一档的期望集）；各自离边界 ≥2 像元（带：左 2 / 右 9 / 上 10 / 下 3；方块：左 12 / 右 2 /
+    // 上 2 / 下 6）⇒ erode 的边界虚采样进不了期望。两波段**各自**都是 {0.0, 255.0} 两档直方图 ⇒
+    // 不进 toUint8 的常数退化支（⚠ 不许把任何一波写成整幅同值：那判的是 S7 已经判过的常数退化，不是 band）。
+    // 期望手推（从上面四个矩形字面量算，不看产物）：
+    //   band = 1：横带里每个像元都缺上/下直邻 ⇒ erode = ∅ ⇒ temp₀ = 整个输入、work₁ = ∅ 退
+    //     ⇒ 骨架 = 输入自身 = 那 **9 格**（期望集 = cellsOfRects(该档前景)，从夹具导出）；
+    //   band = 2：与 S1 同枚 6×6（x 平移 +10）⇒ 内缩三轮 temp₀/₁/₂ 各 4 角 = **12 格**（= 2n，n 偶 ⇒
+    //     正中无格），坐标集 = 主对角 {(12,2),(13,3),(14,4),(15,5),(16,6),(17,7)}
+    //     ∪ 反对角 {(17,2),(16,3),(15,4),(14,5),(13,6),(12,7)}（两条对角不相交）。
+    // ⇒ "恒读第 1 波段"的红点落在 band = 2 这一档（亮格集 = 带 ≠ X ⇒ 逐格 12 错配 + 格数 9≠12 +
+    //   子集 9 格出界）；"恒读第 2 波段"的红点落在 band = 1 这一档（逐格 9 错配 + 格数 12≠9 + 子集 12 格出界）。
+    //   两档成对才是把 band 钉住的完整理由：只判一档时，另一方向的恒读实现照样全绿。
+    // ⚠ 上面那对形态是**构造论证**（判据设计依据），本席没有为了这条改 src/ 复跑；下面两条改桩臂只在
+    //   **测试面**把实参钉死成错的一侧，复现同一对红点的方向，不是产品反事实实跑。
+    {
+        const std::vector<Rect> s8BandOne = {{2, 10, 9, 1}};    // 第 1 波段：横带（9 格）
+        const std::vector<Rect> s8BandTwo = {{12, 2, 6, 6}};    // 第 2 波段：孤立方块（36 格）
+        const std::string s8Input = gis::tests::writeFloatBandsRaster(
+            getTestDir(), "e2e_skeleton_s8_2band_input.tif", 20, 14,
+            {bandMask(s8BandOne, 20, 14), bandMask(s8BandTwo, 20, 14)});
+
+        CaseExpectation s8a;
+        s8a.tag = "S8(band=1，横带)";
+        s8a.outputName = "e2e_skeleton_s8_band1_output.tif";
+        s8a.foreground = s8BandOne;
+        s8a.skeleton = cellsOfRects(s8BandOne);                 // 手推：1 像元宽带 ⇒ 骨架 == 输入
+        s8a.windows = {{1, 9, 11, 3}};                           // 矩形外扩一圈：11×3 = 33 格（9 格期望亮 + 24 格期望 0）
+        s8a.expectedWidth = 20;
+        s8a.expectedHeight = 14;
+        s8a.expectedSkeletonCells = 9;
+        s8a.band = 1;
+        runCase(s8Input, s8a);
+
+        CaseExpectation s8b;
+        s8b.tag = "S8(band=2，6x6 方块的两对角)";
+        s8b.outputName = "e2e_skeleton_s8_band2_output.tif";
+        s8b.foreground = s8BandTwo;
+        s8b.skeleton = {{12, 2}, {13, 3}, {14, 4}, {15, 5}, {16, 6}, {17, 7},
+                        {17, 2}, {16, 3}, {15, 4}, {14, 5}, {13, 6}, {12, 7}};
+        s8b.windows = {{11, 1, 8, 8}};                           // 矩形外扩一圈：8×8 = 64 格（12 格期望亮 + 52 格期望 0）
+        s8b.expectedWidth = 20;
+        s8b.expectedHeight = 14;
+        s8b.expectedSkeletonCells = 12;
+        s8b.band = 2;
+        runCase(s8Input, s8b);
+
+        // 本档的期望格数与前景格数关系决定了逐格段承不承重（口径与 S3a/S3c 那段一致）：
+        //   band = 2 档 12 != 36 ⇒ 亮格集是前景的真子集，"格数 ∧ 子集 ∧ 值域"锁不出"哪 12 格"
+        //     ⇒ 这里的逐格段**独立承重**（和 S1/S2/S3c 同类）；
+        //   band = 1 档 9 == 9 ⇒ 那三格把它蕴含住了，逐格段是**不独立承重的推论行**，覆盖记在三格
+        //     头上，留着只为红时点名 (x, y)。两档合起来才叫判住 band：值级判据是"亮格集合 == 哪一枚形状"，
+        //     而不是"非空"。
     }
 }
 
