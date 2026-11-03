@@ -3199,7 +3199,7 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
     EXPECT_TRUE(fs::exists(output));
     EXPECT_GT(readRasterPixel(output, 48, 48), 0.0f);
 
-    // ── 以下 S1~S7：夹具一律"两档前景矩形 + 20×14 非方幅面"，期望一律手推 ──
+    // ── 以下 S1~S7（含修复轮补的 S3c 档）：夹具一律"两档前景矩形 + 20×14 非方幅面"，期望一律手推 ──
     struct Rect { int x; int y; int w; int h; };  // 左闭右开
     auto inRects = [](const std::vector<Rect>& rects, int x, int y) {
         for (const auto& r : rects) {
@@ -3451,7 +3451,10 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
     // 产物逐格等于输入前景，格数 12×2 = **24**。这条同时把"细化会不会把已有的带啃断"钉住；
     // ⚠ 本档也是**被蕴含的推论行**：期望格数 == 前景格数（24 == 24），三个前提与推导逐字见 S3a
     //   那段标注；逐格不独立承重、**覆盖记在那三格头上**，留着只为归因点名坐标。
-    // ⚠ 厚度必须正好 2——3 像元厚的带 erode 得到中间那一行、产物就不是输入（已在本机 cv2 上实测过对照）。
+    // ⚠ 厚度必须正好 2——3 像元厚的带 erode 得到中间那一行、产物就不是输入：
+    //   这句话在本块里**不再是叙述**，下面紧跟的 S3c 档把它写成了判据；
+    //   本块首稿把它写成"已在本机 cv2 上实测过对照"——那个 14 格的数其实**纯手推即得**
+    //   （逐轮推导见 S3c 段头，不需要任何模拟载体），修复轮把证据等级改准为"手推 + 判据"。
     {
         const std::string s3bInput = writeMaskRaster("e2e_skeleton_s3b_input.tif", 20, 14, {{3, 5, 12, 2}});
         CaseExpectation s3b;
@@ -3464,6 +3467,34 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
         s3b.expectedHeight = 14;
         s3b.expectedSkeletonCells = 24;
         runCase(s3bInput, s3b);
+    }
+
+    // S3c（3 像元厚带 ⇒ **不**保形）：修复轮把"厚度必须正好 2"从叙述升成判据。夹具 {3, 5, 12, 3}
+    // （x∈[3,14]、y∈{5,6,7}，前景 36 格，离边界 ≥2 像元 ⇒ erode 的边界虚采样进不了期望）。手推逐轮：
+    //   第 1 轮 erode = "上下左右 4 直邻齐备" = 中间行且左右不贴端 = {(4..13, 6)}（10 格）；
+    //   open = dilate(erode) = 中间行 12 格（含两端 (3,6)(14,6)）+ 上行 {4..13} + 下行 {4..13} = 32 格
+    //   ⇒ temp₀ = 36 − 32 = **两端四角** {(3,5),(3,7),(14,5),(14,7)}；work₁ = 那条 10 格的线。
+    //   第 2 轮 erode(work₁) = ∅（每格都缺上/下直邻）⇒ open = ∅ ⇒ temp₁ = work₁ = 10 格 ⇒ work₂ = ∅ 退。
+    //   骨架 = 4 + 10 = **14 格**，坐标集 = 两端四角 ∪ 中间行 x∈[4,13]。
+    // ⚠ 本档期望格数 14 != 前景格数 36 ⇒ S3a/S3b 那个"逐格被三格蕴含"的前提在这里**恰好不成立**
+    //   ：亮格集是前景的真子集，格数与子集都锁不出"哪 14 格"⇒ **逐格那一段在这里独立承重**。
+    //   所以本档既是"已细者不变"的反例档（含义：不是所有带状前景都保形），也与 S1/S2/叠加档
+    //   同类——期望格数 != 前景格数，所以逐格段在这里独立承重。两条可自证的红点：
+    //   格数期望改 14 → 13 ⇒ 只红"格数"那一格；把期望集改成 cellsOfRects(foreground) 而
+    //   格数不动 ⇒ 只红逐格（36 − 14 = 22 格错配，取决于"期望亮集"u4e0e"u5b9eu9645u4eaeu96c6"u7684u5deeu96c6uff09u3002
+    {
+        const std::string s3cInput = writeMaskRaster("e2e_skeleton_s3c_input.tif", 20, 14, {{3, 5, 12, 3}});
+        CaseExpectation s3c;
+        s3c.tag = "S3(3 像元厚带)";
+        s3c.outputName = "e2e_skeleton_s3c_output.tif";
+        s3c.foreground = {{3, 5, 12, 3}};
+        s3c.skeleton = {{3, 5}, {3, 7}, {14, 5}, {14, 7},
+                        {4, 6}, {5, 6}, {6, 6}, {7, 6}, {8, 6}, {9, 6}, {10, 6}, {11, 6}, {12, 6}, {13, 6}};
+        s3c.windows = {{2, 4, 14, 5}};   // 矩形外扩一圈：14×5 = 70 格（14 格期望亮 + 56 格期望 0）
+        s3c.expectedWidth = 20;
+        s3c.expectedHeight = 14;
+        s3c.expectedSkeletonCells = 14;
+        runCase(s3cInput, s3c);
     }
 
     // S7（常数件退化档）：整幅同一个常数 ⇒ toUint8 的 `maxVal - minVal < 1e-10` 支把整幅写成 0
