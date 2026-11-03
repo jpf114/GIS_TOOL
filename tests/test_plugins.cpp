@@ -7574,11 +7574,23 @@ TEST_F(PluginTest, ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin) {
 // 这里故意给**不连续**的标签 2 与 5（跳过 3、4）：改前 segment_count 报 5，改后报 2。
 // 同一幅标记里三个种子的标签值也各自锚住（1/2/5 原样透传到输出），
 // 否则"把 segment_count 硬编码成 2"的假实现也能全绿。
+//
+// ── 批次 D P6：本块晋升成登记行 `processing,watershed` 的 `[:]GOLD` 证据块（登记表第 4 列指到这里）──
+// 这把的真实形状不是"没人判过 watershed"，而是**判据形态与守卫口径脱节**：下面 W2 那三条标签判据和
+// `segment_count` 那条一直都在，用的是 `EXPECT_EQ`，而 `CoverageMeta.GoldEvidenceIsAuditable` 认的宏族
+// （`kNumericAssertions` = `EXPECT_NEAR / EXPECT_FLOAT_EQ / EXPECT_DOUBLE_EQ`）里没有 `EXPECT_EQ`
+// ⇒ 判过也不记数，这一行因此一直挂着 PENDING。本刀两件事一起做，只做前一件就是 shape gaming：
+//   ①（做账）把**已经有数值承载力**的整数判据改写成守卫认的宏族 ⇒ W2；
+//   ②（补真判据）把这块原先没判到的产品事实补上 ⇒ W1 谷线进产物、W3 正标签去重集合不被重新编号、
+//      W4 计数口径双向可红、W5 `marker_input` 恒读第 1 波段。
+// 已知**不承重**项（别拿本块去判这两条）：把 `doWatershed` 产出段那段 `label > 1` 去重计数搬到
+// `cv::watershed` **之前**是一个可存活的等价变异（实测变异轮 6/6 全绿、变异体已还原）⇒ W4 判"口径"不判"时序"；
+// 自动标记支的 `markers += 1` 顺序由同族的 `ProcessingWatershedAutoMarkersKeepBackgroundAsOwnBasin` 块承担，本块不重复。
 TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
 
-    // 32x24 非正方形：顺带让 Tier 3 那条尺寸守卫的"行列写反"变异有东西可挡（见 §4）。
+    // 32x24 非正方形：顺带让 Tier 3 那条尺寸守卫的"行列写反"变异有东西可挡（见同族尺寸守卫块）。
     const int w = 32, h = 24;
     std::vector<float> data(static_cast<size_t>(w) * static_cast<size_t>(h));
     for (int y = 0; y < h; ++y) {
@@ -7589,18 +7601,24 @@ TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels) 
     }
     const std::string input = gis::tests::writeFloatRaster(getTestDir(), "ws_t16_ext_input.tif", w, h, data);
 
+    // 两枚种子的取点范围命名成常量：主档、W1 的"块内不许有谷线"、W4 的换标签档、W5 的诱饵档共用同一套几何，
+    // 只有标签取值不同 ⇒ "只改标签、不改几何"这句才真的可执行（几何各写一遍就会漂）。
+    constexpr int rectAX0 = 4, rectAY0 = 4, rectAX1 = 8, rectAY1 = 8;        // 区域 A
+    constexpr int rectBX0 = 20, rectBY0 = 14, rectBX1 = 24, rectBY1 = 18;    // 区域 B
+    constexpr int unknownY0 = 10, unknownY1 = 12;                            // 横贯整幅的未知带
+
     // 标记按 OpenCV 约定书写：1 = 确定背景、>= 2 = 区域、0 = 未知。
     std::vector<float> markers(static_cast<size_t>(w) * static_cast<size_t>(h), 1.0f);
-    auto fillRect = [&](int x0, int y0, int x1, int y1, float value) {
+    auto fillRect = [](std::vector<float>& target, int width, int x0, int y0, int x1, int y1, float value) {
         for (int y = y0; y <= y1; ++y) {
             for (int x = x0; x <= x1; ++x) {
-                markers[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = value;
+                target[static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)] = value;
             }
         }
     };
-    fillRect(4, 4, 8, 8, 2.0f);            // 区域 A：标签 2
-    fillRect(20, 14, 24, 18, 5.0f);        // 区域 B：标签 5（与 2 之间留标签空洞）
-    fillRect(0, 10, w - 1, 12, 0.0f);      // 未知带：0
+    fillRect(markers, w, rectAX0, rectAY0, rectAX1, rectAY1, 2.0f);   // 区域 A：标签 2
+    fillRect(markers, w, rectBX0, rectBY0, rectBX1, rectBY1, 5.0f);   // 区域 B：标签 5（与 2 之间留标签空洞）
+    fillRect(markers, w, 0, unknownY0, w - 1, unknownY1, 0.0f);       // 未知带：0
     const std::string markerPath =
         gis::tests::writeFloatRaster(getTestDir(), "ws_t16_ext_marker.tif", w, h, markers);
 
@@ -7617,9 +7635,27 @@ TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels) 
     const auto countIt = result.metadata.find("segment_count");
     ASSERT_NE(countIt, result.metadata.end());
 
-    const int background = static_cast<int>(readRasterPixel(output, 2, 2));
-    const int seedA = static_cast<int>(readRasterPixel(output, 6, 6));
-    const int seedB = static_cast<int>(readRasterPixel(output, 22, 16));
+    // ── W2（做账）标记透传：三条整数判据从 `EXPECT_EQ` 换成 `EXPECT_DOUBLE_EQ`，判的内容一个字没变。──
+    // 读成 `float` 而不是先 `static_cast<int>`：这条要钉的就是"产物里那枚浮点值"，先取整会把
+    // "标签被当成连续量处理（写成 1.9999、或者带上了拉伸）"这一类缺陷吃掉。
+    // 零容差（用 `EXPECT_DOUBLE_EQ` 而不是 `EXPECT_NEAR(..., 1e-6)`）为什么安全——三步都在本仓源码里读得到：
+    //   (1) 产物波段是 `GDT_Float32` 单波段：`gis::core::matToGdalTiff` 先用
+    //       `createRaster(dstPath, mat.cols, mat.rows, 1, GDT_Float32)` 建盘，再对 `CV_32F` 的标签矩阵按
+    //       `GDT_Float32` 整幅 `RasterIO(GF_Write, ...)`；`createRaster` 透给驱动的创建选项是 `nullptr`
+    //       ⇒ GTiff 走默认（不压缩、不量化）⇒ 没有"写进去的位被换掉"这条路。
+    //   (2) 标签→float 无损：产品写的是 `static_cast<float>(label)`，而 IEEE754 binary32 的尾数（含隐藏位）
+    //       共 24 位 ⇒ 所有 |n| <= 2^24 = 16777216 的整数逐位精确。本块产物的取值只有 -1、0 和标记给的
+    //       1/2/5，最大绝对值 5 距那个上界还有 3355443 倍 ⇒ 一次舍入都不会发生。
+    //   (3) 读回不缩放：`readRasterPixel` 与 `readRasterBandF32` 都按 `GDT_Float32` 缓冲读同类型波段、
+    //       bufW/bufH 与窗口宽高相等（不重采样）；GDAL 的 `RasterIO` 不应用波段的 scale/offset，而
+    //       `matToGdalTiff` 全程没有 `SetScale/SetOffset`，夹具也没声明 NoData ⇒ 连 NoData 回填都不触发；
+    //       float→double 的提升同样逐位精确。
+    //   ⇒ 三跳合起来是"写进去的位和读出来的位是同一批位"，所以这里**该**用精确相等：加容差反而会放走
+    //      "标签被当连续量处理"那一类缺陷。⚠ 这个论证只覆盖**整型标签**，不许外推到本插件的连续量产物
+    //      （`template_match` 的响应值是拉伸过的浮点，那边必须带容差）。
+    const float background = readRasterPixel(output, 2, 2);
+    const float seedA = readRasterPixel(output, 6, 6);
+    const float seedB = readRasterPixel(output, 22, 16);
     const std::string observed = " 实测[背景(2,2)=" + std::to_string(background) +
                                  ", A心(6,6)=" + std::to_string(seedA) +
                                  ", B心(22,16)=" + std::to_string(seedB) +
@@ -7627,11 +7663,219 @@ TEST_F(PluginTest, ProcessingWatershedExternalMarkersCountDistinctRegionLabels) 
 
     // 三个种子的标签值原样透传（背景 1 / 区域 2 / 区域 5）：证明 segment_count 是从这幅标记栅格数出来的，
     // 不是硬编码的 2。取点全部避开最外一圈——OpenCV watershed 会把触及边框的盆地沿边框写成 -1。
-    EXPECT_EQ(background, 1) << "外部标记里的确定背景标签 1 应原样透传" << observed;
-    EXPECT_EQ(seedA, 2) << "外部标记里的区域标签 2 应原样透传" << observed;
-    EXPECT_EQ(seedB, 5) << "外部标记里的区域标签 5 应原样透传" << observed;
+    EXPECT_DOUBLE_EQ(background, 1.0) << "外部标记里的确定背景标签 1 应原样透传" << observed;
+    EXPECT_DOUBLE_EQ(seedA, 2.0) << "外部标记里的区域标签 2 应原样透传" << observed;
+    EXPECT_DOUBLE_EQ(seedB, 5.0) << "外部标记里的区域标签 5 应原样透传" << observed;
     EXPECT_EQ(countIt->second, "2")
         << "标记里只有 2 个区域（标签 2 与 5）；最大标签是 5，把 maxLabel 当区域数就少算/多算" << observed;
+
+    // 整幅读一次，供 W1 / W3 两段共用（逐像元调 `readRasterPixel` 要开 768 次数据集）。
+    int productWidth = 0;
+    int productHeight = 0;
+    const std::vector<float> product = readRasterBandF32(output, productWidth, productHeight);
+    ASSERT_EQ(product.size(), static_cast<size_t>(w) * static_cast<size_t>(h))
+        << "产物像元总数与输入不符 ⇒ 下面几段整幅扫描的索引前提不成立";
+    EXPECT_EQ(productWidth, w) << observed;
+    EXPECT_EQ(productHeight, h) << observed;
+
+    // ── W1（新增）谷线真的进了产物：产物里必须出现负值格，而且那个值就是 -1.0。──
+    // 判"存在"不判"几格"：谷线厚度由 `cv::watershed` 按梯度决定、随影像几何漂 ⇒ 把格数写成期望就是标定常量。
+    // "没扫到"与"扫到了但值不是 -1"必须是两条不同的红，所以发现用 `value < 0.0f`（判负）、
+    // 钉值用 `EXPECT_DOUBLE_EQ(探针, -1.0)`（判等），两件事分开写。
+    // 探针初值取 NaN，**不取 -1**：这幅产物的合法取值里就有 -1（谷线本身），拿 -1 当"没找到"的哨兵会把
+    // "存在谷线"和"一格都没扫到"混成同一件事（`raster_fixture.h` 里 `unreadablePixelValue()` 取 NaN 是同一个理由）。
+    int valleyCells = 0;
+    float valleyProbe = std::numeric_limits<float>::quiet_NaN();
+    for (const float value : product) {
+        if (value < 0.0f) {
+            ++valleyCells;
+            if (std::isnan(valleyProbe)) valleyProbe = value;
+        }
+    }
+    EXPECT_GT(valleyCells, 0)
+        << "产物里一个负值都没有 ⇒ 分水岭没在两盆之间划谷线（谷线格数=0、探针仍是 NaN=根本没扫到）" << observed;
+    EXPECT_DOUBLE_EQ(valleyProbe, -1.0)
+        << "产物里出现的负值不是 -1 ⇒ 谷线的写法变了，实测探针=" << valleyProbe;
+
+    // 两枚种子所在块**整块**不许是谷线：被 -1 吃掉种子 = 分割把标记本身当成分界。
+    // 这两条不等上面 W2 的三个取点——那三条钉"种子格的取值"，这两条钉"负值域不覆盖整个种子块"。
+    const auto valleyCellsInRect = [&](int x0, int y0, int x1, int y1) {
+        int n = 0;
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                if (product[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] < 0.0f) ++n;
+            }
+        }
+        return n;
+    };
+    const int valleyCellsInA = valleyCellsInRect(rectAX0, rectAY0, rectAX1, rectAY1);
+    const int valleyCellsInB = valleyCellsInRect(rectBX0, rectBY0, rectBX1, rectBY1);
+    EXPECT_EQ(valleyCellsInA, 0)
+        << "区域 A 的种子块里出现负值 ⇒ 谷线吃掉了标记（实测 A 块负值格数=" << valleyCellsInA
+        << "，全图负值格数=" << valleyCells << "）";
+    EXPECT_EQ(valleyCellsInB, 0)
+        << "区域 B 的种子块里出现负值 ⇒ 同上（实测 B 块负值格数=" << valleyCellsInB
+        << "，全图负值格数=" << valleyCells << "）";
+
+    // ── W3（新增）不给非零标记重新编号：产物里出现的**正标签去重集合**必须与标记给的那批一字不差。──
+    // `cv::watershed` 的契约是"只往 markers==0 灌标签、不改写已有的非零标签" ⇒ 标记给的标签空洞（2 与 5 之间
+    // 缺 3、4）在产物里必须还是空洞；被补成连续编号 = 产品替用户重新编号 = 这几条红。
+    // 期望集合从**夹具自己的 markers 缓冲**算出来，不从产物读回来抄 ⇒ 两侧载体独立，对撞才有承载力；
+    // 改成"从产物导出期望"就把这条洗成恒真。
+    std::set<float> expectedPositiveLabels;
+    for (const float value : markers) {
+        if (value > 0.0f) expectedPositiveLabels.insert(value);
+    }
+    std::set<float> productPositiveSet;
+    for (const float value : product) {
+        if (value > 0.0f) productPositiveSet.insert(value);
+    }
+    const std::vector<float> productPositiveLabels(productPositiveSet.begin(), productPositiveSet.end());
+    const auto describeLabels = [](const std::set<float>& values) {
+        std::string text = "{";
+        for (const float value : values) {
+            if (text.size() > 1) text += ",";
+            text += std::to_string(value);
+        }
+        return text + "}";
+    };
+    // 集合相等判两半：少一格红"标记给的标签在产物里丢了"，多一格红"产物冒出了标记里没有的标签"。
+    EXPECT_EQ(static_cast<int>(productPositiveSet.size()), static_cast<int>(expectedPositiveLabels.size()))
+        << "正标签去重集合的**个数**不等；标记侧=" << describeLabels(expectedPositiveLabels)
+        << " 产物侧=" << describeLabels(productPositiveSet);
+    for (const float label : expectedPositiveLabels) {
+        EXPECT_NE(productPositiveSet.find(label), productPositiveSet.end())
+            << "标记里给了标签 " << label << "，产物里却没有 ⇒ 被重新编号或整片丢失";
+    }
+    for (const float label : productPositiveLabels) {
+        EXPECT_EQ(expectedPositiveLabels.count(label), 1u)
+            << "产物里冒出标记里没有的标签 " << label << " ⇒ watershed 不该新增正标签";
+    }
+    // 取值逐个钉死：{1.0, 2.0, 5.0} 就是上面 fillRect 写进标记的那三个值（1=背景、2=A、5=B）。
+    //   标签空洞若被补成连续编号，第三条红在"5 vs 3"；越界取值一律由域外探针 NaN 负责红（不拿 -1 当哨兵）。
+    //   ⚠ 这三行是 CF-B 的注入点。控制器实测（改期望列表成 {1.0, 2.0, 3.0, 5.0}，凭空补一枚标签）⇒
+    //     **只有第三条取值断言红**（5 vs 3）；上面"集合个数"那条不红——它数的是从标记缓冲 markers 导出的
+    //     `expectedPositiveLabels`，与这个字面量无关。⇒ 这条注入的承重面是"取值逐个钉死"，不是"个数"。
+    const std::vector<double> expectedLabelValues{1.0, 2.0, 5.0};
+    const auto productLabelAt = [&](size_t index) {
+        return index < productPositiveLabels.size() ? static_cast<double>(productPositiveLabels[index])
+                                                    : std::numeric_limits<double>::quiet_NaN();
+    };
+    EXPECT_DOUBLE_EQ(productLabelAt(0), expectedLabelValues[0])
+        << "产物里最小的正标签应是标记给的确定背景 1，实测产物正标签集合=" << describeLabels(productPositiveSet);
+    EXPECT_DOUBLE_EQ(productLabelAt(1), expectedLabelValues[1])
+        << "第二枚应是区域 A 的 2（被重新编号成 2 以外的值就是产品替用户改标签）";
+    EXPECT_DOUBLE_EQ(productLabelAt(2), expectedLabelValues[2])
+        << "第三枚应是区域 B 的 5：空洞 2→5 被补成 3 就说明产品做了连续编号";
+
+    // ── W4（新增）计数口径双向可红：保留上面 `segment_count == "2"`，再加一档**只改标记标签、
+    //    不改几何也不改期望**的对照——区域 B 的标签 5 换成 3，两档都必须报 2。──
+    // 这条判的是**产品决定的口径**，不是我选的夹具决定的：`doWatershed` 产出段是
+    // `if (label > 1) uniqueLabels.insert(label);` + `segmentCount = uniqueLabels.size();` ——
+    // 过滤条件只看"大于 1"、聚合只看"去重集合的大小"，两句都不读标签的具体取值
+    // ⇒ 只要两枚种子互不相等且都 > 1，换标签值不会换个数。口径的边界也写清楚（不外推）：
+    //   两枚种子**取同一个标签**时个数会变成 1（去重把它们并成一格），那时口径照样成立、只是
+    //   "区域数 == 种子数"不再成立 ⇒ 那一档本刀不判（要另造一幅标记，且它判的是另一件事）。
+    // 双向可红：错写法"取最大标签值"在档一报 5、在档二报 3 ⇒ 两个方向各红一次，而不是只红一次。
+    std::vector<float> markersAlt = markers;
+    fillRect(markersAlt, w, rectBX0, rectBY0, rectBX1, rectBY1, 3.0f);   // 只把 B 的标签 5 换成 3
+    const std::string markerAltPath =
+        gis::tests::writeFloatRaster(getTestDir(), "ws_t16_ext_marker_alt3.tif", w, h, markersAlt);
+    const std::string altOutput = utf8PathString(getTestDir() / "ws_t16_ext_output_alt3.tif");
+    params["marker_input"] = markerAltPath;
+    params["output"] = altOutput;
+    const auto altResult = p->execute(params, progress_);
+    ASSERT_TRUE(altResult.success) << altResult.message;
+    const auto altCount = altResult.metadata.find("segment_count");
+    ASSERT_NE(altCount, altResult.metadata.end());
+    EXPECT_EQ(altCount->second, "2")
+        << "把区域 B 的标签 5 换成 3（几何与区域个数都没动）后 segment_count 必须仍是 2：档一报 "
+        << countIt->second << "、档二报 " << altCount->second
+        << "；把最大标签值当区域数的错写法会分别报 5 与 3";
+    // 正控（缺了它这档可能只是把主档又跑了一遍）：对照档的产物确实带着新标签 3，且 A 侧没被顺手改掉。
+    EXPECT_DOUBLE_EQ(readRasterPixel(altOutput, 22, 16), 3.0)
+        << "对照档的 B 种子格应读到标记里给的 3 ⇒ 读不到就说明这一档跑的还是主档那幅标记";
+    EXPECT_DOUBLE_EQ(readRasterPixel(altOutput, 6, 6), 2.0) << "对照档只该换 B 的标签，A 的种子格仍是 2";
+
+    // ── W5（新增）`marker_input` 恒读第 1 波段，`band` 只作用在输入影像上。──
+    // 产品里外部标记那一支是 `readBandAsMat(markerInput, 1, progress)`——第二个实参是**字面量 1**，与 `band`
+    // 无关；同一函数上方输入影像走的是 `readBandAsMat(input, band, progress)`。
+    // ⚠ 这跟 `processing.template_match` 的口径**相反**：那边模板走 `readBandAsMat(templateFile, band, ...)`，
+    //   同一个 `band` 同时作用于输入与模板 ⇒ 本条不是通用规律（"辅助输入跟随 band"在本插件里既不成立也不普适），
+    //   两支的判据要各写各的，别把这里写成"所有第二输入都读第 1 波段"。
+    // 两档对撞（没有正控的话，档一可能比的是两个相同的东西）：
+    //   档一：2 波段标记（第 1 波段 = 真标记 1/2/5，第 2 波段 = 诱饵标记 1/4/9）+ 2 波段输入 + `band = 2`
+    //         ⇒ 分割仍按标记的**第 1 波段**：正标签集合还是 {1,2,5}、计数还是 2、诱饵的 4/9 一格都不出现。
+    //   档二（正控）：2 波段标记（第 1 波段整幅 0、第 2 波段 = 真标记）+ `band = 2`
+    //         ⇒ 结果**必须变**：标记的第 1 波段没有任何种子 ⇒ segment_count = 0、产物里没有正标签。
+    //           若 `band` 真被用到标记图上，这一档会读到第 2 波段的真标记并报 2 ⇒ 红。
+    std::vector<float> data2(static_cast<size_t>(w) * static_cast<size_t>(h));
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            data2[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] =
+                static_cast<float>((x * 3 + y * 5) % 16);
+        }
+    }
+    const std::string input2 =
+        gis::tests::writeFloatBandsRaster(getTestDir(), "ws_t16_ext_input2band.tif", w, h, {data, data2});
+    std::vector<float> decoyMarkers(static_cast<size_t>(w) * static_cast<size_t>(h), 1.0f);
+    fillRect(decoyMarkers, w, rectAX0, rectAY0, rectAX1, rectAY1, 4.0f);   // 同一套几何、不同的一批标签
+    fillRect(decoyMarkers, w, rectBX0, rectBY0, rectBX1, rectBY1, 9.0f);
+    fillRect(decoyMarkers, w, 0, unknownY0, w - 1, unknownY1, 0.0f);
+    const std::string marker2Path = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "ws_t16_ext_marker2band.tif", w, h, {markers, decoyMarkers});
+    const std::string band2Output = utf8PathString(getTestDir() / "ws_t16_ext_output_band2.tif");
+    params["input"] = input2;
+    params["marker_input"] = marker2Path;
+    params["output"] = band2Output;
+    params["band"] = 2;
+    const auto band2Result = p->execute(params, progress_);
+    ASSERT_TRUE(band2Result.success) << band2Result.message;
+    const auto band2Count = band2Result.metadata.find("segment_count");
+    ASSERT_NE(band2Count, band2Result.metadata.end());
+    int band2Width = 0;
+    int band2Height = 0;
+    const std::vector<float> band2Product = readRasterBandF32(band2Output, band2Width, band2Height);
+    ASSERT_EQ(band2Product.size(), static_cast<size_t>(w) * static_cast<size_t>(h)) << "W5 档一产物尺寸不符";
+    std::set<float> band2PositiveSet;
+    for (const float value : band2Product) {
+        if (value > 0.0f) band2PositiveSet.insert(value);
+    }
+    EXPECT_EQ(band2Count->second, "2")
+        << "`band = 2` 换了输入的地形，但分割必须按标记的**第 1 波段**（真标记）来做，实测档一 segment_count="
+        << band2Count->second << "、产物正标签集合=" << describeLabels(band2PositiveSet);
+    EXPECT_DOUBLE_EQ(readRasterPixel(band2Output, 6, 6), 2.0)
+        << "档一 A 种子格应读到标记第 1 波段给的 2（读到诱饵的 4 就说明 `band` 被用到标记图上了）";
+    EXPECT_DOUBLE_EQ(readRasterPixel(band2Output, 22, 16), 5.0) << "档一 B 种子格应读到 5，理由同上";
+    EXPECT_EQ(band2PositiveSet.count(4.0f), 0u)
+        << "标记第 2 波段的诱饵标签 4 出现在产物里 ⇒ `marker_input` 跟着 `band` 走了"
+        << "，产物正标签集合=" << describeLabels(band2PositiveSet);
+    EXPECT_EQ(band2PositiveSet.count(9.0f), 0u) << "同上，诱饵标签 9"
+        << "，产物正标签集合=" << describeLabels(band2PositiveSet);
+
+    std::vector<float> markerBand1Zero(static_cast<size_t>(w) * static_cast<size_t>(h), 0.0f);
+    const std::string zeroMarkerPath = gis::tests::writeFloatBandsRaster(
+        getTestDir(), "ws_t16_ext_marker_band1zero.tif", w, h, {markerBand1Zero, markers});
+    const std::string zeroOutput = utf8PathString(getTestDir() / "ws_t16_ext_output_band1zero.tif");
+    params["marker_input"] = zeroMarkerPath;
+    params["output"] = zeroOutput;
+    const auto zeroResult = p->execute(params, progress_);
+    ASSERT_TRUE(zeroResult.success) << zeroResult.message;
+    const auto zeroCount = zeroResult.metadata.find("segment_count");
+    ASSERT_NE(zeroCount, zeroResult.metadata.end());
+    int zeroWidth = 0;
+    int zeroHeight = 0;
+    const std::vector<float> zeroProduct = readRasterBandF32(zeroOutput, zeroWidth, zeroHeight);
+    ASSERT_EQ(zeroProduct.size(), static_cast<size_t>(w) * static_cast<size_t>(h)) << "W5 档二产物尺寸不符";
+    int zeroPositiveCells = 0;
+    for (const float value : zeroProduct) {
+        if (value > 0.0f) ++zeroPositiveCells;
+    }
+    EXPECT_EQ(zeroCount->second, "0")
+        << "正控：标记第 1 波段整幅是 0（一格种子都没有）⇒ 计数必须是 0。报 2 就说明产品读的是第 2 波段那份真标记";
+    EXPECT_EQ(zeroPositiveCells, 0)
+        << "正控的另一半：产物里冒出 " << zeroPositiveCells
+        << " 格正标签 ⇒ `band = 2` 被用到了标记图上（第 2 波段的真标记被当成了种子）";
 }
 
 // ── Task 16 Tier 2 补：标记里一个种子都没有 ⇒ 区域数必须是 0 ──────────────────────
