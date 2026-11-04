@@ -4645,6 +4645,64 @@ B4 把 K1 那档的 k 从 3 改成 4（> 不同向量个数）⇒ 恰红 **3** �
 
 **批次 D 的收口门余量**：登记表只剩 3 条 PENDING，且**全部不是 processing 族** —— `matching,ecc_register` 与 `matching,stitch`、`spindex,ndvi`（三条都在 #149，前两条还挂 Release 门与"先写真判据"）。⇒ D1 的 26 条里 processing 侧十条（P1~P9）全 GOLD。
 
+### 批次 D 覆盖晋升 P10（2026-11-04，`spindex,ndvi` 一条 PENDING→GOLD；**顺带把 #149 里我自己写错的一句任务书转述读正**；控制器自跑，不碰腿、不碰矩阵、不碰产品）
+
+**基线现读**（HEAD `70005ce`）：六键 `126/123/3/124/15`（slot 108）、`kPendingCeiling = 3`、`Total Tests: 802`。
+三笔：`2f5e93d` 测试（ND-1~ND-7，块体 21 → **295 行**）/ `0858f1a` 登记（六键 `126/124/2/125/15`、slot 109、ceiling 3→2）/ 本节这笔文档。
+`tests/test_plugins.cpp` 29424 → **29697** 行；三计数 `350/3155/2104` → `350/3203/2119`（+0 用例 / +48 EXPECT / +15 ASSERT）。
+
+**先更正我自己的一处任务书转述**（R-D51 那条纪律的再一次应用）：#149 把这条写成"**`spindex.ndvi` 真降档（可即时）**"。
+逐字载体三处把它否证了：①腿脚本 `run_real_raster_regression.ps1` 里 `spindex_ndvi` 这条 case **存在**，断言
+`Size:   24 x 24 x 1 bands` 与 `Mean:   0.75` ⇒ 矩阵那行 col5 `real_regression` 名副其实，**不该降**；
+②单测专块的动作槽是守卫认的 `params["action"] = std::string("ndvi")` 形态，挂 PENDING 的真实原因只是
+"没有值级断言"（`metadata.count("ndvi_min") > 0` 那种键存在）⇒ 与别的刀同形；③那个 `0.75` 本身就是可手推数
+`(70 − 10) / 80` ⇒ 这个动作没有任何"判不了"的障碍。⇒ **按正常晋升做完**（降档只会把要求降下来，门不会真归零）。
+
+**判据的立论**：链路上没有 `toUint8` 也没有 min-max 拉伸 ⇒ 产物就是 `(NIR − Red)/(NIR + Red)` 本身 ⇒ 期望全走闭式且是绝对量。
+七档：ND-1 常量件 576 格逐格 `EXPECT_FLOAT_EQ(., 0.4f)` + message 逐字 + 四个 min/max 键（`ndvi_min/ndvi_max` 是
+`index_min/index_max` 的**别名** ⇒ 四个一起判才挡得住别名复制错）；ND-2 `red_band`/`nir_band` 成对档
+（0.75 与 **−0.2**，两档**符号不同**是有意——同号的一对挡不住"整体取反"这种等价变异）；ND-3 默认支；
+ND-4 波段越界；ND-4c 缺失输入；ND-5 分母趋 0；ND-6 按列分带 + min/max 精确（非方 8x6 件给转置证据）；ND-7 自有消息通道三条逐字。
+
+**本刀最有价值的一条是 ND-4 与 ND-4c 成对**：同一个 `doExecuteAction` 里两种失败形态并存——`getBandIndex` 在 try **之内**
+throw，被函数末尾 `catch (const std::exception&) → Result::fail(ex.what())` 转成失败返回（message 逐字
+`red_band 9 out of range (1-4)`）；而 `openRaster(input)` 在 try **之前**、且**没判空** ⇒ 异常原样逃出 `execute()`。
+这条边界正是 N187（#210）要的机制证据：processing 那 13 处死支指望的 `if (!ds)` / `if (mat.empty())`
+全都落在"只抛不返回空"的那一侧，而有 catch 的插件（spindex）才能把异常变成失败文案。
+
+**六臂**（`.BLOCK` sha `949354da363ee700` 取在写完判据之后；每臂跑前 `git status`、还原复算裸字节 sha256、重编再复跑）：
+C1 ND-2a 逐格期望改 0.4 ⇒ **48** ✓；C2 ND-4 文案的键名换成另一个键 ⇒ **1** ✓（证明"哪个键被拒"是判据，不只是"被拒了"）；
+C3 去掉 ND-6 的按列分带 ⇒ **25** ✓（24 格 + `index_max`）；C4 ⇒ **49**、**与预测 48 不符且机制也不是我设计的那个**：
+只换 `Red` 行会让 `NIR == Red` ⇒ 分子归 0，它实际证的是 ND-6 的 0.0 几何而不是符号档 ⇒ 另开 **C4b**（两行同时换半区）
+⇒ **48** ✓、实到 `−9.99999996e+11` 与推得的 `−100/1e-10 ≈ −1e12` 同量级 ⇒ "符号跟着分子走"这条才有载体；
+C5 ND-1 的 576 格期望翻成 0.5 ⇒ **576** 条（空真防护）。⇒ 这是"臂的前提本身要算"的又一实例（R-D65/R-D67 同族，第六次）。
+
+**首跑四笔红全是我自己的假前提**（按实到改准、不留过期辩护）：①②runner 无条件读产物 ⇒ 把**测试自己的**
+`readRasterBandF32` 异常当成了"产品抛出"（ND-4 两条全歪）；③用 `0` 同时表示"不传这个键"和"传 0 触发下界"⇒ 语义撞车，
+下界档根本没被跑到 ⇒ 改成 `-1` 表示不传；④ND-4 的实到形态是"catch 转失败返回"而不是"逃出 execute()"。
+
+**文档对撞（`docs/算法说明/光谱指数/NDVI.md`）逮出一处与产品互斥的算法描述 ⇒ 新立 N188（#211）**：
+文档"安全除法处理"一节写的是"分母绝对值低于阈值（如 `1e-6`）时把该像元结果**设为 0（视为无效）**"，
+而实现是 `denominator += 1e-10f` 后直接相除——**没有阈值判断、不置 0、不裁值域** ⇒ 三点全不符。
+后果写在文档与任务里：分子非 0 而分母为 0 的像元得到 **±1e12 的有限巨值**，跳出 NDVI 合法值域 `[-1, 1]`，
+会被后续按阈值分级当成极高植被一侧，并主导 metadata 的最值；行业惯例这里是掩膜成 NoData。
+改它=改可观测行为 ⇒ 三个修法（甲 NaN+NoData、乙 置 0 并另发"被置 0 像元数"、丙 维持现状只写清文档）交 D3 拍板，本刀按丙落文档。
+另补三处精度：波段越界的失败文案逐字（`red_band 9 out of range (1-4)`）、"文件打不开是另一种形态（异常逃出）"、
+metadata 键名与成功消息里那对最值是同一个数。参数表五列未动。
+
+**未判项（登记）**：`preset` / `expression` 两个键在 ndvi 支里被读走但只有 `custom_index` 用（本动作不受它们影响）⇒
+未做档，属 #164 那把探针刀的射程；`blue_band` / `green_band` 同理（ndvi 只解析 red/nir 两个）。
+
+**验收实到**（Debug 单树）：`SpindexNdviExecution` + 姊妹块 `SpindexOtherIndicesExecution` 同跑 OK（186 ms / 395 ms，0 条 error）；
+`(CoverageMeta|CoverageMetaJudge)` **19/19**、`docs_match_cli` + `source_mojibake_guard` **2/2**；`Total Tests:` 仍 **802**；
+六键改后逐条用声明行自带命令复跑（`126/124/2/125/15`，`124 + 2 == 126`、`124 − 15 == 109` 现算成立）；
+`data` 两件套 = `find data -type f -newermt '2026-11-04 00:00:00' | wc -l` **0** 与 `BASELINE: 88 CURRENT: 88 DIFFS: 0`；
+`src/`、`tests/real_data_matrix.txt`、腿脚本零改动；NDVI.md 94 → 111 行 CRLF、无 BOM、裸 LF 0。
+
+**批次 D 收口门余量**：登记表只剩 **2** 条 PENDING，都是 matching（`ecc_register` / `stitch`）⇒ 按 R-D51 的逐字载体，
+它们要"先写真判据 + 只能在 Release 树上验证"，已按用户裁定与 Release 重编合并到 **D4 门前**一起做。
+⇒ D1（#147）与 P10 之后，**promotion 侧只剩这一把**；P8a/P8b/P9/P10 四把都**没有独立复审席**（R-D63 欠账）。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
