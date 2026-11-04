@@ -4759,6 +4759,48 @@ A4 与 A3d 是这一把**主动登记的两处边界**，不是疏漏：
 `tests/check_source_mojibake.ps1` 现读 6924 字节、**非 ASCII 字节数 0**（守 #173 那条「`.ps1` 字面量必须 ASCII」）、CRLF、无 BOM。
 卫生面：探针文件已删（`git status` 干净）、`data/` 两件套 0 新文件 + `88/88/0`、受保护件 `terrain_plugin.cpp` blob 未变。
 
+### 批次 D 守卫扩面 D3-A（2026-11-04，`docs_match_cli` 加两条判据：类型列对撞插件 ParamSpec、说明列不许为空；**不碰产品**）
+
+**先量现值再定判据**（工单原话，顺序不能倒）。文档侧 `## 参数` 表实到 126 篇 / 594 行 / 每行 5 列；
+第 2 列（类型）的取值**封闭为 9 个词**，与 `src/framework/include/gis/framework/param_spec.h` 里
+`enum class ParamType` 的 9 个成员一一对应（文件路径 276 / 整数 121 / 浮点数 87 / 字符串 61 / 枚举 35 /
+坐标系 6 / 布尔值 4 / 范围 3 / 目录路径 1）⇒ 这一列本来就判得了，此前只是没判。
+
+**逐行对撞的 3 处不符**（口径 = 配上二进制键的 593 行）：
+
+- `georef` 两篇（控制点配准、RPC 正射校正）把"目标坐标系"的类型写成 `字符串` ⇒ **文档漂移，已改**。
+  这处判定的抓手不是我的猜测：该键在 CLI `--help` 里的标签就叫"目标坐标系"、`Default: EPSG:4326`，
+  而文档自己的参数名也是"目标坐标系"——写 `字符串` 与同一行的参数名互相打脸。
+- `cutting.tile` 的 `output` 文档写 `目录路径`、插件级 `ParamSpec` 写 `FilePath`：**文档是对的**。
+  `doTile` 用 `create_directories(output)` 把它当目录写（`src/plugins/cutting/cutting_plugin.cpp` 的
+  `doTile` 函数体内），而 GUI 的补救分支 `src/gui/gui_data_support.cpp` 只给 `cutting/split/output`
+  设了 `selectDirectory`，tile 没有；通用那条要求 `paramType == DirPath` 才生效，进不去。
+  ⇒ 落白名单（带这些证据）+ 新挂账 **N189**（GUI 给的是保存文件对话框，与 split 不一致），
+  与既有 N146"插件级表表达不了按动作收紧的必填"同族，本条是**类型侧**。
+
+**载体侧三个要点**：
+
+1. 解析插件源码前**必须剥注释**：本轮未剥的版本多抓到 1 个条目，那是 `processing_plugin.cpp` 一句注释里
+   写的 `ParamSpec{"k", ...}`——全仓从未声明过键 `"k"`。与 `CoverageMeta` 判据要求剥注释是同一个坑。
+2. **判据自己报覆盖数**：摘要行新增 `type_rows` / `desc_rows` / `param_spec_blocks`（实到 593 / 593 / 232），
+   且解析不到任何 ParamSpec 类型时直接 `SystemExit`——否则"类型判据根本没跑"会长得像"文档干净"。
+   `说明列不许为空` 这一判据的现值是 **0 条为空**，所以它可以直接 FATAL；同时 `UNMATCHED-ROWS` 那句
+   告警的射程描述一并补上了新维度（原来只说 必填/默认值 未被检查）。
+3. `--self-test` 的红臂从四类扩到**六类齐全**（`count/label/required/default/type/desc`），
+   "只豁免 1 类"那条臂的装饰数字改成实到断言 —— **本轮就是这条臂先红**，根因是我自己在那次调用里
+   少传了 `types` 参数，于是 `type` 那类根本不存在，臂 2 的"六类齐全"白测了一遍。
+   教训：夹具与调用参数一起改才算加了判据，只改夹具文本等于没改。
+
+**本轮刻意没做**：`Options:` 枚举的集合对撞。文档侧候选值形态至少三种（空格分隔的反引号串 / 斜杠分隔 /
+逗号加等号说明），另有 31 条 enum 键根本没列候选值；我最初用"有没有分隔符"粗数得 3 条是**口径错**
+（空格分隔不落在任何分隔符上）。已拆成独立工单，并要求它先用"取反引号内 token 集"重数再定判据。
+
+**验收实到**：`--self-test` 六臂 6/6 OK；真跑 `actions=126 docs_checked=126 missing_doc=0 rows=594 matched=593
+type_rows=593 desc_rows=593 param_spec_blocks=232 drift=0 allowed=8 dead_allowlist=0 dead_override=0 overrides=8`
+退出码 0；`ctest -C Debug -R "docs_match_cli|source_mojibake_guard"` 2/2；`(CoverageMeta|CoverageMetaJudge)` 19/19；
+`Total Tests:` 802 未变。卫生面：探针产生的 `tests/__pycache__/` 已删、`git status` 只剩本笔预期文件；
+`data/` 两件套 0 新文件 + `88/88/0`；受保护件 blob 未变。
+
 ### 批次 B 待办（本批明确不修，登记在此以免丢失）
 
 - **N81**：多波段且**各波段洞位置不同**时，`add_alpha` 仍会改变色波段数值（`-dstalpha` 把被遮像元写成 0）；**单波段源不受影响**。
