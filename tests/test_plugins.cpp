@@ -9196,10 +9196,36 @@ TEST_F(PluginTest, ProcessingWatershedRejectsMarkerInputWithMismatchedSize) {
         << "输入 32x24、标记 32x16 只有高度不同，也必须判为尺寸不符" << msgSameWidth;
 }
 
+// ── 批次 D P9：登记行 `processing,kmeans` 的 [:]GOLD 证据块（控制器自跑，见 RELEASE）──
+// 链路（现读 doKMeans）：openRaster（**它自己就 throw GisError、永不返回空指针** ⇒ 函数体里
+//   `if (!ds) return fail("Cannot open raster file: …")` 与别的动作那 13 处 `mat.empty()` 同根因、同样不可达）
+//   → 逐波段 `gdalBandToMat`（原始 float32，**没有 toUint8、也没有 normalize**）
+//   → samples = (width*height) x bands 的 CV_32F → `cv::kmeans(samples, k, labels, criteria, attempts,
+//   **cv::KMEANS_PP_CENTERS**, centers)` → 标签**原样**写进 resultImg（0..k-1，不缩放）→ `writeMatOutput(…, 1, …)`。
+// ⇒ 产物是**标签矩阵**（取整数值的浮点），既不是灰度也不是拉伸结果 ⇒ 这里既能判绝对值、也能判"分区结构"。
+// 立论靠三条可手推的事实，每条都先在本地 cv2 模拟里对撞过（算式写在逐档注释里）：
+//   ①同一样本值**永远同标签**（到各中心的距离全同 ⇒ argmin 同侧）。⚠ 前提是 `k <= 不同样本值的个数`：
+//     模拟实测 k=4 配 3 个不同值时重复点被劈开（4 簇、compactness 仍 0）⇒ k>distinct 那一档本刀**不判**。
+//   ②只有 3 个不同样本值时，Lloyd + PP 初值的**每一条**分支都收敛到同一个分区（三种首中心逐一手推过）
+//     ⇒ 所以"哪两块同标签"与"compactness 的精确值"都是推出来的，不是标定出来的。
+//     稳定性另有两实测：本地 cv2 对五组夹具各跑 300 次，分区结构与紧凑度**各自只有一个取值**；
+//     本仓 exe 直跑该用例 20 次全绿（PP 的首中心来自 RNG，不锁种子 ⇒ 不测这一条就是把判据架在运气上）。
+//   ③合并两块的代价闭式：两块各 n 个重复点、两块中心距 d ⇒ 合并后 SSE = 2·n·(d/2)² = **n·d²/2**
+//     ⇒ 本刀三档：n=8、d=100 ⇒ 40000；d=300 ⇒ 360000；k=distinct ⇒ 0。三个数都在 float32 里精确。
+//     （旁证：模拟里 k=1 读到 693333.328125 —— 不是 double 的 2080000/3 ⇒ compactness 是按 float32 累加的；
+//      本刀**没有**把那个数写成判据，因为累加顺序不是我能推的东西。）
+// ⚠ 标签**编号**随初值排列而变 ⇒ 全部判据写成"块间相等/不等"的关系式，不写"某块等于第几号"
+//   （与 P7a 复审席把"行主序从 1 起编号"降回实现细节是同一条规矩）。
+// ⚠ `band` 取了不用（特征来自**全部**波段）：它不是可见参数（visibleKeys 里没有 band），但产品注释与文档都这么宣称
+//   ⇒ K4 用"传 band=1 与 band=2 产物逐格相同"钉住那条宣称，K5 再反过来证明第 2 波段**确实进特征**。
+// ⚠ metadata 实到只有 k / compactness / bands 三键，**没有 `action`**（processing 里唯一不写它的一个）
+//   ⇒ 本块只判"三键齐全 + 值精确"，**不**把"没有 action 键"钉成契约（那是缺陷形态，交登记）。
 TEST_F(PluginTest, ProcessingKMeansExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
 
+    // ── 既有三条原样保留（success / 产物存在 / metadata 里有 compactness 这个键）──
+    // 它们是本块挂 PENDING 期间唯一的断言 ⇒ 属"行为锁"，不作鉴别证据，留着只为不弄丢既有覆盖。
     std::string input = createTestRaster("e2e_kmeans_input.tif", 30, 30, 3);
     std::string output = (getTestDir() / "e2e_kmeans_output.tif").string();
 
@@ -9214,6 +9240,306 @@ TEST_F(PluginTest, ProcessingKMeansExecution) {
     EXPECT_TRUE(result.success) << "KMeans failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
     EXPECT_TRUE(result.metadata.count("compactness") > 0);
+
+    // ── 夹具：24 格 = 三块 x 8，块值 0 / 100 / 400；6 列 x 4 行（**非方**）──
+    // 一维特征下像元的**位置**根本不进样本向量 ⇒ 块的形状随便排，只要每块 8 格；
+    // 但尺寸仍要非方，否则"产物宽高写反"在这件上是等价变异。
+    constexpr int kCols = 6, kRows = 4;
+    constexpr int kBlock = kCols * kRows / 3;   // 24 / 3 = 8
+    auto mkBlocks = [&](float v0, float v1, float v2) {
+        std::vector<float> cells(static_cast<size_t>(kCols) * kRows, 0.0f);
+        for (int b = 0; b < 3; ++b) {
+            const float v = (b == 0) ? v0 : (b == 1) ? v1 : v2;
+            for (int j = 0; j < kBlock; ++j) {
+                cells[static_cast<size_t>(b) * kBlock + j] = v;
+            }
+        }
+        return cells;
+    };
+    const std::vector<float> blockVals = mkBlocks(0.0f, 100.0f, 400.0f);
+    const std::vector<float> constVals(static_cast<size_t>(kCols) * kRows, 0.0f);
+
+    struct CapturingProgress : gis::core::ProgressReporter {
+        std::vector<std::string> messages;
+        void onProgress(double) override {}
+        void onMessage(const std::string& msg) override { messages.push_back(msg); }
+        bool isCancelled() const override { return false; }
+    };
+    struct KRun {
+        gis::framework::Result result;
+        std::vector<float> cells;
+        std::vector<std::string> messages;
+        int w = 0, h = 0;
+        std::string output;
+    };
+    std::error_code staleEc;
+    auto cleanStale = [&staleEc](const std::string& path) {
+        fs::remove(path, staleEc);
+        fs::remove(path + ".aux.xml", staleEc);
+        // GDAL 句柄没放开时 fs::remove 在 Windows 上**静默失败** ⇒ 当场红，否则下面所有"不许留产物"会被残留顶成假绿。
+        if (fs::exists(path)) ADD_FAILURE() << "同名残留删不掉（有句柄没放）: " << path;
+    };
+    // band 做成带默认值的形参（0 = 不传这个键）⇒ 新增一档不新增宏、也不改其余各档的实参形态。
+    auto runKmeans = [&](const std::string& inputPath, const char* outputName, int k, int band = 0) {
+        KRun run;
+        run.output = utf8PathString(getTestDir() / outputName);
+        cleanStale(run.output);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("kmeans");
+        callParams["input"] = inputPath;
+        callParams["output"] = run.output;
+        callParams["kmeans_k"] = k;
+        callParams["kmeans_attempts"] = 3;
+        if (band > 0) callParams["band"] = band;
+        CapturingProgress sink;
+        run.result = p->execute(callParams, sink);
+        run.messages = sink.messages;
+        run.cells = readRasterBandF32(run.output, run.w, run.h);
+        return run;
+    };
+    // 越界取格返回 NaN（不是 -1 之类的合法标签）：拿与合法值同域的数当哨兵，会把"没取到"读成"取到了那一号标签"。
+    auto cellAt = [](const std::vector<float>& cells, int idx) -> double {
+        if (idx < 0 || idx >= static_cast<int>(cells.size())) {
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        return static_cast<double>(cells[static_cast<size_t>(idx)]);
+    };
+    auto distinctCount = [](const std::vector<float>& cells) {
+        std::vector<float> seen;
+        for (const float v : cells) {
+            bool found = false;
+            for (const float t : seen) {
+                if (t == v) { found = true; break; }
+            }
+            if (!found) seen.push_back(v);
+        }
+        return static_cast<int>(seen.size());
+    };
+    // 跨跑比较只许比**分区结构**：标签编号随 KMEANS_PP_CENTERS 的随机首中心而变（块头那条）。signature[i] = 第 i 格的值在行主序里第一次出现的序号 ⇒ 对"标签改名"不变。
+    auto partitionSignature = [](const std::vector<float>& cells) {
+        std::vector<int> sig(cells.size(), -1);
+        std::vector<float> seen;
+        for (size_t i = 0; i < cells.size(); ++i) {
+            int idx = -1;
+            for (size_t t = 0; t < seen.size(); ++t) {
+                if (seen[t] == cells[i]) { idx = static_cast<int>(t); break; }
+            }
+            if (idx < 0) {
+                seen.push_back(cells[i]);
+                idx = static_cast<int>(seen.size()) - 1;
+            }
+            sig[i] = idx;
+        }
+        return sig;
+    };
+    // K1/K2/K4/K5 共用的结构判据：每块内部 8 格必须同标签（同块第 j 格与代表格第 0 格比）。
+    auto expectBlocksConst = [&](const KRun& run, const char* tag) {
+        for (int b = 0; b < 3; ++b) {
+            const double base = cellAt(run.cells, b * kBlock);
+            for (int j = 1; j < kBlock; ++j) {
+                EXPECT_DOUBLE_EQ(cellAt(run.cells, b * kBlock + j), base)
+                    << tag << " 第 " << b << " 块内部第 " << j << " 格与代表格不同标签"
+                    << "（k <= distinct 的前提下同一样本向量不可能被劈开）";
+            }
+        }
+    };
+
+    const std::string singleInput =
+        gis::tests::writeFloatRaster(getTestDir(), "km_single_input.tif", kCols, kRows, blockVals);
+    ASSERT_FALSE(singleInput.empty()) << "单波段夹具没写出来";
+
+    // ── K1 k=3 == 不同值的个数 ⇒ 三块各成一簇：块内恒等 + 块间互斥 + 值集 == 3 + compactness 推得 0 ──
+    const KRun k3 = runKmeans(singleInput, "km_k3.tif", 3);
+    ASSERT_TRUE(k3.result.success) << k3.result.message;
+    ASSERT_EQ(k3.cells.size(), static_cast<size_t>(kCols) * kRows)
+        << "产物像元总数与输入不符 ⇒ 下面按索引取格的判据前提不成立";
+    EXPECT_EQ(k3.w, kCols) << "产物宽度 = 输入列数（非方夹具上 cols/rows 写反必红在这里）";
+    EXPECT_EQ(k3.h, kRows) << "产物高度 = 输入行数";
+    expectBlocksConst(k3, "K1");
+    EXPECT_NE(cellAt(k3.cells, 0), cellAt(k3.cells, kBlock)) << "K1 三块两两成簇 ⇒ 0 与 100 两块不能同标签";
+    EXPECT_NE(cellAt(k3.cells, kBlock), cellAt(k3.cells, 2 * kBlock)) << "K1 100 与 400 两块不能同标签";
+    EXPECT_NE(cellAt(k3.cells, 0), cellAt(k3.cells, 2 * kBlock)) << "K1 0 与 400 两块不能同标签";
+    EXPECT_EQ(distinctCount(k3.cells), 3) << "k=3 ⇒ 值集大小就是 3（不多不少）";
+    EXPECT_EQ(k3.result.metadata.at("compactness"), "0.000000")
+        << "每块内部 SSE = 0 ⇒ 总紧凑度推得 0；这条同时挡住“把输入灰度原样写回产物”那类假实现";
+    EXPECT_EQ(k3.result.metadata.at("k"), "3");
+    EXPECT_EQ(k3.result.metadata.at("bands"), "1");
+
+    // ── K2 同一件 k=2 ⇒ 合并"代价小的那对"：d^2({0,100}) = 10000 < d^2({100,400}) = 90000 ──
+    // 手推：SSE(合并两块) = n·d^2/2 = 8·10000/2 = **40000**（另一块单独成簇、贡献 0）。
+    // K1/K2 成对 ⇒ 把"k 真被读进 cv::kmeans"钉住：把 k 写死成 3 的实现会在 K2 的值集与 compactness 上各红一条。
+    const KRun k2 = runKmeans(singleInput, "km_k2.tif", 2);
+    ASSERT_TRUE(k2.result.success) << k2.result.message;
+    ASSERT_EQ(k2.cells.size(), static_cast<size_t>(kCols) * kRows);
+    expectBlocksConst(k2, "K2");
+    EXPECT_DOUBLE_EQ(cellAt(k2.cells, 0), cellAt(k2.cells, kBlock))
+        << "K2 0 与 100 两块必须并成一簇：三种并法的代价是 d^2 = 10000 / 90000 / 160000 ⇒ {0,100} 唯一最小";
+    EXPECT_NE(cellAt(k2.cells, 2 * kBlock), cellAt(k2.cells, 0)) << "K2 400 那块必须单独成簇";
+    EXPECT_EQ(distinctCount(k2.cells), 2) << "k=2 ⇒ 值集大小就是 2";
+    EXPECT_EQ(k2.result.metadata.at("compactness"), "40000.000000")
+        << "K2 的紧凑度是推出来的：2·8·(100/2)^2 = 40000";
+
+    // ── K3 消息通道三条自有文案（顺序实到：Reading → Running → Completed）+ 与 metadata 交叉一致 ──
+    // ⚠ 本动作**不**走 readBandAsMat（它自己 openRaster），所以没有那条通用的 "Reading band N from …"；
+    //   写完产物却有 writeMatOutput 的通用文案 ⇒ 总条数不是"自有三条"，所以这里按**含 "K-Means" 的条数**数，
+    //   那是自有通道的数（通用文案里不含这个词），不照抄别的块的条数期望。
+    auto countContaining = [](const std::vector<std::string>& msgs, const char* needle) {
+        int n = 0;
+        for (const std::string& m : msgs) {
+            if (m.find(needle) != std::string::npos) ++n;
+        }
+        return n;
+    };
+    auto hasMessage = [](const std::vector<std::string>& msgs, const std::string& exact) {
+        for (const std::string& m : msgs) {
+            if (m == exact) return true;
+        }
+        return false;
+    };
+    EXPECT_TRUE(hasMessage(k2.messages, "Reading 1 bands for K-Means..."))
+        << "波段数走的是自有消息通道；实到消息共 " << k2.messages.size() << " 条";
+    EXPECT_TRUE(hasMessage(k2.messages, "Running K-Means with k=2...")) << "k 进了自有文案";
+    EXPECT_TRUE(hasMessage(k2.messages, "K-Means completed: 2 clusters, compactness=40000.000000"))
+        << "完成文案把 clusters 与 compactness 都带出来 ⇒ 与 metadata 那条同一个数（两个载体交叉一致）";
+    EXPECT_EQ(countContaining(k2.messages, "K-Means"), 3)
+        << "自有消息通道恰好三条 ⇒ 多出来或少一条都在这里红";
+
+    // ── K4 `band` 惰性：同一件输入传 band=1 与 band=2 ⇒ **分区结构**相同、metadata 三键相同 ──
+    // 这条钉的是产品注释与文档共同的那句宣称（"这行取了值但从没被使用"）：它只判"不随 band 变"，
+    // **不**判 band 该不该生效——生效是行为变更，交拍板。
+    // ⚠ 比较一律走 partitionSignature，不逐格比标签数值：本刀第一跑就是拿逐格比得到的
+    //   "24/24 全不同"顶红的，而两跑的分区其实一模一样 ⇒ 判"跨跑相同"只许判改名不变量。
+    const std::vector<std::vector<float>> twoBands = {blockVals, constVals};
+    const std::string bandPairInput =
+        gis::tests::writeFloatBandsRaster(getTestDir(), "km_band_inert_input.tif", kCols, kRows, twoBands);
+    ASSERT_FALSE(bandPairInput.empty()) << "2 波段夹具没写出来";
+    const KRun k4a = runKmeans(bandPairInput, "km_band1.tif", 3, 1);
+    const KRun k4b = runKmeans(bandPairInput, "km_band2.tif", 3, 2);
+    ASSERT_TRUE(k4a.result.success) << k4a.result.message;
+    ASSERT_TRUE(k4b.result.success) << k4b.result.message;
+    ASSERT_EQ(k4b.cells.size(), k4a.cells.size());
+    EXPECT_EQ(partitionSignature(k4a.cells), partitionSignature(k4b.cells))
+        << "band=1 与 band=2 的分区结构不同 ⇒ `band` 惰性这条宣称没有载体（签名对标签改名不变）";
+    expectBlocksConst(k4a, "K4a");
+    EXPECT_EQ(distinctCount(k4a.cells), 3) << "K4 用 k=3 配 3 个不同向量 ⇒ 每块各成一簇";
+    EXPECT_EQ(k4b.result.metadata.at("bands"), "2") << "样本矩阵的列数 = 文件波段数，与 band 传什么无关";
+    EXPECT_EQ(k4b.result.metadata.at("compactness"), k4a.result.metadata.at("compactness"))
+        << "紧凑度也不随 band 变 ⇒ 结构与数值两个载体一起判，不只判形状。";
+
+    // ── K5 第 2 波段**确实进特征**：同一件 band1，只换 band2 ⇒ 分区翻转 ──
+    // Z1 向量 (0,0) / (100,400) / (400,400) ⇒ d^2(A,B)=170000、d^2(B,C)=90000、d^2(A,C)=320000
+    //   ⇒ 合并 **{B,C}**，SSE = 8·300^2/2 = **360000**；
+    // Z2 把 band2 换成常数 ⇒ 退回一维 0/100/400 ⇒ 合并 **{A,B}**，SSE = 8·100^2/2 = **40000**（与 K2 同值，互为旁证）。
+    // ⇒ 两档各判"哪两块同标签"+ 精确紧凑度：只读第 1 波段的实现会让 Z1 也得到 {A,B} ⇒ Z1 那两条红；
+    //   反过来 K4 判的是"band 这个键不生效"，两件事不重复（一个管键、一个管列数）。
+    const std::vector<float> z1Band2 = mkBlocks(0.0f, 400.0f, 400.0f);
+    const std::vector<std::vector<float>> z1Bands = {blockVals, z1Band2};
+    const std::vector<std::vector<float>> z2Bands = {blockVals, constVals};
+    const std::string z1Input =
+        gis::tests::writeFloatBandsRaster(getTestDir(), "km_z1_input.tif", kCols, kRows, z1Bands);
+    const std::string z2Input =
+        gis::tests::writeFloatBandsRaster(getTestDir(), "km_z2_input.tif", kCols, kRows, z2Bands);
+    ASSERT_FALSE(z1Input.empty()) << "Z1 夹具没写出来";
+    ASSERT_FALSE(z2Input.empty()) << "Z2 夹具没写出来";
+    const KRun z1 = runKmeans(z1Input, "km_z1_k2.tif", 2);
+    const KRun z2 = runKmeans(z2Input, "km_z2_k2.tif", 2);
+    ASSERT_TRUE(z1.result.success) << z1.result.message;
+    ASSERT_TRUE(z2.result.success) << z2.result.message;
+    expectBlocksConst(z1, "Z1");
+    expectBlocksConst(z2, "Z2");
+    EXPECT_DOUBLE_EQ(cellAt(z1.cells, kBlock), cellAt(z1.cells, 2 * kBlock))
+        << "Z1 里 100 与 400 两块必须同标签（band2 让它们只差 300，而它们与 band1=0 那块差 170000）";
+    EXPECT_NE(cellAt(z1.cells, 0), cellAt(z1.cells, kBlock)) << "Z1 的 (0,0) 那块必须单独成簇";
+    EXPECT_EQ(z1.result.metadata.at("compactness"), "360000.000000")
+        << "Z1 紧凑度是推出来的：8·300^2/2 = 360000";
+    EXPECT_DOUBLE_EQ(cellAt(z2.cells, 0), cellAt(z2.cells, kBlock))
+        << "Z2（把 band2 换成常数）必须翻回 {A,B} 同簇 ⇒ 与 Z1 那条**反向**，两档合起来才叫“第 2 波段进了特征”";
+    EXPECT_NE(cellAt(z2.cells, kBlock), cellAt(z2.cells, 2 * kBlock))
+        << "Z2 里 400 那块必须单独成簇（与上一条一起构成 Z2 的完整分区；不跨跑比标签编号，那随初值排列变）";
+    EXPECT_EQ(z2.result.metadata.at("compactness"), "40000.000000");
+    EXPECT_NE(partitionSignature(z1.cells), partitionSignature(z2.cells))
+        << "两档的**分区结构**必须不同（签名对标签改名不变 ⇒ 这条判的是结构，不是编号）";
+
+    // ── K6 早退（口径 = doKMeans 里 `Result::fail` 的**返回条数**：现读 5 条，**实到可达 4 条**）──
+    // 顺序实到：input → output → k → attempts → openRaster 判空。前四条逐条取文案；
+    // 第五条不可达——`core::openRaster` 自己 `throw GisError("Cannot open raster: …")`，永不返回空指针 ⇒
+    //   函数体那句 `if (!ds) return fail("Cannot open raster file: …")` 是**又一处死支**（与 N187 同根因、不同文案，
+    //   那条挂账的射程应按本刀实到扩成两类文案）。
+    struct KFailCase { const char* outputName; const char* dropKey; std::map<std::string, gis::framework::ParamValue> over; };
+    const std::vector<KFailCase> fails = {
+        {"km_f_no_input.tif",  "input",  {}},
+        {"km_f_no_output.tif", "output", {}},
+        {"km_f_k0.tif",        "",       {{"kmeans_k", 0}}},
+        {"km_f_attempts0.tif", "",       {{"kmeans_attempts", 0}}},
+    };
+    for (const KFailCase& fc : fails) {
+        const std::string failOutput = utf8PathString(getTestDir() / fc.outputName);
+        cleanStale(failOutput);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("kmeans");
+        callParams["input"] = singleInput;
+        callParams["output"] = failOutput;
+        callParams["kmeans_k"] = 3;
+        callParams["kmeans_attempts"] = 3;
+        for (const auto& kv : fc.over) callParams[kv.first] = kv.second;
+        if (fc.dropKey[0] != '\0') callParams.erase(fc.dropKey);
+        const auto failResult = p->execute(callParams, progress_);
+        EXPECT_FALSE(failResult.success) << fc.outputName << " 期望早退失败";
+        EXPECT_FALSE(fs::exists(failOutput)) << "早退支不许留产物: " << failOutput;
+    }
+    {
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        const std::string msgOutput = utf8PathString(getTestDir() / "km_f_msgs.tif");
+        cleanStale(msgOutput);
+        callParams["action"] = std::string("kmeans");
+        callParams["input"] = singleInput;
+        callParams["output"] = msgOutput;
+        callParams["kmeans_k"] = 3;
+        callParams["kmeans_attempts"] = 0;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "kmeans_attempts must be positive");
+        callParams["kmeans_attempts"] = 3;
+        callParams["kmeans_k"] = 0;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "k must be positive")
+            << "文案说 k、键叫 kmeans_k ⇒ 这处分叉只登记，不在本刀改文案";
+        callParams["kmeans_k"] = 3;
+        callParams.erase("input");
+        EXPECT_EQ(p->execute(callParams, progress_).message, "input is required");
+        callParams["input"] = singleInput;
+        callParams.erase("output");
+        EXPECT_EQ(p->execute(callParams, progress_).message, "output is required");
+        callParams["output"] = msgOutput;
+        // 第五条：前置四道全过了，但输入指向一件不存在的栅格 ⇒ 实到形态是**抛**，不是返回 fail。
+        // 本仓既有约定（`tests/raster_fixture.h` 文件头写明）：测试侧不 include <gis/core/error.h>，
+        // 接 std::exception 读 e.what() ⇒ 这里照它写。
+        const std::string missingInput = utf8PathString(getTestDir() / "km_no_such_input.tif");
+        callParams["input"] = missingInput;
+        bool gotResult = false;
+        bool threw = false;
+        std::string whatText;
+        try {
+            const auto missingResult = p->execute(callParams, progress_);
+            gotResult = true;
+            whatText = missingResult.message;
+        } catch (const std::exception& e) {
+            threw = true;
+            whatText = e.what();
+        }
+        EXPECT_TRUE(threw) << "缺失输入实到应抛出；却拿到结果 success=" << (gotResult ? 1 : 0)
+                           << " message=" << whatText;
+        EXPECT_NE(whatText.find("Cannot open raster: "), std::string::npos)
+            << "异常里是 openRaster 的英文文案，不是函数体里那句中文 fail（后者不可达）；实到 what=" << whatText;
+        EXPECT_FALSE(fs::exists(msgOutput)) << "抛出这条路径也不许留下产物";
+    }
+
+    // ── K7 声明区间下界 2 与实现闸 `k <= 0` 的口径分叉：k=1 在插件层**放行** ──
+    // 实到：成功、值集 == 1（全部样本一簇）。**不**判它的 compactness——模拟读到 693333.328125，
+    // 那个数依赖 float32 的累加顺序，不是我推得出的东西 ⇒ 只锁"放行 + 一簇"这两件可观测事实。
+    // 是否该按 spec 下界拒掉 = 可观测行为变更 ⇒ 交拍板（与 N172 那族"CLI 区间闸 vs ParamSpec"同批）。
+    const KRun k1 = runKmeans(singleInput, "km_k1.tif", 1);
+    ASSERT_TRUE(k1.result.success) << "k=1 实到应当放行（实现只拒 k<=0）：" << k1.result.message;
+    EXPECT_EQ(distinctCount(k1.cells), 1) << "k=1 ⇒ 只有一个标签";
+    EXPECT_EQ(k1.result.metadata.at("k"), "1");
+    EXPECT_EQ(k1.result.metadata.at("bands"), "1");
 }
 
 // kmeans：不传 kmeans_k ⇒ 兜底必须与 paramSpecs() 的 kmeans_k 默认值同值。
