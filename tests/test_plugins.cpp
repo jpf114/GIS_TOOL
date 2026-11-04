@@ -6881,10 +6881,28 @@ TEST_F(PluginTest, RasterRenderHistogramMatchExecution) {
     EXPECT_NEAR(adfGT[5], -0.001, 1e-12);
 }
 
+// ── 批次 D P10：登记行 `spindex,ndvi` 的 [:]GOLD 证据块（控制器自跑，见 RELEASE）──
+// 链路（现读 doExecuteAction 的 ndvi 支）：openRaster → getBandIndex(red_band 默认 3 / nir_band 默认 4，
+//   **越界直接 throw std::runtime_error**）→ readBandMat(Red) → readBandMat(NIR) →
+//   `safeDivide(nir - red, nir + red)`（`denominator += 1e-10f` 再 `cv::divide`）→
+//   `matToGdalTiff(indexMat, input, output, 1)`（**不是** writeMatOutput ⇒ 没有 NaN→NoData 回填那一步）→
+//   `buildIndexResult("NDVI", …)`（metadata 里 index/index_min/index_max，再补 ndvi_min/ndvi_max/red_band/nir_band）。
+// ⇒ 既没有 toUint8 也没有 min-max 拉伸，产物就是 NDVI 本身 ⇒ 端点、逐格值、metadata 的 min/max 全是可推的绝对量。
+// 立论只靠一条闭式：`NDVI = (NIR − Red) / (NIR + Red)`，本刀所有夹具的分子/分母都是**小整数** ⇒
+//   fl32 除法的结果虽然不精确（0.4f = 0.40000000596…），但 `std::to_string(double)` 只留 6 位小数
+//   ⇒ metadata 侧写成 `"0.400000"` 是**可推且精确**的；逐格侧用 `EXPECT_FLOAT_EQ`（1 ulp）不吃舍入亏。
+// 四个推数（都在下面各有一档）：(70−30)/100 = 0.4；(70−10)/80 = 0.75（**与腿侧那条 case 断言的
+//   `Mean:   0.75` 同一个数**，跨载体旁证）；(20−30)/50 = −0.2；(70−70)/140 = 0.0。
+// ⚠ `safeDivide` 的 1e-10 在**正常量级上是被吞掉的**：分母 100 + 1e-10 在 fl32 里仍是 100.0f（ulp(100) ≈ 7.6e-6），
+//   所以前四档的期望**不需要**为它做修正；它真正起作用只在分子/分母同时接近 0 的那一档（ND-5），
+//   那一档的产物是 `100 / 1e-10 ≈ 1e12` 这种**远超 NDVI 合法值域 [−1,1]** 的有限值——不是 NaN、不是 inf。
+//   ⇒ ND-5 按这个实到形态判（判符号与量级，不判逐位数字，因为 `fl32(1e-10)` 本身不精确），
+//     而"分母趋 0 时该 mask 成 NoData 还是该给一个巨大值"是行业约定问题、改它=改可观测行为 ⇒ 只登记交裁定。
 TEST_F(PluginTest, SpindexNdviExecution) {
     auto* p = mgr_.find("spindex");
     ASSERT_NE(p, nullptr);
 
+    // ── 既有五条原样保留（success / 产物存在 / 两个键存在）；它们是本块此前挂 PENDING 的全部载体 ──
     const std::string input = createMultiBandConstantRaster(
         "e2e_spindex_ndvi_input.tif", 24, 24, {10.0f, 20.0f, 30.0f, 70.0f});
     const std::string output = utf8PathString(getTestDir() / "e2e_spindex_ndvi_output.tif");
@@ -6901,6 +6919,261 @@ TEST_F(PluginTest, SpindexNdviExecution) {
     EXPECT_TRUE(fs::exists(output));
     EXPECT_TRUE(result.metadata.count("ndvi_min") > 0);
     EXPECT_TRUE(result.metadata.count("ndvi_max") > 0);
+
+    // ── ND-1 同一件（Red=30 / NIR=70）把"键存在"升级成"值精确"：48 格改 576 格逐格判 ──
+    // 这一档还顺手把既有那两条 `count(...) > 0` 顶成值判据：index_min/max 与 ndvi_min/ndvi_max 是**同一对数**，
+    // 后者只是前者的别名（现读函数体那两行赋值）⇒ 四个键一起判逐字，别名写错（比如把 max 复制成 min）必红。
+    int baseW = 0;
+    int baseH = 0;
+    const auto baseCells = readRasterBandF32(output, baseW, baseH);
+    ASSERT_EQ(baseCells.size(), static_cast<size_t>(24) * 24) << "产物像元总数与输入不符";
+    EXPECT_EQ(baseW, 24) << "产物宽度";
+    EXPECT_EQ(baseH, 24) << "产物高度（本件是方阵 ⇒ 行列写反在这件上等价，转置证据由 ND-6 的非方件出）";
+    int ndviOffGrid = 0;
+    for (int i = 0; i < static_cast<int>(baseCells.size()); ++i) {
+        EXPECT_FLOAT_EQ(baseCells[static_cast<size_t>(i)], 0.4f)
+            << "ND-1 第 " << i << " 格：(70 − 30) / (70 + 30) 推得 0.4";
+        if (std::abs(baseCells[static_cast<size_t>(i)] - 0.4f) > 1e-6f) ++ndviOffGrid;
+    }
+    EXPECT_EQ(ndviOffGrid, 0) << "整幅同值的波段 ⇒ 产物必须**处处** 0.4（这条把'只在某一格取点'的弱判据换成全集）";
+    EXPECT_EQ(result.message, "NDVI computed: range [0.400000, 0.400000]")
+        << "message 里那对方括号就是 buildIndexResult 的 min/max，逐字判";
+    EXPECT_EQ(result.metadata.at("index"), "NDVI") << "index 键发大写索引名（与登记行的 action 不是一回事）";
+    EXPECT_EQ(result.metadata.at("index_min"), "0.400000");
+    EXPECT_EQ(result.metadata.at("index_max"), "0.400000");
+    EXPECT_EQ(result.metadata.at("ndvi_min"), "0.400000");
+    EXPECT_EQ(result.metadata.at("ndvi_max"), "0.400000");
+    EXPECT_EQ(result.metadata.at("red_band"), "3") << "这两个键回显的是**解析后**的波段号，不是入参原样";
+    EXPECT_EQ(result.metadata.at("nir_band"), "4");
+
+    // 夹具与运行器：小尺寸非方件（8 x 6 = 48 格），波段逐格常量或按列分带，全部走显式向量 ⇒ 不复用方阵件。
+    struct NdviRun {
+        gis::framework::Result result;
+        std::vector<float> cells;
+        std::vector<std::string> messages;
+        int w = 0, h = 0;
+        std::string output;
+        bool threw = false;
+        std::string whatText;
+    };
+    constexpr int kCols = 8, kRows = 6;
+    std::error_code staleEc;
+    auto cleanStale = [&staleEc](const std::string& path) {
+        fs::remove(path, staleEc);
+        fs::remove(path + ".aux.xml", staleEc);
+        if (fs::exists(path)) ADD_FAILURE() << "同名残留删不掉（有句柄没放）: " << path;
+    };
+    struct CapturingProgress : gis::core::ProgressReporter {
+        std::vector<std::string> messages;
+        void onProgress(double) override {}
+        void onMessage(const std::string& msg) override { messages.push_back(msg); }
+        bool isCancelled() const override { return false; }
+    };
+    auto constBand = [](float v) {
+        return std::vector<float>(static_cast<size_t>(kCols) * kRows, v);
+    };
+    // red/nir 传 **-1** 表示"这个键不传"（默认支）；0 照原样传出去（ND-4 的下界档要用 0 触发）。
+    // 只在 success 时读产物——现读 `doExecuteAction` 末尾有 `catch (const std::exception&) → Result::fail(ex.what())`，
+    //   所以 try **之内**抛出的那些（波段越界）是"失败返回"而不是"逃出 execute()"。
+    //   本刀第一跑就是无条件读了产物，把**测试自己的** `readRasterBandF32` 异常当成了产品抛出 ⇒ 判据全歪。
+    auto runNdvi = [&](const char* outputName, const std::vector<std::vector<float>>& bands,
+                       int red, int nir) {
+        const std::string in = gis::tests::writeFloatBandsRaster(
+            getTestDir(), std::string(outputName) + "_in.tif", kCols, kRows, bands);
+        NdviRun run;
+        run.output = utf8PathString(getTestDir() / (std::string(outputName) + ".tif"));
+        cleanStale(run.output);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("ndvi");
+        callParams["input"] = in;
+        callParams["output"] = run.output;
+        if (red >= 0) callParams["red_band"] = red;
+        if (nir >= 0) callParams["nir_band"] = nir;
+        try {
+            CapturingProgress sink;
+            run.result = p->execute(callParams, sink);
+            run.messages = sink.messages;
+            if (run.result.success) run.cells = readRasterBandF32(run.output, run.w, run.h);
+        } catch (const std::exception& e) {
+            run.threw = true;
+            run.whatText = e.what();
+        }
+        return run;
+    };
+    const std::vector<std::vector<float>> fourConst = {constBand(10.0f), constBand(20.0f),
+                                                       constBand(30.0f), constBand(70.0f)};
+
+    // ── ND-2 `red_band` / `nir_band` 的成对档：两档各挡一种"用反" ──
+    // 档 a：red = 第 1 波段(10) / nir = 第 4(70) ⇒ (70 − 10) / 80 = **0.75**（与腿侧断言同一个数）；
+    //   若实现把 red/nir 用反 ⇒ 得 −0.75 ⇒ 本档红。
+    // 档 b：red = 第 3(30) / nir = 第 2(20) ⇒ (20 − 30) / 50 = **−0.2**；用反 ⇒ +0.2 ⇒ 红。
+    //   两档**符号不同**是有意的：同号的一对挡不住"整体取反"这种等价变异（P4c 的临界对同一条道理）。
+    const NdviRun a = runNdvi("ndvi_nd2a", fourConst, 1, 4);
+    ASSERT_FALSE(a.threw) << a.whatText;
+    ASSERT_TRUE(a.result.success) << a.result.message;
+    ASSERT_EQ(a.cells.size(), static_cast<size_t>(kCols) * kRows);
+    EXPECT_EQ(a.w, kCols) << "非方夹具上的宽度判据（8）";
+    EXPECT_EQ(a.h, kRows) << "非方夹具上的高度判据（6）⇒ 行列写反在这里就红";
+    for (int i = 0; i < static_cast<int>(a.cells.size()); ++i) {
+        EXPECT_FLOAT_EQ(a.cells[static_cast<size_t>(i)], 0.75f)
+            << "ND-2a 第 " << i << " 格：(70 − 10) / 80 = 0.75，与腿侧 `Mean:   0.75` 同数";
+    }
+    EXPECT_EQ(a.result.metadata.at("red_band"), "1") << "回显必须跟着实参走，不是跟着默认值";
+    EXPECT_EQ(a.result.metadata.at("nir_band"), "4");
+    EXPECT_EQ(a.result.metadata.at("index_max"), "0.750000");
+    const NdviRun b = runNdvi("ndvi_nd2b", fourConst, 3, 2);
+    ASSERT_FALSE(b.threw) << b.whatText;
+    ASSERT_TRUE(b.result.success) << b.result.message;
+    ASSERT_EQ(b.cells.size(), static_cast<size_t>(kCols) * kRows);
+    for (int i = 0; i < static_cast<int>(b.cells.size()); ++i) {
+        EXPECT_FLOAT_EQ(b.cells[static_cast<size_t>(i)], -0.2f)
+            << "ND-2b 第 " << i << " 格：(20 − 30) / 50 = −0.2（NIR < Red 的那一侧）";
+    }
+    EXPECT_EQ(b.result.metadata.at("index_min"), "-0.200000");
+    EXPECT_EQ(b.result.metadata.at("index_max"), "-0.200000");
+
+    // ── ND-3 默认支：两个键都不传 ⇒ 默认 red=3 / nir=4 ⇒ 与 ND-1 同值 0.4 ──
+    // 这条把"默认值写反成 1/2"或"默认丢了"钉住（丢了默认值会让 getBandIndex 越界 ⇒ 走 ND-4 那支失败返回）。
+    const NdviRun d = runNdvi("ndvi_nd3", fourConst, -1, -1);
+    ASSERT_FALSE(d.threw) << d.whatText;
+    ASSERT_TRUE(d.result.success) << d.result.message;
+    EXPECT_EQ(d.result.metadata.at("red_band"), "3") << "兜底必须与函数体里那两个默认值同值";
+    EXPECT_EQ(d.result.metadata.at("nir_band"), "4");
+    for (int i = 0; i < static_cast<int>(d.cells.size()); ++i) {
+        EXPECT_FLOAT_EQ(d.cells[static_cast<size_t>(i)], 0.4f) << "ND-3 第 " << i << " 格应等于 ND-1 的 0.4";
+    }
+
+    // ── ND-4 波段越界：异常在 try **之内** ⇒ 被插件自己的 catch 转成失败返回，不逃出 execute() ──
+    // 现读：`getBandIndex` throw，函数末尾 `catch (const std::exception& ex) { return Result::fail(ex.what()); }`
+    //   ⇒ 实到是 success=false + message 逐字等于那条 out-of-range 文案 + 没有产物。
+    //   上界(9) / 下界(0) 各一档：同一函数拼的文案、不同触发条件；red 先解析，所以 oorLow 出的是 nir 那条。
+    const NdviRun oorHigh = runNdvi("ndvi_nd4hi", fourConst, 9, 4);
+    EXPECT_FALSE(oorHigh.threw) << "波段越界不该逃出 execute()（插件内有 catch）；what=" << oorHigh.whatText;
+    EXPECT_FALSE(oorHigh.result.success) << "red_band=9（4 波段件）应失败";
+    EXPECT_EQ(oorHigh.result.message, "red_band 9 out of range (1-4)") << "文案逐字：键名 + 入参 + (1-count)";
+    EXPECT_FALSE(fs::exists(oorHigh.output)) << "失败支不许留产物";
+    const NdviRun oorLow = runNdvi("ndvi_nd4lo", fourConst, 3, 0);
+    EXPECT_FALSE(oorLow.threw);
+    EXPECT_FALSE(oorLow.result.success) << "nir_band=0 也要失败（下界那半边）";
+    EXPECT_EQ(oorLow.result.message, "nir_band 0 out of range (1-4)");
+    EXPECT_FALSE(fs::exists(oorLow.output));
+
+    // ── ND-4c 与 ND-4 **相反**的一支：输入文件不存在 ⇒ 异常**逃出** execute()（openRaster 在 try 之前）──
+    // 同一条函数里两种失败形态并存：`openRaster(input)` 在 try 外（且**没有**判空——它只抛不返回空），
+    //   波段解析在 try 内 ⇒ 这就是"N187 那批死支"的机制证据：凡是指望 `if (!ds)` 兜住的写法都兜不住。
+    //   判"逃出 + 实到 what() 带 Cannot open raster + 不留产物"三件；与 ND-4 成对，才知道边界画在哪。
+    {
+        const std::string missing = utf8PathString(getTestDir() / "ndvi_no_such_input.tif");
+        const std::string missingOutput = utf8PathString(getTestDir() / "ndvi_nd4c.tif");
+        cleanStale(missingOutput);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("ndvi");
+        callParams["input"] = missing;
+        callParams["output"] = missingOutput;
+        bool escaped = false;
+        std::string what;
+        try {
+            const auto missingResult = p->execute(callParams, progress_);
+            ADD_FAILURE() << "缺失输入实到应逃出 execute()（openRaster 在 try 之前）；实得 success="
+                          << (missingResult.success ? 1 : 0) << " message=" << missingResult.message;
+        } catch (const std::exception& e) {
+            escaped = true;
+            what = e.what();
+        }
+        EXPECT_TRUE(escaped);
+        EXPECT_NE(what.find("Cannot open raster: "), std::string::npos) << "实到 what=" << what;
+        EXPECT_FALSE(fs::exists(missingOutput)) << "缺失输入也不许留产物";
+    }
+
+    // ── ND-5 分母趋 0：`safeDivide` 的 1e-10 在这一档**才**起作用 ⇒ 产物是有限的巨大值 ──
+    // 夹具：NIR = ±50、Red = ∓50 两个区 ⇒ 分子 ±100、分母 0 + 1e-10 ⇒ |结果| ≈ 1e12，
+    //   远超 NDVI 的合法值域 [−1,1]。**判符号与量级**（>1e11 / <-1e11）、判 isfinite ⇒ 不判逐位数字，
+    //   因为 fl32(1e-10) 本身不精确、除法结果取决于它的真实表示——那是与本算法无关的实现细节。
+    std::vector<std::vector<float>> cancelling = {   // 后两枚下面按列填 ⇒ 这里不能是 const
+        constBand(0.0f), constBand(0.0f),
+        std::vector<float>(static_cast<size_t>(kCols) * kRows),   // Red
+        std::vector<float>(static_cast<size_t>(kCols) * kRows),   // NIR
+    };
+    for (int y = 0; y < kRows; ++y) {
+        for (int x = 0; x < kCols; ++x) {
+            const bool left = (x < kCols / 2);
+            cancelling[2][static_cast<size_t>(y) * kCols + x] = left ? -50.0f : 50.0f;   // Red
+            cancelling[3][static_cast<size_t>(y) * kCols + x] = left ? 50.0f : -50.0f;   // NIR
+        }
+    }
+    const NdviRun z = runNdvi("ndvi_nd5", cancelling, 3, 4);
+    ASSERT_FALSE(z.threw) << z.whatText;
+    ASSERT_TRUE(z.result.success) << z.result.message;
+    ASSERT_EQ(z.cells.size(), static_cast<size_t>(kCols) * kRows);
+    int nd5Huge = 0;
+    int nd5NonFinite = 0;
+    for (int y = 0; y < kRows; ++y) {
+        for (int x = 0; x < kCols; ++x) {
+            const float v = z.cells[static_cast<size_t>(y) * kCols + static_cast<size_t>(x)];
+            if (!std::isfinite(v)) ++nd5NonFinite;
+            const bool left = (x < kCols / 2);
+            if (left) {
+                EXPECT_GT(v, 1e11f) << "ND-5 左半区（NIR=+50, Red=−50）分母被 1e-10 兜住 ⇒ 应是正的巨值";
+            } else {
+                EXPECT_LT(v, -1e11f) << "ND-5 右半区（NIR=−50, Red=+50）⇒ 应是负的巨值（符号跟着分子走）";
+            }
+            if (std::abs(v) > 1e11f) ++nd5Huge;
+        }
+    }
+    EXPECT_EQ(nd5NonFinite, 0) << "safeDivide 的意义就是**不产生** NaN/inf ⇒ 出现非有限值才是这条判据红";
+    EXPECT_EQ(nd5Huge, kCols * kRows) << "全部 48 格都应在巨大值一侧（没有一格落回 [−1,1]）";
+
+    // ── ND-6 空间分区 + metadata 的 min/max 精确 + 非方件的转置证据 ──
+    // NIR 整幅 70；Red 左 4 列 = 30、右 4 列 = 70 ⇒ 左 0.4、右 **0.0**（(70−70)/140）。
+    // 两个值都推得出 ⇒ `index_min == "0.000000"` / `index_max == "0.400000"` 是可判的绝对量（不是"键存在"）；
+    // 而**按列**切分使"行列写反"成为可观测：写反后每列会混进两种值 ⇒ 逐格判必红。
+    std::vector<float> redSplit(static_cast<size_t>(kCols) * kRows, 0.0f);
+    for (int y = 0; y < kRows; ++y) {
+        for (int x = 0; x < kCols; ++x) {
+            redSplit[static_cast<size_t>(y) * kCols + x] = (x < kCols / 2) ? 30.0f : 70.0f;
+        }
+    }
+    const std::vector<std::vector<float>> splitBands = {constBand(10.0f), constBand(20.0f),
+                                                        redSplit, constBand(70.0f)};
+    const NdviRun sp = runNdvi("ndvi_nd6", splitBands, 3, 4);
+    ASSERT_FALSE(sp.threw) << sp.whatText;
+    ASSERT_TRUE(sp.result.success) << sp.result.message;
+    ASSERT_EQ(sp.cells.size(), static_cast<size_t>(kCols) * kRows);
+    for (int y = 0; y < kRows; ++y) {
+        for (int x = 0; x < kCols; ++x) {
+            const float v = sp.cells[static_cast<size_t>(y) * kCols + static_cast<size_t>(x)];
+            if (x < kCols / 2) {
+                EXPECT_FLOAT_EQ(v, 0.4f) << "ND-6 左半（Red=30）应 0.4，第 (" << x << "," << y << ") 格不是";
+            } else {
+                EXPECT_FLOAT_EQ(v, 0.0f) << "ND-6 右半（Red=NIR=70）应精确 0.0，第 (" << x << "," << y << ") 格不是";
+            }
+        }
+    }
+    EXPECT_EQ(sp.result.metadata.at("index_min"), "0.000000");
+    EXPECT_EQ(sp.result.metadata.at("index_max"), "0.400000");
+
+    // ── ND-7 自有消息通道三条逐字（Reading Red / Reading NIR / Computing 公式）──
+    // 公式那一条把 `(NIR - Red) / (NIR + Red)` 写进了文案 ⇒ 与本块的期望闭式**同形**，
+    // 于是"文案里的公式"与"实现里的公式"若分叉（例如哪天改成 (NIR−Red)/(NIR+Red+eps) 的说明），这里会红。
+    // 计数按"含 NDVI 的条数"数（readBandMat 那两条也含 band 但不含 NDVI ⇒ 自有通道恰好 3 条：2 条 Reading + 1 条 Computing）。
+    auto countContaining = [](const std::vector<std::string>& msgs, const char* needle) {
+        int n = 0;
+        for (const std::string& m : msgs) {
+            if (m.find(needle) != std::string::npos) ++n;
+        }
+        return n;
+    };
+    auto hasMessage = [](const std::vector<std::string>& msgs, const std::string& exact) {
+        for (const std::string& m : msgs) {
+            if (m == exact) return true;
+        }
+        return false;
+    };
+    EXPECT_TRUE(hasMessage(sp.messages, "Reading Red band 3"))
+        << "波段标签是 Red/NIR 两个词 + 解析后的号；实到消息共 " << sp.messages.size() << " 条";
+    EXPECT_TRUE(hasMessage(sp.messages, "Reading NIR band 4"));
+    EXPECT_TRUE(hasMessage(sp.messages, "Computing NDVI = (NIR - Red) / (NIR + Red)..."));
+    EXPECT_EQ(countContaining(sp.messages, "NDVI"), 1) << "带 NDVI 字样的只有那一条公式文案";
 }
 
 TEST_F(PluginTest, SpindexOtherIndicesExecution) {
