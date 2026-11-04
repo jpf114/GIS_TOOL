@@ -3699,6 +3699,25 @@ TEST_F(PluginTest, ProcessingGaborFallbackDefaultsMatchParamSpecs) {
         << "gabor 的 sigma 兜底与 paramSpecs() 声明的默认值分叉";
 }
 
+// ── 批次 D P8a：登记行 `processing,glcm_texture` 的 [:]GOLD 证据块（本刀由控制器自跑，见 RELEASE）──
+// 这块的立论基础只有一条**可手推的不变量**：输入整幅均匀 ⇒ 每个内部窗的 GLCM 只有一个非零格 (l,l)、
+// 其 p = 1 ⇒ 四指标各自退化成 1 / 0 / 1 / 0（见下面逐档），**不需要枚举任何非均匀窗**。
+// 为什么不走"把四指标的期望值都算出来"那条路：`doGlcmTexture` 产出前还有一层
+// `cv::normalize(result, normalized, 0.0, 1.0, NORM_MINMAX)` ⇒ **产物读不到指标原值**，
+// 而 result 又含"从未被写过的边框一圈 raw = 0" ⇒ 任何非均匀夹具的期望都要先解出整幅 min/max，
+// 那是 4 方向 × 每方向一整窗的逐档枚举。本刀拒绝用"实测一下看看"冒充手推 ⇒ 非均匀档登记为可判而未判
+// （它同时挡住三条：归一化与否的鉴别、四方向集 vs 8 对称、`band` 双向档——三条要的是同一套枚举机器）。
+//
+// 上游依据（控制器自己解包 4.14 的 `norm.dispatch.cpp` 读到，引用只给语句原文不给行号）：
+//   `scale = (dmax - dmin)*(smax - smin > DBL_EPSILON ? 1./(smax - smin) : 0);` 与
+//   `shift = (float)dmin - (float)(smin*scale);` ⇒ **min == max 时 scale = 0、shift = dmin = 0 ⇒ 整幅写 0**
+//   （不是 NaN、不是 1、不是未定义）。⇒ 边框那一圈在产物里**恒等于 0.0**：四个指标都 >= 0，
+//   而 `minMaxIdx` 扫的是含边框的整幅 result ⇒ smin 必然 = 0（边框自己就是那个 0），
+//   于是边框映射成 (0 - 0)/(smax - 0) = 0。⚠ 这条只在"至少有一个内部窗的 raw > 0"时走归一化支；
+//   整幅 raw 全 0 时走上面那条退化支，产物同样整幅 0——**两个来源不同的 0**，下面各有一档钉住。
+//
+// 夹具一律 5 列 x 4 行（**非方**：方阵上"宽高写反"是等价变异 = 自制盲区）。
+// ⚠ 本块**不改产品码**，也不判 `band`（理由见上面那条登记）；`pairCount` 那个"算了不用"的量见 §未判项。
 TEST_F(PluginTest, ProcessingGlcmTextureExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -3723,7 +3742,193 @@ TEST_F(PluginTest, ProcessingGlcmTextureExecution) {
     double minValue = 0.0;
     double maxValue = 0.0;
     cv::minMaxLoc(texture, &minValue, &maxValue);
-    EXPECT_GT(maxValue, 0.0);
+    EXPECT_GT(maxValue, 0.0) << "既有那条只判 max > 0（行为锁，不作鉴别证据）；值级承载在下面 GLCM-G 系列";
+
+    // ── 机器：一枚整幅同值的非方件 + 一次跑，产物整幅读回来 ──
+    constexpr int kCols = 5, kRows = 4;                       // 非方；20 格
+    std::vector<float> flat(static_cast<size_t>(kCols) * static_cast<size_t>(kRows), 255.0f);
+    const std::string flatInput =
+        gis::tests::writeFloatRaster(getTestDir(), "glcm_flat_input.tif", kCols, kRows, flat);
+    std::error_code staleEc;
+    auto cleanStale = [&staleEc](const std::string& path) {
+        fs::remove(path, staleEc);
+        fs::remove(path + ".aux.xml", staleEc);
+        // Windows 下没放开的 GDAL 数据集句柄会让 fs::remove **静默失败** ⇒ 当场红，
+        // 否则"产物不许存在"那几条会被残留文件顶成假绿（本仓 P5a 就是这么被顶红过一次）。
+        if (fs::exists(path)) ADD_FAILURE() << "同名残留删不掉（有句柄没放）: " << path;
+    };
+    struct GlcmRun {
+        gis::framework::Result result;
+        std::vector<float> cells;
+        int w = 0, h = 0;
+        std::string output;
+        float cellAt(int x, int y) const {
+            if (cells.empty() || x < 0 || y < 0 || x >= w || y >= h) return std::numeric_limits<float>::quiet_NaN();
+            return cells[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)];
+        }
+    };
+    auto runGlcm = [&](const std::string& inputPath, const char* outputName, const std::string& metric,
+                        int kernelSize, int levels) {
+        GlcmRun run;
+        run.output = utf8PathString(getTestDir() / outputName);
+        cleanStale(run.output);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("glcm_texture");
+        callParams["input"] = inputPath;
+        callParams["output"] = run.output;
+        callParams["band"] = 1;
+        callParams["kernel_size"] = kernelSize;
+        callParams["glcm_metric"] = metric;
+        callParams["glcm_levels"] = levels;
+        run.result = p->execute(callParams, progress_);
+        run.cells = readRasterBandF32(run.output, run.w, run.h);
+        return run;
+    };
+    auto countOf = [](const std::vector<float>& cells, float value) {
+        int n = 0;
+        for (const float v : cells) {
+            if (v == value) ++n;
+        }
+        return n;
+    };
+
+    // ── GLCM-G1 整幅均匀 + homogeneity ⇒ 内部 6 格 == 1.0、边框 14 格 == 0.0 ──
+    // 手推链（每一步都在本仓源码里读得到，或在上游语句原文里）：
+    //   (1) `toUint8` 的退化支（`maxVal - minVal < 1e-10` ⇒ 整幅 `Mat::zeros`）把整幅 255 的件**先抹成全 0**
+    //       ⇒ 与 P7a 全零档同因；(2) 于是每个量化格都落到同一个 level l（`levels = 8` 时 l = 0）；
+    //   (3) 内部窗 = [y-1, y+1] x [x-1, x+1]，伙伴 = +偏移；整幅同值 ⇒ **每方向的每一对都是 (l,l)**
+    //       ⇒ glcm[l,l] = dirPairCount ⇒ 归一后只有 p = 1 一枚非零格；
+    //   (4) homogeneity 每方向贡献 `p/(1+|i-j|)` = 1/(1+0) = 1 ⇒ 四方向求和后 `value / 4.0` **仍是 1**；
+    //   (5) 主循环只跑 y,x ∈ [radius, n-radius) ⇒ radius = 1 的那一圈**从未被写**，raw = 0；
+    //   (6) normalize 支：smin = 0（就是那圈边框）、smax = 1 ⇒ scale = 1、shift = 0
+    //       ⇒ 产物：内部 = 1.0、边框 = 0.0。内部 = {1,2} x {1,2,3} = **6 格**，边框 = 20 - 6 = **14 格**。
+    // 6 这个数不是量的：(kRows - 2*radius) * (kCols - 2*radius) = (4-2)*(5-2) = 6。
+    const GlcmRun g1 = runGlcm(flatInput, "glcm_g1_homogeneity.tif", "homogeneity", 3, 8);
+    ASSERT_TRUE(g1.result.success) << g1.result.message;
+    ASSERT_EQ(g1.cells.size(), static_cast<size_t>(kCols) * static_cast<size_t>(kRows))
+        << "产物像元总数与输入不符 ⇒ 下面逐格判据的索引前提不成立";
+    EXPECT_EQ(g1.w, kCols) << "产物宽度必须等于输入的列数（非方夹具上 cols/rows 写反必红在这里）";
+    EXPECT_EQ(g1.h, kRows) << "产物高度必须等于输入的行数";
+    for (int y = 1; y <= kRows - 2; ++y) {
+        for (int x = 1; x <= kCols - 2; ++x) {
+            EXPECT_DOUBLE_EQ(g1.cellAt(x, y), 1.0)
+                << "内部格 (" << x << "," << y << ") 应是 homogeneity 归一后的 1.0（手推链第 4/6 步）";
+        }
+    }
+    EXPECT_EQ(countOf(g1.cells, 1.0f), 6) << "1.0 的格数应恰好是内部格数 (4-2)*(5-2) = 6";
+    EXPECT_EQ(countOf(g1.cells, 0.0f), 14) << "0.0 的格数应恰好是边框格数 20 - 6 = 14";
+    // 值域只 {0.0, 1.0}：把"整幅同值 ⇒ 每窗 raw 同值 ⇒ 拉伸后只两端点"这条钉死；
+    // 冒出新值（例如漏掉 normalize 直接写 raw、或把边框写成 NoData 哨兵）都在这里红。
+    for (int y = 0; y < g1.h; ++y) {
+        for (int x = 0; x < g1.w; ++x) {
+            const float v = g1.cellAt(x, y);
+            EXPECT_TRUE(v == 0.0f || v == 1.0f)
+                << "(" << x << "," << y << ") 出现了 {0.0, 1.0} 之外的值，实到=" << v;
+        }
+    }
+    EXPECT_EQ(g1.result.metadata.at("metric"), "homogeneity") << "metric 原样回显";
+    EXPECT_EQ(g1.result.metadata.at("kernel_size"), "3") << "kernel_size 走 std::to_string 回显";
+    EXPECT_EQ(g1.result.metadata.at("levels"), "8") << "glcm_levels 走 std::to_string 回显";
+
+    // ── GLCM-G2 同一枚均匀件换 contrast / entropy ⇒ 整幅 raw 全 0 ⇒ 退化支 ⇒ **内部也是 0.0** ──
+    // 手推：contrast = Σ (i-j)^2 * p = 0；entropy = -1 * log(1) = 0 ⇒ result **整幅** 0（内部与边框同值）
+    // ⇒ minMaxIdx 得 smin = smax = 0 ⇒ 走上游那条 `smax - smin > DBL_EPSILON ? … : 0` 的 **0 支**
+    //   ⇒ scale = 0、shift = 0 ⇒ 产物整幅 0.0。
+    // ⚠ 这个 0 与 G1 边框那个 0 **来源不同**：G1 的边框是"0 映射成 0"（走归一化支），
+    //   这里的整幅 0 是"退化支把 scale 归 0"。G1 内部必须 1.0、G2 内部必须 0.0 ⇒
+    //   任何"四指标共用一条公式"的假实现都会在 G1 与 G2 之一红（metric 敏感性就靠这两档对撞，
+    //   不需要枚举手推四指标的非均匀值）。
+    for (const char* degenerateMetric : {"contrast", "entropy"}) {
+        const std::string outName = std::string("glcm_g2_") + degenerateMetric + ".tif";
+        const GlcmRun g2 = runGlcm(flatInput, outName.c_str(), degenerateMetric, 3, 8);
+        ASSERT_TRUE(g2.result.success) << degenerateMetric << ": " << g2.result.message;
+        ASSERT_EQ(g2.cells.size(), static_cast<size_t>(kCols) * static_cast<size_t>(kRows));
+        double sumSq = 0.0;
+        for (const float v : g2.cells) sumSq += static_cast<double>(v) * static_cast<double>(v);
+        EXPECT_DOUBLE_EQ(sumSq, 0.0) << degenerateMetric << ": 整幅 raw 全 0 时产物必须整幅 0（退化支），" << outName;
+        EXPECT_DOUBLE_EQ(g2.cellAt(2, 1), 0.0)
+            << degenerateMetric << ": 内部格也必须是 0.0——它是 G1 那条 1.0 的另一半，别把它当边框";
+    }
+
+    // ── GLCM-G3 内部为空 ⇒ 一个窗都不建 ⇒ 整幅 raw 0 ⇒ 产物整幅 0，且**成功返回** ──
+    // 手推：kRows = 4、kernel_size = 5 ⇒ radius = 2 ⇒ 主循环 y ∈ [2, 4-2) = **空** ⇒ result 保持 Scalar(0)
+    // ⇒ 与 G2 同走退化支 ⇒ 整幅 0.0。这条判的是"产出循环的边界"，也是产品的一条静默陷阱：
+    //   4x5 件配 5x5 窗 ⇒ rc=0、产物整幅 0、metadata 照常报 `kernel_size=5`，**不发一个警告**
+    //   ⇒ 已同步进用户文档（「注意事项」那条"窗口比影像还大 ⇒ 输出整幅 0 而不是报错"）。
+    //   是否该改成显式失败属可观测行为变更 ⇒ 只登记交拍板，本刀不改产品。
+    const GlcmRun g3 = runGlcm(flatInput, "glcm_g3_empty_interior.tif", "homogeneity", 5, 8);
+    ASSERT_TRUE(g3.result.success) << g3.result.message;
+    ASSERT_EQ(g3.cells.size(), static_cast<size_t>(kCols) * static_cast<size_t>(kRows));
+    EXPECT_EQ(countOf(g3.cells, 0.0f), kCols * kRows) << "没有任何内部窗时整幅都该是 0.0（20 格）";
+    EXPECT_EQ(g3.result.metadata.at("kernel_size"), "5") << "空内部不影响 metadata 回显（这条是行为锁，不作鉴别证据）";
+
+    // ── GLCM-G4 / G5 未知 metric 的**可达性**：同一个坏取值，有内部 ⇒ 失败；空内部 ⇒ 反而成功 ──
+    // 产品里 `return Result::fail("Unknown glcm metric: " + metric)` 写在**最内层双循环的 else 支**，
+    // 所以它只有在某个方向真算出 p > 0 时才可达 ⇒ 这不是"参数校验位置"的测试，是**校验发生在哪一层**的测试：
+    //   G4（kernel 3 ⇒ 有内部窗）：必须失败、文案逐字、**不许留产物**；
+    //   G5（kernel 5 ⇒ 内部为空 ⇒ 那句 else 永远不执行）：必须**成功**且产物整幅 0。
+    // 两档合起来才把"未知 metric 会不会被拒"这件事判到；单看 G4 会以为它是全局校验（其实不是）。
+    const std::string g4Output = utf8PathString(getTestDir() / "glcm_g4_unknown_metric.tif");
+    cleanStale(g4Output);
+    {
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("glcm_texture");
+        callParams["input"] = flatInput;
+        callParams["output"] = g4Output;
+        callParams["band"] = 1;
+        callParams["kernel_size"] = 3;
+        callParams["glcm_metric"] = std::string("not_a_metric");
+        callParams["glcm_levels"] = 8;
+        const auto g4 = p->execute(callParams, progress_);
+        EXPECT_FALSE(g4.success) << "有内部窗时未知 metric 必须被拒（那句 else 就在算子里）";
+        EXPECT_EQ(g4.message, "Unknown glcm metric: not_a_metric") << "文案要逐字对上，实到=" << g4.message;
+        EXPECT_FALSE(fs::exists(g4Output)) << "失败支不许留产物: " << g4Output;
+    }
+    const GlcmRun g5 = runGlcm(flatInput, "glcm_g5_unknown_metric_unreached.tif", "not_a_metric", 5, 8);
+    ASSERT_TRUE(g5.result.success)
+        << "空内部时那句 else 根本不执行 ⇒ 未知 metric 在这一支**不会**被拒（这是产品实到，不是理想行为）";
+    EXPECT_EQ(countOf(g5.cells, 0.0f), kCols * kRows) << "G5 的产物应与 G3 一样整幅 0.0";
+
+    // ── GLCM-G6 五道前置早退：各一条文案 + 各一条"不许留产物" ──
+    // 顺序实到：input → output → kernel_size < 3 → kernel_size 偶 → levels < 2（都写在任何读盘之前）；
+    // ⇒ `kernel_size = 2` 先撞 "must be >= 3"，`4` 才撞 "must be odd"；这两条各一档，不许合并成一条断言。
+    auto runEarlyFail = [&](const char* outputName, const std::string& dropKey, const std::string& metric,
+                             std::optional<int> kernelSize, std::optional<int> levels) {
+        const std::string failOutput = utf8PathString(getTestDir() / outputName);
+        cleanStale(failOutput);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("glcm_texture");
+        callParams["input"] = flatInput;
+        callParams["output"] = failOutput;
+        callParams["band"] = 1;
+        callParams["glcm_metric"] = metric;
+        callParams["glcm_levels"] = levels.value_or(8);
+        callParams["kernel_size"] = kernelSize.value_or(3);
+        if (!dropKey.empty()) callParams.erase(dropKey);
+        const auto failResult = p->execute(callParams, progress_);
+        EXPECT_FALSE(failResult.success) << "期望早退失败，实到 success=" << failResult.success;
+        EXPECT_FALSE(fs::exists(failOutput)) << "早退支不许留产物: " << failOutput;
+        return failResult.message;
+    };
+    EXPECT_EQ(runEarlyFail("glcm_g6_no_input.tif", "input", "contrast", 3, 8), "input is required");
+    EXPECT_EQ(runEarlyFail("glcm_g6_no_output.tif", "output", "contrast", 3, 8), "output is required");
+    EXPECT_EQ(runEarlyFail("glcm_g6_kernel_2.tif", "", "contrast", 2, 8), "kernel_size must be >= 3");
+    EXPECT_EQ(runEarlyFail("glcm_g6_kernel_4.tif", "", "contrast", 4, 8), "kernel_size must be odd");
+    EXPECT_EQ(runEarlyFail("glcm_g6_levels_1.tif", "", "contrast", 3, 1), "glcm_levels must be >= 2");
+
+    // ── GLCM-G7 metadata 四键齐全 + 成功文案（两条各自独立，不判通道数）──
+    // 四键 = action / metric / kernel_size / levels。⚠ 这里只判**本动作自己写的这四键是否齐全**
+    //   （逐键命中才 ++），**不判"总共只有这四个键"**——框架/写出层可能往 metadata 里加别的键，
+    //   把"齐全"写成"恰好四个"就是没有载体的宣称（同一条纪律见 template_match 那把的 metadata 档）。
+    size_t ownKeys = 0;
+    for (const auto& kv : g1.result.metadata) {
+        if (kv.first == "action" || kv.first == "metric" || kv.first == "kernel_size" || kv.first == "levels") {
+            ++ownKeys;
+        }
+    }
+    EXPECT_EQ(ownKeys, static_cast<size_t>(4)) << "本动作自己写的四个 metadata 键必须齐全，实到 metadata 总键数=" << g1.result.metadata.size();
+    EXPECT_EQ(g1.result.message, "Processing completed successfully")
+        << "成功文案来自 writeMatOutput（本动作函数体里 onMessage 0 次，别照抄别的动作的消息判据）";
 }
 
 TEST_F(PluginTest, ProcessingMeanShiftSegmentExecution) {
