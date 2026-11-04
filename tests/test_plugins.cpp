@@ -3613,6 +3613,16 @@ TEST_F(PluginTest, ProcessingSkeletonExecution) {
     }
 }
 
+// ── 批次 D P8b：登记行 `processing,gabor_filter` 的 [:]GOLD 证据块（控制器自跑，见 RELEASE）──
+// 既有四条断言（success / exists / metadata["action"] / EXPECT_GT(中心格, 0)）里没有任何守卫认的数值宏
+// （`kNumericAssertions` 只有 EXPECT_NEAR / EXPECT_FLOAT_EQ / EXPECT_DOUBLE_EQ）⇒ 判过也不顶数。
+// 本块只依赖**一条可手推的不变量 + 一条两跑之间的恒等式**，不去枚举 Gabor 核的逐格值：
+//   链路（现读 doGaborFilter）：readBandAsMat → convertTo(CV_32F)（**没有** toUint8）→
+//   getGaborKernel(Size(k,k), sigma, theta, lambda, gamma, psi, CV_32F) → filter2D →
+//   **cv::normalize(response, result, 0.0, 1.0, NORM_MINMAX, CV_32F)** → writeMatOutput。
+// ⚠ 末尾这层全局 min-max 拉伸 ⇒ 产物读不到响应原值（与 P8a 的 GLCM 同一形状），
+//   所以任何"把响应值写成期望"的判据都不成立；能写的只有：常值场退化、两跑之间的互补关系、值域、边框。
+// 函数体 onMessage 0 次、只读 7 个键；本块**不**据"onMessage 0 次"宣称动作不产生文案（那条在 P7b 已被推翻）。
 TEST_F(PluginTest, ProcessingGaborFilterExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -3635,8 +3645,199 @@ TEST_F(PluginTest, ProcessingGaborFilterExecution) {
     EXPECT_TRUE(result.success) << "Gabor filter failed: " << result.message;
     EXPECT_TRUE(fs::exists(output));
     EXPECT_EQ(result.metadata.at("action"), "gabor_filter");
-    EXPECT_GT(readRasterPixel(output, 26, 26), 0.0f);
+    EXPECT_GT(readRasterPixel(output, 26, 26), 0.0f) << "既有那条只判某格 > 0（行为锁，不作鉴别证据）";
+
+    constexpr int kCols = 26, kRows = 24;                     // 非方；26x24 = 624 格
+    // 一枚"整幅同值"的件与一枚"大亮块"件：后者留够余量，使中心像元的邻域整片落在亮块内。
+    std::vector<float> flat(static_cast<size_t>(kCols) * static_cast<size_t>(kRows), 255.0f);
+    std::vector<float> block(static_cast<size_t>(kCols) * static_cast<size_t>(kRows), 0.0f);
+    for (int y = 2; y <= 21; ++y) {
+        for (int x = 3; x <= 22; ++x) {
+            block[static_cast<size_t>(y) * static_cast<size_t>(kCols) + static_cast<size_t>(x)] = 255.0f;
+        }
+    }
+    const std::string flatInput =
+        gis::tests::writeFloatRaster(getTestDir(), "gabor_flat_input.tif", kCols, kRows, flat);
+    const std::string blockInput =
+        gis::tests::writeFloatRaster(getTestDir(), "gabor_block_input.tif", kCols, kRows, block);
+    std::error_code staleEc;
+    auto cleanStale = [&staleEc](const std::string& path) {
+        fs::remove(path, staleEc);
+        fs::remove(path + ".aux.xml", staleEc);
+        // GDAL 数据集句柄没放开时 fs::remove 在 Windows 上**静默失败** ⇒ 当场红；
+        // 否则下面所有"产物不许存在"的判据会被残留文件顶成假绿（本仓 P5a 就这么被顶红过一次）。
+        if (fs::exists(path)) ADD_FAILURE() << "同名残留删不掉（有句柄没放）: " << path;
+    };
+    auto cellOf = [](const std::vector<float>& cells, int w, int x, int y) -> float {
+        if (cells.empty() || x < 0 || y < 0 || x >= w || y >= static_cast<int>(cells.size()) / (w ? w : 1)) {
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        return cells[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)];
+    };
+    struct GaborRun {
+        gis::framework::Result result;
+        std::vector<float> cells;
+        int w = 0, h = 0;
+        std::string output;
+    };
+    // psi 是形参且带默认值 0.0 ⇒ 既有调用点取默认、只有 GB-3 的两档各传 0.0 / CV_PI，
+    // 这样"新增一档"不新增宏、也不改变其余各档的实参形态（同 P7b S8 的参数化做法）。
+    auto runGabor = [&](const std::string& inputPath, const char* outputName, double psi, int band = 1) {
+        GaborRun run;
+        run.output = utf8PathString(getTestDir() / outputName);
+        cleanStale(run.output);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("gabor_filter");
+        callParams["input"] = inputPath;
+        callParams["output"] = run.output;
+        callParams["band"] = band;
+        callParams["kernel_size"] = 5;
+        callParams["sigma"] = 2.0;
+        callParams["gabor_theta"] = 0.0;
+        callParams["gabor_lambda"] = 6.0;
+        callParams["gabor_gamma"] = 0.5;
+        callParams["gabor_psi"] = psi;
+        run.result = p->execute(callParams, progress_);
+        run.cells = readRasterBandF32(run.output, run.w, run.h);
+        return run;
+    };
+    // ── GB-1 整幅同值的件 ⇒ 响应是常数 ⇒ normalize 走 min==max 退化支 ⇒ **产物整幅 0.0** ──
+    // 手推链：常值场过任何线性卷积核都得常值（值 = c·Σkernel，本刀不需要它）⇒ response 的
+    //   smin == smax ⇒ 上游 `scale = (dmax - dmin)*(smax - smin > DBL_EPSILON ? 1./(smax - smin) : 0)` 取 **0 支**、
+    //   `shift = dmin = 0` ⇒ 每一格都是 0*值 + 0 = 0.0（与 P8a 的 GLCM-G2 同一条上游分支，跨第二个动作复核）。
+    // 这条同时挡住"忘了调 normalize"（会读到 c·Σkernel 而不是 0）与"用了 toUint8"（会把常值场抹成 0 而非 255，
+    //   但退化支两种都给 0 ⇒ 这一条**不**区分那两点，区分它们的是 GB-3）。
+    const GaborRun g1 = runGabor(flatInput, "gabor_gb1_flat.tif", 0.0);
+    ASSERT_TRUE(g1.result.success) << g1.result.message;
+    ASSERT_EQ(g1.cells.size(), static_cast<size_t>(kCols) * static_cast<size_t>(kRows))
+        << "产物像元总数与输入不符 ⇒ 下面逐格判据的索引前提不成立";
+    EXPECT_EQ(g1.w, kCols) << "产物宽度 = 输入列数（非方夹具上 cols/rows 写反必红在这里）";
+    EXPECT_EQ(g1.h, kRows) << "产物高度 = 输入行数";
+    for (int y = 0; y < g1.h; ++y) {
+        for (int x = 0; x < g1.w; ++x) {
+            EXPECT_DOUBLE_EQ(cellOf(g1.cells, g1.w, x, y), 0.0)
+                << "常值件经 min-max 退化支后 (" << x << "," << y << ") 必须是 0.0";
+        }
+    }
+    EXPECT_EQ(g1.result.metadata.at("theta"), "0.000000") << "theta 用 std::to_string(double) 的形态回显";
+    EXPECT_EQ(g1.result.metadata.at("lambda"), "6.000000") << "gabor_lambda 回显（值取自上面的实参，不是抄的常量）";
+    EXPECT_EQ(g1.result.metadata.at("gamma"), "0.500000") << "gabor_gamma 回显";
+
+    // ── GB-2 值域与尺寸（大亮块件，psi=0）：产物只落在 [0,1]，且**不是**整幅同值 ──
+    // 亮块 20x20 在 26x24 里 ⇒ 中心区与非中心区的响应不同 ⇒ smin < smax ⇒ 走正常归一化支；
+    // 拉伸式的两端点必然出现 ⇒ 判"各有一格**离端点 <= 2 ulp**"，两侧都**不**承诺精确相等：
+    //   实测不对称——1 那一端恰为精确 1.0，0 那一端最近的一格离 0 有 6.6581913316099417e-09（把这里的计数阈值
+    //   收紧成 `v == 0.0f` 会当场红 ⇒ 2 ulp 不是"放到绿为止"，是这一端的最小够用口径）。
+    // 这条把 GB-1 的"整幅 0"与"退化支"分开：同一件在 GB-2 下必须出现 1.0 ⇒ 若 normalize 被整条删掉，这里读不到 1.0。
+    const GaborRun g2 = runGabor(blockInput, "gabor_gb2_block.tif", 0.0);
+    ASSERT_TRUE(g2.result.success) << g2.result.message;
+    ASSERT_EQ(g2.cells.size(), static_cast<size_t>(kCols) * static_cast<size_t>(kRows));
+    int g2ZeroCells = 0;
+    int g2OneCells = 0;
+    int g2OutOfRange = 0;
+    float g2ZeroEndDist = 1.0f;   // 全图离"0 那一端"最近的距离
+    float g2OneEndDist = 1.0f;    // 全图离"1 那一端"最近的距离
+    for (int i = 0; i < static_cast<int>(g2.cells.size()); ++i) {
+        const float v = g2.cells[static_cast<size_t>(i)];
+        if (v < 0.0f || v > 1.0f) ++g2OutOfRange;
+        if (std::abs(v) <= 2.4e-07f) ++g2ZeroCells;
+        if (std::abs(v - 1.0f) <= 2.4e-07f) ++g2OneCells;
+        if (std::abs(v) < g2ZeroEndDist) g2ZeroEndDist = std::abs(v);
+        if (std::abs(v - 1.0f) < g2OneEndDist) g2OneEndDist = std::abs(v - 1.0f);
+    }
+    EXPECT_EQ(g2OutOfRange, 0) << "产物出现 [0,1] 之外的值 ⇒ 末尾的归一化没做或做错了档位";
+    EXPECT_GT(g2ZeroCells, 0) << "全图最接近 0 端的格离 0 有 " << g2ZeroEndDist << "（应 <= 2.4e-7）";
+    EXPECT_GT(g2OneCells, 0) << "全图最接近 1 端的格离 1 有 " << g2OneEndDist << "（应 <= 2.4e-7）";
+
+    // ── GB-3 psi 的互补对（两跑之间的恒等式，**不需要知道核的任何逐格值**）──
+    // 手推：核的相位项是 `cos(2*pi*x'/lambda + psi)`，psi -> psi + pi 把每个核值取反（cos 的平移 pi）⇒
+    //   response' = -response ⇒ 其 smin' = -smax、smax' = -smin ⇒ 归一化后 v' = 1 - v（逐格互补）。
+    //   ⇒ 恒等式 `v + v' == 1.0` 与核的具体形状无关，只对"psi 真被读进核"与"末尾确实是那层 min-max 拉伸"敏感：
+    //   假实现忽略 gabor_psi ⇒ v' == v ⇒ 在 v != 0.5 的格上红（GB-2 已证非均匀 ⇒ 必有这样的格）。
+    // 容差按**求值路径**给：核是 CV_32F、normalize 中间量是 double ⇒ 两跑各自的量化差在 1 ulp 量级；
+    //   1 ulp(1.0) = 1.1920929e-7 ⇒ 取 2 ulp = 2.4e-7 覆盖两端点附近的合成误差。
+    //   ⚠ 这条容差的**鉴别余量**是 O(1)（忽略 psi 时残差 = |2v - 1|，在 v 接近 0 或 1 的格上约等于 1）⇒
+    //   2.4e-7 与 1 之间差六个数量级，不是"容差放到绿为止"：已实测把第二档的 psi 取成与第一档同值（= 模拟
+    //     "核没读 psi"这条可观测形态）时 624 格**全红**、最差残差恰为 1（在 v = 0 或 1 的格上 |2v - 1| = 1）。
+    //   绿态的实到最差残差 = 4.4703483581542969e-08（cv2 离线读端与测试内 GDAL 读端同值）⇒ 精确相等会红，2.4e-7 必要。
+    const GaborRun g3a = runGabor(blockInput, "gabor_gb3_psi0.tif", 0.0);
+    const GaborRun g3b = runGabor(blockInput, "gabor_gb3_psi_pi.tif", 3.1415926535897931);
+    ASSERT_TRUE(g3a.result.success) << g3a.result.message;
+    ASSERT_TRUE(g3b.result.success) << g3b.result.message;
+    ASSERT_EQ(g3b.cells.size(), g3a.cells.size());
+    double psiPairWorst = 0.0;
+    int psiPairWorstAt = -1;
+    for (int i = 0; i < static_cast<int>(g3a.cells.size()); ++i) {
+        const double sum = static_cast<double>(g3a.cells[static_cast<size_t>(i)]) +
+                         static_cast<double>(g3b.cells[static_cast<size_t>(i)]);
+        const double resid = std::abs(sum - 1.0);
+        if (resid > psiPairWorst) { psiPairWorst = resid; psiPairWorstAt = i; }
+    }
+    for (int i = 0; i < static_cast<int>(g3a.cells.size()); ++i) {
+        EXPECT_NEAR(g3a.cells[static_cast<size_t>(i)] + g3b.cells[static_cast<size_t>(i)], 1.0, 2.4e-07)
+            << "psi=0 与 psi=pi 两跑在第 " << i << " 格不互补（最差残差落在第 " << psiPairWorstAt
+            << " 格、=" << psiPairWorst << "）";
+    }
+    EXPECT_EQ(g3b.result.metadata.at("theta"), g3a.result.metadata.at("theta"))
+        << "psi 不该改写 theta 的回显（两档 theta 都是 0.0）";
+
+    // ── GB-4 六道前置早退：各一条文案 + 各一条"不许留产物" ──
+    // 顺序实到：input → output → kernel_size(<3 → 偶) → sigma → gabor_lambda → gabor_gamma ⇒
+    //   `kernel_size = 2` 先撞 ">= 3"、`4` 才撞 "odd"；`sigma = 0` 撞 "positive"（**不是**上游核的报错）。
+    struct FailCase { const char* outputName; const char* dropKey; std::map<std::string, gis::framework::ParamValue> over; };
+    const std::vector<FailCase> fails = {
+        {"gabor_f_no_input.tif",  "input",  {}},
+        {"gabor_f_no_output.tif", "output", {}},
+        {"gabor_f_k2.tif",        "",       {{"kernel_size", 2}}},
+        {"gabor_f_k4.tif",        "",       {{"kernel_size", 4}}},
+        {"gabor_f_sigma0.tif",    "",       {{"sigma", 0.0}}},
+        {"gabor_f_lambda0.tif",   "",       {{"gabor_lambda", 0.0}}},
+        {"gabor_f_gamma0.tif",    "",       {{"gabor_gamma", 0.0}}},
+    };
+    for (const FailCase& fc : fails) {
+        const std::string failOutput = utf8PathString(getTestDir() / fc.outputName);
+        cleanStale(failOutput);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("gabor_filter");
+        callParams["input"] = flatInput;
+        callParams["output"] = failOutput;
+        callParams["band"] = 1;
+        callParams["kernel_size"] = 5;
+        callParams["sigma"] = 2.0;
+        for (const auto& kv : fc.over) callParams[kv.first] = kv.second;
+        if (fc.dropKey[0] != '\0') callParams.erase(fc.dropKey);
+        const auto failResult = p->execute(callParams, progress_);
+        EXPECT_FALSE(failResult.success) << fc.outputName << " 期望早退失败";
+        EXPECT_FALSE(fs::exists(failOutput)) << "早退支不许留产物: " << failOutput;
+    }
+    // 文案逐字各判一条（上面的循环只判"失败 + 无产物"这两件共同的事，这里把**哪个闸挡的**分开钉）：
+    // 取一条最容易被混的对照（sigma 与 lambda 的文案只差键名）实到两次的 message。
+    {
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("gabor_filter");
+        callParams["input"] = flatInput;
+        callParams["output"] = utf8PathString(getTestDir() / "gabor_f_msgs.tif");
+        callParams["band"] = 1;
+        callParams["kernel_size"] = 5;
+        callParams["gabor_lambda"] = 6.0;
+        callParams["gabor_gamma"] = 0.5;
+        callParams["sigma"] = 0.0;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "sigma must be positive");
+        callParams["sigma"] = 2.0;
+        callParams["gabor_lambda"] = 0.0;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "gabor_lambda must be positive");
+        callParams["gabor_lambda"] = 6.0;
+        callParams["gabor_gamma"] = -1.0;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "gabor_gamma must be positive");
+        callParams["gabor_gamma"] = 0.5;
+        callParams["kernel_size"] = 4;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "kernel_size must be odd");
+        callParams["kernel_size"] = 2;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "kernel_size must be >= 3");
+        cleanStale(utf8PathString(getTestDir() / "gabor_f_msgs.tif"));
+    }
 }
+
 
 // Task 15 / R-T15-4：默认值单源锁的判据一律来自 paramSpecs()，不把 5/1.5/4 抄进测试码
 // （抄进测试的仍是双源，只是换了个地方）。
@@ -3660,7 +3861,7 @@ static std::string specDefaultAsMetadataString(const gis::framework::ParamSpec& 
 }
 
 // gabor：不传 kernel_size/sigma ⇒ 兜底必须与 paramSpecs() 声明的默认值同值。
-// 改前实现兜底是 9/2.0（提交 54df42c:1159-1160），spec 是 5/1.5（同一 paramSpecs() 里
+// 改前实现兜底是 9/2.0（提交 54df42c 里的 doGaborFilter 取参那两行），spec 是 5/1.5（同一 paramSpecs() 里
 // kernel_size / sigma 那两条，按键名找，别抄行号）⇒ 本用例红。
 TEST_F(PluginTest, ProcessingGaborFallbackDefaultsMatchParamSpecs) {
     auto* p = mgr_.find("processing");
@@ -3931,6 +4132,16 @@ TEST_F(PluginTest, ProcessingGlcmTextureExecution) {
         << "成功文案来自 writeMatOutput（本动作函数体里 onMessage 0 次，别照抄别的动作的消息判据）";
 }
 
+// ── 批次 D P8b：登记行 `processing,mean_shift_filter` 的 [:]GOLD 证据块（控制器自跑，见 RELEASE）──
+// 链路（现读 doMeanShiftSegment）：readBandAsMat → **toUint8** → cvtColor(GRAY2BGR) →
+//   pyrMeanShiftFiltering(color, shifted, spatial_radius, color_radius, pyramid_level) →
+//   cvtColor(BGR2GRAY) → convertTo(result, CV_32F, 1.0 / 255.0) → writeMatOutput。
+// 与 gabor / GLCM 不同：**这条链末尾没有 min-max 拉伸** ⇒ 产物就是"灰度 / 255"，
+//   所以这里可以判绝对值（0.0 与 1.0 两个端点都是可推的），而那两个动作只能判退化支与两跑之间的关系。
+// 只依赖两条可手推的事实：①常值场经均值漂移仍等于该常值（邻域全同 ⇒ 均值就是它）；
+//   ②大亮块内部离边界 >= spatial_radius 的那一格，其空间邻域整片是同一个颜色 ⇒ 输出仍是 255。
+// ⚠ ①的前提是"邻域全同"，与 `pyramid_level` 无关（缩放也不造出新颜色）；②**与 level 有关**：
+//   level >= 1 会先高斯金字塔降采样 ⇒ 17x17 的纯亮邻域在细尺度上凑不齐 ⇒ 本档把 pyramid_level 固定为 0。
 TEST_F(PluginTest, ProcessingMeanShiftSegmentExecution) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -3955,7 +4166,173 @@ TEST_F(PluginTest, ProcessingMeanShiftSegmentExecution) {
     double minValue = 0.0;
     double maxValue = 0.0;
     cv::minMaxLoc(shifted, &minValue, &maxValue);
-    EXPECT_GT(maxValue - minValue, 0.0);
+    EXPECT_GT(maxValue - minValue, 0.0) << "既有那条只判「图里有反差」（行为锁，不作鉴别证据）";
+
+    constexpr int kCols = 26, kRows = 24;                     // 非方；624 格
+    // 亮块 [3..22] x [2..21]（20x20），中心取 (12,11)：其 17x17 空间邻域（sr = 8）整片在块内 ⇒ 输出 255。
+    std::vector<float> flat(static_cast<size_t>(kCols) * static_cast<size_t>(kRows), 255.0f);
+    std::vector<float> block(static_cast<size_t>(kCols) * static_cast<size_t>(kRows), 0.0f);
+    for (int y = 2; y <= 21; ++y) {
+        for (int x = 3; x <= 22; ++x) {
+            block[static_cast<size_t>(y) * static_cast<size_t>(kCols) + static_cast<size_t>(x)] = 255.0f;
+        }
+    }
+    const std::string flatInput =
+        gis::tests::writeFloatRaster(getTestDir(), "ms_flat_input.tif", kCols, kRows, flat);
+    const std::string blockInput =
+        gis::tests::writeFloatRaster(getTestDir(), "ms_block_input.tif", kCols, kRows, block);
+    std::error_code staleEc;
+    auto cleanStale = [&staleEc](const std::string& path) {
+        fs::remove(path, staleEc);
+        fs::remove(path + ".aux.xml", staleEc);
+        if (fs::exists(path)) ADD_FAILURE() << "同名残留删不掉（有句柄没放）: " << path;
+    };
+    struct MsRun {
+        gis::framework::Result result;
+        std::vector<float> cells;
+        int w = 0, h = 0;
+        std::string output;
+    };
+    // sr / cr / level 都做成形参（带默认值）⇒ 新增一档不新增宏、也不改其余各档的实参形态。
+    auto runMs = [&](const std::string& inputPath, const char* outputName, int band = 1,
+                     double sr = 8.0, double cr = 16.0, int level = 0) {
+        MsRun run;
+        run.output = utf8PathString(getTestDir() / outputName);
+        cleanStale(run.output);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("mean_shift_filter");
+        callParams["input"] = inputPath;
+        callParams["output"] = run.output;
+        callParams["band"] = band;
+        callParams["spatial_radius"] = sr;
+        callParams["color_radius"] = cr;
+        callParams["pyramid_level"] = level;
+        run.result = p->execute(callParams, progress_);
+        run.cells = readRasterBandF32(run.output, run.w, run.h);
+        return run;
+    };
+    auto cellOf = [](const std::vector<float>& cells, int w, int x, int y) -> float {
+        if (cells.empty() || x < 0 || y < 0 || x >= w || y * w >= static_cast<int>(cells.size())) {
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        return cells[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)];
+    };
+
+    // ── MS-1 常值件 ⇒ toUint8 常数退化支先抹成全 0 ⇒ 邻域全同 ⇒ 漂移不改变颜色 ⇒ 产物整幅 0.0 ──
+    // 逐格精确相等（这条链上没有 normalize，0 就是 0；`255 * (1/255)` 那类舍入只影响 1.0 那一端）。
+    const MsRun m1 = runMs(flatInput, "ms_ms1_flat.tif");
+    ASSERT_TRUE(m1.result.success) << m1.result.message;
+    ASSERT_EQ(m1.cells.size(), static_cast<size_t>(kCols) * static_cast<size_t>(kRows))
+        << "产物像元总数与输入不符 ⇒ 下面逐格判据的索引前提不成立";
+    EXPECT_EQ(m1.w, kCols) << "产物宽度 = 输入列数（非方夹具上 cols/rows 写反必红在这里）";
+    EXPECT_EQ(m1.h, kRows) << "产物高度 = 输入行数";
+    for (int y = 0; y < m1.h; ++y) {
+        for (int x = 0; x < m1.w; ++x) {
+            EXPECT_DOUBLE_EQ(cellOf(m1.cells, m1.w, x, y), 0.0)
+                << "常值件的均值漂移输出必须整幅 0.0，第 (" << x << "," << y << ") 格不是";
+        }
+    }
+
+    // ── MS-2 大亮块件（level 0）⇒ 中心格 1.0、角格精确 0.0、值域 [0,1] ──
+    // 中心那一格：其 17x17 邻域整片 255 ⇒ 漂移后仍是 255 ⇒ 255 * (1/255)。容差 2.4e-7 = 2 ulp(1.0)：
+    //   实到两端都是**精确**的：测试内的 GDAL 读端与取证时另跑的 cv2 读端都读到 0.0 与 1.0（全图值集 = {0,1}）。
+    //   原因是这条链上的 scale 是 double 的 1/255，255 乘它再落回 float32 正好 1.0；
+    //   "先 fl32(1/255) 再乘 255"才会得 1.0000001，那是另一种求值路径。
+    //   留 2 ulp 只挡"上游哪天改成在 float32 里求这个乘积"这种与本算法无关的变体；判别余量在另一侧：
+    //   删掉那个 1/255 会读到 255.0，差八个数量级。
+    // 角格 (0,0) 的 0.0 也来自**颜色**窗口：它的 17x17 空间邻域其实够得着亮块（块从 x=3,y=2 起，
+    //   距角格 <= 8），把亮块像元挡在外面的是 `color_radius = 16`；反事实臂把该档放大到 500 后角格读成 0.72549021244049072（= 185/255）。
+    const MsRun m2 = runMs(blockInput, "ms_ms2_block.tif");
+    ASSERT_TRUE(m2.result.success) << m2.result.message;
+    ASSERT_EQ(m2.cells.size(), static_cast<size_t>(kCols) * static_cast<size_t>(kRows));
+    EXPECT_NEAR(cellOf(m2.cells, m2.w, 12, 11), 1.0, 2.4e-07)
+        << "亮块内部、邻域整片同色的那一格必须约等于 1.0";
+    EXPECT_DOUBLE_EQ(cellOf(m2.cells, m2.w, 0, 0), 0.0) << "角格在亮块之外 ⇒ 必须是 0.0";
+    int m2OutOfRange = 0;
+    for (int i = 0; i < static_cast<int>(m2.cells.size()); ++i) {
+        const float v = m2.cells[static_cast<size_t>(i)];
+        if (v < 0.0f || v > 1.0f) ++m2OutOfRange;
+    }
+    EXPECT_EQ(m2OutOfRange, 0) << "产物越出 [0,1] ⇒ 那个 1.0/255 的缩放没做或做错了";
+
+    // ── MS-2c 二值件的**值集**只有两端（把 MS-2 从三个取点升级成整幅 624 格的值级承载）──
+    // 手推：本件的两色经 GRAY2BGR 复制成 (g,g,g) ⇒ 类间的欧氏距离是 sqrt(3)*255 ≈ 441.67，而 `color_radius = 16` 远小于它 ⇒
+    //   任何像元的颜色窗口都装不下另一类 ⇒
+    //   漂移的每个收敛值都是"同一色那一簇"的均值 = 该色本身 ⇒ 产物仍只取 {0, 255} ⇒ 除以 255 后是 {0.0, 1.0}。
+    // 这条钉的是"跨色平均不许发生"，且**阈值是可算的**：反事实臂取 color_radius = 500（> 441.67）⇒ 本条红，实到
+    //   608/624 格落到两端之外；同一臂先试过的 300 判据**不**红——300 仍小于类间距离，够不到"跨过两色"这个前提，
+    //   所以引用这条时给的是距离算式而不是"放大半径"四个字。
+    // ⚠ 前提是本档 `pyramid_level = 0`（块头那条：level >= 1 先在金字塔粗尺度上跑，插值本身就会造出中间值）。
+    int m2OffGrid = 0;
+    for (int i = 0; i < static_cast<int>(m2.cells.size()); ++i) {
+        const float v = m2.cells[static_cast<size_t>(i)];
+        if (!(std::abs(v) <= 2.4e-07f || std::abs(v - 1.0f) <= 2.4e-07f)) ++m2OffGrid;
+    }
+    EXPECT_EQ(m2OffGrid, 0) << "二值件的产物出现了既不贴 0 端也不贴 1 端的格 ⇒ 颜色窗口越过了类间差";
+
+    // ── MS-3 `band` 双向档（P7b 立的规矩：可见参数必须有档，且**成对**才承重）──
+    // 一枚 2 波段件：第 1 波段整幅同值（⇒ MS-1 那条 ⇒ 整幅 0.0）、第 2 波段是那枚亮块（⇒ 中心约 1.0）。
+    // 只判 band=2 一档挡不住"恒读第 1 波段"；只判 band=1 一档挡不住"恒读第 2 波段"（两档各拿相反方向的红点）。
+    const std::vector<std::vector<float>> twoBands = {flat, block};
+    const std::string twoBandInput =
+        gis::tests::writeFloatBandsRaster(getTestDir(), "ms_band_pair_input.tif", kCols, kRows, twoBands);
+    ASSERT_FALSE(twoBandInput.empty()) << "2 波段夹具没写出来";
+    const MsRun m3a = runMs(twoBandInput, "ms_ms3_band1.tif", 1);
+    ASSERT_TRUE(m3a.result.success) << m3a.result.message;
+    const MsRun m3b = runMs(twoBandInput, "ms_ms3_band2.tif", 2);
+    ASSERT_TRUE(m3b.result.success) << m3b.result.message;
+    ASSERT_EQ(m3b.cells.size(), m3a.cells.size());
+    int m3aBrightCells = 0;
+    for (int i = 0; i < static_cast<int>(m3a.cells.size()); ++i) {
+        if (std::abs(m3a.cells[static_cast<size_t>(i)]) > 2.4e-07f) ++m3aBrightCells;
+    }
+    EXPECT_EQ(m3aBrightCells, 0) << "band=1 读到的是一件常值图 ⇒ 任何一格都不该出现非零漂移结果";
+    EXPECT_NEAR(cellOf(m3b.cells, m3b.w, 12, 11), 1.0, 2.4e-07)
+        << "band=2 读到的是亮块件 ⇒ 中心格约 1.0（与 band=1 档相反方向的红点）";
+    EXPECT_DOUBLE_EQ(cellOf(m3b.cells, m3b.w, 0, 0), 0.0) << "band=2 档的角格仍应是 0.0";
+
+    // ── MS-4 五道前置早退：各一条文案 + 各一条"不许留产物" ──
+    // 顺序实到：input → output → spatial_radius → color_radius → pyramid_level。
+    // 两条 "must be positive" 只差键名（spatial_radius / color_radius）⇒ 单独各取一次实到 message 对撞。
+    {
+        const std::string failOutput = utf8PathString(getTestDir() / "ms_ms4_fails.tif");
+        cleanStale(failOutput);
+        std::map<std::string, gis::framework::ParamValue> callParams;
+        callParams["action"] = std::string("mean_shift_filter");
+        callParams["input"] = blockInput;
+        callParams["output"] = failOutput;
+        callParams["band"] = 1;
+        callParams["color_radius"] = 16.0;
+        callParams["pyramid_level"] = 1;
+        callParams["spatial_radius"] = 0.0;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "spatial_radius must be positive");
+        callParams["spatial_radius"] = 8.0;
+        callParams["color_radius"] = 0.0;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "color_radius must be positive");
+        callParams["color_radius"] = 16.0;
+        callParams["pyramid_level"] = -1;
+        EXPECT_EQ(p->execute(callParams, progress_).message, "pyramid_level must be >= 0");
+        callParams["pyramid_level"] = 1;
+        callParams.erase("input");
+        EXPECT_EQ(p->execute(callParams, progress_).message, "input is required");
+        callParams["input"] = blockInput;
+        callParams.erase("output");
+        EXPECT_EQ(p->execute(callParams, progress_).message, "output is required");
+        EXPECT_FALSE(fs::exists(failOutput)) << "五道早退全在 writeMatOutput 之前 ⇒ 一条产物都不许留下";
+    }
+
+    // ── MS-5 metadata 四键齐全（只判齐全，不判"总共只有这四个键"）──
+    int msOwnKeys = 0;
+    for (const char* key : {"action", "spatial_radius", "color_radius", "pyramid_level"}) {
+        if (m2.result.metadata.find(key) != m2.result.metadata.end()) ++msOwnKeys;
+    }
+    EXPECT_EQ(msOwnKeys, 4) << "本动作自己写的四个 metadata 键必须齐全";
+    EXPECT_EQ(m2.result.metadata.at("spatial_radius"), "8.000000")
+        << "spatial_radius 用 std::to_string(double) 的形态回显（实参与上面 runMs 的默认值同源）";
+    EXPECT_EQ(m2.result.metadata.at("pyramid_level"), "0")
+        << "pyramid_level 是 int 形态；MS-2 这一档显式传了 0（见块头那条 level 与邻域的说明）";
+    EXPECT_EQ(m2.result.message, "Processing completed successfully")
+        << "成功文案来自 writeMatOutput；本动作函数体 onMessage 0 次，但**不**据此宣称动作不产生文案（P7b 已推翻那条）";
 }
 
 TEST_F(PluginTest, ProcessingConnectedComponentsExecution) {
