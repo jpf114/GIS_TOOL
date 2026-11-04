@@ -1,11 +1,14 @@
 # tests/check_source_mojibake.ps1
 # Guard: source text must not contain mojibake (GBK/UTF-8 double-encoding residue).
-# Four rules (see docs/RELEASE.md, B17):
+# Five rules (R1~R4 see docs/RELEASE.md, B17; R5 added in batch D):
 #   R1 ROUNDTRIP  : run encoded as CP936 decodes as valid UTF-8 into different CJK text
 #   R2 PUA        : U+E000-U+F8FF (private use area)
 #   R3 BOPOMOFO   : U+3105-U+312F (Zhuyin never appears in this project's UI copy)
 #   R4 ODDFORMS   : U+FE30-U+FE4F presentation forms, U+FFE0-U+FFE6 fullwidth currency,
 #                   U+20AC euro, U+FFFD replacement char
+#   R5 ESCRESIDUE : bare uXXXX escape residue (an escaped CJK char whose backslash was eaten
+#                   by a writing tool). R1~R4 only look at non-ASCII runs, so this one shape is
+#                   pure ASCII and they can never see it.
 # Output is ASCII-only on purpose: Windows PowerShell 5.1 renders non-ASCII stdout as garbage,
 # so a Chinese message here would be unreadable in exactly the failure case.
 # Exit 0 = clean, 1 = violations or self-test failure.
@@ -23,6 +26,18 @@ $strict936 = [System.Text.Encoding]::GetEncoding(
     (New-Object System.Text.EncoderExceptionFallback),
     (New-Object System.Text.DecoderExceptionFallback))
 $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+
+# R5 is an ASCII-shape rule, so it cannot ride on the non-ASCII run walk in Find-Rules.
+# Both delimiters are load bearing: drop the right-hand one and a legitimate identifier
+# above_u10ffff_f5 fires (it is the only escaped-shaped token in the scanned tree today).
+# The run branch exists for adjacent escapes whose tail touches a letter or a digit -- measured:
+# that shape fires only through the run branch, and a lone escape whose right neighbour is
+# alphanumeric stays unseen by both branches (accepted hole: residue here is always followed by
+# CJK or punctuation). A properly escaped literal inside a string does fire, deliberately --
+# this repo writes CJK literally in UTF-8 sources. Literal bad samples live only in
+# tests/mojibake_fixtures/mojibake_bad.txt (the repo scan skips that directory); writing one in
+# this comment makes the guard flag its own source file, which is how this shape got tested.
+$Re5EscapeResidue = [regex]'(?<![0-9A-Za-z])(?:[uU][0-9a-fA-F]{4}){2,}|(?<![0-9A-Za-z])[uU][0-9a-fA-F]{4}(?![0-9A-Za-z])'
 
 function Get-Runs([string]$s) {
     # maximal runs of non-ASCII chars, length >= 2
@@ -54,6 +69,7 @@ function Test-Roundtrip([string]$run) {
 
 function Find-Rules([string]$line) {
     $hits = New-Object System.Collections.ArrayList
+    if ($Re5EscapeResidue.IsMatch($line)) { [void]$hits.Add('R5_ESCRESIDUE') }
     foreach ($run in (Get-Runs $line)) {
         foreach ($ch in $run.ToCharArray()) {
             $c = [int]$ch
@@ -88,8 +104,8 @@ foreach ($ol in (Read-Utf8 $okPath).Split("`n")) {
     foreach ($r in (Find-Rules $ol)) { [void]$okHits.Add($r) }
 }
 Write-Output ("SELFTEST bad-fixture rules: " + ($badRules -join ','))
-if ($badRules.Count -lt 4) {
-    Write-Output ("SELFTEST FAIL: bad fixture must trigger all 4 rules, got " + $badRules.Count)
+if ($badRules.Count -lt 5) {
+    Write-Output ("SELFTEST FAIL: bad fixture must trigger all 5 rules, got " + $badRules.Count)
     exit 1
 }
 if (@($okHits).Count -gt 0) {

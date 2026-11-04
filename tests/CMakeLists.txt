@@ -2063,7 +2063,7 @@ set_tests_properties(real_data_vector_join_heavy PROPERTIES
 # WHY 注册在 if(GIS_POWERSHELL_EXECUTABLE) 之外：那条 if 只管 real_*_regression 的 custom target。
 #   本用例如果也躲进 if 里，解释器找不到的机器上它会**静默不注册**（ctest -N 少一条、CI 照绿），
 #   正是本批反复消灭的"没检查长得像检查通过"。所以这里恒注册，解释器缺失由脚本判红。
-# 判据本身带自证：先跑 tests/mojibake_fixtures/{bad,ok} —— bad 必须命中全部 4 条规则、
+# 判据本身带自证：先跑 tests/mojibake_fixtures/{bad,ok} —— bad 必须命中全部 5 条规则（批次 D 起含 R5 转义残留）、
 #   ok（真实中文文案）必须 0 命中 ⇒ 规则退化或过宽都会先在这里红，而不是放过仓库里的真乱码。
 # 复算：cmake -DPS=<powershell> -DREPO_ROOT=<仓库根> -P tests/check_source_mojibake.cmake
 #   （退出码 0 = 干净；非 0 时 stdout 每行形如 "MOJIBAKE <规则> <相对路径>:<行号>"）

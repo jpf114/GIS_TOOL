@@ -3,10 +3,10 @@
 # 用法（复算口径，与 tests/CMakeLists.txt 里注册的用例同一件事）：
 #   cmake -DPS=<powershell 绝对路径> -DREPO_ROOT=<仓库根> -P tests/check_source_mojibake.cmake
 #
-# WHY 判据不在 CMake 里自己写：四条规则里 R1（GBK roundtrip）需要 CP936 编解码器，
+# WHY 判据不在 CMake 里自己写：五条规则里 R1（GBK roundtrip）需要 CP936 编解码器，
 #   CMake 没有编解码器（同族限制见"CMake 无 zlib ⇒ 像素级独立判定不可行"）。
-#   而 R2-R4 虽然只比码点，也**不能**只用人能写的那部分先落地：B17 的教训正是"规则只有两条就报归零"，
-#   缺一条就是窄规则的 0。所以四条一起、放同一个脚本里，载体只负责调用与判定退出码。
+#   而 R2-R5 虽然只比码点 / 只比 ASCII 形状，也**不能**只用人能写的那部分先落地：B17 的教训正是"规则只有两条就报归零"，
+#   缺一条就是窄规则的 0。所以五条一起、放同一个脚本里，载体只负责调用与判定退出码。
 # WHY 解释器缺失报红而不是 SKIP：本用例的"没有违规"就是绿 ⇒ "没人检查过"绝不能长得像"检查通过"
 #   （N84/N86 那一族：check_install_closure.cmake 对扫描器缺失同样是 FATAL_ERROR 而不是跳过）。
 
