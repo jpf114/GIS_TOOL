@@ -3706,7 +3706,10 @@ TEST_F(PluginTest, ProcessingGaborFilterExecution) {
     //   smin == smax ⇒ 上游 `scale = (dmax - dmin)*(smax - smin > DBL_EPSILON ? 1./(smax - smin) : 0)` 取 **0 支**、
     //   `shift = dmin = 0` ⇒ 每一格都是 0*值 + 0 = 0.0（与 P8a 的 GLCM-G2 同一条上游分支，跨第二个动作复核）。
     // 这条同时挡住"忘了调 normalize"（会读到 c·Σkernel 而不是 0）与"用了 toUint8"（会把常值场抹成 0 而非 255，
-    //   但退化支两种都给 0 ⇒ 这一条**不**区分那两点，区分它们的是 GB-3）。
+    //   但退化支两种都给 0 ⇒ 这一条**不**区分那两点）。
+    // ⚠ 复审订正：我原先还多 claim 了一句"区分它们的是 GB-3"——**整个 GB 块都区分不了有没有 toUint8**：
+    //   那层 0..255 拉伸是**正系数仿射变换**，与线性卷积可交换、又被末尾的 min-max 抵消 ⇒ 两实现的产物只差 8 位量化误差；
+    //   GB-3 比的是**同一实现两跑之间**的关系，仿射变换照样抵消 ⇒ 它也区分不了。要区分必须能在产物里读到响应原值（= GLCM 那堵墙）。
     const GaborRun g1 = runGabor(flatInput, "gabor_gb1_flat.tif", 0.0);
     ASSERT_TRUE(g1.result.success) << g1.result.message;
     ASSERT_EQ(g1.cells.size(), static_cast<size_t>(kCols) * static_cast<size_t>(kRows))
@@ -3727,7 +3730,8 @@ TEST_F(PluginTest, ProcessingGaborFilterExecution) {
     // 亮块 20x20 在 26x24 里 ⇒ 中心区与非中心区的响应不同 ⇒ smin < smax ⇒ 走正常归一化支；
     // 拉伸式的两端点必然出现 ⇒ 判"各有一格**离端点 <= 2 ulp**"，两侧都**不**承诺精确相等：
     //   实测不对称——1 那一端恰为精确 1.0，0 那一端最近的一格离 0 有 6.6581913316099417e-09（把这里的计数阈值
-    //   收紧成 `v == 0.0f` 会当场红 ⇒ 2 ulp 不是"放到绿为止"，是这一端的最小够用口径）。
+    //   收紧成 `v == 0.0f` 会当场红 ⇒ 2 ulp 不是"放到绿为止"。**但也别写成"最小够用"**：本刀只测到"精确相等必红"这一侧，
+    //   真正最小的余量在哪没测（1 ulp 够不够没跑过）⇒ 这句只对"不是随手放宽"负责。
     // 这条把 GB-1 的"整幅 0"与"退化支"分开：同一件在 GB-2 下必须出现 1.0 ⇒ 若 normalize 被整条删掉，这里读不到 1.0。
     const GaborRun g2 = runGabor(blockInput, "gabor_gb2_block.tif", 0.0);
     ASSERT_TRUE(g2.result.success) << g2.result.message;
@@ -3938,7 +3942,9 @@ TEST_F(PluginTest, ProcessingGaborFallbackDefaultsMatchParamSpecs) {
 
 // ── 批次 D P8a：登记行 `processing,glcm_texture` 的 [:]GOLD 证据块（本刀由控制器自跑，见 RELEASE）──
 // 这块的立论基础只有一条**可手推的不变量**：输入整幅均匀 ⇒ 每个内部窗的 GLCM 只有一个非零格 (l,l)、
-// 其 p = 1 ⇒ 四指标各自退化成 1 / 0 / 1 / 0（见下面逐档），**不需要枚举任何非均匀窗**。
+// 其 p = 1 ⇒ 四指标各自退化成 homogeneity=1 / contrast=0 / energy=1 / entropy=0。
+// ⚠ 本块只有 **homogeneity / contrast / entropy 三档**（复审席指出的口径修正）：energy 的退化值与 homogeneity 同为 1，
+//   加一档只是同义重复 ⇒ energy **登记为可判而未判**。三档已足够，**不需要枚举任何非均匀窗**。
 // 为什么不走"把四指标的期望值都算出来"那条路：`doGlcmTexture` 产出前还有一层
 // `cv::normalize(result, normalized, 0.0, 1.0, NORM_MINMAX)` ⇒ **产物读不到指标原值**，
 // 而 result 又含"从未被写过的边框一圈 raw = 0" ⇒ 任何非均匀夹具的期望都要先解出整幅 min/max，
@@ -6890,7 +6896,8 @@ TEST_F(PluginTest, RasterRenderHistogramMatchExecution) {
 // ⇒ 既没有 toUint8 也没有 min-max 拉伸，产物就是 NDVI 本身 ⇒ 端点、逐格值、metadata 的 min/max 全是可推的绝对量。
 // 立论只靠一条闭式：`NDVI = (NIR − Red) / (NIR + Red)`，本刀所有夹具的分子/分母都是**小整数** ⇒
 //   fl32 除法的结果虽然不精确（0.4f = 0.40000000596…），但 `std::to_string(double)` 只留 6 位小数
-//   ⇒ metadata 侧写成 `"0.400000"` 是**可推且精确**的；逐格侧用 `EXPECT_FLOAT_EQ`（1 ulp）不吃舍入亏。
+//   ⇒ metadata 侧写成 `"0.400000"` 是**可推且精确**的；逐格侧 `EXPECT_FLOAT_EQ` 的口径是 **4 ULP**（不是 1 ulp——复审订正），
+//     本件其实用不到那点余量（40/100 的 fl32 就是同一个数），留着只为"不把上游舍入当契约"（与 P9 同一条规矩）。
 // 四个推数（都在下面各有一档）：(70−30)/100 = 0.4；(70−10)/80 = 0.75（**与腿侧那条 case 断言的
 //   `Mean:   0.75` 同一个数**，跨载体旁证）；(20−30)/50 = −0.2；(70−70)/140 = 0.0。
 // ⚠ `safeDivide` 的 1e-10 在**正常量级上是被吞掉的**：分母 100 + 1e-10 在 fl32 里仍是 100.0f（ulp(100) ≈ 7.6e-6），
@@ -6920,7 +6927,7 @@ TEST_F(PluginTest, SpindexNdviExecution) {
     EXPECT_TRUE(result.metadata.count("ndvi_min") > 0);
     EXPECT_TRUE(result.metadata.count("ndvi_max") > 0);
 
-    // ── ND-1 同一件（Red=30 / NIR=70）把"键存在"升级成"值精确"：48 格改 576 格逐格判 ──
+    // ── ND-1 同一件（Red=30 / NIR=70）把"键存在"升级成"值精确"：24x24 = 576 格逐格 + 8 个键/消息逐字 ──
     // 这一档还顺手把既有那两条 `count(...) > 0` 顶成值判据：index_min/max 与 ndvi_min/ndvi_max 是**同一对数**，
     // 后者只是前者的别名（现读函数体那两行赋值）⇒ 四个键一起判逐字，别名写错（比如把 max 复制成 min）必红。
     int baseW = 0;
@@ -7153,8 +7160,9 @@ TEST_F(PluginTest, SpindexNdviExecution) {
     EXPECT_EQ(sp.result.metadata.at("index_max"), "0.400000");
 
     // ── ND-7 自有消息通道三条逐字（Reading Red / Reading NIR / Computing 公式）──
-    // 公式那一条把 `(NIR - Red) / (NIR + Red)` 写进了文案 ⇒ 与本块的期望闭式**同形**，
-    // 于是"文案里的公式"与"实现里的公式"若分叉（例如哪天改成 (NIR−Red)/(NIR+Red+eps) 的说明），这里会红。
+    // 公式那一条把 `(NIR - Red) / (NIR + Red)` 写进了文案 ⇒ 与本块的期望闭式**同形**。
+    // ⚠ 复审订正：这条**只钉得住"文案发了什么"**——真把实现里的公式改掉，红的是 ND-1~ND-6 那些**值档**，不是这一条。
+    //   它独立的价值在第二个载体：完成文案里的 compactness 与 metadata 是同一个数，两处一起判才叫交叉对撞。
     // 计数按"含 NDVI 的条数"数（readBandMat 那两条也含 band 但不含 NDVI ⇒ 自有通道恰好 3 条：2 条 Reading + 1 条 Computing）。
     auto countContaining = [](const std::vector<std::string>& msgs, const char* needle) {
         int n = 0;
@@ -9479,8 +9487,11 @@ TEST_F(PluginTest, ProcessingWatershedRejectsMarkerInputWithMismatchedSize) {
 // 立论靠三条可手推的事实，每条都先在本地 cv2 模拟里对撞过（算式写在逐档注释里）：
 //   ①同一样本值**永远同标签**（到各中心的距离全同 ⇒ argmin 同侧）。⚠ 前提是 `k <= 不同样本值的个数`：
 //     模拟实测 k=4 配 3 个不同值时重复点被劈开（4 簇、compactness 仍 0）⇒ k>distinct 那一档本刀**不判**。
-//   ②只有 3 个不同样本值时，Lloyd + PP 初值的**每一条**分支都收敛到同一个分区（三种首中心逐一手推过）
-//     ⇒ 所以"哪两块同标签"与"compactness 的精确值"都是推出来的，不是标定出来的。
+//   ②**一维件**（三个不同值 0/100/400）：三种首中心逐一手推都落到同一分区 ⇒ 该夹具的分区与 `40000` 是推出来的；
+//     ⚠ 复审订正：**K5 的二维件不是这样**。`KMEANS_PP_CENTERS` 的后续中心是按 D² **加权随机**抽的（不是"取最远"），
+//     所以 Z1 真存在一条次优分支 `{A,B}|{C}`（SSE = 680000）：本地 cv2 以 `attempts=1` 跑 4000 次命中 68 次（≈1.70%）。
+//     K5 的 `360000` 之所以站得住，依据是**本仓实参 `attempts=3` 取最小紧凑度** + 同夹具 `attempts=3` 跑 4000 次全中
+//     （坏跑的概率量级 ~1e-5）⇒ 这是一条**实测支撑的高置信**判据，不是恒等式；写判据时别把它说成穷举推出的。
 //     稳定性另有两实测：本地 cv2 对五组夹具各跑 300 次，分区结构与紧凑度**各自只有一个取值**；
 //     本仓 exe 直跑该用例 20 次全绿（PP 的首中心来自 RNG，不锁种子 ⇒ 不测这一条就是把判据架在运气上）。
 //   ③合并两块的代价闭式：两块各 n 个重复点、两块中心距 d ⇒ 合并后 SSE = 2·n·(d/2)² = **n·d²/2**
@@ -9733,11 +9744,13 @@ TEST_F(PluginTest, ProcessingKMeansExecution) {
     EXPECT_NE(partitionSignature(z1.cells), partitionSignature(z2.cells))
         << "两档的**分区结构**必须不同（签名对标签改名不变 ⇒ 这条判的是结构，不是编号）";
 
-    // ── K6 早退（口径 = doKMeans 里 `Result::fail` 的**返回条数**：现读 5 条，**实到可达 4 条**）──
-    // 顺序实到：input → output → k → attempts → openRaster 判空。前四条逐条取文案；
-    // 第五条不可达——`core::openRaster` 自己 `throw GisError("Cannot open raster: …")`，永不返回空指针 ⇒
-    //   函数体那句 `if (!ds) return fail("Cannot open raster file: …")` 是**又一处死支**（与 N187 同根因、不同文案，
-    //   那条挂账的射程应按本刀实到扩成两类文案）。
+    // ── K6 早退（口径 = doKMeans 里 `Result::fail` 的**返回条数**：**现读 6 条，实到可达 4 条**）──
+    // 顺序实到：input → output → k → attempts →（openRaster 判空）→（逐波段读后判空）。前四条逐条取文案。
+    // ⚠ 复审订正：我原先数成"5 条"，漏了波段循环里那条 —— `Result::fail("无法读取波段 N 数据: …")`。
+    // 后两条**都不可达**，而且是**两种不同文案**的死支：`core::openRaster` 只抛不返回空 ⇒ `if (!ds)` 走不到；
+    //   `gdalBandToMat` 同样只抛（`Cannot get band N`）或返回非空 ⇒ `if (bandMat.empty())` 也走不到。
+    //   ⇒ N187 那笔挂账的射程应是**三类文案**（`无法读取输入栅格数据` / `Cannot open raster file` / `无法读取波段 N 数据`），
+    //   而不是我原先只数得到的那 13 处 `mat.empty()`。
     struct KFailCase { const char* outputName; const char* dropKey; std::map<std::string, gis::framework::ParamValue> over; };
     const std::vector<KFailCase> fails = {
         {"km_f_no_input.tif",  "input",  {}},
