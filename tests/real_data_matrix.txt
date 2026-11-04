@@ -1,9 +1,26 @@
 # 批次C C1 动作覆盖矩阵（2026-10-21 用户批准定稿："可以，顺序执行吧"）
 # 每行: plugin,action,input_kind,fixture,current_coverage,target_tier,batch,note
 # fixture ∈ {data, not-consumed, synthetic}（not-consumed=真实数据存在但当前腿走合成兜底）
-# current_coverage=real_regression 表示动作已出现在某条 real_*_regression 的 New-Case 里
+# current_coverage=real_regression 表示动作被某条 real_*_regression 注册过；完整口径见下面"第5列 current_coverage 是三载体的并集"那段
 # target_tier=gold 的行必须晋升 GOLD（登记行改状态+第4列）；relation 行只补真实数据链路
 # fixture=data 表示 data/ 现有资源可用；synthetic 表示由脚本生成最小夹具（落 build/tmp/）
+# 第5列 current_coverage 是三载体的并集：只按字面 New-Case 里的动作名扫会漏报，
+#   因为后两类载体给的是 case 名或名单项，不含动作名的字面串。命中任一即记 real_regression——
+#   甲 字面注册 New-Case -CaseArgs @("<plugin>", "<action>", …)
+#   乙 派生工厂 New-DerivedCase：case 名与动作名不同串 ⇒ 按 case 名扫必然看不到动作
+#   丙 名单变量 $script:TopologyCheckCaseNames / $script:UnionPolyCaseNames / $script:JoinHeavyCaseNames，
+#      三条名单既是注册门禁也是判定分派门禁，脚本末尾逐条断言"名单 == 实到"，故不需要第二处登记
+#   腿另受 -Mode quick/full 条件注册 ⇒ real_regression 只说"某条腿注册过"，不说"每次 ctest 都跑到"
+#   也不说"腿里有值级期望"：processing,gabor_filter 与 processing,mean_shift_filter 两条的判定分支实到只有
+#   "Size: 32 x 32 x 1 bands" 与 "Type: Float32" 两条形状锁，逐格数值判据在单测侧
+# 第6列 target_tier 与 tests/action_gold_cases.txt 第3列是两条独立轴（前者=批次C定的目标档位，后者=判据现状）：
+#   relation 行允许已经是 GOLD（补的是数据链路，不是判据），coverage=none 行也允许已经是 GOLD
+#   （判据来自单测侧、从来没有真实腿 case）⇒ 不许由任一格推另一格，对账时两侧各自现读
+# 第4列 fixture 的两条定义本来就重叠：把"真实数据存在但当前腿走合成兜底"给成 not-consumed，同一情形又可按
+#   "data/ 现有资源可用"给成 data ⇒ 注记自报走兜底的行里两种取值各有三十多条，故第4列不能当"这条腿读了 data/ 原件"的证据，
+#   读没读只由第8列注记承重；还没逐行核过的 38 行，其第8列仍停在未核对那一档
+#   spindex 这两行本轮核到实输入：evi2 由 raster 腿吃生成夹具 ndvi_input.tif、osavi 由 GUI cmake 腿吃生成夹具 osavi_input.tif，
+#   两者都出自测试 helper 的 ndvi-raster 子命令 ⇒ 第4列取本块兄弟行一致的 not-consumed
 # ⚠ 现读事实（Task C2 复验 + 复审 J③ 逐文件核实）：仓库 data/ 只有 dem、image、vector 三个子目录，
 #   没有 data/raster 与 data/matching ⇒ raster 与 matching 两条腿一直在走 .ps1 的合成兜底分支，
 #   被它们覆盖的行标 fixture=not-consumed（真实数据存在，但当前腿没去取）。收紧归 C4~C15 各批。
@@ -116,9 +133,9 @@ raster_render,histogram_match,raster,data,real_regression,gold,C10,腿走合成�
 spindex,ndvi,multispectral,not-consumed,real_regression,gold,C8,腿走合成兜底
 spindex,ndmi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
 spindex,evi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
-spindex,evi2,multispectral,data,none,relation,C8,夹具来源为启发式判定，开批前核对
+spindex,evi2,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底（raster 腿 New-Case spindex_evi2）
 spindex,savi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
-spindex,osavi,multispectral,data,none,relation,C8,夹具来源为启发式判定，开批前核对
+spindex,osavi,multispectral,not-consumed,none,relation,C8,腿走合成兜底（仅单测与 GUI cmake 腿，无 raster 腿 case）
 spindex,gndvi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
 spindex,ndwi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
 spindex,mndwi,multispectral,not-consumed,real_regression,relation,C8,腿走合成兜底
