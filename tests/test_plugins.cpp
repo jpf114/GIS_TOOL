@@ -3781,7 +3781,14 @@ TEST_F(PluginTest, ProcessingGaborFilterExecution) {
     EXPECT_EQ(g3b.result.metadata.at("theta"), g3a.result.metadata.at("theta"))
         << "psi 不该改写 theta 的回显（两档 theta 都是 0.0）";
 
-    // ── GB-4 六道前置早退：各一条文案 + 各一条"不许留产物" ──
+    // ── GB-4 早退档（口径 = `doGaborFilter` 里 `Result::fail` 的**返回条数**，函数体现读 8 条）──
+    // 前置 7 条覆盖 6 个键（`kernel_size` 占两条：`>= 3` 与 `odd`）⇒ 下面的表把这 **7 条**各走一遍，
+    // 每条判"失败 + 不许留产物"，再在花括号里逐字取一句文案（含 input/output 那两条与 mean_shift 同名的）。
+    // ⚠ 函数体里还有第 8 条 `Result::fail("无法读取输入栅格数据: …")`，本刀**不**给它判据，因为它不可达：
+    //   `core::readBandAsMat` 只有两种出口——返回非空 Mat，或对"打不开 / 波段越界"抛 `GisError`
+    //   （`Cannot open raster: …` / `Cannot get band N`）。直接调 `execute()` 时异常穿出到测试体
+    //   （本刀实跑撞过两次，两支用例各报一条 C++ exception）⇒ 那句中文在单测侧读不到。
+    //   同一形态在 `processing_plugin.cpp` 里现读 13 处 ⇒ 交控制器编号，本刀不改产品码。
     // 顺序实到：input → output → kernel_size(<3 → 偶) → sigma → gabor_lambda → gabor_gamma ⇒
     //   `kernel_size = 2` 先撞 ">= 3"、`4` 才撞 "odd"；`sigma = 0` 撞 "positive"（**不是**上游核的报错）。
     struct FailCase { const char* outputName; const char* dropKey; std::map<std::string, gis::framework::ParamValue> over; };
@@ -3834,8 +3841,37 @@ TEST_F(PluginTest, ProcessingGaborFilterExecution) {
         EXPECT_EQ(p->execute(callParams, progress_).message, "kernel_size must be odd");
         callParams["kernel_size"] = 2;
         EXPECT_EQ(p->execute(callParams, progress_).message, "kernel_size must be >= 3");
+        // 另外两条只在 FailCase 表里判过"失败 + 无产物"、没取过文案的键，这里补上逐字对撞：
+        // 它们的文案与 mean_shift 那两个动作**逐字相同** ⇒ 只判 success=false 根本分不清是哪一道闸挡的。
+        callParams["kernel_size"] = 5;
+        callParams.erase("input");
+        EXPECT_EQ(p->execute(callParams, progress_).message, "input is required");
+        callParams["input"] = flatInput;
+        callParams.erase("output");
+        EXPECT_EQ(p->execute(callParams, progress_).message, "output is required");
         cleanStale(utf8PathString(getTestDir() / "gabor_f_msgs.tif"));
     }
+
+    // ── GB-5 `band` 双向档（可见参数必须有档，且**成对**才承重）──
+    // 一枚 2 波段件：第 1 波段整幅同值（⇒ GB-1 那条退化支 ⇒ 整幅 0.0）、第 2 波段是那枚亮块（⇒ GB-2 那条 ⇒ 有格贴 1.0）。
+    // 只判 band=1 挡不住"恒读第 2 波段"，只判 band=2 挡不住"恒读第 1 波段" ⇒ 两档各拿相反方向的红点。
+    const std::vector<std::vector<float>> twoBands = {flat, block};
+    const std::string twoBandInput =
+        gis::tests::writeFloatBandsRaster(getTestDir(), "gabor_band_pair_input.tif", kCols, kRows, twoBands);
+    ASSERT_FALSE(twoBandInput.empty()) << "2 波段夹具没写出来";
+    const GaborRun g5a = runGabor(twoBandInput, "gabor_gb5_band1.tif", 0.0, 1);
+    ASSERT_TRUE(g5a.result.success) << g5a.result.message;
+    const GaborRun g5b = runGabor(twoBandInput, "gabor_gb5_band2.tif", 0.0, 2);
+    ASSERT_TRUE(g5b.result.success) << g5b.result.message;
+    ASSERT_EQ(g5b.cells.size(), g5a.cells.size());
+    int g5aBright = 0;
+    int g5bOnes = 0;
+    for (int i = 0; i < static_cast<int>(g5b.cells.size()); ++i) {
+        if (std::abs(g5a.cells[static_cast<size_t>(i)]) > 2.4e-07f) ++g5aBright;
+        if (std::abs(g5b.cells[static_cast<size_t>(i)] - 1.0f) <= 2.4e-07f) ++g5bOnes;
+    }
+    EXPECT_EQ(g5aBright, 0) << "band=1 是一件常值图 ⇒ 走退化支 ⇒ 任何一格都不该离开 0.0";
+    EXPECT_GT(g5bOnes, 0) << "band=2 读到的是亮块件 ⇒ 至少一格贴到 1.0；恒读第 1 波段时这里是 0 ⇒ 红在这一条";
 }
 
 
@@ -4291,7 +4327,9 @@ TEST_F(PluginTest, ProcessingMeanShiftSegmentExecution) {
         << "band=2 读到的是亮块件 ⇒ 中心格约 1.0（与 band=1 档相反方向的红点）";
     EXPECT_DOUBLE_EQ(cellOf(m3b.cells, m3b.w, 0, 0), 0.0) << "band=2 档的角格仍应是 0.0";
 
-    // ── MS-4 五道前置早退：各一条文案 + 各一条"不许留产物" ──
+    // ── MS-4 早退档（口径 = `doMeanShiftSegment` 里 `Result::fail` 的**返回条数**，函数体现读 6 条）──
+    // 前置 5 条（input / output / spatial_radius / color_radius / pyramid_level）逐条取文案，实到 5 条各不相同；
+    // 第 6 条"栅格读不出来"与 GB-4 块头记的是同一条不可达支 ⇒ 本刀同样不给它判据。
     // 顺序实到：input → output → spatial_radius → color_radius → pyramid_level。
     // 两条 "must be positive" 只差键名（spatial_radius / color_radius）⇒ 单独各取一次实到 message 对撞。
     {
@@ -4318,7 +4356,7 @@ TEST_F(PluginTest, ProcessingMeanShiftSegmentExecution) {
         callParams["input"] = blockInput;
         callParams.erase("output");
         EXPECT_EQ(p->execute(callParams, progress_).message, "output is required");
-        EXPECT_FALSE(fs::exists(failOutput)) << "五道早退全在 writeMatOutput 之前 ⇒ 一条产物都不许留下";
+        EXPECT_FALSE(fs::exists(failOutput)) << "前置五道 return 全在 writeMatOutput 之前 ⇒ 一条产物都不许留下";
     }
 
     // ── MS-5 metadata 四键齐全（只判齐全，不判"总共只有这四个键"）──
