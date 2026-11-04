@@ -9,11 +9,16 @@
   3. `<cli> <plugin> --help` —— CLI 实际契约：`[required|optional]`、`Default:`、`Options:`。
 
 文档侧：`docs/算法说明/<主功能>/<动作名>.md` 的 `## 参数` 表（列：参数/类型/必填/默认值/说明）。
-比对维度：**行数、参数名、必填、默认值、类型、说明非空**。
+比对维度：**行数、参数名、必填、默认值、类型、说明非空、枚举候选值集合**。
 `类型` 的真值来自第 4 个载体：插件源码里 `paramSpecs()` 的 `ParamSpec{key, …, ParamType::X, …}`
 （逐条按大括号配对取第一个字符串当键、取 `ParamType::` 当类型，**先剥注释**——本轮未剥注释的版本
 多抓到一句注释里的 `ParamSpec{"k", …}`，而全仓并没有声明过键 "k"）。
-`enumValues`/`Options:` 的集合对撞不在本轮（形态太杂，另立刀）。
+`enumValues`/`Options:` 的集合对撞：文档说明里用反引号列了候选值的行，集合必须等于 `--help` 的 `Options:`；
+只取**纯 ASCII** 的反引号串（中文文档也用反引号引用**别的参数名**，现读唯一一处是 raster_math.reclassify 的
+`interval` 按 `间隔步长` 等距切分；Options 恒为 ASCII ⇒ 非 ASCII 引用不参与对撞）。
+**本判据是条件式的**（只在文档列了候选值时才比较）。现读 34 行有 Options，其中 **7 行一个候选值都没列**
+（如 georef 两篇的 resample 只写"重采样方式"）⇒ 这 7 行是**已知未覆盖面**，要收就得逐条补文档，另立刀。
+绿臂里放一个中文参数名引用当诱饵，就是为了证明"按 ASCII 收窄"没有把该比的行一起免掉。
 
 不静音：任何"这条其实不是漂移"的判定都必须写进 `tests/docs_sync_allowlist.json` 的 `verified`
 里并带证据（源码 文件:行）；反过来，**白名单里的死条目也算失败** —— 漂移被修好后忘了删条目，
@@ -374,7 +379,7 @@ def compare(ui, common, spec, help_spec, docs_root, overrides, verified, types=N
     types = types or {}
     findings, hits, used_ov = [], set(), set()
     stats = {"docs": 0, "rows": 0, "matched": 0, "missing_doc": [],
-             "type_rows": 0, "desc_rows": 0}
+             "type_rows": 0, "desc_rows": 0, "option_rows": 0}
     resolved = {}
     for plugin in sorted(ui):
         for action in sorted(ui[plugin]):
@@ -449,6 +454,23 @@ def compare(ui, common, spec, help_spec, docs_root, overrides, verified, types=N
                 if not r["说明"].strip():
                     findings.append((fid, key, "desc",
                                      "%s 键 %s 的说明列是空的" % (fid, key)))
+                # 枚举候选值：CLI 打了 Options 且文档说明里用反引号列了候选值 ⇒ 两个集合必须相等。
+                # 只取纯 ASCII 的反引号串：中文文档里反引号也被用来引用**别的参数名**
+                # （现读唯一一处：raster_math.reclassify 的 `interval` 按 `间隔步长` 等距切分），
+                # 而 Options 恒为 ASCII ⇒ 非 ASCII 的引用不参与对撞。
+                # 本轮刻意**不要求**文档必须列全（现读 34 行有 Options、其中 7 行一个 token 都没列），
+                # 那是另一条判据的射程，需要逐条补文档，不能靠收窄集合比较来冒充。
+                bopts = (help_spec.get(plugin, {}).get(key) or {}).get("options")
+                if bopts:
+                    stats["option_rows"] += 1
+                    doc_set = {t.strip().lower() for t in re.findall(r"`([^`]+)`", r["说明"])
+                               if t.strip().isascii()}
+                    if doc_set:
+                        bin_set = {t.strip().lower() for t in bopts.split(",") if t.strip()}
+                        if doc_set != bin_set:
+                            findings.append((fid, key, "options", "%s 键 %s 枚举候选值：文档=%s 二进制=%s（文档缺=%s 文档多=%s）" % (
+                                fid, key, sorted(doc_set), sorted(bin_set),
+                                sorted(bin_set - doc_set), sorted(doc_set - bin_set))))
     # 总览页与文档集合的双向一致：新增一篇却忘了挂链接、或链接指向已改名的文件，
     # 都是"文档树自己内部对不上"，与二进制无关但同样会误导读者。
     overview = docs_root / "总览.md"
@@ -500,10 +522,11 @@ def run(root, cli, allowlist_path):
         ui, common, spec, help_spec, pathlib.Path(root, "docs/算法说明"), overrides, verified, types)
     total_actions = sum(len(v) for v in ui.values())
     say("actions=%d docs_checked=%d missing_doc=%d rows=%d matched=%d type_rows=%d desc_rows=%d "
+        "option_rows=%d "
         "param_spec_blocks=%d drift=%d allowed=%d "
         "dead_allowlist=%d dead_override=%d overrides=%d" % (
               total_actions, stats["docs"], len(stats["missing_doc"]), stats["rows"], stats["matched"],
-              stats["type_rows"], stats["desc_rows"], blocks,
+              stats["type_rows"], stats["desc_rows"], stats["option_rows"], blocks,
               len(findings) - len(allowed), len(allowed), len(dead), len(unused), len(overrides)))
     if stats["missing_doc"]:
         say("MISSING-DOC " + ", ".join(stats["missing_doc"]))
@@ -514,51 +537,65 @@ def run(root, cli, allowlist_path):
 
 
 def self_test():
-    """合成一份"2 键 3 行、六类缺陷齐全"的假仓库，判据必须六类全点名，死豁免必须报错。"""
+    """合成一份"3 键 4 行、七类缺陷齐全"的假仓库，判据必须七类全点名，死豁免必须报错。"""
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="docs_selftest_"))
     (tmp / "docs/算法说明/假类").mkdir(parents=True)
     good = tmp / "docs/算法说明/假类/假动作.md"
     bad = tmp / "docs/算法说明/假类/假动作坏.md"
+    # 坏文档四行各埋一类以上，且第四行是"配不上键的多余行"——
+    # required/default/type/desc/options 只在"行配上键"之后才检查，
+    # 只埋一行全错的表只能报出 count+label（第一版夹具就是这么漏的 ⇒ 判据看着能红，实际只红两类）。
     bad.write_text("## 参数\n\n| 参数 | 类型 | 必填 | 默认值 | 说明 |\n| --- | --- | --- | --- | --- |\n"
                    "| 输入文件 | 字符串 | 否 | 无 | 必填标错 + 类型标错 |\n"
                    "| Foo | 整数 | 否 | `3` | |\n"
+                   "| 模式 | 枚举 | 否 | `alpha` | 可选 `alpha` 或 `gamma` |\n"
                    "| 名字不对 | 字符串 | 否 | 无 | 多余行 |\n", encoding="utf-8")
+    # 好文档的"模式"行是 options 判据的**在体负控**：`阈值` 是引用别的参数名（非 ASCII），
+    # 必须被剔除后仍 0 漂移——否则这条判据会把中文引用当成候选值误伤。
     good.write_text("## 参数\n\n| 参数 | 类型 | 必填 | 默认值 | 说明 |\n | --- | --- | --- | --- | --- |\n"
-                    "| 输入文件 | 文件路径 | 是 | 无 | x |\n| Foo | 整数 | 否 | `7` | x |\n", encoding="utf-8")
-    # 合成二进制的 ParamSpec 类型：input=FilePath（文档该写 文件路径）、foo=Int（文档该写 整数）。
-    fake_types = {"fake": {"input": "FilePath", "foo": "Int"}}
-    ui = {"fake": {"act_bad": {"displayName": "假动作", "visible": ["input", "foo"],
+                    "| 输入文件 | 文件路径 | 是 | 无 | x |\n| Foo | 整数 | 否 | `7` | x |\n"
+                    "| 模式 | 枚举 | 否 | `alpha` | 可选 `alpha` 或 `beta`，步长按 `阈值` 计 |\n", encoding="utf-8")
+    # 合成二进制的 ParamSpec 类型：input=FilePath（该写 文件路径）、foo=Int（该写 整数）、mode=Enum。
+    fake_types = {"fake": {"input": "FilePath", "foo": "Int", "mode": "Enum"}}
+    ui = {"fake": {"act_bad": {"displayName": "假动作", "visible": ["input", "foo", "mode"],
                                "required": ["input"], "nameSource": "ActionUiConfig"},
-                   "act_good": {"displayName": "假动作", "visible": ["input", "foo"],
+                   "act_good": {"displayName": "假动作", "visible": ["input", "foo", "mode"],
                                 "required": ["input"], "nameSource": "ActionUiConfig"}}}
     hs = {"fake": {"input": {"required": True, "default": None, "label": "输入文件"},
-                   "foo": {"required": False, "default": "7", "label": "Foo"}}}
+                   "foo": {"required": False, "default": "7", "label": "Foo"},
+                   "mode": {"required": False, "default": "alpha", "label": "模式",
+                            "options": "alpha, beta"}}}
     outs = []
-    # 臂 1：好文档必须 0 漂移（否则判据根本不可信）
+    # 臂 1：好文档必须 0 漂移（否则判据根本不可信）；option_rows 必须 ==1，
+    # 这条同时证明"中文参数名引用被剔除后不误伤"确实跑到了（好文档那行的 `阈值` 就是诱饵）。
     findings, allowed, dead, stats, _ = compare(
         {"fake": {"act_good": ui["fake"]["act_good"]}}, {}, {}, hs, tmp / "docs/算法说明",
         {"fake.act_good": ("假类/假动作", True)}, {}, fake_types)
-    outs.append(("绿臂：好文档 0 漂移", len(findings) == 0 and stats["docs"] == 1))
-    # 臂 2：坏文档必须同时点名 count / label / required / default / type / desc 六类。
-    # 埋 3 行而不是 1 行是这里的关键：required/default/type/desc 只在"行配上键"之后才检查，
+    outs.append(("绿臂：好文档 0 漂移（option_rows=%d type_rows=%d）" % (
+        stats["option_rows"], stats["type_rows"]),
+        len(findings) == 0 and stats["docs"] == 1 and stats["option_rows"] == 1))
+    # 臂 2：坏文档必须同时点名 count / label / required / default / type / desc / options 七类。
+    # 埋 4 行而不是 1 行是这里的关键：required/default/type/desc/options 只在"行配上键"之后才检查，
     # 一行全错的表只能报出 count+label（第一版夹具就是这么漏的 ⇒ 判据看着能红，实际只红两类）。
     findings, allowed, dead, stats, _ = compare(
         {"fake": {"act_bad": ui["fake"]["act_bad"]}}, {}, {}, hs, tmp / "docs/算法说明",
         {"fake.act_bad": ("假类/假动作坏", True)}, {}, fake_types)
     kinds = {f[2] for f in findings}
-    outs.append(("红臂：六类缺陷全点名（本轮 kinds=%s，配上 %d/%d 行，type_rows=%d desc_rows=%d）" % (
-        sorted(kinds), stats["matched"], stats["rows"], stats["type_rows"], stats["desc_rows"]),
-        {"count", "label", "required", "default", "type", "desc"} <= kinds and stats["matched"] == 2))
-    # 臂 3：只豁免其中一类（count）⇒ 其余五类仍算漂移，且这条豁免因为用上了，不许报 DEAD。
+    outs.append(("红臂：七类缺陷全点名（本轮 kinds=%s，配上 %d/%d 行，type_rows=%d desc_rows=%d option_rows=%d）" % (
+        sorted(kinds), stats["matched"], stats["rows"], stats["type_rows"], stats["desc_rows"],
+        stats["option_rows"]),
+        {"count", "label", "required", "default", "type", "desc", "options"} <= kinds
+        and stats["matched"] == 3))
+    # 臂 3：只豁免其中一类（count）⇒ 其余六类仍算漂移，且这条豁免因为用上了，不许报 DEAD。
     # 与臂 2 唯一的差别就是那份 verified，所以这里必须把 fake_types 也传进去——
-    # 少传一个参数会让 type 那类根本不存在，臂 2 的"六类齐全"就白测了（本轮真撞到过一次）。
+    # 少传一个参数会让 type 那类根本不存在，臂 2 的"七类齐全"就白测了（本轮真撞到过一次）。
     verified = {("fake.act_bad", "table"): {"kinds": ["count"], "evidence": "x"}}
     findings, allowed, dead, stats, _ = compare(
         {"fake": {"act_bad": ui["fake"]["act_bad"]}}, {}, {}, hs, tmp / "docs/算法说明",
         {"fake.act_bad": ("假类/假动作坏", True)}, verified, fake_types)
     outs.append(("红臂：只豁免 1 类时其余 %d 类仍算漂移、豁免不算死（allowed=%d 总数=%d）" % (
         len(findings) - len(allowed), len(allowed), len(findings)),
-        len(allowed) == 1 and len(findings) - len(allowed) == 5 and not dead))
+        len(allowed) == 1 and len(findings) - len(allowed) == 6 and not dead))
     # 臂 4：与本轮漂移无关的豁免必须报 DEAD
     verified2 = {("fake.other", "table"): {"kinds": ["count"], "evidence": "x"}}
     findings, allowed, dead, stats, _ = compare(
