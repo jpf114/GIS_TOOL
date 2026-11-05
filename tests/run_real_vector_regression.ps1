@@ -16,6 +16,8 @@ param(
     [string]$Group = "all"
 )
 
+# 编码规矩：本文件的非注释行必须零非 ASCII 码点（批次 D 的 N173 把原先 7 条 -Message 改成了 ASCII），因为无 BOM 的 UTF-8 .ps1 里，非 ASCII 字面量是"字节奇偶"延迟引信——同一句中文写在字符串尾部会让 ParseFile 从 0 个错误变成 7 个，加一个空格却仍是 0。中文只能待在注释里；不许往任何字符串尾部追加中文。今天没有机器判据守这条（source_mojibake_guard 的 R5 只管裸 uXXXX 转义残留），改这条文件后要现读 ParseFile 三条臂复测。
+
 . (Join-Path $PSScriptRoot "regression_case_gate.ps1")
 $ErrorActionPreference = "Stop"
 if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)) {
@@ -522,7 +524,7 @@ function Assert-DerivedGeometryCase {
     $reported = Get-ReportedMetadataCount -Text $CliOutput -Key "feature_count" -Label ($Name + " reported feature_count")
     Assert-Condition -Condition ($reported -eq $read.FeatureCount) -Message (
         $Name + ": CLI reported feature_count " + $reported + " but vector info reads back " +
-        $read.FeatureCount + " (自报数与落盘数不一致)")
+        $read.FeatureCount + " (reported feature_count differs from the count read back from disk)")
 
     return $read
 }
@@ -542,19 +544,19 @@ function Validate-DerivedGeometryRelations {
         Assert-Condition -Condition ($VertexCount -ge 0) -Message "midpoints_line ran before vertices_line, cannot cross-check"
         Assert-Condition -Condition ($VertexCount -ge 2 * $MidpointCount) -Message (
             "midpoints_line: vertices " + $VertexCount + " < 2 * midpoints " + $MidpointCount +
-            " (每条线至少 2 个顶点却只有 1 个中点)")
+            " (a line needs at least 2 vertices but yields only 1 midpoint)")
         Assert-Condition -Condition ($MidpointCount -ge $InputFeatureCount) -Message (
             "midpoints_line: midpoints " + $MidpointCount + " < input features " + $InputFeatureCount +
-            " (每个线要素至少产出 1 个中点)")
+            " (every line feature must yield at least 1 midpoint)")
     }
     if ($Name -eq "endpoints_line") {
         Assert-Condition -Condition ($MidpointCount -ge 0) -Message "endpoints_line ran before midpoints_line, cannot cross-check"
         Assert-Condition -Condition ($EndpointCount -eq 2 * $MidpointCount) -Message (
             "endpoints_line: endpoints " + $EndpointCount + " != 2 * midpoints " + $MidpointCount +
-            " (每条线首尾各 1 个端点)")
+            " (each line has exactly 2 endpoints)")
         Assert-Condition -Condition ($VertexCount -ge $EndpointCount) -Message (
             "endpoints_line: vertices " + $VertexCount + " < endpoints " + $EndpointCount +
-            " (端点是顶点的子集)")
+            " (endpoints are a subset of vertices)")
     }
 }
 
@@ -631,7 +633,7 @@ function Ensure-DerivedGeometryInputs {
     $lineStats = Get-LayerStats -ResolvedCliPath $ResolvedCliPath -Path $lineSlice -ScratchDir $scratchRoot
     Assert-Condition -Condition ($lineStats.Geometry -match "LineString") -Message (
         "derived geometry leg: line slice geometry is " + $lineStats.Geometry +
-        ", not a line layer (extract 三兄弟只对线图层有定义，喂错图层必须红)")
+        ", not a line layer (the extract trio is only defined for line layers)")
     Assert-Condition -Condition ($polygonStats.FeatureCount -gt 0) -Message "derived geometry leg: polygon input has no feature"
     Assert-Condition -Condition ($lineStats.FeatureCount -gt 0) -Message "derived geometry leg: line slice has no feature"
 
@@ -1868,7 +1870,7 @@ function Assert-ChineseAttributeFilterCase {
         -Label ($Case.Name + " reported feature_count")
     Assert-Condition -Condition ($reported -eq $read.FeatureCount) -Message (
         $Case.Name + ": CLI says " + $reported + " but vector info reads back " + $read.FeatureCount +
-        " (自报数与落盘数不一致)")
+        " (reported feature_count differs from the count read back from disk)")
     Assert-Condition -Condition ($read.FeatureCount -eq $Refs.MatchCount) -Message (
         $Case.Name + ": output keeps " + $read.FeatureCount + " feature(s), input side counted " +
         $Refs.MatchCount + " for the same value (filter dropped or invented features)")
