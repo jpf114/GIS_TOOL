@@ -3785,13 +3785,14 @@ TEST_F(PluginTest, ProcessingGaborFilterExecution) {
     EXPECT_EQ(g3b.result.metadata.at("theta"), g3a.result.metadata.at("theta"))
         << "psi 不该改写 theta 的回显（两档 theta 都是 0.0）";
 
-    // ── GB-4 早退档（口径 = `doGaborFilter` 里 `Result::fail` 的**返回条数**，函数体现读 8 条）──
+    // ── GB-4 早退档（口径 = `doGaborFilter` 里 `Result::fail` 的**返回条数**，函数体现读 7 条）──
     // 前置 7 条覆盖 6 个键（`kernel_size` 占两条：`>= 3` 与 `odd`）⇒ 下面的表把这 **7 条**各走一遍，
     // 每条判"失败 + 不许留产物"，再在花括号里逐字取一句文案（含 input/output 那两条与 mean_shift 同名的）。
-    // ⚠ 函数体里还有第 8 条 `Result::fail("无法读取输入栅格数据: …")`，本刀**不**给它判据，因为它不可达：
-    //   `core::readBandAsMat` 只有两种出口——返回非空 Mat，或对"打不开 / 波段越界"抛 `GisError`
-    //   （`Cannot open raster: …` / `Cannot get band N`）。直接调 `execute()` 时异常穿出到测试体
-    //   （本刀实跑撞过两次，两支用例各报一条 C++ exception）⇒ 那句中文在单测侧读不到。
+    // 这里原先写的是"函数体还有第 8 条 `无法读取输入栅格数据: …`，不可达所以不给判据"：
+    //   不可达的机制是 `core::readBandAsMat` 只有两种出口——返回非空 Mat，或对"打不开 / 波段越界"抛
+    //   `GisError`（`Cannot open raster: …` / `Cannot get band N`）；直接调 `execute()` 时异常穿出到测试体
+    //   （P8b 实跑两支用例各报一条 C++ exception）。N187 已把这类判空死支删掉 ⇒ 条数由 8 变 7，
+    //   本块不再留指向已消失文案的路标。
     //   同一形态在 `processing_plugin.cpp` 里现读 13 处 ⇒ 交控制器编号，本刀不改产品码。
     // 顺序实到：input → output → kernel_size(<3 → 偶) → sigma → gabor_lambda → gabor_gamma ⇒
     //   `kernel_size = 2` 先撞 ">= 3"、`4` 才撞 "odd"；`sigma = 0` 撞 "positive"（**不是**上游核的报错）。
@@ -9478,8 +9479,8 @@ TEST_F(PluginTest, ProcessingWatershedRejectsMarkerInputWithMismatchedSize) {
 }
 
 // ── 批次 D P9：登记行 `processing,kmeans` 的 [:]GOLD 证据块（控制器自跑，见 RELEASE）──
-// 链路（现读 doKMeans）：openRaster（**它自己就 throw GisError、永不返回空指针** ⇒ 函数体里
-//   `if (!ds) return fail("Cannot open raster file: …")` 与别的动作那 13 处 `mat.empty()` 同根因、同样不可达）
+// 链路（现读 doKMeans）：openRaster（**它自己就 throw GisError、永不返回空指针** ⇒ 函数体里原先那句
+//   `fail("Cannot open raster file: …")` 与别的动作那 13 处 `mat.empty()` 同根因、同样不可达，已由 N187 删除）
 //   → 逐波段 `gdalBandToMat`（原始 float32，**没有 toUint8、也没有 normalize**）
 //   → samples = (width*height) x bands 的 CV_32F → `cv::kmeans(samples, k, labels, criteria, attempts,
 //   **cv::KMEANS_PP_CENTERS**, centers)` → 标签**原样**写进 resultImg（0..k-1，不缩放）→ `writeMatOutput(…, 1, …)`。
@@ -9744,13 +9745,12 @@ TEST_F(PluginTest, ProcessingKMeansExecution) {
     EXPECT_NE(partitionSignature(z1.cells), partitionSignature(z2.cells))
         << "两档的**分区结构**必须不同（签名对标签改名不变 ⇒ 这条判的是结构，不是编号）";
 
-    // ── K6 早退（口径 = doKMeans 里 `Result::fail` 的**返回条数**：**现读 6 条，实到可达 4 条**）──
-    // 顺序实到：input → output → k → attempts →（openRaster 判空）→（逐波段读后判空）。前四条逐条取文案。
-    // ⚠ 复审订正：我原先数成"5 条"，漏了波段循环里那条 —— `Result::fail("无法读取波段 N 数据: …")`。
-    // 后两条**都不可达**，而且是**两种不同文案**的死支：`core::openRaster` 只抛不返回空 ⇒ `if (!ds)` 走不到；
-    //   `gdalBandToMat` 同样只抛（`Cannot get band N`）或返回非空 ⇒ `if (bandMat.empty())` 也走不到。
-    //   ⇒ N187 那笔挂账的射程应是**三类文案**（`无法读取输入栅格数据` / `Cannot open raster file` / `无法读取波段 N 数据`），
-    //   而不是我原先只数得到的那 13 处 `mat.empty()`。
+    // ── K6 早退（口径 = doKMeans 里 `Result::fail` 的**返回条数**：现读 4 条，四条全可达）──
+    // 顺序实到：input → output → k → attempts，逐条取文案。
+    // 这里原先数到 6 条：多出的两条是 `if (!ds)` 与波段循环里的 `if (bandMat.empty())`——
+    //   `core::openRaster` 只抛不返回空、`gdalBandToMat` 同样只抛（`Cannot get band N`）或返回非空 ⇒ 都走不到。
+    //   那次复审据此把 N187 的射程从"13 处 `mat.empty()`"订正成**三类文案**；
+    //   N187 已按裁定把三类同形死支共 15 处一次性删掉 ⇒ 本块只留四条，不再给不可达的分支立字据。
     struct KFailCase { const char* outputName; const char* dropKey; std::map<std::string, gis::framework::ParamValue> over; };
     const std::vector<KFailCase> fails = {
         {"km_f_no_input.tif",  "input",  {}},

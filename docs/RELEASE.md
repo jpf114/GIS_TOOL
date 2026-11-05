@@ -4899,6 +4899,38 @@ dead_allowlist=0 dead_override=0` 退出码 0；`data/` 未被写、文档树除
 
 ---
 
+### 批次 D 裁定落地 N187（2026-11-05，processing 的 15 处"判空再 fail"死支删除；**行为不变，只删够不着的分支**）
+
+用户 2026-11-05 逐条拍板选了**甲 删死支**。先做普查（脚本 `build/tmp/batchD/n187/census.py`，逐条打上下文三行）：
+15 处**同形**——每条的上一行都是 `readBandAsMat(...)` / `gdalBandToMat(...)` / `openRaster(...)`，
+其后就是 `if (X.empty()) { return Result::fail(三类文案之一); }`（`if (!ds) return fail(...)` 是一条单行形）。
+删除按块匹配（`if (X.empty()) {` + 紧跟一行 `return gis::framework::Result::fail(` 且含三类文案之一 + 紧跟 `}`），
+并加了一条防误伤的守卫：**上一行不含 `readBandAsMat(` 或 `gdalBandToMat(` 就不许删**。
+实到 `matched_blocks=14 matched_oneline=1 → 15`，删 43 行（14×3+1），文件 1560 行→1517 行，三类文案在本文件残留计数均为 **0**。
+
+**为什么它们够不着（机制 + 一条实测）**：`core::gdalBandToMat` 的非空出口只有 `cv::Mat(height, width, CV_32F)`，
+其余出口全是抛 `GisError`（取不到波段 / 尺寸超限 / `openRaster` 打不开），而 `cv::Mat` 只有在 0 行或 0 列时才 empty；
+实测上游连造都拒绝——`gdal_create -outsize 0 0 -of GTiff` 报 `Attempt to create 0x0 dataset is illegal,
+sizes must be larger than zero`（rc≠0、不落盘）⇒ 0×0 数据源进不了这条链，判空支恒不可达。
+契约已写进 `src/core/include/gis/core/opencv_wrapper.h` 里两个入口的声明上方（唯一落点，不在 15 处各写一遍）。
+
+**随刀改准的三处旧文本**（它们指向被删的文案，不改就成了悬空路标）：
+`tests/test_plugins.cpp` 的 GB-4 块头把口径条数由 8 改成现读 **7**（`doGaborFilter` 现读 `Result::fail` 7 条），
+P9 的 K6 块头由"现读 6 条、实到可达 4 条"改成**现读 4 条、四条全可达**，
+P9 链路注释里那句 `if (!ds) return fail(...)` 改成"原先有、已由本刀删除"；
+`docs/算法说明/影像处理与分析/K-Means 分割.md` 的注意事项同步。
+按函数体现读 `Result::fail(` 条数（脚本现读，16 个 do* 函数）：GaborFilter 7、GlcmTexture 7、Pansharpen 9、KMeans 4、
+Threshold/Filter/Hough 各 3、Enhance/Edge 各 4、Watershed 4、MeanShift 5、TemplateMatch 5、Skeleton/ConnectedComponents/Stats 各 2。
+
+**射程外残留（本把不动，如实登记）**：`src/plugins/vector/vector_plugin_raster_convert.inc` 里还有一句
+`if (!srcDS) return Result::fail("Cannot open raster file: " + input)`，上一行同样是 `core::openRaster` ⇒ 同形死支；
+但它不在 N187 登记的 processing 射程内，且同函数紧接着的 `if (!rasterBand)` 是**活的**
+（`GetRasterBand` 返回 nullptr 不抛）⇒ 全仓现读该英文文案仍有 1 处（在 vector）。留待按同一口径扩面时一并清。
+
+**回归**：整树 Debug 重编通过；`PluginTest.Processing*` **30 条全绿**（4.94 s）；param_guard / docs_match_cli /
+source_mojibake_guard / geotransform_guard **四条机器守卫全绿**（4.09 / 1.25 / 17.14 / 0.55 s）；
+用户数据未被写（`find data -type f -newermt 本次开批` 0 条、基线对账 88/88/0）。无独立复审席（R-D63 继续记欠账）。
+
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件

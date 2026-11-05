@@ -184,9 +184,6 @@ gis::framework::Result ProcessingPlugin::doThreshold(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -245,9 +242,6 @@ gis::framework::Result ProcessingPlugin::doFilter(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -306,9 +300,6 @@ gis::framework::Result ProcessingPlugin::doEnhance(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -457,9 +448,6 @@ gis::framework::Result ProcessingPlugin::doEdge(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -534,9 +522,6 @@ gis::framework::Result ProcessingPlugin::doContour(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -599,9 +584,6 @@ gis::framework::Result ProcessingPlugin::doTemplateMatch(
 
     progress.onProgress(0.1);
     cv::Mat srcMat = readBandAsMat(input, band, progress);
-    if (srcMat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.2);
     cv::Mat tplMat = readBandAsMat(templateFile, band, progress);
@@ -963,9 +945,6 @@ gis::framework::Result ProcessingPlugin::doHough(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1037,9 +1016,6 @@ gis::framework::Result ProcessingPlugin::doWatershed(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1172,9 +1148,6 @@ gis::framework::Result ProcessingPlugin::doSkeleton(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1240,9 +1213,6 @@ gis::framework::Result ProcessingPlugin::doGaborFilter(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1290,9 +1260,6 @@ gis::framework::Result ProcessingPlugin::doGlcmTexture(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.25);
 
@@ -1389,9 +1356,6 @@ gis::framework::Result ProcessingPlugin::doMeanShiftSegment(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1433,9 +1397,6 @@ gis::framework::Result ProcessingPlugin::doConnectedComponents(
 
     progress.onProgress(0.1);
     cv::Mat mat = readBandAsMat(input, band, progress);
-    if (mat.empty()) {
-        return gis::framework::Result::fail("无法读取输入栅格数据: " + input);
-    }
     progress.throwIfCancelled();
     progress.onProgress(0.3);
 
@@ -1495,7 +1456,6 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     progress.onProgress(0.1);
 
     auto ds = gis::core::openRaster(input, true);
-    if (!ds) return gis::framework::Result::fail("Cannot open raster file: " + input);
 
     int width = ds->GetRasterXSize();
     int height = ds->GetRasterYSize();
@@ -1506,9 +1466,6 @@ gis::framework::Result ProcessingPlugin::doKMeans(
     std::vector<cv::Mat> bandMats;
     for (int b = 1; b <= bands; ++b) {
         cv::Mat bandMat = gis::core::gdalBandToMat(ds.get(), b);
-        if (bandMat.empty()) {
-            return gis::framework::Result::fail("无法读取波段 " + std::to_string(b) + " 数据: " + input);
-        }
         bandMats.push_back(bandMat);
     }
     progress.throwIfCancelled();
