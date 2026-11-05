@@ -991,6 +991,98 @@ TEST_F(PluginTest, ProcessingClipLimitLowerBoundIsOne) {
         << "ParamSpec 声明的默认值必须落在新界内";
 }
 
+// N183 / #146：派发层的必填闸按动作取，不再拿插件级 spec.required 对所有动作一刀切。
+// 四个方向各有一支：
+//   1) stats / info 只给 input ⇒ 闸放行（这两个动作的实现根本不读 output，旧形态在这里误报，
+//      且报错文案与真必填的动作逐字相同）；
+//   2) 逐动作名单：这两个插件里**只有** stats 与 info 被摘掉 output（判"过删"——把 erase 写成
+//      无条件、或把例外键名写错都会在这里红）；
+//   3) 同一个 stats/info 的 input 仍然必填（判"摘过头"）；
+//   4) 插件级 paramSpecs() 的 output 仍声明 required=true（必填闸的默认口径来自这张表，
+//      在这张表上松口会把真必填的那批动作一起放开）。
+TEST_F(PluginTest, PerActionRequiredGateDropsOutputOnlyForStatsAndInfo) {
+    using namespace gis::framework;
+    auto* processing = mgr_.find("processing");
+    auto* vectorPlugin = mgr_.find("vector");
+    ASSERT_NE(processing, nullptr);
+    ASSERT_NE(vectorPlugin, nullptr);
+
+    const std::map<std::string, ParamValue> statsParams{
+        {"action", std::string("stats")},
+        {"input", std::string("in.tif")},
+    };
+    EXPECT_TRUE(validateParams(actionScopedParamSpecs(*processing, "stats"), statsParams).empty())
+        << "doStats 既不读也不写 output ⇒ 这道闸对只有 input 的调用是误报";
+
+    const std::map<std::string, ParamValue> infoParams{
+        {"action", std::string("info")},
+        {"input", std::string("city.geojson")},
+    };
+    EXPECT_TRUE(validateParams(actionScopedParamSpecs(*vectorPlugin, "info"), infoParams).empty())
+        << "doInfo 只读 input 与 layer ⇒ 同一族误报";
+
+    // 方向 3：摘 output 不许顺手把 input 也摘掉。
+    const std::map<std::string, ParamValue> actionOnly{{"action", std::string("stats")}};
+    EXPECT_NE(validateParams(actionScopedParamSpecs(*processing, "stats"), actionOnly).find("输入栅格"),
+              std::string::npos)
+        << "stats 的 input 必填被一起放开了";
+    const std::map<std::string, ParamValue> infoActionOnly{{"action", std::string("info")}};
+    EXPECT_NE(validateParams(actionScopedParamSpecs(*vectorPlugin, "info"), infoActionOnly).find("输入文件"),
+              std::string::npos)
+        << "info 的 input 必填被一起放开了";
+
+    // 方向 2：逐动作名单。例外只有 processing.stats 与 vector.info。
+    const auto actionsOf = [](const IGisPlugin& plugin) {
+        std::vector<std::string> actions;
+        for (const auto& spec : plugin.paramSpecs()) {
+            if (spec.key == "action") {
+                for (const auto& action : spec.enumValues) actions.push_back(action);
+            }
+        }
+        return actions;
+    };
+    const auto outputFlagOf = [](const IGisPlugin& plugin, const std::string& action) {
+        std::optional<bool> flag;
+        for (const auto& spec : actionScopedParamSpecs(plugin, action)) {
+            if (spec.key == "output") flag = spec.required;
+        }
+        return flag;
+    };
+    std::string wrongGate;
+    int gateArms = 0;
+    for (const bool isProcessing : {true, false}) {
+        const IGisPlugin& plugin = isProcessing ? *processing : *vectorPlugin;
+        const std::string name = plugin.name();
+        const std::string exempt = isProcessing ? "stats" : "info";
+        for (const auto& action : actionsOf(plugin)) {
+            ++gateArms;
+            const auto flag = outputFlagOf(plugin, action);
+            if (!flag.has_value()) {
+                wrongGate += "\n  " + name + "." + action + " 的 specs 里没有 output 这条";
+                continue;
+            }
+            const bool expected = (action != exempt);
+            if (*flag != expected) {
+                wrongGate += "\n  " + name + "." + action + " 的 output 必填=" +
+                             (*flag ? "true" : "false") + "，期望=" + (expected ? "true" : "false");
+            }
+        }
+    }
+    EXPECT_GT(gateArms, 40) << "两个插件的动作名单都没枚举到 ⇒ 方向 2 那圈断言是空真";
+    EXPECT_TRUE(wrongGate.empty())
+        << "per-action 必填闸的例外名单变了（只该摘 processing.stats 与 vector.info 的 output）:" << wrongGate;
+
+    // 方向 4：插件级声明本身不许动。
+    for (auto* plugin : {processing, vectorPlugin}) {
+        bool declaredRequired = false;
+        for (const auto& spec : plugin->paramSpecs()) {
+            if (spec.key == "output") declaredRequired = spec.required;
+        }
+        EXPECT_TRUE(declaredRequired)
+            << plugin->name() << " 的插件级 output 不再声明必填 ⇒ 真必填的那批动作会被一起放开";
+    }
+}
+
 TEST_F(PluginTest, ProcessingPluginParams) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -1871,6 +1963,10 @@ TEST_F(PluginTest, ProcessingStatsExecution) {
     // CLI 不带 --output ⇒ rc=1、"参数"输出栅格"不能为空"；带 ⇒ rc=0 且那个路径根本不出现。
     // 修法（把 output 从该动作的必填里摘掉，或让 CLI 的必填闸走 per-action 可见键）**改可观测行为**
     // ⇒ 归用户拍板，本把不动 src/，只把"直调不传 output 仍 success、传了也不写文件"这一层钉成断言。
+    // （时态限定：2026-11-05 的 N183 裁定刀取了后一种修法 —— CLI 与工作流的必填闸改走
+    // `requiredParamKeys(action)`，判据是 `PluginTest.PerActionRequiredGateDropsOutputOnlyForStatsAndInfo`
+    // 与 `GuiContract.RequiredParamKeysArePanelVisible`。本用例判的是**直调插件**那一层，本来就不过派发闸，
+    // 所以 F7 这两半今天仍然成立、与该修法不冲突。）
     const std::string outputNever = utf8PathString(dir / "d1p4a_stats_must_not_be_written.tif");
     std::error_code outEc;
     fs::remove(outputNever, outEc);

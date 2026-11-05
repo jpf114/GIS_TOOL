@@ -169,13 +169,14 @@ else()
     endif()
 endif()
 
-# ⚠ 这里**故意给 vector info 传 --output**：vector 插件级把 `output` 标成必填（漂移清单 D1，
-#   工单 Task C23 要放开的那条）⇒ 裸环境里 `vector info` 不传 output 会 rc=1。
-#   本判据测的是"包能不能独立跑"，不是 D1 ⇒ 不把 D1 的修复混进交付判据；D1 放开后这个多余参数也无害。
-#   实测 `vector info` **从不写 --output**（只往 stdout 打图层信息）⇒ 它的判据只能是 rc=0 + stdout 非空，
-#   不能拿"产物文件存在"去判，否则判的是 D1 而不是交付。
+# N183 / 工单 #146（2026-11-05 落地）：这里**不给 vector info 传 --output**。
+#   修前 vector 插件级把 `output` 整插件标成必填 ⇒ 裸环境里裸调用 rc=1，那一版因此故意多传一个占位路径绕开。
+#   现在必填闸按动作取、本动作的 output 已摘掉 ⇒ 这条判据顺带钉住"摘掉的必填在交付包里真的不再拦人"，
+#   必填闸若回归，这条会红而不是被占位参数悄悄绕过。
+#   实测 `vector info` 从不写 --output（只往 stdout 打图层信息）⇒ 判据仍只能是 rc=0 + stdout 非空，
+#   不许拿"产物文件存在"去判。
 set(_gis_vec_log "${_gis_scratch}/vector_info.stdout")
-execute_process(COMMAND "${_gis_cli}" vector info --input "${_gis_vec}" --output "${_gis_scratch}/vector_info.unused.out"
+execute_process(COMMAND "${_gis_cli}" vector info --input "${_gis_vec}"
     WORKING_DIRECTORY "${_gis_repo}"
     OUTPUT_FILE "${_gis_vec_log}" ERROR_FILE "${_gis_vec_log}.err"
     RESULT_VARIABLE _gis_rc)

@@ -792,6 +792,52 @@ TEST(WorkflowParamValidation, OutOfRangeIntFailsStepBeforePlugin) {
     EXPECT_FALSE(std::filesystem::exists(outputDir)) << "越界参数那一步仍然创建了瓦片目录";
 }
 
+TEST(WorkflowParamValidation, RequiredGateIsActionScopedSameAsCli) {
+    // N183 / 工单 #146 的工作流侧同臂：派发层的必填闸改成按动作取之后，
+    // 同一份"只给 input"的参数在 stats 上放行、在 enhance 上照旧在派发前拒。
+    // WHY 两条都要：只判 stats 那一支，把 actionScopedParamSpecs 整个删掉（等于回到旧形态）
+    // 或把 override 写成无条件 erase（等于把 output 的必填全放开）都可能不被发现。
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_NE(mgr.find("processing"), nullptr);
+
+    const auto dir = workflowParamValidationTestDir("required_gate_action_scoped");
+    const std::string input = writeTileInputFixture(dir);
+    ASSERT_FALSE(input.empty()) << "夹具栅格创建失败";
+
+    gis::framework::WorkflowRunner runner(mgr);
+
+    gis::framework::Workflow statsWf;
+    statsWf.name = "stats 不再被要求给 output";
+    gis::framework::WorkflowStep statsStep;
+    statsStep.pluginName = "processing";
+    statsStep.actionKey = "stats";
+    statsStep.params["input"] = "${input}";
+    statsWf.steps.push_back(statsStep);
+
+    const auto statsResult = runner.execute(statsWf, {{"input", input}});
+    EXPECT_TRUE(statsResult.success) << "工作流仍把 stats 的 output 当必填: " << statsResult.message;
+    EXPECT_EQ(statsResult.completedSteps, 1) << statsResult.message;
+
+    gis::framework::Workflow enhanceWf;
+    enhanceWf.name = "enhance 照旧要 output";
+    gis::framework::WorkflowStep enhanceStep;
+    enhanceStep.pluginName = "processing";
+    enhanceStep.actionKey = "enhance";
+    enhanceStep.params["input"] = "${input}";
+    enhanceWf.steps.push_back(enhanceStep);
+
+    const auto enhanceResult = runner.execute(enhanceWf, {{"input", input}});
+    ASSERT_FALSE(enhanceResult.success) << "enhance 缺 output 被放行进插件";
+    ASSERT_EQ(enhanceResult.stepMessages.size(), 1u);
+    const std::string& message = enhanceResult.stepMessages[0];
+    // 形状沿用 Task 14：Step <n> (<plugin>.<action>) invalid parameter <key>: <message>
+    EXPECT_EQ(message.rfind("Step 1 (processing.enhance) invalid parameter output: ", 0), 0u) << message;
+    EXPECT_NE(message.find("输出栅格"), std::string::npos) << message;
+    EXPECT_EQ(enhanceResult.completedSteps, 0) << "缺必填的那一步被算成已完成，说明没在进插件前拦住";
+}
+
 TEST(WorkflowParamValidation, ActionSpecificCombinationFailsStepBeforePlugin) {
     // cutting.clip 的 action 级判据（action_validation.cpp:112-115）：extent 与 cutline
     // 至少填一个。修复前工作流不调 validateActionSpecificParams ⇒ 参数表本身全部合法，

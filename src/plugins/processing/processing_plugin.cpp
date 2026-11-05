@@ -73,6 +73,18 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
     };
 }
 
+std::set<std::string> ProcessingPlugin::requiredParamKeys(const std::string& actionKey) const {
+    // N183：doStats 只读 input/band，既不读也不写 output（实测带 --output 仍 rc=0、
+    // 那个路径上没有产物）⇒ 插件级 required=true 对这个动作是误报。
+    // 其余动作的 output 都在各自的 visibleKeys 里（21-C 反向守卫判的就是"面板可见键必被实读"，
+    // 那条守卫绿着），所以保持基类口径不动。
+    auto keys = gis::framework::IGisPlugin::requiredParamKeys(actionKey);
+    if (actionKey == "stats") {
+        keys.erase("output");
+    }
+    return keys;
+}
+
 gis::framework::Result ProcessingPlugin::execute(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {

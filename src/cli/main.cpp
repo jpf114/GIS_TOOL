@@ -240,17 +240,23 @@ int main(int argc, char* argv[]) {
         params["action"] = actionValue;
     }
 
-    const std::string validationError = gis::framework::validateParams(specs, params);
-    if (!validationError.empty()) {
-        std::cerr << "Error: " << validationError << std::endl;
-        return 1;
-    }
-
     std::string action;
     if (const auto actionIt = params.find("action");
         actionIt != params.end() && std::holds_alternative<std::string>(actionIt->second)) {
         action = std::get<std::string>(actionIt->second);
     }
+
+    // N183 / #146：必填闸按动作取。specs 是插件级表、被该插件的全部动作共享，required=true
+    // 只能说"这个键多数动作要"；本动作根本不读的键（processing.stats 与 vector.info 的
+    // output）在这道闸上是误报，报错文案与真必填的动作逐字相同、无从区分。
+    // 只重写 required：类型/区间/枚举校验仍走整份 specs，未声明键检查也在上面照旧用 specs。
+    const std::string validationError = gis::framework::validateParams(
+        gis::framework::actionScopedParamSpecs(*plugin, action), params);
+    if (!validationError.empty()) {
+        std::cerr << "Error: " << validationError << std::endl;
+        return 1;
+    }
+
     if (const auto issue =
             gis::framework::validateActionSpecificParams(plugin->name(), action, params);
         issue.has_value()) {

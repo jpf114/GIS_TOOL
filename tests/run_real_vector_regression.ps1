@@ -277,8 +277,11 @@ function Get-LayerStats {
         [string]$ScratchDir
     )
 
-    # vector info 目前被插件级 output 必填挡住（漂移清单 D1），所以这里必须带一个占位输出；
-    # doInfo 不写文件，占位路径只是用来满足校验。
+    # 这里带的 --output 从 N183（2026-11-05）起已经是**多余参数**：必填闸改成按动作取，
+    # 本动作不再要它，doInfo 也从不写文件（这个占位路径永远不落盘）。
+    # 调用形态本把不动：删它要给这三个取数器（Get-LayerStats / Get-LayerInfoForPath /
+    # Get-LayerFeatureCount）改掉二十多处 -ScratchDir 调用点，风险落在全部矢量腿上，
+    # 已登记为 **N192**（纯清理，不改判据）。本文件的判据不依赖这个参数存在与否。
     $text = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
         "vector", "info",
         ("--input=" + $Path),
@@ -368,8 +371,10 @@ function Get-LayerInfoSummary {
     }
 }
 
-# 对**文件**跑一次 vector info 再解析。D1 未销账：info 仍被插件级 output 必填挡着，
-# 所以带一个不会落盘的占位输出（doInfo 不写文件）。
+# 对**文件**跑一次 vector info 再解析。这里的 --output 自 N183 起已是多余参数（doInfo 从不写文件），
+# 保留只因为删它要给这三个取数器改掉二十多处 -ScratchDir 调用点 —— 已登记 N192（纯清理刀）。
+# 下面 C3c-A 的 info_province / info_roads 两条用例、以及拓扑检查读 metrics_buf 那次 info 都已不带它裸调，
+# 反臂在那三处。
 function Get-LayerInfoForPath {
     param(
         [string]$ResolvedCliPath,
@@ -1560,8 +1565,7 @@ function Assert-TopologyCheckCase {
                 $Case.Name + ":" + $read.FieldCount + "!=" + $inherited + "+ 5")
             $info = Invoke-CliAndCaptureText -ResolvedCliPath $ResolvedCliPath -Arguments @(
                 "vector", "info",
-                ("--input=" + [string]$TopologyRefs.Outputs["metrics_buf"]),
-                ("--output=" + (Join-Path $TopologyRefs.ScratchRoot "metrics_info_placeholder.gpkg"))
+                ("--input=" + [string]$TopologyRefs.Outputs["metrics_buf"])
             )
             foreach ($name in @("geom_area", "geom_length", "compactness", "circularity", "orientation")) {
                 Assert-Condition -Condition ([regex]::IsMatch($info, ("(?m)^\s*\[\d+\] " + $name + " \(Real\)\s*$"))) -Message (
@@ -3526,16 +3530,15 @@ $cases += New-Case -Name "filter_cn_attribute" -Group "overlay_buffer_join" -Cas
 )
 
 # ── C3c-A：info（省层 + 道路层）与 repair（省层）的真实数据 quick 用例 ──────────────
-# info 不写产物，但 D1 未销账时插件级 output 仍必填 ⇒ 带一个不会落盘的占位输出（同 Get-LayerStats）。
+# 这两条 info 用例**不带 --output**（N183，2026-11-05 摘掉本动作的必填后裸调用才跑得通）
+# ⇒ 它们同时是"必填闸按动作取"在真实数据腿上的反臂：闸一回归，这两条立刻 rc=1。
 $cases += New-Case -Name "info_province" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "info",
-    ("--input=" + $script:C3cARefs.ProvinceCopy),
-    ("--output=" + (Join-Path $ResolvedOutputRoot "info_province_placeholder.gpkg"))
+    ("--input=" + $script:C3cARefs.ProvinceCopy)
 ) -ExpectedOutputs @()
 $cases += New-Case -Name "info_roads" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "info",
-    ("--input=" + $script:C3cARefs.RoadsCopy),
-    ("--output=" + (Join-Path $ResolvedOutputRoot "info_roads_placeholder.gpkg"))
+    ("--input=" + $script:C3cARefs.RoadsCopy)
 ) -ExpectedOutputs @()
 $cases += New-Case -Name "repair_province" -Group "overlay_buffer_join" -CaseArgs @(
     "vector", "repair",

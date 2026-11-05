@@ -3903,6 +3903,8 @@ dilate↔erode 的**最大**间隔，不是最小；本把这三支的相邻最�
 拒不带 `--output` 的 stats；②GUI 该动作的 per-action `visibleKeys` 只有 `{"input","band"}`，不含 `output`；
 ③`doStats` 既不读也不写 `output`。实测：不带 ⇒ rc=1 + `Error: 参数“输出栅格”不能为空`；带 ⇒ rc=0 + 产物不存在
 ⇒ 用户被迫给一个永远不会被写的路径。与 #146（vector 的 `--output` 误报必填）同族，但多出"传了也静默不写"这一半。
+（**时态限定**：本条是立案时的读数；2026-11-05 已由下面"批次 D 裁定落地 N183"那节修掉，含 #146 一并销账。
+本节留的是当时的实测，不再代表今天的行为。）
 修法（从该动作的必填里摘掉 `output`，或让 CLI 的必填闸走 per-action 可见键）**改可观测行为 ⇒ 归用户拍板，本把不动 `src/`**。
 本把只做三件：把"直调不传 `output` 仍 success、传了也不写文件"钉成断言；文档诚实化
 （`docs/算法说明/影像处理与分析/统计信息.md` 五处：CLI 必填而动作不消费、StdDev 是总体口径、本动作无产物、
@@ -5096,6 +5098,67 @@ param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条
 **仍挂着的**：N172（区间开/闭标志与"按动作收紧"的表达力、其余两处 GUI 魔数 `gamma`/`kernel_size`/`sigma` 等、
 CLI 手写闸的 5 条不一致）与 N182（kernel_size/sigma 单源）——本把只收了 `clip_limit` 这一个键。
 无独立复审席（R-D63 继续记欠账）。
+
+### 批次 D 裁定落地 N183（2026-11-05，派发层的必填闸改按动作取；**改可观测行为，同销工单 #146**）
+
+- 拍板：甲"必填闸改走 per-action"。修前实测（Debug 树 `gis-cli`，输入都是 `data/` 的副本）：
+  - `processing stats --input=<副本>` 不带 `--output` ⇒ rc=1、`Error: 参数"输出栅格"不能为空`，
+    与确实要写文件的 `processing enhance` 在同一参数形状下报的**逐字同文案**、无从区分；
+    带上 `--output=<路径>` ⇒ rc=0，但那个路径上没有产物。
+  - `vector info --input=<副本>` 不带 `--output` ⇒ rc=1、`Error: 参数"输出文件"不能为空`，
+    同样与 `vector filter` 的报错逐字相同（这就是工单 #146 记的那条）。
+- 误报面的普查口径（一次算全，三处载体）：GUI 表 `actionUiConfigStorage()` 的 visibleKeys
+  × `--help` 的 `[required]` × 13 个插件 / 126 个动作 ⇒ 插件级 required 声明 17 条（不含 `action`），
+  落到 (plugin, action, key) 三元组上**213 条必填键确实在该动作面板内、2 条不在**
+  （`processing.stats.output` 与 `vector.info.output`），visibleKeys 为空的动作 0 条
+  ⇒ 误报面就是这两格，没有第三条，也不存在"面板不做过滤所以口径失效"的第四类。
+- 修法（单源放在插件层，不在 CLI/GUI 各抄一份）：`IGisPlugin` 新增虚函数
+  `requiredParamKeys(actionKey)`，默认实现＝"该插件全部 `required=true` 的 spec 键"，即旧口径逐字保持；
+  `ProcessingPlugin` 只对 `stats`、`VectorPlugin` 只对 `info` 各摘掉 `output` 一条。
+  CLI 与工作流派发改走 `actionScopedParamSpecs(*plugin, action)`：把 required 重写进一份 spec 副本，
+  `validateParams` 与 `findFirstInvalidParamKey` 读同一份向量 ⇒ 键名和文案不会分叉（B12 的同口径要求）。
+  类型/区间/枚举/未声明键四道判据仍走整份 specs，只动 required 这一维。
+  图形界面一行没改：它本来就先按 visibleKeys 过滤、再判必填，与派发层的新口径天然一致。
+- 插件级声明一个字没松：`output` 在 `processing` 与 `vector` 的 `paramSpecs()` 里仍是 `required=true`
+  （那是另外 15 / 32 个动作的真值），摘只发生在"这一个动作"这一层。
+- 判据（三条新用例；两个方向各跑过变异，实测读数见下）：
+  - `PluginTest.PerActionRequiredGateDropsOutputOnlyForStatsAndInfo`：逐动作名单——两个插件里**只有**
+    `stats` / `info` 被摘，其余动作逐个判 `output` 仍必填；同一个动作的 `input` 仍必填；
+    插件级声明仍 `required=true`（四支各盯一个失败方向）。
+  - `GuiContract.RequiredParamKeysArePanelVisible`：对 action spec 自己枚举出的全部 (plugin, action)
+    判"必填键必须是该动作面板渲染的键"（`action` 是面板选择器、`buildEffectiveGuiParamSpecs` 从不渲染它，
+    故豁免），并判"必填键必须是已声明的 spec 键"（抓 override 里把键名写错这种静默放开）。
+    它与 21-C 反向守卫（面板可见键必被实读）合起来 ⇒ **必填键必被实读**，这一族误报从此不能再生。
+  - `WorkflowParamValidation.RequiredGateIsActionScopedSameAsCli`：工作流侧双臂——`stats` 只给 `input`
+    放行且 completedSteps=1；`enhance` 缺 `output` 仍在派发前拒，文案同时带键名与人类可读名。
+  - 变异实测：撤掉 `processing` 那句 erase ⇒ 守卫点名 `processing.stats.output`、名单用例点名
+    `processing.stats 的 output 必填=true，期望=false`（两条同红）；把 `vector` 的 erase 改成无条件 ⇒
+    **只有**名单用例红（点名 `vector.filter 的 output 必填=false，期望=true`）——子集式守卫看不见
+    "摘过头"，那个方向只能由名单用例承重，所以两条都必须留。
+  - 这条守卫第一次实跑就整片红：每个动作的 `action` 都被点名（它永远在必填集里、从不在 visibleKeys 里）
+    ⇒ 豁免那一支是实测逼出来的，不是先验设计；红在回归之前而不是之后。
+- 交付判据同步：`tests/check_install_smoke.cmake` 里"故意给 `vector info` 传 `--output`"的绕法删掉，
+  改成裸调用 ⇒ 裸环境里这道闸一旦回归，这条会红，而不是被占位参数悄悄绕过。
+- 真实腿同步：`run_real_vector_regression.ps1` 里三处**内联**占位改成裸调（两条 C3c-A 的 `info` quick 用例，
+  以及拓扑检查读 `metrics_buf` 那一次 `info`）；三个取数器（`Get-LayerStats` / `Get-LayerInfoForPath` /
+  `Get-LayerFeatureCount`）的占位参数本把**保留**——删它要给二十多处调用点改签名，风险落在全部矢量腿上，
+  登记为 N192。
+- 文档同步（口径=全仓 grep "N183 / 误报必填 / 输出栅格…必填" 的四个落点，逐个改或加时态限定）：
+  `影像处理与分析/统计信息.md` 两处"命令行仍要求 `--output=`"改写为已修并点名两条判据；
+  `矢量数据处理/矢量信息.md` 补一条"命令行不需要 `--output=`"（原文从没写过这件事）；
+  `docs/交付自验.md` 那条"矢量侧的 `--output` 目前**必须给**（待放开）"改成"只有 `info` 不再需要、
+  其余矢量动作仍然必须给"（这是给客户照着敲的一页，写错等于教人绕路）；
+  本文件里 P4a 那段立案原文加时态限定（不改历史读数）；`tests/test_plugins.cpp` 的 F7 块头注释同加时态限定。
+- 本把新立两条挂账：
+  - **N191（待拍板）**：反方向没跟着收——现读 60 个 (plugin, action, key) 三元组在 GUI 的 `requiredKeys`
+    里标了必填、插件级 spec 却没标 ⇒ CLI 与工作流放行、由插件用英文报错；且 `--help` 只有插件级
+    `[required]`，无 per-action 表达能力。要不要把这 60 格并进同一来源、`--help` 怎么表达，
+    改的是 60 个动作的 CLI 可接受集 ⇒ 归拍板，与 N172 同族。
+    同一条拍板还要顺带定 `GuiContract.RequiredParamKeysArePanelVisible` 的尺寸：本把它落的是**单向子集**
+    （必填键必须是面板渲染的键），实测变异 `MUTATION-N183B` 证明它看不见"摘过头"（把某个动作的 output
+    无条件摘掉时只有名单用例红）；要不要把它加成双向相等（`required(action) == spec.required ∩ visible(action)`）
+    取决于上面那 60 格往哪边靠 —— 单向时 GUI 可以比 CLI 严，双向时两侧必须逐字一致。
+  - **N192（纯清理）**：上面那三个取数器的占位 `--output` 在本把之后已是多余参数。
 
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 

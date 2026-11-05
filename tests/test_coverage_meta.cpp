@@ -1322,6 +1322,80 @@ TEST(GuiContract, ExportActionVisibleKeys) {
               << " path=" << outPath.string() << std::endl;
 }
 
+// ============================================================ N183 / #146 必填闸的跨层一致性
+//
+// 命题：插件为某个动作声明的必填键，必须出现在该动作 GUI 面板真渲染的 visibleKeys 里。
+// 21-C 反向守卫钉的是另一半（"面板可见键必被实读"），两条合起来 ⇒ 必填键必被实读，
+// 于是派发层的必填闸再也报不出"这个动作根本不消费的键"——那正是 processing.stats 与
+// vector.info 的 --output 误报（本守卫立项的实测出处，2026-11-05 的 CLI 双臂对撞）。
+//
+// WHY 枚举源自己走 action spec 的 enumValues，而不是登记表：登记表少一行会由
+// EveryActionIsRegistered 双向抓到，但本守卫不想把覆盖面押在那张表上。
+//
+// 口径：比的是"该动作的参数行"。"action" 本身是面板顶部的动作选择器、buildEffectiveGuiParamSpecs
+// 从不把它当参数渲染，所以它不进 visibleKeys，本守卫对它豁免（首轮实跑就是它报出一百多条）。
+//
+// 判别变异：删掉 ProcessingPlugin::requiredParamKeys 里那句 erase ⇒ invisible 里出现
+// processing.stats.output ⇒ 本守卫红；反过来把 erase 的键名写错（如 "ouput"）由 phantom 抓。
+TEST(GuiContract, RequiredParamKeysArePanelVisible) {
+    gis::core::initGDAL();
+    gis::framework::PluginManager mgr;
+    mgr.loadFromDirectory(gis::tests::testPluginDir().string());
+    ASSERT_GE(mgr.plugins().size(), 13u);
+
+    int pairs = 0;
+    std::string invisible;
+    std::string phantom;
+    std::string noConfig;
+    for (auto* plugin : mgr.plugins()) {
+        if (!plugin) continue;
+        const std::string pluginName = plugin->name();
+        if (pluginName == "lifecycle_test") continue;  // 夹具插件，与 collectAllActions 同一处理由
+
+        // paramSpecs() 按值返回 ⇒ 先落具名变量，否则 range-for 里取到的指针会悬垂。
+        const auto specs = plugin->paramSpecs();
+        std::set<std::string> specKeys;
+        std::vector<std::string> actionKeys;
+        for (const auto& spec : specs) {
+            specKeys.insert(spec.key);
+            if (spec.key == "action") {
+                for (const auto& action : spec.enumValues) actionKeys.push_back(action);
+            }
+        }
+        ASSERT_FALSE(actionKeys.empty()) << pluginName << " 的 paramSpecs 里没有带 enumValues 的 action";
+
+        for (const auto& action : actionKeys) {
+            ++pairs;
+            const std::string where = pluginName + "." + action;
+            const auto required = plugin->requiredParamKeys(action);
+            for (const auto& key : required) {
+                if (!specKeys.count(key)) phantom += "\n  " + where + "." + key;
+            }
+            const auto* config = gis::gui::findActionUiConfig(pluginName, action);
+            if (!config) {
+                noConfig += "\n  " + where;
+                continue;
+            }
+            for (const auto& key : required) {
+                // "action" 是面板顶部的动作选择器，不是参数行：buildEffectiveGuiParamSpecs 逐字把它
+                // 从渲染里跳过，所以它永远不出现在 visibleKeys 里（首轮实跑就报出 100 多条这个键）。
+                if (key == "action") continue;
+                if (!config->visibleKeys.count(key)) invisible += "\n  " + where + "." + key;
+            }
+        }
+    }
+
+    EXPECT_TRUE(phantom.empty())
+        << "requiredParamKeys 供了插件级 paramSpecs 里根本没有的键名（拼错的键等于把必填静默放开）:"
+        << phantom;
+    EXPECT_TRUE(noConfig.empty())
+        << "这些动作在 GUI 侧没有 ActionUiConfig 条目，本守卫无法判它的必填口径:" << noConfig;
+    EXPECT_TRUE(invisible.empty())
+        << "派发层必填闸要求了一个面板根本不渲染的键（该动作不消费它 ⇒ 报错是误报）:" << invisible;
+    // 空跑自检：动作全集一条都没进循环时上面三条全是空真，这条把"守卫确实跑过"钉住。
+    EXPECT_GT(pairs, 100) << "枚举到的 (plugin, action) 组合过少 ⇒ 本守卫的覆盖面已经塌掉";
+}
+
 // ============================================================ 判据自身的单测（N90 / F-a / F-b / F-c）
 //
 // WHY 判据要有自己的用例，而不是只跑登记表：CoverageMeta.GoldEvidenceIsAuditable 只对**今天这张表**

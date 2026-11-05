@@ -244,6 +244,17 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
     };
 }
 
+std::set<std::string> VectorPlugin::requiredParamKeys(const std::string& actionKey) const {
+    // N183 / #146：doInfo 只读 input 与 layer、往 stdout 打图层信息，从不读也从不写 output
+    // （33 个动作里唯一一个）。插件级 output 的 required=true 对它之外的那 32 个动作成立
+    // ——那 32 个的 output 都在各自 visibleKeys 内，21-C 反向守卫判的就是"面板可见键必被实读"。
+    auto keys = gis::framework::IGisPlugin::requiredParamKeys(actionKey);
+    if (actionKey == "info") {
+        keys.erase("output");
+    }
+    return keys;
+}
+
 gis::framework::Result VectorPlugin::execute(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
