@@ -19063,8 +19063,8 @@ TEST_F(PluginTest, CuttingMergeBandsCombinesInputAndBandsList) {
 // D1-C1（Task 18）：merge_bands 的**波段顺序 / 重复项 / 每文件展开全部波段**判据。
 // 实到的参数消费面（读 doMergeBands 的拼接 + 副本 gis-cli 实测，两种载体一致）：
 //   · `bands` 吃的是**逗号分隔的文件路径列表**，接在 `input` 的列表之后；**不是波段索引**。
-//     同一份 `gis-cli cutting --help` 把 --bands 写成 "Comma-separated band indexes" ⇒ 文案与实现分歧
-//     （实测 --bands=1 ⇒ rc=1、案文 "Cannot open file: 1"）；本席不改产品码，只按实到写判据并登记缺口。
+//     文案与实现曾分歧（`gis-cli cutting --help` 把 --bands 写成 "Comma-separated band indexes"，
+//     实测 --bands=1 ⇒ rc=1、案文 "Cannot open file: 1"）；N175 已按实到把 displayName 与描述串改准，判据不变。
 //   · 输出波段 = 拼接后的每个文件按顺序贡献**它自己的全部波段**（`-separate` 的 VRT）。
 //     ⚠ 上面那两个既有用例（CuttingMergeBands*）的夹具是 createTestRaster ⇒ 三个文件内容**逐字节相同**，
 //     所以在它们身上判不出顺序；本用例改用三个不同常量的夹具，顺序才是可红的。

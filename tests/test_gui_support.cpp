@@ -2783,7 +2783,7 @@ TEST(GuiSupportTest, ParamTextLookupReturnsCommonAndActionSpecificText) {
     const auto* mergeBandsBandsText =
         gis::gui::findActionSpecificParamText("cutting", "merge_bands", "bands");
     ASSERT_NE(mergeBandsBandsText, nullptr);
-    EXPECT_EQ(mergeBandsBandsText->displayName, QStringLiteral("波段列表"));
+    EXPECT_EQ(mergeBandsBandsText->displayName, QStringLiteral("额外波段文件"));
     EXPECT_EQ(mergeBandsBandsText->description, QStringLiteral("补充更多单波段栅格路径，使用英文逗号分隔。"));
 
     EXPECT_EQ(

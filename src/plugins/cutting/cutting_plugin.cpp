@@ -70,7 +70,7 @@ std::vector<gis::framework::ParamSpec> CuttingPlugin::paramSpecs() const {
             int{0}, int{65536}
         },
         gis::framework::ParamSpec{
-            "bands", "波段列表", "Comma-separated band indexes",
+            "bands", "额外波段文件", "Comma-separated extra raster paths appended after those in --input",
             gis::framework::ParamType::String, false, std::string{}
         },
         gis::framework::ParamSpec{

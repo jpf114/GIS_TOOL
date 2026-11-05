@@ -243,7 +243,7 @@ actionSpecificParamTextStorage() {
             }},
             {"merge_bands", {
                 {"input", {QStringLiteral("输入文件"), QStringLiteral("可填写一个或多个单波段栅格路径，使用英文逗号分隔。")}},
-                {"bands", {QStringLiteral("波段列表"), QStringLiteral("补充更多单波段栅格路径，使用英文逗号分隔。")}},
+                {"bands", {QStringLiteral("额外波段文件"), QStringLiteral("补充更多单波段栅格路径，使用英文逗号分隔。")}},
             }},
         }},
         {"processing", {
