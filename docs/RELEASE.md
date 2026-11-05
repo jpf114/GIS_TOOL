@@ -3884,6 +3884,9 @@ dilate↔erode 的**最大**间隔，不是最小；本把这三支的相邻最�
   那一种（声明与根元素同行也不读），而 GDAL 自己写出的边车**不带这一行** ⇒ 本刀首跑那句"手写边车结构不合 GDAL 预期
   所以没读回"、以及随后那句"条件=边车是 GDAL 写过的结构"都归错了因，两处读数相反的机制就在这声明一行上。
   射程另见下面 G-9。
+  ⚠ 以上读数记的是 **2026-11-02 当时的产品形态**：批次 D 的 N184（2026-11-05）已在 `core::openRaster` 给句柄置
+  PAM 的 `GPF_DISABLED` ⇒ 这一族的读回**今天已不成立**（机制与本节那套判别变量仍成立：判别变量确实是声明行）。
+  判据与正反两臂见 `CoreTest.OpenRasterDoesNotReadBackPamNoData` 与"批次 D 裁定落地 N184"一节。
 
 ⇒ ①"缓存统计值 ≠ 重算值"的可分辨场景**造出来了**（假边车值确实 ≠ 现算值），但两类入口都不取 ⇒ **本把判不动这条**，
 没有把它写成断言；②每次 `execute` 前删边车 + 独占文件名：对**四个统计量**仍是防御性纪律、不承重；
@@ -5025,6 +5028,39 @@ param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条
 **与 N182 的关系**：本把的不可达论证用的是"动作级校验保证 >=3 的奇数"这一**现读事实**；
 N182 把这条保证上抬到 ParamSpec 单源之后，论证不变强（约束仍在），所以两把的先后不影响正确性——
 本把按 N182 之后落，只是顺带把那条校验的载体读了一遍。无独立复审席（R-D63 继续记欠账）。
+
+### 批次 D 裁定落地 N184（2026-11-05，core::openRaster 按数据集关掉 PAM；**改可观测行为**）
+
+用户 2026-11-04/05 逐条拍板选了**甲 打开时禁 PAM 读回（不用全局环境变量）**。落点一处：`gis::core::openRaster`
+取到句柄后 `dynamic_cast<GDALPamDataset*>` 成功就 `SetPamFlags(GetPamFlags() | GPF_DISABLED)`（`gdal_pam.h`）。
+
+**裁定时我说的"用 GDALOpenEx 的 PAM 标志位"这条不成立，实测推翻后才落到 per-dataset 标志上**，两条负结果都要留字据：
+① `GDAL_OF_*` 里没有 PAM 开关（`gdal.h` 现读 0x00/0x01/0x02/0x04/0x08/0x10/0x20 一列，没有 pam 位）；
+② 唯一的进程内开关是配置项 `GDAL_PAM_ENABLED`（现读 `gdal.dll` 里有这一串），但**边车是懒读的**——
+只在 `GDALOpen` 前后 `CPLSetThreadLocalConfigOption("GDAL_PAM_ENABLED","NO")` 再立刻恢复，
+`raster_inspect info` 照样报 `NoData: -9999`；而把它当**环境变量**整进程设上才压得住（那是裁定明令不取的形态，
+因为它连写盘一起关）。⇒ 既要不污染全局、又要压住懒读，只剩"给这一份句柄置 GPF_DISABLED"。
+
+**探针形状**（按 P4a-fix 定的判别变量）：手写 `.aux.xml` **不带** `<?xml ?>` 声明行，内层只放
+`<PAMRasterBand band="1"><NoDataValue>-9999</NoDataValue></PAMRasterBand>`。
+改前经产品读数：`raster_inspect info` 打 `NoData: -9999`；改后同一命令**这一行整条不出现**（外部 `gdalinfo` 仍报
+-9999，说明影像没变、只是我们不读）。判据落在 `CoreTest.OpenRasterDoesNotReadBackPamNoData`，三臂：
+边车伪声明不读回；**反臂** GTiff 自己的 `GDAL_NODATA`（-12345）照旧读得到（抑制不是把 NoData 一律抹掉）；
+原生声明与边车同时存在时读到的必须是 -12345。
+**反向臂实跑**：把那句 SetPamFlags 摘掉重编 ⇒ 第一条 `hasNodata` 变 true 且读到 -9999，用例红（rc=1）；装回后全绿。
+
+**副作用（裁定要求先量的那一项）**：`GPF_DISABLED` 是"这份句柄的 PAM 读写全不做"，所以经 `openRaster` 打开的
+数据集在关盘时**也不再回写边车**。现读两条：① `raster_manage nodata` 在 GA_Update 句柄上设 NoData，
+产物 gdalinfo 报 `NoData Value=-9999` 且**没有生成 .aux.xml** ⇒ GTiff 走原生标签，功能没丢；
+② 一次 `processing filter --filter_type=gaussian`（真实 DEM 副本）在输入与输出两侧都不落边车。
+⇒ 处理链里"上游边车被下游读回并固化"这条传播路径两端都断了。
+其余消费面：`GetStatistics` 系 0 处、`ComputeStatistics` 4 处且 bApproxOK 全是 false ⇒ 只可能变"重算"，不会变"读到旧缓存"。
+
+**回归**：整树 Debug 重编通过；`gis_tests.exe` 全量 **653 条全绿**（53.5 s，单进程）；`real_data_raster` 腿绿（18.66 s）；
+param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条全绿。
+文档面 `统计信息.md` 四处口径同批改准（算法内容、处理流程第 3 步、结果解释、注意事项），
+P4a-fix 那节的历史读数加时态限定（那套判别变量仍然成立，只是今天读不回）。
+无独立复审席（R-D63 继续记欠账）。
 
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 

@@ -129,6 +129,65 @@ TEST_F(CoreTest, CreateAndOpenRaster) {
     EXPECT_EQ(ds2->GetRasterXSize(), 100);
 }
 
+// N184：PAM（同名 .aux.xml）里的 NoDataValue **不读回**，而 GTiff 自己的 GDAL_NODATA 标签照旧读得到。
+// 判别变量（P4a-fix 实测）：手写边车**不带** `<?xml ... ?>` 声明那一行才生效——GDAL 3.12 自己写出的
+// 边车就没有这一行，所以"我们产出的边车会被下游读回"是默认状态，本条把它按住。
+// 改了必红：删掉 openRaster 里那句 SetPamFlags(GPF_DISABLED) ⇒ 第一条 EXPECT_FALSE(hasNodata) 变 true；
+// 反过来把抑制做过头（连原生声明一起抹）⇒ 第二条 EXPECT_TRUE 红。
+TEST_F(CoreTest, OpenRasterDoesNotReadBackPamNoData) {
+    const auto writeSidecar = [](const fs::path& rasterPath) {
+        std::ofstream sidecar(rasterPath.string() + ".aux.xml");
+        // 刻意不写 XML 声明行：写了 GDAL 就不认这份边车，本条会假绿。
+        sidecar << "<PAMDataset>\n"
+                << "  <PAMRasterBand band=\"1\">\n"
+                << "    <NoDataValue>-9999</NoDataValue>\n"
+                << "  </PAMRasterBand>\n"
+                << "</PAMDataset>\n";
+        sidecar.close();
+    };
+
+    const std::string pamPath = (getTestDir() / "pam_nodata_probe.tif").string();
+    fs::remove(pamPath + ".aux.xml");
+    {
+        auto ds = gis::core::createRaster(pamPath, 4, 4, 1, GDT_Float32);
+        int createdHasNodata = FALSE;
+        ds->GetRasterBand(1)->GetNoDataValue(&createdHasNodata);
+        ASSERT_FALSE(createdHasNodata) << "新建的 GTiff 本就没有 NoData 声明";
+    }
+    writeSidecar(pamPath);
+    ASSERT_TRUE(fs::exists(pamPath + ".aux.xml"));
+    {
+        auto ds = gis::core::openRaster(pamPath, true);
+        int hasNodata = FALSE;
+        const double value = ds->GetRasterBand(1)->GetNoDataValue(&hasNodata);
+        EXPECT_FALSE(hasNodata) << "边车里的伪 NoData 不许被读回（读到的是 " << value << "）";
+    }
+
+    // 反臂：原生声明必须照旧读得到——抑制只针对边车，不是把 NoData 一律抹掉。
+    const std::string nativePath = (getTestDir() / "native_nodata_probe.tif").string();
+    fs::remove(nativePath + ".aux.xml");
+    {
+        auto ds = gis::core::createRaster(nativePath, 4, 4, 1, GDT_Float32);
+        ASSERT_EQ(ds->GetRasterBand(1)->SetNoDataValue(-12345.0), CE_None);
+    }
+    {
+        auto ds = gis::core::openRaster(nativePath, true);
+        int hasNodata = FALSE;
+        const double value = ds->GetRasterBand(1)->GetNoDataValue(&hasNodata);
+        ASSERT_TRUE(hasNodata) << "GTiff 自己的 GDAL_NODATA 标签必须仍然读得到";
+        EXPECT_DOUBLE_EQ(value, -12345.0);
+    }
+    // 边车**最后**才写：这一臂要判的是"原生声明读得到、边车不参与"，顺序在前会被读成边车优先与否的歧义。
+    writeSidecar(nativePath);
+    {
+        auto ds = gis::core::openRaster(nativePath, true);
+        int hasNodata = FALSE;
+        const double value = ds->GetRasterBand(1)->GetNoDataValue(&hasNodata);
+        ASSERT_TRUE(hasNodata);
+        EXPECT_DOUBLE_EQ(value, -12345.0) << "读到的必须是原生声明，不是边车里的 -9999";
+    }
+}
+
 TEST_F(CoreTest, CreateRasterCreatesParentDirectories) {
     std::string path = (getTestDir() / "nested" / "auto_created" / "create_parent_test.tif").string();
     {

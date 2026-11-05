@@ -3,6 +3,7 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 #include <cpl_conv.h>
+#include <gdal_pam.h>
 #include <filesystem>
 #include <mutex>
 #include <chrono>
@@ -48,6 +49,14 @@ GdalDatasetPtr openRaster(const std::string& path, bool readOnly) {
         GDALOpen(normalizedPath.c_str(), readOnly ? GA_ReadOnly : GA_Update));
     if (!ds) {
         throw GisError("Cannot open raster: " + path + " (" + CPLGetLastErrorMsg() + ")");
+    }
+    // N184：禁掉这份数据集的 PAM（同名 .aux.xml）读回。GDAL 既没有"按次打开"的 PAM 开关
+    // （GDAL_OF_* 里没有），配置项也不能只圈住 GDALOpen——实测边车是**懒读**的：
+    // 只在 GDALOpen 前后设 GDAL_PAM_ENABLED 时，GetNoDataValue 仍然报出边车里的 -9999，
+    // 整进程设该配置项才压得住（那会连写盘一起关掉，不是本条要的）。
+    // 所以改走**每数据集**的 GPF_DISABLED，作用域就是这一份句柄。
+    if (auto* pam = dynamic_cast<GDALPamDataset*>(ds)) {
+        pam->SetPamFlags(pam->GetPamFlags() | GPF_DISABLED);
     }
     return GdalDatasetPtr(ds);
 }
