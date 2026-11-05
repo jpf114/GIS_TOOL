@@ -4984,6 +4984,28 @@ param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条
 登记表 `processing,hough` 的 GOLD 行不增不改（证据用例名不变，只是同一用例里多了一条默认档臂）。
 无独立复审席（R-D63 继续记欠账）。
 
+### 批次 D 裁定落地 N180（2026-11-05，zonal_stats 的 CSV 空分区行补齐到 8 列；**改产物字节**）
+
+用户 2026-11-05 逐条拍板选了**甲 修 writer，列数恒为 8**。改点一个字符：`count == 0` 那一支
+原先发 `",,,,,"`（5 个逗号 ⇒ `fid,band` 之后只有 5 个空字段 ⇒ 整行 7 列），现在发 6 个逗号 ⇒ 与表头
+`feature_id,band,min,max,mean,stddev,sum,count`（8 列）等长，也与满值那一支（`min,max,mean,stddev` 4 个逗号
++ `sum,count` 2 个逗号 = 6 个）同形。JSON 支不受影响：它空分区只发 `{"band":N}`、六个键整体省略，本来就不靠列数。
+
+**动手前先查了"有没有判据把 7 字段钉成现状"**（这是裁定的前置条件）：有，且正是立案那条 ——
+`PluginTest.RasterManageZonalStatsExecution` 里 zEmpty 的 `EXPECT_EQ(row->size(), 7u)` 明确写着
+"钉的是现读形状，不是应该的形状；谁补上那个逗号这一条就会红"。⇒ 本把把期望值改成 **8u**，
+并把它旁边那个行查找 helper `findZonalCsvRow` 的注释改准（它**故意不按列数筛行**，理由正是"按 ==8 筛会把
+缺陷行洗白成空跑"；缺陷修掉后这条理由不再成立，但写法保留——列数由 `size()==8u` 那条直接判，筛行只看前两列）。
+`docs/算法说明/栅格工具/分区统计.md` 的"不能假设 CSV 每行都是 8 列"改成"列数与表头恒等，读端可按位置取列"。
+
+**反向臂实跑**：把 writer 改回 5 个逗号重编 ⇒ `RasterManageZonalStatsExecution` 在该断言处红两次
+（两个波段各一条，`Which is: 7` vs `8u`），退出码 1；改回 6 个逗号后 5 条 `PluginTest.RasterManage*` 全绿。
+
+**回归**：整树 Debug 重编通过；`PluginTest.RasterManage*` 5 条全绿（337 ms）；
+param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条全绿。
+`raster_manage,zonal_stats` 的 GOLD 登记行不变（证据用例名不变）。产物字节变了 ⇒ D4 的双树全量与
+`--install` 复核时这一条属于"字节级契约"那族，要一并复看。无独立复审席（R-D63 继续记欠账）。
+
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件

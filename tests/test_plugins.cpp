@@ -656,9 +656,9 @@ static const std::vector<std::string>* findZonalCsvRow(const std::vector<std::ve
                                                        const std::string& featureId, int band) {
     const std::string bandText = std::to_string(band);
     for (const auto& row : rows) {
-        // 这里**不按列数筛行**：count==0 的分区行产品只印 6 个逗号（7 个字段），比表头的 8 列少一列
-        // （N180，见 RasterManageZonalStatsExecution 里的逐字读数）。按 ==8 筛会把那一行直接判成"不存在"，
-        // 于是把一个真缺陷洗白成一次空跑 —— 正是本块要消灭的形状。
+        // 这里**不按列数筛行**：列数由 RasterManageZonalStatsExecution 里那条 size()==8u 直接判，
+        // 筛行只看前两列。历史上 count==0 的分区行曾少印一个逗号（N180，已修），
+        // 若当时按 ==8 筛会把那一行判成"不存在"，把一个真缺陷洗白成一次空跑 —— 这正是别这么写的理由。
         if (row.size() >= 2 && row[0] == featureId && row[1] == bandText) return &row;
     }
     return nullptr;
@@ -23746,16 +23746,14 @@ TEST_F(PluginTest, RasterManageZonalStatsExecution) {
     EXPECT_EQ(zb2->at(6), "15");
     EXPECT_EQ(zb2->at(7), "1");
 
-    // ---- zEmpty：区建了、但一个像元都没命中 ⇒ 六个统计列全空 ----
+    // ---- zEmpty：区建了、但一个像元都没命中 ⇒ 六个统计列全空，但**列数仍为 8** ----
     for (int band = 1; band <= 2; ++band) {
         const auto* row = findZonalCsvRow(zonalRows, "zEmpty", band);
         ASSERT_NE(row, nullptr) << "zEmpty 的窗口非空（1x1），区应当进 zoneStats，哪怕统计列为空";
-        // N180（本把新立，产品缺陷、本把不修）：count==0 那一支发的是 `csv << ",,,,,"`，
-        // 而满值那一支在 "fid,band" 之后发 6 个逗号（min/max/mean/stddev 各一个 + sum/count 两个），
-        // 空值那一支只有 5 个 ⇒ 产物行比 8 列表头**少一列**（实测逐字节读数 6 个逗号 / 7 个字段，
-        // 同批产物里满值行是 7 个逗号 / 8 个字段）。这里钉的是**现读形状**，不是"应该的形状"：
-        // 谁补上那个逗号，这一条就会红，届时必须连带把 JSON 支与文档口径一起改，而不是顺手放宽本条。
-        EXPECT_EQ(row->size(), 7u) << "N180：空分区行实测只有 7 个字段（表头是 8 列）";
+        // N180 的修法（本把落地）：空值那一支原先只发 5 个逗号 ⇒ 行比 8 列表头少一列，
+        //   按表头位置解析的读端会把 null 落到 count 而不是 min。现在空行与满行同列数。
+        //   列数只由下面这条 size()==8u 承重 ⇒ 不许放宽成 >=，也不许靠"空字段循环"代证（它按 size 走，少一列照样全绿）。
+        EXPECT_EQ(row->size(), 8u) << "N180：空分区行必须与表头同列数（8 列），六个统计列留空";
         for (std::size_t col = 2; col < row->size(); ++col) {
             EXPECT_TRUE(row->at(col).empty())
                 << "zEmpty band" << band << " 第 " << col << " 列本该是空字段";

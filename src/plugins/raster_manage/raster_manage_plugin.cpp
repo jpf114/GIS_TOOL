@@ -424,7 +424,9 @@ gis::framework::Result RasterManagePlugin::doZonalStats(
                     csv << "," << acc.minVal << "," << acc.maxVal << "," << mean << "," << stddev;
                     csv << "," << acc.sum << "," << acc.count;
                 } else {
-                    csv << ",,,,,";
+                    // 满值那一支在 "fid,band" 之后发 6 个字段 ⇒ 空值也必须发 6 个空字段（7 个逗号），
+                    // 否则产物行比 8 列表头少一列（批次 D 的 N180；列数由 zonal CSV 判据钉住）。
+                    csv << ",,,,,,";
                 }
                 csv << "\n";
             }
