@@ -1270,10 +1270,9 @@ gis::framework::Result ProcessingPlugin::doGlcmTexture(
     const int rows = gray.rows;
     const int cols = gray.cols;
     const int radius = kernelSize / 2;
-    const int pairCount = kernelSize * std::max(0, kernelSize - 1);
-    if (pairCount <= 0) {
-        return gis::framework::Result::fail("invalid kernel_size");
-    }
+    // 归一只用**逐方向**的 dirPairCount（窗口尺寸、是否撞边界都会变），从来不用总量。
+    // WHY 这里不留一个全局 pairCount 与 `<= 0` 闸：那个总量算出来就被丢，而 kernel_size 由 action
+    // 级校验保证 >=3 的奇数 ⇒ 闸恒不可达（批次 D 的 N186 删的就是这一对）。改回总量归一会改变产物。
 
     cv::Mat result(rows, cols, CV_32F, cv::Scalar(0));
     const double scale = static_cast<double>(levels) / 256.0;

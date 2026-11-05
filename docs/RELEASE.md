@@ -5006,6 +5006,26 @@ param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条
 `raster_manage,zonal_stats` 的 GOLD 登记行不变（证据用例名不变）。产物字节变了 ⇒ D4 的双树全量与
 `--install` 复核时这一条属于"字节级契约"那族，要一并复看。无独立复审席（R-D63 继续记欠账）。
 
+### 批次 D 裁定落地 N186（2026-11-05，删掉 doGlcmTexture 里"算了不用"的全局 pairCount 与那道不可达闸；**行为不变**）
+
+用户 2026-11-05 逐条拍板选了**甲 删掉**。射程两行：`const int pairCount = kernelSize * std::max(0, kernelSize - 1);`
+与 `if (pairCount <= 0) return Result::fail("invalid kernel_size");`。归一**只**用逐方向的 `dirPairCount`
+（窗口尺寸与是否撞边界都会让它变），那个总量算完即丢。
+闸不可达有现读载体：`processing glcm_texture --kernel_size=1` 在**动作级校验**就被拒
+（案文 `参数"窗口大小"必须是不小于 3 的奇数`，rc=1），够不到插件消费点；kernelSize>=3 时 `pairCount = k*(k-1) >= 6`。
+`"invalid kernel_size"` 这句全仓只有这一处，`grep -rn "invalid kernel_size" src tests docs` 删除后为 0 ⇒ 没有任何判据钉过它。
+
+替换成一句 WHY 注释（放在 `radius` 声明处）：归一只能走 `dirPairCount`，改回总量归一会**改变产物**。
+文档面零改动：`pairCount` 今天不出现在任何 `docs/算法说明` 文件里（唯一的 grep 命中是
+`VectorRepairCountsEmptyGeometryAsSkipped` 这个用例名的子串误中）。
+`tests/action_gold_cases.txt` 的 `processing,glcm_texture,GOLD,PluginTest.ProcessingGlcmTextureExecution` 不变。
+
+**回归**：整树 Debug 重编通过；`*Glcm*:*Gabor*:*MeanShift*` 4 条全绿（677 ms）；
+param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条全绿。
+**与 N182 的关系**：本把的不可达论证用的是"动作级校验保证 >=3 的奇数"这一**现读事实**；
+N182 把这条保证上抬到 ParamSpec 单源之后，论证不变强（约束仍在），所以两把的先后不影响正确性——
+本把按 N182 之后落，只是顺带把那条校验的载体读了一遍。无独立复审席（R-D63 继续记欠账）。
+
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件
