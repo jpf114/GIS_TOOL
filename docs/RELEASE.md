@@ -4955,6 +4955,35 @@ param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条
 `docs_sync_allowlist.json` 改后仍是 `verified=7 / doc_overrides=8`，没有出现 DEAD-ALLOWLIST（那条 type 豁免还在承重）。
 无独立复审席（R-D63 继续记欠账）。
 
+### 批次 D 裁定落地 N185（2026-11-05，hough circles 的 max_radius 默认值不再映射成 INT_MAX；**改可观测行为**）
+
+用户 2026-11-05 逐条拍板选了**甲 透传 0 给上游**。改点只有一处：`doHough` 的 circles 支原先把
+`max_radius` 传成 `maxRadius > 0 ? maxRadius : INT_MAX`，现改为原样透传 `maxRadius`。
+机制侧的既有读数（P5b 块头记着）：上游 `HOUGH_GRADIENT` **只把 `maxRadius <= 0` 当"自动"**，
+正数会被原样拿去做半径 bins 的分配 ⇒ 默认 0 被换成 INT_MAX 后，只要 stage1 出一个候选圆心就抛
+`bad array new length`，一个候选都没有才走得到"成功且 0 检出"——也就是**参数表说的"0 means auto"当时是假的**。
+
+**新增判据**（在 `PluginTest.ProcessingHoughExecution` 内，紧接 circles 参照臂）：与参照臂**只差一个键**——
+不发 `max_radius` ⇒ 消费点 `getParam<int>(params, "max_radius", 0)` 取到 0（单测这条走的是"键不在 params 里"
+的兜底路径，与 CLI 侧由 `ParamSpec` 默认值填 0 的取值相同）。
+三条断言同向：`success` 必须真、产物必须落盘且非零像元数 > 0、`detect_count` 必须 > 0。
+**不钉半径值**（窗口比 40 宽，检出半径可能偏离 B1 的 [20.5,21) 区间），B1/B2 那两条仍用正数窗口收窄搜索。
+
+**反向臂实跑**（可观测行为改动的取证）：把那句改回 `maxRadius > 0 ? maxRadius : INT_MAX` 重编 ⇒
+同一用例以 `unknown file: error: C++ exception with description "bad array new length"` **FAILED**（rc=1）；
+改回透传后 30 条 `PluginTest.Processing*` 全绿。⇒ 这条新断言是承重的，不是"今天已经满足"。
+
+**随刀改准的两处旧文本**：P5b 块头那段"circles 支的判据一律显式给正 max_radius …… 本刀不修 src/**、
+也不把『默认参数必失败』钉成契约"整段按已修订正（保留机制描述，删掉"留待拍板"口径）；
+lines 支那条 `diffCells` 断言的 message 里"0→INT_MAX 映射"改成"那套上限映射"（映射已不存在）。
+文档面 `docs/算法说明/影像处理与分析/霍夫变换.md` 两处：参数表的「最大半径」说明改成"0 不设上界、正数硬上界"，
+注意事项里那条"给正数窗口是目前唯一能拿到检出结果的路径"改写成缺陷已修的过去式 + 判据落点。
+
+**回归**：整树 Debug 重编通过；`PluginTest.Processing*` 30 条全绿（4.57 s）；
+param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条全绿。
+登记表 `processing,hough` 的 GOLD 行不增不改（证据用例名不变，只是同一用例里多了一条默认档臂）。
+无独立复审席（R-D63 继续记欠账）。
+
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件

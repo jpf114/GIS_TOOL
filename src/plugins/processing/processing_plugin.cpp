@@ -969,8 +969,11 @@ gis::framework::Result ProcessingPlugin::doHough(
         }
     } else if (houghType == "circles") {
         std::vector<cv::Vec3f> circles;
+        // max_radius 原样透传：0 交给上游按图像尺寸推上限（参数表说的"0 means auto"）。
+        // WHY 不再映射成 INT_MAX：上游 HOUGH_GRADIENT 拿它当半径上界去分配累加器，
+        // INT_MAX 直接抛 "bad array new length"，动作在**刚要出结果**时失败（批次 D 的 N185）。
         cv::HoughCircles(gray, circles, cv::HOUGH_GRADIENT, 1,
-                         20, 100, circleParam2, minRadius, maxRadius > 0 ? maxRadius : INT_MAX);
+                         20, 100, circleParam2, minRadius, maxRadius);
         detectCount = static_cast<int>(circles.size());
 
         for (auto& c : circles) {

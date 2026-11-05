@@ -8379,11 +8379,11 @@ TEST_F(PluginTest, ProcessingHoughExecution) {
     //   metadata 里有 detect_count 这个键）在 0 上照样全绿 ⇒ hough_threshold / min_line_length /
     //   max_line_gap 三个键在旧块里空转。旧形状保留在下面当对照臂（没删），新判据全跑在实心块/实心盘上。
     // 逐条「改了必红」论证与全部臂读数在批次 D 的 P5b 报告；这里只写落点，不重复抄表。
-    // ⚠ circles 支的判据一律**显式给正 max_radius**：默认 0 被产品映射成 INT_MAX，而上游 HOUGH_GRADIENT
-    //   只把 `maxRadius <= 0` 当「自动」，正数原样传进去 ⇒ 一旦 stage1 出一个候选圆心，就撞上按
-    //   (maxRadius-minRadius) 开的 bins 数组（天文数字分配）；一个候选都没有才走得到「成功且 0 检出」。
-    //   这条是 N185 已确诊缺陷（登记见 docs/RELEASE.md 本刀条目，留待拍板）：本刀不修 src/**，
-    //   也**不把「默认参数必失败」钉成契约**——那等于给缺陷发通行证。
+    // ⚠ circles 支的其余判据仍**显式给正 max_radius**（那是 B1/B2 钉半径区间的需要）；
+    //   默认档单独有一条臂（下面 N185 那段）：撤掉这个键走 ParamSpec 的 0 ⇒ 原样透传，由上游按图像尺寸推上限。
+    //   改前形态把 0 映射成 INT_MAX，而上游 HOUGH_GRADIENT 只把 `maxRadius <= 0` 当「自动」，正数原样传进去
+    //   ⇒ 一旦 stage1 出一个候选圆心，就撞上按 (maxRadius-minRadius) 开的 bins 数组（天文数字分配），
+    //   一个候选都没有才走得到「成功且 0 检出」。这条已由批次 D 的 N185 刀修掉，本块不再给缺陷留字据。
 
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -8691,7 +8691,7 @@ TEST_F(PluginTest, ProcessingHoughExecution) {
     const std::string outIsoMaxR = utf8PathString(dir / "p5b_a5_maxr600.tif");
     ASSERT_TRUE(runHough(outIsoMaxR, qIsoMaxR).success);
     EXPECT_EQ(diffCells(outA1in, outIsoMaxR), 0)
-        << "max_radius 在 lines 支被忽略；这一条顺带挡住「在 lines 支也走 circles 那套 0→INT_MAX 映射」的改动";
+        << "max_radius 在 lines 支被忽略；这一条顺带挡住「在 lines 支也走 circles 那套上限映射」的改动";
 
     // lines 支正控：只动真生效的 min_line_length ⇒ 必须不同。
     EXPECT_GT(diffCells(outA1in, outA1out), 0)
@@ -8710,6 +8710,25 @@ TEST_F(PluginTest, ProcessingHoughExecution) {
     ProductFacts fCRefCheck;
     productFacts(outCBase, fCRefCheck);
     EXPECT_GT(fCRefCheck.nzCells, 0) << "circles 参照臂非空 ⇒ 它下面三条「相同」不是 0==0";
+
+    // ==================== N185：撤掉 max_radius 这个键（走声明默认 0）必须可用 ====================
+    // 与上面的参照臂**只差一个键**：不给 max_radius ⇒ 消费点拿到 ParamSpec 的默认 0。
+    // 改前形态把 0 映射成 INT_MAX 交给上游 HOUGH_GRADIENT，一有候选圆就抛 "bad array new length"、整条动作失败；
+    // 改后 0 原样透传，由上游按图像尺寸自己推上限（这才是参数表说的"0 表示自动"）。
+    // 改了必红：把透传改回 `maxRadius > 0 ? maxRadius : INT_MAX` ⇒ 这里的 ASSERT_TRUE(success) 立刻红。
+    // 这一臂**不**钉半径值（窗口比 40 宽，检出半径可能偏离 B1 的 [20.5,21)），只钉"能跑完且有落笔"。
+    Params cNoMaxR = circlesBase(disk20);
+    cNoMaxR["circle_param2"] = 15.0;
+    cNoMaxR["min_radius"] = 10;
+    const std::string outNoMaxR = utf8PathString(dir / "p5b_circles_default_maxr.tif");
+    const auto rNoMaxR = runHough(outNoMaxR, cNoMaxR);
+    ASSERT_TRUE(rNoMaxR.success) << "默认 max_radius=0 不许让整条动作失败: " << rNoMaxR.message;
+    ASSERT_TRUE(fs::exists(outNoMaxR));
+    ProductFacts fNoMaxR;
+    productFacts(outNoMaxR, fNoMaxR);
+    EXPECT_GT(fNoMaxR.nzCells, 0) << "自动上限下同样要检出圆 ⇒ 反臂是『0 检出』的实现";
+    EXPECT_GT(std::stoi(metaOf(rNoMaxR, "detect_count")), 0)
+        << "detect_count 必须与上面『有落笔』同向，不许一个是圆、另一个是 0";
 
     Params cIsoTh = circlesBase(disk20);
     cIsoTh["circle_param2"] = 15.0;
