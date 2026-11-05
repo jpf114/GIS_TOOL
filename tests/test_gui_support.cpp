@@ -1997,7 +1997,13 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
     ASSERT_EQ(processingFiltered.size(), 4u);
     EXPECT_DOUBLE_EQ(std::get<double>(processingFiltered[0].minValue), 0.000001);
     EXPECT_EQ(std::get<int>(processingFiltered[1].minValue), 1);
-    EXPECT_DOUBLE_EQ(std::get<double>(processingFiltered[2].minValue), 0.0);
+    // N181 起 GUI 不再为 clip_limit 另造下界（原先这里是 0.0 的魔数，会把 ParamSpec 抬到 1.0 的下界
+    // 在 GUI 路径上悄悄改回去）。合成 spec 只给了 5 个初始化项 ⇒ minValue 停在 ParamSpec 的默认 int{0}，
+    // 所以这条判的是"GUI 没有覆写"，不是某个具体数（真插件的下界由 ParamSpec 单点声明，见
+    // PluginTest.Enhance 的 C1~C5 与 ProcessingClipLimitLowerBoundRejectedByFramework）。
+    EXPECT_TRUE(std::holds_alternative<int>(processingFiltered[2].minValue))
+        << "clip_limit 的下界不该由 GUI 改写";
+    EXPECT_EQ(std::get<int>(processingFiltered[2].minValue), 0);
     EXPECT_EQ(std::get<int>(processingFiltered[3].minValue), 3);
 
     std::vector<gis::framework::ParamSpec> terrainSpecs = {

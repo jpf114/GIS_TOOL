@@ -5062,6 +5062,41 @@ param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条
 P4a-fix 那节的历史读数加时态限定（那套判别变量仍然成立，只是今天读不回）。
 无独立复审席（R-D63 继续记欠账）。
 
+### 批次 D 裁定落地 N181（2026-11-05，enhance 的 `clip_limit` 下界由 0.0 抬到 1.0；**改可观测行为**）
+
+用户 2026-11-05 逐条拍板选了**甲 下界抬到 1.0**。改点是 `processing` 插件级 spec 的 minValue：
+`double{0.0}` → `double{1.0}`（默认值 2.0 与上界 100.0 不动）。原来那个下界本身就是被闸放行的退化值——
+`clip_limit = 0` 会让上游 `if (clipLimit_ > 0)` 整段跳过裁剪，局部均衡退化成不分格的全局均衡。
+
+**同批删掉 GUI 的第二写者**：`buildEffectiveGuiParamSpecs` 里原先有一支
+`} else if (spec.key == "clip_limit") { adjustedSpec.minValue = 0.0; }`——**不删就等于本把白做**，
+因为它是"面板构建时再把下界改回 0.0"的覆写，CLI/工作流会拦住而 GUI 不会。
+删掉后 GUI 直接继承 spec（少一个写者，方向与 N172 一致，但本把不依赖 N172 的任何机制）。
+`tests/test_gui_support.cpp` 那条 `EXPECT_DOUBLE_EQ(processingFiltered[2].minValue, 0.0)` 因此改成判
+"**未被 GUI 覆写**"（合成 spec 只给 5 项 ⇒ minValue 停在 `ParamSpec` 默认的 `int{0}`，
+所以断言 `holds_alternative<int>` 且值为 0；谁再把魔数加回来这条就红）。
+
+**新判据 `PluginTest.ProcessingClipLimitLowerBoundIsOne`**（判在框架闸那一层，三条同向）：
+`0.0` 拒且案文含「超出范围 [1, 100]」；`0.999` 也拒（它与 1.0 在上游折成同一个整数裁剪上限，放行只会长出
+"改了没效果"的区间）；`2.0` 通过（默认值必须落在新界内）。
+**C5 不反转、改注记**：先前裁定写的是"C5 判据要行为反转成 0.0 报错"，实测**不成立**——
+该用例直调插件，而区间闸在派发层（CLI `main.cpp:243` 与 GUI `validateExecutionParams` 共用
+`validateParams`，直调不过它；这个分层在 4774 行既有注释里就写着）。所以 C5 仍判"0.0 直达上游、产物不同"，
+只把注释改成"这是绕过派发层的形态证据"，拒绝行为由上面那条新判据钉。
+⇒ 裁定里的"反转 C5"按实测落成"保留 C5 + 新增派发层判据"，两件事都做了，只是分工变了。
+
+**真二进制三臂**：`processing enhance --clip_limit=0.5` ⇒ `rc=1`、案文「参数“CLAHE裁剪限制”超出范围 [1, 100]」、
+**产物目录里 0 个文件**（不产出）；`--clip_limit=2.0` ⇒ `Success`；界外那条的三件（rc / 案文 / 无产物）都现读。
+**反向臂实跑**：把 spec 的 minValue 改回 0.0 重编 ⇒ 新用例前两条红（0.0 与 0.999 都放行）；
+把 GUI 那支加回 0.0 ⇒ `GuiSupportTest.BuildEffectiveGuiParamSpecs*` 红。
+
+**回归**：整树 Debug 重编通过；单测全量 **654 条全绿**（53.7 s，注册数 803 与新用例自洽）；
+param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条全绿；data 未写（0 条 / 88-88-0）。
+文档面 `影像增强.md` 的那条注意事项整段重写（区间、抬下界的两条依据、派发层与直调的分工）。
+**仍挂着的**：N172（区间开/闭标志与"按动作收紧"的表达力、其余两处 GUI 魔数 `gamma`/`kernel_size`/`sigma` 等、
+CLI 手写闸的 5 条不一致）与 N182（kernel_size/sigma 单源）——本把只收了 `clip_limit` 这一个键。
+无独立复审席（R-D63 继续记欠账）。
+
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件

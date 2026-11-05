@@ -45,7 +45,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"color_radius", "颜色半径", "Mean shift color radius", gis::framework::ParamType::Double, false, double{20.0}, double{0.001}, double{1000.0}},
         gis::framework::ParamSpec{"pyramid_level", "金字塔层级", "Mean shift pyramid level", gis::framework::ParamType::Int, false, int{1}, int{0}, int{10}},
         gis::framework::ParamSpec{"enhance_type", "增强类型", "Enhancement type", gis::framework::ParamType::Enum, false, std::string{"equalize"}, int{0}, int{0}, {"equalize", "clahe", "normalize", "log", "gamma"}},
-        gis::framework::ParamSpec{"clip_limit", "CLAHE裁剪限制", "CLAHE clip limit", gis::framework::ParamType::Double, false, double{2.0}, double{0.0}, double{100.0}},
+        gis::framework::ParamSpec{"clip_limit", "CLAHE裁剪限制", "CLAHE clip limit", gis::framework::ParamType::Double, false, double{2.0}, double{1.0}, double{100.0}},
         gis::framework::ParamSpec{"gamma", "Gamma", "Gamma correction value", gis::framework::ParamType::Double, false, double{1.0}, double{0.001}, double{100.0}},
         gis::framework::ParamSpec{"edge_method", "边缘方法", "Edge detection method", gis::framework::ParamType::Enum, false, std::string{"canny"}, int{0}, int{0}, {"canny", "sobel", "laplacian", "scharr"}},
         gis::framework::ParamSpec{"low_threshold", "低阈值", "Low threshold for Canny", gis::framework::ParamType::Double, false, double{50.0}, double{0.0}, double{65535.0}},

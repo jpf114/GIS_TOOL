@@ -2772,8 +2772,6 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 //（`54df42c:2449-2450`：`} else if (spec.key == "k") {` 头与 `adjustedSpec.minValue = 1;` 各 1 行，
                 //  闭合的 `}` 属 else-if 链、删了也不消失 ⇒ 之前写的"5 行"是从交接抄来未换算，此处按实测订正）。
                 adjustedSpec.minValue = 1;
-            } else if (spec.key == "clip_limit") {
-                adjustedSpec.minValue = 0.0;
             } else if (spec.key == "kernel_size") {
                 adjustedSpec.minValue = 3;
             } else if (spec.key == "sigma" || spec.key == "gabor_lambda" || spec.key == "gabor_gamma") {

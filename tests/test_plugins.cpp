@@ -965,6 +965,32 @@ TEST_F(PluginTest, ClassificationSupervisedParamsDoNotRequireFeatureStatsInputs)
     EXPECT_TRUE(gis::framework::validateParams(specs, params).empty());
 }
 
+// N181：clip_limit 的下界由 ParamSpec 单点声明为 **1.0**（原先是 0.0，而 0.0 恰好就是上游那个
+// "整段跳过裁剪"的退化值；0~1 之间又全被 `int(clip_limit × 格子面积 ÷ 256)` 折成同一上限）。
+// 判的是框架侧通用区间闸（CLI / GUI / 工作流三条派发路径共用），不是插件内部——直调 execute()
+// 不过这一层，所以同一文件里 C5 那条"0.0 产物确实不同"仍然成立、也仍然要留。
+// 改了必红：把 spec 的 minValue 改回 0.0 ⇒ 前两条都红；改成 >2.0 ⇒ 第三条红。
+TEST_F(PluginTest, ProcessingClipLimitLowerBoundIsOne) {
+    auto* p = mgr_.find("processing");
+    ASSERT_NE(p, nullptr);
+    const auto specs = p->paramSpecs();
+    const auto spec = std::find_if(specs.begin(), specs.end(),
+                                   [](const gis::framework::ParamSpec& s) {
+                                       return s.key == "clip_limit";
+                                   });
+    ASSERT_NE(spec, specs.end());
+
+    const gis::framework::ParamValue zero = 0.0;
+    EXPECT_NE(gis::framework::validateParamValue(*spec, &zero).find("超出范围 [1, 100]"), std::string::npos)
+        << "0.0 必须被区间闸拒掉，且案文要把上下界都报出来";
+    const gis::framework::ParamValue justUnder = 0.999;
+    EXPECT_FALSE(gis::framework::validateParamValue(*spec, &justUnder).empty())
+        << "0.999 与 1.0 在上游折成同一个整数裁剪上限 ⇒ 放行它只会多出一段『改了没效果』的区间";
+    const gis::framework::ParamValue defaultish = 2.0;
+    EXPECT_TRUE(gis::framework::validateParamValue(*spec, &defaultish).empty())
+        << "ParamSpec 声明的默认值必须落在新界内";
+}
+
 TEST_F(PluginTest, ProcessingPluginParams) {
     auto* p = mgr_.find("processing");
     ASSERT_NE(p, nullptr);
@@ -3004,8 +3030,9 @@ TEST_F(PluginTest, ProcessingEnhanceExecution) {
     const std::string outClZero = utf8PathString(dir / "d1p2a_enh_clahe_clip0_f1.tif");
     const auto runClZero = runEnhance(f1, outClZero, "clahe", 1, true, 0.0, false, 0.0);
     EXPECT_TRUE(runClZero.success)
-        << "C5（DF-5 探针②）clip_limit=0.0 直达 cv::createCLAHE(0.0,...)：框架的 `if (actionKey == \"enhance\")` 块"
-           "只闸 gamma<=0、不闸 clip_limit ⇒ 既不抛也不失败，动作成功返回";
+        << "C5（DF-5 探针②）clip_limit=0.0 直达 cv::createCLAHE(0.0,...)：本用例**直调插件**，不过 CLI/GUI/工作流"
+           "那条派发前区间闸 ⇒ N181 把 ParamSpec 下界抬到 1.0 之后，派发路径上 0.0 会被拒（判据见"
+           "ProcessingClipLimitLowerBoundIsOne）；本行留着是给『界外的值确实能喂到上游』的形态证据";
     EXPECT_NEAR(readRasterPixel(outClZero, 2, 1), 1.0, kEps)
         << "C5（DF-5 探针③）clipLimit_ = 0 ⇒ 整数上限保持 0 ⇒ 上游 `if (clipLimit_ > 0)` 跳过裁剪"
            " ⇒ 单格 hist[0]=15 ⇒ lut[0]=255 ⇒ 1.0，与 C1 的 0.133333 差 0.866667 ⇒ **产物真的不同**";
