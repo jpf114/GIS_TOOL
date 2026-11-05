@@ -541,8 +541,16 @@ TEST(GuiSupportTest, BuildFileParamUiConfigProvidesSpecializedHints) {
     EXPECT_TRUE(splitOutputConfig.selectDirectory);
     EXPECT_TRUE(splitOutputConfig.isOutput);
 
+    // N189：tile 的 output 也按目录写（doTile 里 create_directories(output)，瓦片落 z/x/y）。
+    const auto tileOutputConfig = gis::gui::buildFileParamUiConfig(
+        "cutting", "tile", "output", gis::framework::ParamType::FilePath);
+    EXPECT_TRUE(tileOutputConfig.selectDirectory);
+    EXPECT_TRUE(tileOutputConfig.isOutput);
+
+    // 反臂：同样是 FilePath 的 output，matching/detect 写的是单文件，不许被上面的目录分支带成选目录。
     const auto detectOutputConfig = gis::gui::buildFileParamUiConfig(
         "matching", "detect", "output", gis::framework::ParamType::FilePath);
+    EXPECT_FALSE(detectOutputConfig.selectDirectory);
     EXPECT_EQ(detectOutputConfig.suggestedSuffix, ".json");
     EXPECT_NE(detectOutputConfig.saveFilter.find("*.json"), std::string::npos);
 

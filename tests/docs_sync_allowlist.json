@@ -44,7 +44,7 @@
      "evidence": "文档 19 行 vs visibleKeys 18：多出的『重采样方法』对应 resample，是 tile 实读的已声明键（读 src/plugins/cutting/cutting_plugin.cpp:1130，声明 同文件:81），只是没进 GUI visibleKeys ⇒ N109 藏键方向，文档那行必须留着。GUI 侧可见性与文档行数天然差 1",
      "what": "cutting.tile 的行数与参数名两处整表级差异"},
     {"action": "cutting.tile", "key": "output", "kinds": ["type"],
-     "evidence": "插件级单条 output 声明 FilePath（src/plugins/cutting/cutting_plugin.cpp:52），但 doTile 把它当目录写（同文件 :1364 的 create_directories(output)，doTile 函数体从 :1112 起）；GUI 只给 cutting/split/output 设了 selectDirectory（src/gui/gui_data_support.cpp:2032-2034），tile 没有分支 ⇒ 文档写 目录路径 说的是 tile 的真实行为，插件级 ParamSpec 表达不了『按动作变化的类型』（与 N146『插件级表表达不了按动作收紧的必填』同族，类型侧挂账 N189）",
+     "evidence": "插件级单条 output 声明 FilePath（src/plugins/cutting/cutting_plugin.cpp:52），但 doTile 把它当目录写（同文件 :1364 的 create_directories(output)，doTile 函数体从 :1112 起）；GUI 侧 buildFileParamUiConfig 原先只给 cutting/split/output 设 selectDirectory、tile 没有分支 ⇒ 文档写 目录路径 说的是 tile 的真实行为；N189 已给 tile/output 补上同形分支（selectDirectory 与 isOutput 都置真、placeholder 写的是选目录的口径），并由 test_gui_support 的 BuildFileParamUiConfigProvidesSpecializedHints 正反两臂钉住（tile 必须选目录、matching/detect 的 output 必须不选）。结构性口径未变：插件级 ParamSpec 仍表达不了『按动作变化的类型』（与 N146『插件级表表达不了按动作收紧的必填』同族）",
      "what": "文档 类型=目录路径，二进制 ParamSpec=FilePath"}
   ]
 }

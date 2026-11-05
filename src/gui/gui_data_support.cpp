@@ -2036,6 +2036,15 @@ FileParamUiConfig buildFileParamUiConfig(const std::string& pluginName,
         return config;
     }
 
+    // cutting/tile 的 output 同样是目录（doTile 里 create_directories(output)，瓦片写 z/x/y）；
+    // 插件级 ParamSpec 声明的是 FilePath，所以这里必须显式覆盖，否则 GUI 给的是保存文件对话框。
+    if (pluginName == "cutting" && action == "tile" && paramKey == "output") {
+        config.placeholder = "请选择输出目录，瓦片按 z/x/y 层级写入并另存 metadata.json";
+        config.selectDirectory = true;
+        config.isOutput = true;
+        return config;
+    }
+
     if (pluginName == "matching" && action == "stitch" && paramKey == "input") {
         config.placeholder = "请输入多个影像路径，使用英文逗号分隔，例如 a.tif,b.tif";
         config.openFilter = filterForRasterInputs();

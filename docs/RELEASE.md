@@ -4931,6 +4931,30 @@ Threshold/Filter/Hough 各 3、Enhance/Edge 各 4、Watershed 4、MeanShift 5、
 source_mojibake_guard / geotransform_guard **四条机器守卫全绿**（4.09 / 1.25 / 17.14 / 0.55 s）；
 用户数据未被写（`find data -type f -newermt 本次开批` 0 条、基线对账 88/88/0）。无独立复审席（R-D63 继续记欠账）。
 
+### 批次 D 裁定落地 N189（2026-11-05，GUI 给 cutting/tile 的 output 补上"选目录"分支；**只动 GUI 与判据，不碰产品算法、不碰 CLI**）
+
+用户 2026-11-05 逐条拍板选了**甲 补 GUI 分支**。实到形态：`doTile` 把 `output` 当目录用
+（`create_directories(output)`，瓦片落 `output/<z>/<x>/<y>.<ext>`），但插件级 `ParamSpec` 只有单条 `output`、
+声明的是 `FilePath`，而 `buildFileParamUiConfig` 原先只给 `cutting/split/output` 开了 `selectDirectory` ⇒
+GUI 对 tile 弹的是**保存文件对话框**，与它自己的真实行为不符（文档 `栅格切片.md` 的参数表写的是"目录路径"，说的是真行为）。
+
+改法照 split 那支同形：新增 `cutting` + `action == "tile"` + `paramKey == "output"` 一支，
+置 `selectDirectory = true`、`isOutput = true`，placeholder 写成选目录口径。
+**键类型不动**（`ParamSpec` 仍 `FilePath`）——插件级表表达不了"按动作变化的类型"，这是结构性口径，
+与 N146（插件级表表达不了按动作收紧的必填）同族，仍留在 `docs_sync_allowlist.json` 的 `type` 豁免里，
+只把那条 evidence 从"tile 没有分支"改成"已由 N189 补分支 + 正反两臂钉住"。
+
+**判据**（`GuiSupportTest.BuildFileParamUiConfigProvidesSpecializedHints`）配了两向：
+tile 的 output 必须 `selectDirectory` 且 `isOutput`；**新加的反臂**是 `matching/detect` 的 output 必须
+**不** `selectDirectory`（它是单文件产物）⇒ 万一有人把目录分支上抬成通用规则，这一臂会红。
+判别取证：把 tile 那支的 `selectDirectory = true` 改成 `false` 重编 ⇒
+该用例在 `tileOutputConfig.selectDirectory` 一处 FAILED；改回后 82 条 GuiSupportTest 全绿。
+
+**回归**：整树 Debug 重编通过；`GuiSupportTest.*` 82 条全绿（489 ms）；
+param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条全绿（3.94 / 1.14 / 15.23 / 0.52 s）。
+`docs_sync_allowlist.json` 改后仍是 `verified=7 / doc_overrides=8`，没有出现 DEAD-ALLOWLIST（那条 type 豁免还在承重）。
+无独立复审席（R-D63 继续记欠账）。
+
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件
