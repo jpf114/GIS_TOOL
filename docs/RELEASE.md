@@ -5258,6 +5258,56 @@ P5 与 P0 只差分号 ⇒ 这六臂只够说明"要配平失序才触发"，不
 
 **余下两片**：C3＝删口径 A 现值那 24 行派发路径不可达的手写闸 + 迁余下测试行 + GUI 魔数全数派生化；
 C4＝删 `doFilter` 的静默改写 + `docs_match_cli` 加"区间描述串 vs 实到边界"判据（两侧单源之后这条才可能绿）+ 双树与 RELEASE/台账收口。
+### 批次 D 裁定落地 N172-C3（2026-11-06，删掉派发路径上不可达的 24 行手写数值闸与 GUI 的 28 行魔数改界；**CLI/工作流零行为变更，GUI 有七格界与声明对齐**）
+
+**先给判据，再动刀**。新增 `PluginTest.DispatchHandLayerNeverStricterThanScopedSpecs`：论域＝登记表 126 个 (plugin, action)
+× 该动作作用域表里每个 Int/Double 键 × 每键 10~11 个探针值（min/max/默认值各一、两侧各越界一档、0 与 ±1，Double 再加一个 NaN），
+实测 **1353 个键位 / 13997 次探针**；判据是一条单向蕴含「spec 放行 ⇒ 手写层不得就**同一个键**返回 issue」。
+首跑 **0 反例** ⇒ 那 24 行闸在 CLI / 工作流 / GUI 三条派发路径上从来开不了口（`validateParams` 先跑）。
+这条判据留在仓里当永久防线，另外两条下限（键位 ≥1300、探针 ≥13000）防"论域缩水把 0 反例变成假绿"。
+
+**删**：`action_validation.cpp` 24 行比较（＝27 次比较）分 11 个块、共 138 行，其中 `spindex` 与 `processing` 两个整块
+（前者是循环驱动的六个 `*_band`）一起走；同文件里失去唯一调用者的 `intParamValue` 助手（12 行）一并删。
+`gui_data_support.cpp` 删 78 行＝28 行界赋值 + 分支头，只留 `projection.transform` 那条 `src_srs` 的**默认值**改写（它不是界）。
+两个口径的现值都归零：口径 A（"解引用取值 + 与常数比较"的行）37→24→**0**，口径 B（`adjustedSpec.minValue/maxValue =` 的行）34→28→**0**。
+
+**迁移**：GUI 参数表 `ActionValidationParamTest` 43 行 → **22** 行。删掉的 21 行不是我挑的——是删完闸跑全量单测时
+逐条点名的失败名单；它们迁进 `DispatchNumericBoundsFollowScopedSpecs` 的第二张表（`redundantRows`），
+另外补 5 行（`raster_inspect.bins`、`vector.rasterize.resolution`、`matching.detect.min_distance`、`processing.kmeans.kmeans_k`、
+`spindex.ndvi.red_band`——这五个键的闸在旧表里从来没留过表项）。roster 现值 **39 行**（C2 的 13 ＋ C3 的 26），
+每行的期望案文都取自真二进制实到，不是推定。`GuiSupportTest` 的两条用例改名成
+`BuildEffectiveGuiParamSpecsLeavesMatchingRangesAlone` 与 `...LeavesUtilityAndProcessingBoundsAlone`，判据换成**哨兵搬运**：
+喂进 −5.0/7.0 与 −3/11 这种与插件真实界都不同的哨兵值，要求六个字段（min/max/exclusiveMin/exclusiveMax/requireOdd/default）
+逐字原样出来。旧写法只判"停在 ParamSpec 默认的 int{0}"，那样的话"GUI 把界改成默认值"和"GUI 没动界"根本分不开。
+
+**新维度守卫**：`GuiContract.EffectiveSpecsAgreeWithPluginSpecs` 加"数值界"一维。红→绿顺序照做：判据先加上跑，
+点名 **23** 格（按 (plugin, action, key) 枚举，所以一处 `terrain.z_factor` 魔数会牵出 slope/aspect/hillshade/tpi 好几格）；
+删完 GUI 那 28 行之后转绿。
+
+**GUI 侧的七格行为变更**（本把唯一的可观测变化；CLI 与工作流零变更，理由见上面那条 0 反例）：
+- 三格由"GUI 比声明宽"收成声明值：`terrain.z_factor`、`processing.gamma`、`processing.spatial_radius` 与 `color_radius`
+  ——GUI 原先写 1e-6，插件声明是 0.001；
+- 四格删掉"拿极小量/极大量近似开界"的写法，直接吃声明里的开区间位：`georef.sun_zenith_deg`（GUI 89.999999 ⇒ spec 90 开上界）、
+  `georef.dark_percentile`（99.999999 ⇒ 100 开上界）、`georef.minnaert_k` 与 `georef.bright_percentile`（1e-6 ⇒ 0 开下界）。
+方向一律是"GUI 与 CLI 提交同一份界"，与 N181（`enhance.clip_limit` 抬下界并删掉 GUI 那份第二写者）同法同判。
+
+**判别变异三臂（各自点名、各自用字节备份还原并核 md5）**
+- M-A 把 `terrain.z_factor` 的 GUI 改写塞回去 ⇒ `GuiContract.EffectiveSpecsAgreeWithPluginSpecs` 红，点名 **14** 格
+  （守卫按 (plugin, action, key) 枚举，而这条改写是插件级的 ⇒ slope/aspect/hillshade/tpi/tri/curvature/… 每个 terrain 动作各一格），
+  `...LeavesUtilityAndProcessingBoundsAlone` 同时红（`z_factor 的下界被展示层改了`），
+  而 `...LeavesMatchingRangesAlone` **保持绿** ⇒ 归属唯一。
+- M-B 把已删的手写闸（terrain `z_factor <= 0`）塞回派发前那一层 ⇒ roster 里 `terrain.hillshade.z_factor` 那一行红：
+  「手写层仍在判这个界 ⇒ 数值界有两份写者：参数“高程缩放”必须大于 0」。
+- M1（删之前的反事实臂）把 `z_factor <= 0.0` 改成 `< 1.0`，让它**真的**比 spec 严 ⇒ 新守卫红并点名
+  `terrain.slope.z_factor 值=0.001000 被 spec 放行，却被手写层拒`。
+⚠ 顺手把一条判据射程钉在纸上：**"冗余的第二写者"只有 roster 那一臂抓得到**（M-B 那闸与 spec 拒绝集相同 ⇒
+「spec 放行 ⇒ 手写层放行」恒真，新守卫不响）。这不是漏洞，是那条判据的设计射程——别把它当成"有没有第二写者"的唯一防线。
+
+**验收实到（终树重编后复跑，全部现读）**：Debug 全量 ctest **776/776 Passed、0 Failed、1273.21 s**（比 C2 那次少 20 条＝删掉的 21 行 GUI 表项 ＋ 本把新增 1 条判据；两条改名用例与新判据都在 ctest 名单里，PRE_TEST 发现机制自己跟上）；单元二进制 `gis_tests.exe` **626 tests from 24 test suites、626 PASSED、57.90 s**（646 − 21 ＋ 1）；五条机器守卫 5/5 Passed（合计 28.53 s）：`param_guard_visible_keys_all_read`、`install_smoke`、`source_mojibake_guard` 14.91 s、`docs_match_cli` 1.02 s、`geotransform_guard` 0.54 s；`data/` 两件套：`find data -type f -newermt "2026-11-06 08:32:00"` = **0**（这条窗口从 C2 开批算起，覆盖本把全程）；`check_data_baseline.py` = **BASELINE: 88  CURRENT: 88  DIFFS: 0**；卫生面：CLI 双臂的输入输出都指到 `data/` 之外的未跟踪临时目录、没开过任何原件；`tests/__pycache__` 提交前清掉；Release 树未重编 ⇒ 本把只验收 Debug；席位：本把控制器自跑，无独立复审席。
+
+**余下一片**：C4＝删 `doFilter` 里"偶数加一、小于 3 抬到 3"的静默改写（它是数值界剩下的唯一第二写者，
+且只有进程内直调可达）＋给 `docs_match_cli` 加"区间描述串 vs 实到边界"判据（界与案文两侧都单源之后这条才可能绿）
+＋双树与文档收口。
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件

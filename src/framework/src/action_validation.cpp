@@ -91,19 +91,6 @@ std::optional<double> doubleParamValue(
     return std::nullopt;
 }
 
-std::optional<int> intParamValue(
-    const std::map<std::string, ParamValue>& params,
-    const std::string& key) {
-    const auto it = params.find(key);
-    if (it == params.end()) {
-        return std::nullopt;
-    }
-    if (const auto* value = std::get_if<int>(&it->second)) {
-        return *value;
-    }
-    return std::nullopt;
-}
-
 } // namespace
 
 std::optional<ActionValidationIssue> validateActionSpecificParams(
@@ -205,20 +192,7 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
-    if (pluginName == "raster_inspect" && actionKey == "histogram") {
-        const auto bins = intParamValue(params, "bins");
-        if (bins.has_value() && *bins <= 0) {
-            return ActionValidationIssue{"bins", "参数“分箱数”必须大于 0"};
-        }
-    }
-
     if (pluginName == "terrain") {
-        if (const auto band = intParamValue(params, "band"); band.has_value() && *band <= 0) {
-            return ActionValidationIssue{"band", "参数“波段号”必须大于 0"};
-        }
-        if (const auto zFactor = doubleParamValue(params, "z_factor"); zFactor.has_value() && *zFactor <= 0.0) {
-            return ActionValidationIssue{"z_factor", "参数“高程缩放”必须大于 0"};
-        }
         if (actionKey == "profile_extract") {
             const std::string pathValue = stringParam("profile_path");
             if (gis::core::trimString(pathValue).empty()) {
@@ -233,53 +207,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
             const std::string pointsValue = stringParam("observer_points");
             if (gis::core::trimString(pointsValue).empty()) {
                 return ActionValidationIssue{"observer_points", "参数“观察点列表”不能为空"};
-            }
-        }
-        if (actionKey == "viewshed" || actionKey == "viewshed_multi") {
-            if (const auto observerHeight = doubleParamValue(params, "observer_height");
-                observerHeight.has_value() && *observerHeight < 0.0) {
-                return ActionValidationIssue{"observer_height", "参数“观察点高度”必须大于等于 0"};
-            }
-            if (const auto targetHeight = doubleParamValue(params, "target_height");
-                targetHeight.has_value() && *targetHeight < 0.0) {
-                return ActionValidationIssue{"target_height", "参数“目标高度”必须大于等于 0"};
-            }
-            if (const auto maxDistance = doubleParamValue(params, "max_distance");
-                maxDistance.has_value() && *maxDistance < 0.0) {
-                return ActionValidationIssue{"max_distance", "参数“最大距离”必须大于等于 0"};
-            }
-        }
-        if (actionKey == "hillshade") {
-            if (const auto azimuth = doubleParamValue(params, "azimuth");
-                azimuth.has_value() && (*azimuth < 0.0 || *azimuth > 360.0)) {
-                return ActionValidationIssue{"azimuth", "参数“方位角”应落在 [0, 360] 范围内"};
-            }
-            if (const auto altitude = doubleParamValue(params, "altitude");
-                altitude.has_value() && (*altitude < 0.0 || *altitude > 90.0)) {
-                return ActionValidationIssue{"altitude", "参数“高度角”应落在 [0, 90] 范围内"};
-            }
-        }
-    }
-
-    if (pluginName == "spindex") {
-        const auto validatePositiveBand = [&](const std::string& key, const char* displayName)
-            -> std::optional<ActionValidationIssue> {
-            const auto bandValue = intParamValue(params, key);
-            if (bandValue.has_value() && *bandValue <= 0) {
-                return ActionValidationIssue{key, std::string("参数“") + displayName + "”必须大于 0"};
-            }
-            return std::nullopt;
-        };
-
-        for (const auto& [key, displayName] : std::vector<std::pair<std::string, const char*>>{
-                 {"blue_band", "蓝光波段"},
-                 {"green_band", "绿光波段"},
-                 {"red_band", "红光波段"},
-                 {"nir_band", "近红外波段"},
-                 {"swir1_band", "短波红外1波段"},
-                 {"swir2_band", "短波红外2波段"}}) {
-            if (const auto issue = validatePositiveBand(key, displayName)) {
-                return issue;
             }
         }
     }
@@ -414,10 +341,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "georef" && actionKey == "dos_correction") {
-        const auto band = intParamValue(params, "band");
-        if (band.has_value() && *band <= 0) {
-            return ActionValidationIssue{"band", "参数“波段序号”必须大于 0"};
-        }
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
             return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
@@ -425,10 +348,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "georef" && actionKey == "radiometric_calibration") {
-        const auto band = intParamValue(params, "band");
-        if (band.has_value() && *band <= 0) {
-            return ActionValidationIssue{"band", "参数“波段序号”必须大于 0"};
-        }
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
             return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
@@ -453,23 +372,9 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     if (pluginName == "georef" &&
         (actionKey == "cosine_correction" || actionKey == "minnaert_correction" ||
          actionKey == "c_correction")) {
-        const auto band = intParamValue(params, "band");
-        const auto sunAzimuth = doubleParamValue(params, "sun_azimuth_deg");
-        if (band.has_value() && *band <= 0) {
-            return ActionValidationIssue{"band", "参数“波段序号”必须大于 0"};
-        }
-        if (sunAzimuth.has_value() && (*sunAzimuth < 0.0 || *sunAzimuth > 360.0)) {
-            return ActionValidationIssue{"sun_azimuth_deg", "参数“太阳方位角”应落在 [0, 360] 范围内"};
-        }
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
             return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
-        }
-        if (actionKey == "c_correction") {
-            const auto cValue = doubleParamValue(params, "c_value");
-            if (cValue.has_value() && *cValue < 0.0) {
-                return ActionValidationIssue{"c_value", "参数“C 系数”必须大于等于 0"};
-            }
         }
     }
 
@@ -526,64 +431,8 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
             return ActionValidationIssue{"output", "参数“输出文件”应使用 .tif 或 .tiff"};
         }
-        const auto resolution = doubleParamValue(params, "resolution");
-        if (resolution.has_value() && *resolution <= 0.0) {
-            return ActionValidationIssue{"resolution", "参数“像元分辨率”必须大于 0"};
-        }
     }
 
-
-    if (pluginName == "matching") {
-        if (const auto minDistance = doubleParamValue(params, "min_distance");
-            minDistance.has_value() && *minDistance < 0.0) {
-            return ActionValidationIssue{"min_distance", "参数“最小间距”必须大于等于 0"};
-        }
-    }
-
-    if (pluginName == "processing") {
-        if (actionKey == "enhance") {
-            if (const auto gamma = doubleParamValue(params, "gamma");
-                gamma.has_value() && *gamma <= 0.0) {
-                return ActionValidationIssue{"gamma", "参数“Gamma值”必须大于 0"};
-            }
-        }
-        if (actionKey == "kmeans") {
-            const auto k = intParamValue(params, "kmeans_k");
-            if (k.has_value() && *k < 2) {
-                return ActionValidationIssue{"kmeans_k", "参数“KMeans 聚类数”必须大于等于 2"};
-            }
-        }
-        if (actionKey == "gabor_filter") {
-            if (const auto lambda = doubleParamValue(params, "gabor_lambda");
-                lambda.has_value() && *lambda <= 0.0) {
-                return ActionValidationIssue{"gabor_lambda", "参数“波长”必须大于 0"};
-            }
-            if (const auto gamma = doubleParamValue(params, "gabor_gamma");
-                gamma.has_value() && *gamma <= 0.0) {
-                return ActionValidationIssue{"gabor_gamma", "参数“纵横比”必须大于 0"};
-            }
-        }
-        if (actionKey == "glcm_texture") {
-            const auto levels = intParamValue(params, "glcm_levels");
-            if (levels.has_value() && *levels < 2) {
-                return ActionValidationIssue{"glcm_levels", "参数“灰度级数”必须大于等于 2"};
-            }
-        }
-        if (actionKey == "mean_shift_filter") {
-            if (const auto spatialRadius = doubleParamValue(params, "spatial_radius");
-                spatialRadius.has_value() && *spatialRadius <= 0.0) {
-                return ActionValidationIssue{"spatial_radius", "参数“空间半径”必须大于 0"};
-            }
-            if (const auto colorRadius = doubleParamValue(params, "color_radius");
-                colorRadius.has_value() && *colorRadius <= 0.0) {
-                return ActionValidationIssue{"color_radius", "参数“颜色半径”必须大于 0"};
-            }
-            if (const auto pyramidLevel = intParamValue(params, "pyramid_level");
-                pyramidLevel.has_value() && *pyramidLevel < 0) {
-                return ActionValidationIssue{"pyramid_level", "参数“金字塔层数”必须大于等于 0"};
-            }
-        }
-    }
 
     return std::nullopt;
 }

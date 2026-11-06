@@ -1488,19 +1488,9 @@ INSTANTIATE_TEST_SUITE_P(
             "reference_raster", ""
         },
         ActionValidationTestParam{
-            "DosCorrectionBandZero", "georef", "dos_correction",
-            {{"band", 0}},
-            "band", ""
-        },
-        ActionValidationTestParam{
             "DosCorrectionOutputExt", "georef", "dos_correction",
             {{"band", 1}, {"output", std::string("D:/data/result.json")}},
             "output", ""
-        },
-        ActionValidationTestParam{
-            "RadiometricCalibrationBandZero", "georef", "radiometric_calibration",
-            {{"band", 0}},
-            "band", ""
         },
         ActionValidationTestParam{
             "RadiometricCalibrationOutputExt", "georef", "radiometric_calibration",
@@ -1523,39 +1513,9 @@ INSTANTIATE_TEST_SUITE_P(
             "output", ""
         },
         ActionValidationTestParam{
-            "CosineCorrectionBandZero", "georef", "cosine_correction",
-            {{"band", 0}},
-            "band", ""
-        },
-        ActionValidationTestParam{
-            "CosineCorrectionSunAzimuthRange", "georef", "cosine_correction",
-            {{"sun_zenith_deg", 30.0}, {"sun_azimuth_deg", 400.0}},
-            "sun_azimuth_deg", ""
-        },
-        ActionValidationTestParam{
             "CosineCorrectionOutputExt", "georef", "cosine_correction",
             {{"sun_azimuth_deg", 180.0}, {"output", std::string("D:/data/result.json")}},
             "output", ""
-        },
-        ActionValidationTestParam{
-            "MinnaertCorrectionBandZero", "georef", "minnaert_correction",
-            {{"band", 0}},
-            "band", ""
-        },
-        ActionValidationTestParam{
-            "MinnaertCorrectionSunAzimuthRange", "georef", "minnaert_correction",
-            {{"sun_zenith_deg", 30.0}, {"sun_azimuth_deg", 400.0}},
-            "sun_azimuth_deg", ""
-        },
-        ActionValidationTestParam{
-            "CCorrectionBandZero", "georef", "c_correction",
-            {{"band", 0}},
-            "band", ""
-        },
-        ActionValidationTestParam{
-            "CCorrectionCValueNegative", "georef", "c_correction",
-            {{"band", 1}, {"c_value", -0.1}},
-            "c_value", ""
         },
         ActionValidationTestParam{
             "PercentileStretchBrightLessThanDark", "georef", "percentile_stretch",
@@ -1566,36 +1526,6 @@ INSTANTIATE_TEST_SUITE_P(
             "RpcOrthorectifyOutputExt", "georef", "rpc_orthorectify",
             {{"output", std::string("D:/data/result.json")}},
             "output", ""
-        },
-        ActionValidationTestParam{
-            "GaborFilterLambdaZero", "processing", "gabor_filter",
-            {{"gabor_lambda", 0.0}},
-            "gabor_lambda", ""
-        },
-        ActionValidationTestParam{
-            "GaborFilterGammaZero", "processing", "gabor_filter",
-            {{"gabor_gamma", 0.0}},
-            "gabor_gamma", ""
-        },
-        ActionValidationTestParam{
-            "GlcmTextureLevelsOne", "processing", "glcm_texture",
-            {{"kernel_size", 5}, {"glcm_levels", 1}},
-            "glcm_levels", ""
-        },
-        ActionValidationTestParam{
-            "MeanShiftSpatialRadiusZero", "processing", "mean_shift_filter",
-            {{"spatial_radius", 0.0}},
-            "spatial_radius", ""
-        },
-        ActionValidationTestParam{
-            "MeanShiftColorRadiusZero", "processing", "mean_shift_filter",
-            {{"color_radius", 0.0}},
-            "color_radius", ""
-        },
-        ActionValidationTestParam{
-            "MeanShiftPyramidLevelNegative", "processing", "mean_shift_filter",
-            {{"pyramid_level", -1}},
-            "pyramid_level", ""
         },
         ActionValidationTestParam{
             "CogOutputExtension", "raster_manage", "cog",
@@ -1613,26 +1543,6 @@ INSTANTIATE_TEST_SUITE_P(
             "output", ""
         },
         ActionValidationTestParam{
-            "TerrainHillshadeBandZero", "terrain", "hillshade",
-            {{"band", 0}, {"z_factor", 0.0}, {"azimuth", 400.0}, {"altitude", 100.0}},
-            "band", ""
-        },
-        ActionValidationTestParam{
-            "TerrainHillshadeZFactorZero", "terrain", "hillshade",
-            {{"band", 1}, {"z_factor", 0.0}, {"azimuth", 400.0}, {"altitude", 100.0}},
-            "z_factor", ""
-        },
-        ActionValidationTestParam{
-            "TerrainHillshadeAzimuthRange", "terrain", "hillshade",
-            {{"band", 1}, {"z_factor", 1.0}, {"azimuth", 400.0}, {"altitude", 100.0}},
-            "azimuth", ""
-        },
-        ActionValidationTestParam{
-            "TerrainHillshadeAltitudeRange", "terrain", "hillshade",
-            {{"band", 1}, {"z_factor", 1.0}, {"azimuth", 315.0}, {"altitude", 100.0}},
-            "altitude", ""
-        },
-        ActionValidationTestParam{
             "TerrainProfileExtractPathEmpty", "terrain", "profile_extract",
             {{"band", 1}, {"profile_path", std::string("")}},
             "profile_path", ""
@@ -1643,24 +1553,9 @@ INSTANTIATE_TEST_SUITE_P(
             "output", ""
         },
         ActionValidationTestParam{
-            "TerrainViewshedObserverHeightNegative", "terrain", "viewshed",
-            {{"observer_height", -1.0}},
-            "observer_height", ""
-        },
-        ActionValidationTestParam{
             "TerrainViewshedMultiPointsEmpty", "terrain", "viewshed_multi",
             {{"observer_points", std::string("")}},
             "observer_points", ""
-        },
-        ActionValidationTestParam{
-            "TerrainViewshedMultiTargetHeightNegative", "terrain", "viewshed_multi",
-            {{"observer_points", std::string("116.0,40.0;116.1,39.9")}, {"target_height", -1.0}},
-            "target_height", ""
-        },
-        ActionValidationTestParam{
-            "TerrainViewshedMultiMaxDistanceNegative", "terrain", "viewshed_multi",
-            {{"observer_points", std::string("116.0,40.0;116.1,39.9")}, {"max_distance", -1.0}},
-            "max_distance", ""
         }
     )
 );
@@ -1812,13 +1707,40 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsPreservesPluginRequiredFlagsWith
     EXPECT_FALSE(filtered[2].required);
 }
 
-TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesMatchingRanges) {
+namespace {
+// N172-C3：展示层对"数值界"必须是纯搬运——喂进去什么界就吐出来什么界。
+// 哨兵值故意取成**与插件真实界不同、彼此也不同**的一组（Double 用 -5.0/7.0，Int 用 -3/11），
+// 这样"GUI 没改界"不是靠 ParamSpec 的默认 int{0} 蒙对：万一有人把界重置成默认值，本函数照样红。
+void expectNumericFieldsUntouched(const std::vector<gis::framework::ParamSpec>& in,
+                                  const std::vector<gis::framework::ParamSpec>& out) {
+    ASSERT_EQ(out.size(), in.size());
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        const std::string where = in[i].key + " ";
+        EXPECT_TRUE(out[i].minValue == in[i].minValue) << where << "的下界被展示层改了";
+        EXPECT_TRUE(out[i].maxValue == in[i].maxValue) << where << "的上界被展示层改了";
+        EXPECT_EQ(out[i].exclusiveMin, in[i].exclusiveMin) << where << "的下界开闭位被展示层改了";
+        EXPECT_EQ(out[i].exclusiveMax, in[i].exclusiveMax) << where << "的上界开闭位被展示层改了";
+        EXPECT_EQ(out[i].requireOdd, in[i].requireOdd) << where << "的奇偶位被展示层改了";
+        EXPECT_TRUE(out[i].defaultValue == in[i].defaultValue) << where << "的默认值被展示层改了";
+    }
+}
+} // namespace
+
+// N172-C3：matching 那四个键的界原先各由展示层造一份（min_distance=0.0、stitch_confidence=0..1、
+// ratio_test/quality_level 的 0.000001 伪下界），现在全部回到插件声明那一份。真实界由
+// PluginTest.DispatchNumericBoundsFollowScopedSpecs 判，本用例只判"展示层不动界"。
+TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsLeavesMatchingRangesAlone) {
     std::vector<gis::framework::ParamSpec> specs = {
-        {"ratio_test", "比率阈值", "", gis::framework::ParamType::Double, false},
-        {"quality_level", "质量阈值", "", gis::framework::ParamType::Double, false},
-        {"min_distance", "最小间距", "", gis::framework::ParamType::Double, false},
-        {"stitch_confidence", "拼接置信度", "", gis::framework::ParamType::Double, false}
+        {"ratio_test", "比率阈值", "", gis::framework::ParamType::Double, false,
+         double{0.75}, double{-5.0}, double{7.0}},
+        {"quality_level", "质量阈值", "", gis::framework::ParamType::Double, false,
+         double{0.01}, double{-5.0}, double{7.0}},
+        {"min_distance", "最小间距", "", gis::framework::ParamType::Double, false,
+         double{10.0}, double{-5.0}, double{7.0}},
+        {"stitch_confidence", "拼接置信度", "", gis::framework::ParamType::Double, false,
+         double{0.5}, double{-5.0}, double{7.0}},
     };
+    specs.back().setExclusive(true, true);
 
     const auto filtered = gis::gui::buildEffectiveGuiParamSpecs(
         "matching",
@@ -1827,75 +1749,45 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesMatchingRanges) {
         {"ratio_test", "quality_level", "min_distance", "stitch_confidence"},
         {});
 
-    ASSERT_EQ(filtered.size(), 4u);
-    // N172-C2：ratio_test / quality_level 的 (0, 1] 现在由 matching 的 ParamSpec 声明
-    // （exclusiveMin + 上界 1.0），展示层那份 0.000001 伪下界删掉。合成 spec 只有 5 个初始化项
-    // ⇒ minValue 停在 ParamSpec 默认的 int{0}，这两条判的是"GUI 没有另造界"；
-    // 真实插件那一侧的界由 PluginTest.DispatchNumericBoundsFollowScopedSpecs 判。
-    EXPECT_TRUE(std::holds_alternative<int>(filtered[0].minValue))
-        << "ratio_test 的下界不该由 GUI 改写";
-    EXPECT_EQ(std::get<int>(filtered[0].minValue), 0);
-    EXPECT_TRUE(std::holds_alternative<int>(filtered[1].minValue))
-        << "quality_level 的下界不该由 GUI 改写";
-    EXPECT_EQ(std::get<int>(filtered[1].minValue), 0);
-    EXPECT_DOUBLE_EQ(std::get<double>(filtered[2].minValue), 0.0);
-    EXPECT_DOUBLE_EQ(std::get<double>(filtered[3].minValue), 0.0);
-    EXPECT_DOUBLE_EQ(std::get<double>(filtered[3].maxValue), 1.0);
+    expectNumericFieldsUntouched(specs, filtered);
+    // 反事实护栏：确认这组哨兵真的不是 ParamSpec 的默认值，否则"没改"与"改成默认"分不开。
+    ASSERT_EQ(std::get<double>(filtered[0].minValue), -5.0);
+    ASSERT_TRUE(filtered[3].exclusiveMin);
 }
 
-TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBounds) {
+// N172-C3：raster_inspect / terrain / spindex / processing / georef / vector 六个插件里
+// 展示层曾经造过界的那些键，现在一律原样搬运（原来这几条断言钉的就是魔数本身）。
+TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsLeavesUtilityAndProcessingBoundsAlone) {
+    // raster_manage 那条另有来历：Task 3 删掉展示层对 band 默认值的覆写，所以 0 必须由插件 spec 带进来
+    //（defaultValue 这一维现在由 expectNumericFieldsUntouched 一起判）。
     std::vector<gis::framework::ParamSpec> rasterManageSpecs = {
-        // 与 raster_manage_plugin.cpp 的真实 spec 同形：band 默认 0（全波段）、范围 0..999。
-        // Task 3 删掉了展示层对 band 默认值的覆写，所以这里的 0 必须由插件 spec 自己带进来。
-        {"band", "波段", "", gis::framework::ParamType::Int, false, int{0}, int{0}, int{999}},
-        {"red_band", "红光波段", "", gis::framework::ParamType::Int, false},
-        {"nir_band", "近红外波段", "", gis::framework::ParamType::Int, false}
+        {"band", "波段", "", gis::framework::ParamType::Int, false, int{0}, int{-3}, int{11}},
+        {"red_band", "红光波段", "", gis::framework::ParamType::Int, false, int{1}, int{-3}, int{11}},
+        {"nir_band", "近红外波段", "", gis::framework::ParamType::Int, false, int{1}, int{-3}, int{11}}
     };
     const auto rasterManageFiltered = gis::gui::buildEffectiveGuiParamSpecs(
-        "raster_manage",
-        "nodata",
-        rasterManageSpecs,
-        {"band", "red_band", "nir_band"},
-        {});
-
-    ASSERT_EQ(rasterManageFiltered.size(), 3u);
-    EXPECT_EQ(std::get<int>(rasterManageFiltered[0].defaultValue), 0);
-    EXPECT_EQ(std::get<int>(rasterManageFiltered[0].minValue), 0);
-    EXPECT_EQ(std::get<int>(rasterManageFiltered[1].minValue), 0);
-    EXPECT_EQ(std::get<int>(rasterManageFiltered[2].minValue), 0);
+        "raster_manage", "nodata", rasterManageSpecs, {"band", "red_band", "nir_band"}, {});
+    expectNumericFieldsUntouched(rasterManageSpecs, rasterManageFiltered);
+    ASSERT_EQ(std::get<int>(rasterManageFiltered[0].defaultValue), 0);
 
     std::vector<gis::framework::ParamSpec> rasterInspectSpecs = {
-        {"bins", "分箱数", "", gis::framework::ParamType::Int, false},
+        {"bins", "分箱数", "", gis::framework::ParamType::Int, false, int{256}, int{-3}, int{11}},
     };
     const auto rasterInspectFiltered = gis::gui::buildEffectiveGuiParamSpecs(
-        "raster_inspect",
-        "histogram",
-        rasterInspectSpecs,
-        {"bins"},
-        {});
-    ASSERT_EQ(rasterInspectFiltered.size(), 1u);
-    EXPECT_EQ(std::get<int>(rasterInspectFiltered[0].minValue), 1);
+        "raster_inspect", "histogram", rasterInspectSpecs, {"bins"}, {});
+    expectNumericFieldsUntouched(rasterInspectSpecs, rasterInspectFiltered);
 
     std::vector<gis::framework::ParamSpec> spindexSpecs = {
-        {"blue_band", "蓝波段", "", gis::framework::ParamType::Int, false},
-        {"green_band", "绿波段", "", gis::framework::ParamType::Int, false},
-        {"red_band", "红光波段", "", gis::framework::ParamType::Int, false},
-        {"nir_band", "近红外波段", "", gis::framework::ParamType::Int, false},
-        {"swir1_band", "短波红外1波段", "", gis::framework::ParamType::Int, false}
+        {"blue_band", "蓝波段", "", gis::framework::ParamType::Int, false, int{1}, int{-3}, int{11}},
+        {"green_band", "绿波段", "", gis::framework::ParamType::Int, false, int{2}, int{-3}, int{11}},
+        {"red_band", "红光波段", "", gis::framework::ParamType::Int, false, int{3}, int{-3}, int{11}},
+        {"nir_band", "近红外波段", "", gis::framework::ParamType::Int, false, int{4}, int{-3}, int{11}},
+        {"swir1_band", "短波红外1波段", "", gis::framework::ParamType::Int, false, int{5}, int{-3}, int{11}}
     };
     const auto spindexFiltered = gis::gui::buildEffectiveGuiParamSpecs(
-        "spindex",
-        "evi",
-        spindexSpecs,
-        {"blue_band", "green_band", "red_band", "nir_band", "swir1_band"},
-        {});
-
-    ASSERT_EQ(spindexFiltered.size(), 5u);
-    EXPECT_EQ(std::get<int>(spindexFiltered[0].minValue), 1);
-    EXPECT_EQ(std::get<int>(spindexFiltered[1].minValue), 1);
-    EXPECT_EQ(std::get<int>(spindexFiltered[2].minValue), 1);
-    EXPECT_EQ(std::get<int>(spindexFiltered[3].minValue), 1);
-    EXPECT_EQ(std::get<int>(spindexFiltered[4].minValue), 1);
+        "spindex", "evi", spindexSpecs,
+        {"blue_band", "green_band", "red_band", "nir_band", "swir1_band"}, {});
+    expectNumericFieldsUntouched(spindexSpecs, spindexFiltered);
 
     gis::framework::ParamSpec expressionSpec{
         "expression", "表达式", "", gis::framework::ParamType::String, false
@@ -1906,21 +1798,13 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
         std::string::npos);
 
     std::vector<gis::framework::ParamSpec> vectorSpecs = {
-        {"tolerance", "简化容差", "", gis::framework::ParamType::Double, false}
+        {"tolerance", "简化容差", "", gis::framework::ParamType::Double, false,
+         double{10.0}, double{-5.0}, double{7.0}}
     };
     const auto vectorFiltered = gis::gui::buildEffectiveGuiParamSpecs(
-        "vector",
-        "simplify",
-        vectorSpecs,
-        {"tolerance"},
-        {"tolerance"});
+        "vector", "simplify", vectorSpecs, {"tolerance"}, {"tolerance"});
     ASSERT_EQ(vectorFiltered.size(), 1u);
-    // N172-C2：GUI 不再给 tolerance 另造 0.000001 伪下界 —— 下界 (0, 1e9] 由 vector 的
-    // ParamSpec 用 exclusiveMin 单点声明。合成 spec 只有 5 个初始化项 ⇒ minValue 停在默认 int{0}，
-    // 所以这条判的是"GUI 没有覆写"（真插件的界由 PluginTest.DispatchNumericBoundsFollowScopedSpecs 判）。
-    EXPECT_TRUE(std::holds_alternative<int>(vectorFiltered[0].minValue))
-        << "tolerance 的下界不该由 GUI 改写";
-    EXPECT_EQ(std::get<int>(vectorFiltered[0].minValue), 0);
+    expectNumericFieldsUntouched(vectorSpecs, vectorFiltered);
     // R-F2-A：requiredKeys 只允许**加严**必填、不允许放宽。面板把 tolerance 列进 requiredKeys，
     // 所以 vector.simplify 的 tolerance 在 GUI 里必须是必填（插件级 spec 是 false，因为它要服务
     // 整个 vector 插件的其它 action）。Task 3 那句"删掉 requiredKeys 改写 required 的分支"
@@ -1928,60 +1812,56 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
     EXPECT_TRUE(vectorFiltered[0].required);
 
     std::vector<gis::framework::ParamSpec> processingSpecs = {
-        {"gamma", "Gamma", "", gis::framework::ParamType::Double, false},
-        {"k", "聚类数", "", gis::framework::ParamType::Int, false},
-        {"clip_limit", "CLAHE", "", gis::framework::ParamType::Double, false},
-        {"kernel_size", "核大小", "", gis::framework::ParamType::Int, false}
+        {"gamma", "Gamma", "", gis::framework::ParamType::Double, false,
+         double{1.0}, double{-5.0}, double{7.0}},
+        // "k" 是合成键：全仓没有 ParamSpec{"k", ...}（原展示层那条 `spec.key == "k"` 分支因此不可达，
+        // N172-C3 连它带这条断言一起处置：分支删掉，这里改成"展示层不动任何界"）。
+        {"k", "聚类数", "", gis::framework::ParamType::Int, false, int{4}, int{-3}, int{11}},
+        {"clip_limit", "CLAHE", "", gis::framework::ParamType::Double, false,
+         double{2.0}, double{-5.0}, double{7.0}},
+        {"kernel_size", "核大小", "", gis::framework::ParamType::Int, false, int{5}, int{-3}, int{11}},
     };
+    processingSpecs.back().setRequireOdd();
     const auto processingFiltered = gis::gui::buildEffectiveGuiParamSpecs(
-        "processing",
-        "enhance",
-        processingSpecs,
-        {"gamma", "k", "clip_limit", "kernel_size"},
-        {});
-
-    ASSERT_EQ(processingFiltered.size(), 4u);
-    EXPECT_DOUBLE_EQ(std::get<double>(processingFiltered[0].minValue), 0.000001);
-    EXPECT_EQ(std::get<int>(processingFiltered[1].minValue), 1);
-    // N181 起 GUI 不再为 clip_limit 另造下界（原先这里是 0.0 的魔数，会把 ParamSpec 抬到 1.0 的下界
-    // 在 GUI 路径上悄悄改回去）。合成 spec 只给了 5 个初始化项 ⇒ minValue 停在 ParamSpec 的默认 int{0}，
-    // 所以这条判的是"GUI 没有覆写"，不是某个具体数（真插件的下界由 ParamSpec 单点声明，见
-    // PluginTest.Enhance 的 C1~C5 与 ProcessingClipLimitLowerBoundRejectedByFramework）。
-    EXPECT_TRUE(std::holds_alternative<int>(processingFiltered[2].minValue))
-        << "clip_limit 的下界不该由 GUI 改写";
-    EXPECT_EQ(std::get<int>(processingFiltered[2].minValue), 0);
-    // N172-C2：kernel_size 的 ">=3 且奇数" 现在写在 processing 的 ParamSpec 上
-    // （minValue=int{3} + requireOdd），GUI 那份 minValue=3 的重复声明删掉了 ⇒ 合成 spec 的
-    // minValue 应保持 ParamSpec 默认值，判的是"GUI 不再另造界"。
-    EXPECT_TRUE(std::holds_alternative<int>(processingFiltered[3].minValue));
-    EXPECT_EQ(std::get<int>(processingFiltered[3].minValue), 0);
+        "processing", "enhance", processingSpecs,
+        {"gamma", "k", "clip_limit", "kernel_size"}, {});
+    expectNumericFieldsUntouched(processingSpecs, processingFiltered);
+    ASSERT_TRUE(processingFiltered[3].requireOdd);
 
     std::vector<gis::framework::ParamSpec> terrainSpecs = {
-        {"band", "波段", "", gis::framework::ParamType::Int, false},
-        {"z_factor", "高程缩放", "", gis::framework::ParamType::Double, false},
-        {"azimuth", "方位角", "", gis::framework::ParamType::Double, false},
-        {"altitude", "高度角", "", gis::framework::ParamType::Double, false},
-        {"accum_threshold", "汇流阈值", "", gis::framework::ParamType::Double, false}
+        {"band", "波段", "", gis::framework::ParamType::Int, false, int{1}, int{-3}, int{11}},
+        {"z_factor", "高程缩放", "", gis::framework::ParamType::Double, false,
+         double{1.0}, double{-5.0}, double{7.0}},
+        {"azimuth", "方位角", "", gis::framework::ParamType::Double, false,
+         double{315.0}, double{-5.0}, double{7.0}},
+        {"altitude", "高度角", "", gis::framework::ParamType::Double, false,
+         double{45.0}, double{-5.0}, double{7.0}},
+        {"accum_threshold", "汇流阈值", "", gis::framework::ParamType::Double, false,
+         double{10.0}, double{-5.0}, double{7.0}},
     };
     const auto terrainFiltered = gis::gui::buildEffectiveGuiParamSpecs(
-        "terrain",
-        "stream_extract",
-        terrainSpecs,
-        {"band", "z_factor", "azimuth", "altitude", "accum_threshold"},
-        {});
+        "terrain", "stream_extract", terrainSpecs,
+        {"band", "z_factor", "azimuth", "altitude", "accum_threshold"}, {});
+    expectNumericFieldsUntouched(terrainSpecs, terrainFiltered);
 
-    ASSERT_EQ(terrainFiltered.size(), 5u);
-    EXPECT_EQ(std::get<int>(terrainFiltered[0].minValue), 1);
-    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[1].minValue), 0.000001);
-    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[2].minValue), 0.0);
-    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[2].maxValue), 360.0);
-    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[3].minValue), 0.0);
-    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[3].maxValue), 90.0);
-    // N172-C2：accum_threshold 的 (0, 1e9] 由 terrain 的 ParamSpec 声明（exclusiveMin），GUI 那份
-    // 0.000001 伪下界删掉 ⇒ 这条同样判"GUI 没有覆写"。（z_factor 那一支仍是 GUI 魔数，归 C3。）
-    EXPECT_TRUE(std::holds_alternative<int>(terrainFiltered[4].minValue))
-        << "accum_threshold 的下界不该由 GUI 改写";
-    EXPECT_EQ(std::get<int>(terrainFiltered[4].minValue), 0);
+    std::vector<gis::framework::ParamSpec> georefSpecs = {
+        {"sun_zenith_deg", "太阳天顶角", "", gis::framework::ParamType::Double, false,
+         double{30.0}, double{-5.0}, double{7.0}},
+        {"minnaert_k", "Minnaert K", "", gis::framework::ParamType::Double, false,
+         double{0.5}, double{-5.0}, double{7.0}},
+        {"dark_percentile", "暗百分位", "", gis::framework::ParamType::Double, false,
+         double{1.0}, double{-5.0}, double{7.0}},
+        {"bright_percentile", "亮百分位", "", gis::framework::ParamType::Double, false,
+         double{99.0}, double{-5.0}, double{7.0}},
+        {"c_value", "C 系数", "", gis::framework::ParamType::Double, false,
+         double{0.1}, double{-5.0}, double{7.0}},
+    };
+    georefSpecs[0].setExclusive(false, true);
+    const auto georefFiltered = gis::gui::buildEffectiveGuiParamSpecs(
+        "georef", "cosine_correction", georefSpecs,
+        {"sun_zenith_deg", "minnaert_k", "dark_percentile", "bright_percentile", "c_value"}, {});
+    expectNumericFieldsUntouched(georefSpecs, georefFiltered);
+    ASSERT_TRUE(georefFiltered[0].exclusiveMax);
 }
 
 TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {

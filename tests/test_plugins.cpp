@@ -1084,9 +1084,12 @@ TEST_F(PluginTest, PerActionRequiredGateDropsOutputOnlyForStatsAndInfo) {
     }
 }
 
-// N172-C2：13 条"比 ParamSpec 更严"的手写数值闸搬进声明层之后，派发层的边界判定必须逐条
-// 落在同一格上，而且手写层对同一份越界参数必须**不再报任何问题**（报了就说明数值界有两份写者）。
+// N172-C2/C3：手写数值闸全部搬进 ParamSpec 之后，派发层的边界判定必须逐条落在同一格上，
+// 而且手写层对同一份越界参数必须**不再报任何问题**（报了就说明数值界有两份写者）。
 // 每行判三件事：越界值被拒且文案里带实际生效的开/闭括号、界内值放行、手写闸返回空。
+// 两张表的来路不同：stricterRows 是 C2 那 13 条"排在 spec 之外"的闸；redundantRows 是 C3 那 21 条
+// "spec 闭区间本来就覆盖、派发路径上从来轮不到它开口"的闸（删之前由
+// DispatchHandLayerNeverStricterThanScopedSpecs 逐键证过反例为 0）。
 TEST_F(PluginTest, DispatchNumericBoundsFollowScopedSpecs) {
     struct Row {
         const char* plugin;
@@ -1096,28 +1099,8 @@ TEST_F(PluginTest, DispatchNumericBoundsFollowScopedSpecs) {
         gis::framework::ParamValue accepted;
         const char* expectedFragment;
     };
-    const std::vector<Row> rows = {
-        // 下界开：(0, x]
-        {"terrain", "stream_extract", "accum_threshold", 0.0, 10.0, "超出范围 (0, "},
-        {"georef", "minnaert_correction", "minnaert_k", 0.0, 0.5, "超出范围 (0, 1]"},
-        {"georef", "percentile_stretch", "bright_percentile", 0.0, 1.0, "超出范围 (0, 100]"},
-        {"vector", "sliver_remove", "min_area", 0.0, 10.0, "超出范围 (0, "},
-        {"vector", "simplify", "tolerance", 0.0, 2.0, "超出范围 (0, "},
-        {"matching", "match", "ratio_test", 0.0, 0.75, "超出范围 (0, 1]"},
-        {"matching", "corner", "quality_level", 0.0, 0.01, "超出范围 (0, 1]"},
-        // 上界开：[0, x)
-        {"georef", "cosine_correction", "sun_zenith_deg", 90.0, 89.5, "超出范围 [0, 90)"},
-        {"georef", "percentile_stretch", "dark_percentile", 100.0, 99.5, "超出范围 [0, 100)"},
-        // 奇偶位：三个动作共用同一条声明
-        {"processing", "filter", "kernel_size", 4, 5, "必须是[3, 101] "},
-        {"processing", "gabor_filter", "kernel_size", 4, 5, "必须是[3, 101] "},
-        {"processing", "glcm_texture", "kernel_size", 4, 5, "必须是[3, 101] "},
-        // per-action 开界
-        {"processing", "gabor_filter", "sigma", 0.0, 1.5, "超出范围 (0, 1000]"},
-    };
-    ASSERT_EQ(rows.size(), 13u) << "13 条更严的手写闸应当各有一行，多一条少一条都要先解释";
 
-    for (const auto& row : rows) {
+    const auto checkRow = [this](const Row& row) {
         auto* plugin = mgr_.find(row.plugin);
         ASSERT_NE(plugin, nullptr) << row.plugin;
         const auto scoped = gis::framework::actionScopedParamSpecs(*plugin, row.action);
@@ -1136,9 +1119,78 @@ TEST_F(PluginTest, DispatchNumericBoundsFollowScopedSpecs) {
             << where << " 越界值实到文案：" << badIssue;
         EXPECT_TRUE(gis::framework::validateParamValue(*spec, &row.accepted).empty())
             << where << " 界内值被拒：" << gis::framework::validateParamValue(*spec, &row.accepted);
-        EXPECT_FALSE(gis::framework::validateActionSpecificParams(row.plugin, row.action, badParams)
-                         .has_value())
-            << where << " 手写层仍在判这个界 ⇒ 数值界有两份写者";
+        // 手写层那一臂**按键名比**，不是"整层必须沉默"：只喂一个键时同动作的组合规则会先报别的键
+        // （terrain viewshed_multi 的 observer_points 不能为空就是这一族），那不是"数值界有两份写者"。
+        const auto handIssue = gis::framework::validateActionSpecificParams(row.plugin, row.action, badParams);
+        EXPECT_TRUE(!handIssue || handIssue->key != row.key)
+            << where << " 手写层仍在判这个界 ⇒ 数值界有两份写者："
+            << (handIssue ? handIssue->message : std::string{});
+    };
+
+    const std::vector<Row> stricterRows = {
+        // 下界开：(0, x]
+        {"terrain", "stream_extract", "accum_threshold", 0.0, 10.0, "超出范围 (0, "},
+        {"georef", "minnaert_correction", "minnaert_k", 0.0, 0.5, "超出范围 (0, 1]"},
+        {"georef", "percentile_stretch", "bright_percentile", 0.0, 1.0, "超出范围 (0, 100]"},
+        {"vector", "sliver_remove", "min_area", 0.0, 10.0, "超出范围 (0, "},
+        {"vector", "simplify", "tolerance", 0.0, 2.0, "超出范围 (0, "},
+        {"matching", "match", "ratio_test", 0.0, 0.75, "超出范围 (0, 1]"},
+        {"matching", "corner", "quality_level", 0.0, 0.01, "超出范围 (0, 1]"},
+        // 上界开：[0, x)
+        {"georef", "cosine_correction", "sun_zenith_deg", 90.0, 89.5, "超出范围 [0, 90)"},
+        {"georef", "percentile_stretch", "dark_percentile", 100.0, 99.5, "超出范围 [0, 100)"},
+        // 奇偶位：三个动作共用同一条声明
+        {"processing", "filter", "kernel_size", 4, 5, "必须是[3, 101] "},
+        {"processing", "gabor_filter", "kernel_size", 4, 5, "必须是[3, 101] "},
+        {"processing", "glcm_texture", "kernel_size", 4, 5, "必须是[3, 101] "},
+        // per-action 开界
+        {"processing", "gabor_filter", "sigma", 0.0, 1.5, "超出范围 (0, 1000]"},
+    };
+    ASSERT_EQ(stricterRows.size(), 13u) << "13 条更严的手写闸应当各有一行，多一条少一条都要先解释";
+
+    const std::vector<Row> redundantRows = {
+        // C3 删掉的冗余闸：原来由手写层报"必须大于 0"这类文案，实际派发路径上 spec 的闭区间先拦，
+        // 所以生效文案一直是 paramIntervalText 生成的这一句（界内值取该键在插件里声明的默认值）。
+        {"georef", "dos_correction", "band", 0, 1, "参数“波段”超出范围 [1, 999]"},
+        {"georef", "radiometric_calibration", "band", 0, 1, "参数“波段”超出范围 [1, 999]"},
+        {"georef", "cosine_correction", "band", 0, 1, "参数“波段”超出范围 [1, 999]"},
+        {"georef", "cosine_correction", "sun_azimuth_deg", 400.0, 180.0, "参数“太阳方位角”超出范围 [0, 360]"},
+        {"georef", "minnaert_correction", "band", 0, 1, "参数“波段”超出范围 [1, 999]"},
+        {"georef", "minnaert_correction", "sun_azimuth_deg", 400.0, 180.0, "参数“太阳方位角”超出范围 [0, 360]"},
+        {"georef", "c_correction", "band", 0, 1, "参数“波段”超出范围 [1, 999]"},
+        {"georef", "c_correction", "c_value", -0.1, 0.1, "参数“C值”超出范围 [0, 100]"},
+        // 下面五行补的是"删了闸但从没留过表项"的那几个键：raster_inspect.bins、vector.resolution、
+        // matching.min_distance、processing.kmeans_k 四处原先只有手写层在判，测试表里没有对应行；
+        // spindex 的六个 *_band 共用同一条 [1, 999] 声明，取 red_band 立一行，其余五个键由
+        // DispatchHandLayerNeverStricterThanScopedSpecs 逐键扫过（1353 个键位 / 13997 次探针）。
+        {"raster_inspect", "histogram", "bins", 0, 256, "参数“分箱数”超出范围 [1, 65536]"},
+        {"vector", "rasterize", "resolution", 0.0, 1.0, "参数“栅格分辨率”超出范围 [0.001, 1e+09]"},
+        {"matching", "detect", "min_distance", -1.0, 10.0, "参数“最小间距”超出范围 [0, 10000]"},
+        {"processing", "kmeans", "kmeans_k", 1, 4, "参数“KMeans K”超出范围 [2, 256]"},
+        {"spindex", "ndvi", "red_band", 0, 3, "参数“红光波段”超出范围 [1, 999]"},
+        {"processing", "gabor_filter", "gabor_lambda", 0.0, 8.0, "参数“Gabor Lambda”超出范围 [0.001, 1000]"},
+        {"processing", "gabor_filter", "gabor_gamma", 0.0, 0.5, "参数“Gabor Gamma”超出范围 [0.001, 10]"},
+        {"processing", "glcm_texture", "glcm_levels", 1, 8, "参数“GLCM灰度级”超出范围 [2, 256]"},
+        {"processing", "mean_shift_filter", "spatial_radius", 0.0, 10.0, "参数“空间半径”超出范围 [0.001, 1000]"},
+        {"processing", "mean_shift_filter", "color_radius", 0.0, 20.0, "参数“颜色半径”超出范围 [0.001, 1000]"},
+        {"processing", "mean_shift_filter", "pyramid_level", -1, 1, "参数“金字塔层级”超出范围 [0, 10]"},
+        {"terrain", "hillshade", "band", 0, 1, "参数“波段”超出范围 [1, 999]"},
+        {"terrain", "hillshade", "z_factor", 0.0, 1.0, "参数“Z因子”超出范围 [0.001, 10000]"},
+        {"terrain", "hillshade", "azimuth", 400.0, 315.0, "参数“方位角”超出范围 [0, 360]"},
+        {"terrain", "hillshade", "altitude", 100.0, 45.0, "参数“高度角”超出范围 [0, 90]"},
+        {"terrain", "viewshed", "observer_height", -1.0, 2.0, "参数“观察高度”超出范围 [0, 10000]"},
+        {"terrain", "viewshed_multi", "target_height", -1.0, 0.0, "参数“目标高度”超出范围 [0, 10000]"},
+        {"terrain", "viewshed_multi", "max_distance", -1.0, 0.0, "参数“最大距离”超出范围 [0, 1e+09]"},
+    };
+    ASSERT_EQ(redundantRows.size(), 26u)
+        << "26 = 21（C3 删掉的闸里在 GUI 参数表留过表项的那些，逐条由全量单测的失败名单点名）"
+           "+ 5（bins / resolution / min_distance / kmeans_k / red_band 原本一条表项都没有，本把补上）";
+
+    for (const auto& row : stricterRows) {
+        checkRow(row);
+    }
+    for (const auto& row : redundantRows) {
+        checkRow(row);
     }
 
     // 反臂（per-action 钩子真正承重的证据）：sigma=0 在 filter 必须是合法值 ——
@@ -1168,6 +1220,125 @@ TEST_F(PluginTest, DispatchNumericBoundsFollowScopedSpecs) {
     }
     EXPECT_EQ(glcmIssue.find("窗口大小"), std::string::npos)
         << "glcm_texture 的报错里不该再出现硬写的「窗口大小」：" << glcmIssue;
+}
+
+// N172-C3 的取证判据，也是这一片刀留下的永久守卫：删一条手写数值闸之前，先证明它已经不是第二写者。
+// 论域 = 登记表 tests/action_gold_cases.txt 里每个 (plugin, action) × 该动作**作用域后**的每个 Int/Double 键
+//        × 探针值集（min/max/默认值各一，两侧各越界一档，外加 0 与 ±1；Double 再补一个 NaN）。
+// 判据 = 单向蕴含「spec 放行 ⇒ 手写层不得就**同一个键**返回 issue」。只比同一个键，是因为手写层里的组合规则
+//        （"至少填写一个"这类）在只给一个键的探针下会先报别的键，那是另一维，不该被这条拦下来。
+// 为什么这一条撑得住"删了不改变任何结果"：CLI / 工作流 / GUI 三条派发路径都是 validateParams(作用域表) 先跑、
+//        validateActionSpecificParams 后跑，spec 已经拦下的值轮不到手写层出文案；spec 放行的值只要手写层也
+//        放行，就没有行为差。
+// 反臂（判别变异）：把任一已删的闸原样写回手写层 ⇒ hits 那一格必须点名它（不是静默少跑）。
+TEST_F(PluginTest, DispatchHandLayerNeverStricterThanScopedSpecs) {
+    const fs::path registryPath = fs::u8path(std::string(GIS_SOURCE_DIR) + "/tests/action_gold_cases.txt");
+    std::ifstream registry(registryPath);
+    ASSERT_TRUE(static_cast<bool>(registry)) << "读不到登记表：" << registryPath.string();
+
+    std::vector<std::pair<std::string, std::string>> pairs;
+    std::string row;
+    while (std::getline(registry, row)) {
+        if (!row.empty() && row.back() == '\r') {
+            row.pop_back();
+        }
+        if (row.empty() || row.front() == '#') {
+            continue;
+        }
+        const auto first = row.find(',');
+        const auto second = row.find(',', first + 1);
+        if (first == std::string::npos || second == std::string::npos) {
+            continue;
+        }
+        pairs.emplace_back(row.substr(0, first), row.substr(first + 1, second - first - 1));
+    }
+    ASSERT_GE(pairs.size(), 120u) << "登记表的 (plugin, action) 论域缩了 ⇒ 本判据的覆盖不再成立";
+
+    const auto stringify = [](const gis::framework::ParamValue& value) {
+        if (const auto* iv = std::get_if<int>(&value)) {
+            return std::to_string(*iv);
+        }
+        if (const auto* dv = std::get_if<double>(&value)) {
+            return std::to_string(*dv);
+        }
+        return std::string{"<非数值>"};
+    };
+
+    std::vector<std::string> hits;
+    std::size_t numericKeys = 0;
+    std::size_t probes = 0;
+    std::size_t missingPlugins = 0;
+
+    for (const auto& [pluginName, action] : pairs) {
+        auto* plugin = mgr_.find(pluginName);
+        if (plugin == nullptr) {
+            ++missingPlugins;
+            continue;
+        }
+        for (const auto& spec : gis::framework::actionScopedParamSpecs(*plugin, action)) {
+            const bool isInt = spec.type == gis::framework::ParamType::Int;
+            const bool isDouble = spec.type == gis::framework::ParamType::Double;
+            if (!isInt && !isDouble) {
+                continue;
+            }
+            ++numericKeys;
+
+            std::vector<gis::framework::ParamValue> values;
+            const auto push = [&values](double v) {
+                values.emplace_back(v);
+            };
+            if (isInt) {
+                const auto* lo = std::get_if<int>(&spec.minValue);
+                const auto* hi = std::get_if<int>(&spec.maxValue);
+                const int baseLo = lo ? *lo : -1;
+                const int baseHi = hi ? *hi : 1;
+                for (const int v : {baseLo - 1, baseLo, baseLo + 1, 0, -1, 1, baseHi - 1, baseHi, baseHi + 1}) {
+                    values.emplace_back(v);
+                }
+            } else {
+                const auto* def = std::get_if<double>(&spec.defaultValue);
+                const auto* lo = std::get_if<double>(&spec.minValue);
+                const auto* hi = std::get_if<double>(&spec.maxValue);
+                const double baseLo = lo ? *lo : 0.0;
+                const double baseHi = hi ? *hi : 1.0;
+                for (const double v : {baseLo - 1.0, baseLo, baseLo + 1.0, 0.0, -1.0, 1.0,
+                                       baseHi - 1.0, baseHi, baseHi + 1.0,
+                                       std::numeric_limits<double>::quiet_NaN()}) {
+                    push(v);
+                }
+                if (def) {
+                    push(*def);
+                }
+            }
+
+            for (const auto& value : values) {
+                ++probes;
+                if (!gis::framework::validateParamValue(spec, &value).empty()) {
+                    continue;  // spec 自己就拦了，轮不到手写层报文案
+                }
+                const std::map<std::string, gis::framework::ParamValue> only{{spec.key, value}};
+                const auto issue = gis::framework::validateActionSpecificParams(pluginName, action, only);
+                if (issue && issue->key == spec.key) {
+                    hits.push_back(pluginName + "." + action + "." + spec.key + " 值=" + stringify(value) +
+                                   " 被 spec 放行，却被手写层拒：" + issue->message);
+                }
+            }
+        }
+    }
+
+    std::string report;
+    for (std::size_t i = 0; i < hits.size() && i < 12; ++i) {
+        report += "\n  " + hits[i];
+    }
+    EXPECT_EQ(missingPlugins, 0u) << "登记表里有点名不到的插件 ⇒ 论域不完整，本判据的覆盖要重算";
+    EXPECT_TRUE(hits.empty()) << "手写层仍在比 spec 更严（这些键还有第二写者，删不得）：" << report;
+    // 两条下限是"论域没缩"的守卫：数值键位数与探针次数一旦掉下来，说明登记表或 spec 表少了行，
+    // 那时 hits==0 就只是假绿。现值取本刀首跑实到（1353 位 / 13997 次，登记表现读 126 个 (plugin,action)），
+    // 下限留出"以后有人删一条 spec 行"的余量，向上取整会把自己锁死。
+    EXPECT_GE(numericKeys, 1300u) << "作用域表里的 Int/Double 键位数现读 " << numericKeys;
+    EXPECT_GE(probes, 13000u) << "探针总次数现读 " << probes;
+    RecordProperty("hand_layer_numeric_keys", std::to_string(numericKeys).c_str());
+    RecordProperty("hand_layer_probes", std::to_string(probes).c_str());
 }
 
 TEST_F(PluginTest, ProcessingPluginParams) {
@@ -29938,3 +30109,4 @@ TEST_F(PluginTest, VectorConvertExplicitFormatBeatsOutputExtension) {
     EXPECT_EQ(n153OutputDriverName(output), "GeoJSON")
         << "显式 --format 被扩展名覆盖了 ⇒ 案 A 实现反了";
 }
+

@@ -2713,89 +2713,13 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
         // ParamSpec cannot express - ParamSpec is shared by all actions of a plugin, so a key that
         // only this action needs cannot be raised to required=true in the plugin without inventing
         // a false requirement for its siblings (same structural gap as the src_srs default below).
-        // Default values, on the other hand, must never be rewritten here at all: the plugin spec
-        // is the single source of truth shared with the CLI.
+        // Default values and numeric bounds must never be rewritten here at all: the plugin spec is
+        // the single source of truth shared with the CLI. N172-C3 删掉了最后 28 行界改写
+        //（1e-6 / 89.999999 这类"拿极小量近似开界"的写法，加上一批与声明同值的重复）；
+        // 界要按动作收窄就走 adjustActionSpec()，不在这里改。
         adjustedSpec.required = spec.required || requiredKeys.count(spec.key) > 0;
-        // Enforced by GuiContract.EffectiveSpecsAgreeWithPluginSpecs.
+        // Enforced by GuiContract.EffectiveSpecsAgreeWithPluginSpecs (required / defaultValue / bounds).
 
-        if (pluginName == "matching") {
-            // N172-C2：ratio_test / quality_level 的 (0,1] 现在由插件级 ParamSpec 的开界位声明，
-            // GUI 不再另造 0.000001 这种"近似大于 0"的伪下界（它既比 CLI 松又比手写闸松，是三套口径）。
-            if (spec.key == "min_distance") {
-                adjustedSpec.minValue = 0.0;
-            } else if (spec.key == "stitch_confidence") {
-                adjustedSpec.minValue = 0.0;
-                adjustedSpec.maxValue = 1.0;
-            }
-        }
-        if (pluginName == "raster_inspect" && spec.key == "bins") {
-            adjustedSpec.minValue = 1;
-        }
-        if (pluginName == "terrain") {
-            if (spec.key == "band") {
-                adjustedSpec.minValue = 1;
-            } else if (spec.key == "z_factor") {
-                adjustedSpec.minValue = 0.000001;
-            } else if (spec.key == "azimuth") {
-                adjustedSpec.minValue = 0.0;
-                adjustedSpec.maxValue = 360.0;
-            } else if (spec.key == "altitude") {
-                adjustedSpec.minValue = 0.0;
-                adjustedSpec.maxValue = 90.0;
-            } else if (spec.key == "observer_height" || spec.key == "target_height" || spec.key == "max_distance") {
-                adjustedSpec.minValue = 0.0;
-            }
-        }
-        if (pluginName == "spindex" &&
-            (spec.key == "blue_band" || spec.key == "green_band" ||
-             spec.key == "red_band" || spec.key == "nir_band" ||
-             spec.key == "swir1_band" || spec.key == "swir2_band")) {
-            adjustedSpec.minValue = 1;
-        }
-        // N172-C2：vector 的 tolerance 界 (0,1e9] 与 resolution 界 [0.001,1e9] 都由插件级 ParamSpec
-        //   声明，这里原先那行 minValue = 0.000001 一支让 GUI 比 CLI 松（5e-5 在面板能提交、在命令行被拒），
-        //   两支口径就此并回一份。
-        if (pluginName == "processing") {
-            if (spec.key == "gamma") {
-                adjustedSpec.minValue = 0.000001;
-            } else if (spec.key == "k") {
-                // Task 15 / 挂账 N59（批次 B 处理）：全仓没有任何插件声明键 "k"
-                // （`grep 'ParamSpec{"k"'` 零命中），⇒ 这条分支对**真实插件不可达**，用户碰不到它。
-                // 但它今天不是死代码：tests/test_gui_support.cpp:1976 用合成 spec
-                // `{"k", "聚类数", …}` 喂进本函数，:1989 断 `minValue == 1`
-                //（删掉本分支后该断言实测读到 0 ⇒ `GuiSupportTest.BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBounds` 红）。
-                // ⇒ 本质是"只有测试在消费的产品代码"（与 Task 13 的 enumLabelKeys 同族）。
-                // 本批**保留**：删它必须同时删既有断言（批次 A 红线），换来的只是少 **2 行**不可达代码
-                //（`54df42c:2449-2450`：`} else if (spec.key == "k") {` 头与 `adjustedSpec.minValue = 1;` 各 1 行，
-                //  闭合的 `}` 属 else-if 链、删了也不消失 ⇒ 之前写的"5 行"是从交接抄来未换算，此处按实测订正）。
-                adjustedSpec.minValue = 1;
-            } else if (spec.key == "glcm_levels") {
-                adjustedSpec.minValue = 2;
-            } else if (spec.key == "spatial_radius" || spec.key == "color_radius") {
-                adjustedSpec.minValue = 0.000001;
-            } else if (spec.key == "pyramid_level") {
-                adjustedSpec.minValue = 0;
-            }
-        }
-        if (pluginName == "georef" && spec.key == "band") {
-            adjustedSpec.minValue = 1;
-        } else if (pluginName == "georef" && spec.key == "sun_zenith_deg") {
-            adjustedSpec.minValue = 0.0;
-            adjustedSpec.maxValue = 89.999999;
-        } else if (pluginName == "georef" && spec.key == "sun_azimuth_deg") {
-            adjustedSpec.minValue = 0.0;
-            adjustedSpec.maxValue = 360.0;
-        } else if (pluginName == "georef" && spec.key == "minnaert_k") {
-            adjustedSpec.minValue = 0.000001;
-        } else if (pluginName == "georef" && spec.key == "c_value") {
-            adjustedSpec.minValue = 0.0;
-        } else if (pluginName == "georef" && spec.key == "dark_percentile") {
-            adjustedSpec.minValue = 0.0;
-            adjustedSpec.maxValue = 99.999999;
-        } else if (pluginName == "georef" && spec.key == "bright_percentile") {
-            adjustedSpec.minValue = 0.000001;
-            adjustedSpec.maxValue = 100.0;
-        }
         if (pluginName == "projection" && action == "transform" && spec.key == "src_srs") {
             adjustedSpec.defaultValue = std::string("EPSG:4326");
         }

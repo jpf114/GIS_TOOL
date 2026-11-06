@@ -1079,6 +1079,20 @@ TEST(GuiContract, EffectiveSpecsAgreeWithPluginSpecs) {
                         whitelistHits.insert(divergence.id);
                     }
                 }
+                // N172-C3：数值界与默认值同源。展示层一旦自己改 min/max/开闭/奇偶，同一个值在
+                // GUI 与 CLI 上就会得到两种答案（C3 删掉的 29 行 `adjustedSpec.minValue = …` 就是这个形状：
+                // 有的是同值重述，有的是拿 1e-6 / 89.999999 去近似一个本该写成开区间的界）。
+                // 界要按动作收，就先给 ParamSpec 加位（C1/C2 的 setExclusive/setRequireOdd），别在这儿改。
+                if (!(eff.minValue == origin->minValue) || !(eff.maxValue == origin->maxValue) ||
+                    eff.exclusiveMin != origin->exclusiveMin || eff.exclusiveMax != origin->exclusiveMax ||
+                    eff.requireOdd != origin->requireOdd) {
+                    Divergence divergence{key + ".bounds",
+                        key + " 的数值界被展示层覆写（GUI 与 CLI 因此会对同一个值给出两种校验结果）"};
+                    violations.push_back(divergence);
+                    if (kKnownDivergentOverrides.count(divergence.id)) {
+                        whitelistHits.insert(divergence.id);
+                    }
+                }
             }
         }
     }
@@ -1090,7 +1104,7 @@ TEST(GuiContract, EffectiveSpecsAgreeWithPluginSpecs) {
         }
     }
     EXPECT_TRUE(unexpected.empty())
-        << "展示层与插件 paramSpecs 出现未登记的 required/默认值分歧（GUI 与 CLI 因此会提交不同参数）:"
+        << "展示层与插件 paramSpecs 出现未登记的 required/默认值/数值界分歧（GUI 与 CLI 因此会提交不同参数或给出两种校验结果):"
         << unexpected;
 
     std::string dead;
