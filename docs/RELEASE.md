@@ -5385,9 +5385,21 @@ C1 `65af9ee`（`ParamSpec` 加开/闭区间位与奇偶位，零行为变更）�
 另立"手写层不得比声明更严"这条永久判据与 `GuiContract` 的数值界一维）→ **C4 本把**（删 `doFilter` 的
 静默改写＝数值界剩下的那一处第二写者，并把文档区间交给机器判）。
 收口对账：**数值界与区间文案的写者从 4 处收成 1 处（`ParamSpec`）**；工单 #172（N172）与 #189（N182）
-同时销账——N182 立案时留的"四处口径分叉"里，`kernel_size` 那三处（声明 / 手写闸 / 静默改写）与
-`sigma` 的"读而不用"是两件事，后者由 P3b 的六支正面见证钉住、不属本单射程。
-受保护的 `terrain_plugin.cpp` blob 现值仍为 `fa34c3fbf9cc457e74cc460fb1dd9abeb7abe1bc`（C2 起，本把没碰 terrain）。
+同时销账。#189 标题里的两族分叉各自的归一处数不同，此处按现读与历史树对齐一遍再落笔
+（**本段是对 `63699d8` 那版结句的更正**：旧句把 kernel_size 的写者数写成"三处（声明/手写闸/静默改写）"，
+漏了 GUI 那份 `minValue = 3`；又把 sigma 那族误称成"读而不用"）：
+- `kernel_size` 四处 → 1：声明（C1 加位、C2 抬下界到 3 并加奇偶位）、派发层手写闸（C3 删）、
+  GUI 的 `minValue = 3` 魔数（**C2** 删；复算 = `git show c11a78c -- src/gui/gui_data_support.cpp`，
+  里面那条 `-` 分支头就是 `} else if (spec.key == "kernel_size") {`，抬界的那行 `adjustedSpec.minValue = 3;`
+  与它同支一起消失）、`doFilter` 内静默改写（C4 删并改显式拒绝）。
+- `sigma` 三处 → 1：声明 `[0.0, 1000.0]`、GUI 的 `minValue = 1e-6`（那一支同时挂
+  `sigma`/`gabor_lambda`/`gabor_gamma`，由 **C2** 删；在 `c11a78c~1` 的历史树里可读到原行）、
+  `action_validation` 的 `sigma>0`（只挂 `gabor_filter`，由 **C3** 随 processing 整块删）；
+  剩下的 `adjustActionSpec` per-action 开区间位与声明同在一个文件，属同一写者的按动作位。
+两族之外另记一件：σ=0 从 CLI 合法可达、走上游按 ksize 索引的硬编码二项式表，仓里**没有**这一段的期望位点
+⇒ 与"读而不用"（S11 六支正面见证已钉）是两件事，另立 **N194**（工单 #223）。
+受保护的 `terrain_plugin.cpp` blob 现值仍为 `fa34c3fbf9cc457e74cc460fb1dd9abeb7abe1bc`
+（C2 起，本把没碰 terrain）。
 
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
