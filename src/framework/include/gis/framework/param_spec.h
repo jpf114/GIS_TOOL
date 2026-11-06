@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+#include <type_traits>
 
 namespace gis::framework {
 
@@ -44,6 +45,9 @@ struct ParamSpec {
     ParamValue minValue = int{0};   ///< Minimum allowed value (for Int/Double)
     ParamValue maxValue = int{0};   ///< Maximum allowed value (for Int/Double)
     std::vector<std::string> enumValues; ///< Allowed values for Enum type
+    bool exclusiveMin = false;  ///< true ⇒ 值必须严格大于 minValue（下界开区间，(min, max]）
+    bool exclusiveMax = false;  ///< true ⇒ 值必须严格小于 maxValue（上界开区间，[min, max)）
+    bool requireOdd = false;    ///< 仅对 Int 生效：true ⇒ 只接受奇数（核大小这类卷积窗口）
 
     // Builder-style helpers
     ParamSpec& setName(const std::string& n) { displayName = n; return *this; }
@@ -51,6 +55,9 @@ struct ParamSpec {
     ParamSpec& setRequired(bool r) { required = r; return *this; }
     ParamSpec& setDefault(const ParamValue& v) { defaultValue = v; return *this; }
     ParamSpec& setEnum(const std::vector<std::string>& v) { enumValues = v; return *this; }
+    // 聚合初始化是位置写死的八~九个字段，开/闭与奇偶用这两个方法补在末尾，避免把布尔位塞进位置串里读不出含义。
+    ParamSpec& setExclusive(bool min, bool max) { exclusiveMin = min; exclusiveMax = max; return *this; }
+    ParamSpec& setRequireOdd() { requireOdd = true; return *this; }
 };
 
 // Get a value from the params map, with type checking and default fallback
@@ -162,6 +169,43 @@ inline bool convertParamValue(const std::vector<ParamSpec>& specs,
     return true;
 }
 
+// 区间文案的唯一拼装点：括号形态跟着实际生效的开/闭位走。
+// WHY 要单源：手写层过去把同一个键写成 "[0, 100) 范围内" 而实现判的是闭区间上界，
+// 文案与实到边界不符（N172 的实测形态之一），此后凡是区间文案都从这里出。
+template<typename T>
+inline std::string paramIntervalText(const ParamSpec& spec, T lo, T hi) {
+    std::ostringstream oss;
+    oss << (spec.exclusiveMin ? '(' : '[') << lo << ", " << hi << (spec.exclusiveMax ? ')' : ']');
+    return oss.str();
+}
+
+// Int / Double 两支共用的数值判据：区间（含开/闭位）与奇偶位都在这里，调用方不再各写一份比较。
+template<typename T>
+inline std::string validateNumericParam(const ParamSpec& spec, T value) {
+    const std::string issuePrefix = "参数“" + paramDisplayName(spec) + "”";
+    const T* minValue = std::get_if<T>(&spec.minValue);
+    const T* maxValue = std::get_if<T>(&spec.maxValue);
+    const bool rangeActive = minValue && maxValue && *maxValue > *minValue;
+    if (rangeActive) {
+        const bool rejected = value < *minValue || value > *maxValue ||
+            (spec.exclusiveMin && value == *minValue) ||
+            (spec.exclusiveMax && value == *maxValue);
+        if (rejected) {
+            return issuePrefix + "超出范围 " + paramIntervalText(spec, *minValue, *maxValue);
+        }
+    }
+    if constexpr (std::is_same_v<T, int>) {
+        // requireOdd 只对 Int 生效：Double 上写它是声明错误，宁可让区间位去判、这里静默不判。
+        if (spec.requireOdd && value % 2 == 0) {
+            if (rangeActive) {
+                return issuePrefix + "必须是" + paramIntervalText(spec, *minValue, *maxValue) + " 内的奇数";
+            }
+            return issuePrefix + "必须是奇数";
+        }
+    }
+    return {};
+}
+
 inline std::string validateParamValue(const ParamSpec& spec,
                                       const ParamValue* value) {
     const std::string issuePrefix = "参数“" + paramDisplayName(spec) + "”";
@@ -195,30 +239,14 @@ inline std::string validateParamValue(const ParamSpec& spec,
             if (!intValue) {
                 return issuePrefix + "类型无效";
             }
-            const auto* minValue = std::get_if<int>(&spec.minValue);
-            const auto* maxValue = std::get_if<int>(&spec.maxValue);
-            if (minValue && maxValue && *maxValue > *minValue &&
-                (*intValue < *minValue || *intValue > *maxValue)) {
-                std::ostringstream oss;
-                oss << issuePrefix << "超出范围 [" << *minValue << ", " << *maxValue << "]";
-                return oss.str();
-            }
-            return {};
+            return validateNumericParam(spec, *intValue);
         }
         case ParamType::Double: {
             const auto* doubleValue = std::get_if<double>(value);
             if (!doubleValue) {
                 return issuePrefix + "类型无效";
             }
-            const auto* minValue = std::get_if<double>(&spec.minValue);
-            const auto* maxValue = std::get_if<double>(&spec.maxValue);
-            if (minValue && maxValue && *maxValue > *minValue &&
-                (*doubleValue < *minValue || *doubleValue > *maxValue)) {
-                std::ostringstream oss;
-                oss << issuePrefix << "超出范围 [" << *minValue << ", " << *maxValue << "]";
-                return oss.str();
-            }
-            return {};
+            return validateNumericParam(spec, *doubleValue);
         }
         case ParamType::Bool:
             return std::get_if<bool>(value) ? std::string{} : issuePrefix + "类型无效";

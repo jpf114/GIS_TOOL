@@ -164,6 +164,76 @@ TEST(FrameworkTest, ValidateParamsRejectsInvalidEnumValue) {
     EXPECT_NE(issue.find("取值无效"), std::string::npos);
 }
 
+TEST(FrameworkTest, NumericBoundFlagsAreHonouredByValidateParams) {
+    // N172 地基层：开/闭位与奇偶位只在显式声明时改变判定，默认位形态必须与旧实现逐字一致。
+    using namespace gis::framework;
+
+    auto makeDouble = [](bool exMin, bool exMax) -> ParamSpec {
+        ParamSpec spec;
+        spec.key = "ratio";
+        spec.displayName = "比率";
+        spec.type = ParamType::Double;
+        spec.minValue = 0.0;
+        spec.maxValue = 1.0;
+        return spec.setExclusive(exMin, exMax);
+    };
+    const std::map<std::string, ParamValue> zero{{"ratio", 0.0}};
+    const std::map<std::string, ParamValue> one{{"ratio", 1.0}};
+    const std::map<std::string, ParamValue> mid{{"ratio", 0.5}};
+
+    // 默认（两个位都关）= 旧行为：0 与 1 都放行，文案仍是方括号。
+    EXPECT_TRUE(validateParams({makeDouble(false, false)}, zero).empty());
+    EXPECT_TRUE(validateParams({makeDouble(false, false)}, one).empty());
+    // 下界开：0 被拒，且括号必须跟着变圆。
+    EXPECT_NE(validateParams({makeDouble(true, false)}, zero).find("超出范围 (0, 1]"), std::string::npos)
+        << "声明 exclusiveMin 后 0 必须被拒，且文案要写出实到边界";
+    EXPECT_TRUE(validateParams({makeDouble(true, false)}, mid).empty());
+    // 上界开：1 被拒（今天 georef 的暗像元百分位就是这个形态）。
+    EXPECT_NE(validateParams({makeDouble(false, true)}, one).find("超出范围 [0, 1)"), std::string::npos);
+    EXPECT_TRUE(validateParams({makeDouble(false, true)}, mid).empty());
+    // 两端都开。
+    EXPECT_FALSE(validateParams({makeDouble(true, true)}, zero).empty());
+    EXPECT_FALSE(validateParams({makeDouble(true, true)}, one).empty());
+    // 越界方向本来就拒，开闭位不许把它放回去。
+    EXPECT_FALSE(validateParams({makeDouble(false, false)}, std::map<std::string, ParamValue>{{"ratio", 1.5}}).empty());
+
+    auto makeKernel = []() -> ParamSpec {
+        ParamSpec spec;
+        spec.key = "kernel_size";
+        spec.displayName = "核大小";
+        spec.type = ParamType::Int;
+        spec.minValue = 3;
+        spec.maxValue = 101;
+        return spec.setRequireOdd();
+    };
+    EXPECT_TRUE(validateParams({makeKernel()}, std::map<std::string, ParamValue>{{"kernel_size", 3}}).empty());
+    const std::string evenIssue =
+        validateParams({makeKernel()}, std::map<std::string, ParamValue>{{"kernel_size", 4}});
+    EXPECT_NE(evenIssue.find("必须是[3, 101] 内的奇数"), std::string::npos) << evenIssue;
+    // 区间判定先于奇偶：2 连下界都不过，报的就该是区间而不是奇偶。
+    EXPECT_NE(validateParams({makeKernel()}, std::map<std::string, ParamValue>{{"kernel_size", 2}})
+                  .find("超出范围"), std::string::npos);
+    // 奇偶位在没有生效区间时单独报（区间位关着 ⇒ min==max ⇒ 区间判定跳过）。
+    ParamSpec oddOnly;
+    oddOnly.key = "step";
+    oddOnly.displayName = "步长";
+    oddOnly.type = ParamType::Int;
+    oddOnly.requireOdd = true;
+    EXPECT_NE(validateParams({oddOnly}, std::map<std::string, ParamValue>{{"step", 8}}).find("必须是奇数"),
+              std::string::npos);
+    EXPECT_TRUE(validateParams({oddOnly}, std::map<std::string, ParamValue>{{"step", 7}}).empty());
+    // requireOdd 只对 Int 生效：Double 上声明它必须静默不判（否则 4.0 与 3.0 都会被拒）。
+    ParamSpec doubleOdd;
+    doubleOdd.key = "sigma";
+    doubleOdd.displayName = "Sigma";
+    doubleOdd.type = ParamType::Double;
+    doubleOdd.minValue = 0.0;
+    doubleOdd.maxValue = 1000.0;
+    doubleOdd.requireOdd = true;
+    EXPECT_TRUE(validateParams({doubleOdd}, std::map<std::string, ParamValue>{{"sigma", 4.0}}).empty())
+        << "奇偶位泄漏到 Double 支：4.0 本该放行";
+}
+
 TEST(FrameworkTest, PluginManagerEmpty) {
     gis::framework::PluginManager mgr;
     EXPECT_TRUE(mgr.plugins().empty());
