@@ -1,0 +1,75 @@
+{
+  "_comment": [
+    "anchor_guard 的登记表（判据本体 tests/check_anchor_guard.py，载体 tests/check_anchor_guard.cmake）。",
+    "carriers = 扫哪些活文本；index_roots = 锚的目标允许解析到哪些树。",
+    "vcpkg_installed/ 与 build/ 刻意不进索引：上游源码不随仓走 ⇒ 判据不能依赖本机有没有它。",
+    "⚠ 上游锚的行号在本机不可复核：现读 vcpkg_installed/ 只有 vcpkg/info 与 vcpkg/updates，没有任何 port 源文件。",
+    "  所以下面每条 lib 只写『哪个上游 + 版本口径』，路径只在载体注释自己已经写了路径时才跟着写；",
+    "  行号对不对属于『写注释那次现读』的产物，守卫这边只保证三件事：文件名的确是上游的（不是本仓改名）、",
+    "  名单不腐化（用不到就判 dead-registry）、锚数不增长（棘轮界）。",
+    "anchor_ceiling 必须逐字等于现读锚次数：多一条=新写裸锚（违反 R-D34），少一条=清了没降界，两个方向都判红。"
+  ],
+  "carriers": {
+    "roots": ["src", "tests"],
+    "exts": ["cpp", "h", "hpp", "cc", "inc", "ps1", "py", "cmake", "json", "txt"]
+  },
+  "index_roots": ["src", "tests", "cmake", "scripts", "installer", "resources"],
+  "anchor_ceiling": 182,
+  "upstream_files": [
+    {
+      "name": "gdaldataset.cpp",
+      "lib": "GDAL 3.12.4（载体写作 gcore/gdaldataset.cpp）",
+      "evidence": "GetGeoTransform 返回值语义与 y-flip 默认值的实现位置，被 gdal_wrapper.cpp / cutting_plugin.cpp / terrain_plugin.cpp 的注释引用"
+    },
+    {
+      "name": "gdal_geotransform.h",
+      "lib": "GDAL 3.12.4",
+      "evidence": "geotransform 结构体成员默认值那一段，gdal_wrapper.cpp 用它解释『未显式设置时拿到什么』"
+    },
+    {
+      "name": "gdalwarp_lib.cpp",
+      "lib": "GDAL 3.12.4（载体写作 apps/gdalwarp_lib.cpp）",
+      "evidence": "cutting_plugin.cpp 引用它解释 warp 给输出写变换的判据（本仓不调那条路径，只是说明上游行为）"
+    },
+    {
+      "name": "gdal_alg.h",
+      "lib": "GDAL 3.12.4",
+      "evidence": "terrain_plugin.cpp 用它钉 viewshed 系函数第 13 个实参 dfCurvCoeff 的位置与含义"
+    },
+    {
+      "name": "gdalrasterize.cpp",
+      "lib": "GDAL 3.12.4（载体写作 alg/gdalrasterize.cpp）",
+      "evidence": "vector_plugin_raster_convert.inc 用它说明 burn/attribute 两条语义在上游被写死在哪一段"
+    },
+    {
+      "name": "cpl_error.h",
+      "lib": "GDAL 3.12.4（CPL 端口）",
+      "evidence": "vector_plugin_duplicate_point_check.inc 用它证明 CPLAssert 在未定义 DEBUG 的两种配置里都不展开 ⇒ 没有上游断言替我们兜误用"
+    },
+    {
+      "name": "ogr_geometry.h",
+      "lib": "GDAL 3.12.4（OGR C++ API 头）",
+      "evidence": "OGRGeometry::toPoint() 的原文被两处注释引用，用来钉『非点几何 toPoint 返回 NULL』这条判定前提"
+    },
+    {
+      "name": "qsettings.h",
+      "lib": "Qt 6.11.2（载体写作 include/Qt6/QtCore/qsettings.h）",
+      "evidence": "类体里 Q_DISABLE_COPY(QSettings) 那行 ⇒ app_settings.h 用它说明 QSettings 既不可拷贝也不可移动"
+    },
+    {
+      "name": "deriv.cpp",
+      "lib": "OpenCV 4.14.0（载体写作 imgproc/src/deriv.cpp）",
+      "evidence": "cv::getScharrKernels 的 CV_Assert(dx >= 0 && dy >= 0 && dx+dy == 1) 位置；processing_plugin.cpp 与 test_plugins.cpp 的失败文案都引它。第三处是 test_plugins.cpp 里**原样引用的 OpenCV 异常串**（带省略号前缀，basename 仍是 deriv.cpp）"
+    },
+    {
+      "name": "segmentation.cpp",
+      "lib": "OpenCV 4.14.0",
+      "evidence": "watershed 的 CV_Assert(src.size() == dst.size()) 位置，test_plugins.cpp 用它解释尺寸不符为什么以 cv::Exception 失败"
+    },
+    {
+      "name": "filesystem.cpp",
+      "lib": "MSVC STL 工具集 14.44.35207（载体写作 crt/src/stl/filesystem.cpp）",
+      "evidence": "std::filesystem::rename 在本机被实现成带 MOVEFILE_COPY_ALLOWED 的 MoveFileExW ⇒ vector_plugin_common.inc 自己发不带该标志的调用，防跨卷静默退化成 copy+delete"
+    }
+  ]
+}

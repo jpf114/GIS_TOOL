@@ -699,7 +699,7 @@ function Resolve-ProvinceVectorInput {
 #   adjacency(prov3857) >= 1 / adjacency(buf30) == 0 四条一起，才既不是"猜 0"也不是给这份样本标定的常量。
 # ⚠ 产品口径差 N125（工单 C3b-A 现读到并登记、**C3d 已修复销账**）：overlap_check 曾自带一份只认
 #   Polygon/MultiPolygon 的交面积 switch，交集是 GeometryCollection 时落 default 得 0 ⇒ 不写行；而
-#   topology_check 走 polygonIntersectionArea()（common.inc:499-509）显式累加 GeometryCollection 的子面面积。
+#   topology_check 走 polygonIntersectionArea()（vector_plugin_common.inc 的 wkbGeometryCollection 分支）显式累加 GeometryCollection 的子面面积。
 #   prov3857 上修复前实测 overlap 报 0、topology 报 1 条（12,14,overlap,401282）⇒ 同一对要素两个动作自相矛盾。
 #   C3d 让 overlap_check 复用同一个 polygonIntersectionArea()（**单源**，本地 switch 已删除）⇒ 省界臂现读
 #   写出 12,14,401282，与 topology 那一行同值 ⇒ 跨动作等式不再需要"只在 buf30 那一臂写"的例外；
@@ -2288,7 +2288,7 @@ function Assert-C3cBSimplifyCase {
 # 判据六条，全部是不变式，没有一个数字是从本机产物抄来的：
 #   ① stdout 自报数 == 元数据 union_total_pieces == vector info 落盘读数（三段等式，同 C3f 的 ④ 口径）；
 #   ② union_input_pieces + union_overlap_pieces + union_overlay_pieces == union_total_pieces
-#      （实现 overlay.inc:177 自己声明的不变量，少一类或多一类都红）；
+#      （实现 vector_plugin_overlay.inc 的三个计数变量声明处 自己声明的不变量，少一类或多一类都红）；
 #   ③ 按 source 值把落盘产物三类各数一遍：逐类现读数 == 对应元数据值，且三类之和 == 落盘总数
 #      ⇒ 把"记账"与"真写出去的行"焊死，并钉住 source 词表只有 input/both/overlay 这三类；
 #   ④ 分块数下界 union_total_pieces >= 源层"几何非空"的要素数（推导写在
@@ -2304,12 +2304,12 @@ function Test-GeoJsonGeometryNonEmpty {
 
     # "几何非空"只问一件事：这棵几何树里有没有出现过坐标数字。OGR 的 IsEmpty() 对
     #   Polygon/MultiPolygon/LineString/MultiLineString 的语义就是"一个点都没有"，所以本函数与实现里
-    #   `if (!geom || geom->IsEmpty()) continue;`（overlay.inc:353-355）跳过的正是同一批要素。
+    #   `if (!geom || geom->IsEmpty()) continue;`（vector_plugin_overlay.inc 的源侧循环）跳过的正是同一批要素。
     # 判据 ④ 的下界推导（源侧）：路径 A 对每条**几何非空**的源要素只有两种收尾 ——
     #   (a) candidates 循环里第一次拿到非空交集时 consumed 仍为 null ⇒ piece = intersection->clone() 必非空
-    #       ⇒ 写出 >= 1 个 both 块（overlay.inc:370-392）；此后 consumed 才可能非空、后续 piece 才可能为空；
+    #       ⇒ 写出 >= 1 个 both 块（vector_plugin_overlay.inc 里写 both 块那一支）；此后 consumed 才可能非空、后续 piece 才可能为空；
     #   (b) 循环结束时 consumed 仍为 null ⇒ remainder = geom->clone() 必非空 ⇒ 写出 1 个 input 块
-    #       （overlay.inc:413-429；Difference 返 null 只可能发生在 consumed 非空那一支，即 (a) 已经写过块）。
+    #       （vector_plugin_overlay.inc 里写 input remainder 那一支；Difference 返 null 只可能发生在 consumed 非空那一支，即 (a) 已经写过块）。
     #   ⇒ "每条几何非空的源要素至少贡献一块"，于是 total_pieces >= 源层非空要素数 永远成立。
     # 下界为什么不从叠加侧取：叠加独有块允许为 0（叠加面被源面完全吞掉时 raw->IsEmpty() ⇒ 478-480 行
     #   continue，那是契约不是缺口）⇒ 叠加侧给不出任何非平凡下界。
@@ -2595,7 +2595,7 @@ function Assert-UnionPolyCase {
     $overlayPieces = Get-ReportedMetadataCount -Text $Case.Output -Key "union_overlay_pieces" `
         -Label ($Case.Name + " union_overlay_pieces")
 
-    # ② 三类之和 == 总数（实现 overlay.inc:177 自述的不变量）。
+    # ② 三类之和 == 总数（实现 vector_plugin_overlay.inc 的三个计数变量声明处 自述的不变量）。
     Assert-Condition -Condition (($inputPieces + $overlapPieces + $overlayPieces) -eq $totalPieces) -Message (
         $Case.Name + ": union_input_pieces(" + $inputPieces + ") + union_overlap_pieces(" + $overlapPieces +
         ") + union_overlay_pieces(" + $overlayPieces + ") != union_total_pieces(" + $totalPieces + ")")
@@ -2620,7 +2620,7 @@ function Assert-UnionPolyCase {
     # ⑥ 覆盖哨兵：路径 A 的判据（路径 B 契约上恒为 0）。
     Assert-Condition -Condition ($overlayPieces -ge 1) -Message (
         $Case.Name + ": union_overlay_pieces " + $overlayPieces + " < 1, so this run produced no " +
-        "overlay-only piece. Path B never writes any (overlay.inc:210), so either this leg silently fell " +
+        "overlay-only piece. Path B never writes any （vector_plugin_overlay.inc 路径 B 的分支点）, so either this leg silently fell " +
         "back to path B or the chosen pair no longer leaves any overlay-only area. Either way the leg has " +
         "lost path A coverage: re-choose the input pair, do not delete this assertion.")
 

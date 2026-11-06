@@ -2145,6 +2145,41 @@ add_test(
         -DREPO_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_geotransform_guard.cmake
 )
+# ── 批次 D N178：裸行号锚点守卫 anchor_guard ──────────────────────────────────────
+# 判据本体 tests/check_anchor_guard.py：活文本（src/ 与 tests/ 下的 cpp|h|hpp|cc|inc|ps1|py|cmake|json|txt）
+#   里每一处 `name.ext:N[-M]` 要么 ①在本仓唯一解析到文件且行号不超过该文件行数，要么
+#   ②文件名在 tests/anchor_guard_config.json 的上游名单里被点名（上游源码不随仓走 ⇒ 行号机器不可核，
+#   现读 vcpkg_installed/ 只有 vcpkg/info 与 vcpkg/updates，一条 port 源文件都没有）。
+# 另两条反空跑：登记表里的 anchor_ceiling 必须**逐字等于**现读锚数（多一条=新写了裸锚，违反 R-D34；
+#   少一条=清了锚却没把界降下来，于是下一刀可以悄悄加回去），上游名单里没被任何锚用到的条目判红
+#   （口径同 docs_match_cli 的 DEAD-ALLOWLIST）。立案理由就在本刀现读里：3 条锚指到 EOF 之后
+#   （N172-C3 删了 151 行 action_validation.cpp 与 78 行 gui_data_support.cpp，没人回头挪锚），
+#   13 条把 vector_plugin_common.inc 这类名字简写成 common.inc（补全路径后行号虽在范围内、指的却是别的代码）。
+# WHY 自证臂先跑：判据自己红 ⇒ 对仓库的结论一律不作数（与 geotransform_guard 同一顺序、同一退出码分层）。
+# WHY 自己再探一次解释器而不复用 _gis_geotransform_py / _gis_docs_py：三个守卫各自声明自己的"拒绝放行"，
+#   共用一个变量会让后人改其中一处探测时静默改掉本守卫的注册条件。
+find_program(GIS_ANCHOR_PYTHON NAMES python python3 py)
+set(_gis_anchor_py "")
+if(GIS_ANCHOR_PYTHON)
+    execute_process(
+        COMMAND "${GIS_ANCHOR_PYTHON}" -c "print('GIS_ANCHOR_PY_OK')"
+        OUTPUT_VARIABLE _gis_anchor_probe
+        ERROR_QUIET
+        RESULT_VARIABLE _gis_anchor_probe_rc
+        TIMEOUT 20
+    )
+    if(_gis_anchor_probe_rc EQUAL 0 AND _gis_anchor_probe MATCHES "GIS_ANCHOR_PY_OK")
+        set(_gis_anchor_py "${GIS_ANCHOR_PYTHON}")
+    endif()
+endif()
+add_test(
+    NAME anchor_guard
+    COMMAND ${CMAKE_COMMAND}
+        -DPY=${_gis_anchor_py}
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -DREPORT=${CMAKE_CURRENT_BINARY_DIR}/anchor_guard_report.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_anchor_guard.cmake
+)
 # Hard timeout for every test registered at configure time: a hanging test must fail, not
 # hang the pipeline. TESTS is the documented read-only directory property that lists the
 # tests add_test() has defined in this directory so far, so reading it at the very bottom

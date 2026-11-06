@@ -56,7 +56,7 @@ set(GIS_21C_SHAPE_PROBE_CLOSERE "[*]/")
 # 键 = "<相对插件目录的文件路径>|<剥 // 并折叠空白后的整行>"；不用行号（行号会随无关改动漂移成假账）。
 # 今天全树的**一处**合法命中：vector_plugin_info_filter.inc:93 的 where.find("/*") —— 它是
 #   **字符串字面量**（接收者是 std::string where），不是块注释起始符。另外两处候选都不命中：
-#   :92 的 where.find("--") 不含 /* 或 */；duplicate_point_check.inc:56-57 的 /** … */
+#   vector_plugin_info_filter.inc 里的 where.find("--") 不含 /* 或 */；vector_plugin_duplicate_point_check.inc 里那句 /** … */
 #   整行都在 // 注释里，剥 // 后只剩空白 ⇒ 被 if(NOT clean STREQUAL "") 挡在命中之外。
 #   实测取证：build/t21Fix_item12_green.log 的 block_comment_hits 与 build/t21Fix_blockscan.log。
 # ⚠ 这条表被 ③/② 抓过一次真红（本片的自查）：豁免表初版按"全树 2 处 /*"登记了 :40 与 :41 两条，

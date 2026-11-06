@@ -251,7 +251,7 @@ function Validate-CaseOutputs {
             Assert-Condition -Condition ($payload.matches.Count -eq $payload.count) -Message "matching_match match count mismatch"
             # Predicate-side fact behind the ratio-zero criterion: distances are non-negative.
             # NOTE: the ratio_test=0 value assert cannot live in this leg -- CLI validation
-            # (action_validation.cpp:574) restricts matching ratio_test to (0,1], rc=1 rejects 0.
+            # (matching_plugin.cpp ratio_test ParamSpec, exclusive lower bound) restricts matching ratio_test to (0,1], rc=1 rejects 0.
             # The zero point is pinned C++-side only (PluginTest.MatchingMatchRatioTestLadderAndZeroPoint).
             foreach ($m in @($payload.matches)) {
                 Assert-Condition -Condition ($m.distance -ge 0) -Message ("matching_match negative distance in payload: " + $m.distance)

@@ -13073,7 +13073,7 @@ TEST_F(PluginTest, VectorFilterWhereClauseAcceptsChineseAttributeValue) {
         ASSERT_NE(ds, nullptr);
         auto srs = std::make_unique<OGRSpatialReference>();
         srs->importFromEPSG(3857);
-        // 输出层类型由 resultLayerGeometryType() 归一成 MultiPolygon（common.inc:388-402），
+        // 输出层类型由 resultLayerGeometryType() 归一成 MultiPolygon（vector_plugin_common.inc 的 resultLayerGeometryType），
         // 输入直接按 MultiPolygon 建 ⇒ 回读时两侧同形，断言不必再猜驱动会怎么升维。
         auto* layer = ds->CreateLayer("provinces", srs.get(), wkbMultiPolygon, nullptr);
         ASSERT_NE(layer, nullptr);
@@ -18244,7 +18244,7 @@ TEST_F(PluginTest, DuplicatePointCheckSkipsNonPointFeatureGeometry) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
 
-    // 图层声明为混合类型时 effectiveLayerGeometryType 取首个非空要素的类型（common.inc:425-446），
+    // 图层声明为混合类型时 effectiveLayerGeometryType 取首个非空要素的类型（vector_plugin_common.inc 的 effectiveLayerGeometryType），
     // 这里首要素是 Point ⇒ 类型闸放行，后续 LineString 要素必须走"显式跳过并计数"分支。
     const std::string input = utf8PathString(getTestDir() / "t20_mixed_geom_dupes_input.geojson");
     const std::string output = utf8PathString(getTestDir() / "t20_mixed_geom_dupes_output.csv");
@@ -18296,7 +18296,7 @@ TEST_F(PluginTest, DuplicatePointCheckMultiPointKeepsZOutOfDedupKey) {
     auto* p = mgr_.find("vector");
     ASSERT_NE(p, nullptr);
 
-    // 既有去重键 pointKey（common.inc:626-631）是 setprecision(10) 的 "x,y" ⇒ 纯 2D、Z 被忽略。
+    // 既有去重键 pointKey（vector_plugin_common.inc 里那条定义）是 setprecision(10) 的 "x,y" ⇒ 纯 2D、Z 被忽略。
     // 这是既有语义，本用例只负责把它钉住，防止后来人"顺手把 Z 也纳入键"而悄悄改掉判定口径。
     const std::string input = utf8PathString(getTestDir() / "t20_multipoint_z_input.geojson");
     const std::string output = utf8PathString(getTestDir() / "t20_multipoint_z_output.csv");
@@ -18551,7 +18551,7 @@ TEST_F(PluginTest, VectorHoleCheckExecution) {
         << csvColumnContext(row1, 1, lines[1]);
     const CsvDoubleColumn row1Holes = csvColumnAsDouble(row1, 2);
     EXPECT_TRUE(row1Holes.ok) << "hole_count 列不是数字: " << csvColumnContext(row1, 2, lines[1]);
-    // 算式：F1 = 1 个外环 + 2 个内环 ⇒ getNumInteriorRings() = 2（Polygon 分支，common.inc:638）。
+    // 算式：F1 = 1 个外环 + 2 个内环 ⇒ getNumInteriorRings() = 2（Polygon 分支，vector_plugin_common.inc 的 geometryHoleCount）。
     // ⚠ R-C3b-1 选 ②：hole_count 是**内环计数**、不是量测，写成浮比只为了让机器级判据
     //   CoverageMeta.GoldEvidenceIsAuditable 认它作数值断言；1e-9 远小于任何整数偏差，语义损失为零。
     EXPECT_NEAR(2.0, row1Holes.value, 1e-9)
@@ -18569,7 +18569,7 @@ TEST_F(PluginTest, VectorHoleCheckExecution) {
     const CsvDoubleColumn row2Holes = csvColumnAsDouble(row2, 2);
     EXPECT_TRUE(row2Holes.ok) << "hole_count 列不是数字: " << csvColumnContext(row2, 2, lines[2]);
     // 算式：F3 = 子面 A(1 内环) + 子面 B(3 内环) ⇒ MultiPolygon 分支逐子面累加 = 1 + 3 = 4
-    //   （common.inc:639-645）。这条同时钉住"只数第一个子面"（会给 1）与"数外环"（会给 2+…）两类变异。
+    //   （vector_plugin_common.inc 的 geometryHoleCount MultiPolygon 分支）。这条同时钉住"只数第一个子面"（会给 1）与"数外环"（会给 2+…）两类变异。
     EXPECT_NEAR(4.0, row2Holes.value, 1e-9)
         << "F3 的内环计数应为 1+3=4: " << csvColumnContext(row2, 2, lines[2]);
 }
@@ -23469,7 +23469,7 @@ TEST_F(PluginTest, MatchingMatchRatioTestLadderAndZeroPoint) {
 
     // —— §2.3 比值闸零点：判据原文 m[0].distance < ratioTest * m[1].distance，
     //    距离非负 ⇒ ratio=0 时右端恒 0、左端 >=0 ⇒ 恒假 ⇒ **恰好 0 条**。
-    //    （CLI 够不到这一档：action_validation.cpp:574 把 ratio_test 的合法区间钉成 (0,1]，
+    //    （CLI 够不到这一档：matching 的 ratio_test ParamSpec 把合法区间钉成 (0,1]，
     //     0 会被参数校验拒掉；本用例走 PluginManager 直连所以可达。腿侧那条晋升不了，已如实记。）
     const int zero = runMatch(0.0, "rt0");
     EXPECT_NEAR(static_cast<double>(zero), 0.0, 0.0)

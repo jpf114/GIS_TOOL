@@ -5401,6 +5401,84 @@ C1 `65af9ee`（`ParamSpec` 加开/闭区间位与奇偶位，零行为变更）�
 受保护的 `terrain_plugin.cpp` blob 现值仍为 `fa34c3fbf9cc457e74cc460fb1dd9abeb7abe1bc`
 （C2 起，本把没碰 terrain）。
 
+### 批次 D N178（2026-11-06，新增第六条机器守卫 `anchor_guard`：活注释里的裸行号锚必须解得开、行号不许越界、锚数只许降；**不碰产品**）
+
+R-D34 早就定了"已提交文本不许写裸行号锚"，但一直没机器执行 ⇒ 攒到了本刀现读的规模。
+两个口径都记下来，不可互推：
+- 立案口径（2026-10-29，`git grep` 数**载体行**）：`src/` 15 文件 / 39 行、`tests/` 19 文件 / 139 行，合计 **178 行**；
+- 本刀口径（守卫数**锚的出现次数**，载体扩到 `src/` + `tests/` 的
+  `cpp|h|hpp|cc|inc|ps1|py|cmake|json|txt`）：修前 **198** 处 / 修后 **182** 处。
+  差在"一行里可以写两个锚"，复算 = `python tests/check_anchor_guard.py --repo-root . --config tests/anchor_guard_config.json`
+  的 `anchors=` 字段（把登记表的 `anchor_ceiling` 临时改成别的数就能看到棘轮红）。
+
+**判据形状：工单里"增量式 / 解析式 二选一"，本席位选的是两者能同时成立的交集**（不涉及用户可见行为，
+不需要拍板；理由随文）
+- `range`：锚解析到本仓文件、但行号（或区间上端）超过该文件行数 ⇒ 红。这是"解析式"里机器**能**核的那一半。
+- `unresolved`：锚既不在本仓、文件名又没登记为上游 ⇒ 红。带目录的锚按**整段后缀**比
+  （`cli/main.cpp` 能对上 `src/cli/main.cpp`；`common.inc` 对不上 `vector_plugin_common.inc`，段不等 ⇒ 正好抓住简写）。
+- `ambiguous`：不带目录的裸文件名在本仓命中 >1 个文件 ⇒ 红（读者必须自己猜）。
+- `ceiling`：登记表 `anchor_ceiling` 必须**逐字等于**现读锚数 ⇒ 多一条红（新写裸锚）、少一条也红
+  （清了锚却没把界降下来，于是下一刀可以悄悄加回去）。这一条顺带就是"扫描真的跑了"的地板：
+  解析器整体失效 ⇒ 现读掉到 0 ⇒ 与界不等 ⇒ 红，不需要另设地板。
+- `dead-registry`：上游名单里没被任何锚用到的条目 ⇒ 红（口径同 `docs_match_cli` 的 DEAD-ALLOWLIST）。
+**为什么不选纯"增量式"**：它要拿 `git diff` 当基准，ctest 在任意提交上跑就会随基线漂；
+**为什么不选纯"解析式（锚必须对上注释引用的那段原文）"**：现读 182 处里只有极少数写了可比的原文，
+其余是"某函数/某分支"式引用，硬套只会得到"把注释改写成可匹配文本"这种为判据服务的改写。
+
+**本刀修掉的 16 处（198 ⇒ 182）**
+- 3 处 `range`：全部是**本批次自己造成的**——N172-C3 删了 `action_validation.cpp` 151 行与
+  `gui_data_support.cpp` 78 行，`tests/test_plugins.cpp` 与 `tests/run_real_matching_regression.ps1` 里
+  指向 `action_validation.cpp:574` 的锚落到 EOF 之后（441 行），`tests/docs_sync_allowlist.json` 的
+  `gui_data_support.cpp:2799-2801` 同理（2793 行）。三处都改成"指符号不指行号"
+  （ratio_test 那条现在说"matching 的 `ParamSpec` 把合法区间钉成 (0,1]"，正是 C2 之后的真源）。
+- 13 处 `unresolved`（去重后 12 个目标）：`common.inc` / `overlay.inc` / `duplicate_point_check.inc`
+  这类**把文件名简写**的锚（`vector_plugin_` 前缀被省掉）。补全路径后**逐条把目标区间打出来对过内容**，
+  结果是 **12 个目标里 9 个指错、只有 3 个还指对**（对的是 `overlay.inc:370-392`＝写 both 块那一支、
+  `:413-429`＝写 input remainder 那一支、`:210`＝路径 B 的分支点）：
+  `common.inc:499-509` 讲 `polygonIntersectionArea()` 累加 GeometryCollection 子面面积，实际那几行是
+  数据源串的引号解析；`:388-402` 讲 `resultLayerGeometryType`，实际是 `stagedOutputPrefix` 与
+  `MoveFileExW` 的注释；`:425-446` 讲 `effectiveLayerGeometryType`，实际是 `normalizeSourceStringPath` 的注释；
+  `:626-631`、`:638`、`:639-645` 三处讲 `pointKey` 与 hole_count 的两个分支，实际全在边车替换的注释里
+  （真身分别是 `pointKey`、`geometryHoleCount` 的 Polygon / MultiPolygon 分支）；
+  `overlay.inc:177` 说"实现自述的不变量"，177 行是**空行**（不变量写在 179-180 三个计数变量的声明处）；
+  `:353-355` 引的那句 `if (!geom || geom->IsEmpty()) continue;` 差着几行；
+  `duplicate_point_check.inc:56-57` 说有 `/** … */`，那两行是 `while (GetNextFeature)` 与 `unique_ptr`。
+  ⇒ 处置一律改成**符号/分支名**、不留行号（而不是"补个行号"把可疑数字留在树里）：
+  `polygonIntersectionArea`、`resultLayerGeometryType`、`effectiveLayerGeometryType`、
+  `pointKey`、`geometryHoleCount` 的 Polygon / MultiPolygon 分支、写 both 块那一支、写 input remainder 那一支、
+  路径 B 的分支点。每条改前都在目标文件里 grep 过符号确实存在。
+
+**自证六臂（TDD 顺序照做：先跑桩 ⇒ `rc=2`、5 条 FAIL / 1 条 OK，再实现 ⇒ 6 条 OK）**
+其中一条臂在实现前就被自己否证：初版写的是 `stats["anchors"] != 99`，桩函数回 0 也满足 ⇒ **恒真的假臂**；
+改成"看 findings 里有没有 `ceiling` 这一类"才是真臂。这条已写进判据注释。
+
+**真仓变异探针（临时件 `tests/anchor_guard_mutation_probe.txt`，跑完即删、不入树）**
+里面埋三处：越界 `src/gui/gui_data_support.cpp:999999`、不存在的 `some/deleted/local_file.cpp:12`、
+已登记的上游 `gcore/gdaldataset.cpp:1509` ⇒ 守卫 `rc=1`，逐条点名 range 1 / unresolved 1 /
+"现读 185 != 登记表 182：多了 3 条"，第三条探针锚被正确归为 upstream 而不报红；删掉临时件后复跑 `rc=0`。
+
+**三条已量的射程限制（写在判据 docstring 与登记表注释里，别把这条守卫当成"锚都核对过了"）**
+① 上游锚只核"文件名登记过"，**不核行号**：现读 `vcpkg_installed/` 只有 `vcpkg/info` 与 `vcpkg/updates`，
+   一条 port 源文件都没有 ⇒ 上游行号是"写那次注释时的现读"，机器在此刻无法否证。
+② 本仓锚只核"文件在、行号不越界"，**不核内容**：本刀那 13 条简写锚就是活例——把名字补全后 13 条的行号
+   全都落在范围内，而其中 **10 次引用（9 个目标）指的并不是注释里说的那段代码** ⇒ 内容层面的收口靠
+   "逐刀把锚迁成符号名 + ceiling 必须等于现读"托住不许增长，终局是 182 → 0，不是一刀。
+③ 只认 `name.ext:N` 形态：`函数体 :1506-:1512` 这种**续行裸号**看不见（正则要吃文件名，
+   否则 `value: 5` 会一片误红）。本刀顺手把见到的那处（`tests/check_action_visible_keys_read.cmake`）改成了符号写法。
+
+**验收实到（终树重编后复跑，全部现读；Release 树仍未重编 ⇒ 本把只验收 Debug）**：
+Debug 全量 ctest **777/777 Passed、0 Failed、1355.53 s**（注册数 776 ⇒ **777**，+1 就是 `anchor_guard`，
+PRE_TEST 发现机制自己跟上）；单元二进制 `--gtest_list_tests` 现读 **626 tests from 24 test suites**（未变：
+本把只改注释文本，没加没删用例）；**六条**机器守卫在全量轮里 6/6 Passed：
+`param_guard_visible_keys_all_read` 4.90 s、`install_smoke` 8.96 s、`source_mojibake_guard` 18.54 s、
+`docs_match_cli` 1.17 s、`geotransform_guard` 0.57 s、`anchor_guard` 0.72 s（另 `install_closure` 12.67 s）；
+`anchor_guard` 在-suite 的 summary 现读 `carriers=35 anchor_lines=168 anchors=182 local_ok=157 upstream=25
+range=0 unresolved=0 ambiguous=0 ceiling=182 dead_registry=0`；
+`data/` 两件套：`find data -type f -newermt "2026-11-06 15:23:35"` = **0**、
+`check_data_baseline.py` = **BASELINE: 88  CURRENT: 88  DIFFS: 0**；
+卫生面：调查脚本与变异探针输出都在 `build/tmp/`（gitignored）内，探针临时件已删，
+取证用的 `tests/__pycache__` 提交前删掉；席位：控制器自跑，无独立复审席。
+
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件

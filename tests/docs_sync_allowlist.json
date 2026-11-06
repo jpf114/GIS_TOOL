@@ -26,7 +26,7 @@
   ],
   "verified": [
     {"action": "projection.transform", "key": "src_srs", "kinds": ["nodefaultspec"],
-     "evidence": "GUI 按动作覆盖默认值 src/gui/gui_data_support.cpp:2799-2801（EPSG:4326），动作兜底同值 src/plugins/projection/projection_plugin.cpp:463；插件级 ParamSpec 的空默认是给 reproject 的（空=读文件自带 CRS），CLI 因此不打 Default 行 ⇒ 文档写 EPSG:4326 与面板/行为一致",
+     "evidence": "GUI 按动作覆盖默认值 src/gui/gui_data_support.cpp 的 buildEffectiveGuiParamSpecs 里 projection.transform + src_srs 那条 defaultValue 改写（EPSG:4326），动作兜底同值 src/plugins/projection/projection_plugin.cpp:463；插件级 ParamSpec 的空默认是给 reproject 的（空=读文件自带 CRS），CLI 因此不打 Default 行 ⇒ 文档写 EPSG:4326 与面板/行为一致",
      "what": "文档 默认值=EPSG:4326，二进制 --help 无 Default"},
     {"action": "vector.filter", "key": "extent", "kinds": ["nodefaultspec"],
      "evidence": "extent 是 array 型 spec，CLI 的 Default 打印只覆盖 string/int/double/bool（src/cli/main.cpp:54-67）；动作兜底 0,0,0,0 且四值全零按未提供处理（src/plugins/vector/vector_plugin_info_filter.inc:187,191-194,215-216）",
