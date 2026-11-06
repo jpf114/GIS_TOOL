@@ -235,12 +235,12 @@ std::vector<gis::framework::ParamSpec> VectorPlugin::paramSpecs() const {
             "tolerance", "简化容差", "Douglas-Peucker 简化容差，单位与图层坐标单位一致",
             gis::framework::ParamType::Double, false, double{10.0},
             double{0.0}, double{1e9}
-        },
+        }.setExclusive(true, false),
         gis::framework::ParamSpec{
             "min_area", "最小面积", "小于该面积阈值的面碎片将被移除",
             gis::framework::ParamType::Double, false, double{10.0},
             double{0.0}, double{1e9}
-        },
+        }.setExclusive(true, false),
     };
 }
 

@@ -528,7 +528,9 @@ std::vector<gis::framework::ParamSpec> MainWindow::effectiveParamSpecs() const {
     auto filtered = gis::gui::buildEffectiveGuiParamSpecs(
         currentPlugin_->name(),
         actionKey,
-        currentPlugin_->paramSpecs(),
+        // N172-C2：面板拿到的必须是"本动作作用域后"的参数表（required 与区间/奇偶位都按动作取），
+        // 否则 CLI 与工作流判一份、面板判另一份，同一个越界值两边报两种结果。
+        gis::framework::actionScopedParamSpecs(*currentPlugin_, actionKey),
         visibleKeys,
         requiredKeys);
     for (auto& adjustedSpec : filtered) {

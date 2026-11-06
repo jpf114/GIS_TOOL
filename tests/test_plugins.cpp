@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <gis/framework/plugin.h>
 #include <gis/framework/plugin_manager.h>
+#include <gis/framework/action_validation.h>
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
 #include <gis/core/gdal_wrapper.h>
@@ -1081,6 +1082,92 @@ TEST_F(PluginTest, PerActionRequiredGateDropsOutputOnlyForStatsAndInfo) {
         EXPECT_TRUE(declaredRequired)
             << plugin->name() << " 的插件级 output 不再声明必填 ⇒ 真必填的那批动作会被一起放开";
     }
+}
+
+// N172-C2：13 条"比 ParamSpec 更严"的手写数值闸搬进声明层之后，派发层的边界判定必须逐条
+// 落在同一格上，而且手写层对同一份越界参数必须**不再报任何问题**（报了就说明数值界有两份写者）。
+// 每行判三件事：越界值被拒且文案里带实际生效的开/闭括号、界内值放行、手写闸返回空。
+TEST_F(PluginTest, DispatchNumericBoundsFollowScopedSpecs) {
+    struct Row {
+        const char* plugin;
+        const char* action;
+        const char* key;
+        gis::framework::ParamValue rejected;
+        gis::framework::ParamValue accepted;
+        const char* expectedFragment;
+    };
+    const std::vector<Row> rows = {
+        // 下界开：(0, x]
+        {"terrain", "stream_extract", "accum_threshold", 0.0, 10.0, "超出范围 (0, "},
+        {"georef", "minnaert_correction", "minnaert_k", 0.0, 0.5, "超出范围 (0, 1]"},
+        {"georef", "percentile_stretch", "bright_percentile", 0.0, 1.0, "超出范围 (0, 100]"},
+        {"vector", "sliver_remove", "min_area", 0.0, 10.0, "超出范围 (0, "},
+        {"vector", "simplify", "tolerance", 0.0, 2.0, "超出范围 (0, "},
+        {"matching", "match", "ratio_test", 0.0, 0.75, "超出范围 (0, 1]"},
+        {"matching", "corner", "quality_level", 0.0, 0.01, "超出范围 (0, 1]"},
+        // 上界开：[0, x)
+        {"georef", "cosine_correction", "sun_zenith_deg", 90.0, 89.5, "超出范围 [0, 90)"},
+        {"georef", "percentile_stretch", "dark_percentile", 100.0, 99.5, "超出范围 [0, 100)"},
+        // 奇偶位：三个动作共用同一条声明
+        {"processing", "filter", "kernel_size", 4, 5, "必须是[3, 101] "},
+        {"processing", "gabor_filter", "kernel_size", 4, 5, "必须是[3, 101] "},
+        {"processing", "glcm_texture", "kernel_size", 4, 5, "必须是[3, 101] "},
+        // per-action 开界
+        {"processing", "gabor_filter", "sigma", 0.0, 1.5, "超出范围 (0, 1000]"},
+    };
+    ASSERT_EQ(rows.size(), 13u) << "13 条更严的手写闸应当各有一行，多一条少一条都要先解释";
+
+    for (const auto& row : rows) {
+        auto* plugin = mgr_.find(row.plugin);
+        ASSERT_NE(plugin, nullptr) << row.plugin;
+        const auto scoped = gis::framework::actionScopedParamSpecs(*plugin, row.action);
+        const gis::framework::ParamSpec* spec = nullptr;
+        for (const auto& candidate : scoped) {
+            if (candidate.key == row.key) spec = &candidate;
+        }
+        ASSERT_NE(spec, nullptr) << row.plugin << "." << row.action << " 的作用域表里没有 " << row.key;
+
+        const std::string where = std::string(row.plugin) + "." + row.action + "." + row.key;
+        const std::map<std::string, gis::framework::ParamValue> badParams{{row.key, row.rejected}};
+        // 判的是"这一条 spec 的数值界"，所以直接取 validateParamValue —— 换成 validateParams
+        // 会先因缺 input/output 报「不能为空」，数值那一维根本轮不到（本轮第一版就踩在这上面）。
+        const std::string badIssue = gis::framework::validateParamValue(*spec, &row.rejected);
+        EXPECT_NE(badIssue.find(row.expectedFragment), std::string::npos)
+            << where << " 越界值实到文案：" << badIssue;
+        EXPECT_TRUE(gis::framework::validateParamValue(*spec, &row.accepted).empty())
+            << where << " 界内值被拒：" << gis::framework::validateParamValue(*spec, &row.accepted);
+        EXPECT_FALSE(gis::framework::validateActionSpecificParams(row.plugin, row.action, badParams)
+                         .has_value())
+            << where << " 手写层仍在判这个界 ⇒ 数值界有两份写者";
+    }
+
+    // 反臂（per-action 钩子真正承重的证据）：sigma=0 在 filter 必须是合法值 ——
+    // gaussian 支把 sigma<=0 交给上游按核尺寸取的硬编码二项式核，既有文档与 [:]GOLD 都按此写。
+    auto* processing = mgr_.find("processing");
+    ASSERT_NE(processing, nullptr);
+    const auto sigmaSpecOf = [&](const std::string& action) {
+        for (const auto& candidate : gis::framework::actionScopedParamSpecs(*processing, action)) {
+            if (candidate.key == "sigma") return candidate;
+        }
+        ADD_FAILURE() << "processing." << action << " 的作用域表里没有 sigma 这条 spec";
+        return gis::framework::ParamSpec{};
+    };
+    const gis::framework::ParamValue sigmaZero = 0.0;
+    EXPECT_TRUE(gis::framework::validateParamValue(sigmaSpecOf("filter"), &sigmaZero).empty())
+        << "gabor_filter 的开界泄漏到了 filter：filter 的 sigma=0 是上游硬编码二项式核的入口";
+    EXPECT_FALSE(gis::framework::validateParamValue(sigmaSpecOf("gabor_filter"), &sigmaZero).empty())
+        << "反向：gabor_filter 的 sigma=0 必须仍然被拒";
+
+    // glcm 那句硬写的「窗口大小」从此不存在：报错里的名字必须是 spec 的 displayName（核大小）。
+    const gis::framework::ParamValue evenKernel = 4;
+    std::string glcmIssue;
+    for (const auto& candidate : gis::framework::actionScopedParamSpecs(*processing, "glcm_texture")) {
+        if (candidate.key == "kernel_size") {
+            glcmIssue = gis::framework::validateParamValue(candidate, &evenKernel);
+        }
+    }
+    EXPECT_EQ(glcmIssue.find("窗口大小"), std::string::npos)
+        << "glcm_texture 的报错里不该再出现硬写的「窗口大小」：" << glcmIssue;
 }
 
 TEST_F(PluginTest, ProcessingPluginParams) {
@@ -2554,9 +2641,10 @@ TEST_F(PluginTest, ProcessingFilterExecution) {
 
     // ---- S10：kernel_size 的静默纠正段（只有**进程内直调**可达）----
     // doFilter 里紧挨着两行：`if (kernelSize % 2 == 0) kernelSize++;` 与 `if (kernelSize < 3) kernelSize = 3;`。
-    // CLI / 工作流 / GUI 的三处 Run 入口都先过 action 级校验（「不小于 3 的奇数」⇒ 直接失败），
+    // CLI / 工作流 / GUI 的三处 Run 入口都先过派发层校验（奇偶位写在 ParamSpec 上 ⇒ 直接失败），
     // 所以这两行在真实命令行上进不来 ⇒ 本把把它**钉成「进程内直调才有的行为」**，不当正常路径
-    // （四处口径分叉立 N182，修法不在本把）。
+    // （四处口径分叉立 N182；N172-C2 已把 spec / 手写闸 / GUI 魔数三份收成 ParamSpec 一处，
+    //  doFilter 这两行静默改写是余下的那一处，归 N172-C4）。
     const std::string outMedianK4 = utf8PathString(dir / "p3b_filter_median_k4.tif");
     const std::string outMedianK5 = utf8PathString(dir / "p3b_filter_median_k5.tif");
     auto runMedianK4 = runFilter(plateauInput, outMedianK4, "median", 4, 1.5, 1);
@@ -20024,6 +20112,8 @@ TEST_F(PluginTest, TerrainCurvatureHandValueOnUnitPlane) {
 // 三幅 DEM 沿用前两把刀同一套：DEM-P（z=x、像元 1.0）、DEM-F（z=5）、DEM-N（createTerrainRaster，48×48、像元 0.001）。
 //
 // 判别变异（本刀实测三臂，全部还原后 git hash-object = 588a42504ee19bcb551f8214e5c1adb68cea20e9）：
+//   ⚠ 那个哈希是**当时**的基线。N172-C2 往本插件的 accum_threshold 声明上加了开界位，基线 blob 已经换值
+//   （现值写在 docs/RELEASE.md 的 N172-C2 节）⇒ 还原判据一律用字节备份的 md5 对撞，别拿旧哈希当"还原成功"。
 //   MUT-ARM-SWAP（:238 两支公式对调）⇒ profile 与 plan 两条用例同时红（左边缘 2.86↔0、噪声点挪
 //     0.19~2.80），tpi/tri/curvature/roughness 绿；腿红在 terrain_profile_curvature min
 //     (actual=-9.18331 expected=-2.385005) ⇒ -9.18331 正是 plan 的 Min ⇒ 对调在腿上也看得见。

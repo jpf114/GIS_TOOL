@@ -219,12 +219,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         if (const auto zFactor = doubleParamValue(params, "z_factor"); zFactor.has_value() && *zFactor <= 0.0) {
             return ActionValidationIssue{"z_factor", "参数“高程缩放”必须大于 0"};
         }
-        if (actionKey == "stream_extract") {
-            if (const auto threshold = doubleParamValue(params, "accum_threshold");
-                threshold.has_value() && *threshold <= 0.0) {
-                return ActionValidationIssue{"accum_threshold", "参数“汇流阈值”必须大于 0"};
-            }
-        }
         if (actionKey == "profile_extract") {
             const std::string pathValue = stringParam("profile_path");
             if (gis::core::trimString(pathValue).empty()) {
@@ -460,13 +454,9 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         (actionKey == "cosine_correction" || actionKey == "minnaert_correction" ||
          actionKey == "c_correction")) {
         const auto band = intParamValue(params, "band");
-        const auto sunZenith = doubleParamValue(params, "sun_zenith_deg");
         const auto sunAzimuth = doubleParamValue(params, "sun_azimuth_deg");
         if (band.has_value() && *band <= 0) {
             return ActionValidationIssue{"band", "参数“波段序号”必须大于 0"};
-        }
-        if (sunZenith.has_value() && (*sunZenith < 0.0 || *sunZenith >= 90.0)) {
-            return ActionValidationIssue{"sun_zenith_deg", "参数“太阳天顶角”应落在 [0, 90) 范围内"};
         }
         if (sunAzimuth.has_value() && (*sunAzimuth < 0.0 || *sunAzimuth > 360.0)) {
             return ActionValidationIssue{"sun_azimuth_deg", "参数“太阳方位角”应落在 [0, 360] 范围内"};
@@ -474,12 +464,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
             return ActionValidationIssue{"output", "参数“输出栅格”应使用 .tif 或 .tiff"};
-        }
-        if (actionKey == "minnaert_correction") {
-            const auto minnaertK = doubleParamValue(params, "minnaert_k");
-            if (minnaertK.has_value() && *minnaertK <= 0.0) {
-                return ActionValidationIssue{"minnaert_k", "参数“Minnaert 系数”必须大于 0"};
-            }
         }
         if (actionKey == "c_correction") {
             const auto cValue = doubleParamValue(params, "c_value");
@@ -492,12 +476,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     if (pluginName == "georef" && actionKey == "percentile_stretch") {
         const auto darkPercentile = doubleParamValue(params, "dark_percentile");
         const auto brightPercentile = doubleParamValue(params, "bright_percentile");
-        if (darkPercentile.has_value() && (*darkPercentile < 0.0 || *darkPercentile >= 100.0)) {
-            return ActionValidationIssue{"dark_percentile", "参数“暗像元百分位”应落在 [0, 100) 范围内"};
-        }
-        if (brightPercentile.has_value() && (*brightPercentile <= 0.0 || *brightPercentile > 100.0)) {
-            return ActionValidationIssue{"bright_percentile", "参数“亮像元百分位”应落在 (0, 100] 范围内"};
-        }
         if (darkPercentile.has_value() && brightPercentile.has_value() &&
             *darkPercentile >= *brightPercentile) {
             return ActionValidationIssue{"bright_percentile", "参数“亮像元百分位”必须大于“暗像元百分位”"};
@@ -543,13 +521,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
-    if (pluginName == "vector" && actionKey == "sliver_remove") {
-        const auto minArea = doubleParamValue(params, "min_area");
-        if (minArea.has_value() && *minArea <= 0.0) {
-            return ActionValidationIssue{"min_area", "参数“最小面积”必须大于 0"};
-        }
-    }
-
     if (pluginName == "vector" && actionKey == "rasterize") {
         const std::string outputPath = stringParam("output");
         if (!outputPath.empty() && !endsWithOneOf(outputPath, {".tif", ".tiff"})) {
@@ -561,22 +532,8 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
-    if (pluginName == "vector" && actionKey == "simplify") {
-        const auto tolerance = doubleParamValue(params, "tolerance");
-        if (tolerance.has_value() && *tolerance <= 0.0) {
-            return ActionValidationIssue{"tolerance", "参数“简化容差”必须大于 0"};
-        }
-    }
 
     if (pluginName == "matching") {
-        if (const auto ratio = doubleParamValue(params, "ratio_test");
-            ratio.has_value() && (*ratio <= 0.0 || *ratio > 1.0)) {
-            return ActionValidationIssue{"ratio_test", "参数“Lowe比率阈值”应落在 (0, 1] 范围内"};
-        }
-        if (const auto quality = doubleParamValue(params, "quality_level");
-            quality.has_value() && (*quality <= 0.0 || *quality > 1.0)) {
-            return ActionValidationIssue{"quality_level", "参数“质量水平”应落在 (0, 1] 范围内"};
-        }
         if (const auto minDistance = doubleParamValue(params, "min_distance");
             minDistance.has_value() && *minDistance < 0.0) {
             return ActionValidationIssue{"min_distance", "参数“最小间距”必须大于等于 0"};
@@ -584,12 +541,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
     }
 
     if (pluginName == "processing") {
-        if (actionKey == "filter" || actionKey == "gabor_filter") {
-            const auto kernelSize = intParamValue(params, "kernel_size");
-            if (kernelSize.has_value() && (*kernelSize < 3 || *kernelSize % 2 == 0)) {
-                return ActionValidationIssue{"kernel_size", "参数“核大小”必须是不小于 3 的奇数"};
-            }
-        }
         if (actionKey == "enhance") {
             if (const auto gamma = doubleParamValue(params, "gamma");
                 gamma.has_value() && *gamma <= 0.0) {
@@ -603,14 +554,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
             }
         }
         if (actionKey == "gabor_filter") {
-            const auto kernelSize = intParamValue(params, "kernel_size");
-            if (kernelSize.has_value() && (*kernelSize < 3 || *kernelSize % 2 == 0)) {
-                return ActionValidationIssue{"kernel_size", "参数“核大小”必须是不小于 3 的奇数"};
-            }
-            if (const auto sigma = doubleParamValue(params, "sigma");
-                sigma.has_value() && *sigma <= 0.0) {
-                return ActionValidationIssue{"sigma", "参数“sigma值”必须大于 0"};
-            }
             if (const auto lambda = doubleParamValue(params, "gabor_lambda");
                 lambda.has_value() && *lambda <= 0.0) {
                 return ActionValidationIssue{"gabor_lambda", "参数“波长”必须大于 0"};
@@ -621,10 +564,6 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
             }
         }
         if (actionKey == "glcm_texture") {
-            const auto kernelSize = intParamValue(params, "kernel_size");
-            if (kernelSize.has_value() && (*kernelSize < 3 || *kernelSize % 2 == 0)) {
-                return ActionValidationIssue{"kernel_size", "参数“窗口大小”必须是不小于 3 的奇数"};
-            }
             const auto levels = intParamValue(params, "glcm_levels");
             if (levels.has_value() && *levels < 2) {
                 return ActionValidationIssue{"glcm_levels", "参数“灰度级数”必须大于等于 2"};

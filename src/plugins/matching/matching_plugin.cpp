@@ -66,7 +66,7 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"method", "特征方法", "Feature detector method", gis::framework::ParamType::Enum, false, std::string{"sift"}, int{0}, int{0}, {"sift", "orb", "akaze"}},
         gis::framework::ParamSpec{"match_method", "匹配器", "Descriptor matching method", gis::framework::ParamType::Enum, false, std::string{"bf"}, int{0}, int{0}, {"bf", "flann"}},
         gis::framework::ParamSpec{"max_points", "最大特征点", "Maximum number of detected feature points", gis::framework::ParamType::Int, false, int{5000}, int{1}, int{100000}},
-        gis::framework::ParamSpec{"ratio_test", "比值检验", "Lowe ratio threshold in range [0, 1]", gis::framework::ParamType::Double, false, double{0.75}, double{0.0}, double{1.0}},
+        gis::framework::ParamSpec{"ratio_test", "比值检验", "Lowe ratio threshold; above 0 and at most 1", gis::framework::ParamType::Double, false, double{0.75}, double{0.0}, double{1.0}}.setExclusive(true, false),
         gis::framework::ParamSpec{"transform", "变换模型", "Registration transform model", gis::framework::ParamType::Enum, false, std::string{"affine"}, int{0}, int{0}, {"affine", "projective", "similarity", "translation"}},
         gis::framework::ParamSpec{"resample", "重采样", "Resampling method for warped output", gis::framework::ParamType::Enum, false, std::string{"bilinear"}, int{0}, int{0}, {"nearest", "bilinear", "cubic"}},
         gis::framework::ParamSpec{"change_method", "变化方法", "Change detection method", gis::framework::ParamType::Enum, false, std::string{"differencing"}, int{0}, int{0}, {"differencing", "ratio", "pcd"}},
@@ -77,7 +77,7 @@ std::vector<gis::framework::ParamSpec> MatchingPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"ecc_epsilon", "ECC收敛阈值", "ECC termination epsilon", gis::framework::ParamType::Double, false, double{1e-6}, double{1e-10}, double{1.0}},
         gis::framework::ParamSpec{"corner_method", "角点方法", "Corner detection method", gis::framework::ParamType::Enum, false, std::string{"harris"}, int{0}, int{0}, {"harris", "shi_tomasi"}},
         gis::framework::ParamSpec{"max_corners", "最大角点数", "Maximum number of returned corners", gis::framework::ParamType::Int, false, int{5000}, int{1}, int{100000}},
-        gis::framework::ParamSpec{"quality_level", "角点质量", "Corner quality level in range [0, 1]", gis::framework::ParamType::Double, false, double{0.01}, double{0.0}, double{1.0}},
+        gis::framework::ParamSpec{"quality_level", "角点质量", "Corner quality level; above 0 and at most 1", gis::framework::ParamType::Double, false, double{0.01}, double{0.0}, double{1.0}}.setExclusive(true, false),
         gis::framework::ParamSpec{"min_distance", "最小间距", "Minimum spacing between corners", gis::framework::ParamType::Double, false, double{10.0}, double{0.0}, double{10000.0}},
         gis::framework::ParamSpec{"stitch_confidence", "拼接置信度", "Panorama confidence threshold", gis::framework::ParamType::Double, false, double{0.5}, double{0.0}, double{1.0}},
     };

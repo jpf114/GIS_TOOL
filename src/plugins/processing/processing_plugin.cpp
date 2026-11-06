@@ -33,7 +33,7 @@ std::vector<gis::framework::ParamSpec> ProcessingPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"threshold_value", "阈值", "Threshold value", gis::framework::ParamType::Double, false, double{128.0}, double{0.0}, double{65535.0}},
         gis::framework::ParamSpec{"max_value", "最大值", "Maximum output value", gis::framework::ParamType::Double, false, double{255.0}, double{0.0}, double{65535.0}},
         gis::framework::ParamSpec{"filter_type", "滤波类型", "Filter type", gis::framework::ParamType::Enum, false, std::string{"gaussian"}, int{0}, int{0}, {"gaussian", "median", "bilateral", "morph_open", "morph_close", "morph_dilate", "morph_erode"}},
-        gis::framework::ParamSpec{"kernel_size", "核大小", "Kernel size", gis::framework::ParamType::Int, false, int{5}, int{1}, int{101}},
+        gis::framework::ParamSpec{"kernel_size", "核大小", "Kernel size; odd and at least 3", gis::framework::ParamType::Int, false, int{5}, int{3}, int{101}}.setRequireOdd(),
         gis::framework::ParamSpec{"sigma", "Sigma", "Sigma value", gis::framework::ParamType::Double, false, double{1.5}, double{0.0}, double{1000.0}},
         gis::framework::ParamSpec{"gabor_theta", "Gabor Theta", "Gabor theta", gis::framework::ParamType::Double, false, double{0.0}, double{0.0}, double{6.2832}},
         gis::framework::ParamSpec{"gabor_lambda", "Gabor Lambda", "Gabor lambda", gis::framework::ParamType::Double, false, double{8.0}, double{0.001}, double{1000.0}},
@@ -83,6 +83,18 @@ std::set<std::string> ProcessingPlugin::requiredParamKeys(const std::string& act
         keys.erase("output");
     }
     return keys;
+}
+
+void ProcessingPlugin::adjustActionSpec(gis::framework::ParamSpec& spec,
+                                        const std::string& actionKey) const {
+    // N172/N182：全仓实测只有这一个键需要"同一插件、不同动作、边界开闭不同"。
+    // sigma 的 0 在两支里含义不同：filter 的 gaussian 支允许 0（上游按核尺寸取硬编码二项式核，
+    // 派发层今天也放行），gabor_filter 的 0 被插件自己的前置检查拒
+    // （`Result::fail("sigma must be positive")`，GB-4 那支用例逐字钉着，`Gabor 滤波.md` 也写了"必须大于 0"）。
+    // ⇒ 开界只加在 gabor_filter 上，等于把这条 per-action 事实从手写层搬进声明层。
+    if (actionKey == "gabor_filter" && spec.key == "sigma") {
+        spec.exclusiveMin = true;
+    }
 }
 
 gis::framework::Result ProcessingPlugin::execute(

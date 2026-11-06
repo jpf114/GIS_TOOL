@@ -14,6 +14,7 @@ public:
 
     std::vector<gis::framework::ParamSpec> paramSpecs() const override;
     std::set<std::string> requiredParamKeys(const std::string& actionKey) const override;
+    void adjustActionSpec(gis::framework::ParamSpec& spec, const std::string& actionKey) const override;
 
     gis::framework::Result execute(
         const std::map<std::string, gis::framework::ParamValue>& params,

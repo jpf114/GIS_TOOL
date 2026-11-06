@@ -2719,10 +2719,9 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
         // Enforced by GuiContract.EffectiveSpecsAgreeWithPluginSpecs.
 
         if (pluginName == "matching") {
-            if (spec.key == "ratio_test" || spec.key == "quality_level") {
-                adjustedSpec.minValue = 0.000001;
-                adjustedSpec.maxValue = 1.0;
-            } else if (spec.key == "min_distance") {
+            // N172-C2：ratio_test / quality_level 的 (0,1] 现在由插件级 ParamSpec 的开界位声明，
+            // GUI 不再另造 0.000001 这种"近似大于 0"的伪下界（它既比 CLI 松又比手写闸松，是三套口径）。
+            if (spec.key == "min_distance") {
                 adjustedSpec.minValue = 0.0;
             } else if (spec.key == "stitch_confidence") {
                 adjustedSpec.minValue = 0.0;
@@ -2743,8 +2742,6 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
             } else if (spec.key == "altitude") {
                 adjustedSpec.minValue = 0.0;
                 adjustedSpec.maxValue = 90.0;
-            } else if (spec.key == "accum_threshold") {
-                adjustedSpec.minValue = 0.000001;
             } else if (spec.key == "observer_height" || spec.key == "target_height" || spec.key == "max_distance") {
                 adjustedSpec.minValue = 0.0;
             }
@@ -2755,9 +2752,9 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
              spec.key == "swir1_band" || spec.key == "swir2_band")) {
             adjustedSpec.minValue = 1;
         }
-        if (pluginName == "vector" && (spec.key == "resolution" || spec.key == "tolerance")) {
-            adjustedSpec.minValue = 0.000001;
-        }
+        // N172-C2：vector 的 tolerance 界 (0,1e9] 与 resolution 界 [0.001,1e9] 都由插件级 ParamSpec
+        //   声明，这里原先那行 minValue = 0.000001 一支让 GUI 比 CLI 松（5e-5 在面板能提交、在命令行被拒），
+        //   两支口径就此并回一份。
         if (pluginName == "processing") {
             if (spec.key == "gamma") {
                 adjustedSpec.minValue = 0.000001;
@@ -2772,10 +2769,6 @@ std::vector<gis::framework::ParamSpec> buildEffectiveGuiParamSpecs(
                 //（`54df42c:2449-2450`：`} else if (spec.key == "k") {` 头与 `adjustedSpec.minValue = 1;` 各 1 行，
                 //  闭合的 `}` 属 else-if 链、删了也不消失 ⇒ 之前写的"5 行"是从交接抄来未换算，此处按实测订正）。
                 adjustedSpec.minValue = 1;
-            } else if (spec.key == "kernel_size") {
-                adjustedSpec.minValue = 3;
-            } else if (spec.key == "sigma" || spec.key == "gabor_lambda" || spec.key == "gabor_gamma") {
-                adjustedSpec.minValue = 0.000001;
             } else if (spec.key == "glcm_levels") {
                 adjustedSpec.minValue = 2;
             } else if (spec.key == "spatial_radius" || spec.key == "color_radius") {

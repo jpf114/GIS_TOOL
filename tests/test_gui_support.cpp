@@ -1528,11 +1528,6 @@ INSTANTIATE_TEST_SUITE_P(
             "band", ""
         },
         ActionValidationTestParam{
-            "CosineCorrectionSunZenithRange", "georef", "cosine_correction",
-            {{"band", 1}, {"sun_zenith_deg", 95.0}},
-            "sun_zenith_deg", ""
-        },
-        ActionValidationTestParam{
             "CosineCorrectionSunAzimuthRange", "georef", "cosine_correction",
             {{"sun_zenith_deg", 30.0}, {"sun_azimuth_deg", 400.0}},
             "sun_azimuth_deg", ""
@@ -1546,16 +1541,6 @@ INSTANTIATE_TEST_SUITE_P(
             "MinnaertCorrectionBandZero", "georef", "minnaert_correction",
             {{"band", 0}},
             "band", ""
-        },
-        ActionValidationTestParam{
-            "MinnaertCorrectionKZero", "georef", "minnaert_correction",
-            {{"band", 1}, {"minnaert_k", 0.0}},
-            "minnaert_k", ""
-        },
-        ActionValidationTestParam{
-            "MinnaertCorrectionSunZenithRange", "georef", "minnaert_correction",
-            {{"minnaert_k", 0.5}, {"sun_zenith_deg", 95.0}},
-            "sun_zenith_deg", ""
         },
         ActionValidationTestParam{
             "MinnaertCorrectionSunAzimuthRange", "georef", "minnaert_correction",
@@ -1573,44 +1558,14 @@ INSTANTIATE_TEST_SUITE_P(
             "c_value", ""
         },
         ActionValidationTestParam{
-            "CCorrectionSunZenithRange", "georef", "c_correction",
-            {{"c_value", 0.1}, {"sun_zenith_deg", 95.0}},
-            "sun_zenith_deg", ""
-        },
-        ActionValidationTestParam{
-            "PercentileStretchDarkPercentile", "georef", "percentile_stretch",
-            {{"dark_percentile", 100.0}},
-            "dark_percentile", ""
-        },
-        ActionValidationTestParam{
             "PercentileStretchBrightLessThanDark", "georef", "percentile_stretch",
             {{"dark_percentile", 10.0}, {"bright_percentile", 10.0}},
-            "bright_percentile", ""
-        },
-        ActionValidationTestParam{
-            "PercentileStretchBrightOver100", "georef", "percentile_stretch",
-            {{"bright_percentile", 101.0}},
             "bright_percentile", ""
         },
         ActionValidationTestParam{
             "RpcOrthorectifyOutputExt", "georef", "rpc_orthorectify",
             {{"output", std::string("D:/data/result.json")}},
             "output", ""
-        },
-        ActionValidationTestParam{
-            "FilterEvenKernelSize", "processing", "filter",
-            {{"kernel_size", 4}},
-            "kernel_size", "参数“核大小”必须是不小于 3 的奇数"
-        },
-        ActionValidationTestParam{
-            "GaborFilterEvenKernelSize", "processing", "gabor_filter",
-            {{"kernel_size", 4}},
-            "kernel_size", ""
-        },
-        ActionValidationTestParam{
-            "GaborFilterSigmaZero", "processing", "gabor_filter",
-            {{"kernel_size", 5}, {"sigma", 0.0}},
-            "sigma", ""
         },
         ActionValidationTestParam{
             "GaborFilterLambdaZero", "processing", "gabor_filter",
@@ -1621,11 +1576,6 @@ INSTANTIATE_TEST_SUITE_P(
             "GaborFilterGammaZero", "processing", "gabor_filter",
             {{"gabor_gamma", 0.0}},
             "gabor_gamma", ""
-        },
-        ActionValidationTestParam{
-            "GlcmTextureEvenKernelSize", "processing", "glcm_texture",
-            {{"kernel_size", 4}},
-            "kernel_size", ""
         },
         ActionValidationTestParam{
             "GlcmTextureLevelsOne", "processing", "glcm_texture",
@@ -1653,19 +1603,9 @@ INSTANTIATE_TEST_SUITE_P(
             "output", ""
         },
         ActionValidationTestParam{
-            "VectorSimplifyToleranceZero", "vector", "simplify",
-            {{"tolerance", 0.0}},
-            "tolerance", ""
-        },
-        ActionValidationTestParam{
             "VectorSliverRemoveOutputExt", "vector", "sliver_remove",
             {{"output", std::string("D:/data/output.csv")}},
             "output", ""
-        },
-        ActionValidationTestParam{
-            "VectorSliverRemoveMinAreaZero", "vector", "sliver_remove",
-            {{"output", std::string("D:/data/output.gpkg")}, {"min_area", 0.0}},
-            "min_area", ""
         },
         ActionValidationTestParam{
             "VectorSpatialJoinOutputExt", "vector", "spatial_join",
@@ -1691,11 +1631,6 @@ INSTANTIATE_TEST_SUITE_P(
             "TerrainHillshadeAltitudeRange", "terrain", "hillshade",
             {{"band", 1}, {"z_factor", 1.0}, {"azimuth", 315.0}, {"altitude", 100.0}},
             "altitude", ""
-        },
-        ActionValidationTestParam{
-            "TerrainStreamExtractThresholdZero", "terrain", "stream_extract",
-            {{"band", 1}, {"z_factor", 1.0}, {"accum_threshold", 0.0}},
-            "accum_threshold", ""
         },
         ActionValidationTestParam{
             "TerrainProfileExtractPathEmpty", "terrain", "profile_extract",
@@ -1893,10 +1828,16 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesMatchingRanges) {
         {});
 
     ASSERT_EQ(filtered.size(), 4u);
-    EXPECT_DOUBLE_EQ(std::get<double>(filtered[0].minValue), 0.000001);
-    EXPECT_DOUBLE_EQ(std::get<double>(filtered[0].maxValue), 1.0);
-    EXPECT_DOUBLE_EQ(std::get<double>(filtered[1].minValue), 0.000001);
-    EXPECT_DOUBLE_EQ(std::get<double>(filtered[1].maxValue), 1.0);
+    // N172-C2：ratio_test / quality_level 的 (0, 1] 现在由 matching 的 ParamSpec 声明
+    // （exclusiveMin + 上界 1.0），展示层那份 0.000001 伪下界删掉。合成 spec 只有 5 个初始化项
+    // ⇒ minValue 停在 ParamSpec 默认的 int{0}，这两条判的是"GUI 没有另造界"；
+    // 真实插件那一侧的界由 PluginTest.DispatchNumericBoundsFollowScopedSpecs 判。
+    EXPECT_TRUE(std::holds_alternative<int>(filtered[0].minValue))
+        << "ratio_test 的下界不该由 GUI 改写";
+    EXPECT_EQ(std::get<int>(filtered[0].minValue), 0);
+    EXPECT_TRUE(std::holds_alternative<int>(filtered[1].minValue))
+        << "quality_level 的下界不该由 GUI 改写";
+    EXPECT_EQ(std::get<int>(filtered[1].minValue), 0);
     EXPECT_DOUBLE_EQ(std::get<double>(filtered[2].minValue), 0.0);
     EXPECT_DOUBLE_EQ(std::get<double>(filtered[3].minValue), 0.0);
     EXPECT_DOUBLE_EQ(std::get<double>(filtered[3].maxValue), 1.0);
@@ -1974,7 +1915,12 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
         {"tolerance"},
         {"tolerance"});
     ASSERT_EQ(vectorFiltered.size(), 1u);
-    EXPECT_DOUBLE_EQ(std::get<double>(vectorFiltered[0].minValue), 0.000001);
+    // N172-C2：GUI 不再给 tolerance 另造 0.000001 伪下界 —— 下界 (0, 1e9] 由 vector 的
+    // ParamSpec 用 exclusiveMin 单点声明。合成 spec 只有 5 个初始化项 ⇒ minValue 停在默认 int{0}，
+    // 所以这条判的是"GUI 没有覆写"（真插件的界由 PluginTest.DispatchNumericBoundsFollowScopedSpecs 判）。
+    EXPECT_TRUE(std::holds_alternative<int>(vectorFiltered[0].minValue))
+        << "tolerance 的下界不该由 GUI 改写";
+    EXPECT_EQ(std::get<int>(vectorFiltered[0].minValue), 0);
     // R-F2-A：requiredKeys 只允许**加严**必填、不允许放宽。面板把 tolerance 列进 requiredKeys，
     // 所以 vector.simplify 的 tolerance 在 GUI 里必须是必填（插件级 spec 是 false，因为它要服务
     // 整个 vector 插件的其它 action）。Task 3 那句"删掉 requiredKeys 改写 required 的分支"
@@ -2004,7 +1950,11 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
     EXPECT_TRUE(std::holds_alternative<int>(processingFiltered[2].minValue))
         << "clip_limit 的下界不该由 GUI 改写";
     EXPECT_EQ(std::get<int>(processingFiltered[2].minValue), 0);
-    EXPECT_EQ(std::get<int>(processingFiltered[3].minValue), 3);
+    // N172-C2：kernel_size 的 ">=3 且奇数" 现在写在 processing 的 ParamSpec 上
+    // （minValue=int{3} + requireOdd），GUI 那份 minValue=3 的重复声明删掉了 ⇒ 合成 spec 的
+    // minValue 应保持 ParamSpec 默认值，判的是"GUI 不再另造界"。
+    EXPECT_TRUE(std::holds_alternative<int>(processingFiltered[3].minValue));
+    EXPECT_EQ(std::get<int>(processingFiltered[3].minValue), 0);
 
     std::vector<gis::framework::ParamSpec> terrainSpecs = {
         {"band", "波段", "", gis::framework::ParamType::Int, false},
@@ -2027,7 +1977,11 @@ TEST(GuiSupportTest, BuildEffectiveGuiParamSpecsAppliesUtilityAndProcessingBound
     EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[2].maxValue), 360.0);
     EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[3].minValue), 0.0);
     EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[3].maxValue), 90.0);
-    EXPECT_DOUBLE_EQ(std::get<double>(terrainFiltered[4].minValue), 0.000001);
+    // N172-C2：accum_threshold 的 (0, 1e9] 由 terrain 的 ParamSpec 声明（exclusiveMin），GUI 那份
+    // 0.000001 伪下界删掉 ⇒ 这条同样判"GUI 没有覆写"。（z_factor 那一支仍是 GUI 魔数，归 C3。）
+    EXPECT_TRUE(std::holds_alternative<int>(terrainFiltered[4].minValue))
+        << "accum_threshold 的下界不该由 GUI 改写";
+    EXPECT_EQ(std::get<int>(terrainFiltered[4].minValue), 0);
 }
 
 TEST(GuiSupportTest, BuildExecuteButtonStateReflectsSelectionAndValidation) {

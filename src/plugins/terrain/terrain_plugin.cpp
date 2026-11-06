@@ -1427,7 +1427,7 @@ std::vector<gis::framework::ParamSpec> TerrainPlugin::paramSpecs() const {
         gis::framework::ParamSpec{"z_factor", "Z因子", "Vertical exaggeration factor", gis::framework::ParamType::Double, false, double{1.0}, double{0.001}, double{10000.0}},
         gis::framework::ParamSpec{"azimuth", "方位角", "Light azimuth for hillshade", gis::framework::ParamType::Double, false, double{315.0}, double{0.0}, double{360.0}},
         gis::framework::ParamSpec{"altitude", "高度角", "Light altitude for hillshade", gis::framework::ParamType::Double, false, double{45.0}, double{0.0}, double{90.0}},
-        gis::framework::ParamSpec{"accum_threshold", "汇流阈值", "Threshold used by stream extraction", gis::framework::ParamType::Double, false, double{10.0}, double{0.0}, double{1e9}},
+        gis::framework::ParamSpec{"accum_threshold", "汇流阈值", "Stream extraction threshold; must be greater than 0", gis::framework::ParamType::Double, false, double{10.0}, double{0.0}, double{1e9}}.setExclusive(true, false),
         // 只被 fill_sinks 读取（其它 action 传 0.0 即完全等效于未启用），默认 0.0 保证
         // "GUI 全默认提交"这条路径的行为与新增本键之前逐像元一致。
         // WHY 描述要写清两件事（fix round 1 F1/F5 的口径）：

@@ -3456,6 +3456,9 @@ action 级校验要求「不小于 3 的奇数」并**直接失败**；GUI 的 `
 `doFilter` 内部则**静默改写**（偶数加一、小于 3 抬到 3，不告警、不改返回状态）。
 ⇒ 同一份 `--kernel_size=4`：CLI/工作流/GUI 三条路都被拒（用户看得见错误），**进程内直调**却被悄悄折成 5
 （调用方拿到 `success=true`，且实际用的核不是他给的那一个）。
+【时态限定，2026-11-06 N172-C2】上面「四处口径」里的前三处（ParamSpec 区间、action 级校验、GUI 下界）
+今天已合成 `ParamSpec` 一处声明（区间位 + 奇偶位 + 按动作取的作用域表）；
+余下「进程内直调被静默折成 5」这一处仍在，归 N172-C4。
 归 **N172 同族**（声明区间与消费点行为不一致）。**修法不在本把**——把 `ParamSpec` 下界改成 3、或把偶数列入非法值，
 都会同时改 `--help` 的可视区间与 GUI 的滑动范围 = 改可观测行为，需要用户拍板。
 本把只做两件：**把"纠正段只在进程内直调可达"钉成判据**（S10 + A11/A12）+ **文档诚实化**
@@ -5017,7 +5020,7 @@ param_guard / docs_match_cli / source_mojibake_guard / geotransform_guard 四条
 与 `if (pairCount <= 0) return Result::fail("invalid kernel_size");`。归一**只**用逐方向的 `dirPairCount`
 （窗口尺寸与是否撞边界都会让它变），那个总量算完即丢。
 闸不可达有现读载体：`processing glcm_texture --kernel_size=1` 在**动作级校验**就被拒
-（案文 `参数"窗口大小"必须是不小于 3 的奇数`，rc=1），够不到插件消费点；kernelSize>=3 时 `pairCount = k*(k-1) >= 6`。
+（案文 `参数"窗口大小"必须是不小于 3 的奇数`，rc=1；这句是**当时实到**，N172-C2 把奇偶位搬进 ParamSpec 后同一入口的案文已换成 `参数“核大小”必须是[3, 101] 内的奇数`），够不到插件消费点；kernelSize>=3 时 `pairCount = k*(k-1) >= 6`。
 `"invalid kernel_size"` 这句全仓只有这一处，`grep -rn "invalid kernel_size" src tests docs` 删除后为 0 ⇒ 没有任何判据钉过它。
 
 替换成一句 WHY 注释（放在 `radius` 声明处）：归一只能走 `dirPairCount`，改回总量归一会**改变产物**。
@@ -5160,6 +5163,101 @@ CLI 手写闸的 5 条不一致）与 N182（kernel_size/sigma 单源）——�
     取决于上面那 60 格往哪边靠 —— 单向时 GUI 可以比 CLI 严，双向时两侧必须逐字一致。
   - **N192（纯清理）**：上面那三个取数器的占位 `--output` 在本把之后已是多余参数。
 
+### 批次 D 裁定落地 N172-C2（2026-11-06，13 条"比参数表更严"的手写数值闸搬进 `ParamSpec` 的开/闭位与奇偶位；**派发路径行为不变，报错案文换形**）
+
+用户 2026-11-05 在 N172 的三选一里选了**甲 全量单源**，这是四片刀的第二片。射程 14 个文件＝代码与测试 12 个（+168/−162，口径 `git diff --numstat -- src tests`）＋文档 2 个：
+框架头 1（`plugin.h` 新增 `adjustActionSpec` 虚钩子，由 `actionScopedParamSpecs` 在取作用域表时应用）
+＋插件 6（georef 4 键、matching 2 键、vector 2 键、terrain 1 键、processing 1 键的声明，另加 processing 头里的钩子声明）
+＋手写层 1（`action_validation.cpp` 删 13 条闸、11 处 span）＋GUI 2（`gui_data_support.cpp` 删魔数改界、`mainwindow.cpp` 面板改喂作用域表）
+＋测试 2（`test_plugins.cpp` 新用例与两处注释、`test_gui_support.cpp` 删表项与两条用例改写）
+＋文档 2（`空间滤波.md` 案文引用；`RELEASE.md` 本节与另外两处时态限定）。
+
+**十三键与新声明**（"实到案文"＝真 Debug `gis-cli` 逐条跑出来的那一行，不是推定；越界值那一侧全部 rc=1）：
+
+| 键（动作） | 声明改成 | CLI 实到案文 |
+| --- | --- | --- |
+| `accum_threshold`（terrain stream_extract） | `setExclusive(true,false)` | `参数“汇流阈值”超出范围 (0, 1e+09]` |
+| `minnaert_k`（georef minnaert_correction） | `setExclusive(true,false)` | `参数“Minnaert K”超出范围 (0, 1]` |
+| `bright_percentile`（georef percentile_stretch） | `setExclusive(true,false)` | `参数“亮百分位”超出范围 (0, 100]` |
+| `dark_percentile`（georef percentile_stretch） | `setExclusive(false,true)` | `参数“暗百分位”超出范围 [0, 100)` |
+| `sun_zenith_deg`（georef cosine_correction） | `setExclusive(false,true)` | `参数“太阳天顶角”超出范围 [0, 90)` |
+| `ratio_test`（matching match） | `setExclusive(true,false)` | `参数“比值检验”超出范围 (0, 1]` |
+| `quality_level`（matching corner） | `setExclusive(true,false)` | `参数“角点质量”超出范围 (0, 1]` |
+| `tolerance`（vector simplify） | `setExclusive(true,false)` | `参数“简化容差”超出范围 (0, 1e+09]` |
+| `min_area`（vector sliver_remove） | `setExclusive(true,false)` | `参数“最小面积”超出范围 (0, 1e+09]` |
+| `kernel_size`（processing filter / gabor_filter / glcm_texture 三动作共用一条声明） | `setRequireOdd()` | `参数“核大小”必须是[3, 101] 内的奇数` |
+| `sigma`（processing gabor_filter，仅此动作） | 钩子按动作置 `exclusiveMin` | `参数“Sigma”超出范围 (0, 1000]` |
+
+**行为不变的证据是双臂跑的**：界内值一律放行——`--sun_zenith_deg=89.5` 过了参数层、红在下一句
+`slope_raster is required`；`processing filter --kernel_size=5` 与 `--sigma=0` 都进到算法里去了（打到
+`Reading band 1 from …` 才因输入不存在而失败）。补三条 `--kernel_size` 读数把分工钉清楚：1 / 2 / 102 都是
+`超出范围 [3, 101]`，只有偶数走奇偶那一句。反向臂是这批里唯一有语义差别的一条：`sigma=0` 在 `filter` **必须**合法
+（gaussian 支把 `sigma<=0` 交给上游按核尺寸取的硬编码二项式核，文档与 GOLD 都按此写），在 `gabor_filter` **必须**被拒
+⇒ 这就是 `adjustActionSpec` 存在的理由；13 条里实测只有这一个键需要按动作表达开界，其余 12 条都是插件级一条声明。
+
+**三个互相独立的口径**（口径的字面定义抄在下面，不依赖任何脚本活着）：
+- 口径 A＝`action_validation.cpp` 里"解引用取值 + 与常数比较"的行（跳过注释行）：**37 → 24**，差 **13**。
+- 口径 B＝`gui_data_support.cpp` 里 `adjustedSpec.minValue` / `adjustedSpec.maxValue` 被赋常数的行（跳过注释行）：**34 → 28**。
+- 口径 C＝`test_gui_support.cpp` 里 `ActionValidationTestParam{` 行：**56 → 43**，差 **13**。
+两处 13 对齐是"删干净了"的算术对撞；判据侧还有一道硬闸——新用例每行都跑一次
+`validateActionSpecificParams(...) == nullopt`，**手写层只要还留着这 13 条里的任何一条就红**。
+这条闸不是摆设：C2 第一版就是被它逮到漏删了 `vector.sliver_remove.min_area`。
+
+**口径差异登记（给 C3，别拿错数）**：台账里 N172 的"42 条闸 / 29 条冗余"是**闸**口径（跨行写法算一条、spindex 那段
+循环驱动的 6 个 `*_band` 各算一条），今天的口径 A 是**行**口径 ⇒ 两个数不可互推（24 行里 `azimuth` / `altitude` /
+`sun_azimuth_deg` 三支各含两次比较）。C3 派发前先把口径定成一个，任务书里不许直接把"29"当现值写。
+
+**判别变异两臂（每臂各改一个载体、各整树重编一次）**
+- M1 去掉 `georef.sun_zenith_deg` 的 `.setExclusive(false, true)` ⇒ `PluginTest.DispatchNumericBoundsFollowScopedSpecs` 红，
+  点名行 `georef.cosine_correction.sun_zenith_deg 越界值实到文案：`（后面空串＝90 被放行了），其余 12 行不吭声。
+- M2 把 `adjustActionSpec` 里的动作名 `"gabor_filter"` 写成 `"gabor_filter_typo"` ⇒ 同一条用例里**两**处红：
+  roster 行 `processing.gabor_filter.sigma 越界值实到文案：`，加那条显式反向臂（「反向：gabor_filter 的 sigma=0 必须仍然被拒」）；
+  而 `filter` 的 `sigma=0` 那一支仍绿 ⇒ 钩子确实只对 gabor 承重，没把开界泄漏给整份表。
+- 还原一律用字节备份 `cp` + md5 对撞（georef `d2e8e6e73ca94c5be94f6a62ddb9bb38`、processing `27305dcca07d974c0f27d6fbe3f99b16`），
+  两臂还原后各自重编再跑，终树回到绿态。
+
+**受保护件重钉（按裁定 N160 甲）**：`src/plugins/terrain/terrain_plugin.cpp` 本把被改**一行**（`accum_threshold` 加开界位与说明串），
+blob 由 `588a42504ee19bcb551f8214e5c1adb68cea20e9` 变为 `fa34c3fbf9cc457e74cc460fb1dd9abeb7abe1bc`；两法同值——
+`git diff` 给出的 `index 588a425..fa34c3f`，与"工作树先把 CRLF 归一成 LF、再按 `blob <len>\0` 取 sha1"。
+此后凡指旧值的"还原判据"都会假 ⇒ `tests/test_plugins.cpp` 里 terrain profile 那块引用旧哈希的三臂注释已就地加时态限定，
+还原只认字节备份的 md5。
+
+**N193 立案（本把新号；缺陷在守卫自己身上，本把不动它的判据）**
+`tests/check_action_visible_keys_read.cmake`（ctest 名 `param_guard_visible_keys_all_read`）的段模型建立在两个
+"整行形状"上：一条线只剩 `}` 或 `};` 就切一段，段名取段头攒到的文本里最左的 `标识符(`
+（见该脚本第 3~4 节，注释里自己写着"取最左的 ident("）。两步都不认识字符串字面量。
+⇒ ParamSpec 的描述串里只要出现**不配平的括号**，那一支插件的段就崩，守卫报"找不到派发种子"。
+六臂实测（P0~P4 一次脚本、P5 补一臂：每臂复制整棵 `src/plugins`，只改 georef `sun_zenith_deg` 那一行的描述串，用 `-DPLUGIN_DIR` 指过去跑同一份守卫脚本）：
+- P0 散文描述（无括号）⇒ rc=0、`no_seed configured=0`、`segments=409`
+- P1 `[0, 90)` ⇒ **rc=1**、`no_seed configured=8`、`segments=398`（比控制臂少 11 段）
+- P2 `[0, 90]` 配平方括号 ⇒ rc=0、`no_seed configured=0`、`segments=409`
+- P3 `(0, 90)` 配平圆括号 ⇒ rc=0、同上
+- P4 `(0, 90]` 反方向失配 ⇒ **rc=1**、`no_seed configured=8`、`segments=398`
+- P5 控制串原样、只在尾巴后再塞 `; a;b;c`（括号一维不动）⇒ rc=0、`no_seed configured=0`、`segments=409`
+⇒ 承重的是**配平**，不是括号种类，也不是分号；命中的 8 个条目逐字是 georef 的全部白名单动作
+（`c_correction;cosine_correction;dos_correction;gcp_register;minnaert_correction;percentile_stretch;radiometric_calibration;rpc_orthorectify`），
+射程限于出事那一支插件的文件，而且**是响的红、不是静默放行**（rc=1 且把 8 个动作逐条列出来）。
+内部卡在哪一步本把没逐 step 复算：P2 与 P1、P4 与 P3 都只差收尾那一枚括号（开符与串内其余部分逐字相同），
+P5 与 P0 只差分号 ⇒ 这六臂只够说明"要配平失序才触发"，不足以定位到某一条正则。本把处置：描述串一律不写区间括号，改成
+`must be greater than 0` / `above 0 and at most 1` / `at least 0 and below 90` / `odd and at least 3` 这类散文，
+区间形状只活在报错案文里由 `paramIntervalText()` 单点生成。修法（段切分与函数名抽取改成字符串感知，或加一条括号配平校验）归 D3 守卫扩面。
+
+**更正已提交文本**：`65af9ee`（N172-C1）提交信息里那句「参数化测试表 56 行里 33 行直接钉着这些闸」的 **33** 是我手抄键名清单得到的，
+没有脚本载体，而且那份清单漏了 `sigma`。今天的机械口径是：行内 `expectedKey` 落在手写数值闸的键集（31 键）里的行＝**35**，
+这是**上界**（同一个键也可能被别的规则报出，且 `band` 这类"一键多闸"会扇入）；能逐字对上闸内案文字面量的只有 1 行
+——因为表里绝大多数行只钉 `issue->key`、`expectedMessage` 留空。⇒ 准确说法＝改前 56 行、本把迁走 13 行、
+余 43 行里"钉的确实是数值闸"的那部分由 C3 逐行判定。已提交信息不改（不改历史），更正只落这里与台账。
+
+**验收实到（终树重编后复跑，全部现读）**：
+- Debug 全量 ctest **796/796 Passed、0 Failed、1124.36 s**（`ctest -N -C Debug` 今天列到 796 条）；登记表 PENDING 仍 **2** 条，本把不碰矩阵、不碰登记表。
+- 单元二进制 `gis_tests.exe` **646 tests from 24 test suites、646 PASSED、55.05 s**。
+- 五条机器守卫在终树上 5/5 Passed（38.42 s 合计）：`param_guard_visible_keys_all_read` 3.88 s、`install_smoke` 11.72 s、`source_mojibake_guard` 20.54 s、`docs_match_cli` 1.66 s、`geotransform_guard` 0.55 s；`install_smoke` 在全量里另跑一次 7.81 s 也绿。
+- `data/` 两件套：`find data -type f -newermt "2026-11-06 08:32:00"` = **0**；`check_data_baseline.py` = **BASELINE: 88  CURRENT: 88  DIFFS: 0**（CLI 双臂的输入输出都指到 `data/` 之外的未跟踪临时目录、且那个输入文件并不存在，全程没开过任何原件 ⇒ 无 `.aux.xml` 风险）。
+- 卫生面：`rm -rf tests/__pycache__`（普查脚本 import 守卫模块带出来的我的临时产物，不在 .gitignore 里）后工作树 **13 个 M、0 个 ??**；Release 树未重编 ⇒ 本把只验收 Debug。
+- 席位：本把控制器自跑，无独立复审席。
+
+**余下两片**：C3＝删口径 A 现值那 24 行派发路径不可达的手写闸 + 迁余下测试行 + GUI 魔数全数派生化；
+C4＝删 `doFilter` 的静默改写 + `docs_match_cli` 加"区间描述串 vs 实到边界"判据（两侧单源之后这条才可能绿）+ 双树与 RELEASE/台账收口。
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件

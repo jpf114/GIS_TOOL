@@ -48,6 +48,18 @@ public:
     }
 
     /**
+     * Adjust one spec copy for one action, in the ways the plugin-level table cannot express.
+     *
+     * A ParamSpec row is shared by every action of the plugin, so "this key must be strictly
+     * positive for action A but may be 0 for action B" has nowhere to live otherwise
+     * (N172/N182 measured exactly one such key: processing.sigma, where filter documents 0 as
+     * the upstream binomial-kernel path while gabor_filter must reject it).
+     * The default does nothing. Overrides may only *narrow* what the declared table already
+     * allows - never widen a range or drop a requirement.
+     */
+    virtual void adjustActionSpec(ParamSpec& spec, const std::string& actionKey) const {}
+
+    /**
      * Execute the plugin with the given parameters.
      * @param params Map of parameter key to value.
      * @param progress Progress reporter for cancellation and status updates.
@@ -59,9 +71,11 @@ public:
 };
 
 /**
- * The plugin spec table with ParamSpec::required rewritten to this action's requiredness.
- * Dispatch layers (CLI / workflow) validate against this table instead of paramSpecs(), so the
- * required gate and findFirstInvalidParamKey always read the same vector.
+ * The plugin spec table rewritten for one action: ParamSpec::required follows requiredParamKeys()
+ * and each row then goes through adjustActionSpec().
+ * Dispatch layers (CLI / workflow / GUI panel) validate against this table instead of
+ * paramSpecs(), so the required gate, the numeric bounds and findFirstInvalidParamKey
+ * always read the same vector.
  */
 inline std::vector<ParamSpec> actionScopedParamSpecs(const IGisPlugin& plugin,
                                                       const std::string& actionKey) {
@@ -69,6 +83,7 @@ inline std::vector<ParamSpec> actionScopedParamSpecs(const IGisPlugin& plugin,
     std::vector<ParamSpec> specs = plugin.paramSpecs();
     for (auto& spec : specs) {
         spec.required = requiredKeys.count(spec.key) > 0;
+        plugin.adjustActionSpec(spec, actionKey);
     }
     return specs;
 }
