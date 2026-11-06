@@ -2810,41 +2810,42 @@ TEST_F(PluginTest, ProcessingFilterExecution) {
     EXPECT_LE(productMax(outBilateral), 1.0f) << "S9 bilateral 产物 Max ≤ 1.0";
     EXPECT_FLOAT_EQ(productMax(outDilateIsland), 1.0f) << "S9 量化支在窄岛件上仍取到满幅 1.0（不是被压成 0）";
 
-    // ---- S10：kernel_size 的静默纠正段（只有**进程内直调**可达）----
-    // doFilter 里紧挨着两行：`if (kernelSize % 2 == 0) kernelSize++;` 与 `if (kernelSize < 3) kernelSize = 3;`。
-    // CLI / 工作流 / GUI 的三处 Run 入口都先过派发层校验（奇偶位写在 ParamSpec 上 ⇒ 直接失败），
-    // 所以这两行在真实命令行上进不来 ⇒ 本把把它**钉成「进程内直调才有的行为」**，不当正常路径
-    // （四处口径分叉立 N182；N172-C2 已把 spec / 手写闸 / GUI 魔数三份收成 ParamSpec 一处，
-    //  doFilter 这两行静默改写是余下的那一处，归 N172-C4）。
-    const std::string outMedianK4 = utf8PathString(dir / "p3b_filter_median_k4.tif");
-    const std::string outMedianK5 = utf8PathString(dir / "p3b_filter_median_k5.tif");
-    auto runMedianK4 = runFilter(plateauInput, outMedianK4, "median", 4, 1.5, 1);
-    auto runMedianK5 = runFilter(plateauInput, outMedianK5, "median", 5, 1.5, 1);
-    EXPECT_TRUE(runMedianK4.success) << "S10 median k=4 failed: " << runMedianK4.message;
-    EXPECT_TRUE(runMedianK5.success) << "S10 median k=5 failed: " << runMedianK5.message;
-    EXPECT_EQ(countPixelDiffs(outMedianK4, outMedianK5, kEps), 0)
-        << "S10 k=4 被第一行折成 5 ⇒ 与 k=5 逐点相同（52×12 = 624 像元、0 处差异）；"
-           "删掉那一行就会带着偶数核进 cv::medianBlur，而上游是 CV_Assert(ksize % 2 == 1)";
+    // ---- S10：kernel_size 的界在进程内直调这一路同样是「拒」，不再「改」（N172-C4）----
+    // doFilter 原来那两行静默改写（偶数加一、小于 3 抬到 3）换成与 doGaborFilter / doGlcmTexture 同族的
+    // 显式 fail ⇒ 直调方拿到的是 success=false 加一句案文，不再出现"给的核尺寸与实际用的核尺寸不同"。
+    // 派发那三条路本来走不到这里（[3, 101] 与奇偶位在 ParamSpec 上先拦，见
+    // PluginTest.DispatchNumericBoundsFollowScopedSpecs），所以本段判的是"剩下那一处第二写者已消失"。
+    struct RejectedKernel {
+        const char* filterType;
+        int kernel;
+        const char* fileName;
+        const char* expectedMessage;
+    };
+    const std::vector<RejectedKernel> rejectedKernels = {
+        {"median", 4, "p3b_filter_median_k4_rejected.tif", "kernel_size must be odd"},
+        {"morph_dilate", 1, "p3b_filter_dilate_k1_rejected.tif", "kernel_size must be >= 3"},
+        {"morph_dilate", 2, "p3b_filter_dilate_k2_rejected.tif", "kernel_size must be >= 3"},
+    };
+    for (const auto& c : rejectedKernels) {
+        const std::string out = utf8PathString(dir / c.fileName);
+        auto run = runFilter(plateauInput, out, c.filterType, c.kernel, 1.5, 1);
+        EXPECT_FALSE(run.success) << "S10 " << c.filterType << " k=" << c.kernel
+                                  << " 直调应当被拒，实际 success=true（静默改写没删干净）";
+        EXPECT_EQ(run.message, std::string(c.expectedMessage))
+            << "S10 " << c.filterType << " k=" << c.kernel << " 的拒绝案文不是预期的那一句";
+        EXPECT_FALSE(fs::exists(fs::u8path(out)))
+            << "S10 " << c.filterType << " k=" << c.kernel << " 被拒的那次不许留下产物";
+    }
 
-    const std::string outDilateK1 = utf8PathString(dir / "p3b_filter_dilate_k1.tif");
-    const std::string outDilateK2 = utf8PathString(dir / "p3b_filter_dilate_k2.tif");
     const std::string outDilateK3 = utf8PathString(dir / "p3b_filter_dilate_k3.tif");
     const std::string outDilateK5 = utf8PathString(dir / "p3b_filter_dilate_k5.tif");
-    auto runDilateK1 = runFilter(plateauInput, outDilateK1, "morph_dilate", 1, 1.5, 1);
-    auto runDilateK2 = runFilter(plateauInput, outDilateK2, "morph_dilate", 2, 1.5, 1);
     auto runDilateK3 = runFilter(plateauInput, outDilateK3, "morph_dilate", 3, 1.5, 1);
     auto runDilateK5 = runFilter(plateauInput, outDilateK5, "morph_dilate", 5, 1.5, 1);
-    EXPECT_TRUE(runDilateK1.success) << "S10 dilate k=1 failed: " << runDilateK1.message;
-    EXPECT_TRUE(runDilateK2.success) << "S10 dilate k=2 failed: " << runDilateK2.message;
     EXPECT_TRUE(runDilateK3.success) << "S10 dilate k=3 failed: " << runDilateK3.message;
     EXPECT_TRUE(runDilateK5.success) << "S10 dilate k=5 failed: " << runDilateK5.message;
-    EXPECT_EQ(countPixelDiffs(outDilateK1, outDilateK3, kEps), 0)
-        << "S10 k=1（`1 % 2 != 0` 走不到第一行）由**第二行**折成 3 ⇒ 与 k=3 逐点相同";
-    EXPECT_EQ(countPixelDiffs(outDilateK2, outDilateK3, kEps), 0)
-        << "S10 k=2 由**第一行**折成 3 ⇒ 与 k=3 逐点相同";
     EXPECT_EQ(countPixelDiffs(outDilateK5, outDilateShape, kEps), 0)
         << "S10 显式 k=5 与 S0/S1 的 k=5 产物一致（同一夹具同一支，交叉核对读盘口径本身）";
-    // 「相同」的三行必须有「不同」托着，否则它们是恒真：r 从 1 变 2 会让档边界平移 2 列。
+    // 「相同」的那行必须有「不同」托着，否则它是恒真：r 从 1 变 2 会让档边界平移 2 列。
     EXPECT_NEAR(readRasterPixel(outDilateK3, 18, kRow), 0.0, kEps)
         << "S10 dilate k=3 的 x=18 窗口 [16,18] 全在最低档 ⇒ 0（k=5 同一列是 50/255 ⇒ 核尺寸真被消费）";
     EXPECT_NEAR(readRasterPixel(outDilateK5, 18, kRow), 50.0 / 255.0, kEps) << "S10 dilate k=5 的 x=18 = 50/255";

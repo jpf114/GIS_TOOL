@@ -259,8 +259,11 @@ gis::framework::Result ProcessingPlugin::doFilter(
     if (input.empty())  return gis::framework::Result::fail("input is required");
     if (output.empty()) return gis::framework::Result::fail("output is required");
 
-    if (kernelSize % 2 == 0) kernelSize++;
-    if (kernelSize < 3) kernelSize = 3;
+    // N172-C4：这里原来是两行静默改写（偶数加一、小于 3 抬到 3）——调用方给的核尺寸与实际用的
+    // 不是同一个，且返回状态仍是成功。派发路径本来走不到这里（ParamSpec 的 [3,101]+奇偶位先拦），
+    // 剩下的唯一入口是进程内直调，故改成与 doGaborFilter / doGlcmTexture 同族的显式拒绝。
+    if (kernelSize < 3) return gis::framework::Result::fail("kernel_size must be >= 3");
+    if ((kernelSize % 2) == 0) return gis::framework::Result::fail("kernel_size must be odd");
 
     progress.throwIfCancelled();
 

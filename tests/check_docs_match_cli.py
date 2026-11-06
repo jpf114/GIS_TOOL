@@ -294,6 +294,70 @@ def load_param_types(root):
     return types, blocks
 
 
+def load_param_bounds(root):
+    """从插件源码取 (plugin, key) -> 数值界声明（min/max 原文 + 开闭位 + 奇偶位）。
+
+    与 load_param_types 分开的两个理由：
+      ①本函数额外读 *.inc（vector 的 spec 表整个活在 .inc 里，类型判据当年没扩这一维，
+        这里若跟着改会把"类型列"的论域一起改动，那是另一把刀的射程）；
+      ②区间判据要的是**声明的括号形状**，与类型无关，混在一个解析器里会让两边的坑互相污染。
+    三个 int{}/double{} 记号依序当 默认/min/max（与 ParamSpec 的位置初始化同序），
+    尾随的 .setExclusive(a,b) / .setRequireOdd() 当开闭位与奇偶位。
+    """
+    bounds = {}
+    for plugin_dir in sorted(pathlib.Path(root, "src/plugins").iterdir()):
+        if not plugin_dir.is_dir():
+            continue
+        plugin = plugin_dir.name
+        for src in sorted(list(plugin_dir.glob("*.cpp")) + list(plugin_dir.glob("*.inc"))):
+            body = strip_comments(src.read_text(encoding="utf-8"))
+            for m in re.finditer(r"ParamSpec\s*\{", body):
+                depth, i = 1, m.end()
+                while i < len(body) and depth:
+                    if body[i] == "{":
+                        depth += 1
+                    elif body[i] == "}":
+                        depth -= 1
+                    i += 1
+                entry = body[m.end():i - 1]
+                tail = body[i:i + 60]
+                km = re.search(r'"([A-Za-z_0-9]+)"', entry)
+                # 字符类含 Ee 与正负号：源码里确有 double{1e-6} / double{1e9} 这类形态（matching.ecc_epsilon、
+                # terrain.accum_threshold），只写 [0-9.e+] 会把带负指数的**上界**漏掉 ⇒ len(lits)<3 ⇒ 整个键不进界表。
+                lits = re.findall(r"(?:int|double)\{(-?[0-9.eE+-]+)\}", entry)
+                if not km or len(lits) < 3:
+                    continue
+                ex = re.search(r"setExclusive\(\s*(true|false)\s*,\s*(true|false)\s*\)", tail)
+                bounds.setdefault(plugin, {})[km.group(1)] = {
+                    "min": lits[1], "max": lits[2],
+                    "exMin": bool(ex and ex.group(1) == "true"),
+                    "exMax": bool(ex and ex.group(2) == "true"),
+                    "odd": "setRequireOdd" in tail,
+                }
+    return bounds
+
+
+# 文档说明列里的区间写法：[a, b] / (a, b] / [a, b) / (a, b)，两端允许小数与科学计数。
+DOC_RANGE_RE = re.compile(r"([\[\(])\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*,\s*"
+                          r"(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*([\]\)])")
+
+
+def doc_range_claims(cell):
+    """取出说明列里所有区间形状。
+
+    按**括号对**定位，与外面有没有反引号无关：现读 11 处里 9 处写在代码段内、2 处写在正文里
+    ⇒ 沿用"枚举候选值"那条只取反引号内 token 的取法会漏掉 2 处，反向只取体外会漏掉 9 处，
+    两种收窄都不做，整格扫括号对。论域（9 行 11 处）逐处核过与参数表一致 ⇒ 误伤面量过。
+    """
+    return list(DOC_RANGE_RE.finditer(cell))
+
+
+def spec_interval_text(b):
+    """把一条界声明还原成文档该写的区间串：括号形状取开闭位，两端取源码字面量原文。"""
+    return ("%s%s, %s%s" % ("(" if b["exMin"] else "[", b["min"], b["max"],
+                            ")" if b["exMax"] else "]"))
+
+
 def canon(s):
     """去空白 + 小写：文档排版会在中英文间加空格，二进制标签有 Sigma/NoData 这类大小写形态。"""
     return "".join(ch for ch in s if not ch.isspace()).lower()
@@ -375,11 +439,11 @@ def same_number(a, b):
         return False
 
 
-def compare(ui, common, spec, help_spec, docs_root, overrides, verified, types=None):
+def compare(ui, common, spec, help_spec, docs_root, overrides, verified, types=None, bounds=None):
     types = types or {}
     findings, hits, used_ov = [], set(), set()
     stats = {"docs": 0, "rows": 0, "matched": 0, "missing_doc": [],
-             "type_rows": 0, "desc_rows": 0, "option_rows": 0}
+             "type_rows": 0, "desc_rows": 0, "option_rows": 0, "range_rows": 0, "range_claims": 0}
     resolved = {}
     for plugin in sorted(ui):
         for action in sorted(ui[plugin]):
@@ -471,6 +535,36 @@ def compare(ui, common, spec, help_spec, docs_root, overrides, verified, types=N
                             findings.append((fid, key, "options", "%s 键 %s 枚举候选值：文档=%s 二进制=%s（文档缺=%s 文档多=%s）" % (
                                 fid, key, sorted(doc_set), sorted(bin_set),
                                 sorted(bin_set - doc_set), sorted(doc_set - bin_set))))
+                # 区间描述串：说明列里每一处 `[a, b]` 形状都必须等于该键 ParamSpec 声明的数值界
+                # （含开闭位）。这条判据在 C1 之前**不可能绿**——同一个界当时有四个写者（spec / 派发层手写闸 /
+                # GUI 魔数 / 插件内静默改写），文档只能对其中一个；C2~C4 把四处收成 ParamSpec 一处之后，
+                # "文档 == spec" 才有单一比较对象，也才有资格进机器判据。
+                # 逐处都查（不是只查第一处）：现读同一格多处的是"核大小"那格，三处全是同一个 `[3, 101]`
+                # ⇒ 重复声明不误伤；反之若某格第二处讲的是**产物值域**且数值不同，它会报红，
+                # 那时该改的是文档措辞（把值域写成区间以外的形态），而不是把比较集合收窄成"只看第一处"。
+                # 奇偶位（requireOdd）**不在这条判据的射程**：文档用"必须为奇数"这类中文措辞，形状对不上
+                # 区间正则；它由 ParamSpec 自己 + roster 的奇偶行承重，别在这里假称判过。
+                claims = doc_range_claims(r["说明"])
+                if claims:
+                    stats["range_rows"] += 1
+                    bnd = (bounds or {}).get(plugin, {}).get(key)
+                    for m in claims:
+                        stats["range_claims"] += 1
+                        got = m.group(0)
+                        if bnd is None:
+                            findings.append((fid, key, "range", "%s 键 %s 文档写了区间 %s，"
+                                             "但该键的 ParamSpec 没有声明数值界（三个 int{}/double{} 不齐全）" % (
+                                                 fid, key, got)))
+                            continue
+                        want = spec_interval_text(bnd)
+                        # 数字按 same_number 比、括号按形状比，不比整串字面量：
+                        # 源码界写成 double{0.0}/double{360.0}，文档按中文排版习惯写 [0, 360] ——
+                        # 那是同一个区间的两种拼法，不是漂移（现读此类 6 处，逐处两边都是同值）。
+                        if (got[0] != want[0] or got[-1] != want[-1]
+                                or not same_number(m.group(2), bnd["min"])
+                                or not same_number(m.group(3), bnd["max"])):
+                            findings.append((fid, key, "range", "%s 键 %s 区间：文档=%s 二进制=%s" % (
+                                fid, key, got, want)))
     # 总览页与文档集合的双向一致：新增一篇却忘了挂链接、或链接指向已改名的文件，
     # 都是"文档树自己内部对不上"，与二进制无关但同样会误导读者。
     overview = docs_root / "总览.md"
@@ -518,45 +612,70 @@ def run(root, cli, allowlist_path):
     types, blocks = load_param_types(root)
     if not types:
         raise SystemExit("2 一个 ParamSpec 类型都没解析到 ⇒ 类型判据等于没跑（插件目录或声明形态变了）")
+    bounds = load_param_bounds(root)
+    n_bounds = sum(len(v) for v in bounds.values())
+    # 现读 104 个带界键 / 13 个插件。地板取 90：这条只拦"解析器整体失效"（声明形态或插件目录变了 ⇒
+    # 界表空/半空，区间判据静默变成永不命中），不给单键的合法改写设卡。
+    if n_bounds < 90:
+        raise SystemExit("2 只解析到 %d 个带数值界的 ParamSpec（现读量级 104）⇒ 区间判据等于没跑"
+                         "（声明形态或插件目录变了）" % n_bounds)
     findings, allowed, dead, stats, unused = compare(
-        ui, common, spec, help_spec, pathlib.Path(root, "docs/算法说明"), overrides, verified, types)
+        ui, common, spec, help_spec, pathlib.Path(root, "docs/算法说明"), overrides, verified,
+        types, bounds)
     total_actions = sum(len(v) for v in ui.values())
     say("actions=%d docs_checked=%d missing_doc=%d rows=%d matched=%d type_rows=%d desc_rows=%d "
-        "option_rows=%d "
+        "option_rows=%d range_rows=%d range_claims=%d "
         "param_spec_blocks=%d drift=%d allowed=%d "
         "dead_allowlist=%d dead_override=%d overrides=%d" % (
               total_actions, stats["docs"], len(stats["missing_doc"]), stats["rows"], stats["matched"],
-              stats["type_rows"], stats["desc_rows"], stats["option_rows"], blocks,
+              stats["type_rows"], stats["desc_rows"], stats["option_rows"],
+              stats["range_rows"], stats["range_claims"], blocks,
               len(findings) - len(allowed), len(allowed), len(dead), len(unused), len(overrides)))
     if stats["missing_doc"]:
         say("MISSING-DOC " + ", ".join(stats["missing_doc"]))
     if stats["matched"] != stats["rows"]:
         say("UNMATCHED-ROWS %d 行没配上任何二进制键 ⇒ 上面这些行的 必填/默认值/类型/说明 未被检查" % (
             stats["rows"] - stats["matched"]))
+    # 区间维度的地板：现读 11 处（本判据接入时逐处核过全对）⇒ 取 10 只拦"整条判据空跑"，
+    # 不拦单处文档改写。没有这条地板，说明列被改写成"约 0 到 1 之间"这类非区间拼法就会静默失去承重。
+    if stats["range_claims"] < 10:
+        say("RANGE-COVERAGE 说明列里只有 %d 处区间描述串（本轮接入时现读 11）⇒ 区间判据的承重面塌了" % (
+            stats["range_claims"]))
+        return 1
     return (len(findings) - len(allowed)) + len(dead) + len(unused) + len(stats["missing_doc"])
 
 
 def self_test():
-    """合成一份"3 键 4 行、七类缺陷齐全"的假仓库，判据必须七类全点名，死豁免必须报错。"""
+    """合成一份"3 键 4 行、八类缺陷齐全"的假仓库，判据必须八类全点名，死豁免必须报错。"""
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="docs_selftest_"))
     (tmp / "docs/算法说明/假类").mkdir(parents=True)
     good = tmp / "docs/算法说明/假类/假动作.md"
     bad = tmp / "docs/算法说明/假类/假动作坏.md"
     # 坏文档四行各埋一类以上，且第四行是"配不上键的多余行"——
-    # required/default/type/desc/options 只在"行配上键"之后才检查，
+    # required/default/type/desc/options/range 只在"行配上键"之后才检查，
     # 只埋一行全错的表只能报出 count+label（第一版夹具就是这么漏的 ⇒ 判据看着能红，实际只红两类）。
+    # 区间类埋**三处、三条分支各自承重**（同一 kind 只报一次不等于三条臂都证到）：
+    #   Foo 行 "[0, 10]"  = 数字全对、右括号 "]" 对上声明的 ")" ⇒ 只有开闭位比较能抓到；
+    #   Foo 行 "[0, 20)"  = 括号全对、上界 20≠10 ⇒ 只有数值比较能抓到；
+    #   模式 行 "[0, 1]"   = 该键（Enum）根本没有数值界声明 ⇒ 另一条"文档凭空造界"分支。
+    # 输入行留空说明，专供 desc ⇒ desc 与 range 的载体互不遮挡。
     bad.write_text("## 参数\n\n| 参数 | 类型 | 必填 | 默认值 | 说明 |\n| --- | --- | --- | --- | --- |\n"
-                   "| 输入文件 | 字符串 | 否 | 无 | 必填标错 + 类型标错 |\n"
-                   "| Foo | 整数 | 否 | `3` | |\n"
-                   "| 模式 | 枚举 | 否 | `alpha` | 可选 `alpha` 或 `gamma` |\n"
+                   "| 输入文件 | 字符串 | 否 | 无 | |\n"
+                   "| Foo | 整数 | 否 | `3` | 取值 [0, 10] 与 [0, 20) |\n"
+                   "| 模式 | 枚举 | 否 | `alpha` | 可选 `alpha` 或 `gamma`，另有 [0, 1] |\n"
                    "| 名字不对 | 字符串 | 否 | 无 | 多余行 |\n", encoding="utf-8")
     # 好文档的"模式"行是 options 判据的**在体负控**：`阈值` 是引用别的参数名（非 ASCII），
     # 必须被剔除后仍 0 漂移——否则这条判据会把中文引用当成候选值误伤。
+    # "Foo"行的区间放在反引号里，是 range 判据的**绿臂载体**：现读文档最常见的写法就是代码段，
+    # 本判据刻意不剥反引号 ⇒ 这里必须仍然配上，否则反引号形态会被整条判据漏掉。
     good.write_text("## 参数\n\n| 参数 | 类型 | 必填 | 默认值 | 说明 |\n | --- | --- | --- | --- | --- |\n"
-                    "| 输入文件 | 文件路径 | 是 | 无 | x |\n| Foo | 整数 | 否 | `7` | x |\n"
+                    "| 输入文件 | 文件路径 | 是 | 无 | x |\n| Foo | 整数 | 否 | `7` | 合法取值 `[0, 10)` |\n"
                     "| 模式 | 枚举 | 否 | `alpha` | 可选 `alpha` 或 `beta`，步长按 `阈值` 计 |\n", encoding="utf-8")
     # 合成二进制的 ParamSpec 类型：input=FilePath（该写 文件路径）、foo=Int（该写 整数）、mode=Enum。
     fake_types = {"fake": {"input": "FilePath", "foo": "Int", "mode": "Enum"}}
+    # 合成二进制的数值界：只有 foo 声明了 [0, 10)（开闭位 exMax=True）；input/mode 声明里没凑齐三个
+    # int{}/double{} ⇒ 不进界表，正是"文档写了区间但 spec 没声明界"那条分支的载体。
+    fake_bounds = {"fake": {"foo": {"min": "0", "max": "10", "exMin": False, "exMax": True, "odd": False}}}
     ui = {"fake": {"act_bad": {"displayName": "假动作", "visible": ["input", "foo", "mode"],
                                "required": ["input"], "nameSource": "ActionUiConfig"},
                    "act_good": {"displayName": "假动作", "visible": ["input", "foo", "mode"],
@@ -567,40 +686,54 @@ def self_test():
                             "options": "alpha, beta"}}}
     outs = []
     # 臂 1：好文档必须 0 漂移（否则判据根本不可信）；option_rows 必须 ==1，
-    # 这条同时证明"中文参数名引用被剔除后不误伤"确实跑到了（好文档那行的 `阈值` 就是诱饵）。
+    # 这条同时证明"中文参数名引用被剔除后不误伤"确实跑到了（好文档那行的 `阈值` 就是诱饵）；
+    # range_claims 必须 ==1，同时证明"区间写在反引号里"这一形态真的被吃到而不是静默跳过。
     findings, allowed, dead, stats, _ = compare(
         {"fake": {"act_good": ui["fake"]["act_good"]}}, {}, {}, hs, tmp / "docs/算法说明",
-        {"fake.act_good": ("假类/假动作", True)}, {}, fake_types)
-    outs.append(("绿臂：好文档 0 漂移（option_rows=%d type_rows=%d）" % (
-        stats["option_rows"], stats["type_rows"]),
-        len(findings) == 0 and stats["docs"] == 1 and stats["option_rows"] == 1))
-    # 臂 2：坏文档必须同时点名 count / label / required / default / type / desc / options 七类。
-    # 埋 4 行而不是 1 行是这里的关键：required/default/type/desc/options 只在"行配上键"之后才检查，
+        {"fake.act_good": ("假类/假动作", True)}, {}, fake_types, fake_bounds)
+    outs.append(("绿臂：好文档 0 漂移（option_rows=%d type_rows=%d range_claims=%d）" % (
+        stats["option_rows"], stats["type_rows"], stats["range_claims"]),
+        len(findings) == 0 and stats["docs"] == 1 and stats["option_rows"] == 1
+        and stats["range_claims"] == 1))
+    # 臂 2：坏文档必须同时点名 count / label / required / default / type / desc / options / range 八类。
+    # 埋 4 行而不是 1 行是这里的关键：required/default/type/desc/options/range 只在"行配上键"之后才检查，
     # 一行全错的表只能报出 count+label（第一版夹具就是这么漏的 ⇒ 判据看着能红，实际只红两类）。
     findings, allowed, dead, stats, _ = compare(
         {"fake": {"act_bad": ui["fake"]["act_bad"]}}, {}, {}, hs, tmp / "docs/算法说明",
-        {"fake.act_bad": ("假类/假动作坏", True)}, {}, fake_types)
+        {"fake.act_bad": ("假类/假动作坏", True)}, {}, fake_types, fake_bounds)
     kinds = {f[2] for f in findings}
-    outs.append(("红臂：七类缺陷全点名（本轮 kinds=%s，配上 %d/%d 行，type_rows=%d desc_rows=%d option_rows=%d）" % (
-        sorted(kinds), stats["matched"], stats["rows"], stats["type_rows"], stats["desc_rows"],
-        stats["option_rows"]),
-        {"count", "label", "required", "default", "type", "desc", "options"} <= kinds
-        and stats["matched"] == 3))
-    # 臂 3：只豁免其中一类（count）⇒ 其余六类仍算漂移，且这条豁免因为用上了，不许报 DEAD。
-    # 与臂 2 唯一的差别就是那份 verified，所以这里必须把 fake_types 也传进去——
-    # 少传一个参数会让 type 那类根本不存在，臂 2 的"七类齐全"就白测了（本轮真撞到过一次）。
+    ranges = [f for f in findings if f[2] == "range"]
+    outs.append(("红臂：八类缺陷全点名（本轮 kinds=%s，配上 %d/%d 行，type_rows=%d desc_rows=%d "
+                 "option_rows=%d range=%d）" % (
+                     sorted(kinds), stats["matched"], stats["rows"], stats["type_rows"],
+                     stats["desc_rows"], stats["option_rows"], len(ranges)),
+                     {"count", "label", "required", "default", "type", "desc", "options", "range"} <= kinds
+                     and stats["matched"] == 3))
+    # 臂 2b：range 的三条分支各自单独承重（同一 kind 只报一次不算证到三条路）——
+    # 开闭位单点错、数字单点错、该键根本没声明界，三条必须各出一条。
+    outs.append(("红臂：range 三条分支各报一次（本轮 %d 条：无声明界 %d / 只括号错 %d / 只数字错 %d）" % (
+        len(ranges), sum(1 for f in ranges if "声明" in f[3]),
+        sum(1 for f in ranges if "文档=[0, 10] " in f[3]),
+        sum(1 for f in ranges if "文档=[0, 20) " in f[3])),
+        len(ranges) == 3
+        and sum(1 for f in ranges if "声明" in f[3]) == 1
+        and sum(1 for f in ranges if "文档=[0, 10] " in f[3]) == 1
+        and sum(1 for f in ranges if "文档=[0, 20) " in f[3]) == 1))
+    # 臂 3：只豁免其中一类（count）⇒ 其余各类仍算漂移，且这条豁免因为用上了，不许报 DEAD。
+    # 与臂 2 唯一的差别就是那份 verified，所以这里必须把 fake_types / fake_bounds 也传进去——
+    # 少传一个参数会让 type（或 range）那类根本不存在，臂 2 的"八类齐全"就白测了（本轮真撞到过一次）。
     verified = {("fake.act_bad", "table"): {"kinds": ["count"], "evidence": "x"}}
     findings, allowed, dead, stats, _ = compare(
         {"fake": {"act_bad": ui["fake"]["act_bad"]}}, {}, {}, hs, tmp / "docs/算法说明",
-        {"fake.act_bad": ("假类/假动作坏", True)}, verified, fake_types)
+        {"fake.act_bad": ("假类/假动作坏", True)}, verified, fake_types, fake_bounds)
     outs.append(("红臂：只豁免 1 类时其余 %d 类仍算漂移、豁免不算死（allowed=%d 总数=%d）" % (
         len(findings) - len(allowed), len(allowed), len(findings)),
-        len(allowed) == 1 and len(findings) - len(allowed) == 6 and not dead))
+        len(allowed) == 1 and len(findings) - len(allowed) == 9 and not dead))
     # 臂 4：与本轮漂移无关的豁免必须报 DEAD
     verified2 = {("fake.other", "table"): {"kinds": ["count"], "evidence": "x"}}
     findings, allowed, dead, stats, _ = compare(
         {"fake": {"act_good": ui["fake"]["act_good"]}}, {}, {}, hs, tmp / "docs/算法说明",
-        {"fake.act_good": ("假类/假动作", True)}, verified2)
+        {"fake.act_good": ("假类/假动作", True)}, verified2, fake_types, fake_bounds)
     outs.append(("红臂：与本轮漂移无关的豁免必须报 DEAD", ("fake.other", "table") in dead))
     # 臂 5：总览页双向对撞 —— 挂了的文件不存在 ⇒ dangling；盘上有、链接没有 ⇒ unlinked。
     # （前面几条不建 总览.md，判据那一步是 skip，不会污染"好文档 0 漂移"这条绿臂。）
@@ -608,7 +741,7 @@ def self_test():
         "- [假动作](./假类/假动作.md)\n- [不存在](./假类/根本没有.md)\n", encoding="utf-8")
     findings, allowed, dead, stats, _ = compare(
         {"fake": {"act_good": ui["fake"]["act_good"]}}, {}, {}, hs, tmp / "docs/算法说明",
-        {"fake.act_good": ("假类/假动作", True)}, {})
+        {"fake.act_good": ("假类/假动作", True)}, {}, fake_types, fake_bounds)
     kinds5 = {f[2] for f in findings}
     outs.append(("红臂：总览缺挂与死链都点名（本轮 kinds=%s）" % sorted(kinds5),
                  {"unlinked", "dangling"} <= kinds5))
