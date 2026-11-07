@@ -37,7 +37,22 @@
 #       registration site in the runner source -- i.e. the exempt case was deleted out from
 #       under the entry;
 #   (7) judged + exempted-this-run != ran (the counter partition is arithmetic, so a lying
-#       hook cannot hide behind a green run).
+#       hook cannot hide behind a green run);
+#   (8) a judged branch whose body carries no derivable value-level expectation while not being
+#       named on the no-value roster (N177: "judged=47" used to be readable as "47 value
+#       expectations" while six raster branches only compared Size/Type strings);
+#   (9) a no-value roster entry whose branch DOES carry a value expectation (stale exemption);
+#   (10) a no-value entry naming a case neither judged, nor registered, nor gated-registered;
+#        also a blank Reason, or a name listed twice.
+#
+# THE VALUE SCREEN (checks 8-10) and what it cannot see, stated so nobody reads the split as
+# stronger than it is: a branch counts as value-judged only if the AST shows a comparison against a
+# numeric literal under an Assert* command, or a call into a helper that does (fixpoint over the
+# runner's own functions), or a call into a comparing helper with a numeric literal argument.
+#   - a cardinality bound ($rows.Count -ge 2, -eq 42) is deliberately NOT a product value;
+#   - a comparison written against another product's number (no literal) is NOT marked;
+#   - a vacuous comparison (1 -eq 1) WOULD be marked -- the screen is a screen, not a proof.
+# Proof of each arm lives in tests/regression_case_gate_selftest.ps1 (eight arms, run first).
 #
 # SCOPE STATEMENT (R-D33 item 8): the gate judges THIS run's roster, not the static universe.
 # quick/full modes and the Debug lightweight gates register different case sets, and several
@@ -100,6 +115,253 @@ function Note-CaseRun {
     }
 }
 
+function Test-RegressionGateNumericConstant {
+    # Windows PowerShell 5.1 hands every numeric literal back as a bare ConstantExpressionAst
+    # (there is no Integer/Real subtype in play here -- measured on this box: 12.5 / 1e-3 / 2 all
+    # come out as ConstantExpressionAst, while strings are StringConstantExpressionAst). So the
+    # test is "constant, not a string, and its value parses as a number in the invariant culture".
+    # TryParse is what keeps `3.0.1` (a version) and `$true` out of the numeric set.
+    param($Node)
+    if ($null -eq $Node) { return $false }
+    if (-not ($Node -is [System.Management.Automation.Language.ConstantExpressionAst])) { return $false }
+    if ($Node -is [System.Management.Automation.Language.StringConstantExpressionAst]) { return $false }
+    $text = [string]$Node.Value
+    $d = 0.0
+    return [double]::TryParse($text, [System.Globalization.NumberStyles]::Float,
+                              [System.Globalization.CultureInfo]::InvariantCulture, [ref]$d)
+}
+
+function Test-RegressionGateComparisonOperator {
+    # PS spells comparison operators with a case-sensitivity prefix: -lt is TokenKind.Ilt (or Clt),
+    # never plain "Lt". Reading only "Lt" marks zero branches -- which is how this list got pinned
+    # by a failing self-test rather than by a guess.
+    param($OperatorText)
+    $ops = @('Ilt', 'Clt', 'Ile', 'Cle', 'Igt', 'Cgt', 'Ige', 'Cge',
+             'Ieq', 'Ceq', 'Ine', 'Cne', 'Lt', 'Le', 'Gt', 'Ge', 'Equal', 'Ne')
+    return ($ops -contains $OperatorText)
+}
+
+function Get-RegressionGateComparisons {
+    # Every comparison binary inside $Scope, tagged with the three facts the value screen needs.
+    #   Numeric  : one side is a hand-written number -- bare, or arithmetic over numbers, so
+    #              `([int]$inherited + 5)` counts (the expectation is written down, not read from
+    #              another product).
+    #   Countish : the non-literal side is a collection bound ($rows.Count -ge 2). Cardinality is
+    #              deliberately NOT a product value -- that exact reading is what N177 was filed
+    #              over, and arm A6 pins it.
+    #   OperandText: the comparison's own source text, lowercased -- the helper rule uses it to ask
+    #              whether the quantity being compared is one of the helper's declared parameters.
+    # WHY every caller wraps this in @(): PowerShell unrolls a returned array onto the pipeline, so a
+    # scope with exactly ONE comparison comes back as a bare object and `$cmps.Count` on it is $null.
+    # A `Count -gt 0` test then reads false for one-comparison helpers and true for two or more --
+    # that is how a whole class of helpers looked "does not compare" (arm A10 caught it).
+    param($Scope)
+    $out = [System.Collections.Generic.List[object]]::new()
+    if ($null -eq $Scope) { return @($out) }
+    foreach ($bin in $Scope.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.BinaryExpressionAst] }, $true)) {
+        if (-not (Test-RegressionGateComparisonOperator ([string]$bin.Operator))) { continue }
+        $leftNumeric = Test-RegressionGateNumericArgument $bin.Left
+        $rightNumeric = Test-RegressionGateNumericArgument $bin.Right
+        # "the other side" is the MEASURED quantity, i.e. whichever side is not the literal.
+        # Getting this backwards silently disables the cardinality exclusion, which is exactly what
+        # arm A6 exists to catch ($Rows.Count -ge 2 must NOT read as a product value).
+        $other = $bin.Left
+        if ($leftNumeric -and -not $rightNumeric) { $other = $bin.Right }
+        $text = ''
+        if ($null -ne $other) { $text = ([string]$other.Extent.Text).TrimEnd() }
+        # WHY -cmatch and not -match: `.Count` is the PowerShell collection bound (cardinality), and
+        # the legs also read a product field literally named "count" (`$payload.count -le 20`, the
+        # max_points cap). A case-insensitive test throws the second one away with the first.
+        $countish = ($text -cmatch '\.(Count|Length|LongLength)$')
+        $wrapped = $false
+        $walker = $bin.Parent
+        while ($null -ne $walker) {
+            if ($walker -is [System.Management.Automation.Language.CommandAst]) {
+                $cn = [string]$walker.GetCommandName()
+                if ($cn.StartsWith('Assert')) { $wrapped = $true; break }
+            }
+            $walker = $walker.Parent
+        }
+        $out.Add([pscustomobject]@{
+            Numeric = ($leftNumeric -or $rightNumeric)
+            Countish = $countish
+            AssertWrapped = $wrapped
+            OperandText = ([string]$bin.Extent.Text).ToLower()
+        }) | Out-Null
+    }
+    return @($out)
+}
+
+function Get-RegressionGateParameterNames {
+    # Declared parameters of a function, lowercased and without the $.
+    # WHY Body.ParamBlock and not FunctionDefinitionAst.Parameters: on 5.1 the latter comes back
+    # empty for a `param(...)` function (measured), so reading it silently yields "no parameters"
+    # and every parameter-based rule degenerates to false.
+    param($FunctionAst)
+    $names = [System.Collections.Generic.List[string]]::new()
+    if ($null -eq $FunctionAst -or $null -eq $FunctionAst.Body) { return $names }
+    $block = $FunctionAst.Body.ParamBlock
+    if ($null -eq $block) { return $names }
+    foreach ($p in @($block.Parameters)) {
+        if ($null -eq $p -or $null -eq $p.Name) { continue }
+        $names.Add(([string]$p.Name.VariablePath.UserPath).ToLower()) | Out-Null
+    }
+    return $names
+}
+
+function Test-RegressionGateNumericArgument {
+    # Is this argument a hand-written number -- bare, or arithmetic over numbers only?
+    # `(10.0 / 255.0)` and `([int]$inherited + 5)` count (the expectation is written out, just not
+    # as one token); `("Mean: " + $x)`, `$InputFeatureCount` and `$Rows.Count` do not.
+    # WHY member names are skipped: `$Rows.Count` parses as a MemberExpressionAst whose member is a
+    # STRING constant, so a naive "any string inside means this is text" test would veto the very
+    # cardinality expressions the exclusion is there to catch.
+    param($Node)
+    if ($null -eq $Node) { return $false }
+    if (Test-RegressionGateNumericConstant $Node) { return $true }
+    if ($Node -is [System.Management.Automation.Language.StringConstantExpressionAst]) { return $false }
+    if ($Node -isnot [System.Management.Automation.Language.ExpressionAst]) { return $false }
+    $found = $false
+    foreach ($sub in $Node.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.ExpressionAst] }, $true)) {
+        if ($sub -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+            # WHY the parent is matched by NAME: on Windows PowerShell 5.1 the static-member node is
+            # InvokeMemberExpressionAst and there is no StaticMemberExpressionAst type to test
+            # against -- [System.Management.Automation.Language.StaticMemberExpressionAst] throws
+            # TypeNotFound at that very line, and a type test that cannot be evaluated is not a test.
+            $parentName = ''
+            if ($null -ne $sub.Parent) { $parentName = [string]$sub.Parent.GetType().Name }
+            if ($parentName -in @('MemberExpressionAst', 'StaticMemberExpressionAst',
+                                  'InvokeMemberExpressionAst', 'InvokeExpressionAst')) { continue }
+            return $false
+        }
+        if (Test-RegressionGateNumericConstant $sub) { $found = $true }
+    }
+    return $found
+}
+
+function Test-RegressionGateDecimalText {
+    # Does this literal spell out a number with a decimal point or an exponent?
+    # WHY that is the text-side test: the legs pin product numbers as whole printed lines
+    # ("Mean:   0.75", "Pixel Size:  (0.001, -0.001)", a CSV row "z1,1,0,4,2,1.22474,16,8"), and a
+    # decimal is what separates such an expectation from the shape text the same helper is used
+    # for ("Size:   24 x 24 x 1 bands", "Type:   Float32", "CRS:    EPSG:4326", "Band 1:"). The
+    # separation is not perfect -- "Mean:   0" has no decimal, which is why those branches were
+    # moved to -Expected instead of being taught to the screen by a keyword list.
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $false }
+    return ($Text -match '\d+\.\d|\.\d+|\d+[eE][+-]?\d')
+}
+
+function Get-RegressionGateExpectationArguments {
+    # E2/E3 evidence inside one scope: an expected quantity handed to an assertion command, either
+    # as a number in an -Expected-shaped parameter or as text that itself carries a decimal.
+    # WHY keying on the parameter NAME and not on "any numeric argument": the legs pass four
+    # different kinds of number to the same helper -- the expected value (-Expected 0), the array
+    # geometry (-ExpectedWidth 32), the precision (-Tolerance 1e-9) and the band index (-Band 1).
+    # Only the first is an expectation about the product; arms A11 and A13 pin that.
+    param($Scope)
+    $commands = @($Scope.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))
+    foreach ($cmd in $commands) {
+        $name = ([string]$cmd.GetCommandName()).ToLower()
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        if (-not $name.StartsWith('assert')) { continue }
+        $els = @($cmd.CommandElements)
+        $param = ''
+        foreach ($el in $els) {
+            if ($el -is [System.Management.Automation.Language.CommandParameterAst]) {
+                $param = [string]$el.ParameterName
+                continue
+            }
+            if ($el -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                $el = $el.Expression
+            }
+            if ($param -match '^(Expected|Expect|Expectation|ExpectedValue)$') {
+                if (Test-RegressionGateNumericArgument $el) { return $true }
+            }
+            if ($param -notmatch '^(Message|Name|Label|Case)$') {
+                if ($el -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    if (Test-RegressionGateDecimalText ([string]$el.Value)) { return $true }
+                }
+            }
+        }
+    }
+    return $false
+}
+
+function Get-RegressionGateDecimalComparisonText {
+    # E3's other shape: a whole expected line pinned in a comparison operand rather than an
+    # argument -- `Assert-Condition -Condition ($lines -contains "z1,1,0,4,2,1.22474,16,8")`, which
+    # is how the zonal-stats branch writes its CSV rows. -contains/-match/-like are comparisons on
+    # the string level but carry no numeric operand, so the numeric screen (E1) never sees them.
+    param($Scope)
+    $skip = @('Plus', 'Minus', 'Multiply', 'Divide', 'Mod')
+    foreach ($bin in $Scope.FindAll(
+        { param($n) $n -is [System.Management.Automation.Language.BinaryExpressionAst] }, $true)) {
+        if ($skip -contains ([string]$bin.Operator)) { continue }
+        foreach ($side in @($bin.Left, $bin.Right)) {
+            if ($side -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                if (Test-RegressionGateDecimalText ([string]$side.Value)) { return $true }
+            }
+        }
+    }
+    return $false
+}
+
+function Test-RegressionGateValueScope {
+    # Is a value-level expectation written down in this scope? Three shapes, all derived:
+    #   E1 a hand-written number compared against the product (not a cardinality bound, and under
+    #      an Assert* command -- so "the helper computed a number" is not enough);
+    #   E2 an expected quantity passed into an assertion helper as -Expected/-Expect;
+    #   E3 an expectation pinned as text that itself carries a decimal.
+    # WHY -HelperScope drops E1: inside a helper, "compares a local against a literal" is exactly
+    # what a transport check looks like ($code -eq 0, $jsonStart -ge 0), and it says nothing about
+    # the product. A helper's own numbers only count when they sit in an E2/E3 expectation shape or
+    # in a comparison of the helper's OWN parameters (Test-RegressionGateValueHelper).
+    param($Scope, $FunctionMap, $ValueHelpers, [switch]$HelperScope)
+    if ($null -eq $Scope) { return $false }
+    if (-not $HelperScope) {
+        foreach ($c in @(Get-RegressionGateComparisons -Scope $Scope)) {
+            if ($c.Numeric -and -not $c.Countish -and $c.AssertWrapped) { return $true }
+        }
+    }
+    if (Get-RegressionGateExpectationArguments -Scope $Scope) { return $true }
+    if (Get-RegressionGateDecimalComparisonText -Scope $Scope) { return $true }
+    foreach ($cmd in @($Scope.FindAll(
+            { param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+        $name = ([string]$cmd.GetCommandName()).ToLower()
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        if (-not $FunctionMap.ContainsKey($name)) { continue }
+        if ($ValueHelpers.Contains($name)) { return $true }
+    }
+    return $false
+}
+
+function Test-RegressionGateValueHelper {
+    # Which helpers may transfer "this branch pins a value" to their callers?
+    #   H1 the helper compares one of its OWN declared parameters against a hand-written number --
+    #      the expectation flows through the call, which is the point of a value assertion; or
+    #   H2 the helper writes an expectation of its own (E2/E3 inside its body).
+    # What must NOT qualify: comparing a local the caller never touched. Measured on the raster
+    # leg, `Invoke-CliAndCaptureText` (`$code -eq 0`) and `Read-JsonPayload` (`$jsonStart -ge 0`)
+    # both passed the old "does it compare anything at all" test, `Get-NamedRasterInfo` then
+    # inherited it, and every branch that merely read gdalinfo text was counted as value-checked.
+    param($FunctionAst, $OwnParameterNames)
+    if ($null -eq $FunctionAst -or $null -eq $OwnParameterNames) { return $false }
+    if ($OwnParameterNames.Count -eq 0) { return $false }
+    foreach ($cmp in @(Get-RegressionGateComparisons -Scope $FunctionAst.Body)) {
+        if (-not $cmp.Numeric -or $cmp.Countish) { continue }
+        foreach ($p in $OwnParameterNames) {
+            if ([string]::IsNullOrWhiteSpace($p)) { continue }
+            if ($cmp.OperandText -match ('\b' + [regex]::Escape($p) + '\b')) { return $true }
+        }
+    }
+    return $false
+}
+
+
 function Get-RegressionGateBranchFacts {
     # Reads the runner's own source with the PowerShell parser (no grep/regex on comment noise).
     # Returns two derived sets:
@@ -124,6 +386,7 @@ function Get-RegressionGateBranchFacts {
     }
 
     $branches = [System.Collections.Generic.List[string]]::new()
+    $clauseBodies = @{}
     $switches = $ast.FindAll(
         { param($node) $node -is [System.Management.Automation.Language.SwitchStatementAst] }, $true)
     foreach ($sw in $switches) {
@@ -136,12 +399,18 @@ function Get-RegressionGateBranchFacts {
             if ($labelAst -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
                 $label = [string]$labelAst.Value
                 if (-not $branches.Contains($label)) { $branches.Add($label) | Out-Null }
+                if (-not $clauseBodies.ContainsKey($label)) {
+                    $clauseBodies[$label] = [System.Collections.Generic.List[object]]::new()
+                }
+                # A label seen again means two switches judge one name: keep both bodies, and the
+                # screen below demands BOTH carry a value expectation (strictness is deliberate --
+                # the weaker one is exactly what a reader would not see in a merged count).
+                $clauseBodies[$label].Add($clause.Item2) | Out-Null
             }
         }
     }
 
-    $conditional = @{}
-    # CommandAst only: CommandExpressionAst (also a CommandBaseAst) has no GetCommandName() on PS 5.1.
+    $conditional = @{}    # CommandAst only: CommandExpressionAst (also a CommandBaseAst) has no GetCommandName() on PS 5.1.
     $commands = $ast.FindAll(
         { param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)
     foreach ($cmd in $commands) {
@@ -182,9 +451,61 @@ function Get-RegressionGateBranchFacts {
         }
     }
 
+    $functions = @{}
+    $paramNames = @{}
+    foreach ($fn in $ast.FindAll(
+        { param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+        $key = [string]$fn.Name.ToLower()
+        $functions[$key] = $fn
+        $paramNames[$key] = @(Get-RegressionGateParameterNames -FunctionAst $fn)
+    }
+    # Fixpoint over the runner's own helpers. A helper is value-bearing when it either writes an
+    # expectation itself (E1/E2/E3 inside its body) or compares one of ITS OWN PARAMETERS against a
+    # hand-written number (the expectation reaches it through the call), and closure then carries
+    # that to anything calling it -- the vector leg drives whole case groups from helper procs.
+    # Iterated to stability because the source order of definitions is not a call order.
+    # WHY transport helpers stay out of this set: see Test-RegressionGateValueHelper. Measured with
+    # them in, 62 of the raster leg's 64 branches read as value-checked, including the four that
+    # only ever compare gdalinfo Size/Type text.
+    $valueHelpers = [System.Collections.Generic.HashSet[string]]::new()
+    $grew = $true
+    while ($grew) {
+        $grew = $false
+        foreach ($name in @($functions.Keys)) {
+            if ($valueHelpers.Contains($name)) { continue }
+            if ((Test-RegressionGateValueScope -Scope $functions[$name].Body `
+                        -FunctionMap $functions -ValueHelpers $valueHelpers -HelperScope) -or
+                (Test-RegressionGateValueHelper -FunctionAst $functions[$name] `
+                        -OwnParameterNames $paramNames[$name])) {
+                $valueHelpers.Add($name) | Out-Null
+                $grew = $true
+            }
+        }
+    }
+
+    $valueBranches = [System.Collections.Generic.List[string]]::new()
+    foreach ($label in $branches) {
+        $marked = $true
+        foreach ($body in $clauseBodies[$label]) {
+            if (-not (Test-RegressionGateValueScope -Scope $body -FunctionMap $functions `
+                        -ValueHelpers $valueHelpers)) { $marked = $false; break }
+        }
+        if ($marked) { $valueBranches.Add($label) | Out-Null }
+    }
+    if ($branches.Count -gt 0 -and $valueBranches.Count -eq 0) {
+        # A screen that marks nothing is a broken screen, not a suite with no value expectations:
+        # passing here would turn every branch into "must be roistered" and let the roster grow
+        # until the number means nothing again -- the exact failure N177 is about.
+        throw ("regression gate: the value screen marked 0 of " + $branches.Count +
+               " judgement branches in " + $RunnerPath + " -- either the assertion shape changed " +
+               "(Assert-* renamed, comparisons no longer against literals) or the screen went " +
+               "blind. Fix the screen before trusting any judged= number.")
+    }
+
     return [pscustomobject]@{
         Branches        = @($branches)
         ConditionalCase = $conditional
+        ValueBranches   = @($valueBranches)
     }
 }
 
@@ -206,6 +527,7 @@ function Assert-AllCasesJudged {
         [string]$RunnerPath,
         [string]$SelectedGroup = "all",
         [object[]]$Allowlist = @(),
+        [object[]]$NoValueList = @(),
         [string[]]$RuntimeRosters = @()
     )
 
@@ -255,6 +577,40 @@ function Assert-AllCasesJudged {
                ($duplicates -join ","))
     }
 
+    # (8) the N177 roster: a branch whose body carries no derivable hand-written value expectation
+    #     must be named here, one entry per branch, and the entry must say what the branch does
+    #     check. Three lawful kinds of reason, and a reason that does not name one of them is the
+    #     gap: (a) shape only -- gdalinfo Size/Type/CRS text, a header column list, a tile grid;
+    #     (b) an invariant whose expected side is read at run time (output count == input count), so
+    #     no number is written down; (c) a content statistic pinned as a printed INTEGER substring
+    #     ("Mean:   0"), which the screen cannot tell from a size line. Kind (c) is a known test
+    #     weakness, not a classification, and says so.
+    #     WHY a roster instead of a red-by-default rule: forcing fake numeric expectations onto (a)
+    #     and (b) would make the assertion worse than the gap. WHY reasons are mandatory: an entry
+    #     without one is the "judged=47 read as 47 value expectations" misreading again, just moved
+    #     from the counter to the exemption list.
+    $noValueNames = @()
+    $noValueMissingReason = @()
+    foreach ($entry in @($NoValueList)) {
+        if ($null -eq $entry) { continue }
+        $entryName = [string]$entry.Name
+        if ([string]::IsNullOrWhiteSpace([string]$entry.Reason)) {
+            $noValueMissingReason += $entryName
+        }
+        $noValueNames += $entryName
+    }
+    if ($noValueMissingReason.Count -gt 0) {
+        throw ("regression gate[" + $RunnerName + "]: " + $noValueMissingReason.Count +
+               " roster entry(ies) carry no reason: " + ($noValueMissingReason -join ",") +
+               " -- every entry must state what that branch actually checks (Size/Type strings, " +
+               "a column list, a run-time invariant, an integer substring).")
+    }
+    $noValueDuplicates = @($noValueNames | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+    if ($noValueDuplicates.Count -gt 0) {
+        throw ("regression gate[" + $RunnerName + "]: the no-value roster lists a name twice: " +
+               ($noValueDuplicates -join ","))
+    }
+
     # (2) forward: ran but not judged, and not allowlisted.
     $unjudged = @($ranCases | Where-Object { ($judged -notcontains $_) -and ($allowNames -notcontains $_) })
     # (3) reverse necessity of the allowlist itself.
@@ -288,7 +644,38 @@ function Assert-AllCasesJudged {
     $exemptNotRegistered = @($allowNames | Where-Object { $registered -notcontains $_ })
     $partitionSum = $judged.Count + $exemptedThisRun.Count
 
+    # (8b) split the judged counter by what the screen derived, so "judged=" can never be read as
+    #      a value-coverage number again.
+    $valueBranchSet = @($facts.ValueBranches)
+    $valueJudged = @($judged | Where-Object { $valueBranchSet -contains $_ })
+    $unrosteredNoValue = @($judged | Where-Object {
+        ($valueBranchSet -notcontains $_) -and ($noValueNames -notcontains $_) })
+    $staleNoValue = @($noValueNames | Where-Object { $valueBranchSet -contains $_ })
+    # A roster entry may name a branch this leg did not register: the vector leg runs one group per
+    # process, so the other groups' branches are legitimately absent from THIS run. The lawful
+    # reference for "ghost" is therefore the file's own branch labels, not this run's roster -- and
+    # the necessity check still bites, because deleting the branch deletes the label and the entry
+    # then points at nothing.
+    $ghostNoValue = @($noValueNames | Where-Object {
+        ($judged -notcontains $_) -and ($registered -notcontains $_) -and
+        ($branches -notcontains $_) -and (-not $facts.ConditionalCase.ContainsKey($_)) })
+
     $problems = @()
+    if ($unrosteredNoValue.Count -gt 0) {
+        $problems += ($unrosteredNoValue.Count.ToString() + " judged branch(es) carry no derivable " +
+                     "value-level expectation and are not on the no-value roster: " +
+                     ($unrosteredNoValue -join ","))
+    }
+    if ($staleNoValue.Count -gt 0) {
+        $problems += ("roster entry(ies) do carry a value-level expectation, so the entry is " +
+                     "stale and must be removed: " + ($staleNoValue -join ","))
+    }
+    if ($ghostNoValue.Count -gt 0) {
+        $problems += ($ghostNoValue.Count.ToString() + " roster entry(ies) name a case that was " +
+                     "neither judged, nor registered, nor declared as a judgement branch of " +
+                     $RunnerPath + ", nor conditionally registered -- the branch or the case is " +
+                     "gone: " + ($ghostNoValue -join ","))
+    }
     if ($unjudged.Count -gt 0) {
         $problems += ($unjudged.Count.ToString() + " case(s) ran with no judgement branch and no " +
                      "allowlist entry: " + ($unjudged -join ","))
@@ -325,7 +712,24 @@ function Assert-AllCasesJudged {
                " judged=" + $judged.Count + " allowlisted=" + $exemptedThisRun.Count +
                " allowlist-table=" + $allowNames.Count +
                " allowlist-gated-not-registered=" + $exemptNotRegistered.Count +
-               " branch-labels=" + $branches.Count)
+               " branch-labels=" + $branches.Count +
+               " value-judged=" + $valueJudged.Count + " no-value-judged=" + ($judged.Count - $valueJudged.Count) +
+               " no-value-roster=" + $noValueNames.Count)
+    }
+
+    # The counters are returned as well as printed, from the SAME variables: a self-test must be
+    # able to assert on the contract instead of scraping console text (Write-Host output cannot be
+    # captured from a script block in 5.1, and scraping it would also couple the proof to layout).
+    $summary = [pscustomobject]@{
+        Registered   = $registered.Count
+        Ran          = $ranCases.Count
+        Judged       = $judged.Count
+        ValueJudged  = $valueJudged.Count
+        NoValueJudged  = ($judged.Count - $valueJudged.Count)
+        NoValueRoster  = $noValueNames.Count
+        Allowlisted  = $exemptedThisRun.Count
+        AllowlistTbl = $allowNames.Count
+        BranchLabels = $branches.Count
     }
 
     # One line, printed only when the gate actually passed.
@@ -333,12 +737,19 @@ function Assert-AllCasesJudged {
     # judged + allowlisted == ran here); allowlist-table = the list handed over by the runner;
     # the difference between those two is exactly the entries whose case is gated out of this
     # config and is only lawful while the gated registration site still exists (check (6)).
-    Write-Host ("regression-gate[" + $RunnerName + "]: registered=" + $registered.Count +
-                " ran=" + $ranCases.Count + " judged=" + $judged.Count +
-                " allowlisted=" + $exemptedThisRun.Count +
-                " allowlist-table=" + $allowNames.Count +
+    # value-judged / no-value-judged split the judged counter by the AST screen (N177): only
+    # value-judged may be read as "the leg compares product numbers against a written-down
+    # expectation"; the no-value side is covered by a reason in the roster, never by silence.
+    Write-Host ("regression-gate[" + $RunnerName + "]: registered=" + $summary.Registered +
+                " ran=" + $summary.Ran + " judged=" + $summary.Judged +
+                " value-judged=" + $summary.ValueJudged +
+                " no-value-judged=" + $summary.NoValueJudged +
+                " no-value-roster=" + $summary.NoValueRoster +
+                " allowlisted=" + $summary.Allowlisted +
+                " allowlist-table=" + $summary.AllowlistTbl +
                 " allowlist-gated-not-registered=" + $exemptNotRegistered.Count +
-                " branch-labels=" + $branches.Count +
+                " branch-labels=" + $summary.BranchLabels +
                 " conditional-registrations=" + $facts.ConditionalCase.Keys.Count +
                 " dead-branches=0 (scope: this run only, Group=" + $SelectedGroup + ")")
+    return $summary
 }

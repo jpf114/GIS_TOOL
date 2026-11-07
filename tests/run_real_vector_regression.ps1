@@ -3894,7 +3894,47 @@ $summaryTag = $Mode
 if ($Group -ne "all") { $summaryTag = $Mode + "_" + $Group }
 $summaryJsonPath = Join-Path $ResolvedOutputRoot ("summary_" + $summaryTag + ".json")
 $summaryCsvPath = Join-Path $ResolvedOutputRoot ("summary_" + $summaryTag + ".csv")
-Assert-AllCasesJudged -RunnerName "vector" -RunnerPath $PSCommandPath -RuntimeRosters @() -SelectedGroup $Group -Allowlist @()
+# N177 roster: branches whose body carries no hand-written value expectation the AST screen can see.
+# Kinds and the stale-entry rule are documented on the raster leg's table (same contract, and the
+# gate itself refuses a roster entry whose branch has since gained a visible expectation). On this
+# leg the overwhelming kind is `invariant`: the legs here were built to compare the product against
+# quantities read back from the input (feature counts, field lists, CRS, extent), which is a real
+# judgement but states no number, so no number can be wrong in the way a hand-derived one can.
+$vectorNoValueRoster = @(
+    [pscustomobject]@{ Name = "buffer_quick"; Reason = "invariant: reported feature_count equals the input count read at run time, plus the srs_type and layer-name lines" },
+    [pscustomobject]@{ Name = "clip_focus"; Reason = "invariant: feature_count equals the input count read at run time" },
+    [pscustomobject]@{ Name = "intersect_focus"; Reason = "invariant: feature_count equals the input count read at run time" },
+    [pscustomobject]@{ Name = "difference_far"; Reason = "invariant: feature_count equals the input count read at run time" },
+    [pscustomobject]@{ Name = "clip_stress"; Reason = "invariant: feature_count equals the input count read at run time" },
+    # Not a switch label at all: this case is dispatched by GROUP (see the `if ($Case.Group -eq
+    # "union_poly")` above Validate-CaseOutputs' switch, which is deliberate -- a new union_poly
+    # case must reach Assert-UnionPolyCase without anyone remembering to write a name branch). The
+    # screen reads expectation evidence out of a branch BODY keyed by name, so for this case there is
+    # nothing to read and the roster is the only way to say so: this entry records a MISSING
+    # ATTRIBUTION, not a weak judgement. What the helper checks: the piece-count invariant
+    # (input + overlap + overlay == total), the read-back row count against that total, a lower
+    # bound derived from the source histogram, the per-class counts, the field count, and two
+    # written-down floors -- `-gt 0` (it emitted something) and `union_overlay_pieces -ge 1`
+    # (path A was really taken). If a name branch is ever added for this case, this entry goes
+    # stale and the leg fails, which is the check that the attribution was repaired.
+    [pscustomobject]@{ Name = "union_poly_focus"; Reason = "no switch label exists for it on purpose (group-dispatched to Assert-UnionPolyCase), so the screen has no branch body to read; that helper's evidence is count invariants against both inputs read back, plus the -gt 0 and overlay_pieces -ge 1 floors" },
+    [pscustomobject]@{ Name = "spatial_join_focus"; Reason = "invariant: joined count equals the input count, read back from the written layer" },
+    [pscustomobject]@{ Name = "union_focus"; Reason = "invariant: the reported union count is at least the input count read at run time" },
+    [pscustomobject]@{ Name = "convert_roads_geojson"; Reason = "invariant: Assert-C3cAConvertCase compares feature/field counts, field order, layer name and CRS against the input layer read back" },
+    [pscustomobject]@{ Name = "rasterize_bbox"; Reason = "shape: the Size and CRS lines plus integer: Mean:   1 as a substring" },
+    [pscustomobject]@{ Name = "hull_polygon"; Reason = "invariant: derived-geometry helper, extent equal to the input extent and feature count equal to the input count" },
+    [pscustomobject]@{ Name = "envelope_polygon"; Reason = "invariant: derived-geometry helper, extent equal to the input extent and feature count equal to the input count" },
+    [pscustomobject]@{ Name = "centroid_polygon"; Reason = "invariant: derived-geometry helper, centroid inside the input extent, count equal to the input count" },
+    [pscustomobject]@{ Name = "interior_polygon"; Reason = "invariant: derived-geometry helper, interior point inside the input extent, count equal" },
+    [pscustomobject]@{ Name = "boundary_polygon"; Reason = "invariant: derived-geometry helper, geometry kind LineString, extent inside the input, count equal" },
+    [pscustomobject]@{ Name = "vertices_line"; Reason = "invariant: -FeaturesMode none; the read-back count is stored for the vertex/endpoint/midpoint cross-relation, not compared with a written number" },
+    [pscustomobject]@{ Name = "filter_cn_attribute"; Reason = "invariant: the whole judgement is Assert-ChineseAttributeFilterCase, which compares counts, field count and extent against the input layer and requires the extent to have shrunk" },
+    [pscustomobject]@{ Name = "info_province"; Reason = "invariant: Assert-C3cAInfoProvinceCase compares driver, layer name, geometry kind, CRS, field list/order and counts against the input GeoJSON; its own hand-written number (one layer) sits in the helper, where bare comparisons are not read" },
+    [pscustomobject]@{ Name = "info_roads"; Reason = "invariant: same helper family, expected count and field names handed in as variables" },
+    [pscustomobject]@{ Name = "repair_province"; Reason = "invariant: reported/repaired/skipped counts and the read-back layer metadata against input-derived refs; the one hand-written number (skipped_count 0) lives in the helper" },
+    [pscustomobject]@{ Name = "simplify_roads"; Reason = "invariant: reported and read-back counts, field order, layer name, geometry kind and CRS against the input, plus the extent inside the input extent" }
+)
+Assert-AllCasesJudged -RunnerName "vector" -RunnerPath $PSCommandPath -RuntimeRosters @() -SelectedGroup $Group -Allowlist @() -NoValueList $vectorNoValueRoster
 Save-RegressionResults -JsonPath $summaryJsonPath -CsvPath $summaryCsvPath -Mode $Mode -Group $Group -Results $results
 
 Write-Host "Vector regression completed:" -ForegroundColor Green

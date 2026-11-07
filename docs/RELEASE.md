@@ -5479,6 +5479,96 @@ range=0 unresolved=0 ambiguous=0 ceiling=182 dead_registry=0`；
 卫生面：调查脚本与变异探针输出都在 `build/tmp/`（gitignored）内，探针临时件已删，
 取证用的 `tests/__pycache__` 提交前删掉；席位：控制器自跑，无独立复审席。
 
+### 批次 D N177（2026-11-07，腿侧判据闸把 `judged` 拆成 `value-judged` / `no-value-judged`，并给闸自己一支自证用例；**不碰产品**）
+
+症状：三条真实腿的收尾闸过去只要求"分支体跑过 ⇒ `Mark-Judged`"，于是 `judged=63` 被读成"63 条值级
+期望"。本轮把"这条分支到底钉没钉一个手推的产物数值"改成**从 AST 派生**，派生不出来的分支必须逐条
+点名进名单、每条写理由。
+
+**判据形状（三种可派生的证据，每种都由合成夹具的臂钉住；`switch ($Case.Name)` 的分支体是唯一论域）**
+- `E1` 比较：一侧是手写的数——裸字面量，或只由数组成的算式（`(10.0 / 255.0)`、`([int]$inherited + 5)`
+  都算），另一侧不是集合基数。基数排除**大小写敏感**（`-cmatch '\.(Count|Length|LongLength)$'`）：
+  `$rows.Count -ge 2` 是基数、`$payload.count -le 20` 是产物字段（matching 腿里 max_points 的唯一手写上界）。
+- `E2` 参数：期望量以 `-Expected`/`-Expect` 具名传给 `Assert*` 命令。腿里同一助手的四个数字各归各位
+  ——`-Expected 0`（期望）、`-ExpectedWidth 32`（数组几何）、`-Tolerance 1e-9`（精度）、`-Band 1`（波段号），
+  只有第一种算期望；按"调用里有没有数字"来判会把后三种一起吃进来（臂 A11/A13 就是钉这个）。
+- `E3` 文本：期望写成整行文本且文本自带小数或指数——`"Mean:   0.75"`、`"Pixel Size:  (0.001, -0.001)"`、
+  zonal CSV 的整行 `"z1,1,0,4,2,1.22474,16,8"`（`-contains` 不是比较运算符，`E1` 看不见它）。
+- 助手传递规则收紧：**助手只有在拿自己的声明参数跟手写数比时**才把值级证据传给调用方。收紧前是
+  "助手里有任意比较就算"，被两条传输型助手带偏——`Invoke-CliAndCaptureText` 的 `$code -eq 0` 与
+  `Read-JsonPayload` 的 `$jsonStart -ge 0`，再经 `Get-NamedRasterInfo` 传染 ⇒ **栅格腿 64 个分支里 62 个**
+  被读成值级判据，而其中 `processing_gabor_filter` / `processing_glcm_texture` / `processing_mean_shift_filter`
+  / `processing_skeleton` 四条分支体里**一次比较都没有**（探针现读 `comparisons=0 qualifying=0`）。
+- 反向不变量保留：屏幕一个都不标 ⇒ 直接红（"判据瞎了"不许当"没有值期望"）。
+
+**名单（`-NoValueList`，每条 Name + 必填 Reason）**——三种合法理由，理由本身要对读者有用：
+- `shape`：只钉 Size/Type/CRS/"Band N:" 文本与分块网格几何。raster 5 条：`projection_assign_srs`、
+  `processing_gabor_filter`、`processing_glcm_texture`、`processing_mean_shift_filter`、`cutting_split_overlap`。
+- `invariant`：期望的一侧是运行时从输入读回的数（`feature_count` == 输入条数、extent 与输入相等/包含、
+  字段名列表逐字相等）。vector 19 条 + matching 1 条 + raster 2 条。它们是真判据，只是不写数。
+- `integer`：内容统计量钉成 gdalinfo 的**整数字子串**（`"Mean:   0"`、`"Max:    4"`）。子串既不能区分
+  0 与 0.5、也不分波段，屏幕又读不到不带小数的整数 ⇒ **这是测试弱点，不是分类**。15 条（raster 14 +
+  vector 的 `rasterize_bbox`）单独立 **N195**：改走本文件早就为此存在的 `Assert-InfoBandStatNear` /
+  `Assert-InfoStatNear`（其 D1-T1 头注释写的就是"子串的 8 能被 89.98 满足"），改完退出名单。
+  本把不动它们：换断言载体要逐条重推期望值，属另一把刀。
+- 第 4 条形状特殊：`union_poly_focus` **没有名字分支**（按组标分发是 C3h-3 的刻意设计，防"新增用例忘了
+  写判据分支还静默全绿"），屏幕按名字取证据，对它无物可读 ⇒ 理由写的是"归因缺失"，并列出该助手实际
+  判什么（三类之和 == 总数、落盘行数对元数据、源侧直方图推的下界、逐类计数、字段数，以及两个手写
+  下界 `-gt 0` 与 `union_overlay_pieces -ge 1`）。**这条是真实腿跑出来的**：union_poly 腿首跑 rc=1 点名，
+  静态论域看不见它（labels=48 而名单要吃 49 个 case 名）。
+
+**自证 15 臂进 ctest**：新用例 `regression_gate_selftest`（**#778**，载体
+`tests/check_regression_gate_selftest.cmake`，恒注册、解释器缺失判红），跑在一份"腿的形状"合成夹具上，
+臂不依赖真实腿的数字。A9–A15 七支本轮新增；收紧前后对照：收紧前 A1/A9/A10/A12 四支红，另两支的
+非空跑用变异核过——把 `-cmatch` 改回 `-match` ⇒ A14（连带 A1）红；把操作数递归取值改回只看字面量
+⇒ A15（连带 A1）红；改回后 15/15 绿。
+
+**三个载体坑（都写进注释，不是我个人的备忘）**
+1. PowerShell 把**只含一个元素**的返回数组在管道上摊平 ⇒ `$cmps.Count` 是 `$null`，
+   "这个助手里有比较吗"对**恰好一个比较**的助手静默读 false（`≥2` 个才为 true）。臂 A10 抓出来的。
+2. Windows PowerShell 5.1 里没有可 `-is` 的 `StaticMemberExpressionAst` 类型；`[math]::Abs(...)` 的成员名
+   节点其父是 `InvokeMemberExpressionAst` ⇒ 写不存在的类型是**那一行直接抛 TypeNotFound**，
+   类型判断要用 `GetType().Name` 比名字。
+3. `param([string]$Targets)` 之后再写 `$targets = @('a','b')`（PowerShell 变量名大小写不敏感，撞上的是
+   同一个带类型约束的变量）会被 `[string]` **静默转成空格连接的单个字符串** ⇒ 探针的名单筛选变成
+   永不过滤，我据此先收到过一条"NO CLAUSE FOUND"的假阴性。
+
+**读数（两种口径分开写，不可互推；`ctest -V` 现读）**
+- 静态论域（`Get-RegressionGateBranchFacts` 直接读三个 runner 的源）：raster `labels=64 value=43 no-value=21`、
+  vector `labels=48 value=28 no-value=20`（名单 21 条，第 21 条就是那个没有名字分支的 `union_poly_focus`）、
+  matching `labels=5 value=4 no-value=1`。
+- 本跑（腿自己打的行）：
+  `regression-gate[raster]: registered=84 ran=84 judged=63 value-judged=43 no-value-judged=20 no-value-roster=21 allowlisted=21 allowlist-table=21 branch-labels=64 conditional-registrations=1 dead-branches=0`；
+  `regression-gate[matching]: registered=5 ran=5 judged=4 value-judged=3 no-value-judged=1 no-value-roster=1 allowlisted=1 allowlist-table=3 allowlist-gated-not-registered=2 branch-labels=5 conditional-registrations=3 dead-branches=0`。
+  两口的差都是**条件注册**造成的、逐个对上了名字：raster 静态多出的那 1 条是
+  `classification_feature_stats_csv`（`$Mode -eq "full"` 才注册），matching 多出的那 1 条是
+  `matching_detect_sift`（同条件）；matching 的 `allowlist-table=3` 减 `allowlisted=1` =
+  `matching_ecc_register` / `matching_stitch` 两条被 `-not $isDebugCliBuild` 挡在本跑之外（口径不变）。
+  vector 是按组分腿跑的，每条腿各打一行、`judged` 只含本组，因此这里只给静态口径。
+
+**验收实到（全部现读；Release 树未重编 ⇒ 本把只验收 Debug）**
+- 三条腿：`real_data_raster` 24.66 s / `real_data_matching` 2.68 s / 七条 vector 腿全绿——其中
+  `real_data_vector_union_poly` 首跑 **rc=1** 点名 `union_poly_focus`（名单缺这一条），补进名单并写清
+  理由后复跑 **Passed 138.23 s**；其余六条 vector 腿首跑即绿（160.78 / 34.61 / 77.75 / 113.22 / 49.58 / 105.30 s）。
+- Debug 全量 ctest **778/778 Passed、0 Failed、1135.02 s**（注册数 777 ⇒ **778**，+1 就是
+  `regression_gate_selftest`，PRE_TEST 发现机制自己跟上）。
+- 守卫集合（同一轮里）：`param_guard_visible_keys_all_read` 3.76 s、`install_closure` 13.37 s、
+  `install_smoke` 7.68 s、`source_mojibake_guard` 14.64 s、`docs_match_cli` 1.09 s、`geotransform_guard`
+  0.56 s、`anchor_guard` 0.67 s（`anchor_ceiling` 未被本把改动 ⇒ 新增两份 `.ps1`/`.cmake` 里没写裸行号锚）、
+  新用例 `regression_gate_selftest` 1.91 s。
+- 自证 15 臂：`powershell -File tests/regression_case_gate_selftest.ps1` ⇒ `arms=15 failed=0`；
+  两支变异核（`-cmatch`→`-match`、去掉操作数递归）各红 A14/A15 与 A1，还原后 15/15 绿。
+- 名单对账（改前自查，避免把一次 138 s 的腿跑浪费在拼写上）：`roster_check` 三条腿各自
+  `unmarked ⊆ roster`、`duplicates=空`、`stale=空`、`ghost=空` ⇒ 名单与屏幕现读逐字同源。
+- `data/` 两件套：`find data -type f -newermt "2026-11-07 13:46:51"`（本次开批时刻）= **0**、
+  `check_data_baseline.py` = **BASELINE: 88  CURRENT: 88  DIFFS: 0**。
+- 卫生面：本轮没动 `src/`、`tests/test_*.cpp`、登记表 `tests/action_gold_cases.txt` ⇒ PENDING 仍 2 条，
+  单测数不变；全部调查探针在 `build/tmp/batchD/n177/`（gitignored）内。
+- 席位：控制器自跑，无独立复审席（本把没改产品行为，改的是闸与腿的收尾判据）。
+- 遗留：**N195**（15 条整数字子串统计期望改走 `Assert-InfoBandStatNear` / `Assert-InfoStatNear`，
+  改完退出名单，raster 的 `value-judged` 应从 43 涨到 58）；`union_poly_focus` 那类**按组标分发**的分支
+  如需被屏幕归因，得先设计"组标 → 助手"的归因口径，本把不做（本把的处置是把它如实记成归因缺失）。
+
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件

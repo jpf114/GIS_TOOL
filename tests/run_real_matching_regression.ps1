@@ -472,7 +472,12 @@ $matchingGateAllowlist = @(
     [pscustomobject]@{ Name = "matching_ecc_register"; Reason = "PENDING in tests/action_gold_cases.txt; the case only registers on a non-Debug CLI build (R-D25 lightweight gate), and no judgement branch exists for it yet" }
     [pscustomobject]@{ Name = "matching_stitch"; Reason = "PENDING in tests/action_gold_cases.txt; the case only registers on a non-Debug CLI build (R-D25 lightweight gate), and no judgement branch exists for it yet" }
 )
-Assert-AllCasesJudged -RunnerName "matching" -RunnerPath $PSCommandPath -SelectedGroup "all" -Allowlist $matchingGateAllowlist
+# N177 roster: judgement branches whose body carries no hand-written value expectation the AST
+# screen can see; the kinds and the stale-entry rule are documented on the raster leg's table.
+$matchingNoValueRoster = @(
+    [pscustomobject]@{ Name = "matching_register"; Reason = "invariant: the registered product's width and height must equal the reference image's, both read at run time by Get-TiffDimensions" }
+)
+Assert-AllCasesJudged -RunnerName "matching" -RunnerPath $PSCommandPath -SelectedGroup "all" -Allowlist $matchingGateAllowlist -NoValueList $matchingNoValueRoster
 Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results
 
 Write-Host "Matching regression completed:" -ForegroundColor Green

@@ -3388,7 +3388,45 @@ $rasterGateAllowlist = @(
     [pscustomobject]@{ Name = "terrain_cut_fill"; Reason = "fixture-side GOLD via PluginTest.TerrainCutFillExecution; cut/fill volumes not derived for this DEM" },
     [pscustomobject]@{ Name = "terrain_reservoir_volume"; Reason = "fixture-side GOLD via PluginTest.TerrainReservoirVolumeExecution; reservoir volume not derived for this DEM" }
 )
-Assert-AllCasesJudged -RunnerName "raster" -RunnerPath $PSCommandPath -SelectedGroup "all" -Allowlist $rasterGateAllowlist
+# N177 roster: every judgement branch whose body the AST screen cannot see a hand-written value
+# expectation in, named one per branch with the reason saying what it checks instead. Three lawful
+# kinds of reason, and the kind is what the reader is being told:
+#   shape      -- Size/Type/CRS text, a header column list, a tile grid: the branch proves the
+#                 action wrote a product of the right shape and nothing about its content.
+#   invariant  -- the expected side is read back at run time (input counts, JSON metadata), so no
+#                 number is written down. A real judgement, just not a hand-derived quantity.
+#   integer    -- a content statistic pinned as a printed INTEGER substring ("Mean:   0"). This is
+#                 a known weakness, not a classification: a substring cannot tell 0 from 0.5 and the
+#                 screen keys on numbers it can read as numbers (a decimal, or -Expected). The fix is
+#                 to move these onto Assert-InfoBandStatNear / Assert-InfoStatNear, which already
+#                 exist in this file for exactly that reason (see its D1-T1 header comment); tracked
+#                 as N195, not part of N177.
+# Stale entries are refused (a rostered branch that DOES carry a visible expectation fails the leg),
+# so this table cannot quietly grow into the "judged=47 means 47 values" reading it replaces.
+$rasterNoValueRoster = @(
+    [pscustomobject]@{ Name = "spindex_bsi"; Reason = "integer: band mean pinned as the substring Mean:   0; no numeric comparison and no -Expected" },
+    [pscustomobject]@{ Name = "terrain_viewshed_multi"; Reason = "integer: visibility range pinned as the substrings Min:    0 and Max:    255" },
+    [pscustomobject]@{ Name = "projection_assign_srs"; Reason = "shape: the Size line and the CRS line only; assigning an SRS is exactly the case where pixels must not move" },
+    [pscustomobject]@{ Name = "projection_reproject"; Reason = "shape Size/CRS text plus integer: Mean:   1 as a substring" },
+    [pscustomobject]@{ Name = "cutting_mosaic"; Reason = "shape Size/CRS text plus integer: Mean:   1 as a substring" },
+    [pscustomobject]@{ Name = "cutting_split_overlap"; Reason = "shape: tile count 4 (cardinality) plus each tile's -ExpectedWidth/-ExpectedHeight, i.e. the split grid, not its pixels" },
+    [pscustomobject]@{ Name = "processing_pansharpen"; Reason = "integer: the three band means as the substrings Mean:   75 / 85 / 95, band-ambiguous because a substring does not say which band" },
+    [pscustomobject]@{ Name = "processing_gabor_filter"; Reason = "shape: the Size line and the Type line only" },
+    [pscustomobject]@{ Name = "processing_glcm_texture"; Reason = "shape: the Size line and the Type line only" },
+    [pscustomobject]@{ Name = "processing_mean_shift_filter"; Reason = "shape: the Size line and the Type line only" },
+    [pscustomobject]@{ Name = "processing_skeleton"; Reason = "shape Size/Type text plus integer: Max:    1 as a substring" },
+    [pscustomobject]@{ Name = "processing_connected_components"; Reason = "shape Size/Type text plus integer: Max:    4 (component count) as a substring" },
+    [pscustomobject]@{ Name = "georef_gcp_register"; Reason = "shape Size/CRS text plus integer: Mean:   7 as a substring" },
+    [pscustomobject]@{ Name = "georef_cosine_correction"; Reason = "shape Size text plus integer: Mean:   20 as a substring" },
+    [pscustomobject]@{ Name = "georef_percentile_stretch"; Reason = "shape: Size plus Band 1/2/3 presence, plus integer: Mean:   0 as a substring" },
+    [pscustomobject]@{ Name = "georef_rpc_orthorectify"; Reason = "shape Size/CRS text plus integer: Mean:   9 as a substring" },
+    [pscustomobject]@{ Name = "classification_feature_stats"; Reason = "invariant: record and summary cardinalities and the CRS string, each compared against values read back from the JSON body" },
+    [pscustomobject]@{ Name = "classification_feature_stats_csv"; Reason = "shape: a row-count lower bound and two header column names" },
+    [pscustomobject]@{ Name = "classification_svm_classify"; Reason = "shape Size/Type text plus integer: Min:    1 and Max:    2 (label range) as substrings" },
+    [pscustomobject]@{ Name = "classification_random_forest_classify"; Reason = "shape Size/Type text plus integer: Min:    1 and Max:    2 (label range) as substrings" },
+    [pscustomobject]@{ Name = "classification_max_likelihood_classify"; Reason = "shape Size/Type text plus integer: Min:    1 and Max:    2 (label range) as substrings" }
+)
+Assert-AllCasesJudged -RunnerName "raster" -RunnerPath $PSCommandPath -SelectedGroup "all" -Allowlist $rasterGateAllowlist -NoValueList $rasterNoValueRoster
 Save-RegressionResults -ResolvedOutputRoot $ResolvedOutputRoot -Mode $Mode -Results $results
 
 Write-Host "Raster regression completed:" -ForegroundColor Green

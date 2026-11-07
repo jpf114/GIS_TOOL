@@ -2180,6 +2180,31 @@ add_test(
         -DREPORT=${CMAKE_CURRENT_BINARY_DIR}/anchor_guard_report.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_anchor_guard.cmake
 )
+# ── 批次 D N177：腿侧值级判据闸的自证用例 regression_gate_selftest ────────────────────
+# 判据本体 tests/regression_case_gate_selftest.ps1：拿一份"腿的形状"的合成夹具（Register-Case /
+#   switch ($Case.Name) / Assert-* 助手）喂给 tests/regression_case_gate.ps1，逐条臂断言闸在哪种
+#   写法上必须红、在哪种写法上必须绿。夹具永不执行，只被 PowerShell 解析器读——和真读三个 runner
+#   时同一条路。
+# WHY 闸自己需要一个用例，而不是只靠三条真实腿跑它：闸退化时三条腿一起变红，那读数把"闸瞎了"和
+#   "三条腿的期望同时坏了"混成同一个症状；本用例红的分布直接指向规则。实测：收紧 helper 传递规则
+#   那一轮，PowerShell 把单元素返回数组摊平 ⇒ $cmps.Count 为 $null ⇒ "比较都没有"的假绿，而三条腿
+#   当时全绿，是 A9/A10 两支臂把它顶红的。
+# WHY 恒注册、解释器缺失由载体判红：口径同 source_mojibake_guard（"没检查"绝不能长得像"检查通过"）。
+# WHY 自己再取一次解释器而不复用 _gis_mojibake_ps：两个守卫各自声明自己的"拒绝放行"，共用一个变量
+#   会让后人改其中一处探测时静默改掉本守卫的注册条件。
+if(GIS_POWERSHELL_EXECUTABLE)
+    set(_gis_gate_ps "${GIS_POWERSHELL_EXECUTABLE}")
+else()
+    # 空串而不是 ...-NOTFOUND：让载体那侧的"为空即拒绝放行"判据能读到明确的缺失。
+    set(_gis_gate_ps "")
+endif()
+add_test(
+    NAME regression_gate_selftest
+    COMMAND ${CMAKE_COMMAND}
+        -DPS=${_gis_gate_ps}
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_regression_gate_selftest.cmake
+)
 # Hard timeout for every test registered at configure time: a hanging test must fail, not
 # hang the pipeline. TESTS is the documented read-only directory property that lists the
 # tests add_test() has defined in this directory so far, so reading it at the very bottom
