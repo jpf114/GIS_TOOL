@@ -5501,17 +5501,30 @@ range=0 unresolved=0 ambiguous=0 ceiling=182 dead_registry=0`；
   / `processing_skeleton` 四条分支体里**一次比较都没有**（探针现读 `comparisons=0 qualifying=0`）。
 - 反向不变量保留：屏幕一个都不标 ⇒ 直接红（"判据瞎了"不许当"没有值期望"）。
 
-**名单（`-NoValueList`，每条 Name + 必填 Reason）**——三种合法理由，理由本身要对读者有用：
-- `shape`：只钉 Size/Type/CRS/"Band N:" 文本与分块网格几何。raster 5 条：`projection_assign_srs`、
-  `processing_gabor_filter`、`processing_glcm_texture`、`processing_mean_shift_filter`、`cutting_split_overlap`。
-- `invariant`：期望的一侧是运行时从输入读回的数（`feature_count` == 输入条数、extent 与输入相等/包含、
-  字段名列表逐字相等）。vector 19 条 + matching 1 条 + raster 2 条。它们是真判据，只是不写数。
-- `integer`：内容统计量钉成 gdalinfo 的**整数字子串**（`"Mean:   0"`、`"Max:    4"`）。子串既不能区分
-  0 与 0.5、也不分波段，屏幕又读不到不带小数的整数 ⇒ **这是测试弱点，不是分类**。15 条（raster 14 +
-  vector 的 `rasterize_bbox`）单独立 **N195**：改走本文件早就为此存在的 `Assert-InfoBandStatNear` /
+**名单（`-NoValueList`，每条 Name + 必填 Reason）——43 条**：raster 21、vector 21、matching 1。
+理由的类别词是逐条写在串首的，下面这组数是按串首类别词数的
+（`grep -o 'Reason = "[a-z]*' | sort | uniq -c`），混合条目算在串首那一类里：
+
+| 串首类别 | raster | vector | matching | 合计 |
+|---|---|---|---|---|
+| `shape`（钉的是 Size/Type/CRS 文本、网格几何、CSV 列名） | 17 | 1 | — | 18 |
+| `integer`（内容统计量钉成**整数字子串**） | 3 | — | — | 3 |
+| `invariant`（期望的一侧是运行时从输入读回的数） | 1 | 19 | 1 | 21 |
+| `no switch label…`（归因缺失，见下） | — | 1 | — | 1 |
+
+- `shape` 一类里真正"除形状文本外什么都没钉"的是 raster 这 6 条：`projection_assign_srs`、
+  `processing_gabor_filter`、`processing_glcm_texture`、`processing_mean_shift_filter`、
+  `cutting_split_overlap`（钉的是分块网格几何）、`classification_feature_stats_csv`（钉的是 CSV 列名与
+  行数下界）；shape-prefixed 里其余 11 条（raster）+ vector 的 `rasterize_bbox` 是"shape 文本**加上**
+  整数字子串"的混合写法，理由串里两个词都写了。
+- `integer` 一族的要害：子串既不能区分 `0` 与 `0.5`、也不分波段，屏幕又读不到不带小数的整数 ⇒
+  **这是测试弱点，不是分类**。**提到整数字子串的共 15 条**（raster 14 = 3 条串首 `integer` + 11 条混合、
+  vector 1 = `rasterize_bbox`），单独立 **N195**：改走本文件早就为此存在的 `Assert-InfoBandStatNear` /
   `Assert-InfoStatNear`（其 D1-T1 头注释写的就是"子串的 8 能被 89.98 满足"），改完退出名单。
   本把不动它们：换断言载体要逐条重推期望值，属另一把刀。
-- 第 4 条形状特殊：`union_poly_focus` **没有名字分支**（按组标分发是 C3h-3 的刻意设计，防"新增用例忘了
+- `invariant` 是真判据（输出条数 == 输入条数、extent 与输入相等/包含、字段名列表逐字相等），
+  只是不写数，所以屏幕不吃它——把它们记下来正是为了让 `value-judged` 不被读成包含它们。
+- 第 4 类只有一条：`union_poly_focus` **没有名字分支**（按组标分发是 C3h-3 的刻意设计，防"新增用例忘了
   写判据分支还静默全绿"），屏幕按名字取证据，对它无物可读 ⇒ 理由写的是"归因缺失"，并列出该助手实际
   判什么（三类之和 == 总数、落盘行数对元数据、源侧直方图推的下界、逐类计数、字段数，以及两个手写
   下界 `-gt 0` 与 `union_overlay_pieces -ge 1`）。**这条是真实腿跑出来的**：union_poly 腿首跑 rc=1 点名，
@@ -5564,6 +5577,13 @@ range=0 unresolved=0 ambiguous=0 ceiling=182 dead_registry=0`；
   `check_data_baseline.py` = **BASELINE: 88  CURRENT: 88  DIFFS: 0**。
 - 卫生面：本轮没动 `src/`、`tests/test_*.cpp`、登记表 `tests/action_gold_cases.txt` ⇒ PENDING 仍 2 条，
   单测数不变；全部调查探针在 `build/tmp/batchD/n177/`（gitignored）内。
+- ⚠ 本把第一条提交 `e31fe45` 的 message 写的是"42 条分支进名单"，那是**算错的**：
+  逐文件现读 `raster 21 + vector 21 + matching 1 = 43`（42 是我在补 `union_poly_focus` 那条之前数的，
+  改完没回头改数）。message 已在历史里、不 amend，所以更正记在这里与本节；名单本身没错——三条腿的
+  `no-value-roster` 字段现读就是 21 / 21 / 1。改数后重跑的那条腿是 `real_data_vector_union_poly`
+  （rc=1 → **Passed 138.23 s**）。顺带记一件事：我的临时对账脚本 `roster_check.ps1` 的口径是"名字必须是
+  switch 的 label"，所以它把 `union_poly_focus` 同时列进 stale 与 ghost——那是**探针比闸粗**，不是名单错；
+  权威判据是闸自己（ghost 认 registered∪labels∪conditional，stale 认 `ValueBranches`），腿跑绿即证。
 - 席位：控制器自跑，无独立复审席（本把没改产品行为，改的是闸与腿的收尾判据）。
 - 遗留：**N195**（15 条整数字子串统计期望改走 `Assert-InfoBandStatNear` / `Assert-InfoStatNear`，
   改完退出名单，raster 的 `value-judged` 应从 43 涨到 58）；`union_poly_focus` 那类**按组标分发**的分支
