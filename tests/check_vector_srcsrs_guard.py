@@ -14,7 +14,7 @@ deleter，ogr_spatialref.h 内建类型）；裸 `OGRSpatialReference* srcSRS` �
 一次刀同时收编所有 OGR 裸指针会把零行为变更刀变成大面积重写。本守卫按任务书只禁
 srcSRS 的裸声明与裸 delete 两个精确字形；"要不要扩到全部 OGR 裸指针"另立裁定（登记表 _comment）。
 
-判据四条（判定与登记表对撞，全部在本文件内机器化）：
+判据四条（判定与登记表对撞，全部在本文件内机器化；finding 形态三种——b 的双向相等违例以 c 形态报告，b/c 是同一集合关系的两侧）：
   a. 扫描域（src/plugins/vector/ 全目录，.cpp/.h/.hpp/.cc/.inc）内裸声明字形
      `OGRSpatialReference * srcSRS`（\b 收尾，srcSRSRef 这类前缀不误捕）与 `delete srcSRS` 出现 = 红；
   b. 含 RAII 形态的文件集合 与 登记表 file 集合 双向相等
