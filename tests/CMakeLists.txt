@@ -2216,6 +2216,39 @@ add_test(
         -DREPO_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_param_effectiveness_guard.cmake
 )
+# ── 批次 D N144：vector srcSRS 结构守卫 vector_srcsrs_guard ─────────────────────────
+# 判据本体 tests/check_vector_srcsrs_guard.py + 登记表 tests/vector_srcsrs_guard_registry.json：
+# src/plugins/vector/ 全目录里裸 `OGRSpatialReference* srcSRS` 声明与 `delete srcSRS` 一律禁止
+# （Clone 出的 SRS 只许 unique_ptr+OGRSpatialReferenceReleaser 托管——取消路径 throwIfCancelled
+# 抛出时栈展开不释放裸指针，那是本守卫要钉死回退的泄漏面）；含 RAII 形态的文件集合与登记表
+# 双向相等（新持有点不登记红/登记脱钩红），每文件 RAII 声明数与 .get() 调用点数与登记值逐条相等
+# （现读 20 文件/23 声明/23 调用点）。双向臂：把任一处改回裸指针 ⇒ a 红；登记/扫描脱钩 ⇒ c 红。
+# WHY 自证臂先跑：判据自己红 ⇒ 对仓库的结论一律不作数（与 param_effectiveness_guard 同一顺序、
+#   同一退出码分层）。6 条臂（1 绿 + 5 红）逐臂证明的命题写判据文件头与臂名里。
+# WHY 恒注册、解释器缺失拒绝放行、自己再探一次解释器而不复用上面任一变量：口径同
+#   param_effectiveness_guard（各守卫各自声明自己的"拒绝放行"，共用变量会让后人改一处探测时
+#   静默改掉本守卫的注册条件；探测必须"跑起来并回显"——本机 python3 是 WindowsApps 空壳）。
+find_program(GIS_VSRSGUARD_PYTHON NAMES python python3 py)
+set(_gis_vsrs_py "")
+if(GIS_VSRSGUARD_PYTHON)
+    execute_process(
+        COMMAND "${GIS_VSRSGUARD_PYTHON}" -c "print('GIS_VSRSGUARD_PY_OK')"
+        OUTPUT_VARIABLE _gis_vsrs_probe
+        ERROR_QUIET
+        RESULT_VARIABLE _gis_vsrs_probe_rc
+        TIMEOUT 20
+    )
+    if(_gis_vsrs_probe_rc EQUAL 0 AND _gis_vsrs_probe MATCHES "GIS_VSRSGUARD_PY_OK")
+        set(_gis_vsrs_py "${GIS_VSRSGUARD_PYTHON}")
+    endif()
+endif()
+add_test(
+    NAME vector_srcsrs_guard
+    COMMAND ${CMAKE_COMMAND}
+        -DPY=${_gis_vsrs_py}
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_vector_srcsrs_guard.cmake
+)
 # ── 批次 D N177：腿侧值级判据闸的自证用例 regression_gate_selftest ────────────────────
 # 判据本体 tests/regression_case_gate_selftest.ps1：拿一份"腿的形状"的合成夹具（Register-Case /
 #   switch ($Case.Name) / Assert-* 助手）喂给 tests/regression_case_gate.ps1，逐条臂断言闸在哪种

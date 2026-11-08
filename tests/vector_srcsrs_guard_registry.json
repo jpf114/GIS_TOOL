@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "vector srcSRS 结构守卫登记表（N144，批次 D）。判据本体 tests/check_vector_srcsrs_guard.py。",
+    "entries = src/plugins/vector/ 下已 RAII 化的 srcSRS 持有点逐文件登记：",
+    "  file             相对仓库根的源文件路径（必须在守卫扫描域 src/plugins/vector/ 内）",
+    "  raii_declarations 该文件内 std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS 声明条数",
+    "  get_call_sites    该文件内 srcSRS.get() 调用点条数（现读每声明恰好一.CreateLayer 实参）",
+    "判据：扫描域内裸 OGRSpatialReference* srcSRS 声明与 delete srcSRS 必须为 0（a）；",
+    "含 RAII 形态的文件集合与登记表双向相等（c，新站点不登记红/登记文件脱钩红）；",
+    "每文件两计数与登记值逐条相等（d，少声明/多声明/少调用点都红，逼改登记先过人）。",
+    "现读（2026-11-09，BASE=67d6cc9，N144 刀后）：20 文件 / 23 声明 / 23 调用点。",
+    "注释里提到裸字形也会被扫出（守卫不剥注释，误捕只产生假红、可见当场修）——本登记表与源码注释现读零此类命中。"
+  ],
+  "entries": [
+    {"file": "src/plugins/vector/vector_plugin_boundary.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_buffer_clip.inc", "raii_declarations": 2, "get_call_sites": 2},
+    {"file": "src/plugins/vector/vector_plugin_centroid.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_convex_hull.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_dissolve.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_endpoints_extract.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_envelope.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_geom_metrics.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_info_filter.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_interior_point.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_midpoints_extract.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_nearest.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_overlay.inc", "raii_declarations": 3, "get_call_sites": 3},
+    {"file": "src/plugins/vector/vector_plugin_raster_convert.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_repair.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_simplify.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_singlepart.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_sliver_remove.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_spatial_join.inc", "raii_declarations": 1, "get_call_sites": 1},
+    {"file": "src/plugins/vector/vector_plugin_vertices_extract.inc", "raii_declarations": 1, "get_call_sites": 1}
+  ]
+}
