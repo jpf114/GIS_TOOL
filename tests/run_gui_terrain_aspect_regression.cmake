@@ -36,7 +36,8 @@ execute_process(
         --set-param "input=${INPUT_PATH}"
         --set-param "output=${OUTPUT_PATH}"
         --set-param "band=1"
-        --set-param "z_factor=1"
+        # N163：z_factor 从 terrain.aspect 摘键（面板不再渲染该键）⇒ 这里不能再 set-param 它：
+        # MainWindow::setParamValue 对面板没有的键返回 false，GUI 会以 failed_to_apply_param 退出码 2 失败。
         --auto-execute
         --quit-on-finish
         --screenshot "${SCREENSHOT_PATH}"

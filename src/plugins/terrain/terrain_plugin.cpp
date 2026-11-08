@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <queue>
@@ -90,6 +91,16 @@ gis::framework::Result runDemProcess(
     if (band <= 0) return gis::framework::Result::fail("band must be greater than 0");
     if (zFactor <= 0.0) return gis::framework::Result::fail("z_factor must be greater than 0");
 
+    // N163：slope 的上游 scale 文本 = 1/z_factor。z_factor 声明区间 [0.001, 10000] ⇒ 1/z 落在
+    // [0.0001, 1000]；std::to_string 固定 6 位小数，对 1/3 这类无限小数只保 6 位（相对误差 ~1e-6，
+    // 量级无害但倍率精度被格式化吃掉）。%.10g 对 0.0001、1000、0.3333333333 都保 10 位有效数字；
+    // 大档 z=10000（1/z=0.0001）有值级判据钉住（89.9942704 的第 4 位小数就吃 1e-4 的倍率误差）。
+    auto slopeScaleText = [](double z) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.10g", 1.0 / z);
+        return std::string(buf);
+    };
+
     progress.throwIfCancelled();
 
     progress.onProgress(0.1);
@@ -101,16 +112,33 @@ gis::framework::Result runDemProcess(
         return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
     }
 
+    const std::string processKey(processName);
     std::vector<std::string> argStorage = {
         "-of", "GTiff",
-        "-b", std::to_string(band),
-        "-z", std::to_string(zFactor)
+        "-b", std::to_string(band)
     };
-    if (std::string(processName) == "hillshade") {
+    // N163（用户 2026-11-05 拍"甲"）：z_factor 三处分别处置。改前这里把 "-z zFactor" 无条件
+    // 拼给所有 processName，上游 C API 对 slope/aspect 静默丢弃 ⇒ 键可见但从不生效。
+    //   slope      改发 -s：两档实测（build/tmp/batchD/n163/my，GDAL 3.12.4，单位斜面）钉死方向——
+    //              上游 -s k 把梯度**除以 k**（-s 2 → atan(1/2)=26.565°、-s 10 → atan(0.1)=5.711°；
+    //              倒数 -s 0.5/0.1 → 63.435°/84.289°），与产品 z_factor 的"垂直夸张"
+    //              （slope = atan(z·梯度)，docs/坡度.md 数学模型同口径）方向相反 ⇒ 发 1/z_factor。
+    //              z=1 时发 -s 1，逐像元恒等 ⇒ 默认档期望值不变。
+    //   hillshade  保留 -z：-z 是真垂直夸张（同夹具 z=1→255、z=10→198、z=45→185），
+    //              值级判据见 TerrainHillshadeHandValueOnUnitPlane 块 (6)/(7)。
+    //   aspect     不发任何 z 旋钮：上游 aspect 没有垂直比例入口（官方 CLI 对 -z/-s 都报
+    //              Unknown argument），atan2(dz/dy, dz/dx) 在 z 等比缩放下两分量同乘 k、方向角不变
+    //              （实测 aspect z=1 与 z=10 逐字相同）⇒ doAspect 不再读、这里也不发。
+    if (processKey == "hillshade") {
+        argStorage.push_back("-z");
+        argStorage.push_back(std::to_string(zFactor));
         argStorage.push_back("-az");
         argStorage.push_back(std::to_string(azimuth));
         argStorage.push_back("-alt");
         argStorage.push_back(std::to_string(altitude));
+    } else if (processKey == "slope") {
+        argStorage.push_back("-s");
+        argStorage.push_back(slopeScaleText(zFactor));
     }
 
     std::vector<char*> argv;
@@ -148,10 +176,14 @@ gis::framework::Result runDemProcess(
     }
 
     GDALClose(outHandle);
-    auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain." + std::string(processName));
+    auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain." + processKey);
     meta.algorithmParams["band"] = std::to_string(band);
-    meta.algorithmParams["z_factor"] = std::to_string(zFactor);
-    if (std::string(processName) == "hillshade") {
+    // N163：aspect 不再记 z_factor（它已不是 aspect 的输入）；slope/hillshade 记产品侧参数原值
+    //（slope 真正发给上游的是 1/z，这里回显的是用户键面值，与 result.metadata/GUI/CLI 同一口径）。
+    if (processKey == "slope" || processKey == "hillshade") {
+        meta.algorithmParams["z_factor"] = std::to_string(zFactor);
+    }
+    if (processKey == "hillshade") {
         meta.algorithmParams["azimuth"] = std::to_string(azimuth);
         meta.algorithmParams["altitude"] = std::to_string(altitude);
     }
@@ -162,8 +194,10 @@ gis::framework::Result runDemProcess(
     auto result = gis::framework::Result::ok(successLabel + " completed", output);
     result.metadata["action"] = processName;
     result.metadata["band"] = std::to_string(band);
-    result.metadata["z_factor"] = std::to_string(zFactor);
-    if (std::string(processName) == "hillshade") {
+    if (processKey == "slope" || processKey == "hillshade") {
+        result.metadata["z_factor"] = std::to_string(zFactor);
+    }
+    if (processKey == "hillshade") {
         result.metadata["azimuth"] = std::to_string(azimuth);
         result.metadata["altitude"] = std::to_string(altitude);
     }
@@ -1499,13 +1533,16 @@ gis::framework::Result TerrainPlugin::doSlope(
 gis::framework::Result TerrainPlugin::doAspect(
     const std::map<std::string, gis::framework::ParamValue>& params,
     gis::core::ProgressReporter& progress) {
+    // N163：z_factor 从 aspect 摘键（GUI 键名单与坡向文档参数表同批摘）。依据：aspect =
+    // atan2(dz/dy, dz/dx)，z 等比缩放两分量同乘 k、坡向本就不变；上游 aspect 也没有任何垂直比例
+    // 旋钮。第 6 实参传恒等占位 1.0，runDemProcess 对 aspect 既不发 -z/-s 也不记账 z_factor。
     return runDemProcess(
         "aspect",
         "Aspect",
         gis::framework::getParam<std::string>(params, "input", ""),
         gis::framework::getParam<std::string>(params, "output", ""),
         gis::framework::getParam<int>(params, "band", 1),
-        gis::framework::getParam<double>(params, "z_factor", 1.0),
+        1.0,
         315.0,
         45.0,
         progress);

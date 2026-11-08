@@ -19755,10 +19755,44 @@ TEST_F(PluginTest, TerrainSlopeHandValueOnUnitPlane) {
     EXPECT_NEAR(readRasterPixel(outPlane, 0, 0), -9999.0f, 1e-3f);
     EXPECT_NEAR(readRasterPixel(outPlane, 15, 7), -9999.0f, 1e-3f);
 
-    // z_factor 这条**不当判据**：实测 slope 产物对 z_factor 完全不敏感
-    //   （--z_factor=0.5/1/10 在单位斜面上都报 45，见 D1-T1 报告的 N 条候选），
-    //   因为本仓 runDemProcess 把 z_factor 送进 GDAL 的 -z，而 GDAL 的 slope 只认 -s/-p。
-    //   是不是缺陷交控制器裁定，裁定前这里不钉任何 z_factor 期望值（钉住现状等于替缺陷立字据）。
+    // N163（用户 2026-11-05 拍"甲"）落地后的 z_factor 值级判据。改前这里"不当判据"：runDemProcess
+    //   把 z_factor 送进 GDAL 的 -z，而 slope 路对它静默无效（--z_factor=0.5/1/10 全报 45，D1-T1 实测）。
+    //   改后产品把 z_factor 换算成上游 -s 的**倒数**发送（两档实测钉的方向：上游 -s k 把梯度除以 k，
+    //   单位斜面 -s 2/10 → 26.565/5.711，倒数 -s 0.5/0.1 → 63.435/84.289 ⇒ slope = atan(z·梯度)），
+    //   与本文件头部参考公式 atan(z_factor*sqrt(dzdx²+dzdy²)) 同口径。三档逐像元钉死：
+    //     z=2 → atan(2)=63.4349488（发 -s 0.5；方向钉子：发 -s 2 会得 26.565、丢 -s 得 45，都红）；
+    //     z=10 → atan(10)=84.2894069（发 -s 0.1）；
+    //     z=10000 → atan(10000)=89.9942704（大档：1/z=0.0001，既钉住倍率换算在大 z 下的饱和行为，
+    //               也钉住 scale 文本的格式化精度——文本若被格式化吃掉数量级这里当场红）。
+    //   z=1 的恒等性由本用例开头 45.000000 那三枚与 DEM-F/DEM-N 各钉承重（-s 1 逐像元恒等）。
+    std::map<std::string, gis::framework::ParamValue> z2Params = params;
+    const std::string outPlaneZ2 = utf8PathString(getTestDir() / "d1_slope_plane_z2_out.tif");
+    z2Params["output"] = outPlaneZ2;
+    z2Params["z_factor"] = 2.0;
+    const auto z2Result = p->execute(z2Params, progress_);
+    ASSERT_TRUE(z2Result.success) << z2Result.message;
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 7, 7), 63.4349488f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 1, 1), 63.4349488f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outPlaneZ2, 0, 0), -9999.0f, 1e-3f);   // 边框 NODATA 与缩放无关
+
+    std::map<std::string, gis::framework::ParamValue> z10SlopeParams = params;
+    const std::string outPlaneZ10 = utf8PathString(getTestDir() / "d1_slope_plane_z10_out.tif");
+    z10SlopeParams["output"] = outPlaneZ10;
+    z10SlopeParams["z_factor"] = 10.0;
+    const auto z10SlopeResult = p->execute(z10SlopeParams, progress_);
+    ASSERT_TRUE(z10SlopeResult.success) << z10SlopeResult.message;
+    EXPECT_NEAR(readRasterPixel(outPlaneZ10, 7, 7), 84.2894069f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outPlaneZ10, 14, 3), 84.2894069f, 1e-3f);
+
+    std::map<std::string, gis::framework::ParamValue> zBigParams = params;
+    const std::string outPlaneZBig = utf8PathString(getTestDir() / "d1_slope_plane_z10000_out.tif");
+    zBigParams["output"] = outPlaneZBig;
+    zBigParams["z_factor"] = 10000.0;
+    const auto zBigResult = p->execute(zBigParams, progress_);
+    ASSERT_TRUE(zBigResult.success) << zBigResult.message;
+    EXPECT_NEAR(readRasterPixel(outPlaneZBig, 7, 7), 89.9942704f, 1e-3f)
+        << "1/z=0.0001 的 scale 文本必须保住数量级与有效数字（%.10g）";
+
     // DEM-F：dzdx=dzdy=0 ⇒ atan(0)=0，内部 0、边框仍是 -9999（坡度 0 与 NODATA 分得开）。
     std::map<std::string, gis::framework::ParamValue> flatParams = params;
     flatParams["input"] = flat;
@@ -19941,6 +19975,63 @@ TEST_F(PluginTest, TerrainAspectHandValueOnUnitPlane) {
     ASSERT_TRUE(noiseResult.success) << noiseResult.message;
     EXPECT_NEAR(readRasterPixel(outNoise, 13, 7), 301.23921f, 1e-3f);
     EXPECT_NEAR(readRasterPixel(outNoise, 41, 41), 300.71894f, 1e-3f);
+
+    // ── N163：aspect 摘键后的钉子（用户 2026-11-05 拍"甲"裁定 3）─────────────────
+    // (a) 直调传入 z_factor=10：action 必须成功、产物与 z=1 逐像元同值（坡向对垂直夸张不变），
+    //     且 result.metadata 与输出栅格 GIS_PROCESSING 域都不得再出现 z_factor（doAspect 不读不记）；
+    //     band 记账作对照腿，防"整张记账表被顺手删光"的假实现。
+    const std::string outNoiseZ10 = utf8PathString(getTestDir() / "d1_aspect_noise_z10_out.tif");
+    std::map<std::string, gis::framework::ParamValue> z10AspectParams = params;
+    z10AspectParams["input"] = noise;
+    z10AspectParams["output"] = outNoiseZ10;
+    z10AspectParams["z_factor"] = 10.0;
+    const auto z10AspectResult = p->execute(z10AspectParams, progress_);
+    ASSERT_TRUE(z10AspectResult.success) << z10AspectResult.message;
+    EXPECT_NEAR(readRasterPixel(outNoiseZ10, 13, 7), 301.23921f, 1e-3f);
+    EXPECT_NEAR(readRasterPixel(outNoiseZ10, 41, 41), 300.71894f, 1e-3f);
+    EXPECT_EQ(z10AspectResult.metadata.count("z_factor"), 0u)
+        << "aspect 已不再记 z_factor（result.metadata），回显回来了就是摘键没摘干净";
+    {
+        auto ds = gis::core::openRaster(outNoiseZ10, true);
+        ASSERT_NE(ds, nullptr);
+        const auto persisted = gis::core::readProcessingMetadata(ds.get());
+        EXPECT_EQ(persisted.algorithmParams.count("z_factor"), 0u)
+            << "aspect 已不再记 z_factor（输出栅格 GIS_PROCESSING 域的 GIS_PARAM_z_factor）";
+        EXPECT_GT(persisted.algorithmParams.count("band"), 0u)
+            << "band 记账必须仍在（对照腿：摘的只是 z_factor 这一条）";
+    }
+
+    // (b) GUI 键名单：terrain.aspect 的 visibleKeys 不得含 z_factor，且有效键集与白名单完全相等
+    //     （少一个是真参数被隐藏，多一个是空集不过滤——与 viewshed 那族同口径）。
+    const auto* aspectConfig = gis::gui::findActionUiConfig("terrain", "aspect");
+    ASSERT_NE(aspectConfig, nullptr) << "terrain.aspect 缺少 actionUiConfig 条目";
+    EXPECT_EQ(aspectConfig->visibleKeys.count("z_factor"), 0u)
+        << "z_factor 已从 terrain.aspect 摘键，GUI 名单不得再列（param_guard 的差集判据同批核对）";
+    {
+        const auto effective = gis::gui::buildEffectiveGuiParamSpecs(
+            "terrain", "aspect", p->paramSpecs(),
+            aspectConfig->visibleKeys, aspectConfig->requiredKeys);
+        std::set<std::string> effectiveKeys;
+        for (const auto& spec : effective) {
+            effectiveKeys.insert(spec.key);
+        }
+        EXPECT_EQ(effectiveKeys, aspectConfig->visibleKeys)
+            << "terrain.aspect 的有效键集与白名单不一致";
+        EXPECT_EQ(effectiveKeys.count("band"), 1u) << "aspect 仍需渲染 band";
+    }
+
+    // (c) 报错文案正确：spec 表是插件级共享、z_factor 声明本刀不删（它还被 slope/hillshade 等
+    //     13 个 action 使用），CLI/工作流派发的校验单位是 actionScopedParamSpecs ⇒ aspect 作用域下
+    //     越界 z_factor 仍走标准区间文案。按 CLI 的校验调用形态（validateParams over
+    //     actionScopedParamSpecs）钉住：谁把声明删了，这条先红。
+    {
+        std::map<std::string, gis::framework::ParamValue> oobParams = z10AspectParams;
+        oobParams["z_factor"] = 0.0;   // 出声明区间 [0.001, 10000]
+        EXPECT_EQ(gis::framework::validateParams(
+                      gis::framework::actionScopedParamSpecs(*p, "aspect"), oobParams),
+                  "参数“Z因子”超出范围 [0.001, 10000]")
+            << "aspect 作用域下越界 z_factor 的报错必须仍是共享 spec 的标准区间文案（声明不删）";
+    }
 }
 
 // 期望值来源的口径边界（D1-T1x 补，给下面 hillshade 与真实腿的"非回抄"论证划适用域）：
@@ -20059,6 +20150,19 @@ TEST_F(PluginTest, TerrainHillshadeHandValueOnUnitPlane) {
     const auto z10Result = p->execute(z10Params, progress_);
     ASSERT_TRUE(z10Result.success) << z10Result.message;
     EXPECT_FLOAT_EQ(readRasterPixel(outPlaneZ10, 7, 7), 198.0f);
+
+    // (7) N163 补的第二枚 z 钉（45 是垂直夸张的标志性档位，六臂取证用它对过上游 CLI）：
+    //     DEM-P 上 z=45 ⇒ slope=atan(45)=88.7269700°，az=270 与 aspect=270 对齐 ⇒
+    //     raw = 255*cos(zen-slope) = 255*cos(45°-88.7269700°) = 184.2736736 ⇒ ceil = **185**
+    //     （round 会给 184，量化律的第三个判别点；参考值独立复算，与本机上游 CLI 实测 185 同值）。
+    //     "丢掉 -z 发送"的变异 ⇒ z_factor 根本不进上游 ⇒ 像元跑回 255 ⇒ 红（与块 (6) 互为两档）。
+    const std::string outPlaneZ45 = utf8PathString(getTestDir() / "d1_hs_plane_z45_out.tif");
+    std::map<std::string, gis::framework::ParamValue> z45Params = params;
+    z45Params["output"] = outPlaneZ45;
+    z45Params["z_factor"] = 45.0;
+    const auto z45Result = p->execute(z45Params, progress_);
+    ASSERT_TRUE(z45Result.success) << z45Result.message;
+    EXPECT_FLOAT_EQ(readRasterPixel(outPlaneZ45, 7, 7), 185.0f);
 
     auto outDs = gis::core::openRaster(outNoise, true);
     ASSERT_NE(outDs, nullptr);

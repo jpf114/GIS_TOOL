@@ -1035,9 +1035,10 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             }},
         }},
         // terrain：19 个 action 的键逐条取自 terrain_plugin.cpp 各 doXxx 里的 getParam 读取点
-        // （按符号定位，不抄行号——抄了跨版本必漂）。z_factor 只进"确实读它"的 14 个 action —— profile_extract/
-        // viewshed/viewshed_multi/cut_fill/reservoir_volume 不读，列进白名单就是放一个填了
-        // 不生效的键。
+        // （按符号定位，不抄行号——抄了跨版本必漂）。z_factor 只进"确实读它"的 13 个 action ——
+        // profile_extract/viewshed/viewshed_multi/cut_fill/reservoir_volume 不读，列进白名单就是放一个填了
+        // 不生效的键；aspect 自 N163 起也不再读它（坡向对垂直夸张不变，上游 aspect 也没有垂直比例
+        // 旋钮，runDemProcess 对 aspect 不发 -z/-s），GUI 名单与插件读取点同批摘除。
         // WHY epsilon 只进 fill_sinks：Task 10 那轮它还不存在于 paramSpecs() 里，预写会让
         // R-T10-5 的元断言当场变红；按"谁加参数谁同时补可见性"的归属规则，它由 Task 11 与
         // ParamSpec 同批加入，且只有 doFillSinks 读它（其余 hydrology action 传 0.0）。
@@ -1053,7 +1054,9 @@ const std::map<std::string, std::map<std::string, gis::gui::ActionUiConfig>>& ac
             {"aspect", {
                 QString{},
                 QStringLiteral("按 DEM 计算坡向。"),
-                {"input", "output", "band", "z_factor"},
+                // N163：z_factor 摘出——doAspect 已不读该键（坡向对垂直夸张不变），列进白名单
+                // 就是放一个填了没用的键（param_guard_visible_keys_all_read 的差集判据同批核对）。
+                {"input", "output", "band"},
                 {"input", "output"}
             }},
             {"hillshade", {

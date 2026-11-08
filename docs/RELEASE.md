@@ -5399,8 +5399,8 @@ C1 `65af9ee`（`ParamSpec` 加开/闭区间位与奇偶位，零行为变更）�
   剩下的 `adjustActionSpec` per-action 开区间位与声明同在一个文件，属同一写者的按动作位。
 两族之外另记一件：σ=0 从 CLI 合法可达、走上游按 ksize 索引的硬编码二项式表，仓里**没有**这一段的期望位点
 ⇒ 与"读而不用"（S11 六支正面见证已钉）是两件事，另立 **N194**（工单 #223）。
-受保护的 `terrain_plugin.cpp` blob 现值仍为 `fa34c3fbf9cc457e74cc460fb1dd9abeb7abe1bc`
-（C2 起，本把没碰 terrain）。
+受保护的 `terrain_plugin.cpp` blob 现值为 `a5da3e9f54697d1b92af0e1aa8bbb4dc5515a825`
+（N163 落地时改写为现值，旧值见下文 N163 节；C2~N163 前为本节成文时的那一值）。
 
 ### 批次 D N178（2026-11-06，新增第六条机器守卫 `anchor_guard`：活注释里的裸行号锚必须解得开、行号不许越界、锚数只许降；**不碰产品**）
 
