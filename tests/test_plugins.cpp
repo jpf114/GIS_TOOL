@@ -14333,7 +14333,9 @@ TEST_F(PluginTest, VectorSourceNeverDisablesGpkgSpatialIndex) {
 // 取舍判据、且两侧的 cloneNormalizedGeometry(...) 标准化行逐字相等。
 // N158：标准化行的 needle 跟着采集器调用原文演进——采集器为拿维度降级出参必须显式传
 // kVectorAllowDimensionDegradationDefault 与 &dimensionDegraded，needle 换成新调用原文的逐字子串
-//（不换的话两侧都搜不到旧 needle ⇒ EXPECT_EQ 比出两个 <missing> 假绿，判据被掏空）。
+//（不换的话两侧都搜不到旧 needle，比较会退化成 <missing>==<missing> 假绿；复审更正轮补的
+// <missing> 绊线断言已把这条假绿路堵死：任一侧搜不到 needle 直接判红——"守卫空跑"与"needle
+// 与调用原文脱钩"从此都有判据承载，不再只是注释宣称）。
 // 它能红的方式（取证时实演一次）：把 collectNormalizedGeometries 或 collectNormalizedFeatures 里任一处的
 // 取舍判据 `if (geom && !geom->IsEmpty())` 改掉 ⇒ 两份清单不再相等 ⇒ 本条红。
 // WHY 注释里不写行号：行号是**自己会腐烂的断言**——本刀往上补几行用例/注释就把判据从 :209/:248 推走了，
@@ -14428,10 +14430,18 @@ TEST_F(PluginTest, VectorOverlayCollectorMirrorPredicateStaysVerbatim) {
         }
         return std::string("<missing>");
     };
-    EXPECT_EQ(normalizedCloneLine(bodyA), normalizedCloneLine(bodyB))
+    const std::string normalizedCloneA = normalizedCloneLine(bodyA);
+    const std::string normalizedCloneB = normalizedCloneLine(bodyB);
+    // 绊线：搜不到 needle 时上一段返回 <missing>；若两侧同时都搜不到，下面的 EXPECT_EQ 会比出
+    // <missing>==<missing> 假绿（判据被掏空）——先各判一条 ASSERT_NE 把这条路堵死，空跑必红。
+    ASSERT_NE(normalizedCloneA, "<missing>")
+        << "collectNormalizedGeometries 函数体里搜不到标准化行 needle ⇒ 守卫空跑，判红"
+           "（needle 是采集器调用原文的逐字子串，调用形态一变它就找不着）";
+    ASSERT_NE(normalizedCloneB, "<missing>")
+        << "collectNormalizedFeatures 函数体里搜不到标准化行 needle ⇒ 守卫空跑，判红（理由同上）";
+    EXPECT_EQ(normalizedCloneA, normalizedCloneB)
         << "两侧必须都把 feat->GetGeometryRef() 逐字同一形状地送进 cloneNormalizedGeometry 再判取舍"
-           "（needle 是采集器调用原文的逐字子串，N158 起带默认开关与降级出参；<missing> 出现即说明"
-           "needle 与调用原文脱钩，守卫空跑）";
+           "（needle 是采集器调用原文的逐字子串，N158 起带默认开关与降级出参）";
 }
 
 // N148 夹具：GPKG 面图层（EPSG:3857）= 1 条有效矩形 +（withEmpty 时）1 条 EMPTY 面要素。
