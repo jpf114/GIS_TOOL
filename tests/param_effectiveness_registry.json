@@ -1,0 +1,317 @@
+{
+  "_comment": [
+    "#164 上游边界参数有效性棘轮守卫的登记表（判据本体 tests/check_param_effectiveness_guard.py，载体 tests/check_param_effectiveness_guard.cmake）。",
+    "命题（控制器裁定 R-D71，守卫文件头同文）：凡是\"可见参数的值离开本仓、进上游 C API/argv\"的接线点，",
+    "每个 flag 字面量都必须登记在册，且登记必须链到一个真实存在的 gtest 证据用例名；登记在册的 flag 从源码里消失、",
+    "登记行被删、或出现未登记的新边界 flag/新边界文件，守卫必须红。本守卫是完备性棘轮（新接线必须带证据注册；",
+    "既有接线被拆必须红），逐实例的\"值级真生效\"仍由各刀的 gtest 值判据承重——这两句话要原样写进守卫文件头注释。",
+    "",
+    "字段：file=边界 site 文件（仓内相对路径，正斜杠）；context=函数/调用点符号名（不写行号，跨版本不漂）；",
+    "flag=引号内以单个短横线开头的字面量（扫描形状见守卫头注释：首字母锚定，允许后续字母/数字/下划线，",
+    "故 -t_srs/-srcwin/-crop_to_cutline 这族真 flag 在棘轮内而 -9999 哨兵被形状挡住）；",
+    "key=该 flag 实参承载的参数键名，不承载任何键值填 \"internal\"；",
+    "evidence_test=tests/test_plugins.cpp 里的 gtest 用例名（internal 条目可为空；本表现读 35 条全部非空，",
+    "internal 条目链的是\"该调用点被此 gtest 实跑覆盖\"，不是键值判据——差别写在各自 note 里）；note=登记理由/归类理由。",
+    "",
+    "边界 site 现读（2026-11-09，BASE=161ef07）：grep 'OptionsNew|DEMProcessing|GDALWarp|apszArgs|GDALTranslate|GDALBuildVRT'",
+    "命中 46 行 / 5 文件——cutting_plugin.cpp 28、georef_plugin.cpp 6、projection_plugin.cpp 4、raster_manage_plugin.cpp 3、",
+    "terrain_plugin.cpp 5。46 行 → 逻辑调用点映射：terrain 1 点（runDemProcess，5 行）；georef 2 点（doGcpRegister /",
+    "doRpcOrthorectify 各 3 行）；projection 2 点（doReproject 的 vector-translate 分支与 raster-warp 分支各 2 行）；",
+    "raster_manage 1 点（doBuildCog，3 行）；cutting 7 点（doClip cutline 分支 3 行、doClip extent 分支 3 行、doMosaic 3 行、",
+    "doSplit 3 行、doMergeBands 的 GDALBuildVRT 3 行、doMergeBands 的 GDALTranslateOptionsNew(nullptr) 3 行、doTile 3 行），",
+    "其余 7 行是 cutting_plugin.cpp 里提及 GDALWarp 字样的注释（917/1125/1183/1285/1488/1525/1544），不构成边界调用点。",
+    "唯一零 flag 调用点 = CuttingPlugin::doMergeBands 的 GDALTranslateOptionsNew(nullptr, nullptr)（无参转换 VRT→GeoTIFF），",
+    "无 flag 可登记，故无条目；它的存在由本注释与本刀报告的 46 行映射表钉住。",
+    "",
+    "判据与登记表的对撞（五条，详见守卫头注释）：a=每个条目的 flag 在其 site 文件的引号 flag 集里仍找得到；",
+    "b=每个条目的非空 evidence_test 在 tests/test_plugins.cpp 里存在；c=site 文件集合与 grep 边界调用文件集合双向相等；",
+    "d=每个 site 文件的引号 flag 集合 ⊆ 该文件登记的 flag 集合；e=自证臂（守卫内建，≥4 配对臂）。",
+    "扫描陷阱（照 N193 前科规避）：按登记表 site 文件白名单逐文件扫，不全仓正则撒网；",
+    "flag 形状首字母必须是字母（-9999 哨兵、以短横线开头的文件名实参因此不进集合）。",
+    "值级欠账（不属本刀射程，逐实例由各刀补）：cutting.clip cutline 成功档、cutting.mosaic 的 dst_srs 条件档、",
+    "projection.reproject 栅格档与两分支 -s_srs 条件档、georef.rpc_orthorectify 的 dem_file 档，直调 gtest 均无值级档，",
+    "对应条目的 evidence_test 链同函数/同动作既有 gtest 只钉名字存在，note 逐条写明缺口位置。"
+  ],
+  "entries": [
+    {
+      "file": "src/plugins/terrain/terrain_plugin.cpp",
+      "context": "runDemProcess（GDALDEMProcessingOptionsNew，全文件唯一边界调用点）",
+      "flag": "-of",
+      "key": "internal",
+      "evidence_test": "TerrainSlopeAspectAndHillshadeExecution",
+      "note": "internal 归类理由：输出格式恒 GTiff，是产物驱动选择，不承载任何参数键。链上的 gtest 是调用点覆盖（slope/aspect/hillshade 三动作实跑），非键值判据。"
+    },
+    {
+      "file": "src/plugins/terrain/terrain_plugin.cpp",
+      "context": "runDemProcess（GDALDEMProcessingOptionsNew，全文件唯一边界调用点）",
+      "flag": "-b",
+      "key": "band",
+      "evidence_test": "TerrainSlopeAspectAndHillshadeExecution",
+      "note": "band 键直传上游 -b；gtest 三动作都显式带 band=1 实跑。band 维度的值级档只有 1（多 band DEM 的分band 值判据属各刀欠账），本棘轮只钉 flag 在册。"
+    },
+    {
+      "file": "src/plugins/terrain/terrain_plugin.cpp",
+      "context": "runDemProcess（GDALDEMProcessingOptionsNew，全文件唯一边界调用点；processKey==slope 分支）",
+      "flag": "-s",
+      "key": "z_factor",
+      "evidence_test": "TerrainSlopeHandValueOnUnitPlane",
+      "note": "N163 接线：slope 发 -s + 1/z_factor（%.10g）；上游 -s k 把梯度除以 k，与产品 z_factor 的垂直夸张方向相反，故发倒数。gtest 以 z=2/10/10000 三档逐像元钉方向与倍率。本刀反向臂临时把 -s 改回发 -z（模拟 N163 改前静默无效形态）时，守卫必须以 a 条（登记的 -s 从源码消失）当场红。"
+    },
+    {
+      "file": "src/plugins/terrain/terrain_plugin.cpp",
+      "context": "runDemProcess（GDALDEMProcessingOptionsNew，全文件唯一边界调用点；processKey==hillshade 分支）",
+      "flag": "-z",
+      "key": "z_factor",
+      "evidence_test": "TerrainHillshadeHandValueOnUnitPlane",
+      "note": "hillshade 分支保留 -z（上游 hillshade 的 -z 是真垂直夸张：z=1→255、z=10→198、z=45→185 值级钉）。slope/aspect 分支不发 -z——N163 改前的形态是全部 processName 无条件发 -z 而上游对 slope/aspect 静默丢弃。"
+    },
+    {
+      "file": "src/plugins/terrain/terrain_plugin.cpp",
+      "context": "runDemProcess（GDALDEMProcessingOptionsNew，全文件唯一边界调用点；processKey==hillshade 分支）",
+      "flag": "-az",
+      "key": "azimuth",
+      "evidence_test": "TerrainHillshadeHandValueOnUnitPlane",
+      "note": "方位角直传。值级判据在 az=270 档（与 DEM-P 的 aspect=270 对齐；RELEASE N163 节的更正句即以此档为前提）。"
+    },
+    {
+      "file": "src/plugins/terrain/terrain_plugin.cpp",
+      "context": "runDemProcess（GDALDEMProcessingOptionsNew，全文件唯一边界调用点；processKey==hillshade 分支）",
+      "flag": "-alt",
+      "key": "altitude",
+      "evidence_test": "TerrainHillshadeHandValueOnUnitPlane",
+      "note": "光源高度角直传（gtest 基参 altitude=45）。"
+    },
+    {
+      "file": "src/plugins/georef/georef_plugin.cpp",
+      "context": "GeorefPlugin::doGcpRegister（GDALWarpAppOptionsNew）",
+      "flag": "-t_srs",
+      "key": "dst_srs",
+      "evidence_test": "GeorefGcpRegisterExecution",
+      "note": "dst_srs 键值直传。gtest 断言产物 CRS 权威码=EPSG:4326（dst_srs 值级进上游）+ GCP 一阶几何恒等。"
+    },
+    {
+      "file": "src/plugins/georef/georef_plugin.cpp",
+      "context": "GeorefPlugin::doGcpRegister（GDALWarpAppOptionsNew）",
+      "flag": "-r",
+      "key": "resample",
+      "evidence_test": "GeorefGcpRegisterExecution",
+      "note": "resample 键直传（gtest 设 nearest 并钉像元值 7.0 不变）。"
+    },
+    {
+      "file": "src/plugins/georef/georef_plugin.cpp",
+      "context": "GeorefPlugin::doGcpRegister（GDALWarpAppOptionsNew）",
+      "flag": "-order",
+      "key": "internal",
+      "evidence_test": "GeorefGcpRegisterExecution",
+      "note": "internal 归类理由：多项式阶数恒 \"1\"，是\"一阶多项式校正\"这个动作语义的一部分，不是可见键。链上的 gtest 钉 4 GCP 恒等几何（order=1 语义的产物级对照）。"
+    },
+    {
+      "file": "src/plugins/georef/georef_plugin.cpp",
+      "context": "GeorefPlugin::doRpcOrthorectify（GDALWarpAppOptionsNew）",
+      "flag": "-rpc",
+      "key": "internal",
+      "evidence_test": "GeorefRpcOrthorectifyExecution",
+      "note": "internal 归类理由：RPC 模式开关（不带值），让上游按源数据 RPC 元数据做正射；DEM/高程载荷走 -to。gtest 实跑 RPC 源正射成功。"
+    },
+    {
+      "file": "src/plugins/georef/georef_plugin.cpp",
+      "context": "GeorefPlugin::doRpcOrthorectify（GDALWarpAppOptionsNew）",
+      "flag": "-t_srs",
+      "key": "dst_srs",
+      "evidence_test": "GeorefRpcOrthorectifyExecution",
+      "note": "dst_srs 键值直传；gtest 断言产物 CRS=EPSG:4326。"
+    },
+    {
+      "file": "src/plugins/georef/georef_plugin.cpp",
+      "context": "GeorefPlugin::doRpcOrthorectify（GDALWarpAppOptionsNew）",
+      "flag": "-r",
+      "key": "resample",
+      "evidence_test": "GeorefRpcOrthorectifyExecution",
+      "note": "resample 键直传（gtest nearest 档，像元值 9.0 钉住）。"
+    },
+    {
+      "file": "src/plugins/georef/georef_plugin.cpp",
+      "context": "GeorefPlugin::doRpcOrthorectify（GDALWarpAppOptionsNew）",
+      "flag": "-to",
+      "key": "dem_file",
+      "evidence_test": "GeorefRpcOrthorectifyExecution",
+      "note": "dem_file 非空分支：发 -to RPC_DEM=<dem_file>。值级欠账：直调 gtest 只走 rpc_height 档（GUI 腿 run_gui_georef_rpc_regression 同样 rpc_height=0），dem_file 档无值级判据；evidence 链同函数 gtest 仅满足 b 条的名字存在性，不代表 dem_file 档已验。"
+    },
+    {
+      "file": "src/plugins/georef/georef_plugin.cpp",
+      "context": "GeorefPlugin::doRpcOrthorectify（GDALWarpAppOptionsNew）",
+      "flag": "-to",
+      "key": "rpc_height",
+      "evidence_test": "GeorefRpcOrthorectifyExecution",
+      "note": "dem_file 为空分支：发 -to RPC_HEIGHT=<rpc_height>；gtest 设 rpc_height=0.0 实跑。-to 同 flag 两键两分支，按条目分别登记。"
+    },
+    {
+      "file": "src/plugins/projection/projection_plugin.cpp",
+      "context": "ProjectionPlugin::doReproject（GDALVectorTranslateOptionsNew，vector-translate 分支）",
+      "flag": "-f",
+      "key": "internal",
+      "evidence_test": "ProjectionVectorReprojectExecution",
+      "note": "internal 归类理由：输出格式由 detectVectorFormatFromOutput(输出路径) 推导，不是可见键。gtest 实跑 GeoJSON→GPKG 矢量重投影。"
+    },
+    {
+      "file": "src/plugins/projection/projection_plugin.cpp",
+      "context": "ProjectionPlugin::doReproject（GDALVectorTranslateOptionsNew，vector-translate 分支）",
+      "flag": "-t_srs",
+      "key": "dst_srs",
+      "evidence_test": "ProjectionVectorReprojectExecution",
+      "note": "dst_srs 键值直传；gtest 断言输出层 EPSG:3857 且两端点顶点坐标等于独立推算的 WebMercator 值（D1-P 值级判据）。"
+    },
+    {
+      "file": "src/plugins/projection/projection_plugin.cpp",
+      "context": "ProjectionPlugin::doReproject（GDALVectorTranslateOptionsNew，vector-translate 分支）",
+      "flag": "-s_srs",
+      "key": "src_srs",
+      "evidence_test": "ProjectionVectorReprojectExecution",
+      "note": "src_srs 键值直传，条件分支（src_srs 非空才发）。值级欠账：gtest 未设 src_srs，条件档无值级判据；evidence 链同函数 gtest 仅满足 b 条名字存在性。"
+    },
+    {
+      "file": "src/plugins/projection/projection_plugin.cpp",
+      "context": "ProjectionPlugin::doReproject（GDALWarpAppOptionsNew，raster-warp 分支）",
+      "flag": "-t_srs",
+      "key": "dst_srs",
+      "evidence_test": "ProjectionVectorReprojectExecution",
+      "note": "dst_srs 键值直传。值级欠账：reproject 的直调 gtest 只有矢量档（ProjectionVectorReprojectExecution 钉的是 GDALVectorTranslate 那条 -t_srs），栅格 warp 分支无直调 gtest；栅格档值级证据在 GUI 腿 run_gui_projection_reproject_regression（dst_srs=EPSG:3857 实跑）。evidence 链同动作矢量档 gtest 仅满足 b 条名字存在性。"
+    },
+    {
+      "file": "src/plugins/projection/projection_plugin.cpp",
+      "context": "ProjectionPlugin::doReproject（GDALWarpAppOptionsNew，raster-warp 分支）",
+      "flag": "-s_srs",
+      "key": "src_srs",
+      "evidence_test": "ProjectionVectorReprojectExecution",
+      "note": "src_srs 键值直传，条件分支（src_srs 非空才发）。栅格 warp 分支无直调 gtest、GUI 腿也未设 src_srs ⇒ 条件档零覆盖；evidence 链同动作 gtest 仅满足 b 条名字存在性。"
+    },
+    {
+      "file": "src/plugins/projection/projection_plugin.cpp",
+      "context": "ProjectionPlugin::doReproject（GDALWarpAppOptionsNew，raster-warp 分支）",
+      "flag": "-r",
+      "key": "resample",
+      "evidence_test": "ProjectionVectorReprojectExecution",
+      "note": "resample 键值直传（恒发，缺省 nearest）。栅格 warp 分支无直调 gtest，GUI 腿未设 resample（走默认）；evidence 链同动作 gtest 仅满足 b 条名字存在性。"
+    },
+    {
+      "file": "src/plugins/raster_manage/raster_manage_plugin.cpp",
+      "context": "RasterManagePlugin::doBuildCog（GDALTranslateOptionsNew）",
+      "flag": "-of",
+      "key": "internal",
+      "evidence_test": "RasterManageCogExecution",
+      "note": "internal 归类理由：恒 \"COG\"，COG 动作的产物驱动名，不承载可见键（cog 的 visibleKeys 只有 input/output）。gtest 实跑 COG 生成。"
+    },
+    {
+      "file": "src/plugins/raster_manage/raster_manage_plugin.cpp",
+      "context": "RasterManagePlugin::doBuildCog（GDALTranslateOptionsNew）",
+      "flag": "-co",
+      "key": "internal",
+      "evidence_test": "RasterManageCogExecution",
+      "note": "internal 归类理由：创建选项 COMPRESS=LZW（COG 盘上形态的固定压缩档），不承载可见键；压缩参数未暴露为动作键。与下一条 BIGTIFF 同 flag 不同值，按条目分别登记。"
+    },
+    {
+      "file": "src/plugins/raster_manage/raster_manage_plugin.cpp",
+      "context": "RasterManagePlugin::doBuildCog（GDALTranslateOptionsNew）",
+      "flag": "-co",
+      "key": "internal",
+      "evidence_test": "RasterManageCogExecution",
+      "note": "internal 归类理由：创建选项 BIGTIFF=IF_SAFER（大文件防溢出），不承载可见键。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doClip（GDALWarpAppOptionsNew，cutline 分支）",
+      "flag": "-cutline",
+      "key": "cutline",
+      "evidence_test": "CuttingClipRejectsMissingExtentAndCutline",
+      "note": "cutline 键值直传。值级欠账：test_plugins.cpp 现无 cutline 成功档直调 gtest（唯一 clip-cutline gtest 是 extent/cutline 双空拒绝档），成功档值级证据在 GUI 腿 run_gui_cutting_clip_cutline_regression（ctest 名 gui_regression_nested_cutting_clip_cutline，--set-param cutline=…geojson 实跑）；evidence 链拒绝档 gtest 仅满足 b 条名字存在性。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doClip（GDALWarpAppOptionsNew，cutline 分支）",
+      "flag": "-crop_to_cutline",
+      "key": "internal",
+      "evidence_test": "CuttingClipRejectsMissingExtentAndCutline",
+      "note": "internal 归类理由：裁切线模式的配套开关（不带值），cutline 非空时恒发，语义是\"裁到裁切线包框\"，不承载键值。链上的 gtest 只覆盖同函数的拒绝档，仅满足 b 条名字存在性。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doClip（GDALTranslateOptionsNew，extent 分支）",
+      "flag": "-projwin",
+      "key": "extent",
+      "evidence_test": "CuttingClipByExtentProducesExpectedWindow",
+      "note": "extent 键（xmin,ymin,xmax,ymax）按下标 [0][3][2][1] 拼成上游 -projwin ulx uly lrx lry；gtest 以手算窗几何逐项钉（含轴序依据），是 extent 键值级进上游的判据。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doMosaic（GDALWarpAppOptionsNew）",
+      "flag": "-t_srs",
+      "key": "dst_srs",
+      "evidence_test": "CuttingMosaicProducesCombinedExtentAndValues",
+      "note": "dst_srs 键值直传，条件分支（dst_srs 非空才发）。值级欠账：gtest 未设 dst_srs，条件档无值级判据（GUI 腿 run_gui_cutting_mosaic_regression 也未设）；evidence 链同函数 gtest（包框/像元值级）钉调用点覆盖。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doMosaic（GDALWarpAppOptionsNew）",
+      "flag": "-r",
+      "key": "resample",
+      "evidence_test": "CuttingMosaicProducesCombinedExtentAndValues",
+      "note": "resample 键值直传（恒发）。gtest 走缺省 nearest，双幅拼接包框与两像元值级判据。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doSplit（GDALTranslateOptionsNew）",
+      "flag": "-srcwin",
+      "key": "internal",
+      "evidence_test": "CuttingSplitTileGridHandTableAcrossTileSizeAndOverlap",
+      "note": "internal 归类理由：-srcwin 四实参（xOff yOff xSize ySize）由 tile_size/overlap 与栅格尺寸逐瓦片推导，不是任何单个可见键的直传值（tile_size/overlap 是推导输入，走的是切片网格计算）。键值级证据：tile_size×overlap 网格手算表判据在链上 gtest。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doMergeBands（GDALBuildVRTOptionsNew）",
+      "flag": "-separate",
+      "key": "internal",
+      "evidence_test": "CuttingMergeBandsCreatesMultiBandRaster",
+      "note": "internal 归类理由：逐文件分波段堆叠的模式开关（不带值）；bands/input 的文件清单走 GDALBuildVRT 的数据集/文件名实参，不走 argv。多波段产物与波段顺序值级判据在链上 gtest 及其同族用例。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doTile（GDALWarpAppOptionsNew）",
+      "flag": "-t_srs",
+      "key": "internal",
+      "evidence_test": "TileLevelGeometryUsesWebMercatorGrid",
+      "note": "internal 归类理由：恒发 \"EPSG:3857\"——profile 已被 R-T17-1 钉死为仅 mercator，目标 SRS 是动作常量，不承载键值。gtest 钉瓦片层级几何落在 WebMercator 网格。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doTile（GDALWarpAppOptionsNew）",
+      "flag": "-r",
+      "key": "resample",
+      "evidence_test": "TileResampleDrivesOutputBytes",
+      "note": "B16（N36）接线：doTile 改读已声明的 resample 键驱动 -r（改前读未声明的 resampling，--resample= 对 tile 无效）。键值级判据：换 resample 输出字节随之改变（链上 gtest），byte-identical 对照档同族。注：GUI 面板 tile 的 visibleKeys 未列 resample（gui_data_support.cpp tile 条目注释口径停在 B16 前），CLI spec 已声明——两处口径差是既有事实，不属本刀射程。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doTile（GDALWarpAppOptionsNew）",
+      "flag": "-dstalpha",
+      "key": "add_alpha",
+      "evidence_test": "TileAddAlphaChangesTransparencyForPartialBandNoData",
+      "note": "add_alpha 键（bool）非空时发 -dstalpha（加 alpha 波段）；颜色波段推导读 warped 的 -dstalpha 波段数。透明度值级判据在链上 gtest；TileColorBandsDoNotDependOnAddAlpha 钉颜色波段与该开关无关。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doTile（GDALWarpAppOptionsNew）",
+      "flag": "-co",
+      "key": "internal",
+      "evidence_test": "TileLevelGeometryUsesWebMercatorGrid",
+      "note": "internal 归类理由：创建选项 COMPRESS=LZW（瓦片盘上压缩形态），不承载可见键。与下一条 BIGTIFF 同 flag 不同值，按条目分别登记。链上 gtest 实跑 doTile 全链（含 warp 调用点）。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doTile（GDALWarpAppOptionsNew）",
+      "flag": "-co",
+      "key": "internal",
+      "evidence_test": "TileLevelGeometryUsesWebMercatorGrid",
+      "note": "internal 归类理由：创建选项 BIGTIFF=IF_SAFER（大瓦片防溢出），不承载可见键。"
+    }
+  ]
+}
