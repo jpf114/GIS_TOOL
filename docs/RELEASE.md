@@ -5599,6 +5599,18 @@ range=0 unresolved=0 ambiguous=0 ceiling=182 dead_registry=0`；
 - **sift / orb 不变**：sift 非硬上限（20 出 23）、orb 是上限但不保证取满（20⇒10、1000⇒48）。
 - **验收**：Debug 全量 ctest 778/778、1173.33 s（本刀树态，控制器实跑）；六守卫 6/6。
 - 席位：实现段由上一程会话完成、控制器收尾补 RELEASE 节（该节此前缺失，正文里的指向曾是悬空的）；无独立复审席。
+### 批次 D N163（2026-11-05 裁定，2026-11-09 落地：`terrain` 的 `z_factor` 三处分别处置——**slope 接上游 `-s`（发倒数）、hillshade 保留 `-z` 并补值级判据、aspect 整键摘除**；slope 非默认档与 aspect 参数面为用户可见变更）
+
+- **裁定**：2026-11-05 用户拍"甲"四点：① slope 改发 `-s`，方向与倍率以两档实测钉死；② hillshade 保留 `-z` 并补值级判据（丢掉 `-z` 发送必须红）；③ aspect 把 `z_factor` 摘掉（ParamSpec 作用域摘名 + 不读不记 + GUI 键名单同笔 + 文档同步）；④ 不含 #164 的通用"可见参数不许静默无效"守卫（另派，台账 R-D70）。
+- **两档实测**（`build/tmp/batchD/n163/my`，GDAL 3.12.4 单位斜面 16×16，内部像元梯度=1）：上游 `gdaldem slope -s k` 把梯度**除以 k**——`-s 2`→26.565°、`-s 10`→5.711°，倒数 `-s 0.5`/`-s 0.1`→63.435°/84.289°；产品改前 `terrain slope --z_factor=1/2/10/10000` 四臂 Mean 全 45.000（静默无效在本机现读复现）。方向结论：产品 `z_factor` 的语义是垂直夸张（slope=atan(z·梯度)），上游 `-s` 方向相反 ⇒ **发 `1/z_factor`**。改后产品实测：z=1→45.000（`-s 1` 逐像元恒等，默认档不变）、z=2→63.435、z=10→84.289、z=10000→89.994；aspect z=1 与 z=10 逐字同值（270.000）。
+- **产品改动**（`src/plugins/terrain/terrain_plugin.cpp`）：`runDemProcess` 不再把 `-z zFactor` 无条件拼给全部 processName——hillshade 分支保留 `-z`（真垂直夸张），slope 分支改发 `-s` + `1/z_factor`（`%.10g` 格式化：`1/z` 落在 [0.0001, 1000]，`std::to_string` 固定 6 位小数对无限小数会吃精度，大档 z=10000 有值级判据钉住）；aspect 分支不发任何 z 旋钮（上游 aspect 无垂直比例入口，官方 CLI 对 `-z`/`-s` 都报 Unknown argument；atan2(dz/dy, dz/dx) 对 z 等比缩放不变）。`doAspect` 不再读 `z_factor`（恒等占位 1.0），aspect 的 `algorithmParams`/`result.metadata`/输出栅格 `GIS_PARAM_z_factor` 三处记账同笔停记；slope/hillshade 仍记产品侧键面原值。
+- **GUI**：`gui_data_support.cpp` 的 `terrain.aspect` visibleKeys 摘掉 `z_factor`（共 14→13 个 action 列该键），`param_guard_visible_keys_all_read` 的白名单−实读差集同批归零；offscreen 腿 `run_gui_terrain_aspect_regression.cmake` 同步删 `--set-param z_factor=1`（面板没有的键 set-param 会以 failed_to_apply_param 退出码 2 失败）。结构偏差如实记：`ParamSpec` 并无 scope 字段（任务书"作用域列表摘名"按可兑现面落——GUI 键名单 + 文档参数表才是键作用域的真实载体）；CLI `--help` 打的是插件级整表且 `z_factor` 声明被 13 个 action 共用 ⇒ `gis-cli terrain --help` 仍列该键，"aspect 的 --help 不再出现该键"在现结构下不成立，未新增 per-key scope 机制。
+- **判据**（三条新判据全部加进既有 TEST_F，gtest 注册总数 778 不变）：`TerrainSlopeHandValueOnUnitPlane` 补三档逐像元钉——z=2→63.4349488（发 `-s 2` 会得 26.565、丢 `-s` 得 45，方向钉子）、z=10→84.2894069、z=10000→89.9942704（大档兼钉 scale 文本精度）；`TerrainHillshadeHandValueOnUnitPlane` 补块 (7)：z=45→185（raw=255·cos(45°−atan(45°))=184.2736736，ceil 律；丢 `-z` 跑回 255 ⇒ 红，与既有块 (6) z=10→198 互为两档）；`TerrainAspectHandValueOnUnitPlane` 补三面钉——直调传 z=10 产物逐像元同值且 `result.metadata`/`GIS_PROCESSING` 域均无 `z_factor`（band 记账作对照腿）、GUI `terrain.aspect` visibleKeys 无该键且有效键集=白名单、aspect 作用域下越界 z_factor 仍报共享 spec 的标准文案"参数“Z因子”超出范围 [0.001, 10000]"（钉声明不删）。
+- **改前判据重算说明**：`TerrainSlopeHandValueOnUnitPlane` 原有 z_factor"不当判据"注释（钉住缺陷现状不立字据）按裁定改为值级判据；默认档（z=1）45.000000/0/-9999 全部不变（`-s 1` 恒等），aniso 四幅、DEM-F/DEM-N 各钉不受影响；其余 44 处 z_factor 引用逐处判定后无一处期望值需要改动（局部路径族 z=2 的期望走的是 `elevation *= z`，与 GDALDEM 路无关）。
+- **文档**：`坡向.md` 参数表删 `Z因子` 行并写明"坡向对垂直夸张不变"（数学依据与上游无旋钮）；`坡度.md` 写清 `z_factor` 经上游 `-s` 生效、方向按实测写（上游 `-s k` 除在梯度上，产品发 `1/z_factor`，z=1 恒等）；`山体阴影.md` 的 `Z因子` 说明改准为"垂直夸张系数，经上游 `-z` 直接生效"。
+- **受保护件重钉**：`src/plugins/terrain/terrain_plugin.cpp` blob 由 `fa34c3fbf9cc457e74cc460fb1dd9abeb7abe1bc` 变为 `a5da3e9f54697d1b92af0e1aa8bbb4dc5515a825`（本把改写 runDemProcess 参数拼装与记账、doAspect 摘读；旧值在全仓的另一处出现是 N160 节的历史过渡记录，按史实保留，活钉引用只有 N172-C4 节那一处、已换成现值）。
+- **验收**（本刀树态实跑）：`ctest -R "Terrain|terrain"` 48/48 全绿；六守卫 6/6（param_guard_visible_keys_all_read / install_smoke / source_mojibake_guard / docs_match_cli / geotransform_guard / anchor_guard）；ctest 注册总数 778 不变；`git status` 终态干净。
+- 席位：单席实现（取证→实现→判据→文档→重钉一条龙），无独立复审席。
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件
