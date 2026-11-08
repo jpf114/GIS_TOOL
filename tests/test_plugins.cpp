@@ -23388,6 +23388,27 @@ TEST_F(PluginTest, MatchingDetectCapLadderAndFlatZeroPoint) {
     EXPECT_LT(capped20, capped1000)
         << "max_points 未被消费：20 档与 1000 档同为 " << capped20 << "（去上限变异应在此红）";
 
+    // —— §2.1b N167 乙1：akaze 的上限阶梯（本段是"参数被丢弃"这条缺陷的判据）。
+    //    立案现读（2026-10-28 控制器 CLI 实测，2026-11-07 同夹具复算逐格一致）：改前产品码走
+    //    `cv::AKAZE::create()` 不带任何参数 ⇒ max_points 根本没进上游，20 档与 200 档同为 29。
+    //    上游契约（vcpkg 4.14.0 的 features2d.hpp 里 AKAZE::create 的参数文档）：第 8 个实参名就叫
+    //    max_points，语义是"最多返回这么多点，超出则留 response 最高的"，其默认值 -1 = 不限 ⇒
+    //    参数表里"默认 5000"那一格过去对 akaze 是假的。
+    //    改后本夹具（96×96 图案）的 akaze 候选池现读 29，CLI 逐档现读
+    //    1/2/5/20/25/29/30/200/5000 ⇒ 1/2/5/20/25/29/29/29/29，即 min(档, 池)。
+    //    三档各自钉死而不是只钉关系：20 档钉 20（去掉实参 ⇒ 29 ⇒ 红）、5 档钉 5
+    //    （把上限写死成 20 的退化实现 ⇒ 在 5 档红）、5000 档钉 29（池大小，兼作上限的不动点，
+    //    也防"恒返回很少"的实现蒙过前两档）。
+    const int akazeRung5  = runDetect("akaze", 5, "akaze5");
+    const int akazeCapped = runDetect("akaze", 20, "akaze20");
+    const int akazeOpen   = runDetect("akaze", 5000, "akaze5000");
+    EXPECT_EQ(akazeRung5, 5)
+        << "akaze 的 max_points=5 档应恰好截到 5，实读 " << akazeRung5;
+    EXPECT_EQ(akazeCapped, 20)
+        << "akaze 的 max_points=20 档应恰好截到 20（候选池 29 > 20），实读 " << akazeCapped;
+    EXPECT_EQ(akazeOpen, 29)
+        << "akaze 候选池现读 29：上限放到默认 5000 时应等于池大小，实读 " << akazeOpen;
+
     // —— §2.2 空输入零点：恒定值(无纹理)夹具。产品链路 readBandAsMat→CV_32F，
     //    toUint8 对 max-min<1e-10 的图像**恒置全 0**（opencv_wrapper.cpp:162），
     //    平坦图上 ORB/SIFT 按定义没有梯度与尺度极值 ⇒ 计数恰好 0（不是"很少"）。

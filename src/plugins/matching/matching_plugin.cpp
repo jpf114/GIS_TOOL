@@ -102,7 +102,15 @@ gis::framework::Result MatchingPlugin::execute(
 
 static cv::Ptr<cv::Feature2D> createDetector(const std::string& method, int maxPoints) {
     if (method == "orb")   return cv::ORB::create(maxPoints);
-    if (method == "akaze") return cv::AKAZE::create();
+    // N167 乙1：akaze 过去写 `cv::AKAZE::create()`，max_points 根本没进上游（实测 20 档与 200 档同为 29）。
+    // 上游 AKAZE::create 的第 8 个实参就叫 max_points，语义"最多返回这么多点，超出则取 response 最高的"，
+    // 默认 -1 = 不限——所以"默认值 5000"这一行参数表过去对 akaze 是假的。这里把前七个实参**逐字写成上游
+    // 默认值**（DESCRIPTOR_MLDB / 0 / 3 / 0.001f / 4 / 4 / DIFF_PM_G2），只动 max_points 这一个位点，
+    // 免得顺手把 HessianThreshold 或八度层数也改了（那才是真正的大面积行为变更）。
+    if (method == "akaze") return cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, 0, 3, 0.001f, 4, 4,
+                                                   cv::KAZE::DIFF_PM_G2, maxPoints);
+    // sift 保持原样：上游把 nfeatures 当"调阈值的目标"而不是截断上限（实测 max_points=20 出 23），
+    // 要它名副其实得改检测后的选择顺序，属 N167 里被否掉的乙2，本把不动。
     return cv::SIFT::create(maxPoints);
 }
 
