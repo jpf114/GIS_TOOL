@@ -51,7 +51,9 @@ gis::framework::Result VectorPlugin::doBuffer(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
+    // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
+        srcSRSRef ? srcSRSRef->Clone() : nullptr);
     // 本动作**不开图层事务**（`699429a` 的裁定，原来这里挂着一整套 `useTransactions` 分支，
     // 条件恒为假 ⇒ 已按 C3h-2b 的死代码口径删掉；下面那套图层选项与"不传选项"就是当时的取舍本身）。
     // 不许"为与 clip/union 对齐"把它加回来：事务批量写会走 GDAL 的延迟 SQL 索引路径，
@@ -65,11 +67,10 @@ gis::framework::Result VectorPlugin::doBuffer(
     const std::string outputLayerName = std::string(srcLayer->GetName()) + "_buffer";
     OGRLayer* dstLayer = dstDS->CreateLayer(
         outputLayerName.c_str(),
-        srcSRS,
+        srcSRS.get(),
         resultLayerGeometryType(wkbPolygon),
         layerOptionStorage.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -107,7 +108,6 @@ gis::framework::Result VectorPlugin::doBuffer(
                 }
                 if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
                     OGRFeature::DestroyFeature(dstFeat); OGRFeature::DestroyFeature(feat);
-                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write buffer feature");
                 }
                 OGRFeature::DestroyFeature(dstFeat);
@@ -122,7 +122,6 @@ gis::framework::Result VectorPlugin::doBuffer(
     }
 
     dstLayer->SyncToDisk();
-    delete srcSRS;
     progress.throwIfCancelled();
 
     // 工单 §2 的收口顺序：全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由
@@ -230,17 +229,18 @@ gis::framework::Result VectorPlugin::doClip(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
+        srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr);
     const bool useTransactions = outFormat == "GPKG";
     std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         srcLayer->GetName(),
-        srcSRS,
+        srcSRS.get(),
         resultLayerGeometryType(srcEffectiveType),
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -281,7 +281,6 @@ gis::framework::Result VectorPlugin::doClip(
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write clip feature");
                 }
                 count++;
@@ -316,7 +315,6 @@ gis::framework::Result VectorPlugin::doClip(
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write clip feature");
                 }
                 count++;
@@ -332,7 +330,6 @@ gis::framework::Result VectorPlugin::doClip(
     if (useTransactions) {
         dstLayer->CommitTransaction();
     }
-    delete srcSRS;
     progress.throwIfCancelled();
 
     // 工单 §2：事务必须在 commit() 之前收口 —— commit 的第一件事就是 dataset_.reset()，
