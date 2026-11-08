@@ -87,17 +87,18 @@ gis::framework::Result VectorPlugin::doDissolve(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srcSRS = srcSRSRef ? srcSRSRef->Clone() : nullptr;
+    // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
+        srcSRSRef ? srcSRSRef->Clone() : nullptr);
     const bool useTransactions = outFormat == "GPKG";
     std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "dissolved",
-        srcSRS,
+        srcSRS.get(),
         wkbMultiPolygon,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -135,7 +136,6 @@ gis::framework::Result VectorPlugin::doDissolve(
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
                 count++;
@@ -150,7 +150,6 @@ gis::framework::Result VectorPlugin::doDissolve(
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write dissolve feature");
                 }
                 count++;
@@ -161,7 +160,6 @@ gis::framework::Result VectorPlugin::doDissolve(
     if (useTransactions) {
         dstLayer->CommitTransaction();
     }
-    delete srcSRS;
     progress.throwIfCancelled();
 
     // 工单 §2：事务必须在 commit() 之前收口 —— commit 的第一件事就是 dataset_.reset()，
