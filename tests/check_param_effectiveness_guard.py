@@ -51,6 +51,12 @@ flag 扫描形状（陷阱规避，本仓 N193/段模型与短横线误捕两案
      同文件多调用点共用同一 flag 集合判据；
   ③ b 只核名字存在，不核该 gtest 是否走到登记的分支——note 里逐条写明值级欠账
     （cutline 成功档 / mosaic dst_srs 条件档 / reproject 栅格档与 -s_srs 条件档 / rpc dem_file 档）。
+  ④ flag 形状是「引号内单短横线开头的连续字串」——flag 与实参合并成单串下发的形态（如 "-z 2"）
+     不进 a/d 的集合，棘轮对它失明；现树零实例（全 src 探针唯一命中是 terrain 里 N163 的史实注释），
+     未来引入该形态前必须先扩本判据的形状再接线。
+  ④ flag 形状是「引号内单短横线开头的连续字串」——flag 与实参合并成单串下发的形态（如 "-z 2"）
+     不进 a/d 的集合，棘轮对它失明；现树零实例（全 src 探针唯一命中是 terrain 里 N163 的史实注释），
+     未来引入该形态前必须先扩本判据的形状再接线。
 
 退出码（唯一消费者是 tests/check_param_effectiveness_guard.cmake）：
   0 = 自证臂 + 真仓判定都过
@@ -232,8 +238,14 @@ def judge(root, reg):
 
 def self_test():
     """合成夹具仓上逐臂验证判据（≥4 配对臂；每臂证明的命题写在断言名里）。"""
+    import atexit
+    import shutil
+    import atexit
+    import shutil
     import tempfile
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="param_guard164_selftest_"))
+    atexit.register(lambda: shutil.rmtree(tmp, True))
+    atexit.register(lambda: shutil.rmtree(tmp, True))
     (tmp / "src").mkdir()
     (tmp / "tests").mkdir()
 
