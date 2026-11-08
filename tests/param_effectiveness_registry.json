@@ -218,6 +218,22 @@
       "note": "internal 归类理由：创建选项 BIGTIFF=IF_SAFER（大文件防溢出），不承载可见键。"
     },
     {
+      "file": "src/plugins/raster_manage/raster_manage_plugin.cpp",
+      "context": "RasterManagePlugin::doBuildCog（GDALTranslateOptionsNew）",
+      "flag": "-co",
+      "key": "internal",
+      "evidence_test": "RasterManageCogLayoutPristineAndMetadataReadable",
+      "note": "internal 归类理由：创建选项 COPY_SRC_MDD=YES（N179 域落盘承重项：GTiff CreateCopy 缺省 AUTO 只拷默认域，不带它 -dmo 写进中间 VRT 的 GIS_PROCESSING 域会在 CreateCopy 时被丢掉），不承载可见键。与前两条 COMPRESS/BIGTIFF 同 flag 不同值，按条目分别登记。gtest 实跑域读回 + 头内 KNOWN_INCOMPATIBLE_EDITION=NO。"
+    },
+    {
+      "file": "src/plugins/raster_manage/raster_manage_plugin.cpp",
+      "context": "RasterManagePlugin::doBuildCog（GDALTranslateOptionsNew）",
+      "flag": "-dmo",
+      "key": "internal",
+      "evidence_test": "RasterManageCogLayoutPristineAndMetadataReadable",
+      "note": "internal 归类理由：处理元数据随翻译落盘（-dmo GIS_PROCESSING:<键>=<值>，键值对来自 processingMetadataPairs 唯一出口），不承载可见键；域身份仍 GIS_PROCESSING、键名不变，读端零改动（N179 选型 B）。gtest 实跑 GIS_PROCESSING 域读回 + 布局零告警反向判据 + 双向臂。"
+    },
+    {
       "file": "src/plugins/cutting/cutting_plugin.cpp",
       "context": "CuttingPlugin::doClip（GDALWarpAppOptionsNew，cutline 分支）",
       "flag": "-cutline",
