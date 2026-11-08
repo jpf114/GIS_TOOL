@@ -20,10 +20,10 @@ gis::framework::Result VectorPlugin::doDissolve(
     OGRLayer* srcLayer = getLayer(srcDS.get(), layerName);
     if (!srcLayer) { return gis::framework::Result::fail("Cannot find layer"); }
 
-    const OGRSpatialReference* srcSRSRef = srcLayer->GetSpatialRef();
+    const OGRSpatialReference* layerSrsRef = srcLayer->GetSpatialRef();
     // N130：`== "geographic"` 会放过"没有坐标参考"的输入（detectSrsType 返回 "unknown"），
     // 融合后的面积/长度单位无从谈起。用户裁定这一族统一收成"必须投影"。
-    if (detectSrsType(srcSRSRef) != "projected") { return failProjectedRequired("Dissolve");
+    if (detectSrsType(layerSrsRef) != "projected") { return failProjectedRequired("Dissolve");
     }
 
     progress.throwIfCancelled();
@@ -89,7 +89,7 @@ gis::framework::Result VectorPlugin::doDissolve(
 
     // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
     std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
-        srcSRSRef ? srcSRSRef->Clone() : nullptr);
+        layerSrsRef ? layerSrsRef->Clone() : nullptr);
     const bool useTransactions = outFormat == "GPKG";
     std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);

@@ -22,8 +22,8 @@ gis::framework::Result VectorPlugin::doBuffer(
     if (!srcLayer) { return gis::framework::Result::fail("Cannot find layer: " + layerName);
     }
 
-    const OGRSpatialReference* srcSRSRef = srcLayer->GetSpatialRef();
-    const std::string srsType = detectSrsType(srcSRSRef);
+    const OGRSpatialReference* layerSrsRef = srcLayer->GetSpatialRef();
+    const std::string srsType = detectSrsType(layerSrsRef);
     // N130：旧闸只拒 "geographic"，而 detectSrsType 对"没有坐标参考"与"非地理非投影"都返回 "unknown"
     // ⇒ 无 CRS 的输入被放过去，distance 按"度"当"米"算，结果量级全错。用户裁定这一族统一收成"必须投影"。
     if (srsType != "projected") { return failProjectedRequired("Buffer");
@@ -53,7 +53,7 @@ gis::framework::Result VectorPlugin::doBuffer(
 
     // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
     std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
-        srcSRSRef ? srcSRSRef->Clone() : nullptr);
+        layerSrsRef ? layerSrsRef->Clone() : nullptr);
     // 本动作**不开图层事务**（`699429a` 的裁定，原来这里挂着一整套 `useTransactions` 分支，
     // 条件恒为假 ⇒ 已按 C3h-2b 的死代码口径删掉；下面那套图层选项与"不传选项"就是当时的取舍本身）。
     // 不许"为与 clip/union 对齐"把它加回来：事务批量写会走 GDAL 的延迟 SQL 索引路径，
