@@ -14771,7 +14771,7 @@ TEST_F(PluginTest, VectorClipCountsSkippedOverlayInputGeometry) {
 // ── N158（批次 D）：维度退化开关 + `*_degraded_input_count` 判据 ────────────────────────────
 // 碎片面夹具 = 三点共线「面」[[2,2],[8,8],[4,4],[2,2]]（立案同款：环沿 y=x 折返自相交，GEOS 判
 // INVALID，MakeValid 修成 LineString；立案实测 ST_IsValid=0 / ST_MakeValid=LINESTRING）。
-// 改前形态（BASE 二进制现跑取证，见 task-n158-report §2）：union 产物 1 LineString + 2 Polygon、
+// 改前形态（BASE 二进制现跑取证）：union 产物 1 LineString + 2 Polygon、
 // 无任何键 —— 降级结果无痕入产物。判据按任务书写成**两件缺一不判**：
 //   键值断言：`*_degraded_input_count` 从无到 1（>0 才发）；
 //   形状断言：重开产物数"压平成线型"的几何 = 0（降级结果不再入产物）。
@@ -15087,7 +15087,7 @@ TEST_F(PluginTest, VectorClipDropsDegradedOverlayInputAndCountsIt) {
 
 // 裁定第 2 点的钉子：repair 是全插件唯一显式传「允许维度退化」的调用点——碎片面修成 LineString
 // 照样算修复成功写出（repaired_count 计入、skipped_count 不动），产物里那条线就是它的成功产物。
-// 改前实测（task-n158-report §2 臂 2）：repair 对碎片面本来就是 rc=0 + repaired_count 计入 + 线入产物
+// 改前实测：repair 对碎片面本来就是 rc=0 + repaired_count 计入 + 线入产物
 // ⇒ 本条钉的是"例外不被将来误收窄"，不是新行为。
 TEST_F(PluginTest, VectorRepairKeepsDegradedGeometryAsSuccess) {
     auto* p = mgr_.find("vector");
