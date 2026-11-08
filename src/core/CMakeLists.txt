@@ -12,6 +12,7 @@ add_library(gis_core
     src/plugin_utils.cpp
     src/expression_engine.cpp
     src/tile_grid.cpp
+    src/fs_support.cpp
 )
 
 target_include_directories(gis_core PUBLIC
