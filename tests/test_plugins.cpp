@@ -2,6 +2,7 @@
 #include <gis/framework/plugin.h>
 #include <gis/framework/plugin_manager.h>
 #include <gis/framework/action_validation.h>
+#include <gis/framework/execute_guarded.h>
 #include <gis/framework/param_spec.h>
 #include <gis/framework/result.h>
 #include <gis/core/gdal_wrapper.h>
@@ -30234,5 +30235,85 @@ TEST_F(PluginTest, VectorConvertExplicitFormatBeatsOutputExtension) {
     EXPECT_EQ(result.metadata.at("output_format"), "GeoJSON");
     EXPECT_EQ(n153OutputDriverName(output), "GeoJSON")
         << "显式 --format 被扩展名覆盖了 ⇒ 案 A 实现反了";
+}
+
+// ============== N162/#156：output 父目录指向已存在文件 ⇒ helper 层兜底文案（直调 execute()） ==============
+// framework 的父目录形态前置闸（action_validation.cpp 末尾）只罩 CLI / GUI / 工作流三条派发路径；
+// **直调 execute() 的调用方不经它**（任务书结构事实）⇒ 那条腿只能靠 core helper（fs_support）的失败
+// 文案兜底。本组用例钉 helper 层，判四件事缺一不判：失败（executeGuarded ⇒ success=false，rc=1 的
+// 直调等价物）、文案是本仓中文（"无法创建输出目录" + "是已存在的文件而非目录"）、带动作名
+// （"（动作：<plugin> <action>）"）、**无** std 原文（create_directories: / equivalent:——
+// 改前三臂取证里 std 原文正是从这一层漏出来的）。
+// 双向臂（任务书裁定③）：把 VectorStagedOutput::start() 里的 gis::core::ensureParentDirectoryForFile
+// 调用临时改回会抛的 fs::create_directories 重载 ⇒ 下面第一条红（std 原文混入 + 中文缺失），
+// cp 还原 sha256 对拍后恢复绿。gate 层三臂由 ctest 条目 output_dir_failure_guard 承重。
+
+TEST_F(PluginTest, VectorConvertOutputParentIsFileChineseFailureWithActionName) {
+    auto* p = mgr_.find("vector");
+    ASSERT_NE(p, nullptr);
+
+    // blocker：一个已存在的**文件**，output 的父路径指向它（N162/#156 的病灶形态）。
+    const fs::path blocker = getTestDir() / "n162_blocker_file.txt";
+    {
+        std::ofstream b(blocker, std::ios::binary);
+        b << "blocker";
+        ASSERT_TRUE(b.good());
+    }
+    const std::string input = makeN153ConvertFixture("n162_conv_src.shp");
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(blocker / "out.gpkg");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("convert");
+    params["input"] = input;
+    params["output"] = output;
+
+    bool threw = false;
+    const auto result = gis::framework::executeGuarded(*p, params, progress_, &threw);
+    EXPECT_FALSE(result.success) << "output 父路径是已存在的文件，执行必须失败";
+    const std::string& message = result.message;
+    // 本仓中文文案（缺一不判）。
+    EXPECT_NE(message.find("无法创建输出目录"), std::string::npos) << message;
+    EXPECT_NE(message.find("是已存在的文件而非目录"), std::string::npos) << message;
+    // 带动作名（common.inc 的 staged.start 从 doConvert 接线点穿进来的标签）。
+    EXPECT_NE(message.find("（动作：vector convert）"), std::string::npos) << message;
+    // 无 std 原文。
+    EXPECT_EQ(message.find("create_directories:"), std::string::npos) << message;
+    EXPECT_EQ(message.find("equivalent:"), std::string::npos) << message;
+    EXPECT_EQ(message.find("Cannot create a file when that file already exists"), std::string::npos)
+        << message;
+}
+
+TEST_F(PluginTest, RasterInspectHistogramOutputParentIsFileChineseFailureWithActionName) {
+    auto* p = mgr_.find("raster_inspect");
+    ASSERT_NE(p, nullptr);
+
+    const fs::path blocker = getTestDir() / "n162_blocker_file2.txt";
+    {
+        std::ofstream b(blocker, std::ios::binary);
+        b << "blocker";
+        ASSERT_TRUE(b.good());
+    }
+    const std::string input = createTestRaster("n162_hist_src.tif", 32, 32);
+    ASSERT_FALSE(input.empty());
+    const std::string output = utf8PathString(blocker / "h.png");
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("histogram");
+    params["input"] = input;
+    params["output"] = output;
+    params["bins"] = 16;
+
+    bool threw = false;
+    const auto result = gis::framework::executeGuarded(*p, params, progress_, &threw);
+    EXPECT_FALSE(result.success) << "output 父路径是已存在的文件，执行必须失败";
+    const std::string& message = result.message;
+    EXPECT_NE(message.find("无法创建输出目录"), std::string::npos) << message;
+    EXPECT_NE(message.find("是已存在的文件而非目录"), std::string::npos) << message;
+    // 带动作名（raster_inspect 本地调用点的固定标签）。
+    EXPECT_NE(message.find("（动作：raster_inspect histogram）"), std::string::npos) << message;
+    EXPECT_EQ(message.find("create_directories:"), std::string::npos) << message;
+    EXPECT_EQ(message.find("Cannot create a file when that file already exists"), std::string::npos)
+        << message;
 }
 

@@ -2241,6 +2241,42 @@ add_test(
         -DREPO_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_regression_gate_selftest.cmake
 )
+# ── 批次 D N162/#156：三载体 CLI 判据 output_dir_failure_guard ────────────────────────
+# 判据本体 tests/check_output_dir_failure_guard.py + 载体 tests/check_output_dir_failure_guard.cmake：
+# vector convert / raster_inspect histogram / terrain slope 三臂各拿"output 父路径指向一个已存在的文件"
+# 真跑 gis-cli，逐臂判三件事（缺一不判）：rc==1、无 std/GDAL 原文（create_directories: / equivalent: /
+# ERROR 4: / ERROR 1: / Unable to create dataset / filesystem error / Cannot create a file … 禁词表只增不减）、
+# 含本仓中文文案（无法创建输出目录 + 是已存在的文件而非目录）且带动作名（（动作：<plugin> <action>））。
+# 这三臂走的是 framework 前置闸（action_validation.cpp 末尾的父目录形态闸）；helper 层（直调 execute()
+# 不经闸的那条腿）的同一文案纪律由 gis_tests 里的 gtest 载体承重（本刀新增两条，名字带
+# OutputParentIsFile），两层层级分工见任务书裁定②。
+# WHY 自证臂先跑：合成输出喂同一套 judge_carrier（1 绿 + 4 红），判据退化先在自证臂红。
+# WHY 恒注册、解释器/二进制缺失拒绝放行：与 docs_match_cli 同一口径（"没检查"绝不能长得像"检查通过"）。
+# WHY 自己再探一次解释器而不复用 _gis_docs_py/_gis_peguard_py：每个守卫各自声明自己的"拒绝放行"，
+#   共用一个变量会让后人改其中一处探测时静默改掉本守卫的注册条件。
+find_program(GIS_ODGUARD_PYTHON NAMES python python3 py)
+set(_gis_odguard_py "")
+if(GIS_ODGUARD_PYTHON)
+    execute_process(
+        COMMAND "${GIS_ODGUARD_PYTHON}" -c "print('GIS_ODGUARD_PY_OK')"
+        OUTPUT_VARIABLE _gis_odguard_probe
+        ERROR_QUIET
+        RESULT_VARIABLE _gis_odguard_probe_rc
+        TIMEOUT 20
+    )
+    if(_gis_odguard_probe_rc EQUAL 0 AND _gis_odguard_probe MATCHES "GIS_ODGUARD_PY_OK")
+        set(_gis_odguard_py "${GIS_ODGUARD_PYTHON}")
+    endif()
+endif()
+add_test(
+    NAME output_dir_failure_guard
+    COMMAND ${CMAKE_COMMAND}
+        -DPY=${_gis_odguard_py}
+        -DCLI=$<TARGET_FILE:gis-cli>
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -DREPORT=${CMAKE_CURRENT_BINARY_DIR}/output_dir_failure_guard_report.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_output_dir_failure_guard.cmake
+)
 # Hard timeout for every test registered at configure time: a hanging test must fail, not
 # hang the pipeline. TESTS is the documented read-only directory property that lists the
 # tests add_test() has defined in this directory so far, so reading it at the very bottom

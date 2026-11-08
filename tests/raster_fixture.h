@@ -13,9 +13,11 @@
 // 失败约定（重要，D1 更正）：gis::core::openRaster 失败抛 gis::core::GisError、
 // gis::core::createRaster 失败同样抛 gis::core::GisError，两者都不返回 nullptr
 // （见 src/core/src/gdal_wrapper.cpp）。另外 createRaster 先经
-// ensureParentDirectoryForFile 调**会抛**的 fs::create_directories 重载，父目录建不出来时
-// 抛的是 std::filesystem_error（GisError 派生自 std::runtime_error，两者同被 std::exception
-// 接住，见 D4）。夹具在 openFixtureRaster / createFixtureRaster 内部把异常转成
+// ensureParentDirectoryForFile 走 gis::core::ensureOutputDirectory（N162/#156 起
+// 会抛的 fs::create_directories 重载全仓收敛进 core helper 单一文件），父目录建不出来时
+// 抛的是 GisError（文案是本仓中文带动作名；GisError 派生自 std::runtime_error，仍被
+// std::exception 接住，见 D4——N162 改后口径同旧 std::filesystem_error：都被同一 catch 接住）。
+// 夹具在 openFixtureRaster / createFixtureRaster 内部把异常转成
 // ADD_FAILURE()，再走各自的哨兵返回值（写入 → 空串；读取 → NaN / -1 / false）。
 // 准确表述是：ADD_FAILURE() 报在**夹具自身那一行**（raster_fixture.h 的行号），
 // 但落在调用方那条语句所属的用例里，因此用例仍然被记为失败、异常不会穿过测试体把行号与
@@ -65,9 +67,9 @@ inline gis::core::GdalDatasetPtr openFixtureRaster(const std::string& path, cons
 
 // createRaster 的夹具包装，同上：写入函数用空串作为失败哨兵。
 // catch 的类型必须是 std::exception（D4）：createRaster 内部先调
-// ensureParentDirectoryForFile（src/core/src/gdal_wrapper.cpp:14-26），它用的是
-// **会抛**的 fs::create_directories 重载，父目录建不出来时抛 std::filesystem_error，
-// 只 catch GisError 会让它穿透进测试体。
+// ensureParentDirectoryForFile（src/core/src/gdal_wrapper.cpp，按函数名找——N162/#156 改后
+// 它走 gis::core::ensureOutputDirectory，父目录建不出来时抛 GisError（本仓中文带动作名），
+// 行号会漂不写死；N162 改前抛 std::filesystem_error），只 catch GisError 会让它穿透进测试体。
 inline gis::core::GdalDatasetPtr createFixtureRaster(const std::string& path, int width, int height,
                                                      int bands, GDALDataType dtype,
                                                      const char* who) {
