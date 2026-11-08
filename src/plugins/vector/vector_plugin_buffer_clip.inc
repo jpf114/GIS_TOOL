@@ -187,8 +187,11 @@ gis::framework::Result VectorPlugin::doClip(
 
     const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     // N148：裁切层"标准化后仍非法/空"的输入条数（过去无痕丢，现发 clip_skipped_input_count）。
+    // N158：维度降级（面修成线/点）被丢的条数同点并列记账，发 clip_degraded_input_count。
     size_t clipSkippedClipInputs = 0;
-    auto clipEntries = collectNormalizedGeometries(clipLayer, &clipSkippedClipInputs);
+    size_t clipDegradedClipInputs = 0;
+    auto clipEntries = collectNormalizedGeometries(clipLayer, &clipSkippedClipInputs,
+                                                   &clipDegradedClipInputs);
     const bool useLinearPolygonSegmentation =
         isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(clipEntries) == 2;
 
@@ -352,6 +355,10 @@ gis::framework::Result VectorPlugin::doClip(
     // N148 附加键（>0 才发）：既有键取值不动。
     if (clipSkippedClipInputs > 0) {
         result.metadata["clip_skipped_input_count"] = std::to_string(clipSkippedClipInputs);
+    }
+    // N158 附加键（>0 才发）：维度降级被丢的裁切层输入条数；与 skipped 键互斥不重复。既有键取值不动。
+    if (clipDegradedClipInputs > 0) {
+        result.metadata["clip_degraded_input_count"] = std::to_string(clipDegradedClipInputs);
     }
     return result;
 }

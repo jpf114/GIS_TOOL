@@ -120,7 +120,46 @@ public:
     }
 };
 
-static OGRGeometry* cloneNormalizedGeometry(const OGRGeometry* geom) {
+// ── N158：维度降级的「允许」开关（默认不允许）─────────────────────────────────────────────
+// MakeValid() 成功但**维度低于输入维度**（面被修成线/点）的几何，默认按「输入不可用」处置：
+// 返回 nullptr（与既有"修复失败/修成 EMPTY"同一条 nullptr 路径），由调用方所在动作计进
+// `<动作>_degraded_input_count`——键名与发放形态跟随 N148 先例（`*_skipped_input_count`：
+// >0 才发、与既有键并存不互盖；一条输入要么进 skipped 键、要么进 degraded 键，互斥不重复）。
+// 全插件唯一例外是 vector repair（显式传 true，见 vector_plugin_repair.inc 调用点的 WHY 注释）。
+// 为什么用文件作用域常量当默认值而不写死 false：N158 判据的反向臂 (b) 要"把开关默认值临时反转
+// ⇒ 判据必须红"。采集器为了拿 degraded 出参必须显式传第一个实参，传的也是这个常量 ⇒ 反转这一行
+// 就能同时翻转"默认语义"与"采集器语义"两处，一处变异、两臂全红，不用改第二个调用点。
+static constexpr bool kVectorAllowDimensionDegradationDefault = false;
+
+// 「有效维度」：GeometryCollection 递归取成员最大维（嵌套集合同样递归；空成员不计），
+// 其余类型用 OGR 的 getDimension()（点 0 / 线 1 / 面 2）。不直接用 getDimension() 判集合，
+// 是因为集合语义要看 GDAL 实现，本仓自己递归才把"含面集合不算降级"钉在自己手里。
+// 输入不可用（null/空）返回 -1；调用方在空支先行，正常到不了 -1。
+static int normalizedGeometryDimension(const OGRGeometry* geom) {
+    if (!geom || geom->IsEmpty()) {
+        return -1;
+    }
+    if (wkbFlatten(geom->getGeometryType()) == wkbGeometryCollection) {
+        int best = 0;
+        const auto* collection = geom->toGeometryCollection();
+        for (int i = 0; i < collection->getNumGeometries(); ++i) {
+            const int sub = normalizedGeometryDimension(collection->getGeometryRef(i));
+            if (sub > best) {
+                best = sub;
+            }
+        }
+        return best;
+    }
+    return geom->getDimension();
+}
+
+static OGRGeometry* cloneNormalizedGeometry(
+    const OGRGeometry* geom,
+    bool allowDimensionDegradation = kVectorAllowDimensionDegradationDefault,
+    bool* dimensionDegraded = nullptr) {
+    if (dimensionDegraded) {
+        *dimensionDegraded = false;
+    }
     if (!geom) {
         return nullptr;
     }
@@ -129,6 +168,10 @@ static OGRGeometry* cloneNormalizedGeometry(const OGRGeometry* geom) {
     if (!cloned || cloned->IsEmpty()) {
         return cloned;
     }
+
+    // N158：输入维度在 delete cloned 之前取（cloned 与 geom 维度相同，取哪个都一样，
+    // 但指针生命周期上必须赶在 delete 之前）。
+    const int inputDimension = normalizedGeometryDimension(cloned);
 
     bool isValid = false;
     {
@@ -148,6 +191,20 @@ static OGRGeometry* cloneNormalizedGeometry(const OGRGeometry* geom) {
     if (!fixed || fixed->IsEmpty()) {
         delete fixed;
         return nullptr;
+    }
+
+    // N158：修好了也算过维度这一关——面修成线/点（或集合降维）即「维度降级」。
+    // 出参报告的是**事实**（降没降），开关决定**处置**（允不允许留下）；两者解耦，
+    // 采集器才能在不改默认处置的前提下把降级条数递给动作侧发键。
+    const int fixedDimension = normalizedGeometryDimension(fixed);
+    if (fixedDimension < inputDimension) {
+        if (dimensionDegraded) {
+            *dimensionDegraded = true;
+        }
+        if (!allowDimensionDegradation) {
+            delete fixed;
+            return nullptr;
+        }
     }
 
     return fixed;
@@ -196,7 +253,8 @@ struct OverlayGeometryEntry {
 static OGRGeometry* unionGeometryList(std::vector<OGRGeometry*>& geoms);
 
 static std::vector<OverlayGeometryEntry> collectNormalizedGeometries(
-    OGRLayer* layer, size_t* skippedInputCount = nullptr) {
+    OGRLayer* layer, size_t* skippedInputCount = nullptr,
+    size_t* degradedInputCount = nullptr) {
     std::vector<OverlayGeometryEntry> entries;
     if (!layer) {
         return entries;
@@ -205,16 +263,22 @@ static std::vector<OverlayGeometryEntry> collectNormalizedGeometries(
     layer->ResetReading();
     OGRFeature* feat = nullptr;
     while ((feat = layer->GetNextFeature()) != nullptr) {
-        std::unique_ptr<OGRGeometry> geom(cloneNormalizedGeometry(feat->GetGeometryRef()));
+        bool dimensionDegraded = false;
+        std::unique_ptr<OGRGeometry> geom(cloneNormalizedGeometry(feat->GetGeometryRef(), kVectorAllowDimensionDegradationDefault, &dimensionDegraded));
         if (geom && !geom->IsEmpty()) {
             OverlayGeometryEntry entry;
             geom->getEnvelope(&entry.envelope);
             entry.geometry = std::move(geom);
             entries.push_back(std::move(entry));
-        } else if (skippedInputCount) {
+        } else if (skippedInputCount && !dimensionDegraded) {
             // N148：标准化后仍为空/非法的输入今天过去无痕丢掉；这里逐条计数，由调用方所在动作
             // 发 `*_skipped_input_count` 附加键（既有键取值一律不动）。
             ++(*skippedInputCount);
+        } else if (degradedInputCount && dimensionDegraded) {
+            // N158：MakeValid 修好了但维度低于输入（面→线/点）⇒ 输入不可用；逐条计数，
+            // 由调用方所在动作发 `*_degraded_input_count` 附加键。与 N148 的 skipped 类互斥
+            //（一条被丢的输入只进一个键），既有键取值不动。
+            ++(*degradedInputCount);
         }
         OGRFeature::DestroyFeature(feat);
     }
@@ -234,14 +298,19 @@ struct OverlayFeatureEntry {
 // WHY 要逐字：两张表跳过规则一旦不一致，"各分块面积之和 == 并集面积"这类不变量就会凭空多/少一块。
 // 判据一致性由守卫用例钉住：PluginTest.VectorOverlayCollectorMirrorPredicateStaysVerbatim（源码扫描）。
 // N148：跳过支同样逐字镜像地累加 skippedInputCount，动作侧据此发 `*_skipped_input_count` 附加键。
+// N158：维度降级支（degradedInputCount）同样逐字镜像，动作侧据此发 `*_degraded_input_count` 附加键；
+// 降级类与 skipped 类互斥（一条被丢的输入只进一个键）。
 // ⚠ 覆盖边界（如实登记，不是漏删）：**要素趟这支计数今天是不可达的** —— `collectNormalizedFeatures` 的
-// 两个调用点（`vector_plugin_overlay.inc` 路径 A / 路径 B 那两处）都只传图层、不传计数指针，
-// 所以 `*_skipped_input_count` 的实际取值只来自几何趟 `collectNormalizedGeometries`。
+// 两个调用点（`vector_plugin_overlay.inc` 路径 A / 路径 B 那两处）都只传图层、不传计数指针
+//（skipped 与 degraded 同此口径），
+// 所以 `*_skipped_input_count` 与 `*_degraded_input_count` 的实际取值都只来自几何趟
+// `collectNormalizedGeometries`。
 // 保留这两行的唯一理由是"跳过支逐字镜像"（守卫把两侧含 `if (` 的决策行逐字比对，删掉要素趟这支 ⇒ 守卫必红）。
 // 一旦将来有调用点开始传计数指针，union 侧必须防重复计数：几何趟已经取过一次数，两趟各加一遍会把
 // 同一条被丢的输入算成 2 条（union 对同一叠加层就是扫两趟）。
 static std::vector<OverlayFeatureEntry> collectNormalizedFeatures(
-    OGRLayer* layer, size_t* skippedInputCount = nullptr) {
+    OGRLayer* layer, size_t* skippedInputCount = nullptr,
+    size_t* degradedInputCount = nullptr) {
     std::vector<OverlayFeatureEntry> entries;
     if (!layer) {
         return entries;
@@ -250,7 +319,8 @@ static std::vector<OverlayFeatureEntry> collectNormalizedFeatures(
     layer->ResetReading();
     OGRFeature* feat = nullptr;
     while ((feat = layer->GetNextFeature()) != nullptr) {
-        std::unique_ptr<OGRGeometry> geom(cloneNormalizedGeometry(feat->GetGeometryRef()));
+        bool dimensionDegraded = false;
+        std::unique_ptr<OGRGeometry> geom(cloneNormalizedGeometry(feat->GetGeometryRef(), kVectorAllowDimensionDegradationDefault, &dimensionDegraded));
         if (geom && !geom->IsEmpty()) {
             OverlayFeatureEntry entry;
             geom->getEnvelope(&entry.envelope);
@@ -259,8 +329,10 @@ static std::vector<OverlayFeatureEntry> collectNormalizedFeatures(
             entry.feature.reset(feat);
             entries.push_back(std::move(entry));
             continue;
-        } else if (skippedInputCount) {
+        } else if (skippedInputCount && !dimensionDegraded) {
             ++(*skippedInputCount);
+        } else if (degradedInputCount && dimensionDegraded) {
+            ++(*degradedInputCount);
         }
         OGRFeature::DestroyFeature(feat);
     }

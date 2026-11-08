@@ -14330,7 +14330,10 @@ TEST_F(PluginTest, VectorSourceNeverDisablesGpkgSpatialIndex) {
 //（vector_plugin_common.inc 注释明令“取舍规则必须逐字镜像”）。本条按**函数名**锚定切出两个函数体
 //（同文件第三条同形判据属 effectiveLayerGeometryType，在两段切片之外、一行都不许被牵连），
 // 各自抽出“含 if ( 的决策行（trim 后）”清单，判：两侧清单逐字相等、且各恰有一条以 “if (geom” 开头的
-// 取舍判据、且两侧的 cloneNormalizedGeometry(feat->GetGeometryRef()) 标准化行逐字相等。
+// 取舍判据、且两侧的 cloneNormalizedGeometry(...) 标准化行逐字相等。
+// N158：标准化行的 needle 跟着采集器调用原文演进——采集器为拿维度降级出参必须显式传
+// kVectorAllowDimensionDegradationDefault 与 &dimensionDegraded，needle 换成新调用原文的逐字子串
+//（不换的话两侧都搜不到旧 needle ⇒ EXPECT_EQ 比出两个 <missing> 假绿，判据被掏空）。
 // 它能红的方式（取证时实演一次）：把 collectNormalizedGeometries 或 collectNormalizedFeatures 里任一处的
 // 取舍判据 `if (geom && !geom->IsEmpty())` 改掉 ⇒ 两份清单不再相等 ⇒ 本条红。
 // WHY 注释里不写行号：行号是**自己会腐烂的断言**——本刀往上补几行用例/注释就把判据从 :209/:248 推走了，
@@ -14409,12 +14412,15 @@ TEST_F(PluginTest, VectorOverlayCollectorMirrorPredicateStaysVerbatim) {
         << "collectNormalizedFeatures 里以 if (geom 开头的取舍判据必须恰有一条";
 
     auto normalizedCloneLine = [&](const std::string& body) {
+        const std::string needle =
+            "cloneNormalizedGeometry(feat->GetGeometryRef(), "
+            "kVectorAllowDimensionDegradationDefault, &dimensionDegraded)";
         std::size_t start = 0;
         while (start <= body.size()) {
             const std::size_t nl = body.find('\n', start);
             std::string line =
                 trim(nl == std::string::npos ? body.substr(start) : body.substr(start, nl - start));
-            if (line.find("cloneNormalizedGeometry(feat->GetGeometryRef())") != std::string::npos) {
+            if (line.find(needle) != std::string::npos) {
                 return line;
             }
             if (nl == std::string::npos) break;
@@ -14423,7 +14429,9 @@ TEST_F(PluginTest, VectorOverlayCollectorMirrorPredicateStaysVerbatim) {
         return std::string("<missing>");
     };
     EXPECT_EQ(normalizedCloneLine(bodyA), normalizedCloneLine(bodyB))
-        << "两侧必须都把 feat->GetGeometryRef() 逐字同一形状地送进 cloneNormalizedGeometry 再判取舍";
+        << "两侧必须都把 feat->GetGeometryRef() 逐字同一形状地送进 cloneNormalizedGeometry 再判取舍"
+           "（needle 是采集器调用原文的逐字子串，N158 起带默认开关与降级出参；<missing> 出现即说明"
+           "needle 与调用原文脱钩，守卫空跑）";
 }
 
 // N148 夹具：GPKG 面图层（EPSG:3857）= 1 条有效矩形 +（withEmpty 时）1 条 EMPTY 面要素。

@@ -77,7 +77,12 @@ gis::framework::Result VectorPlugin::doRepair(
         // 给 std::unique_ptr 持有。OGRFeature::SetGeometry 内部做的是克隆，故交出 .get() 后本地仍由
         // 智能指针负责释放 ⇒ EMPTY/null 支路的 continue、以及 CreateFeature 失败支路的提前 return
         // 都不必各自手写 delete（评审席逮到的正是"continue 前漏 delete repaired"这条新引入的泄漏）。
-        std::unique_ptr<OGRGeometry> repaired(cloneNormalizedGeometry(feat->GetGeometryRef()));
+        // N158：本动作是全插件**唯一显式传「允许维度退化」**的调用点（其余调用点吃默认「不允许」）。
+        // WHY 例外：repair 的语义就是"修成什么都算成功"——MakeValid 把坏面修成线/点也是修复结果
+        //（改前实测：三点共线面修成 LineString 原样写出、repaired_count=1），丢掉降级结果等于废掉
+        // repair 本身：用户拿来修的坏面，修成线也比你把这条要素整个丢掉强。改前本动作就没有维度
+        // 检查 ⇒ 传 true 是保持现状，不是行为放宽。
+        std::unique_ptr<OGRGeometry> repaired(cloneNormalizedGeometry(feat->GetGeometryRef(), true));
         // N149 案①（用户 2026-10-27 拍）：cloneNormalizedGeometry 对 EMPTY 返回的是**非空指针的
         // 空克隆**（common.inc 里 `if (!cloned || cloned->IsEmpty()) return cloned;`），所以只判
         // nullptr 会把 EMPTY 当成"修好了"：既计入 repaired_count，又原样写进产物。判据照抄本仓

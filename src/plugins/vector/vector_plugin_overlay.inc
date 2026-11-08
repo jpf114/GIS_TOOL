@@ -32,8 +32,11 @@ gis::framework::Result VectorPlugin::doUnion(
     const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     // N148：叠加层在采集侧被丢掉的输入条数（标准化后仍为空/非法）。后面 collectNormalizedFeatures
     // 是同一层的镜像重扫，跳过集相同，不重复计数 ⇒ 只在这一趟拿计数。
+    // N158：维度降级（面修成线/点）被丢的条数同点并列记账，发 union_degraded_input_count。
     size_t unionSkippedOverlayInputs = 0;
-    auto overlayEntries = collectNormalizedGeometries(overlayLayer, &unionSkippedOverlayInputs);
+    size_t unionDegradedOverlayInputs = 0;
+    auto overlayEntries = collectNormalizedGeometries(overlayLayer, &unionSkippedOverlayInputs,
+                                                      &unionDegradedOverlayInputs);
     const bool usePracticalMixedUnion =
         isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
 
@@ -543,6 +546,11 @@ gis::framework::Result VectorPlugin::doUnion(
     if (unionSkippedOverlayInputs > 0) {
         result.metadata["union_skipped_input_count"] = std::to_string(unionSkippedOverlayInputs);
     }
+    // N158 附加键：叠加输入里"MakeValid 修好了但维度低于输入（面→线/点）"被逐条丢弃的条数
+    //（>0 才发，与 N148 的 skipped 键同形；一条被丢的输入只进一个键，互斥不重复）。既有键取值不动。
+    if (unionDegradedOverlayInputs > 0) {
+        result.metadata["union_degraded_input_count"] = std::to_string(unionDegradedOverlayInputs);
+    }
     return result;
 }
 
@@ -579,8 +587,11 @@ gis::framework::Result VectorPlugin::doDifference(
 
     const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     // N148：叠加层"标准化后仍非法/空"的输入条数（过去无痕丢，现发 difference_skipped_input_count）。
+    // N158：维度降级（面修成线/点）被丢的条数同点并列记账，发 difference_degraded_input_count。
     size_t differenceSkippedOverlayInputs = 0;
-    auto overlayEntries = collectNormalizedGeometries(overlayLayer, &differenceSkippedOverlayInputs);
+    size_t differenceDegradedOverlayInputs = 0;
+    auto overlayEntries = collectNormalizedGeometries(overlayLayer, &differenceSkippedOverlayInputs,
+                                                      &differenceDegradedOverlayInputs);
     const bool useLinearPolygonSegmentation =
         isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
 
@@ -758,6 +769,10 @@ gis::framework::Result VectorPlugin::doDifference(
     if (differenceSkippedOverlayInputs > 0) {
         result.metadata["difference_skipped_input_count"] = std::to_string(differenceSkippedOverlayInputs);
     }
+    // N158 附加键（>0 才发）：维度降级被丢的叠加输入条数；与 skipped 键互斥不重复。既有键取值不动。
+    if (differenceDegradedOverlayInputs > 0) {
+        result.metadata["difference_degraded_input_count"] = std::to_string(differenceDegradedOverlayInputs);
+    }
     return result;
 }
 
@@ -794,8 +809,11 @@ gis::framework::Result VectorPlugin::doIntersect(
 
     const OGRwkbGeometryType srcEffectiveType = effectiveLayerGeometryType(srcLayer);
     // N148：叠加层"标准化后仍非法/空"的输入条数（过去无痕丢，现发 intersect_skipped_input_count）。
+    // N158：维度降级（面修成线/点）被丢的条数同点并列记账，发 intersect_degraded_input_count。
     size_t intersectSkippedOverlayInputs = 0;
-    auto overlayEntries = collectNormalizedGeometries(overlayLayer, &intersectSkippedOverlayInputs);
+    size_t intersectDegradedOverlayInputs = 0;
+    auto overlayEntries = collectNormalizedGeometries(overlayLayer, &intersectSkippedOverlayInputs,
+                                                      &intersectDegradedOverlayInputs);
     const bool useLinearPolygonSegmentation =
         isLinearGeometryType(srcEffectiveType) && detectOverlayGeometryDimensionRank(overlayEntries) == 2;
 
@@ -951,6 +969,10 @@ gis::framework::Result VectorPlugin::doIntersect(
     // N148 附加键（>0 才发）：既有键取值不动。
     if (intersectSkippedOverlayInputs > 0) {
         result.metadata["intersect_skipped_input_count"] = std::to_string(intersectSkippedOverlayInputs);
+    }
+    // N158 附加键（>0 才发）：维度降级被丢的叠加输入条数；与 skipped 键互斥不重复。既有键取值不动。
+    if (intersectDegradedOverlayInputs > 0) {
+        result.metadata["intersect_degraded_input_count"] = std::to_string(intersectDegradedOverlayInputs);
     }
     return result;
 }
