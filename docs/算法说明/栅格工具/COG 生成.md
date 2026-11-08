@@ -26,25 +26,34 @@ COG 生成用于把普通栅格转换为 Cloud Optimized GeoTIFF。当前实现�
 - 本机实测产物瓦片块尺寸是 **512 x 512**（`GDALRasterBand::GetBlockSize`）。
 - 在能构造的尺寸档上（40x24 / 64x40 / 130x66 / 300x200）实测**金字塔层数都是 0**：小图没有可退的
   层级，所以『生成的 COG 一定带概览』这句不成立；要看金字塔得先有比瓦片大一档的输入。
-- 生成之后产品还会**第二次打开输入**写处理元数据（含处理时间），这一步会把 IFD 重写到位图末尾，
-  GDAL 当场印 `The IFD has been rewritten at the end of the file, which breaks COG layout`。
-  ⚠ **但"布局失效全是这一步造成的"这句在修复轮被自己的臂日志否证，改成实测口径**：GDAL 对这件事发
-  **两条不同的警告**，①`The IFD has been rewritten at the end of the file, which breaks COG layout`
-  与 ②`This file used to have optimizations in its layout, but those have been, at least partly,
-  invalidated by later changes`。臂 A5（保留那次元数据写）里 ①×1 / ②×6；
-  臂 A7（**去掉**那次元数据写）里 ①×0 但 **②仍 ×1** ⇒ 那次写是**加剧项**，不是布局失效的唯一成因。
-  不改代码也能复现 ②：`gis-cli raster_manage cog` 生成，再用 `gis-cli raster_inspect info` 打开它，
-  stderr 就印 ②（控制器 2026-10-29 复跑，同时 `Overviews: 0`）。⇒ 已立案 **N179**：本动作的产物
-  连 GDAL 自己都认为不再是 COG 布局，"COG 生成"这个动作名与产物实际形态不一致（修法属拍板类，未改产品）。
-- 因此**比较两个产物只能比尺寸 / 块尺寸 / 金字塔层数 / 统计量，不能比 md5 或逐字节**：处理时间每次都变，
-  而且上面那条布局改写的存在与否会直接改变字节布局。
+- 处理元数据（处理动作名、源文件、源 CRS、处理时间）**随翻译一起写进产物的 `GIS_PROCESSING` 元数据域**
+  （批次 D N179，2026-11-09 落地）：翻译参数里逐键下发 `-dmo GIS_PROCESSING:<键>=<值>`，并带
+  `-co COPY_SRC_MDD=YES` 把中间 VRT 上的非默认域拷进 COG 产物（GTiff CreateCopy 缺省只拷默认域，
+  不带它域会丢）。键值对与其它动作的 update 写路径共用同一出口（键名、时间戳兜底、空值跳过语义
+  一致），域身份与键名都不变；输入无 CRS 时 `GIS_SOURCE_CRS` 按既有语义跳过不发。
+- **布局修复（N179 真因链，实测口径）**：翻译本身不破布局；破布局的是修复前"翻译后以 update 模式
+  重开产物写元数据"那一步（当年还靠 `IGNORE_COG_LAYOUT_BREAK=YES` 压制开关压住写期警告）。该重开
+  与该开关都已删除。修复后产物头内 `KNOWN_INCOMPATIBLE_EDITION=NO` 保持原样，生成进程与每个读端
+  **零**布局告警（修复前：生成期 `The IFD has been rewritten at the end of the file, which breaks
+  COG layout` ×1，此后每次打开 `This file used to have optimizations in its layout, ... invalidated
+  by later changes` ×1）。
+  ⚠ R3a 时代"那次元数据写是**加剧项**、不是布局失效唯一成因"的旧口径**撤回**：当年 A7 臂残留的
+  ②×1 是测试输出目录里**陈旧破坏产物被覆盖打开**的污染（CreateCopy 流程开头会打开既有同名产物），
+  不是第二个破坏源；干净路径上纯翻译新建零告警。**update 模式元数据写是布局破坏的唯一产品侧成因**
+  （两条警告同源）。
+- 不改代码也能自查某个产物布局是否完好：看文件头 `GDAL_STRUCTURAL_METADATA` 段里
+  `KNOWN_INCOMPATIBLE_EDITION` 的值，`=NO` 即布局完好；`=YES` 说明该文件曾被 update 模式改写过
+  （旧产物仍可正常读，只是每次打开带 ② 告警）。
+- 因此**比较两个产物只能比尺寸 / 块尺寸 / 金字塔层数 / 统计量，不能比 md5 或逐字节**：处理元数据里
+  的处理时间每次都变，会直接改变产物字节。
 
 ## 处理流程
 
 1. 打开输入栅格。
-2. 组装 COG 输出参数，固定使用 `COG` 格式、`LZW` 压缩和按需 BigTIFF。
-3. 调用 GDALTranslate 执行格式转换。
-4. 生成新的 COG 输出文件，并在元数据中记录格式和压缩方式。
+2. 组装 COG 输出参数，固定使用 `COG` 格式、`LZW` 压缩和按需 BigTIFF，并带上 `COPY_SRC_MDD` 与
+   逐键 `-dmo`（处理元数据随翻译落盘）。
+3. 调用 GDALTranslate 执行格式转换，处理元数据同一次转换写入产物 `GIS_PROCESSING` 域。
+4. 生成新的 COG 输出文件，并在 Result 元数据中记录格式和压缩方式。
 
 ## 输出说明
 
