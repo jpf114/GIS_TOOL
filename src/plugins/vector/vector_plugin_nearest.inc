@@ -75,14 +75,15 @@ gis::framework::Result VectorPlugin::doNearest(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
+        srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         srcLayer->GetName(),
-        srcSRS,
+        srcSRS.get(),
         resultLayerGeometryType(srcLayer->GetGeomType()),
         nullptr);
     if (!dstLayer) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -173,7 +174,6 @@ gis::framework::Result VectorPlugin::doNearest(
         if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
             OGRFeature::DestroyFeature(dstFeat);
             OGRFeature::DestroyFeature(srcFeat);
-            delete srcSRS;
             return gis::framework::Result::fail("Cannot create nearest analysis feature");
         }
 
@@ -184,7 +184,6 @@ gis::framework::Result VectorPlugin::doNearest(
         progress.onProgress(0.35 + 0.55 * static_cast<double>(count) / static_cast<double>(totalCount));
     }
 
-    delete srcSRS;
     progress.throwIfCancelled();
 
     // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
