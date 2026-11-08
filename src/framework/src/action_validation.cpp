@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -433,6 +434,29 @@ std::optional<ActionValidationIssue> validateActionSpecificParams(
         }
     }
 
+    // N162/#156：output 的父目录若存在则必须是目录——一处拦住 CLI / GUI / 工作流三条派发路径
+    //（CLI 在 src/cli/main.cpp、GUI 在 src/gui/mainwindow.cpp 三处、工作流在 workflow.cpp，
+    //  全部经本函数同源校验）。语义边界：父目录**不存在**是合法（后续执行层会创建）；
+    //  父目录**存在但不是目录**（比如指向一个已存在的文件）才前置拒。这条闸是"输出路径形态"
+    //  校验，与 D0-C3 时代"不在框架侧补第二条扩展名同语义判定"的老裁定不冲突
+    //  （那是扩展名一致性，这是父目录形态）。放在所有动作级判定之后：动作自身更具体的
+    //  文案（扩展名一致性等）优先，本闸只兜"形态"。
+    // WHY 用 fs::u8path：output 是 UTF-8 串，窄构造在 Windows 按 ANSI 解（N122 的病灶），
+    //  中文路径下这道闸会静默失明。
+    {
+        const std::string outputPath = stringParam("output");
+        if (!outputPath.empty()) {
+            std::error_code ec;
+            const std::filesystem::path parent = std::filesystem::u8path(outputPath).parent_path();
+            if (!parent.empty() && std::filesystem::exists(parent, ec) &&
+                !std::filesystem::is_directory(parent, ec)) {
+                return ActionValidationIssue{
+                    "output",
+                    "输出路径的父目录“" + parent.u8string() + "”是已存在的文件而非目录，"
+                    "无法创建输出目录（动作：" + pluginName + " " + actionKey + "）"};
+            }
+        }
+    }
 
     return std::nullopt;
 }
