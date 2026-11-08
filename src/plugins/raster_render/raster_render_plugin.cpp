@@ -1,6 +1,7 @@
 #include "raster_render_plugin.h"
 
 #include <gis/core/error.h>
+#include <gis/core/fs_support.h>
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/opencv_wrapper.h>
 
@@ -24,12 +25,13 @@ gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDatase
     return meta;
 }
 
-void ensureParentDirectoryForFile(const std::string& path) {
+void ensureParentDirectoryForFile(const std::string& path, const char* actionLabel) {
     const std::filesystem::path fsPath(path);
     if (!fsPath.has_parent_path()) {
         return;
     }
-    std::filesystem::create_directories(fsPath.parent_path());
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(fsPath, actionLabel);
 }
 
 int mapColormapName(const std::string& name) {
@@ -170,7 +172,7 @@ gis::framework::Result RasterRenderPlugin::doColormap(
     progress.onProgress(0.7);
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
-    ensureParentDirectoryForFile(output);
+    ensureParentDirectoryForFile(output, "raster_render colormap");
     GDALDataset* dstDS = drv->Create(output.c_str(), colored.cols, colored.rows, 3, GDT_Byte, nullptr);
     if (!dstDS) {
         return gis::framework::Result::fail("Cannot create output: " + output);
@@ -254,7 +256,7 @@ gis::framework::Result RasterRenderPlugin::doHistogramMatch(
     progress.onProgress(0.75);
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
-    ensureParentDirectoryForFile(output);
+    ensureParentDirectoryForFile(output, "raster_render histogram_match");
     GDALDataset* dstDS = drv->Create(output.c_str(), matchedFloat.cols, matchedFloat.rows, 1, GDT_Float32, nullptr);
     if (!dstDS) {
         return gis::framework::Result::fail("Cannot create output: " + output);

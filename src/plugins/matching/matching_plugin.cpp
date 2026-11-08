@@ -1,5 +1,6 @@
 #include "matching_plugin.h"
 #include <gis/core/gdal_wrapper.h>
+#include <gis/core/fs_support.h>
 #include <gis/core/opencv_wrapper.h>
 #include <gis/core/error.h>
 #include <gdal_priv.h>
@@ -21,14 +22,9 @@ namespace gis::plugins {
 
 namespace {
 
-void ensureParentDirectoryForFile(const std::string& path) {
-    const std::filesystem::path fsPath(path);
-    if (!fsPath.has_parent_path()) {
-        return;
-    }
-
-    std::filesystem::create_directories(fsPath.parent_path());
-}
+// N162/#156：本地 ensureParentDirectoryForFile 已删——会抛的 create_directories 收敛到
+// gis::core 单一 helper（gis::core::ensureParentDirectoryForFile，文案带动作名），
+// 动作名由各 JSON 写出函数的调用者（doDetect/doCornerDetect/doMatch）穿进来。
 
 gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDataset* srcDs, const std::string& algorithm) {
     gis::core::ProcessingMetadata meta;
@@ -135,8 +131,10 @@ static cv::Mat readBandAsMat(const std::string& path, int band,
 }
 
 static bool writeKeyPointsJSON(const std::string& path,
-                                const std::vector<cv::KeyPoint>& kps) {
-    ensureParentDirectoryForFile(path);
+                                const std::vector<cv::KeyPoint>& kps,
+                                const char* actionLabel) {
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(path), actionLabel);
     std::ofstream ofs(path);
     if (!ofs.is_open()) return false;
     ofs << "{\"keypoints\":[\n";
@@ -157,8 +155,10 @@ static bool writeKeyPointsJSON(const std::string& path,
 static bool writeMatchesJSON(const std::string& path,
                               const std::vector<cv::DMatch>& matches,
                               const std::vector<cv::KeyPoint>& kps1,
-                              const std::vector<cv::KeyPoint>& kps2) {
-    ensureParentDirectoryForFile(path);
+                              const std::vector<cv::KeyPoint>& kps2,
+                              const char* actionLabel) {
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(path), actionLabel);
     std::ofstream ofs(path);
     if (!ofs.is_open()) return false;
     ofs << "{\"matches\":[\n";
@@ -209,7 +209,7 @@ gis::framework::Result MatchingPlugin::doDetect(
     progress.onMessage("Detected " + std::to_string(keypoints.size()) + " keypoints");
 
     if (!output.empty()) {
-        if (!writeKeyPointsJSON(output, keypoints)) {
+        if (!writeKeyPointsJSON(output, keypoints, "matching detect")) {
             return gis::framework::Result::fail("Failed to write output: " + output);
         }
         progress.throwIfCancelled();
@@ -296,7 +296,7 @@ gis::framework::Result MatchingPlugin::doMatch(
                         std::to_string(knnMatches.size()) + " initial)");
 
     if (!output.empty()) {
-        if (!writeMatchesJSON(output, goodMatches, kp1, kp2)) {
+        if (!writeMatchesJSON(output, goodMatches, kp1, kp2, "matching match")) {
             return gis::framework::Result::fail("Failed to write output: " + output);
         }
     }
@@ -756,7 +756,8 @@ gis::framework::Result MatchingPlugin::doCornerDetect(
                         kps.emplace_back(cv::Point2f(c.x, c.y), 3.0f, -1.0f, 0.0f);
                     }
                     return kps;
-                }())) {
+                }(),
+                "matching corner")) {
             return gis::framework::Result::fail("Failed to write output: " + output);
         }
     }

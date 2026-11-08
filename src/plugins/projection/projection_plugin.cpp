@@ -1,6 +1,7 @@
 ﻿#include "projection_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
+#include <gis/core/fs_support.h>
 #include <gis/framework/result_display.h>
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
@@ -145,14 +146,8 @@ std::string detectVectorFormatFromOutput(const std::string& output) {
     return "GeoJSON";
 }
 
-void ensureParentDirectoryForFile(const std::string& path) {
-    const fs::path fsPath = fs::u8path(path);
-    if (!fsPath.has_parent_path()) {
-        return;
-    }
-
-    fs::create_directories(fsPath.parent_path());
-}
+// N162/#156：本地 ensureParentDirectoryForFile 已删——会抛的 create_directories 收敛到
+// gis::core 单一 helper（文案带动作名）；两处调用点都在 doReproject ⇒ 标签固定。
 
 void removeExistingVectorOutput(const std::string& output, const std::string& format) {
     // N122：output 是 UTF-8，窄串 exists 在 Windows 按 ANSI 解 ⇒ 中文路径下恒假、直接 return，
@@ -247,7 +242,8 @@ gis::framework::Result ProjectionPlugin::doReproject(
         progress.onMessage("Setting up vector translate options...");
 
         const std::string outputFormat = detectVectorFormatFromOutput(output);
-        ensureParentDirectoryForFile(output);
+        // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+        gis::core::ensureParentDirectoryForFile(fs::u8path(output), "projection reproject");
         removeExistingVectorOutput(output, outputFormat);
 
         std::vector<std::string> argStorage;
@@ -331,7 +327,8 @@ gis::framework::Result ProjectionPlugin::doReproject(
     auto srcDS = gis::core::openRaster(input, true);
 
     progress.onMessage("Setting up warp options...");
-    ensureParentDirectoryForFile(output);
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(fs::u8path(output), "projection reproject");
 
     std::vector<std::string> argStorage;
     argStorage.push_back("-t_srs");

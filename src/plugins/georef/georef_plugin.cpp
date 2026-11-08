@@ -1,6 +1,7 @@
 ﻿#include "georef_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
+#include <gis/core/fs_support.h>
 #include <gis/core/opencv_wrapper.h>
 
 #include <cpl_conv.h>
@@ -184,7 +185,8 @@ void freeParsedGcps(ParsedGcps& parsedGcps) {
 std::string uniqueTempVrtPath(const std::string& outputPath) {
     const fs::path basePath = fs::temp_directory_path() /
         ("gis_tool_georef_" + std::to_string(std::hash<std::string>{}(outputPath)));
-    fs::create_directories(basePath);
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureOutputDirectory(basePath, "georef gcp_register");
     return (basePath / "gcp_register_input.vrt").string();
 }
 

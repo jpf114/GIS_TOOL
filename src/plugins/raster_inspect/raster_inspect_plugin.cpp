@@ -1,6 +1,7 @@
 #include "raster_inspect_plugin.h"
 
 #include <gis/core/error.h>
+#include <gis/core/fs_support.h>
 #include <gis/core/gdal_wrapper.h>
 
 #include <cpl_conv.h>
@@ -17,14 +18,9 @@ namespace gis::plugins {
 
 namespace {
 
-void ensureParentDirectoryForFile(const std::string& path) {
-    const std::filesystem::path fsPath(path);
-    if (!fsPath.has_parent_path()) {
-        return;
-    }
-
-    std::filesystem::create_directories(fsPath.parent_path());
-}
+// N162/#156：本地 ensureParentDirectoryForFile 已删——会抛的 create_directories 收敛到
+// gis::core 单一 helper（gis::core::ensureParentDirectoryForFile，文案带动作名）；
+// 唯一调用点在 histogram ⇒ 标签固定为 "raster_inspect histogram"。
 
 } // namespace
 
@@ -161,7 +157,9 @@ gis::framework::Result RasterInspectPlugin::doHistogram(
     oss << "],\"total\":" << totalCount << "}\n";
 
     if (!output.empty()) {
-        ensureParentDirectoryForFile(output);
+        // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+        gis::core::ensureParentDirectoryForFile(std::filesystem::path(output),
+                                                "raster_inspect histogram");
         std::ofstream ofs(output);
         if (ofs.is_open()) {
             ofs << oss.str();

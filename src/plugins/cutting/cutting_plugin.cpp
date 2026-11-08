@@ -1,6 +1,7 @@
 #include "cutting_plugin.h"
 #include <gis/core/gdal_wrapper.h>
 #include <gis/core/error.h>
+#include <gis/core/fs_support.h>
 #include <gis/core/runtime_env.h>
 #include <gis/core/text_escape.h>
 #include <gis/core/tile_grid.h>
@@ -406,7 +407,8 @@ gis::framework::Result CuttingPlugin::doSplit(
     std::string outDir = output;
     namespace fs = std::filesystem;
     if (!fs::exists(outDir)) {
-        fs::create_directories(outDir);
+        // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+        gis::core::ensureOutputDirectory(fs::path(outDir), "cutting split");
     }
 
     int tileIdx = 0;
@@ -1361,7 +1363,8 @@ gis::framework::Result CuttingPlugin::doTile(
     progress.onMessage("Bounds: " + std::to_string(minLon) + "," + std::to_string(minLat) +
                        " to " + std::to_string(maxLon) + "," + std::to_string(maxLat));
 
-    std::filesystem::create_directories(output);
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureOutputDirectory(std::filesystem::path(output), "cutting tile");
 
     // 层级包络 → 索引范围（度量推导；tileWindow/tileWorldRect 同源用 globalWidth
     // 推导瓦片数，合法层级恒等于 2^z）。totalTiles 预估与主循环用同一个 lambda，
@@ -1581,7 +1584,8 @@ gis::framework::Result CuttingPlugin::doTile(
                     continue;
                 }
 
-                std::filesystem::create_directories(tileDir);
+                // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+                gis::core::ensureOutputDirectory(std::filesystem::path(tileDir), "cutting tile");
                 if (encodeTile(rgba, fmt, jpegQuality, tilePath)) {
                     ++tilesGenerated;   // 只有真的写出文件才算交付
                 } else {

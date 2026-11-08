@@ -1,6 +1,7 @@
 ﻿#include "classification_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
+#include <gis/core/fs_support.h>
 #include <gis/core/opencv_wrapper.h>
 
 #include <cpl_conv.h>
@@ -332,13 +333,6 @@ std::string buildTargetProjectionWkt(int epsg) {
     std::string result = wkt;
     CPLFree(wkt);
     return result;
-}
-
-void ensureParentDirectory(const std::string& path) {
-    const std::filesystem::path fsPath(path);
-    if (fsPath.has_parent_path()) {
-        std::filesystem::create_directories(fsPath.parent_path());
-    }
 }
 
 gis::core::ProcessingMetadata buildProcessingMetadata(
@@ -881,7 +875,9 @@ std::string escapeJson(const std::string& value) {
 }
 
 void writeCsvResult(const std::string& path, const FeatureStatsResultData& result) {
-    ensureParentDirectory(path);
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(path),
+                                            "classification feature_stats");
     std::ofstream out(path, std::ios::binary);
     if (!out) {
         throw std::runtime_error("Failed to create CSV output: " + path);
@@ -903,7 +899,9 @@ void writeCsvResult(const std::string& path, const FeatureStatsResultData& resul
 }
 
 void writeJsonResult(const std::string& path, const FeatureStatsResultData& result) {
-    ensureParentDirectory(path);
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(path),
+                                            "classification feature_stats");
     std::ofstream out(path, std::ios::binary);
     if (!out) {
         throw std::runtime_error("Failed to create JSON output: " + path);
@@ -988,7 +986,9 @@ FeatureVectorOutputWriter::FeatureVectorOutputWriter(
     const std::string& path,
     int targetEpsg,
     const std::string& layerName) {
-    ensureParentDirectory(path);
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(path),
+                                            "classification feature_stats");
     if (std::filesystem::exists(path)) {
         std::filesystem::remove(path);
     }
@@ -1156,7 +1156,9 @@ FeatureRasterOutputWriter::FeatureRasterOutputWriter(
     int width,
     int height,
     const std::array<double, 6>& geotransform) {
-    ensureParentDirectory(path);
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(path),
+                                            "classification feature_stats");
 
     GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
     if (driver == nullptr) {
