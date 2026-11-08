@@ -54,16 +54,17 @@ gis::framework::Result VectorPlugin::doBoundary(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
+        srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr);
     std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         srcLayer->GetName(),
-        srcSRS,
+        srcSRS.get(),
         wkbMultiLineString,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -105,7 +106,6 @@ gis::framework::Result VectorPlugin::doBoundary(
 
         if (!writeFeatureWithCopiedFieldsOwned(dstLayer, feat, std::move(boundary))) {
             OGRFeature::DestroyFeature(feat);
-            delete srcSRS;
             return gis::framework::Result::fail("Cannot create boundary feature");
         }
 
@@ -116,7 +116,6 @@ gis::framework::Result VectorPlugin::doBoundary(
             static_cast<double>(totalCount));
     }
 
-    delete srcSRS;
     progress.throwIfCancelled();
 
     // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
