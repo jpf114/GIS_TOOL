@@ -1,6 +1,7 @@
 #include "terrain_plugin.h"
 
 #include <gis/core/gdal_wrapper.h>
+#include <gis/core/fs_support.h>
 #include <gis/core/opencv_wrapper.h>
 #include <gis/core/plugin_utils.h>
 
@@ -872,10 +873,9 @@ gis::framework::Result runProfileExtractProcess(
             std::hypot(gt[1], gt[2]),
             std::hypot(gt[4], gt[5])));
 
-    const auto parent = std::filesystem::path(output).parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
-    }
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(output),
+                                            "terrain profile_extract");
     std::ofstream out(output, std::ios::binary);
     if (!out) {
         return gis::framework::Result::fail("Cannot write profile output: " + output);
@@ -976,10 +976,9 @@ gis::framework::Result runViewshedProcess(
         crsWarning = kViewshedProjectedCrsHint;
     }
 
-    const auto parent = std::filesystem::path(output).parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
-    }
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(output),
+                                            "terrain viewshed");
 
     progress.onMessage("Running terrain action: Viewshed");
     progress.throwIfCancelled();
@@ -1174,10 +1173,9 @@ gis::framework::Result runViewshedMultiProcess(
         progress.onProgress(0.2 + 0.7 * static_cast<double>(index + 1) / observerPoints.size());
     }
 
-    const auto parent = std::filesystem::path(output).parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
-    }
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(output),
+                                            "terrain viewshed_multi");
     progress.onMessage("Writing terrain output: " + output);
     // R-T12-3：与单点视域（GDALViewshedGenerate 直接写 GDT_Byte）统一成同一种输出类型，
     // 并且不再把源 DEM 的 NoData 继承进这张 0/255 掩膜。
@@ -1318,10 +1316,9 @@ gis::framework::Result runCutFillProcess(
         }
     }
 
-    const auto parent = std::filesystem::path(output).parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
-    }
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(output),
+                                            "terrain cut_fill");
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(diff, inputDs.get(), output, band);
     auto meta = gis::core::buildPluginMetadata(input, inputDs.get(), "terrain.cut_fill");
@@ -1418,10 +1415,9 @@ gis::framework::Result runReservoirVolumeProcess(
         }
     }
 
-    const auto parent = std::filesystem::path(output).parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
-    }
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(std::filesystem::path(output),
+                                            "terrain reservoir_volume");
     progress.onMessage("Writing terrain output: " + output);
     gis::core::matToGdalTiff(depth, srcDs.get(), output, band);
     auto meta = gis::core::buildPluginMetadata(input, srcDs.get(), "terrain.reservoir_volume");
