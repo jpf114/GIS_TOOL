@@ -14,7 +14,7 @@ namespace gis::core {
 namespace {
 
 // N162/#156：createRaster 是 core 深处的共用出口、拿不到动作名上下文 ⇒ 动作名槽位
-// 用兜底标签"栅格数据集写出"（见任务报告 §8 concerns C-1，非遗漏是选定形态）。
+// 用兜底标签"栅格数据集写出"（非遗漏是选定形态：插件入口拿得到动作名的点位各自穿真名）。
 void ensureParentDirectoryForFile(const std::string& path) {
     namespace fs = std::filesystem;
     std::error_code ec;

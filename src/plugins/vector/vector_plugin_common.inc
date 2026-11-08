@@ -357,7 +357,8 @@ static std::vector<const OverlayGeometryEntry*> collectCandidateOverlayEntries(
 
 // N162/#156：本地 ensureParentDirectoryForFile 已删——会抛的 create_directories 收敛到
 // gis::core 单一 helper（文案带动作名）。动作名不在这里静默放掉：两个 start() 都加了
-// actionLabel 形参，由 31 个动作接线点逐点穿字面量（清单见任务报告 §5.4）。
+// actionLabel 形参，由 31 个动作接线点逐点穿字面量（actionKey 与 vector_plugin.cpp 的
+// execute 派发表逐字一致）。
 
 // ── 批次 D / D0-C3：临时件**命名**与**替换**两条原语的单一来源 ────────────────────────
 // 原来这两件事都长在 VectorStagedOutput 里（私有成员）。CSV 文本产物（7 个检查动作）要走同一条
