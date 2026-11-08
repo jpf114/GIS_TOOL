@@ -73,7 +73,9 @@ gis::framework::Result VectorPlugin::doUnion(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
+        srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr);
     const auto outputGeomType = usePracticalMixedUnion
         ? resultLayerGeometryType(srcEffectiveType)
         : wkbUnknown;
@@ -82,11 +84,10 @@ gis::framework::Result VectorPlugin::doUnion(
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "union",
-        srcSRS,
+        srcSRS.get(),
         outputGeomType,
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -170,7 +171,6 @@ gis::framework::Result VectorPlugin::doUnion(
         &sourceFieldDefn, uniqueFieldName(takenFieldNames, sourceFieldDefn.GetNameRef()));
 
     if (sourceFieldIdx < 0) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create union source field");
     }
 
@@ -272,7 +272,6 @@ gis::framework::Result VectorPlugin::doUnion(
                         if (useTransactions) {
                             dstLayer->RollbackTransaction();
                         }
-                        delete srcSRS;
                         return gis::framework::Result::fail("Failed to write union feature");
                     }
                     count++;
@@ -386,7 +385,6 @@ gis::framework::Result VectorPlugin::doUnion(
                         if (useTransactions) {
                             dstLayer->RollbackTransaction();
                         }
-                        delete srcSRS;
                         return gis::framework::Result::fail("Failed to write union feature");
                     }
                     count++;
@@ -423,7 +421,6 @@ gis::framework::Result VectorPlugin::doUnion(
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write union feature");
                 }
                 count++;
@@ -493,7 +490,6 @@ gis::framework::Result VectorPlugin::doUnion(
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write union feature");
                 }
                 count++;
@@ -516,7 +512,6 @@ gis::framework::Result VectorPlugin::doUnion(
     if (useTransactions) {
         dstLayer->CommitTransaction();
     }
-    delete srcSRS;
     progress.throwIfCancelled();
 
     // 工单 §2：事务必须在 commit() 之前收口 —— commit 的第一件事是 dataset_.reset()，
@@ -626,17 +621,18 @@ gis::framework::Result VectorPlugin::doDifference(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
+        srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr);
     const bool useTransactions = outFormat == "GPKG";
     std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "difference",
-        srcSRS,
+        srcSRS.get(),
         resultLayerGeometryType(srcEffectiveType),
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -672,7 +668,6 @@ gis::framework::Result VectorPlugin::doDifference(
                         if (useTransactions) {
                             dstLayer->RollbackTransaction();
                         }
-                        delete srcSRS;
                         return gis::framework::Result::fail("Failed to write difference feature");
                     }
                     count++;
@@ -697,7 +692,6 @@ gis::framework::Result VectorPlugin::doDifference(
                         if (useTransactions) {
                             dstLayer->RollbackTransaction();
                         }
-                        delete srcSRS;
                         return gis::framework::Result::fail("Failed to write difference feature");
                     }
                     count++;
@@ -732,7 +726,6 @@ gis::framework::Result VectorPlugin::doDifference(
                     if (useTransactions) {
                         dstLayer->RollbackTransaction();
                     }
-                    delete srcSRS;
                     return gis::framework::Result::fail("Failed to write difference feature");
                 }
                 count++;
@@ -748,7 +741,6 @@ gis::framework::Result VectorPlugin::doDifference(
     if (useTransactions) {
         dstLayer->CommitTransaction();
     }
-    delete srcSRS;
     progress.throwIfCancelled();
 
     // 工单 §2：事务必须在 commit() 之前收口（理由同 doUnion）。
@@ -848,17 +840,18 @@ gis::framework::Result VectorPlugin::doIntersect(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
+    // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
+        srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr);
     const bool useTransactions = outFormat == "GPKG";
     std::vector<std::string> layerOptionStorage = buildGpkgDriverIndexedLayerOptions();
     std::vector<char*> layerOptions = buildLayerOptionPointers(layerOptionStorage);
     OGRLayer* dstLayer = dstDS->CreateLayer(
         "intersect",
-        srcSRS,
+        srcSRS.get(),
         resultLayerGeometryType(srcEffectiveType),
         layerOptions.empty() ? nullptr : layerOptions.data());
     if (!dstLayer) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -905,7 +898,6 @@ gis::framework::Result VectorPlugin::doIntersect(
                         if (useTransactions) {
                             dstLayer->RollbackTransaction();
                         }
-                        delete srcSRS;
                         return gis::framework::Result::fail("Failed to write intersect feature");
                     }
                     count++;
@@ -933,7 +925,6 @@ gis::framework::Result VectorPlugin::doIntersect(
                         if (useTransactions) {
                             dstLayer->RollbackTransaction();
                         }
-                        delete srcSRS;
                         return gis::framework::Result::fail("Failed to write intersect feature");
                     }
                     count++;
@@ -950,7 +941,6 @@ gis::framework::Result VectorPlugin::doIntersect(
     if (useTransactions) {
         dstLayer->CommitTransaction();
     }
-    delete srcSRS;
     progress.throwIfCancelled();
 
     // 工单 §2：事务必须在 commit() 之前收口（理由同 doUnion）。
