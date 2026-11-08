@@ -14,7 +14,7 @@
     "exts": ["cpp", "h", "hpp", "cc", "inc", "ps1", "py", "cmake", "json", "txt"]
   },
   "index_roots": ["src", "tests", "cmake", "scripts", "installer", "resources"],
-  "anchor_ceiling": 182,
+  "anchor_ceiling": 181,
   "upstream_files": [
     {
       "name": "gdaldataset.cpp",
