@@ -134,6 +134,10 @@ static constexpr bool kVectorAllowDimensionDegradationDefault = false;
 // 「有效维度」：GeometryCollection 递归取成员最大维（嵌套集合同样递归；空成员不计），
 // 其余类型用 OGR 的 getDimension()（点 0 / 线 1 / 面 2）。不直接用 getDimension() 判集合，
 // 是因为集合语义要看 GDAL 实现，本仓自己递归才把"含面集合不算降级"钉在自己手里。
+// 口径来源（如实登记）：按裁定原文"维度低于输入"的字面读法做**整几何**比较——非法单面被 MakeValid
+// 修成 GC(面+线) 时字面维度未降 ⇒ 不降级不拦截，降级线以集合成员身份留在产物里；"逐成员丢弃"是
+// 另一可行口径，本刀未取（该残留与"形状臂只数顶层线型"的判据盲区已写进矢量侧文档注意事项与
+// RELEASE 行为变更清单）。
 // 输入不可用（null/空）返回 -1；调用方在空支先行，正常到不了 -1。
 static int normalizedGeometryDimension(const OGRGeometry* geom) {
     if (!geom || geom->IsEmpty()) {
