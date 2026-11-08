@@ -2180,6 +2180,42 @@ add_test(
         -DREPORT=${CMAKE_CURRENT_BINARY_DIR}/anchor_guard_report.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_anchor_guard.cmake
 )
+# ── 批次 D #164：上游边界参数有效性棘轮守卫 param_effectiveness_guard ──────────────
+# 判据本体 tests/check_param_effectiveness_guard.py + 登记表 tests/param_effectiveness_registry.json：
+# 凡是"可见参数的值离开本仓、进上游 C API/argv"的接线点，每个 flag 字面量都必须登记在册，且登记必须
+# 链到一个真实存在的 gtest 证据用例名（现读 46 grep 行 / 5 文件 / 7 逻辑调用点 + 1 零 flag 调用点，
+# 35 条目 / 26 个 file×flag 对）；登记在册的 flag 从源码里消失（a）、登记行被删（d）、evidence_test
+# 名不存在（b）、新边界 flag（d）或新边界文件（c，双向）⇒ 红。本守卫是完备性棘轮（新接线必须带证据
+# 注册；既有接线被拆必须红），逐实例的"值级真生效"仍由各刀的 gtest 值判据承重——通用"全部可见键
+# 三元组逐一配行为变异档"的注册表另立 N196，本守卫不做。
+# WHY 自证臂先跑：判据自己红 ⇒ 对仓库的结论一律不作数（与 geotransform_guard / anchor_guard 同一顺序、
+#   同一退出码分层）。7 条臂（1 绿 + 6 红）逐臂证明的命题写判据文件头与臂名里。
+# WHY 恒注册、解释器缺失拒绝放行：与上面 docs_match_cli / geotransform_guard 同一口径
+#   （"没检查"绝不能长得像"检查通过"）。
+# WHY 自己再探一次解释器而不复用 _gis_docs_py/_gis_geotransform_py/_gis_anchor_py：四个守卫各自声明
+#   自己的"拒绝放行"，共用一个变量会让后人改其中一处探测时静默改掉本守卫的注册条件。
+# 探测必须"跑起来并回显"：本机 python3 是 WindowsApps 空壳（静默零输出）。
+find_program(GIS_PEGUARD_PYTHON NAMES python python3 py)
+set(_gis_peguard_py "")
+if(GIS_PEGUARD_PYTHON)
+    execute_process(
+        COMMAND "${GIS_PEGUARD_PYTHON}" -c "print('GIS_PEGUARD_PY_OK')"
+        OUTPUT_VARIABLE _gis_peguard_probe
+        ERROR_QUIET
+        RESULT_VARIABLE _gis_peguard_probe_rc
+        TIMEOUT 20
+    )
+    if(_gis_peguard_probe_rc EQUAL 0 AND _gis_peguard_probe MATCHES "GIS_PEGUARD_PY_OK")
+        set(_gis_peguard_py "${GIS_PEGUARD_PYTHON}")
+    endif()
+endif()
+add_test(
+    NAME param_effectiveness_guard
+    COMMAND ${CMAKE_COMMAND}
+        -DPY=${_gis_peguard_py}
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_param_effectiveness_guard.cmake
+)
 # ── 批次 D N177：腿侧值级判据闸的自证用例 regression_gate_selftest ────────────────────
 # 判据本体 tests/regression_case_gate_selftest.ps1：拿一份"腿的形状"的合成夹具（Register-Case /
 #   switch ($Case.Name) / Assert-* 助手）喂给 tests/regression_case_gate.ps1，逐条臂断言闸在哪种
