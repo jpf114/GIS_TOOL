@@ -14768,6 +14768,358 @@ TEST_F(PluginTest, VectorClipCountsSkippedOverlayInputGeometry) {
     EXPECT_EQ(skippedIt->second, "1");
 }
 
+// ── N158（批次 D）：维度退化开关 + `*_degraded_input_count` 判据 ────────────────────────────
+// 碎片面夹具 = 三点共线「面」[[2,2],[8,8],[4,4],[2,2]]（立案同款：环沿 y=x 折返自相交，GEOS 判
+// INVALID，MakeValid 修成 LineString；立案实测 ST_IsValid=0 / ST_MakeValid=LINESTRING）。
+// 改前形态（BASE 二进制现跑取证，见 task-n158-report §2）：union 产物 1 LineString + 2 Polygon、
+// 无任何键 —— 降级结果无痕入产物。判据按任务书写成**两件缺一不判**：
+//   键值断言：`*_degraded_input_count` 从无到 1（>0 才发）；
+//   形状断言：重开产物数"压平成线型"的几何 = 0（降级结果不再入产物）。
+
+// N158 夹具：GPKG 面图层（EPSG:3857），要素几何按参数给：
+//   withValidRect=true ⇒ 先写 1 条 [minX,minY]-[maxX,maxY] 的有效矩形；
+//   degenerateCount 条三点共线碎片面（固定形状 [[2,2],[8,8],[4,4],[2,2]]，落点按各动作手算挑）。
+// 与 N148 的 writeRectPlusEmptyLayer（EMPTY 类）区分：本夹具造的是"修好了但维度降级"类，
+// 两类出口在采集器里互斥——EMPTY 进 `*_skipped_input_count`，碎片面进 `*_degraded_input_count`
+//（互斥性由 union 用例的"skipped 键不出现"判据钉住）。签名形态照抄 writeNullGeometryPolygonLayer。
+static bool writeDegeneratePolygonLayer(const fs::path& path, bool withValidRect,
+                                        double minX, double minY, double maxX, double maxY,
+                                        int degenerateCount) {
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GPKG");
+    if (!driver) {
+        return false;
+    }
+    const std::string pathText = utf8PathString(path);
+    std::error_code ignored;
+    fs::remove(pathText, ignored);
+    GDALDataset* ds = driver->Create(pathText.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    if (!ds) {
+        return false;
+    }
+    auto srs = std::make_unique<OGRSpatialReference>();
+    srs->importFromEPSG(3857);
+    OGRLayer* layer = ds->CreateLayer("shapes", srs.get(), wkbPolygon, nullptr);
+    if (!layer) {
+        GDALClose(ds);
+        return false;
+    }
+    bool ok = true;
+    if (withValidRect) {
+        OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon poly;
+        OGRLinearRing ring;
+        ring.addPoint(minX, minY);
+        ring.addPoint(maxX, minY);
+        ring.addPoint(maxX, maxY);
+        ring.addPoint(minX, maxY);
+        ring.addPoint(minX, minY);
+        poly.addRing(&ring);
+        feat->SetGeometry(&poly);
+        ok = layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+    }
+    for (int i = 0; ok && i < degenerateCount; ++i) {
+        OGRFeature* feat = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        OGRPolygon degenerate;
+        OGRLinearRing degenerateRing;
+        degenerateRing.addPoint(2.0, 2.0);
+        degenerateRing.addPoint(8.0, 8.0);
+        degenerateRing.addPoint(4.0, 4.0);
+        degenerateRing.addPoint(2.0, 2.0);
+        degenerate.addRing(&degenerateRing);
+        feat->SetGeometry(&degenerate);
+        ok = layer->CreateFeature(feat) == OGRERR_NONE;
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(ds);
+    return ok;
+}
+
+// N158 产物形状臂：重开**单图层**产物，数"压平成线型"（LineString/MultiLineString）的几何条数，
+// totalFeatures 非空时顺带带回要素总数。返回 -1 = 产物打不开/没有图层（调用方先 ASSERT success，
+// 走到 -1 就是产物契约坏了，断言里显式点名）。与键值断言分开写、缺一不判。
+static int countLinearGeometriesInSingleLayerDataset(const fs::path& path, int* totalFeatures = nullptr) {
+    if (totalFeatures) {
+        *totalFeatures = -1;
+    }
+    GDALDataset* ds = GDALDataset::FromHandle(GDALOpenEx(
+        utf8PathString(path).c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
+    if (!ds) {
+        return -1;
+    }
+    OGRLayer* layer = ds->GetLayer(0);
+    if (!layer) {
+        GDALClose(ds);
+        return -1;
+    }
+    int linearCount = 0;
+    int totalCount = 0;
+    layer->ResetReading();
+    while (OGRFeature* feat = layer->GetNextFeature()) {
+        ++totalCount;
+        const OGRGeometry* geom = feat->GetGeometryRef();
+        if (geom) {
+            const auto flatType = wkbFlatten(geom->getGeometryType());
+            if (flatType == wkbLineString || flatType == wkbMultiLineString) {
+                ++linearCount;
+            }
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+    GDALClose(ds);
+    if (totalFeatures) {
+        *totalFeatures = totalCount;
+    }
+    return linearCount;
+}
+
+// 判据 (a)·union：埋 1 条碎片面 ⇒ union_degraded_input_count 从无到 1，且产物不再含 LineString。
+// 手算：输入 [0,10]²；叠加 = 有效矩形 [20,30]²（与输入不相交）+ 碎片面（整条落在输入里）。
+// 改前 3 features（含 1 条 source=both 的 LineString 交叠块）；改后碎片面在采集侧被丢
+// ⇒ 2 features、degraded=1、skipped 键不出现（互斥口径）、既有键取值按丢掉后的现实给。
+TEST_F(PluginTest, VectorUnionDropsDegradedOverlayInputAndCountsIt) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_union_degraded_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_union_degraded_overlay.gpkg";
+    const fs::path overlayCleanPath = getTestDir() / "e2e_union_degraded_overlay_clean.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_union_degraded_output.gpkg");
+    const std::string outputClean = utf8PathString(getTestDir() / "e2e_union_degraded_output_clean.gpkg");
+
+    UnionFixtureFeature srcA;
+    srcA.minX = 0.0; srcA.minY = 0.0; srcA.maxX = 10.0; srcA.maxY = 10.0; srcA.name = "src1";
+    ASSERT_TRUE(writeUnionPolygonLayer(inputPath, {srcA}));
+    ASSERT_TRUE(writeDegeneratePolygonLayer(overlayPath, true, 20.0, 2.0, 30.0, 12.0, 1));
+    ASSERT_TRUE(writeDegeneratePolygonLayer(overlayCleanPath, true, 20.0, 2.0, 30.0, 12.0, 0));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("union");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    // 既有键的取值按"丢掉后的现实"给（N148 同款附加式契约：键值本身一个不许动）：
+    EXPECT_EQ(result.message, "Union completed: 2 features");
+    EXPECT_EQ(unionMetadataValue(result, "union_input_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlap_pieces"), "0");
+    EXPECT_EQ(unionMetadataValue(result, "union_overlay_pieces"), "1");
+    EXPECT_EQ(unionMetadataValue(result, "union_total_pieces"), "2");
+    // 键值断言（一）：碎片面恰 1 条 ⇒ 新键从无到 1。
+    const auto degradedIt = result.metadata.find("union_degraded_input_count");
+    ASSERT_NE(degradedIt, result.metadata.end())
+        << "N158：union 必须把'MakeValid 修好了但维度低于输入'被丢的叠加输入发成 "
+           "union_degraded_input_count，本批叠加侧恰 1 条碎片面；实际键数=" << result.metadata.size();
+    EXPECT_EQ(degradedIt->second, "1");
+    // 键值断言（二）：互斥口径——碎片面进 degraded 键，N148 的 skipped 键不许出现。
+    EXPECT_EQ(result.metadata.count("union_skipped_input_count"), 0u)
+        << "维度降级与'标准化后仍空/非法'是两类出口，一条被丢的输入只进一个键";
+    // 形状断言：产物重开逐条数线型几何 = 0（缺一不判的另一半）。
+    int productFeatures = -1;
+    const int linearInProduct = countLinearGeometriesInSingleLayerDataset(
+        fs::u8path(output), &productFeatures);
+    ASSERT_NE(linearInProduct, -1) << "union 产物重开失败 ⇒ 形状断言空跑";
+    EXPECT_EQ(linearInProduct, 0)
+        << "N158：维度降级默认不允许 ⇒ 产物不得再含被修成线/点的降级结果";
+    EXPECT_EQ(productFeatures, 2) << "产物要素数与 union_total_pieces 同源（2 块）";
+
+    // 反向对照臂：全有效叠加 ⇒ 键不出现（"出现即说明丢了输入"的读法必须为真）。
+    params["overlay_vector"] = utf8PathString(overlayCleanPath);
+    params["output"] = outputClean;
+    const auto clean = p->execute(params, progress_);
+    ASSERT_TRUE(clean.success) << clean.message;
+    EXPECT_EQ(clean.metadata.count("union_degraded_input_count"), 0u)
+        << "零降级的正常批次不许发这个键";
+    EXPECT_EQ(clean.metadata.count("union_skipped_input_count"), 0u);
+    EXPECT_EQ(unionMetadataValue(clean, "union_total_pieces"), "2");
+}
+
+// 判据 (a)·difference：[0,10]² 减 [5,15]² = 一块 L 形；碎片面被丢 ⇒ degraded=1、feature_count 仍 1。
+TEST_F(PluginTest, VectorDifferenceDropsDegradedOverlayInputAndCountsIt) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_diff_degraded_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_diff_degraded_overlay.gpkg";
+    const fs::path overlayCleanPath = getTestDir() / "e2e_diff_degraded_overlay_clean.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_diff_degraded_output.gpkg");
+    const std::string outputClean = utf8PathString(getTestDir() / "e2e_diff_degraded_output_clean.gpkg");
+
+    ASSERT_TRUE(writeDegeneratePolygonLayer(inputPath, true, 0.0, 0.0, 10.0, 10.0, 0));
+    ASSERT_TRUE(writeDegeneratePolygonLayer(overlayPath, true, 5.0, 5.0, 15.0, 15.0, 1));
+    ASSERT_TRUE(writeDegeneratePolygonLayer(overlayCleanPath, true, 5.0, 5.0, 15.0, 15.0, 0));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("difference");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto fcIt = result.metadata.find("feature_count");
+    ASSERT_NE(fcIt, result.metadata.end()) << "差集的 feature_count（N143 既有键）必须还在";
+    EXPECT_EQ(fcIt->second, "1") << "既有值不许动：一块 L 形（碎片面零面积，被丢与否都减不出第二块）";
+    const auto degradedIt = result.metadata.find("difference_degraded_input_count");
+    ASSERT_NE(degradedIt, result.metadata.end())
+        << "N158：difference 必须发 difference_degraded_input_count，本批叠加侧恰 1 条碎片面；"
+           "实际键数=" << result.metadata.size();
+    EXPECT_EQ(degradedIt->second, "1");
+    EXPECT_EQ(result.metadata.count("difference_skipped_input_count"), 0u) << "互斥口径";
+    int productFeatures = -1;
+    const int linearInProduct = countLinearGeometriesInSingleLayerDataset(
+        fs::u8path(output), &productFeatures);
+    ASSERT_NE(linearInProduct, -1) << "difference 产物重开失败 ⇒ 形状断言空跑";
+    EXPECT_EQ(linearInProduct, 0) << "N158：产物不得含降级线/点";
+    EXPECT_EQ(productFeatures, 1);
+
+    params["overlay_vector"] = utf8PathString(overlayCleanPath);
+    params["output"] = outputClean;
+    const auto clean = p->execute(params, progress_);
+    ASSERT_TRUE(clean.success) << clean.message;
+    EXPECT_EQ(clean.metadata.count("difference_degraded_input_count"), 0u);
+    EXPECT_EQ(unionMetadataValue(clean, "feature_count"), "1");
+}
+
+// 判据 (a)·intersect：[0,10]² ∩ [5,15]² = [5,10]² 一块；碎片面被丢 ⇒ degraded=1、feature_count 仍 1。
+TEST_F(PluginTest, VectorIntersectDropsDegradedOverlayInputAndCountsIt) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_int_degraded_input.gpkg";
+    const fs::path overlayPath = getTestDir() / "e2e_int_degraded_overlay.gpkg";
+    const fs::path overlayCleanPath = getTestDir() / "e2e_int_degraded_overlay_clean.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_int_degraded_output.gpkg");
+    const std::string outputClean = utf8PathString(getTestDir() / "e2e_int_degraded_output_clean.gpkg");
+
+    ASSERT_TRUE(writeDegeneratePolygonLayer(inputPath, true, 0.0, 0.0, 10.0, 10.0, 0));
+    ASSERT_TRUE(writeDegeneratePolygonLayer(overlayPath, true, 5.0, 5.0, 15.0, 15.0, 1));
+    ASSERT_TRUE(writeDegeneratePolygonLayer(overlayCleanPath, true, 5.0, 5.0, 15.0, 15.0, 0));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("intersect");
+    params["input"] = utf8PathString(inputPath);
+    params["overlay_vector"] = utf8PathString(overlayPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto fcIt = result.metadata.find("feature_count");
+    ASSERT_NE(fcIt, result.metadata.end()) << "交集的 feature_count（N143 既有键）必须还在";
+    EXPECT_EQ(fcIt->second, "1") << "既有值不许动：交块恰 1 条";
+    const auto degradedIt = result.metadata.find("intersect_degraded_input_count");
+    ASSERT_NE(degradedIt, result.metadata.end())
+        << "N158：intersect 必须发 intersect_degraded_input_count，本批叠加侧恰 1 条碎片面；"
+           "实际键数=" << result.metadata.size();
+    EXPECT_EQ(degradedIt->second, "1");
+    EXPECT_EQ(result.metadata.count("intersect_skipped_input_count"), 0u) << "互斥口径";
+    int productFeatures = -1;
+    const int linearInProduct = countLinearGeometriesInSingleLayerDataset(
+        fs::u8path(output), &productFeatures);
+    ASSERT_NE(linearInProduct, -1) << "intersect 产物重开失败 ⇒ 形状断言空跑";
+    EXPECT_EQ(linearInProduct, 0) << "N158：产物不得含降级线/点";
+    EXPECT_EQ(productFeatures, 1);
+
+    params["overlay_vector"] = utf8PathString(overlayCleanPath);
+    params["output"] = outputClean;
+    const auto clean = p->execute(params, progress_);
+    ASSERT_TRUE(clean.success) << clean.message;
+    EXPECT_EQ(clean.metadata.count("intersect_degraded_input_count"), 0u);
+    EXPECT_EQ(unionMetadataValue(clean, "feature_count"), "1");
+}
+
+// 判据 (a)·clip：[0,10]² 被 [2,8]² 裁出内部一块；裁切层里的碎片面被丢 ⇒ degraded=1、feature_count 仍 1。
+TEST_F(PluginTest, VectorClipDropsDegradedOverlayInputAndCountsIt) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_clip_degraded_input.gpkg";
+    const fs::path clipPath = getTestDir() / "e2e_clip_degraded_clip.gpkg";
+    const fs::path clipCleanPath = getTestDir() / "e2e_clip_degraded_clip_clean.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_clip_degraded_output.gpkg");
+    const std::string outputClean = utf8PathString(getTestDir() / "e2e_clip_degraded_output_clean.gpkg");
+
+    ASSERT_TRUE(writeDegeneratePolygonLayer(inputPath, true, 0.0, 0.0, 10.0, 10.0, 0));
+    ASSERT_TRUE(writeDegeneratePolygonLayer(clipPath, true, 2.0, 2.0, 8.0, 8.0, 1));
+    ASSERT_TRUE(writeDegeneratePolygonLayer(clipCleanPath, true, 2.0, 2.0, 8.0, 8.0, 0));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("clip");
+    params["input"] = utf8PathString(inputPath);
+    params["clip_vector"] = utf8PathString(clipPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    const auto fcIt = result.metadata.find("feature_count");
+    ASSERT_NE(fcIt, result.metadata.end()) << "裁切的 feature_count（N143 既有键）必须还在";
+    EXPECT_EQ(fcIt->second, "1") << "既有值不许动：裁得一块";
+    const auto degradedIt = result.metadata.find("clip_degraded_input_count");
+    ASSERT_NE(degradedIt, result.metadata.end())
+        << "N158：clip 必须发 clip_degraded_input_count，本批裁切侧恰 1 条碎片面；"
+           "实际键数=" << result.metadata.size();
+    EXPECT_EQ(degradedIt->second, "1");
+    EXPECT_EQ(result.metadata.count("clip_skipped_input_count"), 0u) << "互斥口径";
+    int productFeatures = -1;
+    const int linearInProduct = countLinearGeometriesInSingleLayerDataset(
+        fs::u8path(output), &productFeatures);
+    ASSERT_NE(linearInProduct, -1) << "clip 产物重开失败 ⇒ 形状断言空跑";
+    EXPECT_EQ(linearInProduct, 0) << "N158：产物不得含降级线/点";
+    EXPECT_EQ(productFeatures, 1);
+
+    params["clip_vector"] = utf8PathString(clipCleanPath);
+    params["output"] = outputClean;
+    const auto clean = p->execute(params, progress_);
+    ASSERT_TRUE(clean.success) << clean.message;
+    EXPECT_EQ(clean.metadata.count("clip_degraded_input_count"), 0u);
+    EXPECT_EQ(unionMetadataValue(clean, "feature_count"), "1");
+}
+
+// 裁定第 2 点的钉子：repair 是全插件唯一显式传「允许维度退化」的调用点——碎片面修成 LineString
+// 照样算修复成功写出（repaired_count 计入、skipped_count 不动），产物里那条线就是它的成功产物。
+// 改前实测（task-n158-report §2 臂 2）：repair 对碎片面本来就是 rc=0 + repaired_count 计入 + 线入产物
+// ⇒ 本条钉的是"例外不被将来误收窄"，不是新行为。
+TEST_F(PluginTest, VectorRepairKeepsDegradedGeometryAsSuccess) {
+    auto* p = mgr_.find("vector");
+    if (!p) {
+        FAIL() << "plugin not loaded: vector";
+    }
+
+    const fs::path inputPath = getTestDir() / "e2e_repair_degraded_input.gpkg";
+    const std::string output = utf8PathString(getTestDir() / "e2e_repair_degraded_output.gpkg");
+    // 有效矩形 + 碎片面：一条走"原本有效"直通，一条走 MakeValid 降级保留——两类成功一锅端。
+    ASSERT_TRUE(writeDegeneratePolygonLayer(inputPath, true, 0.0, 0.0, 10.0, 10.0, 1));
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("repair");
+    params["input"] = utf8PathString(inputPath);
+    params["output"] = output;
+
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    EXPECT_EQ(result.message, "Repair completed: 2 features");
+    EXPECT_EQ(unionMetadataValue(result, "repaired_count"), "2")
+        << "repair 的语义是'修成什么都算成功'：有效矩形与修成线的碎片面都算 repaired";
+    EXPECT_EQ(unionMetadataValue(result, "skipped_count"), "0");
+    // 形状断言（例外方向）：产物里**必须**还有那条降级线——丢掉它等于废掉 repair。
+    int productFeatures = -1;
+    const int linearInProduct = countLinearGeometriesInSingleLayerDataset(
+        fs::u8path(output), &productFeatures);
+    ASSERT_NE(linearInProduct, -1) << "repair 产物重开失败 ⇒ 形状断言空跑";
+    EXPECT_EQ(linearInProduct, 1) << "碎片面修成的 LineString 必须原样在产物里（repair 例外）";
+    EXPECT_EQ(productFeatures, 2);
+}
+
 // C3c-A（convert 的 A 半边）：输出格式/层名/要素数/字段保真/几何坐标逐点相等。
 // 期望值全部按夹具手推：字段名与顺序 name→code→ratio、code=1..3、ratio=0.25/0.5/0.75、
 // 坐标 (116.00,40.00)/(116.01,40.02)/(116.03,40.01)。三个点不关于 y=x 对称
