@@ -2,6 +2,7 @@
 #include <gis/core/types.h>
 #include <gis/core/progress.h>
 #include <string>
+#include <utility>
 #include <vector>
 #include <map>
 #include <memory>
@@ -147,5 +148,13 @@ bool writeProcessingMetadata(const std::string& rasterPath, const ProcessingMeta
 bool writeProcessingMetadata(GDALDataset* ds, const ProcessingMetadata& metadata);
 /** Read processing metadata from an open dataset. */
 ProcessingMetadata readProcessingMetadata(GDALDataset* ds);
+
+/**
+ * N179：处理元数据的键值对唯一出口（键名、时间戳兜底、空值跳过语义都只在这里定义）。
+ * writeProcessingMetadata(GDALDataset*)（update 路径）与 raster_manage cog 的翻译期
+ * -dmo 落点共用，两条写路不各养一套键名。空值键不产出（与既有 write 语义一致）。
+ */
+std::vector<std::pair<std::string, std::string>> processingMetadataPairs(
+    const ProcessingMetadata& metadata);
 
 } // namespace gis::core

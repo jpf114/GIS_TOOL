@@ -146,11 +146,26 @@ gis::framework::Result RasterManagePlugin::doBuildCog(
     progress.onProgress(0.1);
     auto ds = gis::core::openRaster(input, true);
 
+    // N179：处理元数据随翻译一起写（-dmo <域>:<键>=<值>，仍写 GIS_PROCESSING 域、键名不变，
+    // 键值对来自 processingMetadataPairs 这唯一出口），不再翻译后以 update 模式重开产物——
+    // 那一步会把 COG 布局作废：头内 KNOWN_INCOMPATIBLE_EDITION 被翻成 YES，此后每个读端
+    // 每次打开都报"This file used to have optimizations in its layout ... invalidated"。
+    // COPY_SRC_MDD=YES 是域落盘的承重项：GTiff CreateCopy 缺省（AUTO）只拷默认域，
+    // 不带它 -dmo 写进中间 VRT 的 GIS_PROCESSING 域会在 CreateCopy 时被丢掉。
+    const auto meta = buildMetadata(input, ds.get(), "raster_manage.cog");
+    const auto metaPairs = gis::core::processingMetadataPairs(meta);
+
     std::vector<std::string> argStorage = {
         "-of", "COG",
         "-co", "COMPRESS=LZW",
-        "-co", "BIGTIFF=IF_SAFER"
+        "-co", "BIGTIFF=IF_SAFER",
+        "-co", "COPY_SRC_MDD=YES",
     };
+    argStorage.reserve(argStorage.size() + metaPairs.size() * 2);
+    for (const auto& [key, value] : metaPairs) {
+        argStorage.push_back("-dmo");
+        argStorage.push_back("GIS_PROCESSING:" + key + "=" + value);
+    }
     std::vector<char*> argv;
     argv.reserve(argStorage.size() + 1);
     for (auto& item : argStorage) {
@@ -184,12 +199,6 @@ gis::framework::Result RasterManagePlugin::doBuildCog(
     }
 
     GDALClose(dstHandle);
-
-    {
-        auto srcDs = gis::core::openRaster(input, true);
-        auto meta = buildMetadata(input, srcDs.get(), "raster_manage.cog");
-        gis::core::writeProcessingMetadata(output, meta);
-    }
 
     progress.throwIfCancelled();
     progress.onProgress(1.0);

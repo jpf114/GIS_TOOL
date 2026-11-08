@@ -6820,6 +6820,108 @@ TEST_F(PluginTest, RasterManageCogExecution) {
     EXPECT_EQ(band->GetOverviewCount(), 0);
 }
 
+// ── N179（批次 D）：cog 产物布局修复的反向判据 + "名实相符"正向判据 ──────────────────
+// 拍板点名：cog 产物自己不能再报布局失效告警。机制前提（改前实测，探针读数在
+// build/tmp/batchD/task-n179-report.md §1）：翻译本身不破布局；破布局的是翻译后那次
+// update 模式重开写元数据——GDAL 在 close 时把头内 KNOWN_INCOMPATIBLE_EDITION 翻成 YES
+// 并当场印 "The IFD has been rewritten at the end of the file, which breaks COG layout."，
+// 此后**每次打开**都印 "This file used to have optimizations in its layout, ... invalidated
+// by later changes"。修复后（-dmo 随翻译落盘，不经 update 重开）两者都必须绝迹。
+namespace n179coglayout {
+
+// CPLGetLastErrorMsg 只留最后一条，而本判据要"零"，所以逐条收。
+inline std::vector<std::string>& cplMessages() {
+    static std::vector<std::string> messages;
+    return messages;
+}
+
+inline void CPL_STDCALL captureHandler(CPLErr eErrClass, CPLErrorNum, const char* message) {
+    const char* tag = eErrClass == CE_Failure ? "F: " : (eErrClass == CE_Warning ? "W: " : "D: ");
+    n179coglayout::cplMessages().push_back(std::string(tag) + (message ? message : ""));
+}
+
+}  // namespace n179coglayout
+
+TEST_F(PluginTest, RasterManageCogLayoutPristineAndMetadataReadable) {
+    auto* p = mgr_.find("raster_manage");
+    ASSERT_NE(p, nullptr);
+
+    // 夹具与 RasterManageCogExecution 同族（64×40 三级平台），补一个投影让 GIS_SOURCE_CRS
+    // 非空——"键齐全"才能判到四键（版本键 buildMetadata 不填、写端跳空值，不在此列）。
+    const std::string input = createStepLevelRaster("e2e_util_cog_pristine_input.tif", 64, 40);
+    {
+        auto inDs = gis::core::openRaster(input, false);
+        ASSERT_NE(inDs, nullptr);
+        inDs->SetProjection("EPSG:4326");
+    }
+    const std::string output = utf8PathString(getTestDir() / "e2e_util_cog_pristine_output.tif");
+    // 测试输出目录跨轮复用：上一轮留下的**已破坏**产物会让本轮 CreateCopy 的"覆盖既有文件"
+    // 路径在打开它时印一条布局失效警告——那是陈旧污染不是本动作的行为（R3a 的 A7 臂残留
+    // ②×1 就是这么来的）。判据要fresh产物，先删产物与边车。
+    std::error_code rmEc;
+    fs::remove(output, rmEc);
+    fs::remove(output + ".aux.xml", rmEc);
+
+    std::map<std::string, gis::framework::ParamValue> params;
+    params["action"] = std::string("cog");
+    params["input"] = input;
+    params["output"] = output;
+
+    // 生成期也不能有布局告警（改前生成进程里恰有 1 条 IFD 重写警告）。
+    n179coglayout::cplMessages().clear();
+    CPLPushErrorHandler(n179coglayout::captureHandler);
+    const auto result = p->execute(params, progress_);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(fs::exists(output));
+
+    // ── 反向判据：进程内打开零布局失效类告警（含生成期 + 读期同一捕获窗）────────────
+    auto ds = gis::core::openRaster(output, true);
+    ASSERT_NE(ds, nullptr);
+    // 正向判据·域身份：元数据仍住 GIS_PROCESSING 域（-dmo 的"域不变"钉子——将来若有人
+    // 退回默认域或回落方案，这里红）。
+    char** domMD = ds->GetMetadata("GIS_PROCESSING");
+    ASSERT_NE(domMD, nullptr) << "GIS_PROCESSING 域必须仍在产物头内";
+    ASSERT_NE(CSLFetchNameValue(domMD, "GIS_PROCESSING_ALGORITHM"), nullptr);
+
+    const auto persisted = gis::core::readProcessingMetadata(ds.get());
+    ds.reset();
+    CPLPopErrorHandler();
+    ASSERT_EQ(n179coglayout::cplMessages().size(), 0u)
+        << "cog 产物从生成到打开不得报任何布局失效类告警（改前：生成期 IFD 重写 ×1 + 打开期 "
+           "invalidated ×1）。实际消息："
+        << [&] {
+               std::string joined;
+               for (const auto& m : n179coglayout::cplMessages()) joined += " | " + m;
+               return joined;
+           }();
+
+    // 内容级钉子：头内 KNOWN_INCOMPATIBLE_EDITION 必须是 NO（=YES 是布局被 update 写打破的
+    // 在文件证据，比警告更硬——外部工具不看进程内捕获也能判）。读头 512 字节；必须按
+    // (指针, 长度) 构造 string——TIFF 头第 4 字节就是 NUL，按 C 串构造会在那里截断。
+    {
+        std::ifstream headIfs(fs::path(output), std::ios::binary);
+        ASSERT_TRUE(headIfs.is_open());
+        char head[512] = {};
+        headIfs.read(head, sizeof(head));
+        const std::string headStr(head, static_cast<size_t>(headIfs.gcount()));
+        EXPECT_NE(headStr.find("KNOWN_INCOMPATIBLE_EDITION=NO"), std::string::npos)
+            << "COG 结构头必须保持 KNOWN_INCOMPATIBLE_EDITION=NO（布局完好）";
+        EXPECT_EQ(headStr.find("KNOWN_INCOMPATIBLE_EDITION=YES"), std::string::npos)
+            << "头内出现 =YES 即布局已被 update 写打破";
+    }
+
+    // ── 正向判据（名实相符）：元数据可读回、键齐全 ─────────────────────────────────
+    // GIS_SOURCE_FILE 记的是调用方原样传入的 input 串；CRS 来自夹具补的 EPSG:4326（WKT 非空）；
+    // 处理时间在写侧兜底成当下（非空即可，值随钟走不钉值）；版本键 buildMetadata 不填 ⇒ 域内无键。
+    EXPECT_EQ(persisted.processingAlgorithm, "raster_manage.cog");
+    EXPECT_EQ(persisted.sourceFile, input);
+    EXPECT_FALSE(persisted.sourceCrs.empty()) << "夹具补了投影，GIS_SOURCE_CRS 必须随翻译落盘";
+    EXPECT_FALSE(persisted.processingTime.empty());
+    EXPECT_EQ(persisted.processingVersion, std::string());
+    EXPECT_EQ(persisted.algorithmParams.count("band"), 0u)
+        << "cog 动作不记算法参数，GIS_PARAM_* 不应出现";
+}
+
 TEST_F(PluginTest, RasterInspectHistogramExecution) {
     auto* p = mgr_.find("raster_inspect");
     ASSERT_NE(p, nullptr);

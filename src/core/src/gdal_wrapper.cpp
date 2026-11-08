@@ -288,9 +288,38 @@ bool writeProcessingMetadata(GDALDataset* ds, const ProcessingMetadata& metadata
     if (!ds) return false;
 
     char** papszMD = nullptr;
-    auto addItem = [&](const char* key, const std::string& val) {
+    // N179：键名/时间戳兜底/空值跳过语义收敛到 processingMetadataPairs 这唯一出口，
+    // update 路径（本函数）与 raster_manage cog 的翻译期 -dmo 落点共用，不各养一套键名。
+    for (const auto& [key, value] : processingMetadataPairs(metadata)) {
+        papszMD = CSLSetNameValue(papszMD, key.c_str(), value.c_str());
+    }
+
+    CPLErr err = ds->SetMetadata(papszMD, "GIS_PROCESSING");
+    CSLDestroy(papszMD);
+    ds->FlushCache();
+    return err == CE_None;
+}
+
+bool writeProcessingMetadata(const std::string& rasterPath, const ProcessingMetadata& metadata) {
+    // N179：IGNORE_COG_LAYOUT_BREAK=YES 压制开关随真修复删除。它的唯一真实用户是本工具自己
+    // 产出的 COG（update 重开写元数据、把布局作废），那条路已随 cog 改道消失；其余动作的产物
+    // 是普通 GTiff（无 COG 结构头，压不压都照开），外部布局完好的 COG 在 openRaster 的
+    // GA_Update 打开处本来就会被 GDAL 拒开（两态一致，本函数不是第一道闸）。已破坏的旧 COG
+    // 产物（KNOWN_INCOMPATIBLE_EDITION=YES）不进拒开分支，update 路径照常可用，旧产物兼容。
+    GDALDataset* raw = static_cast<GDALDataset*>(
+        GDALOpenEx(rasterPath.c_str(), GDAL_OF_RASTER | GDAL_OF_UPDATE, nullptr, nullptr, nullptr));
+    if (!raw) return false;
+    bool ok = writeProcessingMetadata(raw, metadata);
+    GDALClose(raw);
+    return ok;
+}
+
+std::vector<std::pair<std::string, std::string>> processingMetadataPairs(
+    const ProcessingMetadata& metadata) {
+    std::vector<std::pair<std::string, std::string>> pairs;
+    auto addItem = [&pairs](const char* key, const std::string& val) {
         if (!val.empty()) {
-            papszMD = CSLSetNameValue(papszMD, key, val.c_str());
+            pairs.emplace_back(key, val);
         }
     };
 
@@ -304,25 +333,7 @@ bool writeProcessingMetadata(GDALDataset* ds, const ProcessingMetadata& metadata
     for (const auto& [k, v] : metadata.algorithmParams) {
         addItem(("GIS_PARAM_" + k).c_str(), v);
     }
-
-    CPLErr err = ds->SetMetadata(papszMD, "GIS_PROCESSING");
-    CSLDestroy(papszMD);
-    ds->FlushCache();
-    return err == CE_None;
-}
-
-bool writeProcessingMetadata(const std::string& rasterPath, const ProcessingMetadata& metadata) {
-    char** openOptions = nullptr;
-    openOptions = CSLSetNameValue(openOptions, "IGNORE_COG_LAYOUT_BREAK", "YES");
-    GDALDataset* raw = static_cast<GDALDataset*>(
-        GDALOpenEx(rasterPath.c_str(),
-                   GDAL_OF_RASTER | GDAL_OF_UPDATE,
-                   nullptr, openOptions, nullptr));
-    CSLDestroy(openOptions);
-    if (!raw) return false;
-    bool ok = writeProcessingMetadata(raw, metadata);
-    GDALClose(raw);
-    return ok;
+    return pairs;
 }
 
 ProcessingMetadata readProcessingMetadata(GDALDataset* ds) {
