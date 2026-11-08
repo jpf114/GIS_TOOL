@@ -355,14 +355,9 @@ static std::vector<const OverlayGeometryEntry*> collectCandidateOverlayEntries(
     return candidates;
 }
 
-static void ensureParentDirectoryForFile(const std::string& output) {
-    const fs::path outputPath = fs::u8path(output);
-    if (!outputPath.has_parent_path()) {
-        return;
-    }
-
-    fs::create_directories(outputPath.parent_path());
-}
+// N162/#156：本地 ensureParentDirectoryForFile 已删——会抛的 create_directories 收敛到
+// gis::core 单一 helper（文案带动作名）。动作名不在这里静默放掉：两个 start() 都加了
+// actionLabel 形参，由 31 个动作接线点逐点穿字面量（清单见任务报告 §5.4）。
 
 // ── 批次 D / D0-C3：临时件**命名**与**替换**两条原语的单一来源 ────────────────────────
 // 原来这两件事都长在 VectorStagedOutput 里（私有成员）。CSV 文本产物（7 个检查动作）要走同一条
@@ -559,7 +554,7 @@ public:
     // 返回 false 时 error 是一句能直接给用户的失败原因（口径随同插件既有的硬失败写法）。
     bool start(const std::string& output, const std::string& format,
                const std::vector<std::string>& protectedInputs, GDALDriver* drv,
-               std::string& error) {
+               std::string& error, const char* actionLabel) {
         format_ = format;
         target_ = fs::u8path(output);
         protectedInputs_.clear();
@@ -592,7 +587,9 @@ public:
             }
         }
 
-        ensureParentDirectoryForFile(output);
+        // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名，
+        // actionLabel 由动作接线点穿进来）。
+        gis::core::ensureParentDirectoryForFile(fs::u8path(output), actionLabel);
 
         // 命名与序号的单一来源见上面 stagedOutputPrefix()（数据集侧与 CSV 侧共用一把计数器）。
         stagedPrefix_ = stagedOutputPrefix(target_);
@@ -830,7 +827,7 @@ public:
     // 所以调用方传 { input } 即可； nearest / spatial_join 那种双输入族不归本类。
     // 返回 false 时 error 是一句能直接给用户的失败原因（文案与数据集侧 staged.start 同源）。
     bool start(const std::string& output, const std::vector<std::string>& protectedInputs,
-               std::string& error) {
+               std::string& error, const char* actionLabel) {
         target_ = fs::u8path(output);
         if (target_.empty() || target_.filename().empty()) {
             error = "output is required";
@@ -858,7 +855,9 @@ public:
             }
         }
 
-        ensureParentDirectoryForFile(output);
+        // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名，
+        // actionLabel 由动作接线点穿进来）。
+        gis::core::ensureParentDirectoryForFile(fs::u8path(output), actionLabel);
 
         stagedPrefix_ = stagedOutputPrefix(target_);
         staged_ = targetDir() / fs::u8path(stagedPrefix_ + target_.extension().u8string());

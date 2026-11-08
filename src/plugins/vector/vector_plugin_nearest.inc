@@ -70,7 +70,7 @@ gis::framework::Result VectorPlugin::doNearest(
     // sameDataset 判的是"输入 vs 第二个输入"，管不到"输出 vs 第二个输入"）。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input, nearestVector }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input, nearestVector }, drv, stageError, "vector nearest")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();

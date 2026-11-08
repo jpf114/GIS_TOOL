@@ -42,7 +42,7 @@ gis::framework::Result VectorPlugin::doVerticesExtract(
     // 所以 ensureParentDirectoryForFile 这件事也归 staged.start 自己做，不在这里先动文件系统。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input }, drv, stageError, "vector vertices_extract")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();

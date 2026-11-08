@@ -65,7 +65,7 @@ gis::framework::Result VectorPlugin::doUnion(
     // removeStaleOldSidecars（删除只许发生在新件全部落地之后）。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input, overlayVector }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input, overlayVector }, drv, stageError, "vector union")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();
@@ -610,7 +610,7 @@ gis::framework::Result VectorPlugin::doDifference(
     // difference 的 --overlay_vector 指到输出同样会毁数据 ⇒ 两个输入都进保护清单。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input, overlayVector }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input, overlayVector }, drv, stageError, "vector difference")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();
@@ -825,7 +825,7 @@ gis::framework::Result VectorPlugin::doIntersect(
     // intersect 的 --overlay_vector 指到输出同样会毁数据 ⇒ 两个输入都进保护清单。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input, overlayVector }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input, overlayVector }, drv, stageError, "vector intersect")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();

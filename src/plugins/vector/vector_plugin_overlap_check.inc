@@ -58,7 +58,7 @@ gis::framework::Result VectorPlugin::doOverlapCheck(
     //（比较前先取串背后的那个文件路径，见 common.inc 的归一函数与它的甲案边界）。
     CsvStagedOutput csv;
     std::string stagedError;
-    if (!csv.start(output, { input }, stagedError)) {
+    if (!csv.start(output, { input }, stagedError, "vector overlap_check")) {
         return gis::framework::Result::fail(stagedError);
     }
     std::ostream& ofs = csv.stream();

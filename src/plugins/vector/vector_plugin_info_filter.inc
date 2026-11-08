@@ -240,7 +240,7 @@ gis::framework::Result VectorPlugin::doFilter(
     // 对应物是 commit 末尾的 removeStaleOldSidecars，删除只许发生在新件全部落地之后。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input }, drv, stageError, "vector filter")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();

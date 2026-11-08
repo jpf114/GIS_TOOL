@@ -77,7 +77,8 @@ gis::framework::Result VectorPlugin::doRasterize(
     progress.onProgress(0.2);
 
     GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GTiff");
-    ensureParentDirectoryForFile(output);
+    // N162/#156：会抛的 create_directories 收敛到 gis::core 单一 helper（文案带动作名）。
+    gis::core::ensureParentDirectoryForFile(fs::u8path(output), "vector rasterize");
     auto dstDS = gis::core::GdalDatasetPtr(drv->Create(output.c_str(), xSize, ySize, 1, GDT_Float32, nullptr));
     if (!dstDS) { return gis::framework::Result::fail("Cannot create output raster: " + output);
     }
@@ -229,7 +230,7 @@ gis::framework::Result VectorPlugin::doPolygonize(
     // 输入是栅格：它同样属于"绝不许被输出覆盖"的对象（输出扩展名写错成 .tif 时也一样）。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input }, drv, stageError, "vector polygonize")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();
@@ -343,7 +344,7 @@ gis::framework::Result VectorPlugin::doConvert(
     // 参数因此必须传 format，否则 Shapefile 的边车落点会按扩展名之外的格式走错。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, format, { input }, drv, stageError)) {
+    if (!staged.start(output, format, { input }, drv, stageError, "vector convert")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();

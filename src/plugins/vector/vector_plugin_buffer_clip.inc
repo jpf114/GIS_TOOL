@@ -46,7 +46,7 @@ gis::framework::Result VectorPlugin::doBuffer(
     // 对应物是 commit 末尾的 removeStaleOldSidecars，删除只许发生在新件全部落地之后。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input }, drv, stageError, "vector buffer")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();
@@ -222,7 +222,7 @@ gis::framework::Result VectorPlugin::doClip(
     // 双输入：`--clip_vector` 指到输出同样会毁数据 ⇒ 两个输入都进保护清单。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input, clipVector }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input, clipVector }, drv, stageError, "vector clip")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();

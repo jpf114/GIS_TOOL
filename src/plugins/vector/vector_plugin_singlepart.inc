@@ -49,7 +49,7 @@ gis::framework::Result VectorPlugin::doSinglepart(
     // 对应物是 commit 末尾的 removeStaleOldSidecars，删除只许发生在新件全部落地之后。
     VectorStagedOutput staged;
     std::string stageError;
-    if (!staged.start(output, outFormat, { input }, drv, stageError)) {
+    if (!staged.start(output, outFormat, { input }, drv, stageError, "vector singlepart")) {
         return gis::framework::Result::fail(stageError);
     }
     GDALDataset* dstDS = staged.dataset();
