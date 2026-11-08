@@ -47,10 +47,11 @@ gis::framework::Result VectorPlugin::doRepair(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srcSRS = srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr;
-    OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS, srcLayer->GetGeomType(), nullptr);
+    // srcSRS RAII 托管（OGRSpatialReferenceReleaser）：取消/早退路径由析构兜底，不再手工释放。
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srcSRS(
+        srcLayer->GetSpatialRef() ? srcLayer->GetSpatialRef()->Clone() : nullptr);
+    OGRLayer* dstLayer = dstDS->CreateLayer(srcLayer->GetName(), srcSRS.get(), srcLayer->GetGeomType(), nullptr);
     if (!dstLayer) {
-        delete srcSRS;
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -104,7 +105,6 @@ gis::framework::Result VectorPlugin::doRepair(
         if (dstLayer->CreateFeature(dstFeat) != OGRERR_NONE) {
             OGRFeature::DestroyFeature(dstFeat);
             OGRFeature::DestroyFeature(feat);
-            delete srcSRS;
             return gis::framework::Result::fail("Cannot create repaired feature");
         }
 
@@ -116,7 +116,6 @@ gis::framework::Result VectorPlugin::doRepair(
             static_cast<double>(totalCount));
     }
 
-    delete srcSRS;
     progress.throwIfCancelled();
 
     // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
