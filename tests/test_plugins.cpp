@@ -6821,8 +6821,7 @@ TEST_F(PluginTest, RasterManageCogExecution) {
 }
 
 // ── N179（批次 D）：cog 产物布局修复的反向判据 + "名实相符"正向判据 ──────────────────
-// 拍板点名：cog 产物自己不能再报布局失效告警。机制前提（改前实测，探针读数在
-// build/tmp/batchD/task-n179-report.md §1）：翻译本身不破布局；破布局的是翻译后那次
+// 拍板点名：cog 产物自己不能再报布局失效告警。机制前提（改前实测）：翻译本身不破布局；破布局的是翻译后那次
 // update 模式重开写元数据——GDAL 在 close 时把头内 KNOWN_INCOMPATIBLE_EDITION 翻成 YES
 // 并当场印 "The IFD has been rewritten at the end of the file, which breaks COG layout."，
 // 此后**每次打开**都印 "This file used to have optimizations in its layout, ... invalidated

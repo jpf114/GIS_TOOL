@@ -304,7 +304,7 @@ bool writeProcessingMetadata(const std::string& rasterPath, const ProcessingMeta
     // N179：IGNORE_COG_LAYOUT_BREAK=YES 压制开关随真修复删除。它的唯一真实用户是本工具自己
     // 产出的 COG（update 重开写元数据、把布局作废），那条路已随 cog 改道消失；其余动作的产物
     // 是普通 GTiff（无 COG 结构头，压不压都照开），外部布局完好的 COG 在 openRaster 的
-    // GA_Update 打开处本来就会被 GDAL 拒开（两态一致，本函数不是第一道闸）。已破坏的旧 COG
+    // GA_Update 打开处本来就会被 GDAL 拒开（两态失败方向相反：完好 COG 被拒开、已破坏 COG 放行，本函数不是第一道闸）。已破坏的旧 COG
     // 产物（KNOWN_INCOMPATIBLE_EDITION=YES）不进拒开分支，update 路径照常可用，旧产物兼容。
     GDALDataset* raw = static_cast<GDALDataset*>(
         GDALOpenEx(rasterPath.c_str(), GDAL_OF_RASTER | GDAL_OF_UPDATE, nullptr, nullptr, nullptr));
