@@ -60,8 +60,8 @@ DOMAINS = [
         "exclude_parts": (),
         "allowlist_key": "entries",
         "expect": {
-            "any": 21, "code": 20, "comment_line": 1, "block_comment": 0, "string_only": 0,
-            "checked": 18, "unchecked": 2, "allowlisted": 2, "violations": 0, "dead": 0,
+            "any": 24, "code": 23, "comment_line": 1, "block_comment": 0, "string_only": 0,
+            "checked": 21, "unchecked": 2, "allowlisted": 2, "violations": 0, "dead": 0,
         },
     },
     {
@@ -102,7 +102,7 @@ DOMAINS = [
         #   读 `GTGUARD SCAN domain=test(...) any=… code=… comment_line=…`，别拿这里的数去改期望值。
         #   （本文件自己不在扫描范围内：只走 CPP_EXTS，所以这些 TOKEN 字面量不会污染读数。）
         "expect": {
-            "code": 10, "checked": 9, "unchecked": 1, "allowlisted": 1, "violations": 0, "dead": 0,
+            "code": 9, "checked": 8, "unchecked": 1, "allowlisted": 1, "violations": 0, "dead": 0,
         },
     },
 ]

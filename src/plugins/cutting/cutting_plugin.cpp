@@ -253,7 +253,7 @@ GeoBox cutlineRequestBox(const std::string& cutlinePath, GDALDataset* srcDs) {
     OGRLayer* layer = ds->GetLayer(0);
     if (!layer) return box;
     OGREnvelope env;
-    if (layer->GetExtent(&env, /*bForce=*/TRUE) != OGRERR_NONE) return box;
+    if (layer->GetExtent(&env, TRUE) != OGRERR_NONE) return box;
     double xs[4] = {env.MinX, env.MaxX, env.MinX, env.MaxX};
     double ys[4] = {env.MinY, env.MinY, env.MaxY, env.MaxY};
     const OGRSpatialReference* layerSrs = layer->GetSpatialRef();

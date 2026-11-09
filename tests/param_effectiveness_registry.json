@@ -251,6 +251,14 @@
     },
     {
       "file": "src/plugins/cutting/cutting_plugin.cpp",
+      "context": "CuttingPlugin::doClip（GDALWarpAppOptionsNew，cutline 分支）",
+      "flag": "-dstnodata",
+      "key": "internal",
+      "evidence_test": "CuttingClipRejectsMissingExtentAndCutline",
+      "note": "internal 归类理由：N174 裁空/NoData 刀的派生值——cutline 臂按包框覆盖判定，覆盖不全时发 -dstnodata 把窗外写成 NoData（值来自选型链：源声明→-9999→装不下取 0），不承载可见键。值级欠账同 -cutline 条：成功档证据在 GUI 腿 gui_regression_nested_cutting_clip_cutline，链上 gtest 仅满足 b 条名字存在性。"
+    },
+    {
+      "file": "src/plugins/cutting/cutting_plugin.cpp",
       "context": "CuttingPlugin::doClip（GDALTranslateOptionsNew，extent 分支）",
       "flag": "-projwin",
       "key": "extent",
