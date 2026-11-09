@@ -19613,17 +19613,34 @@ TEST_F(PluginTest, CuttingClipByExtentProducesExpectedWindow) {
     // 本例请求窗完全在源包框内 ⇒ 任何一格补 0 都意味着窗算错了。
     EXPECT_NEAR(readRasterPixel(output, 0, 0), 5.0f, 1e-4f);
     EXPECT_NEAR(readRasterPixel(output, 6, 3), 5.0f, 1e-4f) << "窗右下角 = 源(11,5)，仍在源内";
+
+    // N174（裁定 2026-11-05 甲）：窗完全在源内 ⇒ 没有源像元网格之外的补丁带 ⇒
+    // **不写 NoData 标签**（terrain 侧"输出真存在无效像元才 SetNoDataValue"的纪律）。
+    // 这一支同时把 GOLD 字节形态钉住：补丁路径不触发时产物自述与改前逐字节同，
+    // 夹具本身不声明 NoData，若这里读到标签 = 补丁路径被误触发。
+    double clipNodata = 0.0;
+    EXPECT_FALSE(gis::tests::readNoDataValue(output, 1, clipNodata))
+        << "窗全在源内：无补丁带就不该冒出 NoData 标签";
 }
 
-// D1-C1（Task 18）：extent 与源包框**部分相交**时的产品实到行为 = **不裁剪**。
-// 副本上 gis-cli 实测（build/tmp/batchD/d1c1/）⇒ rc=0、产物尺寸就是**请求窗**尺寸、
-// 窗外像元补 0 且**不写 NoData**（下游把补的 0 和真 0 数据分不开，已登记为缺口）。
+// D1-C1（Task 18）判据 + N174（裁定 2026-11-05 甲）改准：extent 与源包框**部分相交**时
+// 仍按**请求窗**出图（不把窗裁回源包框），但源像元网格之外的补丁带从"补 0 不声明"
+// 变为"**写 NoData 值 + 写 NoData 标签**"（改前补的 0 和真 0 数据分不开，已立案 10-28）。
+// 改前实到（build/tmp/batchD/d1c1/ 副本 gis-cli 实测）：rc=0、请求尺寸、窗外补 0、无标签。
 // 期望全部由夹具字面量手算：请求窗 x∈[115.998, 116.012]、y∈[39.988, 39.998]
 //   ⇒ 宽 (116.012-115.998)/0.001 = 14、高 (39.998-39.988)/0.001 = 10；
 //   与源包框 x∈[116.000,116.020]、y∈[39.990,40.000] 的交集 = x 向 12 列（本地列 2..13）、
-//   y 向 8 行（本地行 0..7）⇒ 有效像元 12×8 = 96、补 0 像元 140 - 96 = 44
-//   ⇒ Mean = 96×5/140 = 3.4285714285714284（推算，与实测印数 3.42857 同值）。
-TEST_F(PluginTest, CuttingClipExtentPartiallyOutsideSourcePadsZeroWindow) {
+//   y 向 8 行（本地行 0..7）⇒ 有效像元 12×8 = 96、补丁像元 140 - 96 = 44
+//   （西补丁 2 列×10 行 + 南补丁 12 列×2 行）。
+// 补丁值选型：夹具（createConstantRaster）**不声明** NoData 且是 Float32 ⇒ 落在产品
+//   三档选型的第②档 = 仓内常备哨兵 **-9999**（选型链见产品 padOutsideWindowWithNodata 注）。
+// 统计口径改准：ComputeStatistics 跳过声明的 NoData 像元 ⇒ 四个统计量只由 96 个有效
+//   像元决定（全是夹具常量 5.0）⇒ Min=Max=Mean=5.0、StdDev=0；改前补 0 时这四支
+//   读到的是 96×5 与 44×0 的混合（Mean=3.42857…）——统计口径本身就是"补丁不再是 0"
+//   的独立证据（若补丁只改了标签没改值，Min/StdDev 当场红）。
+// 容差逐支说（照本文件容差夹心规矩）：GT 两支同 ByExtent 档的 1e-12；像元值 1e-4f
+//   与全文件同口径；统计四支夹具是常量 ⇒ 精确值，1e-9 夹双精度重算误差。
+TEST_F(PluginTest, CuttingClipExtentPartiallyOutsideSourcePadsNodataOutsideWindow) {
     auto* p = mgr_.find("cutting");
     ASSERT_NE(p, nullptr);
 
@@ -19649,35 +19666,58 @@ TEST_F(PluginTest, CuttingClipExtentPartiallyOutsideSourcePadsZeroWindow) {
     EXPECT_NEAR(gt[0], 115.998, 1e-12) << "产品按**请求**窗出图，不把它裁回源包框";
     EXPECT_NEAR(gt[3], 39.998, 1e-12);
 
-    // 补 0 带的位置是手算的：本地列 0..1 在源西侧、本地行 8..9 在源南侧。
-    EXPECT_NEAR(readRasterPixel(output, 0, 0), 0.0f, 1e-4f) << "西侧两列是补出来的 0";
-    EXPECT_NEAR(readRasterPixel(output, 1, 9), 0.0f, 1e-4f);
+    // NoData 标签：补丁带存在 ⇒ 必须声明，且值 = 产品选型②的 -9999。
+    // 声明缺失（改回"补 0 不声明"）⇒ 本支红；值漂移（比如改用其它哨兵）⇒ 值支红。
+    double clipNodata = 0.0;
+    ASSERT_TRUE(gis::tests::readNoDataValue(output, 1, clipNodata))
+        << "部分相交：窗外有补丁带 ⇒ 必须写 NoData 标签（改前不声明，本支为改准新增）";
+    EXPECT_DOUBLE_EQ(clipNodata, -9999.0);
+
+    // 补丁带位置是手算的：本地列 0..1 在源西侧、本地行 8..9 在源南侧，值 = NoData 值。
+    EXPECT_NEAR(readRasterPixel(output, 0, 0), -9999.0f, 1e-4f) << "西侧两列是补丁 = NoData 值";
+    EXPECT_NEAR(readRasterPixel(output, 1, 9), -9999.0f, 1e-4f);
     EXPECT_NEAR(readRasterPixel(output, 2, 0), 5.0f, 1e-4f) << "本地列 2 = 源列 0";
     EXPECT_NEAR(readRasterPixel(output, 13, 7), 5.0f, 1e-4f) << "本地(13,7) = 源(11,9)，交集右下角";
-    EXPECT_NEAR(readRasterPixel(output, 13, 8), 0.0f, 1e-4f) << "本地行 8 已越过源下边界⇒补 0";
+    EXPECT_NEAR(readRasterPixel(output, 13, 8), -9999.0f, 1e-4f) << "本地行 8 已越过源下边界⇒补丁 = NoData 值";
 
+    // 统计四支：NoData 像元被 ComputeStatistics 剔除 ⇒ 只剩 96 个 5.0。
     double bMin = 0.0;
     double bMax = 0.0;
     double bMean = 0.0;
     double bStd = 0.0;
     ASSERT_EQ(outDs->GetRasterBand(1)->ComputeStatistics(
                   false, &bMin, &bMax, &bMean, &bStd, nullptr, nullptr), CE_None);
-    EXPECT_NEAR(bMean, 96.0 * 5.0 / 140.0, 1e-9)
-        << "96 个有效像元 / 140 个窗内像元（两个数都从夹具字面量手算）";
-    EXPECT_NEAR(bMin, 0.0, 1e-9);
+    EXPECT_NEAR(bMean, 5.0, 1e-9)
+        << "96 个有效像元全是夹具常量 5.0（补丁 44 格带 NoData 标签被剔除，不再按 0 计）";
+    EXPECT_NEAR(bMin, 5.0, 1e-9) << "Min 若是 0 ⇒ 补丁只改了标签没改值；若是 -9999 ⇒ 统计没跳 NoData";
     EXPECT_NEAR(bMax, 5.0, 1e-9);
+    EXPECT_NEAR(bStd, 0.0, 1e-9);
 }
 
-// D1-C1（Task 18）：extent 与源包框**完全不相交**时的产品实到行为（副本实测：x 轴出界、
-// y 轴出界、两轴都出界三种都是 rc=0 + 一张请求尺寸的**全 0 产物**，不报错、不写 NoData）。
-// 本用例按实到写判据，不为了让断言好看去改产品码；它同时把"零填充窗的尺寸仍由 extent 手算得出"
-// 这件事钉住：请求 x∈[116.100, 116.110]、y∈[39.900, 39.910] ⇒ 10×10、Origin = (116.100, 39.910)。
-TEST_F(PluginTest, CuttingClipExtentDisjointFromSourceProducesZeroFilledWindow) {
+// D1-C1（Task 18）判据 + N174（裁定 2026-11-05 甲）改准：extent 与源包框**完全不相交**
+// 时从"rc=0 + 请求尺寸全 0 图"变为 **rc=1 + 本仓中文报文 + 产物不写**（改前一张整幅 0 的
+// 产物毫无信息还占盘，调用方无从分辨"裁空了"与"裁出来全是 0"，已立案 10-28）。
+// 改前实到（build/tmp/batchD/d1c1/ 副本 gis-cli 实测：x 轴出界、y 轴出界、两轴都出界三种
+// 都是 rc=0 + 请求尺寸全 0 产物）；本用例按裁定改准，不再钉缺陷现状。
+// 判据（全部从夹具字面量手算，不从产物回填——产物根本不该存在）：
+//   请求窗 x∈[116.10, 116.11]、y∈[39.90, 39.91] 与源包框 x∈[116.000, 116.020]、
+//   y∈[39.990, 40.000] 的 x 向间隔 = 116.10 - 116.02 = 0.08 度 = 80 个像元 ⇒ 半开严格
+//   重叠两轴都不成立 ⇒ 裁空。
+// 报文判据钉三处稳定短语（N162 后文案纪律：中文 + 关键值 + 动作名）+ 两组实数各一枚
+//   特征子串：请求窗东界 116.11、输入范围东界 116.02——两枚数字分别证明"报文里的请求窗"
+//   与"报文里的输入范围"都是真算出来的包框，不是模板字符串。
+// 产物不写用"先删陈旧 → 断不存在 → 执行 → 再断不存在"闭环（同 BandMathWithUnknownVariable
+// 的失败不落盘口径）：改前实到 rc=0 会当场写 10×10 全 0 图，这一支在改前态必红。
+TEST_F(PluginTest, CuttingClipExtentDisjointFromSourceFailsWithoutWriting) {
     auto* p = mgr_.find("cutting");
     ASSERT_NE(p, nullptr);
 
     const std::string input = createConstantRaster("d1c1_clip_disjoint_input.tif", 20, 10, 5.0f);
     const std::string output = utf8PathString(getTestDir() / "d1c1_clip_disjoint_output.tif");
+
+    std::error_code removeEc;
+    fs::remove(output, removeEc);
+    EXPECT_FALSE(fs::exists(output));
 
     std::map<std::string, gis::framework::ParamValue> params;
     params["action"] = std::string("clip");
@@ -19686,33 +19726,21 @@ TEST_F(PluginTest, CuttingClipExtentDisjointFromSourceProducesZeroFilledWindow) 
     params["extent"] = std::array<double, 4>{116.10, 39.90, 116.11, 39.91};
 
     const auto result = p->execute(params, progress_);
-    // 实到 = 成功。产品侧登记：不相交不报错而吐一张全 0 图 ⇒ 调用方无从分辨"裁空了"与"裁出来全是 0"；
-    // 若日后改成硬失败，这一支与下面四支一起红，属于**行为变更**而不是判据写错。
-    ASSERT_TRUE(result.success) << result.message;
+    // N174 裁定：完全不相交 = 失败（改前是 rc=0 + 全 0 产物，见上注）。
+    EXPECT_FALSE(result.success) << result.message;
 
-    auto outDs = gis::core::openRaster(output, true);
-    ASSERT_NE(outDs, nullptr);
-    EXPECT_EQ(outDs->GetRasterXSize(), 10);
-    EXPECT_EQ(outDs->GetRasterYSize(), 10);
+    // 报文三短语 + 两组包框实数（"请求窗"与"输入范围"都要带，缺一即红）。
+    EXPECT_NE(result.message.find("完全不相交"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("交集为空"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("动作：cutting clip"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("116.11"), std::string::npos)
+        << "报文必须带请求窗实数（东界 116.11 从 extent 字面量来）：" << result.message;
+    EXPECT_NE(result.message.find("116.02"), std::string::npos)
+        << "报文必须带输入范围实数（东界 116.02 = 116 + 20×0.001）：" << result.message;
 
-    double gt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    ASSERT_EQ(outDs->GetGeoTransform(gt), CE_None);
-    EXPECT_NEAR(gt[0], 116.10, 1e-12) << "全 0 产物的左上角仍是请求窗的 (xmin, ymax)";
-    EXPECT_NEAR(gt[3], 39.91, 1e-12);
-    EXPECT_NEAR(gt[1], 0.001, 1e-12) << "零填充产物的像元尺寸仍是源的，不是重采样出来的";
-    EXPECT_NEAR(gt[5], -0.001, 1e-12);
-
-    double bMin = 0.0;
-    double bMax = 0.0;
-    double bMean = 0.0;
-    double bStd = 0.0;
-    ASSERT_EQ(outDs->GetRasterBand(1)->ComputeStatistics(
-                  false, &bMin, &bMax, &bMean, &bStd, nullptr, nullptr), CE_None);
-    EXPECT_NEAR(bMax, 0.0, 1e-9) << "整张都是补出来的 0：Max 若 >0 说明窗碰到了源";
-    EXPECT_NEAR(bMin, 0.0, 1e-9);
-    EXPECT_NEAR(bMean, 0.0, 1e-9);
-    EXPECT_NEAR(readRasterPixel(output, 0, 0), 0.0f, 1e-4f);
-    EXPECT_NEAR(readRasterPixel(output, 9, 9), 0.0f, 1e-4f);
+    // 产物不写：改前态这里会读到一张 10×10 全 0 图 ⇒ 本支是"不写盘"承重支。
+    EXPECT_FALSE(fs::exists(output))
+        << "裁空失败不得写产物（改前写请求尺寸全 0 图）";
 }
 
 
