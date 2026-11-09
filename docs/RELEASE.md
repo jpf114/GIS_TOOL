@@ -5690,6 +5690,15 @@ range=0 unresolved=0 ambiguous=0 ceiling=182 dead_registry=0`；
 - **文档**：`多点视域.md` / `视域分析.md` 同笔改准（越界行为两态）；RELEASE 本节。
 - **席位**：实现席平台报错断线（122 工具次，§0~§1 席位亲笔：上游源码核 + 九臂子进程探针表），产品/判据/守卫同步/文档为席位未提交工作树，控制器验编验绿后按 R-D63 收尾（双向臂/RELEASE/重钉/终验自跑）；**无独立复审席**（配额恢复后优先补审 N174/N160 两把）。
 - **验收**：terrain 族+视域 **52/52**；八守卫 8/8；`GuiContract` 4/4；注册总数 **789**；blob 三代链 `a5da3e9f→7116a6cd→b35e945c`（活钉唯一指新值）；`find data -type f -newermt` = 0。
+### 批次 D N194（2026-11-09 落地：`processing.filter` 的 σ=0 硬编码二项式表位点判——**判据刀，产品零改动**）
+
+- **挂账**：#223（N194）——σ=0 从 CLI 合法可达（ParamSpec min=0.0）、走上游硬编码二项式表，却无位点判；本刀补判据，不改产品。
+- **机制**：doFilter 的 gaussian 支把 sigma 原样交 `cv::GaussianBlur`（无 toUint8、无归一，raw float 直传）；sigma<=0 时 OpenCV `getGaussianKernelBitExact` 取硬编码二项式表，k=5 ⇒ [1,4,6,4,1]/16（0.0625/0.25/0.375 二进制精确）。两支语义不同：filter 的 gaussian **允许** σ=0，gabor_filter 的 σ=0 被 `Result::fail("sigma must be positive")` 拒。
+- **判据**（进既有 `PluginTest.ProcessingFilterExecution`，注册数 789 不变）：判别性夹具 = 9×9 单点亮斑（中心 (4,4)=1.0），5×5 核窗口完整落图内不触边界 ⇒ 输出 = 二项式核外积，逐格手算钉死——中心 36/256、十字邻 24/256、对角 16/256、二步正交 6/256、马步 4/256、远角 1/256、核外 0；另以 σ=1.5 同夹具对照（`countPixelDiffs != 0`）钉"σ=0 不是 σ=1.5 的别名"。恒值夹具不判别（核和为 1）⇒ 必须用 delta。
+- **判别臂**（控制器实测，cp 备份 + sha256 对拍 `fd3859ad…`）：doFilter gaussian 支临时改 `sigma<=0 ? 1.5 : sigma` ⇒ 重编 ⇒ `ProcessingFilterExecution` **Failed**（σ=0 七格期望 + σ=0≠σ=1.5 对照同红）⇒ 还原 sha 对拍 ⇒ 复绿。
+- **文档**：`空间滤波.md` 的 Sigma 行补 σ=0 合法档与二项式核语义（并写明 gabor 支拒绝 σ=0 的两支差异）。
+- **席位**：实现席配额阻断（R-D63，71 工具次未落任何改动）⇒ 控制器从零自跑（判据/判别臂/文档/终验）；**无独立复审席**（与 N174/N160 同批待补审）。
+- **验收**：processing 族 **31/31**；九守卫 9/9；`GuiContract` 4/4；注册总数 **789**；`find data -type f -newermt` = 0；`git status` 终态干净。
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件

@@ -2909,6 +2909,33 @@ TEST_F(PluginTest, ProcessingFilterExecution) {
     EXPECT_NE(runUnknown.message.find("Unknown filter type:"), std::string::npos)
         << "S13 失败文案必须是 `Unknown filter type: ` 前缀，实际 message = " << runUnknown.message;
     EXPECT_FALSE(fs::exists(outUnknown)) << "S13 失败路径不得留产物";
+
+    // ---- N194（#223）：σ=0 走上游硬编码二项式表的位点判 ----
+    // doFilter 的 gaussian 支把 sigma 原样交给 cv::GaussianBlur（无 toUint8、无归一，raw float 直传）；
+    // sigma<=0 时 OpenCV getGaussianKernelBitExact 取硬编码二项式表：k=5 ⇒ [1,4,6,4,1]/16
+    // （0.0625/0.25/0.375 均二进制精确）。判别性夹具 = 9×9 单点亮斑（中心 (4,4)=1.0，余 0）：
+    // 5×5 核窗口完整落在图内（中心距边 4 ≥ 2）不触 BORDER_REFLECT_101 ⇒ 输出 = 二项式核外积 × 1.0，
+    // 逐格手算（不从产物回填）：中心 (6/16)^2=36/256；十字邻 6·4/256；对角 4·4/256；二步正交 6·1/256；
+    // 马步 4·1/256；远角 1·1/256；核外 0。恒值夹具不判别（核和为 1，恒值图输出=输入）⇒ 必须用 delta。
+    std::vector<float> deltaData(9 * 9, 0.0f);
+    deltaData[4 * 9 + 4] = 1.0f;
+    const std::string deltaInput = gis::tests::writeFloatRaster(dir, "n194_delta_input.tif", 9, 9, deltaData);
+    ASSERT_FALSE(deltaInput.empty());
+    const std::string outSigma0 = utf8PathString(dir / "n194_filter_sigma0.tif");
+    auto runSigma0 = runFilter(deltaInput, outSigma0, "gaussian", 5, 0.0, 1);
+    ASSERT_TRUE(runSigma0.success) << runSigma0.message;
+    EXPECT_NEAR(readRasterPixel(outSigma0, 4, 4), 36.0 / 256.0, kEpsRaw) << "σ=0 中心 = (6/16)^2";
+    EXPECT_NEAR(readRasterPixel(outSigma0, 3, 4), 24.0 / 256.0, kEpsRaw) << "σ=0 十字邻 = 6·4/256";
+    EXPECT_NEAR(readRasterPixel(outSigma0, 3, 3), 16.0 / 256.0, kEpsRaw) << "σ=0 对角 = 4·4/256";
+    EXPECT_NEAR(readRasterPixel(outSigma0, 2, 4), 6.0 / 256.0, kEpsRaw) << "σ=0 二步正交 = 6·1/256";
+    EXPECT_NEAR(readRasterPixel(outSigma0, 2, 3), 4.0 / 256.0, kEpsRaw) << "σ=0 马步 = 4·1/256";
+    EXPECT_NEAR(readRasterPixel(outSigma0, 2, 2), 1.0 / 256.0, kEpsRaw) << "σ=0 远角 = 1·1/256";
+    EXPECT_NEAR(readRasterPixel(outSigma0, 0, 0), 0.0, kEpsRaw) << "σ=0 核外 = 0";
+    const std::string outSigma15 = utf8PathString(dir / "n194_filter_sigma15.tif");
+    auto runSigma15 = runFilter(deltaInput, outSigma15, "gaussian", 5, 1.5, 1);
+    ASSERT_TRUE(runSigma15.success) << runSigma15.message;
+    EXPECT_NE(countPixelDiffs(outSigma0, outSigma15, kEpsRaw), 0)
+        << "σ=0 二项式表与 σ=1.5 高斯核必须给出不同产物（σ=0 不是 σ=1.5 的别名）";
 }
 
 // ===================== 批次 D P3：processing.edge 四支值级判据 =====================
