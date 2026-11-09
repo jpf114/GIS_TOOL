@@ -45,7 +45,7 @@ EXIT_USAGE = 3
 #   理由与逐桶分工见下面第二域的注释——两域各自都跑锚点恒等式，一个都没少）。
 #   这是本仓"归零类验收必须先证覆盖"的落地：
 #   少分类一行（漏数）与多分类一行（把注释当代码）都会在这里红，而不是让"0 个违规"看着像好消息。
-#   独立复算（与解析器不同口径；下面两条现读 = 21 与 1，必须逐字等于上面的 any / comment_line）：
+#   独立复算（与解析器不同口径；下面两条现读 = 26 与 1，必须逐字等于上面的 any / comment_line）：
 #     grep -rn "GetGeoTransform(" src/ --include=*.cpp --include=*.h --include=*.hpp --include=*.cc --include=*.inc | grep -o "GetGeoTransform(" | wc -l
 #     grep -rn "GetGeoTransform(" src/ --include=*.cpp --include=*.h --include=*.hpp --include=*.cc --include=*.inc | grep -c "^[^:]*:[0-9]*:[[:space:]]*//"
 #   tests/ 用同样两条，但要先 `| grep -v geotransform_guard_fixtures`（夹具归自证臂管）。
@@ -59,9 +59,11 @@ DOMAINS = [
         "root": "src",
         "exclude_parts": (),
         "allowlist_key": "entries",
+        # N160 账：viewshed 单点 / multi 两个越界闸各新增一处"判了返回值"的地理参考读取位点
+        # （any 24→26 / code 23→25 / checked 21→23；unchecked/allowlisted 不变，violations=0）。
         "expect": {
-            "any": 24, "code": 23, "comment_line": 1, "block_comment": 0, "string_only": 0,
-            "checked": 21, "unchecked": 2, "allowlisted": 2, "violations": 0, "dead": 0,
+            "any": 26, "code": 25, "comment_line": 1, "block_comment": 0, "string_only": 0,
+            "checked": 23, "unchecked": 2, "allowlisted": 2, "violations": 0, "dead": 0,
         },
     },
     {

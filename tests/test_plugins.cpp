@@ -22762,6 +22762,36 @@ TEST_F(PluginTest, TerrainViewshedExecution) {
     EXPECT_EQ(result.metadata.at("action"), "viewshed");
     EXPECT_NEAR(readRasterPixel(output, 16, 16), 255.0f, 1e-4f);
     EXPECT_NEAR(readRasterPixel(output, 0, 0), 255.0f, 1e-4f);
+
+    // N160（裁定①）：单点同形态实测后的同笔判据——GDAL 单点入口并不自己拒（本刀 §1 子进程实测：
+    // 越界观察点无限挂起 + 残留 stub 产物，与 multi 的崩进程同根因：上游只发 Warning 不拒绝）
+    // ⇒ 同一道硬失败闸：success=false + 本仓中文文案（动作名 + 越界点坐标）+ 失败路径零产物。
+    std::error_code oobEc;
+    const std::string oobOutput = utf8PathString(getTestDir() / "terrain_viewshed_oob_output.tif");
+    fs::remove(oobOutput, oobEc);
+    fs::remove(oobOutput + ".aux.xml", oobEc);
+    params["output"] = oobOutput;
+    params["observer_x"] = 115.0;   // 夹具幅面 x∈[116,116.032]、y∈[39.968,40] 之外 ⇒ 像元索引 -1000,-1000
+    params["observer_y"] = 41.0;
+    const auto oob = p->execute(params, progress_);
+    EXPECT_FALSE(oob.success) << "单点观察点越界必须硬失败，不许静默钳位：" << oob.message;
+    EXPECT_NE(oob.message.find("观察点"), std::string::npos) << oob.message;
+    EXPECT_NE(oob.message.find("范围外"), std::string::npos) << oob.message;
+    EXPECT_NE(oob.message.find("115"), std::string::npos) << "文案必须带越界点坐标：" << oob.message;
+    EXPECT_NE(oob.message.find("（动作：terrain viewshed）"), std::string::npos) << oob.message;
+    EXPECT_FALSE(fs::exists(oobOutput)) << "改前单点挂起还残留 stub 产物；改后失败路径零产物：" << oob.message;
+
+    // 半像元贴边臂（判别力：镜像上游向零截断语义）：像元坐标 (-0.5,-0.5) 截断成 (0,0) 是 GDAL
+    // 合法档（§1 s_edge/m_edge 实测 rc=0）⇒ 必须照常成功；拿浮点坐标直接判 <0 的闸门在这条红。
+    const std::string edgeOutput = utf8PathString(getTestDir() / "terrain_viewshed_edge_output.tif");
+    fs::remove(edgeOutput, oobEc);
+    fs::remove(edgeOutput + ".aux.xml", oobEc);
+    params["output"] = edgeOutput;
+    params["observer_x"] = 115.9995;
+    params["observer_y"] = 40.0005;
+    const auto edge = p->execute(params, progress_);
+    EXPECT_TRUE(edge.success) << "半像元贴边是上游合法档，闸门不许误杀：" << edge.message;
+    EXPECT_TRUE(fs::exists(edgeOutput)) << edge.message;
 }
 
 TEST_F(PluginTest, TerrainViewshedMultiExecution) {
@@ -22789,6 +22819,46 @@ TEST_F(PluginTest, TerrainViewshedMultiExecution) {
     EXPECT_EQ(result.metadata.at("observer_count"), "2");
     EXPECT_NEAR(readRasterPixel(output, 5, 5), 255.0f, 1e-4f);
     EXPECT_NEAR(readRasterPixel(output, 25, 25), 255.0f, 1e-4f);
+
+    // N160（用户 2026-11-05 拍板甲，裁定②）：观察点越界硬失败判据。
+    // 改前形态（立案取证 + 本刀 §1 子进程复现）：越界观察点 ⇒ GDAL 只发 Warning 不拒绝 ⇒
+    // 负索引 seek 把进程带走（0xC0000409）。改后：插件级在换算前拦下 ⇒ success=false +
+    // 本仓中文文案（动作名 + 越界点坐标）+ 失败路径零产物。
+    // 载体说明：gtest_discover_tests 逐用例独立子进程 ⇒ 双向臂"删闸 ⇒ 崩"的红只带走本用例的
+    // 子进程，ctest 主进程不受影响（崩进程的红必须在子进程载体里跑）。
+    std::error_code oobEc;
+    const std::string oobOutput = utf8PathString(getTestDir() / "terrain_viewshed_multi_oob_output.tif");
+    fs::remove(oobOutput, oobEc);
+    fs::remove(oobOutput + ".aux.xml", oobEc);
+    params["output"] = oobOutput;
+    params["observer_points"] = std::string("115.0,41.0");   // 幅面外 ⇒ 像元索引 -1000,-1000（负索引同形）
+    const auto oob = p->execute(params, progress_);
+    EXPECT_FALSE(oob.success) << "观察点越界必须硬失败，不许静默钳位：" << oob.message;
+    EXPECT_NE(oob.message.find("观察点"), std::string::npos) << oob.message;
+    EXPECT_NE(oob.message.find("范围外"), std::string::npos) << oob.message;
+    EXPECT_NE(oob.message.find("115"), std::string::npos) << "文案必须带越界点坐标：" << oob.message;
+    EXPECT_NE(oob.message.find("41"), std::string::npos) << oob.message;
+    EXPECT_NE(oob.message.find("（动作：terrain viewshed_multi）"), std::string::npos) << oob.message;
+    EXPECT_FALSE(fs::exists(oobOutput)) << "失败路径不得留下产物：" << oob.message;
+
+    // 混合臂：第一点在幅面内、第二点越界 ⇒ 预检在逐点计算之前整体拦下（改前形态是第一点算完
+    // 进度 55% 后第二点崩，§1 m_mix 实测）；文案报的是越界的那个点。
+    params["observer_points"] = std::string("116.006,39.994;115.0,41.0");
+    const auto mixed = p->execute(params, progress_);
+    EXPECT_FALSE(mixed.success) << mixed.message;
+    EXPECT_NE(mixed.message.find("115"), std::string::npos) << "文案必须点名越界点而非放行点：" << mixed.message;
+    EXPECT_FALSE(fs::exists(oobOutput)) << "混合臂失败同样零产物：" << mixed.message;
+
+    // 半像元贴边臂（判别力：镜像上游向零截断语义）：(-0.5,-0.5) 截断成 (0,0) 是 GDAL 合法档
+    // （§1 s_edge/m_edge 实测 rc=0）⇒ 必须照常成功；拿浮点坐标直接判 <0 的闸门在这条红。
+    const std::string edgeOutput = utf8PathString(getTestDir() / "terrain_viewshed_multi_edge_output.tif");
+    fs::remove(edgeOutput, oobEc);
+    fs::remove(edgeOutput + ".aux.xml", oobEc);
+    params["output"] = edgeOutput;
+    params["observer_points"] = std::string("115.9995,40.0005");
+    const auto edge = p->execute(params, progress_);
+    EXPECT_TRUE(edge.success) << "半像元贴边是上游合法档，闸门不许误杀：" << edge.message;
+    EXPECT_TRUE(fs::exists(edgeOutput)) << edge.message;
 }
 
 // ============================================================================

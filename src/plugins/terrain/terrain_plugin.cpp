@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <queue>
 #include <memory>
 #include <sstream>
@@ -126,6 +127,8 @@ gis::framework::Result runDemProcess(
     //              （slope = atan(z·梯度)，docs/坡度.md 数学模型同口径）方向相反 ⇒ 发 1/z_factor。
     //              z=1 时发 -s 1，逐像元恒等 ⇒ 默认档期望值不变。
     //   hillshade  保留 -z：-z 是真垂直夸张（同夹具 z=1→255、z=10→198、z=45→185），
+    //              （gtest 基参 azimuth=270 与 DEM-P 的 aspect=270 对齐档；CLI 缺省 az=315 为 218/145/132）
+    //              ——az 前提注系 N163 复审 parked Minor、N160 同笔补；
     //              值级判据见 TerrainHillshadeHandValueOnUnitPlane 块 (6)/(7)。
     //   aspect     不发任何 z 旋钮：上游 aspect 没有垂直比例入口（官方 CLI 对 -z/-s 都报
     //              Unknown argument），atan2(dz/dy, dz/dx) 在 z 等比缩放下两分量同乘 k、方向角不变
@@ -935,6 +938,50 @@ gis::framework::Result runProfileExtractProcess(
 // 两处（metadata 与 result.message）共用同一份字面量，避免两侧文案漂移。
 constexpr const char* kViewshedProjectedCrsHint = "observer analysis expects projected CRS";
 
+// N160（用户 2026-11-05 拍板甲）：观察点越界硬失败闸的共用小件（单点与 multi 两个入口同笔接）。
+// WHY 要插件级拦：GDAL 3.12.4 的 Viewshed::calcExtents 对窗外观察点只发 CE_Warning
+//   （"NOTE: The observer location falls outside of the DEM area"）不拒绝执行；本刀子进程实测
+//   （build/tmp/batchD/n160，BASE 二进制）：multi 被 0xC0000409 带走、单点无限挂起且残留 stub 产物
+//   ⇒ 观察点坐标是普通入参、用户可达，两个入口都在交给 GDALViewshedGenerate 之前自己换算并拦下，
+//   不做静默钳位。
+// 索引语义逐字镜像上游 Viewshed::run：浮点像元坐标先过 int 值域闸（NaN/Inf 同样判不在值域内），
+//   再 static_cast<int> 向零截断 ⇒ 半像元贴边（-0.5 → 0）是上游合法档（实测 s_edge/m_edge 两臂 rc=0），
+//   直接拿浮点坐标判 <0 会误杀这一档。
+bool viewshedObserverIndexInRaster(double pixel, double line, int xsize, int ysize) {
+    if (!std::isfinite(pixel) || !std::isfinite(line)) {
+        return false;   // observer_points 走 std::stod，"nan"/"inf" 用户可达 ⇒ 一律硬失败
+    }
+    if (pixel < static_cast<double>(std::numeric_limits<int>::min()) ||
+        pixel > static_cast<double>(std::numeric_limits<int>::max()) ||
+        line < static_cast<double>(std::numeric_limits<int>::min()) ||
+        line > static_cast<double>(std::numeric_limits<int>::max())) {
+        return false;   // int 值域外先拦，static_cast<int> 不越界（上游 GDALIsValueInRange<int> 同形闸）
+    }
+    const int px = static_cast<int>(pixel);
+    const int ln = static_cast<int>(line);
+    return px >= 0 && px < xsize && ln >= 0 && ln < ysize;
+}
+
+// 报文纪律同 N162/N174：本仓中文 + 实数 + 动作名。坐标与换算像元坐标用 %.12g 保 12 位有效数字
+// （std::to_string 固定 6 位小数会吃大坐标精度）；失败路径不建产物（闸门在建产物与逐点计算之前）。
+std::string viewshedObserverOutOfBoundsMessage(const char* actionLabel,
+                                               double observerX, double observerY,
+                                               double pixel, double line,
+                                               int xsize, int ysize) {
+    char xText[40];
+    char yText[40];
+    char pxText[40];
+    char lnText[40];
+    std::snprintf(xText, sizeof(xText), "%.12g", observerX);
+    std::snprintf(yText, sizeof(yText), "%.12g", observerY);
+    std::snprintf(pxText, sizeof(pxText), "%.12g", pixel);
+    std::snprintf(lnText, sizeof(lnText), "%.12g", line);
+    return std::string("视域分析失败：观察点 （") + xText + ", " + yText +
+           "） 在输入 DEM 范围外（换算像元坐标 " + pxText + ", " + lnText +
+           "，幅面宽 " + std::to_string(xsize) + "、高 " + std::to_string(ysize) +
+           "），不写产物（动作：" + actionLabel + "）";
+}
+
 gis::framework::Result runViewshedProcess(
     const std::string& input,
     const std::string& output,
@@ -965,6 +1012,26 @@ gis::framework::Result runViewshedProcess(
     auto* srcBand = srcDs->GetRasterBand(band);
     if (!srcBand) {
         return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
+    }
+
+    // N160（裁定①②）：观察点越界硬失败闸（与 multi 同笔，共用小件见 viewshedObserverIndexInRaster 头注）。
+    // 缺地理参考时 GDAL 基类写恒等阵、观察点按像元坐标解释（TerrainMultiViewshedFailsWithoutGeotransform
+    // 的单点对照腿钉住该现状：无参考 DEM 上 (8,8) 必须照常成功）⇒ 这里不另造失败，直接按像元坐标判索引。
+    double observerGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    double observerPixel = observerX;
+    double observerLine = observerY;
+    if (srcDs->GetGeoTransform(observerGt) == CE_None) {
+        double invGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        if (!GDALInvGeoTransform(observerGt, invGt)) {
+            return gis::framework::Result::fail("Cannot invert raster geotransform");
+        }
+        GDALApplyGeoTransform(invGt, observerX, observerY, &observerPixel, &observerLine);
+    }
+    if (!viewshedObserverIndexInRaster(observerPixel, observerLine,
+                                       srcDs->GetRasterXSize(), srcDs->GetRasterYSize())) {
+        return gis::framework::Result::fail(viewshedObserverOutOfBoundsMessage(
+            "terrain viewshed", observerX, observerY, observerPixel, observerLine,
+            srcDs->GetRasterXSize(), srcDs->GetRasterYSize()));
     }
 
     // 曲率/大气折射修正把距离换算成高程差（Δz ≈ coeff·d²/2R），R 用的是米；CRS 是地理坐标系时
@@ -1130,6 +1197,29 @@ gis::framework::Result runViewshedMultiProcess(
     auto* srcBand = srcDs->GetRasterBand(band);
     if (!srcBand) {
         return gis::framework::Result::fail("Cannot get band " + std::to_string(band));
+    }
+
+    // N160（裁定②）：观察点越界硬失败闸——逐点预检，越界即 Result::fail（中文带动作名与越界点坐标），
+    // 不做静默钳位；闸门在逐点视域计算与建产物之前 ⇒ 失败路径零产物、没有"算了一半"的 partial 形态。
+    // 缺地理参考的失败文案与同族（cut_fill / reservoir_volume / 本函数写出闸）逐字一致，只是提前到计算前
+    // （TerrainMultiViewshedFailsWithoutGeotransform 钉的就是这串文案与"产物不生成"）。
+    double observerGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    if (srcDs->GetGeoTransform(observerGt) != CE_None) {
+        return gis::framework::Result::fail("input raster geotransform is missing");
+    }
+    double invGt[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    if (!GDALInvGeoTransform(observerGt, invGt)) {
+        return gis::framework::Result::fail("Cannot invert raster geotransform");
+    }
+    for (const auto& point : observerPoints) {
+        double pixel = 0.0;
+        double line = 0.0;
+        GDALApplyGeoTransform(invGt, point.x, point.y, &pixel, &line);
+        if (!viewshedObserverIndexInRaster(pixel, line, srcDs->GetRasterXSize(), srcDs->GetRasterYSize())) {
+            return gis::framework::Result::fail(viewshedObserverOutOfBoundsMessage(
+                "terrain viewshed_multi", point.x, point.y, pixel, line,
+                srcDs->GetRasterXSize(), srcDs->GetRasterYSize()));
+        }
     }
 
     cv::Mat merged(srcDs->GetRasterYSize(), srcDs->GetRasterXSize(), CV_32F, cv::Scalar(0.0f));
