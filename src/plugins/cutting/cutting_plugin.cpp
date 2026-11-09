@@ -203,6 +203,196 @@ gis::core::ProcessingMetadata buildMetadata(const std::string& input, GDALDatase
     return meta;
 }
 
+// ===== N174（裁定 2026-11-05 甲）：裁空判据与窗外 NoData 的共用小件 =====
+
+// 地理包框。valid=false 表示"推不出来"（无 GT / 矢量打不开 / 换算失败），
+// 调用方对 invalid 一律放行交给上游 GDAL 自己的报错路径，不做裁空判断。
+struct GeoBox {
+    bool valid = false;
+    double minX = 0.0;
+    double minY = 0.0;
+    double maxX = 0.0;
+    double maxY = 0.0;
+};
+
+// 源栅格的覆盖包框：geotransform 四角（含斜置项）的包络。
+// WHY 用四角而不是只取 gt[0]/gt[1]/gt[3]/gt[5]：规则栅格（gt[2]=gt[4]=0，-projwin
+// 语义就是这个前提）下四角包络退化为轴对齐包框，与逐轴比较等价；带斜置的源四角包络
+// 是覆盖区的保守超集——只会把"确实无交"的窗判成裁空，不会把有交的窗误杀。
+GeoBox rasterCoverageBox(GDALDataset* ds) {
+    GeoBox box;
+    double gt[6];
+    if (!ds || ds->GetGeoTransform(gt) != CE_None) return box;
+    const int w = ds->GetRasterXSize();
+    const int h = ds->GetRasterYSize();
+    const double xs[4] = {gt[0],
+                          gt[0] + w * gt[1],
+                          gt[0] + h * gt[2],
+                          gt[0] + w * gt[1] + h * gt[2]};
+    const double ys[4] = {gt[3],
+                          gt[3] + w * gt[4],
+                          gt[3] + h * gt[5],
+                          gt[3] + w * gt[4] + h * gt[5]};
+    box.minX = *std::min_element(xs, xs + 4);
+    box.maxX = *std::max_element(xs, xs + 4);
+    box.minY = *std::min_element(ys, ys + 4);
+    box.maxY = *std::max_element(ys, ys + 4);
+    box.valid = true;
+    return box;
+}
+
+// 裁切矢量图层的包框，必要时换算到源栅格 SRS（GDALWarp 对带 SRS 的 cutline 图层
+// 也是先换算到源 SRS 再裁，判据与 warp 的实到语义对齐）。打不开 / 无图层 / 取不到
+// 包框 / 换算失败 ⇒ valid=false（放行，不误杀）。
+GeoBox cutlineRequestBox(const std::string& cutlinePath, GDALDataset* srcDs) {
+    GeoBox box;
+    gis::core::GdalDatasetPtr ds(static_cast<GDALDataset*>(
+        GDALOpenEx(cutlinePath.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                   nullptr, nullptr, nullptr)));
+    if (!ds) return box;
+    OGRLayer* layer = ds->GetLayer(0);
+    if (!layer) return box;
+    OGREnvelope env;
+    if (layer->GetExtent(&env, /*bForce=*/TRUE) != OGRERR_NONE) return box;
+    double xs[4] = {env.MinX, env.MaxX, env.MinX, env.MaxX};
+    double ys[4] = {env.MinY, env.MinY, env.MaxY, env.MaxY};
+    const OGRSpatialReference* layerSrs = layer->GetSpatialRef();
+    const OGRSpatialReference* srcSrs = srcDs ? srcDs->GetSpatialRef() : nullptr;
+    if (layerSrs && srcSrs && !layerSrs->IsSame(srcSrs)) {
+        std::unique_ptr<OGRCoordinateTransformation> transform(
+            OGRCreateCoordinateTransformation(layerSrs, srcSrs));
+        if (!transform) return box;
+        for (int i = 0; i < 4; ++i) {
+            if (!transform->Transform(1, &xs[i], &ys[i])) return box;
+        }
+    }
+    box.minX = *std::min_element(xs, xs + 4);
+    box.maxX = *std::max_element(xs, xs + 4);
+    box.minY = *std::min_element(ys, ys + 4);
+    box.maxY = *std::max_element(ys, ys + 4);
+    box.valid = true;
+    return box;
+}
+
+// 裁空判据：两框按**半开区间严格重叠**才算有交（重叠测度为 0 的"贴边"算无交）。
+// WHY 这是像元级判据而不是包框级：clip 的窗语义是请求窗经 geotransform 映到像元窗后
+// 从源像元网格里取样（GDALTranslate -projwin / warp 裁到包框都是这个语义）。贴边的窗
+// 映射出的像元窗落在网格之外（首列/行下标 == 尺寸），GDAL 一个源像元都读不到，产物
+// 只剩补丁——正是"完全不相交"该报错的形态。半开严格比较在规则栅格上与像元级判据等价。
+bool geoBoxesDisjoint(const GeoBox& a, const GeoBox& b) {
+    const bool overlapX = std::min(a.maxX, b.maxX) - std::max(a.minX, b.minX) > 0.0;
+    const bool overlapY = std::min(a.maxY, b.maxY) - std::max(a.minY, b.minY) > 0.0;
+    return !(overlapX && overlapY);
+}
+
+// 报文里的包框文案（精度 12 位：EPSG:3857 的 8 位数坐标不带科学计数，度制小数不带尾零）。
+std::string formatGeoBox(const GeoBox& box) {
+    std::ostringstream oss;
+    oss << std::setprecision(12)
+        << "x∈[" << box.minX << ", " << box.maxX << "]、y∈[" << box.minY << ", " << box.maxY << "]";
+    return oss.str();
+}
+
+// 单个 double 的文案（与 formatGeoBox 同一精度口径），用于 -dstnodata 实参值。
+std::string formatGeoNumber(double v) {
+    std::ostringstream oss;
+    oss << std::setprecision(12) << v;
+    return oss.str();
+}
+
+// 裁空失败报文（N162 后的文案纪律：本仓中文 + 动作名，带请求窗与输入范围两组实数）。
+gis::framework::Result clipDisjointFail(const std::string& requestDesc,
+                                        const GeoBox& request, const GeoBox& coverage) {
+    return gis::framework::Result::fail(
+        "裁切失败：" + requestDesc + "与输入栅格范围完全不相交（交集为空），不写产物。请求窗 "
+        + formatGeoBox(request) + "；输入范围 " + formatGeoBox(coverage)
+        + "（动作：cutting clip）");
+}
+
+// 窗外补丁值选型（跟仓内既有惯例，不发明新哨兵，选型理由就地写全）：
+//   ① 源波段声明过 NoData ⇒ 用声明值——"窗外本来就没有值"与源的无效语义同义，
+//      跟随声明也是 raster_manage / 全色锐化的既有惯例。
+//   ② 未声明且类型装得下 -9999 ⇒ 仓内常备哨兵 -9999（nodata_value 参数默认、
+//      栅格切片文档默认、测试夹具默认都是它；Int16 下界 -32768 装得下）。
+//   ③ 装不下（Byte/Int8/UInt16/UInt32）⇒ 0 并照样声明（classification / vector
+//      rasterize 的既有惯例；避免 -9999 溢出回绕成"标签说 A、像元是 B"的伪态）。
+double clipOutsideNodataValue(GDALRasterBand* srcBand) {
+    int hasNodata = 0;
+    const double declared = srcBand ? srcBand->GetNoDataValue(&hasNodata) : 0.0;
+    if (srcBand && hasNodata) return declared;
+    switch (srcBand ? srcBand->GetRasterDataType() : GDT_Unknown) {
+        case GDT_Byte:
+        case GDT_Int8:
+        case GDT_UInt16:
+        case GDT_UInt32:
+            return 0.0;
+        default:
+            return -9999.0;
+    }
+}
+
+// 窗外补丁写回：把 GDALTranslate -projwin 在源像元网格之外补的 0 改写为 NoData 值，
+// 并给产物波段写 NoData 标签。窗全在源内（无补丁）时**零接触**——不写标签，产物字节
+// 形态与改前逐字节同（GOLD 保住；terrain 侧"真有无效像元才声明"的纪律）。
+// 偏移从产物 GT 与源 GT 反推而不是复制 GDAL 内部的取整公式：-projwin 保分辨率，输出
+// 原点被 GDALTranslate 对齐到源像元网格 ⇒ 差值是整数（容差 1e-6 像元只为吃掉浮点表示差）。
+// 分辨率不一致 / 带斜置 / 无 GT ⇒ 一律放行不改写（那些形态不是本动作的 -projwin 路径）。
+void padOutsideWindowWithNodata(GDALDataset* srcDs, GDALDataset* outDs) {
+    if (!srcDs || !outDs) return;
+    const int srcW = srcDs->GetRasterXSize();
+    const int srcH = srcDs->GetRasterYSize();
+    const int outW = outDs->GetRasterXSize();
+    const int outH = outDs->GetRasterYSize();
+    double srcGt[6];
+    double outGt[6];
+    if (srcDs->GetGeoTransform(srcGt) != CE_None) return;
+    if (outDs->GetGeoTransform(outGt) != CE_None) return;
+    if (srcGt[2] != 0.0 || srcGt[4] != 0.0 || outGt[2] != 0.0 || outGt[4] != 0.0) return;
+    if (srcGt[1] == 0.0 || srcGt[5] == 0.0) return;
+    const auto sameScale = [](double a, double b) {
+        return std::fabs(a - b) <= 1e-12 * std::max(1.0, std::max(std::fabs(a), std::fabs(b)));
+    };
+    if (!sameScale(srcGt[1], outGt[1]) || !sameScale(srcGt[5], outGt[5])) return;
+    const double offXf = (outGt[0] - srcGt[0]) / srcGt[1];
+    const double offYf = (outGt[3] - srcGt[3]) / srcGt[5];
+    if (std::fabs(offXf - std::llround(offXf)) > 1e-6) return;
+    if (std::fabs(offYf - std::llround(offYf)) > 1e-6) return;
+    const long long srcXOff = std::llround(offXf);
+    const long long srcYOff = std::llround(offYf);
+    const long long leftRun = srcXOff < 0 ? std::min<long long>(outW, -srcXOff) : 0;
+    const long long rightStart = (srcXOff + outW > srcW)
+        ? std::max<long long>(0LL, std::min<long long>(outW, srcW - srcXOff)) : outW;
+    const bool padTop = srcYOff < 0;
+    const bool padBottom = srcYOff + outH > srcH;
+    if (leftRun <= 0 && rightStart >= outW && !padTop && !padBottom) return;
+    for (int b = 1; b <= outDs->GetRasterCount(); ++b) {
+        GDALRasterBand* srcBand = srcDs->GetRasterBand(b);
+        GDALRasterBand* outBand = outDs->GetRasterBand(b);
+        if (!srcBand || !outBand) continue;
+        const double nodataVal = clipOutsideNodataValue(srcBand);
+        outBand->SetNoDataValue(nodataVal);
+        std::vector<double> row(static_cast<size_t>(outW), nodataVal);
+        for (int j = 0; j < outH; ++j) {
+            const long long sy = srcYOff + j;
+            if (sy < 0 || sy >= srcH) {
+                outBand->RasterIO(GF_Write, 0, j, outW, 1, row.data(),
+                                  outW, 1, GDT_Float64, 0, 0);
+                continue;
+            }
+            if (leftRun > 0) {
+                outBand->RasterIO(GF_Write, 0, j, static_cast<int>(leftRun), 1, row.data(),
+                                  static_cast<int>(leftRun), 1, GDT_Float64, 0, 0);
+            }
+            if (rightStart < outW) {
+                const int run = static_cast<int>(outW - rightStart);
+                outBand->RasterIO(GF_Write, static_cast<int>(rightStart), j, run, 1,
+                                  row.data(), run, 1, GDT_Float64, 0, 0);
+            }
+        }
+        outBand->FlushCache();
+    }
+}
+
 } // namespace
 
 static std::vector<std::string> splitString(const std::string& s, char delim) {
@@ -242,11 +432,33 @@ gis::framework::Result CuttingPlugin::doClip(
     progress.throwIfCancelled();
     progress.onProgress(0.1);
 
+    // N174：源数据集提前到这里开一次，两条臂与裁空判据共用（改前各臂内部各开一次）。
+    auto srcDS = gis::core::openRaster(input, true);
+
     if (!cutline.empty()) {
+        // N174 裁空判据（cutline 臂）：裁切线包框（带 SRS 时先换算到源 SRS）与源覆盖框
+        // 无交 ⇒ 产物只剩补丁 ⇒ fail，不写盘。
+        const GeoBox cutBox = cutlineRequestBox(cutline, srcDS.get());
+        const GeoBox covBox = rasterCoverageBox(srcDS.get());
+        if (cutBox.valid && covBox.valid && geoBoxesDisjoint(cutBox, covBox)) {
+            return clipDisjointFail("裁切线包框", cutBox, covBox);
+        }
+
         std::vector<std::string> argStorage;
         argStorage.push_back("-cutline");
         argStorage.push_back(cutline);
         argStorage.push_back("-crop_to_cutline");
+        // N174 窗外 NoData（cutline 臂）：warp 的输出范围 = 裁切线包框；源覆盖框盖不满
+        // 包框 ⇒ 包框内有源外的像元（warp 补 0）⇒ 带 -dstnodata 把补丁值与标签一次写准。
+        // 包框被源盖住时补丁只可能来自"包框内、多边形外"的凹陷区，bbox 判据够不着
+        // （要逐像元多边形掩膜才知道），那部分维持改前补 0 不声明的形态，已登记 RELEASE。
+        if (cutBox.valid && covBox.valid &&
+            !(covBox.minX <= cutBox.minX && covBox.maxX >= cutBox.maxX &&
+              covBox.minY <= cutBox.minY && covBox.maxY >= cutBox.maxY) &&
+            srcDS->GetRasterCount() > 0) {
+            argStorage.push_back("-dstnodata");
+            argStorage.push_back(formatGeoNumber(clipOutsideNodataValue(srcDS->GetRasterBand(1))));
+        }
 
         std::vector<const char*> warpArgs;
         for (auto& a : argStorage) warpArgs.push_back(a.c_str());
@@ -258,7 +470,6 @@ gis::framework::Result CuttingPlugin::doClip(
             return gis::framework::Result::fail("Failed to create warp options");
         }
 
-        auto srcDS = gis::core::openRaster(input, true);
         GDALDatasetH srcHandle = static_cast<GDALDatasetH>(srcDS.get());
         int errCode = 0;
         GDALDatasetH dstHandle = GDALWarp(output.c_str(), nullptr,
@@ -270,6 +481,22 @@ gis::framework::Result CuttingPlugin::doClip(
         }
         GDALClose(dstHandle);
     } else {
+        // N174 裁空判据（extent 臂）：请求窗（extent 四元组 = xmin,ymin,xmax,ymax）与
+        // 源覆盖框无交 ⇒ fail，不写盘。退化窗（宽/高非正，轴序写反的典型形态）不进
+        // 裁空分支，让 GDAL 既有负宽高报错原样回报。
+        const GeoBox covBox = rasterCoverageBox(srcDS.get());
+        if (covBox.valid && extentArr[2] > extentArr[0] && extentArr[3] > extentArr[1]) {
+            GeoBox reqBox;
+            reqBox.valid = true;
+            reqBox.minX = extentArr[0];
+            reqBox.minY = extentArr[1];
+            reqBox.maxX = extentArr[2];
+            reqBox.maxY = extentArr[3];
+            if (geoBoxesDisjoint(reqBox, covBox)) {
+                return clipDisjointFail("", reqBox, covBox);
+            }
+        }
+
         std::vector<std::string> argStorage;
         argStorage.push_back("-projwin");
         argStorage.push_back(std::to_string(extentArr[0]));
@@ -287,7 +514,6 @@ gis::framework::Result CuttingPlugin::doClip(
             return gis::framework::Result::fail("Failed to create translate options");
         }
 
-        auto srcDS = gis::core::openRaster(input, true);
         int errCode = 0;
         GDALDatasetH dstHandle = GDALTranslate(output.c_str(),
             static_cast<GDALDatasetH>(srcDS.get()), translateOpts, &errCode);
@@ -297,6 +523,13 @@ gis::framework::Result CuttingPlugin::doClip(
             return gis::framework::Result::fail("Clip by extent failed: " + std::string(CPLGetLastErrorMsg()));
         }
         GDALClose(dstHandle);
+
+        // N174 窗外 NoData（extent 臂）：窗全在源内时零接触（不写标签，GOLD 字节形态
+        // 不动）；有补丁时把 GDALTranslate 补的 0 改写为 NoData 值并加标签。
+        {
+            auto outDs = gis::core::openRaster(output, false);
+            padOutsideWindowWithNodata(srcDS.get(), outDs.get());
+        }
     }
 
     {
