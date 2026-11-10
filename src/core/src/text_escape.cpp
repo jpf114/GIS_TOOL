@@ -27,7 +27,7 @@ std::string escapeForJsSingleQuoted(const std::string& text) {
         case '\'': out += "\\'"; break;
         case '\n': out += "\\n"; break;
         case '\r': out += "\\r"; break;
-        case '<': out += "\\u003C"; break;
+        case '<': out += "\\x3C"; break;
         default: out += ch; break;
         }
     }
