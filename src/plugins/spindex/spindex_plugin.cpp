@@ -45,6 +45,7 @@ cv::Mat readBandMat(const gis::core::GdalDatasetPtr& ds,
     return gis::core::gdalBandToMat(ds.get(), bandIndex);
 }
 
+// N188（RELEASE.md 已知限制）：仅分母 +1e-10f 后 cv::divide，不做阈值判定/值域裁剪，不是"安全除法"。
 cv::Mat safeDivide(const cv::Mat& numerator, cv::Mat denominator) {
     denominator += 1e-10f;
     cv::Mat result;

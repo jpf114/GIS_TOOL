@@ -6451,3 +6451,7 @@ C3h-1 复审又攒出五条同类项（同样归"冗余/一致性"批，行号�
   **有限巨值**（实测约 ±1e12 量级，见 `e9ff436` 那次改准的 NDVI/EVI 两篇），既不是 NaN、不是无穷、也不是 0，
   并会作为正常结果进入 `index_min`/`index_max` 统计。读端要自己把这类像元按"分母无效"处理。
   批次 D 的 N188 裁定（2026-11-05）：**产品不改**，只保证文档口径与实现一致并在此登记。
+- **表达式引擎的除法采用绝对阈值**：`|除数| < 1e-15`（`expression_engine.cpp` 的 `kNearZeroDivisorEpsilon`）即视为除零，整条表达式求值中止并把该像元写成**合法数值 0.0**（不是 NoData），仅以元数据 `divide_by_zero_pixels` 计数 ⇒ 量级 ≲1e-14 的波段（如归一化到极小值的反射率）会把良好比值误判成除零，下游也无法从栅格本身区分"真 0"与"除零 0"（详见 `算法说明/栅格工具/波段运算.md`）。
+- **`vector.spatial_join` 复杂度 O(n·m) 且无空间索引**：逐条重扫 join 图层、无包框预筛，大图层较慢；取消检查已下沉到候选对一级（批次 D 任务 8 已在 `算法说明/矢量数据处理/空间连接.md` 登记）。
+- **矢量检查的坐标键按 10 位小数量化、不是距离容差**：`vector_plugin_common.inc` 的 `pointKey` 用 `std::fixed << std::setprecision(10)` 把 `X,Y` 拼成字符串键，键只取 X/Y、忽略 Z，也无距离容差 ⇒ 坐标按 1e-10 网格量化（落入同一格即视为同一点），X/Y 相同而 Z 不同的点会被判为重复（`重复点检查.md` / `悬挂端点检查.md` 已同步口径）。
+- **9 条 `real_data_*` 在 `data/` 缺失时记 `Skipped` 而非 `Passed`**：包装脚本打印 `GIS_SKIP_TESTDATA_ABSENT: ` 标记并 `return()`，用例侧 `SKIP_REGULAR_EXPRESSION` 认领 ⇒ **Skip 优先于退出码**（退出码 0 也记 Skipped），且 Skipped 不参与失败判定；名单见 `tests/CMakeLists.txt` 的 `GIS_REAL_DATA_TEST_NAMES`（9 条）。
