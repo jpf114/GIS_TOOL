@@ -9,8 +9,9 @@
 
 - **版本**：`v1.0.0`。
 - **阶段**：批次 D 收口执行中（D4 最终门待本轮验收）。
-- **注册数**：Debug **789**（现读：`ctest --test-dir build/debug -C Debug -N | Select-Object -Last 1`）；
-  Release **787**（现读：`ctest --test-dir build/release -C Release -N | Select-Object -Last 1`）。
+- **注册数**：Debug **790**（现读：`ctest --test-dir build/debug -C Debug -N | Select-Object -Last 1`）；
+  Release **788**（现读：`ctest --test-dir build/release -C Release -N | Select-Object -Last 1`）。
+  本轮新增 `docs_prose_claims` 守卫，两树各 +1；`Release == Debug − 2` 的差额仍由两条 `debug_only` 用例构成。
 - **覆盖**（`tests/action_gold_cases.txt`）：**126** 个动作
   （现读：`@(Get-Content tests/action_gold_cases.txt | Where-Object { $_ -notmatch '^#' -and $_ -notmatch '^\s*$' }).Count`）、**126** 条 GOLD
   （现读：`@(Get-Content tests/action_gold_cases.txt | Where-Object { $_ -notmatch '^#' } | Where-Object { $_ -match ',GOLD' }).Count`）、**0** 条 PENDING
@@ -22,6 +23,24 @@
   `install_smoke` 安装态判据通过（现读：`git grep -n -F "安装态冒烟" -- docs/RELEASE.md`）；
   本轮守卫复验：`ctest --test-dir build/debug -C Debug -R "docs_match_cli|anchor_guard" --output-on-failure`。
 - **最近全量验收日期**：以本轮任务 17 落盘记录为准。
+
+### 验收命令与门禁清单
+
+1. 双树用例名差集（只看总数会漏「某条在 Release 静默消失」）：
+
+   ```powershell
+   ctest --test-dir build/debug -C Debug -N | Select-String '^  Test #' | ForEach-Object { ($_ -split ': ')[1] } | Sort-Object | Set-Content build/tmp/tests_debug.txt
+   ctest --test-dir build/release -C Release -N | Select-String '^  Test #' | ForEach-Object { ($_ -split ': ')[1] } | Sort-Object | Set-Content build/tmp/tests_release.txt
+   Compare-Object (Get-Content build/tmp/tests_debug.txt) (Get-Content build/tmp/tests_release.txt)
+   ```
+
+   判据：差集恰为 `gui_matching_stitch_debug_failure_offscreen` 与
+   `gui_matching_ecc_register_debug_failure_offscreen`，反向差集为空。
+2. 真实数据腿门禁：全量前确认 `data/` 存在；全量后确认 9 条 `real_data_*` 用例无 `***Skipped***`。
+   `SKIP_REGULAR_EXPRESSION` 的 Skip 认领优先于退出码，是已知门禁盲区。
+3. 收尾门禁：`git status --short` 为空；`data/` 零写入（与本轮开批时记录的最新文件时间比较）。
+4. 本仓已停用云端 CI，以上为本地人工门禁；`install_smoke` / `install_closure` / 九守卫 /
+   `docs_match_cli` / `docs_prose_claims` 仍由 ctest 自动执行。
 
 ## 发布前验证（本地）
 
