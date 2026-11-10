@@ -12,9 +12,9 @@
 - **注册数**：Debug **789**（现读：`ctest --test-dir build/debug -C Debug -N | Select-Object -Last 1`）；
   Release **787**（现读：`ctest --test-dir build/release -C Release -N | Select-Object -Last 1`）。
 - **覆盖**（`tests/action_gold_cases.txt`）：**126** 个动作
-  （现读：`grep -v '^#' tests/action_gold_cases.txt | grep -vc '^$'`）、**126** 条 GOLD
-  （现读：`grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'`）、**0** 条 PENDING
-  （现读：`grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING'`）。
+  （现读：`@(Get-Content tests/action_gold_cases.txt | Where-Object { $_ -notmatch '^#' -and $_ -notmatch '^\s*$' }).Count`）、**126** 条 GOLD
+  （现读：`@(Get-Content tests/action_gold_cases.txt | Where-Object { $_ -notmatch '^#' } | Where-Object { $_ -match ',GOLD' }).Count`）、**0** 条 PENDING
+  （现读：`@(Get-Content tests/action_gold_cases.txt | Where-Object { $_ -notmatch '^#' } | Where-Object { $_ -match ',PENDING' }).Count`）。
 - **交付方式**：仅 `cmake --install build/release --config Release --prefix install`；
   NSIS 安装包与云端构建已停用（见"交付方式（只保留本机 install）"节）。
 - **九守卫 / 安装判据**：九守卫全绿、**9/9** 通过
@@ -336,7 +336,7 @@ cmake --install build/release --config Release --prefix install
   见"批次 C 阶段二收口"那节）。上一档 **751 / 749** 是阶段三收口轮取的；两档之间涨了 **+3 / +3**：
   C19 的 `install_smoke` 是一条 `add_test`（各 +1），C18 是两条 `TEST(...)`（各 +2）——
   都不是"新增 `add_test` 才能数得到"那种 gtest 之外的注册。
-  再往前，**750 / 748** 是 C4b 加进 `docs_match_cli` 之后取的，**749 / 747** 到 **750 / 748** 那 **+1**
+  再往前，**750 / 748** 是 C4b 加进 `docs_match_cli` 之后取的，**749 / 747**（历史口径，现值见当前状态节）到 **750 / 748** 那 **+1**
   来自 N151 新增的那条 `TEST_F` `PluginTest.ProximityFailsWithoutGeotransform`。
   逐档账：C3m 收口 735 / 733（那一档 **+4** = 三条 `Vector{Centroid,Boundary,ConvexHull}GpkgSpatialIndexIsPopulated`
   + 一条反回潮守卫 `VectorSourceNeverDisablesGpkgSpatialIndex`，详见第 2 节）⇒ C3n 系列 **+8**（C3n-1 +5、C3n-2a/2b/2c/2d +3：`VectorConvexHullMidFailure…`、
@@ -426,7 +426,7 @@ cmake --install build/release --config Release --prefix install
   只 grep 源码那条（`grep -A3 "set_tests_properties(real_data" … | grep TIMEOUT`）测不到覆盖——
   有人把豁免名单里的名字删掉、blanket 把 720/780 改回 300 时，它照样打印那四个数。
 - **全量墙钟基线**（2026-10-21 Task C2 现跑。云端构建停用后已经没有"步骤超时"这一档 ⇒
-  时间上界只有**单条用例的 `TIMEOUT`**：blanket 是 300 s，四条 `real_data_*` 是上面那条例外（60/60/720/780）。
+  时间上界只有**单条用例的 `TIMEOUT`**：blanket 是 300 s，四条 `real_data_*`（历史口径，现值见当前状态节）是上面那条例外（60/60/720/780）。
   全量墙钟只用作"再加用例要重跑这一栏"的触发线；⚠ 四条腿进全量后新增的耗时是可分的：
   现读 Debug 那四条在全量里 10.20 + 1.47 + 167.46 + 186.12 = **365.25 s**，
   Release 6.36 + 1.51 + 85.86 + 91.28 = **185.01 s**。
