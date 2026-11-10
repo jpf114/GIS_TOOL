@@ -24,7 +24,6 @@ desktop.ini
 
 # vcpkg
 vcpkg_installed/
-docs/vcpkg-versions.lock.txt
 
 # Runtime databases
 *.db

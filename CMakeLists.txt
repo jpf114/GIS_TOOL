@@ -266,7 +266,7 @@ if(NOT EXISTS "${GIS_VCPKG_GDAL_DATA_DIR}")
 endif()
 
 find_package(GDAL REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d flann calib3d ml imgcodecs)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d flann calib3d ml imgcodecs stitching video)
 find_package(PROJ REQUIRED)
 
 include(${CMAKE_SOURCE_DIR}/cmake/PluginTargets.cmake)
