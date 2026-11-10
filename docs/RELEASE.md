@@ -8,21 +8,59 @@
 > 量测数字逐条附现读命令；版本号、阶段编号、任务编号为标识/引用，不属量测。
 
 - **版本**：`v1.0.0`。
-- **阶段**：批次 D 收口执行中（D4 最终门待本轮验收）。
+- **阶段**：**D4 已封 / D5 文档同步完成（2026-11-10）**；本地 ff 合并与推送待用户确认，详见下方「D4 / D5 收口结论」。
 - **注册数**：Debug **790**（现读：`ctest --test-dir build/debug -C Debug -N | Select-Object -Last 1`）；
   Release **788**（现读：`ctest --test-dir build/release -C Release -N | Select-Object -Last 1`）。
-  本轮新增 `docs_prose_claims` 守卫，两树各 +1；`Release == Debug − 2` 的差额仍由两条 `debug_only` 用例构成。
+  本轮新增 `docs_prose_claims` 守卫，两树各 +1；`Release == Debug − 2` 的差额仍由两条 `debug_only` 用例构成
+  （现读：本节「验收命令与门禁清单」第 1 条 `Compare-Object`）。
 - **覆盖**（`tests/action_gold_cases.txt`）：**126** 个动作
   （现读：`@(Get-Content tests/action_gold_cases.txt | Where-Object { $_ -notmatch '^#' -and $_ -notmatch '^\s*$' }).Count`）、**126** 条 GOLD
   （现读：`@(Get-Content tests/action_gold_cases.txt | Where-Object { $_ -notmatch '^#' } | Where-Object { $_ -match ',GOLD' }).Count`）、**0** 条 PENDING
   （现读：`@(Get-Content tests/action_gold_cases.txt | Where-Object { $_ -notmatch '^#' } | Where-Object { $_ -match ',PENDING' }).Count`）。
 - **交付方式**：仅 `cmake --install build/release --config Release --prefix install`；
   NSIS 安装包与云端构建已停用（见"交付方式（只保留本机 install）"节）。
-- **九守卫 / 安装判据**：九守卫全绿、**9/9** 通过
-  （现读：`git grep -n -F "九守卫 9/9" -- docs/RELEASE.md`）；`install_closure` 与双配置
-  `install_smoke` 安装态判据通过（现读：`git grep -n -F "安装态冒烟" -- docs/RELEASE.md`）；
-  本轮守卫复验：`ctest --test-dir build/debug -C Debug -R "docs_match_cli|anchor_guard" --output-on-failure`。
-- **最近全量验收日期**：以本轮任务 17 落盘记录为准。
+- **九守卫 / 安装判据**：九守卫全绿、**9/9** 通过，双树同批 **35/35** 判据通过
+  （现读：`ctest --test-dir build/<树> -C <Config> -R "install_smoke|install_closure|docs_match_cli|docs_prose_claims|guard|selftest|CoverageMeta|GuiContract" --output-on-failure -j1`，
+  Debug 48.11 s / Release 41.96 s）。
+- **最近全量验收日期**：**2026-11-10**。Debug **790/790** 通过、墙钟 **1178.97 s**；Release **788/788** 通过、墙钟 **571.76 s**
+  （现读：`ctest --test-dir build/debug -C Debug -j1 --output-on-failure` 与 Release 同命令，两轮退出码 0）。
+  本轮墙钟高于 2026-10-21 基线，未做性能归因；最慢腿余量倍数本轮未逐腿单跑，故不填报。
+
+### D4 / D5 收口结论（2026-11-10）
+
+**D4 最终门（双树全量 + 安装）**
+
+- 两树 configure/build 退出码 0；全量 `ctest -j1`：Debug 790/790、Release 788/788，均 100% passed。
+  双树用例名差集恰为两条 `debug_only` 用例、反向为空；`data/` 零写入；`git status --short` 干净；
+  Debug 与 Release `LastTest.log` 的 `Skipped` 均 0 命中。
+- 两树 `cmake --install`（前缀 `build/tmp/install_Debug` / `install_Release`）退出码 0；
+  `install_smoke` / `install_closure` / 九守卫 / `docs_match_cli` / `docs_prose_claims` 同批 35/35 全绿。
+- 首轮 Release 全量曾因 `source_mojibake_guard` 的 `R5_ESCRESIDUE` 规则误报任务 2 写入的合法 JS 转义
+  `\u003C` 而 1 条失败；未跳过、未改 TIMEOUT，改用语义等价的 `\x3C`（`45d8be7`，2 文件 2 行）后重跑全绿，
+  守卫 5 条自证规则仍能变红。详见 `.superpowers/sdd/task-17-blocker-report.md`。
+- 计划 Task 24 Step 4「真实腿余量按安静态逐条单跑」本轮**按裁定裁剪**：两轮全量无 Timeout 失败，
+  逐腿单跑属性能余量测量、非正确性门禁，余量倍数如实不填报（见 `task-17-report.md`）。
+
+**本轮用户可见 / 行为相关变更**
+
+1. `polygonize` 取消路径改用 RAII 托管 `OGRSpatialReference`，取消时不再泄漏；`warp` 失败清理改用非抛出
+   `remove(path, ec)`；工作流页析构等待后台线程，消除运行中销毁的 use-after-free；空间连接取消检查下沉到候选对。
+2. 新增 `docs_prose_claims` 守卫（关键事实/过期声明/断链机器判据，含 10 条自证臂与红→绿双向臂），
+   两树注册数各 +1；`README` / `交付自验` / `用户手册` / `CHANGELOG` / 两份发布说明改为引用本节现值。
+3. 126 篇算法文档正文与实现一次性对撞，17 篇正文改准（含 12 篇光谱指数统一 N188 口径、
+   特征检测/角点检测 N167 上限语义、分类统计硬失败与后缀校验、重复点 10 位量化）；
+   8 组过期/矛盾声明消除；根目录与源码树的 VS 生成物、历史临时构树、停用 NSIS 安装包已清理。
+
+**遗留与待确认（如实登记，不掩盖）**
+
+- 3 项「计划强制」设计取舍待用户裁定：`\x3C` 单 case 依赖 JS 解析上下文、polygonize 无取消夹具的
+  行为级红判据折衷、工作流析构 `wait()` 的 queued 回调残留风险；代码均按既定裁定实现，未返工。
+- 正文一次性对撞有 4 项「无法判定」（图像拼接 Stitcher 模式、模板匹配底层报文、SVM 分类、
+  辐射定标 metadata_file 分支），保留原文并登记理由；未建永久语义判据。
+- 任务名「98 篇」是阶段三遗留口径（批次 C 未对撞动作数）；本轮实际核对 **125 篇**
+  （含 28 篇一致性抽核）。12 篇光谱指数的修正位置为 ARVI:32 / NBR:30 / MNDWI:30 / GNDVI:29 /
+  UI:30 / EVI2:31 / SAVI:31 / OSAVI:31 / NDWI:30 / BSI:34 / NDBI:30 / NDMI:31。
+- D5 Step 3/4（本地 ff 合并回 `master`、推送后补记复跑对象）**尚未执行**，按计划需单独询问用户。
 
 ### 验收命令与门禁清单
 
