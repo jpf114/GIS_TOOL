@@ -2,14 +2,36 @@
 
 本文件记录 GIS TOOL 的版本变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [Unreleased]
+
+### 修复
+
+- JS 单引号串转义阻断 `</script>` 注入；`polygonize` 取消路径 RAII
+- 工作流页析构等待；warp 失败清理改为非抛出
+
+### 变更
+
+- OpenCV 组件声明、许可年份、依赖版本快照入仓；删除无调用点瓦片辅助函数
+- `.gitignore` 补齐生成物忽略
+
+### 文档
+
+- 建立 RELEASE 当前状态单一事实源，8 组过期声明改准
+- 算法口径名实同步，98 篇正文一次性对撞
+
+### 验收
+
+- 新增 `docs_prose_claims` 守卫
+- D4 双树全量 ctest 与两树 `cmake --install` 结论见 RELEASE 当前状态节
+
 ## [1.0.0] - 2026-05-24
 
 ### 新增
 
 - Windows 插件式 GIS/遥感算法工作台（CLI + GUI）
-- 13 个算法插件与 NSIS 安装脚本
+- 13 个算法插件（当时的 NSIS 安装包已于 2026-10-21 停用）
 - GUI 任务中心、批处理、结果预览、预设工作流
-- 475 项 CTest（含 GUI 离屏回归；`debug_only` 用例在 Release 下自动跳过）
+- 发布时的 CTest 数量（现值见 `docs/RELEASE.md` 当前状态节）；`debug_only` 用例在 Release 下不注册
 
 ### 变更
 
