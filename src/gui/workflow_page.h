@@ -23,6 +23,7 @@ class WorkflowPage : public QWidget {
 public:
     explicit WorkflowPage(gis::framework::PluginManager& pluginManager,
                           QWidget* parent = nullptr);
+    ~WorkflowPage() override;
 
 signals:
     void workflowFinished(bool success, const QString& message);

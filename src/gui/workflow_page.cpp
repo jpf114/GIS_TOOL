@@ -19,6 +19,14 @@ WorkflowPage::WorkflowPage(gis::framework::PluginManager& pluginManager,
     buildUi();
 }
 
+WorkflowPage::~WorkflowPage() {
+    if (workflowThread_) {
+        workflowThread_->wait();
+        delete workflowThread_;
+        workflowThread_ = nullptr;
+    }
+}
+
 void WorkflowPage::buildUi() {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -163,7 +171,6 @@ void WorkflowPage::onExecuteClicked() {
         QMetaObject::invokeMethod(this, &WorkflowPage::onWorkflowFinished);
     });
 
-    connect(workflowThread_, &QThread::finished, workflowThread_, &QThread::deleteLater);
     workflowThread_->start();
 }
 
