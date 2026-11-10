@@ -10,12 +10,10 @@
 - 依赖管理：全局 vcpkg + 仓库 [vcpkg.json](vcpkg.json) 依赖清单
 - 当前产品边界：聚焦算法工作台，不包含地图展示平台能力
 
-### 最近验收摘要（2026-10-21）
+### 当前状态与验收摘要
 
-- `ctest --test-dir build/debug -C Debug -j1`：**697/697** 通过（702.01 s）
-- `ctest --test-dir build/release -C Release -j1`：**695/695** 通过（367.32 s）
-  （Release 恒少 2 条，是两条只在 Debug 生效的轻量闸门用例，按名字核过；
-  ⚠ 本机全量墙钟的 run-to-run 波动有 ±25 s，这两数以当次现读为准，不要拿来论证某个改动变慢）
+注册数、覆盖数、包体与验收结论一律见 [docs/RELEASE.md 当前状态节](./docs/RELEASE.md#当前状态唯一发布事实源) 与 `tests/action_gold_cases.txt`；引用前请按该节给出的命令现读。
+
 - 真实数据回归四条腿已全部纳入 ctest（`real_data_raster` / `real_data_matching` /
   `real_data_vector_quick` / `real_data_vector_full`，挂账 N112 已销），六个 `add_custom_target`
   保留做人工入口。现读：vector 腿判的是 22836 要素的北京道路（`data/` 只读）；
@@ -24,13 +22,6 @@
   归批次 C 的 C4~C15 各批（`tests/real_data_matrix.txt` 的 `not-consumed` 列就是这件事的台账）
 - `cmake --install` + 包内导入闭包断言（`install_closure`）通过
 - 交付方式：只用 `cmake --install`；NSIS 安装包与 GitHub 云端构建已于 2026-10-21 停用
-- 包体：430 个文件 / 192.2 MB（2026-10-21 删掉"把 `bin/*.dll` 再复制一份进 `bin/plugins/`"那段后
-  比原先少 78 个文件 / 167.4 MB；本项目自己的代码只占 3.6 MB，其余全是 GDAL/OpenCV/Qt 的传递依赖）
-
-> ⚠ 文档与代码的一致性只**逐条复验了 5 条**（D1~D5，见
-> [docs/算法说明/文档漂移清单.md](docs/算法说明/文档漂移清单.md)）：D2/D3/D4 已在本仓库改文档，
-> D1 是 CLI 参数契约缺陷（`vector info` 被强制要求 `--output`，留待批次 C），D5 是缺一篇算法说明。
-> 其余 120 篇动作说明的参数表**尚未与 `--list/--help` 逐篇机械核对** ⇒ 参数名/类型/默认值以二进制为准。
 
 > 更早的验收明细见 [CHANGELOG.md](CHANGELOG.md) 与 [docs/RELEASE.md](docs/RELEASE.md)。
 
