@@ -5699,6 +5699,17 @@ range=0 unresolved=0 ambiguous=0 ceiling=182 dead_registry=0`；
 - **文档**：`空间滤波.md` 的 Sigma 行补 σ=0 合法档与二项式核语义（并写明 gabor 支拒绝 σ=0 的两支差异）。
 - **席位**：实现席配额阻断（R-D63，71 工具次未落任何改动）⇒ 控制器从零自跑（判据/判别臂/文档/终验）；**无独立复审席**（与 N174/N160 同批待补审）。
 - **验收**：processing 族 **31/31**；九守卫 9/9；`GuiContract` 4/4；注册总数 **789**；`find data -type f -newermt` = 0；`git status` 终态干净。
+### 批次 D D4-M（2026-11-10 落地：登记表最后两条 PENDING `matching.ecc_register` / `matching.stitch` 晋升 GOLD，`kPendingCeiling` 2→0——**判据刀，产品零改动**）
+
+- **收口**：批次 D 收口门 D4 的关键子刀 D4-M。登记表两条 PENDING（matching ecc_register / stitch）晋升 GOLD，第 4 列写证据用例名 `PluginTest.MatchingEccRegisterExecution` / `PluginTest.MatchingStitchExecution`；`kPendingCeiling` 由 2 降到 **0**，PENDING 真归零。
+- **背景（R-D51）**：matching 插件的 `GIS_MATCHING_LIGHTWEIGHT_DEBUG` 只在 Debug 定义（CMake PRIVATE、插件 SHARED，宏只作用于插件自己的 TU）⇒ Debug 里 doEccRegister/doStitch 必返 fail（"Debug lightweight mode"），**Release 才走真实路径**。两用例各含 `#ifdef _DEBUG`（fail-fast 断言）/ `#else`（Release）两半；新值级判据只进 `#else` 半边，Debug fail-fast 半边原样保留。
+- **ecc 判据（自配准 ⇒ 强手算期望）**：input=reference identical ⇒ findTransformECC 收敛单位阵。warp_matrix 是 OpenCV Mat 流格式（affine 2×3），洗 `[ ] ; ,` 为空格后逐枚 strtod 吃 6 数（形状闸：恰 6 枚 + 尾部纯空白），六枚 EXPECT_NEAR 钉 {1,0,0,0,1,0}，容差 **1e-6**（依据：Release 两跑实测逐枚偏差 0；CV_32F 下约 8.4×FLT_EPSILON，只放末位噪声；紧于 ECC 收敛 eps 1e-5，故能区分精确单位阵与扰动初始化回敛的近似单位阵）。输出 vs 参考逐像元 |Δ|>0.5 计数==0（Byte 整数格半格容差钉逐像元相等；Release 实测 maxdiff=0，9216/9216）。motion_type=="affine"、96×96 既有保留。
+- **stitch 判据（两张 identical 图案 ⇒ 关系不变量 + Release 实测确认）**：pano 尺寸钉死 **96×96**（Release 两跑一致；理论界每轴 ≤2×96、下界单图 96 写注释）；值域 mn≥0 / mx≤1（grayPano/255 理论硬不变量）；非平凡 mn<mx；极值 EXPECT_NEAR(mn,0,0.5/255) / EXPECT_NEAR(mx,1,0.5/255)（半格容差在 k/255 格上等价钉 min==0/max==1；Release 实测 min=0、max=1）；跨跑稳定性：同参第二跑像元逐枚 diffs==0（Release 实测 pixdiffs=0，确定性成立）。input_count=="2" 既有保留。
+- **双验**：Release `MatchingEccRegisterExecution|MatchingStitchExecution` **2/2**；Debug 同两条 + `MatchingPluginDebugLightweightActionsFailFast` **3/3**（fail-fast 半边不被破坏）。`(CoverageMeta|CoverageMetaJudge)` 族 Release+Debug 各 **19/19**；归零承重四条（EveryActionIsRegistered / PendingCountDoesNotGrow / RegistryHeaderCountsMatchData / GoldEvidenceIsAuditable）**4/4**。
+- **登记表现读**：data_rows=126、gold_rows 124→**126**、pending_rows 2→**0**、gold_rows_all_lines 125→**127**、gold_rows_table_driven=15、gold_rows_literal_slot 109→**111**（=126−15）；头部 COUNT 按现读命令逐条重算改齐。
+- **双向臂（Release 实跑，产品变异跑完字节还原，sha256 对拍 `cd9fdb0c…`）**：ecc 臂——affine 支 warpMat 初始化改平移 (5,5) ⇒ ECC 回敛但 eps 终止留残差 ⇒ warp 六枚 EXPECT_NEAR **6/6 红**（平移槽残差约 0.0014/0.0046、对角约 1e-5，均 >1e-6；像元判据在此残差下仍绿 ⇒ 红的恰是 warp 判据本身）⇒ 还原复绿。stitch 臂——归一化尺度 1/255→1/128 ⇒ 产物 max=255/128=**1.9921875** ⇒ 值域上界 + 极值 EXPECT_NEAR 红 ⇒ 还原复绿。产品零净改动。
+- **九守卫同笔跑**（Debug）**9/9**（39.79s）；geotransform 两域现读：产品 any26/code25/checked23、测试 code9/checked8（新判据用 readRasterBandF32，无 GetGeoTransform 代码位点 ⇒ CODE 桶不涨，期望不动）；anchor_guard 绿 ⇒ 零新增裸行号锚（ceiling 181）。
+- **验收**：GuiContract **4/4**；注册总数 Release **787** / Debug **789**（无新增 TEST_F，只在既有用例内补值级判据）；`find data -type f -newermt` = **0**、check_data_baseline **88/88 DIFFS 0**；`git status` 终态干净。
 ## 批次 B 发布说明（用户可见变更，2026-10-19 起）
 
 ### 用户设置存储位置：Windows 注册表 → ini 文件
