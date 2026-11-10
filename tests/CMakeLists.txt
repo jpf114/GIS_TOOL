@@ -60,7 +60,8 @@ target_link_libraries(gis_tests PRIVATE
 target_compile_definitions(gis_tests PRIVATE GIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 if(MSVC)
-    target_compile_options(gis_tests PRIVATE /utf-8)
+    # /bigobj：test_plugins.cpp 随批次 D 判据增长，Release /O2 下节数超 COFF 65535 上限（C1128）。
+    target_compile_options(gis_tests PRIVATE /utf-8 /bigobj)
 endif()
 
 set_target_properties(gis_tests PROPERTIES
