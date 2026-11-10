@@ -235,15 +235,15 @@ gis::framework::Result VectorPlugin::doPolygonize(
     }
     GDALDataset* dstDS = staged.dataset();
 
-    OGRSpatialReference* srs = nullptr;
+    std::unique_ptr<OGRSpatialReference, OGRSpatialReferenceReleaser> srs;
     const char* pszWKT = srcDS->GetProjectionRef();
     if (pszWKT && pszWKT[0] != '\0') {
-        srs = new OGRSpatialReference();
+        srs.reset(new OGRSpatialReference());
         srs->importFromWkt(pszWKT);
     }
 
-    OGRLayer* dstLayer = dstDS->CreateLayer("polygonized", srs, wkbPolygon, nullptr);
-    if (!dstLayer) { if (srs) delete srs;
+    OGRLayer* dstLayer = dstDS->CreateLayer("polygonized", srs.get(), wkbPolygon, nullptr);
+    if (!dstLayer) {
         return gis::framework::Result::fail("Cannot create output layer");
     }
 
@@ -263,7 +263,6 @@ gis::framework::Result VectorPlugin::doPolygonize(
         nullptr,
         nullptr);
     if (polygonizeErr != CE_None) {
-        if (srs) delete srs;
         return gis::framework::Result::fail(
             "Polygonize failed: " + std::string(CPLGetLastErrorMsg()));
     }
@@ -276,7 +275,6 @@ gis::framework::Result VectorPlugin::doPolygonize(
     }
     dstLayer->ResetReading();
 
-    if (srs) delete srs;
     progress.throwIfCancelled();
 
     // 全部写完 ⇒ 关闭数据集 → 逐文件替换目标 → 清旧边车（顺序由 VectorStagedOutput::commit 钉）。
