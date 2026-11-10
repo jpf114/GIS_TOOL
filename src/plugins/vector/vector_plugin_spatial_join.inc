@@ -151,6 +151,7 @@ gis::framework::Result VectorPlugin::doSpatialJoin(
                 }
             }
             OGRFeature::DestroyFeature(joinFeat);
+            progress.throwIfCancelled();
         }
 
         OGRFeature* dstFeat = OGRFeature::CreateFeature(dstLayer->GetLayerDefn());
