@@ -467,6 +467,8 @@ TEST_F(CoreTest, EscapeForHtmlEscapesSpecialCharacters) {
 TEST_F(CoreTest, EscapeForJsSingleQuotedEscapesSpecialCharacters) {
     EXPECT_EQ(gis::core::escapeForJsSingleQuoted("line\nbreak\\quote'"),
               "line\\nbreak\\\\quote\\'");
+    EXPECT_EQ(gis::core::escapeForJsSingleQuoted("a</script>b"),
+              "a\\u003C/script>b");
 }
 
 TEST_F(CoreTest, InitDefaultLoggingIsIdempotent) {
