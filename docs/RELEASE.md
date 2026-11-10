@@ -1,5 +1,28 @@
 # v1.0.0 发布检查清单
 
+## 当前状态（唯一发布事实源）
+
+> 本节是 `v1.0.0` 发布事实的唯一权威口径：每条会漂移的量测数字都由其后所附的现读命令产出，
+> 不在正文别处写死。正文其余批次 A/B/C/D 流水台账保留历史原文，其中的注册数、覆盖数与
+> 基线沿革都是当时现读，不得当作当前值引用。阶段结论由后续收口任务更新本节。
+> 量测数字逐条附现读命令；版本号、阶段编号、任务编号为标识/引用，不属量测。
+
+- **版本**：`v1.0.0`。
+- **阶段**：批次 D 收口执行中（D4 最终门待本轮验收）。
+- **注册数**：Debug **789**（现读：`ctest --test-dir build/debug -C Debug -N | Select-Object -Last 1`）；
+  Release **787**（现读：`ctest --test-dir build/release -C Release -N | Select-Object -Last 1`）。
+- **覆盖**（`tests/action_gold_cases.txt`）：**126** 个动作
+  （现读：`grep -v '^#' tests/action_gold_cases.txt | grep -vc '^$'`）、**126** 条 GOLD
+  （现读：`grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]GOLD'`）、**0** 条 PENDING
+  （现读：`grep -v '^#' tests/action_gold_cases.txt | grep -c '[,]PENDING'`）。
+- **交付方式**：仅 `cmake --install build/release --config Release --prefix install`；
+  NSIS 安装包与云端构建已停用（见"交付方式（只保留本机 install）"节）。
+- **九守卫 / 安装判据**：九守卫全绿、**9/9** 通过
+  （现读：`git grep -n -F "九守卫 9/9" -- docs/RELEASE.md`）；`install_closure` 与双配置
+  `install_smoke` 安装态判据通过（现读：`git grep -n -F "安装态冒烟" -- docs/RELEASE.md`）；
+  本轮守卫复验：`ctest --test-dir build/debug -C Debug -R "docs_match_cli|anchor_guard" --output-on-failure`。
+- **最近全量验收日期**：以本轮任务 17 落盘记录为准。
+
 ## 发布前验证（本地）
 
 ### 1) 构建与全量测试
@@ -36,27 +59,9 @@ CMake Error at …/build/debug/tests/gis_tests[1]_include.cmake:1 (include):
     …/build/debug/tests/gis_tests[1]_include-.cmake
 Errors while running CTest        # 命名列出数 = 0，且没有 "Total Tests" 行
 ```
-跑全量前先用 `-N` 记注册数：**当前基线 Debug 749 / Release 747**（2026-10-26 批次 C C3k-3 双树全量轮现读；
-Release 侧这次是**全目标重建之后**现读的 —— 748/746 那一轮就是重建后取的，C3k-3 把 quick 档最贵的两条重活
-拆成新腿 `real_data_vector_join_heavy`（+1 条 `add_test`）⇒ 749/747；Release 恒比 Debug 少 2 条是既有的
-debug-only 用例，不是漏跑）。此前一档 **748 / 746**（C3c 收尾那三条 `TEST_F`；Release 那时刚从"未重编 ⇒ 读 743"
-补成重建后现读）。从 745 起 Debug 这一档的 **+3** 依次是
-`PluginTest.VectorBufferRoundCapStadiumMatchesHandComputed`（C3c-B 第二片）、
-`PluginTest.VectorDifferenceSubtractsOverlayGeometry`（C3c-C1）与
-`PluginTest.VectorPolygonizeExecutionCarvesEqualValueRegions`（C3c-C3），三条都是新增 `TEST_F`；
-⚠ 上一版这里写 745 / 743，是我在 buffer 那一刀把"没新增 `add_test`"错当成"注册数不变"——
-`ctest -N` 的计数含每一条 gtest 用例，加一条 `TEST_F` 就加一条注册）。上一档 744 / 742 是
-C3k-2 拆腿轮，再上一档 743 / 741 是 C3n-2d，再上一档 742 / 740 是 C3n-2b、741 / 739 是 C3n-2a、740 / 738 是 C3n-1，两棵树各跑
-`ctest --test-dir build/<树> -C <Config> -N | tail -n 1`）。⚠ 上一版这一行写的是 692 / 690，而同一文件下面
-"全量墙钟基线"表写的是 693 / 691 ⇒ 两处本来就差 1（本轮 +4 条后实测 697 / 695，与 693 / 691 那一档对得上、
-  与 692 / 690 差 1）。**那 1 条的来历是确定的，不必挂下一批**：`692 / 690` 是 B21 把
-  `source_mojibake_guard` 落成用例**之前**的旧值（两棵树各 +1 ⇒ 693 / 691），我上一轮只改了下面那张表、
-  漏改了这一行 prose ⇒ 差集就是这一条，本轮把两处统一成现读值 697 / 695。Release 少的那 2 条**必须按名字核、不能只看总数**
-（只看数会漏"某条在 Release 静默消失"）：`comm -23` 实测差集恰为
-`gui_matching_stitch_debug_failure_offscreen` 与 `gui_matching_ecc_register_debug_failure_offscreen`，
-反向 `comm -13` 为空 ⇒ 这两条是 Debug 轻量闸门用例（见"批次 A 发布说明 → 基线口径"）。
+跑全量前先用 `-N` 记注册数：历史基线沿革见批次 A/C 段落；注册数一律以 `ctest --test-dir build/<树> -C <Config> -N` 现读为准，不在正文写死（当前值见"当前状态（唯一发布事实源）"节）。
 
-- **四条 `real_data_*` 也必须带 `-C`**（Task C2 / 预检裁定 R-C2c，本批按裁定**不加兜底**）：这四条的命令里
+- **四条 `real_data_*`（历史口径，现为 9 条，见当前状态节）也必须带 `-C`**（Task C2 / 预检裁定 R-C2c，本批按裁定**不加兜底**）：这四条的命令里
   同样有 `$<TARGET_FILE:gis-cli>` ⇒ 上面那段"不带 `-C` 时展开成空串"的实测对它们一样成立。
   不看脸色的是**注册与否**（四条恒注册，写在 `if(GIS_POWERSHELL_EXECUTABLE)` 之外，解释器缺失由包装
   `FATAL_ERROR` 判红）；但 `-N` 本身**仍必须带 `-C`**——上一段实测就是证据：不带 `-C` 时整棵
@@ -2060,7 +2065,7 @@ C19（裸环境 `install_smoke`）做完后能给出一条更接近"带走"的�
   它们在非 Debug 档会进实跑名单、靠两条新增 allowlist 条目兜住（同样未实跑）；
   ③ 24 条 raster 未判与 3 条 matching 未判是**登记**不是修复，逐条理由见 runner 里的 allowlist 与 `action_gold_cases.txt`。
 
-### 批次 D D1-T3 修复轮 1（2026-10-28，复审席 `task-17-review.md` 判 not approved 的四条必须修）
+### 批次 D D1-T3 修复轮 1（2026-10-28，复审判 not approved 的四条必须修；该轮复审记录未入仓，结论见本节）
 
 - **MF-1（真缺口：闸会装绿）**：共享闸 `tests/regression_case_gate.ps1` 补第 (6) 项硬失败——
   **每条 allowlist 条目必须仍对应本档真注册过的 case**，唯一的例外走**声明**（AST 派生的 `ConditionalCase`：
