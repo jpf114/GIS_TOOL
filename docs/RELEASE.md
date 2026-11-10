@@ -21,8 +21,8 @@
   NSIS 安装包与云端构建已停用（见"交付方式（只保留本机 install）"节）。
 - **九守卫 / 安装判据**：九守卫全绿、**9/9** 通过，双树同批 **35/35** 判据通过
   （现读：`ctest --test-dir build/<树> -C <Config> -R "install_smoke|install_closure|docs_match_cli|docs_prose_claims|guard|selftest|CoverageMeta|GuiContract" --output-on-failure -j1`，
-  Debug 48.11 s / Release 41.96 s）。
-- **最近全量验收日期**：**2026-11-10**。Debug **790/790** 通过、墙钟 **1178.97 s**；Release **788/788** 通过、墙钟 **571.76 s**
+  Debug 45.23 s / Release 40.71 s）。
+- **最近全量验收日期**：**2026-11-10（最终审查修复轮后重跑）**。Debug **790/790** 通过、墙钟 **1154.29 s**；Release **788/788** 通过、墙钟 **585.96 s**
   （现读：`ctest --test-dir build/debug -C Debug -j1 --output-on-failure` 与 Release 同命令，两轮退出码 0）。
   本轮墙钟高于 2026-10-21 基线，未做性能归因；最慢腿余量倍数本轮未逐腿单跑，故不填报。
 
@@ -38,7 +38,7 @@
 - 首轮 Release 全量曾因 `source_mojibake_guard` 的 `R5_ESCRESIDUE` 规则误报任务 2 写入的合法 JS 转义
   `\u003C` 而 1 条失败；未跳过、未改 TIMEOUT，改用语义等价的 `\x3C`（`45d8be7`，2 文件 2 行）后重跑全绿，
   守卫 5 条自证规则仍能变红。详见 `.superpowers/sdd/task-17-blocker-report.md`。
-- 计划 Task 24 Step 4「真实腿余量按安静态逐条单跑」本轮**按裁定裁剪**：两轮全量无 Timeout 失败，
+- 批次 D 计划 Task 24 Step 4「真实腿余量按安静态逐条单跑」本轮**按裁定裁剪**：两轮全量无 Timeout 失败，
   逐腿单跑属性能余量测量、非正确性门禁，余量倍数如实不填报（见 `task-17-report.md`）。
 
 **本轮用户可见 / 行为相关变更**
@@ -47,7 +47,7 @@
    `remove(path, ec)`；工作流页析构等待后台线程，消除运行中销毁的 use-after-free；空间连接取消检查下沉到候选对。
 2. 新增 `docs_prose_claims` 守卫（关键事实/过期声明/断链机器判据，含 10 条自证臂与红→绿双向臂），
    两树注册数各 +1；`README` / `交付自验` / `用户手册` / `CHANGELOG` / 两份发布说明改为引用本节现值。
-3. 126 篇算法文档正文与实现一次性对撞，17 篇正文改准（含 12 篇光谱指数统一 N188 口径、
+3. 共 126 篇算法文档，本轮实核 **125 篇**（含 28 篇一致性抽核）与实现一次性对撞，17 篇正文改准（含 12 篇光谱指数统一 N188 口径、
    特征检测/角点检测 N167 上限语义、分类统计硬失败与后缀校验、重复点 10 位量化）；
    8 组过期/矛盾声明消除；根目录与源码树的 VS 生成物、历史临时构树、停用 NSIS 安装包已清理。
 
@@ -6515,5 +6515,6 @@ C3h-1 复审又攒出五条同类项（同样归"冗余/一致性"批，行号�
   批次 D 的 N188 裁定（2026-11-05）：**产品不改**，只保证文档口径与实现一致并在此登记。
 - **表达式引擎的除法采用绝对阈值**：`|除数| < 1e-15`（`expression_engine.cpp` 的 `kNearZeroDivisorEpsilon`）即视为除零，整条表达式求值中止并把该像元写成**合法数值 0.0**（不是 NoData），仅以元数据 `divide_by_zero_pixels` 计数 ⇒ 量级 ≲1e-14 的波段（如归一化到极小值的反射率）会把良好比值误判成除零，下游也无法从栅格本身区分"真 0"与"除零 0"（详见 `算法说明/栅格工具/波段运算.md`）。
 - **`vector.spatial_join` 复杂度 O(n·m) 且无空间索引**：逐条重扫 join 图层、无包框预筛，大图层较慢；取消检查已下沉到候选对一级（批次 D 任务 8 已在 `算法说明/矢量数据处理/空间连接.md` 登记）。
+  ⚠ 该新增检查点位于内层循环、`srcFeat` 销毁之前，取消异常抛出时会遗留一个未释放的 `srcFeat`；这是本轮任务 8 **新引入**的泄漏窗口（非既有行为，既有外层取消点在销毁之后是安全的）。取消属低频路径，按「不过度设计」保留粒度改进并在此登记，未改用 RAII 托管（最终整分支审查 Important-3 的最低修复要求）。
 - **矢量检查的坐标键按 10 位小数量化、不是距离容差**：`vector_plugin_common.inc` 的 `pointKey` 用 `std::fixed << std::setprecision(10)` 把 `X,Y` 拼成字符串键，键只取 X/Y、忽略 Z，也无距离容差 ⇒ 坐标按 1e-10 网格量化（落入同一格即视为同一点），X/Y 相同而 Z 不同的点会被判为重复（`重复点检查.md` / `悬挂端点检查.md` 已同步口径）。
 - **9 条 `real_data_*` 在 `data/` 缺失时记 `Skipped` 而非 `Passed`**：包装脚本打印 `GIS_SKIP_TESTDATA_ABSENT: ` 标记并 `return()`，用例侧 `SKIP_REGULAR_EXPRESSION` 认领 ⇒ **Skip 优先于退出码**（退出码 0 也记 Skipped），且 Skipped 不参与失败判定；名单见 `tests/CMakeLists.txt` 的 `GIS_REAL_DATA_TEST_NAMES`（9 条）。

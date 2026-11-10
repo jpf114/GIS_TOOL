@@ -161,6 +161,11 @@ void WorkflowPage::onExecuteClicked() {
     std::map<std::string, std::string> initialParams;
     auto wfCopy = wf;
 
+    if (workflowThread_) {
+        workflowThread_->wait();
+        delete workflowThread_;
+        workflowThread_ = nullptr;
+    }
     workflowThread_ = QThread::create([this, wfCopy, initialParams]() {
         gis::framework::WorkflowRunner runner(pluginManager_);
         auto result = runner.execute(wfCopy, initialParams);
