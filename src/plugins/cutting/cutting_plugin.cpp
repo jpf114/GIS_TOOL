@@ -1500,7 +1500,8 @@ gis::framework::Result CuttingPlugin::doTile(
             if (hWarped) {
                 GDALClose(hWarped);
             }
-            std::filesystem::remove(warpedPath);   // warp 半途失败可能留下残缺输出，defensive 清理
+            std::error_code removeEc;
+            std::filesystem::remove(warpedPath, removeEc);   // warp 半途失败可能留下残缺输出，defensive 清理
             return gis::framework::Result::fail("Reprojection failed: " + std::string(CPLGetLastErrorMsg()));
         }
         warped = std::unique_ptr<GDALDataset, WarpedRasterCloser>(
