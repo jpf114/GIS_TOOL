@@ -2113,6 +2113,17 @@ add_test(
         -DREPORT=${CMAKE_CURRENT_BINARY_DIR}/docs_match_cli_report.txt
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_docs_match_cli.cmake
 )
+# ── 质检收口：对外文档关键事实守卫（D4 Step 5 的 docs_prose_claims） ──────────────
+# 判据本体 tests/check_docs_prose_claims.py 只核过期事实 token / 写死的注册数 /
+#   RELEASE 当前状态节 / docs/README.md 相对链接；参数表仍由 docs_match_cli 负责。
+# 复用上方已探测出的 _gis_docs_py，不重复 find_program；解释器缺失时载体 FATAL。
+add_test(
+    NAME docs_prose_claims
+    COMMAND ${CMAKE_COMMAND}
+        -DPY=${_gis_docs_py}
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_docs_prose_claims.cmake
+)
 # ── 批次 D Task 8（D0-C2）：GetGeoTransform 防回潮守卫 ────────────────────────────
 # 判据本体 tests/check_geotransform_guard.py：把 src/（产品域）与 tests/（第二域）里每一个
 #   `GetGeoTransform(` 的 **CODE 位点**分类为"判了返回值 / 未判"，未判的必须被
