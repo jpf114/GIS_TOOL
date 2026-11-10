@@ -10,6 +10,10 @@ install/
 *.suo
 *.sln
 *.vcxproj*
+*.dir/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
 .idea/
 CMakeSettings.json
 CMakeUserPresets.json

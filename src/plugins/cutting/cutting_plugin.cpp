@@ -808,23 +808,6 @@ static int computeMaxZoom(double pixelSize, int tileSize) {
     return 0;
 }
 
-// R-T17-7 第 4 点：doTile 的瓦片索引范围改为"直接从 EPSG:3857 的度量范围算"，不再
-// 经度分往返；这两个函数**保留**（签名与其他潜在调用路径共用 static 工具面），
-// 加 [[maybe_unused]] 免得编译器按未引用局部函数报警——本批不改构建面。
-[[maybe_unused]] static void lonLatToTileXYZ(double lon, double lat, int z, int& x, int& y) {
-    x = static_cast<int>(std::floor((lon + 180.0) / 360.0 * (1 << z)));
-    const double latRad = lat * M_PI / 180.0;
-    y = static_cast<int>(std::floor((1.0 - std::log(std::tan(latRad) + 1.0 / std::cos(latRad)) / M_PI) / 2.0 * (1 << z)));
-    x = std::max(0, std::min(x, (1 << z) - 1));
-    y = std::max(0, std::min(y, (1 << z) - 1));
-}
-
-[[maybe_unused]] static void tileXYToLonLat(int x, int y, int z, double& lon, double& lat) {
-    const double n = M_PI * (1.0 - 2.0 * y / static_cast<double>(1 << z));
-    lon = x / static_cast<double>(1 << z) * 360.0 - 180.0;
-    lat = 180.0 / M_PI * std::atan(0.5 * (std::exp(n) - std::exp(-n)));
-}
-
 // R-T17-7 第 4 点的输入侧换算：tile_extent 按 spec 是 WGS84 经纬度矩形
 // （"Optional tile extent in WGS84"），索引既然只从度量范围推导，用户给的经纬度
 // 必须先**前向投影**进 EPSG:3857（与 mercatorTileGrid 共用同一条 Web Mercator 定义），
