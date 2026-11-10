@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""docs_prose_claims: minimal guard for stale facts in outward-facing docs.
+"""docs_prose_claims: stale-fact guard for outward docs; ASCII-only stdout.
 
-Scope: 7 docs, stale tokens, hardcoded registration counts, RELEASE current-status
-section, docs/README.md links. Parameter tables are covered by docs_match_cli.
-stdout is ASCII-only so CMake cannot re-encode Chinese under the local codepage.
+Tokens, hardcoded registration counts, RELEASE current-status section and
+docs/README.md links; parameter tables stay with docs_match_cli.
 """
 import argparse
 import re
@@ -21,7 +20,6 @@ STALE_TOKENS = (
 REGISTERED_COUNT = re.compile(r"\b7\d\d\s*/\s*7\d\d\b")
 LINK = re.compile(r"\[[^\]]*\]\((\.\.?/[^)#]+)(?:#[^)]*)?\)")
 STATUS_MARKER = "## 当前状态（唯一发布事实源）"
-
 
 def _ascii(text):
     return text.encode("unicode_escape").decode("ascii")
@@ -116,7 +114,6 @@ def main():
         return 1
     print("OK docs_prose_claims: 0 drift")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
