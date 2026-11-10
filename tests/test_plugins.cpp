@@ -25708,6 +25708,61 @@ TEST_F(PluginTest, MatchingStitchExecution) {
     ASSERT_TRUE(result.metadata.count("output_height") > 0);
     EXPECT_GT(std::stoi(result.metadata.at("output_width")), 0);
     EXPECT_GT(std::stoi(result.metadata.at("output_height")), 0);
+
+    // ---- D4-M 值级判据（Release 半边；Debug 半边 fail-fast 原样保留）----
+    // 两张 identical 图案 ⇒ 单应 ≈ identity ⇒ pano 覆盖单张足迹。
+    // 尺寸（Release 实测确认）：两跑均 96×96（与输入同），钉死精确值。
+    // 理论界备查：两图拼接每轴上界 2×96 = 192；identity 单应不缩 footprint，下界即单图 96。
+    const int panoW = std::stoi(result.metadata.at("output_width"));
+    const int panoH = std::stoi(result.metadata.at("output_height"));
+    EXPECT_EQ(panoW, 96) << "identical 输入 pano 宽必须是单图 96（Release 实测确认，两跑一致）";
+    EXPECT_EQ(panoH, 96) << "identical 输入 pano 高必须是单图 96（Release 实测确认，两跑一致）";
+
+    // 像元值域与极值：doStitch 出口 grayPano.convertTo(CV_32F, 1.0/255.0)，grayPano 是 CV_8U
+    // ⇒ 值域含于 [0,1] 是理论硬不变量，像元落在 k/255 格上。
+    // 极值（Release 实测确认）：min=0、max=1（图案的 0 边界与 255 方块拼接后两端都存活，两跑一致）。
+    // 容差取半格 0.5/255：格上距 0 最近的非零值是 1/255（约 3.92e-3）大于 1.96e-3 ⇒ 该容差在格上
+    // 等价于钉 min==0 / max==1，只放读回噪声，不放任何真实格点漂移。
+    int w = 0; int h = 0;
+    const std::vector<float> pix = readRasterBandF32(output, w, h);
+    ASSERT_EQ(w, panoW);
+    ASSERT_EQ(h, panoH);
+    ASSERT_FALSE(pix.empty());
+    float mn = pix[0]; float mx = pix[0];
+    for (float v : pix) {
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+    }
+    EXPECT_GE(mn, 0.0f) << "值域下界 0（grayPano/255 理论不变量）";
+    EXPECT_LE(mx, 1.0f) << "值域上界 1（grayPano/255 理论不变量）";
+    EXPECT_LT(mn, mx) << "非平凡：pano 不得是常量图";
+    constexpr double kHalfStep = 0.5 / 255.0;
+    EXPECT_NEAR(static_cast<double>(mn), 0.0, kHalfStep) << "min 必须是 0（Release 实测确认）";
+    EXPECT_NEAR(static_cast<double>(mx), 1.0, kHalfStep) << "max 必须是 1（Release 实测确认）";
+
+    // 跨跑稳定性：stitcher 对 identical 输入确定性（Release 实测两跑 pixdiffs=0）⇒
+    // 同参再跑一遍，产物像元逐枚一致（产物字节不可比：出口写 GIS_PROCESSING_TIME，只比像元与形状）。
+    {
+        const std::string output2 = utf8PathString(getTestDir() / "e2e_stitch_output_run2.tif");
+        std::map<std::string, gis::framework::ParamValue> params2;
+        params2["action"] = std::string("stitch");
+        params2["input"] = img1 + "," + img2;
+        params2["output"] = output2;
+        const auto result2 = p->execute(params2, progress_);
+        ASSERT_TRUE(result2.success) << "第二跑必须成功: " << result2.message;
+        EXPECT_EQ(result2.metadata.at("output_width"), result.metadata.at("output_width"));
+        EXPECT_EQ(result2.metadata.at("output_height"), result.metadata.at("output_height"));
+        int w2 = 0; int h2 = 0;
+        const std::vector<float> pix2 = readRasterBandF32(output2, w2, h2);
+        ASSERT_EQ(w2, w);
+        ASSERT_EQ(h2, h);
+        ASSERT_EQ(pix2.size(), pix.size());
+        int diffs = 0;
+        for (size_t i = 0; i < pix.size(); ++i) {
+            if (pix[i] != pix2[i]) ++diffs;
+        }
+        EXPECT_EQ(diffs, 0) << "identical 输入两跑产物像元必须逐枚一致（确定性）";
+    }
 }
 
 TEST_F(PluginTest, MatchingEccRegisterExecution) {
@@ -25751,6 +25806,60 @@ TEST_F(PluginTest, MatchingEccRegisterExecution) {
     ASSERT_NE(outDs, nullptr);
     EXPECT_EQ(outDs->GetRasterXSize(), 96);
     EXPECT_EQ(outDs->GetRasterYSize(), 96);
+
+    // ---- D4-M 值级判据（Release 半边；Debug 半边 fail-fast 原样保留）----
+    // 自配准（input = reference，同一文件）⇒ findTransformECC 的输入与模板逐像元相同，
+    // 增强相关系数在 identity 处取最大值 1、梯度为零 ⇒ 收敛到单位阵。
+    // warp_matrix 是 OpenCV Mat 流格式：affine 2x3 ⇒ "[1, 0, 0; 0, 1, 0]"（分号可换行、空白不定）。
+    // 解析口径：把 '[' ']' ';' ',' 洗成空格后逐枚 strtod 吃数，恰吃 6 枚且尾部只剩空白才算 affine 形状。
+    const std::string warpStr = result.metadata.at("warp_matrix");
+    std::string warpClean = warpStr;
+    for (char& c : warpClean) {
+        if (c == '[' || c == ']' || c == ';' || c == ',') c = ' ';
+    }
+    std::vector<double> warpVals;
+    {
+        const char* cur = warpClean.c_str();
+        char* end = nullptr;
+        for (;;) {
+            const double v = std::strtod(cur, &end);
+            if (end == cur) break;
+            warpVals.push_back(v);
+            cur = end;
+        }
+        while (*cur == ' ' || *cur == '\t' || *cur == '\n' || *cur == '\r') ++cur;
+        ASSERT_EQ(*cur, '\0') << "warp_matrix 尾部有非空白残留（形状不是纯 6 数）: " << warpStr;
+    }
+    ASSERT_EQ(warpVals.size(), 6u) << "warp_matrix 不是 affine 2x3 的 6 数形状: " << warpStr;
+    // 容差依据（Release 实测确认）：两跑 warp 逐枚精确等于 {1,0,0,0,1,0}（偏差 0）。
+    // warpMat 是 CV_32F，1e-6 约 8.4 倍 FLT_EPSILON(1.19e-7)，只放浮点末位噪声；
+    // 任何真实变换（如 1 像元平移）偏差 O(1) 远大于 1e-6 ⇒ 必红（判别臂实测）。
+    constexpr double kWarpTol = 1e-6;
+    EXPECT_NEAR(warpVals[0], 1.0, kWarpTol) << "warp[0,0] 必须是 1（自配准收敛单位阵）";
+    EXPECT_NEAR(warpVals[1], 0.0, kWarpTol) << "warp[0,1] 必须是 0";
+    EXPECT_NEAR(warpVals[2], 0.0, kWarpTol) << "warp[0,2]（x 平移）必须是 0";
+    EXPECT_NEAR(warpVals[3], 0.0, kWarpTol) << "warp[1,0] 必须是 0";
+    EXPECT_NEAR(warpVals[4], 1.0, kWarpTol) << "warp[1,1] 必须是 1";
+    EXPECT_NEAR(warpVals[5], 0.0, kWarpTol) << "warp[1,2]（y 平移）必须是 0";
+
+    // 输出 ≈ 输入：identity warpAffine 在整数像元网格上退化为精确拷贝。
+    // 像元格依据：参考是 Byte(0/255)，产物经 matToGdalTiff 以 GDT_Byte 缓冲写进 Float32 数据集
+    // ⇒ 两侧读回都是整数；任何真实差异至少 1，取半格 0.5 即钉逐像元相等。
+    // Release 实测确认：9216/9216 像元 maxdiff = 0（两跑一致）。
+    {
+        int outW = 0; int outH = 0; int refW = 0; int refH = 0;
+        const std::vector<float> outPix = readRasterBandF32(output, outW, outH);
+        const std::vector<float> refPix = readRasterBandF32(reference, refW, refH);
+        ASSERT_EQ(outW, refW);
+        ASSERT_EQ(outH, refH);
+        ASSERT_EQ(outPix.size(), refPix.size());
+        ASSERT_FALSE(outPix.empty());
+        int diffs = 0;
+        for (size_t i = 0; i < outPix.size(); ++i) {
+            if (std::abs(static_cast<double>(outPix[i]) - static_cast<double>(refPix[i])) > 0.5) ++diffs;
+        }
+        EXPECT_EQ(diffs, 0) << "自配准输出必须与输入逐像元相同（identity warp）";
+    }
 }
 
 TEST_F(PluginTest, ClassificationAccuracyAssessmentExecution) {
