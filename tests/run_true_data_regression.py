@@ -326,6 +326,70 @@ def main():
             return True, "custom_index with no expression rejected"
         r.case("true_spindex_custom_index_negative", c_index_negative)
 
+        # ---- classification batch (C9): separable 2-class fixture ------------------
+        # Fixtures are defined by geometry (left/right half, labels 1/2), not by any
+        # classifier output. Three algorithms must all separate the halves; accuracy is
+        # checked against independently computed 1.0 / 0.75, so the test is not a constant pass.
+        def classify_case(action):
+            out = r.out / ("classification_" + action + "_true.tif")
+            rc, text = r.cli_run([
+                "classification", action,
+                "--input=" + str(TR / "classification_input.tif"),
+                "--training_csv=" + str(TR / "classification_training.csv"),
+                "--output=" + str(out), "--bands=1,2"])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            vals = r.pixels(out).reshape(cn, cn)
+            if len(np.unique(vals)) != 2:
+                return False, "expected exactly 2 classes, got {}".format(len(np.unique(vals)))
+            half = E["classification_half"]
+            left = set(np.unique(vals[:, :half]))
+            right = set(np.unique(vals[:, half:]))
+            if len(left) != 1 or len(right) != 1 or left == right:
+                return False, "left/right halves not separated ({} vs {})".format(left, right)
+            return True, "{} separates the two independent classes".format(action)
+
+        cn = E["classification_size"][0]
+        for cls_action in ("svm_classify", "random_forest_classify", "max_likelihood_classify"):
+            r.case("true_classification_" + cls_action,
+                   (lambda a=cls_action: classify_case(a)))
+
+        def accuracy_case(name, classified_file, expected_acc):
+            out = r.out / ("classification_" + name + "_true.json")
+            rc, text = r.cli_run([
+                "classification", "accuracy_assessment",
+                "--classified_raster=" + str(TR / classified_file),
+                "--reference_raster=" + str(TR / "classification_reference.tif"),
+                "--output=" + str(out)])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            payload = r.read_json(out)
+            got = float(payload["overall_accuracy"])
+            if not near(got, expected_acc, 1e-6):
+                return False, "overall_accuracy got {} expected {}".format(got, expected_acc)
+            return True, "overall_accuracy {} matches independent pixel count".format(got)
+
+        r.case("true_classification_accuracy_perfect",
+               lambda: accuracy_case("accuracy_perfect", "classification_perfect.tif",
+                                     E["classification_perfect_accuracy"]))
+        r.case("true_classification_accuracy_degraded",
+               lambda: accuracy_case("accuracy_degraded", "classification_degraded.tif",
+                                     E["classification_degraded_accuracy"]))
+
+        def c_cls_negative():
+            out = r.out / "classification_missing_label_true.tif"
+            if out.exists():
+                out.unlink()
+            rc, text = r.cli_run([
+                "classification", "svm_classify",
+                "--input=" + str(TR / "classification_input.tif"),
+                "--training_csv=" + str(TR / "classification_training.csv"),
+                "--output=" + str(out), "--bands=1,2", "--label_column=missing"])
+            if rc == 0 or out.exists():
+                return False, "missing label column was accepted (rc={})".format(rc)
+            return True, "missing label column rejected, no product"
+        r.case("true_classification_missing_label", c_cls_negative)
+
     else:
         # 1. detect: structural invariants with a real textured image
         def c_detect():

@@ -28,7 +28,12 @@
 #   吃 data/true_raster 与 data/true_matching 下由 tests/make_true_data_fixtures.py 从 D:\Code\Data
 #   真实影像裁出的 256×256 窗口（GDAL 官方 CLI，未调用本仓算法）；期望值 data/true_expected.json
 #   由 gdalinfo/numpy 在源图上独立推导。A 腿仍按上面事实走合成兜底，322 个数值判据不动。
-#   B 腿不消费本表派生件，故不新增表格行；38 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+#   B 腿不消费本表派生件，故不新增表格行；44 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+# classification 批（C9，2026-11-12）：B 腿 raster 组另用独立生成的两类完全可分夹具
+#   （左/右半不同簇 + 几何定义的真值栅格与训练 CSV；无分类器参与造数）覆盖本表剩余 5 行中的
+#   feature_stats（首批已用 GLC 真实矢量+栅格覆盖）/ svm_classify / random_forest_classify /
+#   max_likelihood_classify / accuracy_assessment。精度期望 1.0 与 0.75 按像素计数独立推导。
+#   terrain + spindex + classification 三批合计覆盖 31 行，其余 12 行归 C4~C15 各批。
 # spindex 批（C8，2026-11-12）：B 腿 raster 组另用独立生成的 6 波段 64x64 Float32 判别性堆栈
 #   （固定斜坡 + 固定种子棋盘扰动，与任何指数公式无关、不调用本仓算法）覆盖本表仍标 not-consumed
 #   的 17 个 spindex 动作，期望值由 numpy 按 docs/算法说明/光谱指数/ 的公开公式独立求值。

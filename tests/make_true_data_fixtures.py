@@ -144,6 +144,11 @@ def main():
             "fixed linear ramps plus a seeded checker perturbation, NOT derived from any index "
             "formula. Index expectations are computed independently with numpy from the public "
             "formulas documented in docs/算法说明/光谱指数/, never from a product run.",
+            "classification fixtures are two geometrically separable clusters (left/right half) "
+            "with seeded noise; the reference labels, training CSV and the deliberately degraded "
+            "classification map are all defined by geometry here, never by a classifier run. "
+            "Expected accuracies are 1.0 (perfect) and 0.75 (left quarter flipped), computed "
+            "independently from the pixel counts.",
         ],
         "commands": log,
     }
@@ -358,6 +363,60 @@ def main():
         spindex_params[name] = args
         spindex_oracle[name] = oracle(arr)
 
+    # ---- classification: independently separable 2-class fixture ------------------
+    # Two well-separated clusters (left: ~10/12, right: ~200/210) with a small seeded noise.
+    # The class boundaries, reference labels and the degraded map are defined here by geometry
+    # alone; no classifier output is ever used as a fixture or as an expectation.
+    cn = 64
+    ccx, ccy = np.meshgrid(np.arange(cn), np.arange(cn))
+    crng = np.random.RandomState(SEED + 2)
+    cnoise = crng.uniform(-1.0, 1.0, (cn, cn)).astype(np.float32)
+    cleft = ccx < (cn // 2)
+    cls_b1 = np.where(cleft, 10.0, 200.0).astype(np.float32) + cnoise
+    cls_b2 = np.where(cleft, 12.0, 210.0).astype(np.float32) + cnoise * 0.5
+    cls_single = []
+    for i, arr in enumerate((cls_b1, cls_b2), 1):
+        p = tmp / ("cls_input_b{}.xyz".format(i))
+        with open(p, "w", encoding="ascii") as f:
+            for y in range(cn):
+                for x in range(cn):
+                    f.write("{} {} {:.6f}\n".format(x, y, float(arr[y, x])))
+        tif = tmp / ("cls_input_b{}.tif".format(i))
+        run([t["translate"], "-q", "-of", "GTiff", "-ot", "Float32",
+             "-a_srs", "EPSG:4326", "-a_ullr", "116.0", "40.0", "116.064", "39.936",
+             str(p), str(tif)], log)
+        cls_single.append(str(tif))
+    cls_vrt = tmp / "cls_input.vrt"
+    run([t["buildvrt"], "-q", "-separate", str(cls_vrt), *cls_single], log)
+    cls_input = out_r / "classification_input.tif"
+    run([t["translate"], "-q", str(cls_vrt), str(cls_input)], log)
+    m_cls_input = info(t, cls_input, log)
+
+    cls_ref = np.where(cleft, 1, 2).astype(np.int32)
+    cls_degraded = cls_ref.copy()
+    cls_degraded[:, : (cn // 4)] = 2  # flip the left quarter: accuracy must be exactly 0.75
+    cls_ref_path = out_r / "classification_reference.tif"
+    cls_deg_path = out_r / "classification_degraded.tif"
+    cls_perfect_path = out_r / "classification_perfect.tif"
+    for arr, path in ((cls_ref, cls_ref_path), (cls_degraded, cls_deg_path),
+                      (cls_ref, cls_perfect_path)):
+        p = tmp / (path.stem + ".xyz")
+        with open(p, "w", encoding="ascii") as f:
+            for y in range(cn):
+                for x in range(cn):
+                    f.write("{} {} {}\n".format(x, y, int(arr[y, x])))
+        run([t["translate"], "-q", "-of", "GTiff", "-ot", "Int32",
+             "-a_srs", "EPSG:4326", "-a_ullr", "116.0", "40.0", "116.064", "39.936",
+             str(p), str(path)], log)
+
+    csv_path = out_r / "classification_training.csv"
+    with open(csv_path, "w", encoding="ascii", newline="") as f:
+        f.write("b1,b2,label\n")
+        for _ in range(4):
+            f.write("10,12,1\n")
+        for _ in range(4):
+            f.write("200,210,2\n")
+
     expected = {
         "oracle_independence": "all values derived from gdalinfo / numpy on the SOURCE or fixture; "
                                "no GIS_TOOL algorithm or CLI output was used as an expectation",
@@ -388,6 +447,13 @@ def main():
         "spindex_params": spindex_params,
         "spindex_oracle": spindex_oracle,
         "spindex_sample_xy": [list(p) for p in sample_xy],
+        "classification_input": base_meta(m_cls_input),
+        "classification_size": [cn, cn],
+        "classification_half": cn // 2,
+        "classification_left_label": 1,
+        "classification_right_label": 2,
+        "classification_perfect_accuracy": 1.0,
+        "classification_degraded_accuracy": 0.75,
         "band_math_B1_plus_B2": sum_oracle,
         "reference_input_shift_px": 64,
         "reference_input_overlap_identical": overlap_equal,

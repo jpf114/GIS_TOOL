@@ -23,8 +23,8 @@
   NSIS 安装包与云端构建已停用（见"交付方式（只保留本机 install）"节）。
 - **九守卫 / 安装判据**：九守卫全绿、**9/9** 通过，双树同批 **35/35** 判据通过
   （现读：`ctest --test-dir build/<树> -C <Config> -R "install_smoke|install_closure|docs_match_cli|docs_prose_claims|guard|selftest|CoverageMeta|GuiContract" --output-on-failure -j1`，
-  Debug 53.26 s / Release 47.25 s）。
-- **最近全量验收日期**：**2026-11-12（spindex 批接入后重跑）**。Debug **792/792** 通过、墙钟 **1410.47 s**；Release **790/790** 通过、墙钟 **909.03 s**
+  Debug 69.81 s / Release 65.26 s）。
+- **最近全量验收日期**：**2026-11-12（classification 批接入后重跑）**。Debug **792/792** 通过、墙钟 **1541.42 s**；Release **790/790** 通过、墙钟 **704.06 s**
   （现读：`ctest --test-dir build/debug -C Debug -j1 --output-on-failure` 与 Release 同命令，两轮退出码 0）。
   两树 `cmake --install` 本轮用全新前缀 `build/tmp/install_<Config>_1112`（退出码 0）；复用旧前缀会因
   `Lerc.dll` 双路径冲突报错，属安装目录复用问题，非产品缺陷（`install_closure` 判据用独立前缀故仍绿）。
@@ -90,16 +90,18 @@
   `pattern_checker`（固定种子 64×64 棋盘）、`mismatch_small`（负例）；
   A 腿与 `real_data_matrix.txt` 中 **43 行**（`not-consumed` 36 + `synthetic` 7，fixture 列现读
   `data` 83 / `not-consumed` 36 / `synthetic` 7）仍按既有事实标「合成兜底」；2026-11-12 的
-  terrain 批（9 行）与 spindex 批（17 行）由 B 腿额外覆盖，合计 26 行，其余 17 行归 C4~C15 各批。
+  terrain 批（9 行）、spindex 批（17 行）与 classification 批（5 行）由 B 腿额外覆盖，
+  合计 31 行，其余 12 行归 C4~C15 各批。
 
-**判据**：`tests/run_true_data_regression.py` 共 **38 个 case**（raster 33 / matching 5）——
+**判据**：`tests/run_true_data_regression.py` 共 **44 个 case**（raster 39 / matching 5）——
 `raster_inspect info` 尺寸/均值对独立 gdalinfo、`raster_math band_math` 逐格数值对独立 numpy oracle、
 pansharpen 结构不变量、棋盘判别性夹具、GLC 真实矢量+栅格的 feature_stats、
 terrain 9 个动作 + 解析坡度强 oracle、spindex 17 个动作 + 自定义指数负例、
+classification 3 个分类器 + 2 个精度判据 + 标签列负例、
 ORB 检出上限、平移窗匹配数、register 输出尺寸跟随 reference、多时相 change、尺寸不匹配负例。
 脚本自带「跑过必须被判过」闸，避免空跑假绿；cmake 包装缺 `data/true_*` 时打印专属
 `GIS_SKIP_TRUE_DATA_ABSENT: ` 显式 Skip，两腿 TIMEOUT 60
-（实测 raster 18.11 s / matching 1.64 s，余量 3.3×，仍在 2.5× 拆腿线之上，按规则不抬）。
+（实测 raster 15.44 s / matching 1.34 s，余量 3.9×，仍在 2.5× 拆腿线之上，按规则不抬）。
 
 **terrain 批（C11，2026-11-12）**：把矩阵里仍标 `not-consumed` 的 9 个 terrain 动作
 （`fill_sinks` / `flow_direction` / `flow_accumulation` / `stream_extract` / `watershed` /
@@ -120,11 +122,20 @@ custom_index）的期望值由 numpy 按 `docs/算法说明/光谱指数/` 的�
 并因 EVI 分母在边缘像素过零而调整了波段斜率与 ARVI 映射 —— 边界检查本身是夹具设计的一部分。
 A 腿的 spindex case 与 322 个判据不动。
 
-**判别臂**：`tests/true_data_mutation_arms.py` **五条**臂分别改坏一行产品代码
+**classification 批（C9，2026-11-12）**：按「为测试造数据」口径生成**两类完全可分**夹具
+（64×64 双波段，左半 ~10/12、右半 ~200/210，固定种子微噪声），类别边界、参考标签栅格、
+训练 CSV 与「左四分之一翻转」的退化分类图全部由几何定义，**没有任何分类器参与造数**。
+`svm_classify` / `random_forest_classify` / `max_likelihood_classify` 三个算法都必须把左右半
+分成两个不同的类（独立可分性 oracle，不依赖标签具体编号）；`accuracy_assessment` 用独立真值
+判 `overall_accuracy` 恰为 **1.0**（完美）与 **0.75**（1024/4096 像素被翻转，按像素计数独立推导），
+后者专门防止精度判据恒真；标签列缺失的负例必须被拒。A 腿与 322 个判据不动。
+
+**判别臂**：`tests/true_data_mutation_arms.py` **六条**臂分别改坏一行产品代码
 （表达式 `+`→`-` 使 `B1+B2` 变减法、ORB 忽略 `max_points` 上限、
 `terrain slope` 把 `-s 1/z` 换成 `-s 2`、`spindex.safeDivide` 把分母 `+1e-10f` 换成 `+1.0f`、
-change 静默修复尺寸不匹配），每条都必须让对应判据**变红**，随后按 sha256 字节还原、重编、
-**复绿**。五条均红→绿通过，产品源码无残留改动。这是「数据/判据不是为通过而造」的硬证据。
+`accuracy_assessment` 把分类值读成常数 1、change 静默修复尺寸不匹配），
+每条都必须让对应判据**变红**，随后按 sha256 字节还原、重编、
+**复绿**。六条均红→绿通过，产品源码无残留改动。这是「数据/判据不是为通过而造」的硬证据。
 
 ### 验收命令与门禁清单
 

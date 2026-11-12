@@ -61,6 +61,14 @@ ARMS = [
         "why": "all normalized-index denominators shift by 1; independent formula oracles must go red",
     },
     {
+        "name": "classification_accuracy_read",
+        "file": "src/plugins/classification/classification_plugin.cpp",
+        "find": "            int cVal = classifiedBuf[static_cast<size_t>(x)];",
+        "replace": "            int cVal = 1;",
+        "case": "real_data_true_raster",
+        "why": "accuracy assessment reads a constant class; independent 1.0 / 0.75 oracles must go red",
+    },
+    {
         "name": "change_size_guard",
         "file": "src/plugins/matching/matching_plugin.cpp",
         "regex": r"(?s)    if \(before\.size\(\) != after\.size\(\)\) \{.*?\n    \}",
