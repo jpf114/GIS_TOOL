@@ -8,10 +8,12 @@
 > 量测数字逐条附现读命令；版本号、阶段编号、任务编号为标识/引用，不属量测。
 
 - **版本**：`v1.0.0`。
-- **阶段**：**D4 已封 / D5 文档同步完成（2026-11-10）**；本地 ff 合并与推送待用户确认，详见下方「D4 / D5 收口结论」。
-- **注册数**：Debug **790**（现读：`ctest --test-dir build/debug -C Debug -N | Select-Object -Last 1`）；
-  Release **788**（现读：`ctest --test-dir build/release -C Release -N | Select-Object -Last 1`）。
-  本轮新增 `docs_prose_claims` 守卫，两树各 +1；`Release == Debug − 2` 的差额仍由两条 `debug_only` 用例构成
+- **阶段**：**D4 已封 / D5 文档同步完成（2026-11-10）**；2026-11-12 增补真实数据 B 腿（见下方专节）。
+  本地 ff 合并已完成、远程推送已完成；本轮增补产生的新提交是否推送需单独确认。
+- **注册数**：Debug **792**（现读：`ctest --test-dir build/debug -C Debug -N | Select-Object -Last 1`）；
+  Release **790**（现读：`ctest --test-dir build/release -C Release -N | Select-Object -Last 1`）。
+  相对收口基线各 +3：`docs_prose_claims` 守卫 +1，真实数据 B 腿 `real_data_true_raster` /
+  `real_data_true_matching` 各 +2；`Release == Debug − 2` 的差额仍由两条 `debug_only` 用例构成
   （现读：本节「验收命令与门禁清单」第 1 条 `Compare-Object`）。
 - **覆盖**（`tests/action_gold_cases.txt`）：**126** 个动作
   （现读：`@(Get-Content tests/action_gold_cases.txt | Where-Object { $_ -notmatch '^#' -and $_ -notmatch '^\s*$' }).Count`）、**126** 条 GOLD
@@ -21,17 +23,20 @@
   NSIS 安装包与云端构建已停用（见"交付方式（只保留本机 install）"节）。
 - **九守卫 / 安装判据**：九守卫全绿、**9/9** 通过，双树同批 **35/35** 判据通过
   （现读：`ctest --test-dir build/<树> -C <Config> -R "install_smoke|install_closure|docs_match_cli|docs_prose_claims|guard|selftest|CoverageMeta|GuiContract" --output-on-failure -j1`，
-  Debug 45.23 s / Release 40.71 s）。
-- **最近全量验收日期**：**2026-11-10（最终审查修复轮后重跑）**。Debug **790/790** 通过、墙钟 **1154.29 s**；Release **788/788** 通过、墙钟 **585.96 s**
+  Debug 62.96 s / Release 54.00 s）。
+- **最近全量验收日期**：**2026-11-12（真实数据 B 腿接入后重跑）**。Debug **792/792** 通过、墙钟 **1443.40 s**；Release **790/790** 通过、墙钟 **624.95 s**
   （现读：`ctest --test-dir build/debug -C Debug -j1 --output-on-failure` 与 Release 同命令，两轮退出码 0）。
+  两树 `cmake --install` 本轮用全新前缀 `build/tmp/install_<Config>_1112`（退出码 0）；复用旧前缀会因
+  `Lerc.dll` 双路径冲突报错，属安装目录复用问题，非产品缺陷（`install_closure` 判据用独立前缀故仍绿）。
   本轮墙钟高于 2026-10-21 基线，未做性能归因；最慢腿余量倍数本轮未逐腿单跑，故不填报。
 
 ### D4 / D5 收口结论（2026-11-10）
 
 **D4 最终门（双树全量 + 安装）**
 
-- 两树 configure/build 退出码 0；全量 `ctest -j1`：Debug 790/790、Release 788/788，均 100% passed。
-  双树用例名差集恰为两条 `debug_only` 用例、反向为空；`data/` 零写入；`git status --short` 干净；
+- 两树 configure/build 退出码 0；全量 `ctest -j1`：Debug 790/790、Release 788/788，均 100% passed
+  （2026-11-10 收口轮读数；2026-11-12 增补 B 腿后为 792/792 与 790/790，见本节「最近全量验收日期」）。
+  双树用例名差集恰为两条 `debug_only` 用例、反向为空；原始真实数据目录零写入；`git status --short` 干净；
   Debug 与 Release `LastTest.log` 的 `Skipped` 均 0 命中。
 - 两树 `cmake --install`（前缀 `build/tmp/install_Debug` / `install_Release`）退出码 0；
   `install_smoke` / `install_closure` / 九守卫 / `docs_match_cli` / `docs_prose_claims` 同批 35/35 全绿。
@@ -62,6 +67,41 @@
   UI:30 / EVI2:31 / SAVI:31 / OSAVI:31 / NDWI:30 / BSI:34 / NDBI:30 / NDMI:31。
 - D5 Step 3/4（本地 ff 合并回 `master`、推送后补记复跑对象）**尚未执行**，按计划需单独询问用户。
 
+### 真实数据 B 腿（2026-11-12）
+
+**双轨口径**：A 腿（`real_data_raster` / `real_data_matching`）保留合成夹具与 322 个独立手算数值
+判据，不动；B 腿新增 `real_data_true_raster` / `real_data_true_matching` 两条 ctest 用例，
+只补「真实数据链路」这一层，产品代码零改动。理由是 A 腿的期望值由夹具公式独立推导
+（`x+y`、坡度解析式等），本就符合「为测试造数据 + 独立 oracle」，推翻它会丢失已验证的数值正确性。
+
+**数据与期望值**：
+
+- 造数 `tests/make_true_data_fixtures.py` 只用 vcpkg 的 GDAL 官方命令行
+  （`gdal_translate` / `gdalwarp` / `ogr2ogr` / `gdalinfo`）与 numpy，**不调用本仓任何算法**；
+  源为 `D:\Code\Data` 下 2024 四景、2025 GF2 时相、GlobeLand30 土地覆盖与其矢量。
+  源文件绝对路径、裁窗参数、固定种子、派生公式与全部命令记录在 `data/provenance.json`。
+- 期望值 `data/true_expected.json` 由 `gdalinfo -json` 与 numpy 在**源图**上独立推导
+  （尺寸/CRS/GT/逐波段统计、`B1+B2` 的 min/max/mean、64 px 平移重叠逐格相等）；
+  没有把产品输出或本仓 CLI 文本固化成 golden。
+- 口径逐条标注：真数据 = `reference` / `input`（2024 同景 64 px 平移双窗）、`change_input`
+  （2025 时相重采样对齐，真实多时相对）、`pansharpen_ms`、`classification_raster`、
+  `classification_vector`（GLC 真实矢量，投影到 EPSG:32620 并与栅格同窗）；
+  独立派生 = `pansharpen_pan`（源无全色波段，取 B1，**不是真实全色**）、
+  `pattern_checker`（固定种子 64×64 棋盘）、`mismatch_small`（负例）；
+  A 腿与 `real_data_matrix.txt` 中约 60 行仍按既有事实标「合成兜底」，本次未收紧（归 C4~C15 各批）。
+
+**判据**：`tests/run_true_data_regression.py` 10 个 case —— `raster_inspect info` 尺寸/均值对独立
+gdalinfo、`raster_math band_math` 逐格数值对独立 numpy oracle、pansharpen 结构不变量、
+棋盘判别性夹具、GLC 真实矢量+栅格的 feature_stats、ORB 检出上限、平移窗匹配数、
+register 输出尺寸跟随 reference、多时相 change、尺寸不匹配负例。脚本自带「跑过必须被判过」闸，
+避免空跑假绿；cmake 包装缺 `data/true_*` 时打印专属 `GIS_SKIP_TRUE_DATA_ABSENT: ` 显式 Skip，
+两腿 TIMEOUT 60（实测 2.86 s / 1.55 s，按 ≥4× 起步口径）。
+
+**判别臂**：`tests/true_data_mutation_arms.py` 三条臂分别改坏一行产品代码
+（表达式 `+`→`-` 使 `B1+B2` 变减法、ORB 忽略 `max_points` 上限、change 静默修复尺寸不匹配），
+每条都必须让对应判据**变红**，随后按 sha256 字节还原、重编、**复绿**。三条均红→绿通过，
+产品源码无残留改动。这是「数据/判据不是为通过而造」的硬证据。
+
 ### 验收命令与门禁清单
 
 1. 双树用例名差集（只看总数会漏「某条在 Release 静默消失」）：
@@ -74,9 +114,13 @@
 
    判据：差集恰为 `gui_matching_stitch_debug_failure_offscreen` 与
    `gui_matching_ecc_register_debug_failure_offscreen`，反向差集为空。
-2. 真实数据腿门禁：全量前确认 `data/` 存在；全量后确认 9 条 `real_data_*` 用例无 `***Skipped***`。
-   `SKIP_REGULAR_EXPRESSION` 的 Skip 认领优先于退出码，是已知门禁盲区。
-3. 收尾门禁：`git status --short` 为空；`data/` 零写入（与本轮开批时记录的最新文件时间比较）。
+2. 真实数据腿门禁：全量前确认 `data/` 存在；全量后确认 **11 条**真实数据腿（9 条 A 腿 + 2 条 B 腿）
+   无 `***Skipped***`。`SKIP_REGULAR_EXPRESSION` 的 Skip 认领优先于退出码，是已知门禁盲区；
+   B 腿用专属 `GIS_SKIP_TRUE_DATA_ABSENT: ` token，不与 A 腿三份包装的 token 混用。
+3. 收尾门禁：`git status --short` 为空；**原始真实数据目录** `data/dem`、`data/image`、`data/vector`
+   零写入（最新文件时间仍为 2026-10-27 / 2026-10-21 / 2026-05-25）。
+   `data/true_raster`、`data/true_matching`、`data/provenance.json`、`data/true_expected.json`
+   是 2026-11-12 按用户授权生成的 B 腿夹具（均被 `.gitignore` 忽略），允许写入，不计入「原始数据零写入」。
 4. 本仓已停用云端 CI，以上为本地人工门禁；`install_smoke` / `install_closure` / 九守卫 /
    `docs_match_cli` / `docs_prose_claims` 仍由 ctest 自动执行。
 
@@ -6517,4 +6561,8 @@ C3h-1 复审又攒出五条同类项（同样归"冗余/一致性"批，行号�
 - **`vector.spatial_join` 复杂度 O(n·m) 且无空间索引**：逐条重扫 join 图层、无包框预筛，大图层较慢；取消检查已下沉到候选对一级（批次 D 任务 8 已在 `算法说明/矢量数据处理/空间连接.md` 登记）。
   ⚠ 该新增检查点位于内层循环、`srcFeat` 销毁之前，取消异常抛出时会遗留一个未释放的 `srcFeat`；这是本轮任务 8 **新引入**的泄漏窗口（非既有行为，既有外层取消点在销毁之后是安全的）。取消属低频路径，按「不过度设计」保留粒度改进并在此登记，未改用 RAII 托管（最终整分支审查 Important-3 的最低修复要求）。
 - **矢量检查的坐标键按 10 位小数量化、不是距离容差**：`vector_plugin_common.inc` 的 `pointKey` 用 `std::fixed << std::setprecision(10)` 把 `X,Y` 拼成字符串键，键只取 X/Y、忽略 Z，也无距离容差 ⇒ 坐标按 1e-10 网格量化（落入同一格即视为同一点），X/Y 相同而 Z 不同的点会被判为重复（`重复点检查.md` / `悬挂端点检查.md` 已同步口径）。
-- **9 条 `real_data_*` 在 `data/` 缺失时记 `Skipped` 而非 `Passed`**：包装脚本打印 `GIS_SKIP_TESTDATA_ABSENT: ` 标记并 `return()`，用例侧 `SKIP_REGULAR_EXPRESSION` 认领 ⇒ **Skip 优先于退出码**（退出码 0 也记 Skipped），且 Skipped 不参与失败判定；名单见 `tests/CMakeLists.txt` 的 `GIS_REAL_DATA_TEST_NAMES`（9 条）。
+- **真实数据腿在缺数据时记 `Skipped` 而非 `Passed`**：A 腿（9 条）的三份包装打印
+  `GIS_SKIP_TESTDATA_ABSENT: ` 标记并 `return()`；B 腿（2 条）用专属
+  `GIS_SKIP_TRUE_DATA_ABSENT: ` token，不扩大 A 腿三份包装的独占契约。用例侧各按
+  `SKIP_REGULAR_EXPRESSION` 认领 ⇒ **Skip 优先于退出码**（退出码 0 也记 Skipped），且 Skipped
+  不参与失败判定；名单见 `tests/CMakeLists.txt` 的 `GIS_REAL_DATA_TEST_NAMES`（现为 11 条）。

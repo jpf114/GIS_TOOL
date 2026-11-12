@@ -23,6 +23,8 @@
 ### 验收
 
 - 新增 `docs_prose_claims` 守卫
+- 新增 `real_data_true_raster` / `real_data_true_matching` 两条真实数据腿：从 `D:\Code\Data` 真实影像裁窗，
+  用 GDAL 官方 CLI 独立造数、`gdalinfo`/numpy 独立推导期望值，并配三条「改坏产品必须判红」的判别臂
 - D4 双树全量 ctest 与两树 `cmake --install` 结论见 RELEASE 当前状态节
 
 ## [1.0.0] - 2026-05-24

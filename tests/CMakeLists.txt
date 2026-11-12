@@ -1841,6 +1841,9 @@ set(GIS_REAL_DATA_TEST_NAMES
     real_data_vector_union_poly
     real_data_vector_derive_heavy
     real_data_vector_join_heavy
+    # 质检收口 B 腿：真实数据裁窗 + 独立 oracle，不消费上面那批派生件
+    real_data_true_raster
+    real_data_true_matching
 )
 
 add_test(
@@ -2124,6 +2127,47 @@ add_test(
         -DREPO_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check_docs_prose_claims.cmake
 )
+# ── 质检收口 B 腿：真实数据裁窗 + 独立 oracle ─────────────────────────────────
+# 夹具由 tests/make_true_data_fixtures.py 用 GDAL 官方 CLI 生成（不调用本仓算法），
+# 期望值 data/true_expected.json 由 gdalinfo/numpy 在源图上独立推导；
+# tests/run_true_data_regression.py 自带「跑过必须被判过」闸，避免空跑假绿。
+# WHY 另起炉灶不进 run_real_*.ps1：A 腿 322 个断言绑死合成夹具规格，改它等于推翻
+#   已验证的数值 oracle；B 腿只补「真实数据链路」这一层，产品代码零改动。
+# WHY TIMEOUT 60：实测 raster 2.07 s / matching 1.38 s（2026-11-12，本机安静态），
+#   按新建腿 ≥4× 起步口径取整到 60 s 的倍数；两名字已进 GIS_REAL_DATA_TEST_NAMES，
+#   以豁免文件末尾 blanket 300 s 的覆写。
+# WHY 专属 Skip token：缺 data/true_* 打印 GIS_SKIP_TRUE_DATA_ABSENT: 并 return()，
+#   per-test SKIP_REGULAR_EXPRESSION 认领；不复用 A 腿三份包装独占的 token。
+add_test(
+    NAME real_data_true_raster
+    COMMAND ${CMAKE_COMMAND}
+        -DPY=${_gis_docs_py}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/true_raster_regression
+        -DGROUP=raster
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_true_data_regression.cmake
+)
+set_tests_properties(real_data_true_raster PROPERTIES
+    TIMEOUT 60
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP_TRUE_DATA_ABSENT: "
+)
+add_test(
+    NAME real_data_true_matching
+    COMMAND ${CMAKE_COMMAND}
+        -DPY=${_gis_docs_py}
+        -DCLI_PATH=$<TARGET_FILE:gis-cli>
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/true_matching_regression
+        -DGROUP=matching
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_true_data_regression.cmake
+)
+set_tests_properties(real_data_true_matching PROPERTIES
+    TIMEOUT 60
+    RESOURCE_LOCK real_data_regression
+    SKIP_REGULAR_EXPRESSION "GIS_SKIP_TRUE_DATA_ABSENT: "
+)
 # ── 批次 D Task 8（D0-C2）：GetGeoTransform 防回潮守卫 ────────────────────────────
 # 判据本体 tests/check_geotransform_guard.py：把 src/（产品域）与 tests/（第二域）里每一个
 #   `GetGeoTransform(` 的 **CODE 位点**分类为"判了返回值 / 未判"，未判的必须被
@@ -2337,7 +2381,9 @@ get_property(GIS_TIMED_TEST_NAMES DIRECTORY PROPERTY TESTS)
 #   "实测墙钟 × 余量倍数"算出的上界**高于** 300（vector 那条最重的腿现读 Debug 265.29 s ⇒ 300 ÷ 265.29 = 1.13×），
 #   blanket 会把那几个写好的数悄悄改回 300 ⇒ 注释里的算式当场作废、上界失真。名单走变量
 #   GIS_REAL_DATA_TEST_NAMES 传进来，不在这里手抄第二遍名字（两处各改各的正是本文件反复在防的漂移）。
-#   复算（现值 60/60/720/100/630/430/600/350，按上面名单里 real_data_* 的书写顺序）。⚠ 必须读**生成物**而不是读源码：源码侧那条
+#   复算（现值 60/60/720/100/630/430/600/350，按上面名单里 A 腿 real_data_* 的书写顺序）；
+#   名单尾部另有质检收口 B 腿 real_data_true_raster / real_data_true_matching，TIMEOUT 各 60
+#   （实测 2.07 s / 1.38 s，见本文件 B 腿注册处的定值注释）。⚠ 必须读**生成物**而不是读源码：源码侧那条
 #     grep -A3 "set_tests_properties(real_data" tests/CMakeLists.txt | grep TIMEOUT
 #   即使有人把豁免名单 GIS_REAL_DATA_TEST_NAMES 里的名字删掉、blanket 把值改回 300，它照样打印那几个数。
 #     grep 'TIMEOUT "300"' build/debug/tests/CTestTestfile.cmake | grep -c real_data   ⇒ 必须为 0

@@ -24,6 +24,11 @@
 # ⚠ 现读事实（Task C2 复验 + 复审 J③ 逐文件核实）：仓库 data/ 只有 dem、image、vector 三个子目录，
 #   没有 data/raster 与 data/matching ⇒ raster 与 matching 两条腿一直在走 .ps1 的合成兜底分支，
 #   被它们覆盖的行标 fixture=not-consumed（真实数据存在，但当前腿没去取）。收紧归 C4~C15 各批。
+# 质检收口 B 腿（2026-11-12）：新增 real_data_true_raster / real_data_true_matching 两条 ctest 腿，
+#   吃 data/true_raster 与 data/true_matching 下由 tests/make_true_data_fixtures.py 从 D:\Code\Data
+#   真实影像裁出的 256×256 窗口（GDAL 官方 CLI，未调用本仓算法）；期望值 data/true_expected.json
+#   由 gdalinfo/numpy 在源图上独立推导。A 腿仍按上面事实走合成兜底，322 个数值判据不动。
+#   B 腿不消费本表派生件，故不新增表格行；10 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
 #   可用真实输入的实测清单（gis-cli raster_inspect info 现读，不是猜的）：
 #     data/image/2024/H48E018014C.tif        13912 x 9279 x 4 bands  ⇒ 多波段/指数类可用
 #     data/image/N01_50_2000LC030/*.tif      14377 x 18719 x 1 bands  ⇒ 单波段，指数类做不了

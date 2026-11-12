@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""Build independent real-data fixtures and oracles for the true-data regression legs.
+
+This script NEVER calls any algorithm in this repository. It only uses the GDAL command-line
+tools shipped with vcpkg (gdal_translate / gdalwarp / ogr2ogr / gdalinfo) and numpy. Every
+expected value is derived from the source raster itself (independent of the product under test).
+
+Outputs (all gitignored under data/):
+  data/true_matching/   reference.tif, input.tif, change_input.tif, mismatch_small.tif
+  data/true_raster/     pansharpen_ms.tif, pansharpen_pan.tif, classification_raster.tif,
+                        classification_vector.gpkg, classification_class_map.json,
+                        pattern_checker.tif
+  data/provenance.json  source paths, exact commands, parameters, seed, derivation notes
+  data/true_expected.json  independent oracles (metadata + numpy-derived value expectations)
+"""
+import argparse
+import datetime
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+
+WIN = 256
+SEED = 20261111
+SRC_2024_A = r"D:\Code\Data\raster\2024\H48E018014C.tif"
+SRC_2024_B = r"D:\Code\Data\raster\2024\H48E018015C.tif"
+SRC_2025 = r"D:\Code\Data\raster\2025\GF2_PMS1_E105.6_N29.0_RGB_20250324C.tif"
+SRC_GLC_RASTER = r"D:\Code\Data\GlobeLand30_2000\N20_50_2000LC030\n20_50_2000lc030.tif"
+SRC_GLC_VECTOR = r"D:\Code\Data\GlobeLand30_2000\N20_50_2000LC030\N20_50_2000.shp"
+
+
+def tools(gdal_bin):
+    return {
+        "translate": str(Path(gdal_bin) / "gdal_translate.exe"),
+        "warp": str(Path(gdal_bin) / "gdalwarp.exe"),
+        "info": str(Path(gdal_bin) / "gdalinfo.exe"),
+        "ogr2ogr": str(Path(gdal_bin) / "ogr2ogr.exe"),
+    }
+
+
+def run(cmd, log):
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    log.append(" ".join(str(c) for c in cmd))
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "command failed (rc={}): {}\nstderr: {}".format(proc.returncode, " ".join(cmd), proc.stderr[:500])
+        )
+    return proc.stdout
+
+
+def info(t, path, log):
+    out = run([t["info"], "-json", "-stats", str(path)], log)
+    return json.loads(out)
+
+
+def xyz(t, path, dest, log):
+    run([t["translate"], "-q", "-of", "XYZ", str(path), str(dest)], log)
+    return np.loadtxt(dest)
+
+
+def xyz_band(t, path, dest, band, log):
+    """XYZ driver writes only the first band unless -b is given explicitly."""
+    run([t["translate"], "-q", "-of", "XYZ", "-b", str(band), str(path), str(dest)], log)
+    return np.loadtxt(dest)
+
+
+def stats_of(meta, band_index=0):
+    band = meta["bands"][band_index]
+    md = band.get("metadata", {}).get("", {})
+    return {
+        "min": float(md["STATISTICS_MINIMUM"]),
+        "max": float(md["STATISTICS_MAXIMUM"]),
+        "mean": float(md["STATISTICS_MEAN"]),
+        "stddev": float(md["STATISTICS_STDDEV"]),
+    }
+
+
+def base_meta(meta):
+    return {
+        "size": meta["size"],
+        "bands": len(meta["bands"]),
+        "geoTransform": meta.get("geoTransform"),
+        "wkt": (meta.get("coordinateSystem", {}) or {}).get("wkt"),
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", required=True)
+    ap.add_argument("--src-root", default=r"D:\Code\Data")
+    ap.add_argument(
+        "--gdal-bin",
+        default=r"D:\Code\GitHubCode\vcpkg\installed\x64-windows\tools\gdal",
+    )
+    ap.add_argument(
+        "--proj-data",
+        default=r"D:\Code\GitHubCode\vcpkg\installed\x64-windows\share\proj",
+    )
+    args = ap.parse_args()
+
+    os.environ["PROJ_DATA"] = args.proj_data
+    os.environ["PROJ_LIB"] = args.proj_data
+    t = tools(args.gdal_bin)
+    repo = Path(args.repo)
+    out_r = repo / "data" / "true_raster"
+    out_m = repo / "data" / "true_matching"
+    tmp = repo / "build" / "tmp" / "true_fixtures"
+    for d in (out_r, out_m, tmp):
+        d.mkdir(parents=True, exist_ok=True)
+
+    log = []
+    prov = {
+        "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "seed": SEED,
+        "window": WIN,
+        "toolchain": "vcpkg GDAL command-line tools only; no GIS_TOOL algorithm was invoked",
+        "sources": {
+            "s2024_a": SRC_2024_A,
+            "s2024_b": SRC_2024_B,
+            "s2025": SRC_2025,
+            "glc_raster": SRC_GLC_RASTER,
+            "glc_vector": SRC_GLC_VECTOR,
+        },
+        "notes": [
+            "reference/input are two windows of the SAME 2024 scene, offset by 64 px horizontally; "
+            "their overlap is pixel-identical by construction (independent geometric oracle).",
+            "change_input is the 2025 scene resampled onto the 2024 window grid with bilinear; "
+            "this is a genuine multi-temporal pair, not a synthetic copy.",
+            "pansharpen_pan is band 1 of the same 2024 window: the sources have RGB+Alpha only "
+            "(band 4 is constant 255), so there is NO real panchromatic band; this is an "
+            "independent band extraction, NOT a product-algorithm output and NOT a real PAN.",
+            "pattern_checker is an independently generated 64x64 board (fixed seed) used as a "
+            "discriminating fixture; its values are written from numpy, not from any product.",
+        ],
+        "commands": log,
+    }
+
+    def translate(src, dst, extra):
+        run([t["translate"], "-q", *extra, str(src), str(dst)], log)
+        return info(t, dst, log)
+
+    # ---- matching: real 2024 scene, x window inside the 2025 overlap area -----------------
+    # H48E018015C origin (105.5, 29.1668), pixel 1.8e-05; window at x~105.55, y~29.10.
+    ref = out_m / "reference.tif"
+    inp = out_m / "input.tif"
+    m_ref = translate(SRC_2024_B, ref, ["-srcwin", "2778", "3711", str(WIN), str(WIN), "-b", "1"])
+    m_inp = translate(SRC_2024_B, inp, ["-srcwin", "2842", "3711", str(WIN), str(WIN), "-b", "1"])
+    ul = m_ref["cornerCoordinates"]["upperLeft"]
+    lr = m_ref["cornerCoordinates"]["lowerRight"]
+    change = out_m / "change_input.tif"
+    warp_tmp = tmp / "change_warp.tif"
+    run(
+        [t["warp"], "-q", "-overwrite", "-t_srs", "EPSG:4490", "-te", str(ul[0]), str(lr[1]), str(lr[0]), str(ul[1]),
+         "-ts", str(WIN), str(WIN), "-r", "bilinear", "-b", "1", SRC_2025, str(warp_tmp)],
+        log,
+    )
+    # gdalwarp keeps the source Alpha band; keep only band 1 so matching sees a single-band image.
+    run([t["translate"], "-q", "-b", "1", str(warp_tmp), str(change)], log)
+    m_chg = info(t, change, log)
+    mismatch = out_m / "mismatch_small.tif"
+    translate(ref, mismatch, ["-srcwin", "0", "0", "128", "128"])
+
+    # independent geometric oracle: overlap of reference[64:, :] and input[:-64, :]
+    a = xyz(t, ref, tmp / "ref.xyz", log)
+    b = xyz(t, inp, tmp / "inp.xyz", log)
+    va = a[:, 2].reshape(WIN, WIN)
+    vb = b[:, 2].reshape(WIN, WIN)
+    overlap_equal = bool(np.array_equal(va[:, 64:], vb[:, :-64]))
+
+    # ---- raster: real multispectral, real land-cover, independent class map ---------------
+    ms = out_r / "pansharpen_ms.tif"
+    m_ms = translate(SRC_2024_A, ms, ["-srcwin", "3000", "3000", str(WIN), str(WIN),
+                                      "-b", "1", "-b", "2", "-b", "3"])
+    pan = out_r / "pansharpen_pan.tif"
+    m_pan = translate(SRC_2024_A, pan, ["-srcwin", "3000", "3000", str(WIN), str(WIN), "-b", "1"])
+
+    # XYZ emits one band at a time (x y value); read B1 and B2 independently.
+    b1 = xyz_band(t, ms, tmp / "ms_b1.xyz", 1, log)[:, 2].reshape(WIN, WIN)
+    b2 = xyz_band(t, ms, tmp / "ms_b2.xyz", 2, log)[:, 2].reshape(WIN, WIN)
+    bsum = b1 + b2
+    sum_oracle = {"min": float(bsum.min()), "max": float(bsum.max()), "mean": float(bsum.mean())}
+
+    cls = out_r / "classification_raster.tif"
+    m_cls = translate(SRC_GLC_RASTER, cls, ["-srcwin", "3000", "3000", str(WIN), str(WIN)])
+    cls_xyz = xyz(t, cls, tmp / "cls.xyz", log)
+    codes = sorted({int(v) for v in cls_xyz[:, 2]})
+    class_map = {str(c): "class_{}".format(c) for c in codes}
+    (out_r / "classification_class_map.json").write_text(
+        json.dumps(class_map, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+    # GLC shapefile is EPSG:4326 while the land-cover raster is UTM 32620. Project first,
+    # then clip to the raster window so vector and raster actually overlap.
+    cls_ul = m_cls["cornerCoordinates"]["upperLeft"]
+    cls_lr = m_cls["cornerCoordinates"]["lowerRight"]
+    proj_gpkg = tmp / "glc_32620.gpkg"
+    gpkg = out_r / "classification_vector.gpkg"
+    for p in (proj_gpkg, gpkg):
+        if p.exists():
+            p.unlink()
+    run([t["ogr2ogr"], "-q", "-f", "GPKG", "-t_srs", "EPSG:32620",
+         str(proj_gpkg), SRC_GLC_VECTOR], log)
+    run([t["ogr2ogr"], "-q", "-f", "GPKG", "-spat",
+         str(cls_ul[0]), str(cls_lr[1]), str(cls_lr[0]), str(cls_ul[1]),
+         str(gpkg), str(proj_gpkg)], log)
+
+    # ---- discriminating fixture: independent 64x64 checker board ------------------------
+    rng = np.random.RandomState(SEED)
+    board = ((np.indices((64, 64)).sum(axis=0) % 2) * 255).astype(np.uint8)
+    # a small deterministic perturbation keeps it from being a trivial constant
+    board[10:20, 10:20] = int(rng.randint(1, 254))
+    board_path = tmp / "checker.xyz"
+    with open(board_path, "w", encoding="ascii") as f:
+        for y in range(64):
+            for x in range(64):
+                f.write("{} {} {}\n".format(x, y, board[y, x]))
+    checker = out_r / "pattern_checker.tif"
+    run([t["translate"], "-q", "-of", "GTiff", "-a_srs", "EPSG:4326",
+         "-a_ullr", "116.0", "40.0", "116.064", "39.936",
+         str(board_path), str(checker)], log)
+    m_chk = info(t, checker, log)
+
+    expected = {
+        "oracle_independence": "all values derived from gdalinfo / numpy on the SOURCE or fixture; "
+                               "no GIS_TOOL algorithm or CLI output was used as an expectation",
+        "reference": {**base_meta(m_ref), "stats": stats_of(m_ref)},
+        "input": {**base_meta(m_inp), "stats": stats_of(m_inp)},
+        "change_input": {**base_meta(m_chg), "stats": stats_of(m_chg)},
+        "mismatch_small": base_meta(info(t, mismatch, log)),
+        "pansharpen_ms": {**base_meta(m_ms), "bands_stats": [stats_of(m_ms, i) for i in range(3)]},
+        "pansharpen_pan": {**base_meta(m_pan), "stats": stats_of(m_pan)},
+        "classification_raster": {**base_meta(m_cls), "stats": stats_of(m_cls)},
+        "classification_class_map_codes": codes,
+        "classification_vector": {
+            "layer": "N20_50_2000",
+            "srs": "EPSG:32620",
+            "id_field": "Filename",
+            "name_field": "Row",
+            "note": "field names read independently from ogrinfo -so; vector is projected and "
+                     "clipped to the raster window, so the pair actually overlaps",
+        },
+        "pattern_checker": {**base_meta(m_chk), "stats": stats_of(m_chk)},
+        "band_math_B1_plus_B2": sum_oracle,
+        "reference_input_shift_px": 64,
+        "reference_input_overlap_identical": overlap_equal,
+    }
+
+    (repo / "data" / "provenance.json").write_text(
+        json.dumps(prov, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    (repo / "data" / "true_expected.json").write_text(
+        json.dumps(expected, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+    if not overlap_equal:
+        raise RuntimeError("independent geometric oracle failed: shifted windows do not overlap identically")
+    for key in ("reference", "input", "change_input", "pansharpen_ms", "classification_raster"):
+        if expected[key]["stats" if key != "pansharpen_ms" else "bands_stats"] is None:
+            raise RuntimeError("missing stats for " + key)
+        st = expected[key].get("stats") or expected[key]["bands_stats"][0]
+        if st["stddev"] <= 0:
+            raise RuntimeError("degenerate (constant) fixture: " + key)
+
+    print("OK true-data fixtures: {} products, {} commands".format(len(log), len(log)))
+    print("overlap_identical={} band_math_oracle={}".format(overlap_equal, sum_oracle))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
