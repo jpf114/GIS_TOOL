@@ -28,7 +28,12 @@
 #   吃 data/true_raster 与 data/true_matching 下由 tests/make_true_data_fixtures.py 从 D:\Code\Data
 #   真实影像裁出的 256×256 窗口（GDAL 官方 CLI，未调用本仓算法）；期望值 data/true_expected.json
 #   由 gdalinfo/numpy 在源图上独立推导。A 腿仍按上面事实走合成兜底，322 个数值判据不动。
-#   B 腿不消费本表派生件，故不新增表格行；20 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+#   B 腿不消费本表派生件，故不新增表格行；38 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+# spindex 批（C8，2026-11-12）：B 腿 raster 组另用独立生成的 6 波段 64x64 Float32 判别性堆栈
+#   （固定斜坡 + 固定种子棋盘扰动，与任何指数公式无关、不调用本仓算法）覆盖本表仍标 not-consumed
+#   的 17 个 spindex 动作，期望值由 numpy 按 docs/算法说明/光谱指数/ 的公开公式独立求值。
+#   真实影像无 NIR/SWIR（第 4 波段为 Alpha 恒 255），故此批按「为测试造数据」口径使用独立夹具，
+#   不冒充真实遥感影像；terrain 与 spindex 两批合计覆盖 26 行，其余 17 行归 C4~C15 各批。
 # terrain 批（C11，2026-11-12）：B 腿 raster 组另用 D:\Code\Data\tiff\dem\refas.tif 真实 DEM 裁窗
 #   覆盖本表仍标 not-consumed 的 9 个 terrain 动作（fill_sinks / flow_direction / flow_accumulation /
 #   stream_extract / watershed / viewshed / viewshed_multi / cut_fill / reservoir_volume），

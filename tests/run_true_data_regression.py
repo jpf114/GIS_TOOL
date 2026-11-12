@@ -278,6 +278,54 @@ def main():
             return True, "analytic plane slope {:.4f} deg matches independent geometry".format(exp)
         r.case("true_terrain_slope_analytic", c_plane_slope)
 
+        # ---- spindex batch (C8): 17 actions on an INDEPENDENT 6-band stack ---------
+        # Real imagery has no NIR/SWIR (band 4 is constant Alpha=255), so this batch uses a
+        # deliberately generated 6-band discriminating fixture: fixed ramps + seeded checker,
+        # NOT derived from any index formula. Every expectation is an independent numpy
+        # evaluation of the public index formula, so changing a product formula must go red.
+        def index_case(action):
+            name = "spindex_" + action
+            out = r.out / (name + "_true.tif")
+            rc, text = r.cli_run(["spindex", action,
+                                  "--input=" + str(TR / "spindex_stack.tif"),
+                                  "--output=" + str(out),
+                                  *E["spindex_params"][action]])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            vals = r.pixels(out)
+            if vals.size != 64 * 64 or not np.isfinite(vals).all():
+                return False, "bad size or non-finite values"
+            arr = vals.reshape(64, 64)
+            exp = E["spindex_oracle"][action]
+            got = {"min": float(arr.min()), "max": float(arr.max()),
+                   "mean": float(arr.mean()), "std": float(arr.std())}
+            for k in ("min", "max", "mean", "std"):
+                if not near(got[k], exp[k], 2e-4):
+                    return False, "{} got {:.6f} expected {:.6f}".format(k, got[k], exp[k])
+            for i, xy in enumerate(E["spindex_sample_xy"]):
+                x, y = int(xy[0]), int(xy[1])
+                if not near(float(arr[y, x]), exp["samples"][i], 2e-4):
+                    return False, "sample {} got {:.6f} expected {:.6f}".format(
+                        i, float(arr[y, x]), exp["samples"][i])
+            return True, "{} matches independent formula oracle".format(action)
+
+        for action_name in E["spindex_params"]:
+            r.case("true_spindex_" + action_name,
+                   (lambda a=action_name: index_case(a)))
+
+        # negative case: custom_index without expression/preset must be rejected
+        def c_index_negative():
+            out = r.out / "spindex_custom_index_none_true.tif"
+            if out.exists():
+                out.unlink()
+            rc, text = r.cli_run(["spindex", "custom_index",
+                                  "--input=" + str(TR / "spindex_stack.tif"),
+                                  "--output=" + str(out), "--preset=none"])
+            if rc == 0 or out.exists():
+                return False, "missing expression/preset was accepted (rc={})".format(rc)
+            return True, "custom_index with no expression rejected"
+        r.case("true_spindex_custom_index_negative", c_index_negative)
+
     else:
         # 1. detect: structural invariants with a real textured image
         def c_detect():

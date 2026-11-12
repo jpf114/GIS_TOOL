@@ -53,6 +53,14 @@ ARMS = [
         "why": "slope sends -s 2 instead of 1/z_factor; the analytic plane slope oracle must go red",
     },
     {
+        "name": "spindex_safe_divide",
+        "file": "src/plugins/spindex/spindex_plugin.cpp",
+        "find": "denominator += 1e-10f;",
+        "replace": "denominator += 1.0f;",
+        "case": "real_data_true_raster",
+        "why": "all normalized-index denominators shift by 1; independent formula oracles must go red",
+    },
+    {
         "name": "change_size_guard",
         "file": "src/plugins/matching/matching_plugin.cpp",
         "regex": r"(?s)    if \(before\.size\(\) != after\.size\(\)\) \{.*?\n    \}",

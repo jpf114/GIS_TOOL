@@ -42,6 +42,7 @@ def tools(gdal_bin):
         "warp": str(Path(gdal_bin) / "gdalwarp.exe"),
         "info": str(Path(gdal_bin) / "gdalinfo.exe"),
         "ogr2ogr": str(Path(gdal_bin) / "ogr2ogr.exe"),
+        "buildvrt": str(Path(gdal_bin) / "gdalbuildvrt.exe"),
     }
 
 
@@ -139,6 +140,10 @@ def main():
             "independent band extraction, NOT a product-algorithm output and NOT a real PAN.",
             "pattern_checker is an independently generated 64x64 board (fixed seed) used as a "
             "discriminating fixture; its values are written from numpy, not from any product.",
+            "spindex_stack.tif is a 6-band 64x64 Float32 discriminating fixture: band values are "
+            "fixed linear ramps plus a seeded checker perturbation, NOT derived from any index "
+            "formula. Index expectations are computed independently with numpy from the public "
+            "formulas documented in docs/算法说明/光谱指数/, never from a product run.",
         ],
         "commands": log,
     }
@@ -260,6 +265,99 @@ def main():
     # the expected slope is pure analytic geometry, not a product output.
     plane_slope_deg = float(np.degrees(np.arctan(np.hypot(PLANE_A, PLANE_B))))
 
+    # ---- spindex: independent 6-band discriminating stack + formula oracles ----------
+    # The band values are generated from fixed linear ramps + a seeded checker perturbation.
+    # They are NOT derived from any index formula, and no GIS_TOOL algorithm is involved.
+    # Expected index values are then computed independently with numpy using the PUBLIC
+    # index formulas (same ones documented in docs/算法说明/光谱指数/), never from a product run.
+    n = 64
+    gx, gy = np.meshgrid(np.arange(n), np.arange(n))
+    rng2 = np.random.RandomState(SEED + 1)
+    perturb = ((rng2.rand(n, n) > 0.5) * 2.0 - 1.0) * 0.01
+    band_values = [
+        0.05 + 0.006 * gx + 0.002 * gy + perturb,
+        0.10 + 0.004 * gx + 0.003 * gy,
+        0.06 + 0.002 * gx + 0.001 * gy,
+        0.30 + 0.008 * gx + 0.002 * gy,
+        0.20 + 0.005 * gx + 0.004 * gy,
+        0.15 + 0.004 * gx + 0.006 * gy,
+    ]
+    B = np.stack([np.asarray(v, dtype=np.float32) for v in band_values], axis=0)
+    single_paths = []
+    for i in range(6):
+        xyz_path = tmp / ("spindex_b{}.xyz".format(i + 1))
+        with open(xyz_path, "w", encoding="ascii") as f:
+            for y in range(n):
+                for x in range(n):
+                    f.write("{} {} {:.8f}\n".format(x, y, float(B[i, y, x])))
+        tif = tmp / ("spindex_b{}.tif".format(i + 1))
+        run([t["translate"], "-q", "-of", "GTiff", "-a_srs", "EPSG:4326",
+             "-a_ullr", "116.0", "40.0", "116.064", "39.936",
+             str(xyz_path), str(tif)], log)
+        single_paths.append(str(tif))
+    vrt = tmp / "spindex_stack.vrt"
+    run([t["buildvrt"], "-q", "-separate", str(vrt), *single_paths], log)
+    stack = out_r / "spindex_stack.tif"
+    run([t["translate"], "-q", str(vrt), str(stack)], log)
+    m_stack = info(t, stack, log)
+
+    # (CLI args, independent numpy formula). B[k] is physical band k+1 of the stack,
+    # so the formula and the band flags come from the same mapping and cannot drift.
+    specs = {
+        "ndvi": (["--red_band=1", "--nir_band=4"],
+                 lambda a: (a[3] - a[0]) / (a[3] + a[0])),
+        "ndmi": (["--nir_band=4", "--swir1_band=5"],
+                 lambda a: (a[3] - a[4]) / (a[3] + a[4])),
+        "evi": (["--blue_band=3", "--red_band=1", "--nir_band=4"],
+                lambda a: 2.5 * (a[3] - a[0]) / (a[3] + 6.0 * a[0] - 7.5 * a[2] + 1.0)),
+        "evi2": (["--red_band=1", "--nir_band=4"],
+                 lambda a: 2.5 * (a[3] - a[0]) / (a[3] + 2.4 * a[0] + 1.0)),
+        "savi": (["--red_band=1", "--nir_band=4"],
+                 lambda a: ((a[3] - a[0]) * 1.5) / (a[3] + a[0] + 0.5)),
+        "osavi": (["--red_band=1", "--nir_band=4"],
+                  lambda a: 1.16 * (a[3] - a[0]) / (a[3] + a[0] + 0.16)),
+        "gndvi": (["--green_band=2", "--nir_band=4"],
+                  lambda a: (a[3] - a[1]) / (a[3] + a[1])),
+        "ndwi": (["--green_band=2", "--nir_band=4"],
+                 lambda a: (a[1] - a[3]) / (a[1] + a[3])),
+        "mndwi": (["--green_band=2", "--swir1_band=4"],
+                  lambda a: (a[1] - a[3]) / (a[1] + a[3])),
+        "ndbi": (["--swir1_band=4", "--nir_band=2"],
+                 lambda a: (a[3] - a[1]) / (a[3] + a[1])),
+        "bsi": (["--blue_band=3", "--red_band=1", "--nir_band=4", "--swir1_band=5"],
+                lambda a: ((a[4] + a[0]) - (a[3] + a[2])) / ((a[4] + a[0]) + (a[3] + a[2]))),
+        "arvi": (["--blue_band=1", "--red_band=2", "--nir_band=4"],
+                 lambda a: (a[3] - (2.0 * a[1] - a[0])) / (a[3] + (2.0 * a[1] - a[0]))),
+        "nbr": (["--nir_band=4", "--swir2_band=6"],
+                lambda a: (a[3] - a[5]) / (a[3] + a[5])),
+        "awei": (["--green_band=2", "--nir_band=4", "--swir1_band=5", "--swir2_band=6"],
+                 lambda a: 4.0 * (a[1] - a[4]) - (0.25 * a[3] + 2.75 * a[5])),
+        "ui": (["--nir_band=4", "--swir2_band=6"],
+               lambda a: (a[5] - a[3]) / (a[5] + a[3])),
+        "bi": (["--red_band=3", "--nir_band=4"],
+               lambda a: 1.0 / ((0.1 - a[2]) ** 2 + (0.06 - a[3]) ** 2 + 1e-10)),
+        "custom_index": (["--preset=ndvi_alias", "--red_band=1", "--nir_band=4"],
+                         lambda a: (a[3] - a[0]) / (a[3] + a[0])),
+    }
+
+    sample_xy = ((0, 0), (16, 16), (32, 48), (63, 63))
+
+    def oracle(arr):
+        return {
+            "min": float(arr.min()), "max": float(arr.max()),
+            "mean": float(arr.mean()), "std": float(arr.std()),
+            "samples": [float(arr[y, x]) for x, y in sample_xy],
+        }
+
+    spindex_oracle = {}
+    spindex_params = {}
+    for name, (args, formula) in specs.items():
+        arr = np.asarray(formula(B), dtype=np.float64)
+        if not np.isfinite(arr).all():
+            raise RuntimeError("non-finite independent oracle for spindex." + name)
+        spindex_params[name] = args
+        spindex_oracle[name] = oracle(arr)
+
     expected = {
         "oracle_independence": "all values derived from gdalinfo / numpy on the SOURCE or fixture; "
                                "no GIS_TOOL algorithm or CLI output was used as an expectation",
@@ -286,6 +384,10 @@ def main():
                       "plane_a": PLANE_A, "plane_b": PLANE_B, "plane_c": PLANE_C},
         "terrain_center": dem_center,
         "terrain_water_level": dem_water,
+        "spindex_stack": {**base_meta(m_stack), "band_count": len(m_stack["bands"])},
+        "spindex_params": spindex_params,
+        "spindex_oracle": spindex_oracle,
+        "spindex_sample_xy": [list(p) for p in sample_xy],
         "band_math_B1_plus_B2": sum_oracle,
         "reference_input_shift_px": 64,
         "reference_input_overlap_identical": overlap_equal,
