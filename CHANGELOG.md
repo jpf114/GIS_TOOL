@@ -24,7 +24,8 @@
 
 - 新增 `docs_prose_claims` 守卫
 - 新增 `real_data_true_raster` / `real_data_true_matching` 两条真实数据腿：从 `D:\Code\Data` 真实影像裁窗，
-  用 GDAL 官方 CLI 独立造数、`gdalinfo`/numpy 独立推导期望值，并配四条「改坏产品必须判红」的判别臂
+  用 GDAL 官方 CLI 独立造数、`gdalinfo`/numpy 独立推导期望值，并配初始三条「改坏产品必须判红」的
+  判别臂（逐批增至十条）
 - terrain 批接入真实 DEM 裁窗，覆盖矩阵里 9 个仍走合成兜底的动作；新增独立解析斜面坡度 oracle
   （几何推导值，非产品输出）与填洼单调性、cut_fill 双真实窗判据
 - spindex 批接入独立生成的 6 波段判别性堆栈，覆盖 17 个指数动作；期望值由 numpy 按公开公式
@@ -38,6 +39,8 @@
 - georef 批覆盖最后 8 行：独立解析斜坡 + 坡度/坡向 + 定标元数据 + GCP CSV + 带 RPC 域的 VRT；
   6 个数值校正用 numpy 按公开公式独立求值，GCP/RPC 路径配元数据负例；判别臂增至十条。
   至此 `real_data_matrix.txt` 中 43 行合成兜底全部由 B 腿额外覆盖，A 腿 322 个判据未动
+- 2026-11-13 推送后补记 D5 Step 3/4（复跑对象 = 提交 `f5f9f6b`），并补做 11 条真实数据腿的
+  安静态 TIMEOUT 余量逐条单跑：最小 3.03×、全部 ≥2.5× 触发线，按规则不抬 TIMEOUT、不拆腿
 - D4 双树全量 ctest 与两树 `cmake --install` 结论见 RELEASE 当前状态节
 
 ## [1.0.0] - 2026-05-24

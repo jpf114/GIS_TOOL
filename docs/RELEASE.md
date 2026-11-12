@@ -8,8 +8,11 @@
 > 量测数字逐条附现读命令；版本号、阶段编号、任务编号为标识/引用，不属量测。
 
 - **版本**：`v1.0.0`。
-- **阶段**：**D4 已封 / D5 文档同步完成（2026-11-10）**；2026-11-12 增补真实数据 B 腿（见下方专节）。
-  本地 ff 合并已完成、远程推送已完成；本轮增补产生的新提交是否推送需单独确认。
+- **阶段**：**D4 已封 / D5 已完成并推送闭环（2026-11-13）**；2026-11-12 增补真实数据 B 腿（见下方专节），
+  43 行合成兜底挂账归零。ff 合并与远程推送均已完成，推送时代码态 `f5f9f6b`
+  （依据：本地 `master` 与 `origin/master` 一致、`git branch -vv` 无 ahead/behind；
+  实时 `git ls-remote` 当次因网络不可达未复核，以本地 remote-tracking 为准）；
+  2026-11-13 的收尾补记入库后形成新提交，是否推送单独确认。
 - **注册数**：Debug **792**（现读：`ctest --test-dir build/debug -C Debug -N | Select-Object -Last 1`）；
   Release **790**（现读：`ctest --test-dir build/release -C Release -N | Select-Object -Last 1`）。
   相对收口基线各 +3：`docs_prose_claims` 守卫 +1，真实数据 B 腿 `real_data_true_raster` /
@@ -28,7 +31,8 @@
   （现读：`ctest --test-dir build/debug -C Debug -j1 --output-on-failure` 与 Release 同命令，两轮退出码 0）。
   两树 `cmake --install` 本轮用全新前缀 `build/tmp/install_<Config>_1112`（退出码 0）；复用旧前缀会因
   `Lerc.dll` 双路径冲突报错，属安装目录复用问题，非产品缺陷（`install_closure` 判据用独立前缀故仍绿）。
-  本轮墙钟高于 2026-10-21 基线，未做性能归因；最慢腿余量倍数本轮未逐腿单跑，故不填报。
+  本轮墙钟高于 2026-10-21 基线，未做性能归因；最慢腿 TIMEOUT 余量已于 2026-11-13 逐腿单跑补齐，
+  见下方「最慢腿余量」段。
 
 ### D4 / D5 收口结论（2026-11-10）
 
@@ -43,8 +47,8 @@
 - 首轮 Release 全量曾因 `source_mojibake_guard` 的 `R5_ESCRESIDUE` 规则误报任务 2 写入的合法 JS 转义
   `\u003C` 而 1 条失败；未跳过、未改 TIMEOUT，改用语义等价的 `\x3C`（`45d8be7`，2 文件 2 行）后重跑全绿，
   守卫 5 条自证规则仍能变红。详见 `.superpowers/sdd/task-17-blocker-report.md`。
-- 批次 D 计划 Task 24 Step 4「真实腿余量按安静态逐条单跑」本轮**按裁定裁剪**：两轮全量无 Timeout 失败，
-  逐腿单跑属性能余量测量、非正确性门禁，余量倍数如实不填报（见 `task-17-report.md`）。
+- 批次 D 计划 Task 24 Step 4「真实腿余量按安静态逐条单跑」当时按裁定裁剪；2026-11-13 已补做
+  （11 条真实数据腿逐条单跑，最小余量 3.03×，见下方「最慢腿余量」段），该裁剪项已闭环。
 
 **本轮用户可见 / 行为相关变更**
 
@@ -155,6 +159,35 @@ RPC 域再判输出结构；GCP 少于 3 点与缺失 RPC 两个负例必须被�
 `radiometric_calibration` 丢掉 offset、`cosine_correction` 去掉光照因子、change 静默修复尺寸不匹配），
 每条都必须让对应判据**变红**，随后按 sha256 字节还原、重编、
 **复绿**。十条均红→绿通过，产品源码无残留改动。这是「数据/判据不是为通过而造」的硬证据。
+
+### 最慢腿余量（2026-11-13，安静态逐条单跑）
+
+方法：对 11 条真实数据腿在 Debug 树上**逐条** `ctest -R ^<name>$ -j1` 单跑；墙钟由
+`time.time()` 精确计时，进程状态每 0.2 s 轮询一次、心跳每 20 s 独立输出；TIMEOUT 值由
+`build/debug/tests/CTestTestfile.cmake` 自动解析。首版脚本用 20 s 轮询判定进程结束，
+把墙钟量化成 20 秒整数倍并误报 `real_data_raster` / `real_data_true_raster` 只有 1.50×，
+该数据已作废；下表为修正后的读数，倍数按表中两位小数墙钟重算。
+交叉验证：11 条腿的 ctest 自报耗时均比外测墙钟小 0.1–0.3 s（进程启动开销），其中
+`real_data_vector_derive_heavy` 外测 60.00 s / 自报 59.77 s，确认非量化残留。
+
+| 用例 | 单跑墙钟 | TIMEOUT | 余量 |
+| --- | --- | --- | --- |
+| `real_data_vector_quick` | 204.21 s | 720 s | 3.53× |
+| `real_data_vector_checks` | 32.76 s | 100 s | 3.05× |
+| `real_data_vector_overlay_buffer_join` | 122.81 s | 630 s | 5.13× |
+| `real_data_vector_overlay_ops` | 134.05 s | 430 s | 3.21× |
+| `real_data_vector_union_poly` | 198.04 s | 600 s | **3.03×（最小）** |
+| `real_data_vector_derive_heavy` | 60.00 s | 350 s | 5.83× |
+| `real_data_vector_join_heavy` | 132.54 s | 590 s | 4.45× |
+| `real_data_raster` | 17.56 s | 60 s | 3.42× |
+| `real_data_matching` | 2.29 s | 60 s | 26.20× |
+| `real_data_true_raster` | 19.51 s | 60 s | 3.08× |
+| `real_data_true_matching` | 1.85 s | 60 s | 32.43× |
+
+11 条全部 `rc=0`，**最小余量 3.03× 高于 2.5× 触发线**，因此按既定规则**不抬 TIMEOUT、不拆腿**
+（结论限于安静态逐条单跑口径；全量轮内逐腿余量未单独计量，不作同等声明）。
+原始读数与每条腿的日志在 `build/tmp/leg_timing.json` 与 `build/tmp/leg_<name>.log`（均 gitignored）；
+测量前后 `data/dem` / `data/image` / `data/vector` 的最新文件时间未变（零写入）。
 
 ### 验收命令与门禁清单
 
