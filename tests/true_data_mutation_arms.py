@@ -45,6 +45,14 @@ ARMS = [
         "why": "max_points cap is ignored; ORB on real texture must exceed the cap of 50",
     },
     {
+        "name": "terrain_slope_scale",
+        "file": "src/plugins/terrain/terrain_plugin.cpp",
+        "find": "argStorage.push_back(slopeScaleText(zFactor));",
+        "replace": "argStorage.push_back(\"2\");",
+        "case": "real_data_true_raster",
+        "why": "slope sends -s 2 instead of 1/z_factor; the analytic plane slope oracle must go red",
+    },
+    {
         "name": "change_size_guard",
         "file": "src/plugins/matching/matching_plugin.cpp",
         "regex": r"(?s)    if \(before\.size\(\) != after\.size\(\)\) \{.*?\n    \}",

@@ -23,8 +23,8 @@
   NSIS 安装包与云端构建已停用（见"交付方式（只保留本机 install）"节）。
 - **九守卫 / 安装判据**：九守卫全绿、**9/9** 通过，双树同批 **35/35** 判据通过
   （现读：`ctest --test-dir build/<树> -C <Config> -R "install_smoke|install_closure|docs_match_cli|docs_prose_claims|guard|selftest|CoverageMeta|GuiContract" --output-on-failure -j1`，
-  Debug 62.96 s / Release 54.00 s）。
-- **最近全量验收日期**：**2026-11-12（真实数据 B 腿接入后重跑）**。Debug **792/792** 通过、墙钟 **1443.40 s**；Release **790/790** 通过、墙钟 **624.95 s**
+  Debug 54.08 s / Release 50.65 s）。
+- **最近全量验收日期**：**2026-11-12（terrain 批接入后重跑）**。Debug **792/792** 通过、墙钟 **1240.15 s**；Release **790/790** 通过、墙钟 **591.52 s**
   （现读：`ctest --test-dir build/debug -C Debug -j1 --output-on-failure` 与 Release 同命令，两轮退出码 0）。
   两树 `cmake --install` 本轮用全新前缀 `build/tmp/install_<Config>_1112`（退出码 0）；复用旧前缀会因
   `Lerc.dll` 双路径冲突报错，属安装目录复用问题，非产品缺陷（`install_closure` 判据用独立前缀故仍绿）。
@@ -88,18 +88,31 @@
   `classification_vector`（GLC 真实矢量，投影到 EPSG:32620 并与栅格同窗）；
   独立派生 = `pansharpen_pan`（源无全色波段，取 B1，**不是真实全色**）、
   `pattern_checker`（固定种子 64×64 棋盘）、`mismatch_small`（负例）；
-  A 腿与 `real_data_matrix.txt` 中约 60 行仍按既有事实标「合成兜底」，本次未收紧（归 C4~C15 各批）。
+  A 腿与 `real_data_matrix.txt` 中 **43 行**（`not-consumed` 36 + `synthetic` 7，fixture 列现读
+  `data` 83 / `not-consumed` 36 / `synthetic` 7）仍按既有事实标「合成兜底」；2026-11-12 terrain 批
+  由 B 腿额外覆盖其中 9 个动作，其余 34 行归 C4~C15 各批。
 
-**判据**：`tests/run_true_data_regression.py` 10 个 case —— `raster_inspect info` 尺寸/均值对独立
-gdalinfo、`raster_math band_math` 逐格数值对独立 numpy oracle、pansharpen 结构不变量、
-棋盘判别性夹具、GLC 真实矢量+栅格的 feature_stats、ORB 检出上限、平移窗匹配数、
-register 输出尺寸跟随 reference、多时相 change、尺寸不匹配负例。脚本自带「跑过必须被判过」闸，
-避免空跑假绿；cmake 包装缺 `data/true_*` 时打印专属 `GIS_SKIP_TRUE_DATA_ABSENT: ` 显式 Skip，
-两腿 TIMEOUT 60（实测 2.86 s / 1.55 s，按 ≥4× 起步口径）。
+**判据**：`tests/run_true_data_regression.py` 共 **20 个 case**（raster 15 / matching 5）——
+`raster_inspect info` 尺寸/均值对独立 gdalinfo、`raster_math band_math` 逐格数值对独立 numpy oracle、
+pansharpen 结构不变量、棋盘判别性夹具、GLC 真实矢量+栅格的 feature_stats、
+terrain 9 个动作 + 解析坡度强 oracle、ORB 检出上限、平移窗匹配数、register 输出尺寸跟随 reference、
+多时相 change、尺寸不匹配负例。脚本自带「跑过必须被判过」闸，避免空跑假绿；
+cmake 包装缺 `data/true_*` 时打印专属 `GIS_SKIP_TRUE_DATA_ABSENT: ` 显式 Skip，
+两腿 TIMEOUT 60（实测 raster 10.91 s / matching 1.55 s，按 ≥4× 起步口径）。
 
-**判别臂**：`tests/true_data_mutation_arms.py` 三条臂分别改坏一行产品代码
-（表达式 `+`→`-` 使 `B1+B2` 变减法、ORB 忽略 `max_points` 上限、change 静默修复尺寸不匹配），
-每条都必须让对应判据**变红**，随后按 sha256 字节还原、重编、**复绿**。三条均红→绿通过，
+**terrain 批（C11，2026-11-12）**：把矩阵里仍标 `not-consumed` 的 9 个 terrain 动作
+（`fill_sinks` / `flow_direction` / `flow_accumulation` / `stream_extract` / `watershed` /
+`viewshed` / `viewshed_multi` / `cut_fill` / `reservoir_volume`）接到**真实 DEM**
+（`D:\Code\Data\tiff\dem\refas.tif` 裁 256×256，实测高程 1311–1678 m、σ=63.8）。
+独立 oracle：填洼结果逐格 ≥ 源 DEM、cut_fill 用同 GT 的两个不同真实 DEM 窗并判有挖有填、
+viewshed/水位参数由 `gdalinfo` 独立算出的中心点与统计派生；另造一个**独立解析斜面**
+（z = 0.1x + 0.05y + 500，1 m 像元，EPSG:3857），其坡度解析值 6.3794° 由 numpy 几何推导，
+判 `terrain slope` 输出内部区域均值与之相符（容差 0.5°）。A 腿的 terrain case 与 322 个判据不动。
+
+**判别臂**：`tests/true_data_mutation_arms.py` **四条**臂分别改坏一行产品代码
+（表达式 `+`→`-` 使 `B1+B2` 变减法、ORB 忽略 `max_points` 上限、
+`terrain slope` 把 `-s 1/z` 换成 `-s 2`、change 静默修复尺寸不匹配），
+每条都必须让对应判据**变红**，随后按 sha256 字节还原、重编、**复绿**。四条均红→绿通过，
 产品源码无残留改动。这是「数据/判据不是为通过而造」的硬证据。
 
 ### 验收命令与门禁清单

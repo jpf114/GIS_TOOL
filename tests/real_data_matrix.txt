@@ -28,7 +28,12 @@
 #   吃 data/true_raster 与 data/true_matching 下由 tests/make_true_data_fixtures.py 从 D:\Code\Data
 #   真实影像裁出的 256×256 窗口（GDAL 官方 CLI，未调用本仓算法）；期望值 data/true_expected.json
 #   由 gdalinfo/numpy 在源图上独立推导。A 腿仍按上面事实走合成兜底，322 个数值判据不动。
-#   B 腿不消费本表派生件，故不新增表格行；10 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+#   B 腿不消费本表派生件，故不新增表格行；20 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+# terrain 批（C11，2026-11-12）：B 腿 raster 组另用 D:\Code\Data\tiff\dem\refas.tif 真实 DEM 裁窗
+#   覆盖本表仍标 not-consumed 的 9 个 terrain 动作（fill_sinks / flow_direction / flow_accumulation /
+#   stream_extract / watershed / viewshed / viewshed_multi / cut_fill / reservoir_volume），
+#   并加独立解析斜面坡度强 oracle。按上文本表第4列定义，第4列不作为「腿读了 data/ 原件」的证据，
+#   故这 9 行的 fixture 列保持 not-consumed 不改，覆盖事实由本注释与 B 腿 summary 承重。
 #   可用真实输入的实测清单（gis-cli raster_inspect info 现读，不是猜的）：
 #     data/image/2024/H48E018014C.tif        13912 x 9279 x 4 bands  ⇒ 多波段/指数类可用
 #     data/image/N01_50_2000LC030/*.tif      14377 x 18719 x 1 bands  ⇒ 单波段，指数类做不了

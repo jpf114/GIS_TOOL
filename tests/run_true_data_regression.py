@@ -211,6 +211,73 @@ def main():
             return True, "{} records from GLC raster + UTM vector".format(len(records))
         r.case("true_feature_stats", c_feature_stats)
 
+        # ---- terrain batch (C11): the 9 matrix rows still marked not-consumed -----
+        # Real DEM windows, not the A-leg synthetic DEM. Expectations are independent:
+        # metadata from gdalinfo, fill_sinks monotonicity from the SOURCE pixels,
+        # analytic slope from the plane's geometry (numpy), never from product output.
+        def terrain_case(action, extra, kind):
+            out = r.out / ("terrain_" + action + "_true.tif")
+            args = ["terrain", action,
+                    "--input=" + str(TR / "dem_real.tif"),
+                    "--output=" + str(out), "--band=1", *extra]
+            rc, text = r.cli_run(args)
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            size, _ = r.dims(out)
+            if size != E["dem_real"]["size"]:
+                return False, "size {} != real DEM {}".format(size, E["dem_real"]["size"])
+            vals = r.pixels(out)
+            if not np.isfinite(vals).all() or float(vals.std()) <= 0:
+                return False, "output non-finite or constant on real DEM"
+            if kind == "fill":
+                src = r.pixels(TR / "dem_real.tif")
+                if not bool((vals >= src).all()):
+                    return False, "filled DEM is below the source somewhere"
+            if kind == "cutfill":
+                if not (bool((vals > 0).any()) and bool((vals < 0).any())):
+                    return False, "cut_fill on two distinct real windows has no cut and no fill"
+            return True, "real DEM -> finite non-constant {} output".format(action)
+
+        cx, cy = E["terrain_center"]
+        water = E["terrain_water_level"]
+        terrain_jobs = [
+            ("true_terrain_fill_sinks", "fill_sinks", ["--z_factor=1"], "fill"),
+            ("true_terrain_flow_direction", "flow_direction", ["--z_factor=1"], ""),
+            ("true_terrain_flow_accumulation", "flow_accumulation", ["--z_factor=1"], ""),
+            ("true_terrain_stream_extract", "stream_extract",
+             ["--z_factor=1", "--accum_threshold=10"], ""),
+            ("true_terrain_watershed", "watershed", ["--z_factor=1"], ""),
+            ("true_terrain_viewshed", "viewshed",
+             ["--observer_x={:.6f}".format(cx), "--observer_y={:.6f}".format(cy),
+              "--observer_height=2.0", "--target_height=0.0", "--max_distance=0.0"], ""),
+            ("true_terrain_viewshed_multi", "viewshed_multi",
+             ["--observer_points={:.6f},{:.6f};{:.6f},{:.6f}".format(
+                 cx, cy, cx + 200.0, cy + 200.0),
+              "--observer_height=2.0", "--target_height=0.0", "--max_distance=0.0"], ""),
+            ("true_terrain_cut_fill", "cut_fill",
+             ["--reference=" + str(TR / "dem_reference.tif")], "cutfill"),
+            ("true_terrain_reservoir_volume", "reservoir_volume",
+             ["--water_level={:.4f}".format(water)], ""),
+        ]
+        for cname, action, extra, kind in terrain_jobs:
+            r.case(cname, (lambda a=action, e=extra, k=kind: terrain_case(a, e, k)))
+
+        # strong value-level oracle: independent analytic slope on a generated plane
+        def c_plane_slope():
+            out = r.out / "terrain_slope_plane_true.tif"
+            rc, text = r.cli_run(["terrain", "slope",
+                                  "--input=" + str(TR / "dem_plane.tif"),
+                                  "--output=" + str(out), "--band=1", "--z_factor=1"])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing".format(rc)
+            vals = r.pixels(out).reshape(64, 64)
+            inner = float(vals[2:-2, 2:-2].mean())
+            exp = E["dem_plane"]["slope_degrees"]
+            if not near(inner, exp, 0.5):
+                return False, "slope got {:.4f} deg vs analytic {:.4f} deg".format(inner, exp)
+            return True, "analytic plane slope {:.4f} deg matches independent geometry".format(exp)
+        r.case("true_terrain_slope_analytic", c_plane_slope)
+
     else:
         # 1. detect: structural invariants with a real textured image
         def c_detect():

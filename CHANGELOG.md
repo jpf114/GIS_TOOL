@@ -24,7 +24,9 @@
 
 - 新增 `docs_prose_claims` 守卫
 - 新增 `real_data_true_raster` / `real_data_true_matching` 两条真实数据腿：从 `D:\Code\Data` 真实影像裁窗，
-  用 GDAL 官方 CLI 独立造数、`gdalinfo`/numpy 独立推导期望值，并配三条「改坏产品必须判红」的判别臂
+  用 GDAL 官方 CLI 独立造数、`gdalinfo`/numpy 独立推导期望值，并配四条「改坏产品必须判红」的判别臂
+- terrain 批接入真实 DEM 裁窗，覆盖矩阵里 9 个仍走合成兜底的动作；新增独立解析斜面坡度 oracle
+  （几何推导值，非产品输出）与填洼单调性、cut_fill 双真实窗判据
 - D4 双树全量 ctest 与两树 `cmake --install` 结论见 RELEASE 当前状态节
 
 ## [1.0.0] - 2026-05-24

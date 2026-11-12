@@ -30,6 +30,10 @@ SRC_2024_B = r"D:\Code\Data\raster\2024\H48E018015C.tif"
 SRC_2025 = r"D:\Code\Data\raster\2025\GF2_PMS1_E105.6_N29.0_RGB_20250324C.tif"
 SRC_GLC_RASTER = r"D:\Code\Data\GlobeLand30_2000\N20_50_2000LC030\n20_50_2000lc030.tif"
 SRC_GLC_VECTOR = r"D:\Code\Data\GlobeLand30_2000\N20_50_2000LC030\N20_50_2000.shp"
+SRC_DEM = r"D:\Code\Data\tiff\dem\refas.tif"
+PLANE_A = 0.1   # elevation per pixel column (independent analytic fixture)
+PLANE_B = 0.05  # elevation per pixel row
+PLANE_C = 500.0
 
 
 def tools(gdal_bin):
@@ -123,6 +127,7 @@ def main():
             "s2025": SRC_2025,
             "glc_raster": SRC_GLC_RASTER,
             "glc_vector": SRC_GLC_VECTOR,
+            "dem": SRC_DEM,
         },
         "notes": [
             "reference/input are two windows of the SAME 2024 scene, offset by 64 px horizontally; "
@@ -223,6 +228,38 @@ def main():
          str(board_path), str(checker)], log)
     m_chk = info(t, checker, log)
 
+    # ---- terrain: real DEM windows + an independent analytic plane -------------------
+    dem_real = out_r / "dem_real.tif"
+    m_dem = translate(SRC_DEM, dem_real, ["-srcwin", "1000", "300", str(WIN), str(WIN)])
+    dem_gt = m_dem["geoTransform"]
+    # cut_fill requires an identical geotransform, so take a DIFFERENT real DEM window and
+    # re-assign dem_real's bounds: same grid, genuinely different real elevations.
+    dem_ref = out_r / "dem_reference.tif"
+    dem_ref_raw = tmp / "dem_ref_raw.tif"
+    translate(SRC_DEM, dem_ref_raw, ["-srcwin", "1100", "300", str(WIN), str(WIN)])
+    ulx, uly = dem_gt[0], dem_gt[3]
+    lrx, lry = ulx + WIN * dem_gt[1], uly + WIN * dem_gt[5]
+    run([t["translate"], "-q", "-a_ullr", str(ulx), str(uly), str(lrx), str(lry),
+         str(dem_ref_raw), str(dem_ref)], log)
+    m_dem_ref = info(t, dem_ref, log)
+    dem_center = [dem_gt[0] + WIN * dem_gt[1] / 2.0, dem_gt[3] + WIN * dem_gt[5] / 2.0]
+    dem_stats = stats_of(m_dem)
+    dem_water = (dem_stats["min"] + dem_stats["max"]) / 2.0
+
+    plane_path = tmp / "plane.xyz"
+    with open(plane_path, "w", encoding="ascii") as f:
+        for y in range(64):
+            for x in range(64):
+                f.write("{} {} {:.6f}\n".format(x, y, PLANE_C + PLANE_A * x + PLANE_B * y))
+    dem_plane = out_r / "dem_plane.tif"
+    run([t["translate"], "-q", "-of", "GTiff", "-a_srs", "EPSG:3857",
+         "-a_ullr", "500000", "4000000", "500064", "3999936",
+         str(plane_path), str(dem_plane)], log)
+    m_plane = info(t, dem_plane, log)
+    # Horn 3x3 on a perfect plane gives dz/dx=A, dz/dy=B (1 m pixels, scale=1);
+    # the expected slope is pure analytic geometry, not a product output.
+    plane_slope_deg = float(np.degrees(np.arctan(np.hypot(PLANE_A, PLANE_B))))
+
     expected = {
         "oracle_independence": "all values derived from gdalinfo / numpy on the SOURCE or fixture; "
                                "no GIS_TOOL algorithm or CLI output was used as an expectation",
@@ -243,6 +280,12 @@ def main():
                      "clipped to the raster window, so the pair actually overlaps",
         },
         "pattern_checker": {**base_meta(m_chk), "stats": stats_of(m_chk)},
+        "dem_real": {**base_meta(m_dem), "stats": dem_stats},
+        "dem_reference": base_meta(m_dem_ref),
+        "dem_plane": {**base_meta(m_plane), "slope_degrees": plane_slope_deg,
+                      "plane_a": PLANE_A, "plane_b": PLANE_B, "plane_c": PLANE_C},
+        "terrain_center": dem_center,
+        "terrain_water_level": dem_water,
         "band_math_B1_plus_B2": sum_oracle,
         "reference_input_shift_px": 64,
         "reference_input_overlap_identical": overlap_equal,
@@ -257,7 +300,7 @@ def main():
 
     if not overlap_equal:
         raise RuntimeError("independent geometric oracle failed: shifted windows do not overlap identically")
-    for key in ("reference", "input", "change_input", "pansharpen_ms", "classification_raster"):
+    for key in ("reference", "input", "change_input", "pansharpen_ms", "classification_raster", "dem_real"):
         if expected[key]["stats" if key != "pansharpen_ms" else "bands_stats"] is None:
             raise RuntimeError("missing stats for " + key)
         st = expected[key].get("stats") or expected[key]["bands_stats"][0]
