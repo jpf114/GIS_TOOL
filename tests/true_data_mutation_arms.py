@@ -85,6 +85,22 @@ ARMS = [
         "why": "assigned NoData becomes 0; independent gdalinfo oracle must go red",
     },
     {
+        "name": "georef_radiometric_offset",
+        "file": "src/plugins/georef/georef_plugin.cpp",
+        "find": "    cv::Mat calibrated = bandMat * gain + offset;",
+        "replace": "    cv::Mat calibrated = bandMat * gain;",
+        "case": "real_data_true_raster",
+        "why": "radiometric offset is dropped; independent gain/offset oracle must go red",
+    },
+    {
+        "name": "georef_cosine_factor",
+        "file": "src/plugins/georef/georef_plugin.cpp",
+        "find": "                outputPtr[col] = inputPtr[col] * (cosSunZenith / cosIncidence);",
+        "replace": "                outputPtr[col] = inputPtr[col];",
+        "case": "real_data_true_raster",
+        "why": "cosine illumination factor removed; independent correction oracle must go red",
+    },
+    {
         "name": "change_size_guard",
         "file": "src/plugins/matching/matching_plugin.cpp",
         "regex": r"(?s)    if \(before\.size\(\) != after\.size\(\)\) \{.*?\n    \}",

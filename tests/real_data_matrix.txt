@@ -28,7 +28,12 @@
 #   吃 data/true_raster 与 data/true_matching 下由 tests/make_true_data_fixtures.py 从 D:\Code\Data
 #   真实影像裁出的 256×256 窗口（GDAL 官方 CLI，未调用本仓算法）；期望值 data/true_expected.json
 #   由 gdalinfo/numpy 在源图上独立推导。A 腿仍按上面事实走合成兜底，322 个数值判据不动。
-#   B 腿不消费本表派生件，故不新增表格行；49 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+#   B 腿不消费本表派生件，故不新增表格行；58 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+# georef 批（C13，2026-11-12）：B 腿 raster 组另用独立解析斜坡 + 坡度/坡向 + 定标元数据 +
+#   4 点 GCP CSV + 带 16 键 RPC 元数据域的 VRT，覆盖最后 8 行 georef 动作；
+#   6 个数值校正的期望由 numpy 按公开公式独立求值，GCP/RPC 另配元数据负例。
+#   terrain + spindex + classification + 单动作 + georef 五批合计覆盖 **43 行全部**，剩余 0 行。
+#   按上文第4列定义，fixture 列保持历史取值不改，覆盖事实由本注释与 B 腿 summary 承重。
 # 单动作批（C4/C5/C7/C14，2026-11-12）：B 腿 raster 组另用独立解析斜坡夹具覆盖
 #   cutting,mosaic / matching,change / processing,kmeans / raster_manage,nodata 四行，
 #   oracle 分别来自拼接几何、逐格差值、可分性与独立 gdalinfo 元数据。

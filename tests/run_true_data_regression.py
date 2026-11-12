@@ -487,6 +487,105 @@ def main():
             return True, "out-of-range nodata_value rejected by param guard"
         r.case("true_raster_manage_nodata_negative", c_nodata_negative)
 
+        # ---- georef batch (C13): 6 numeric corrections + GCP/RPC metadata paths ----
+        # All expectations come from numpy evaluation of the published correction formulas
+        # and from independently authored GCP coordinates / RPC metadata, never from a run.
+        def georef_case(action, extra, oracle_key):
+            out = r.out / ("georef_" + action + "_true.tif")
+            rc, text = r.cli_run(["georef", action,
+                                  "--input=" + str(TR / "georef_input.tif"),
+                                  "--output=" + str(out), *extra])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            vals = r.pixels(out)
+            if vals.size != sn * sn or not np.isfinite(vals).all():
+                return False, "bad size or non-finite values"
+            arr = vals.reshape(sn, sn)
+            exp = E["georef_oracle"][oracle_key]
+            got = {"min": float(arr.min()), "max": float(arr.max()), "mean": float(arr.mean())}
+            for k in ("min", "max", "mean"):
+                if not near(got[k], exp[k], 2e-2):
+                    return False, "{} got {:.6f} expected {:.6f}".format(k, got[k], exp[k])
+            for i, xy in enumerate(E["spindex_sample_xy"]):
+                x, y = int(xy[0]), int(xy[1])
+                if not near(float(arr[y, x]), exp["samples"][i], 2e-2):
+                    return False, "sample {} got {:.6f} expected {:.6f}".format(
+                        i, float(arr[y, x]), exp["samples"][i])
+            return True, "{} matches independent correction oracle".format(action)
+
+        topo = ["--slope_raster=" + str(TR / "georef_slope.tif"),
+                "--aspect_raster=" + str(TR / "georef_aspect.tif"),
+                "--sun_zenith_deg=30", "--sun_azimuth_deg=180", "--band=1"]
+        georef_jobs = [
+            ("dos_correction", ["--band=1"], "dos_correction"),
+            ("radiometric_calibration",
+             ["--metadata_file=" + str(TR / "georef_metadata.txt"), "--band=1"],
+             "radiometric_calibration"),
+            ("cosine_correction", topo, "cosine_correction"),
+            ("minnaert_correction", topo + ["--minnaert_k=0.5"], "minnaert_correction"),
+            ("c_correction", topo + ["--c_value=0.1"], "c_correction"),
+            ("percentile_stretch",
+             ["--dark_percentile=1", "--bright_percentile=99"], "percentile_stretch"),
+        ]
+        for action_name, extra, oracle_key in georef_jobs:
+            r.case("true_georef_" + action_name,
+                   (lambda a=action_name, e=extra, k=oracle_key: georef_case(a, e, k)))
+
+        def c_gcp():
+            vrt = TR / "georef_input.tif"
+            out = r.out / "georef_gcp_true.tif"
+            rc, text = r.cli_run([
+                "georef", "gcp_register", "--input=" + str(vrt), "--output=" + str(out),
+                "--gcp_file=" + str(TR / "georef_gcp.csv"),
+                "--dst_srs=EPSG:4326", "--resample=nearest"])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            meta = json.loads(r.gdal([r.tool("gdalinfo"), "-json", str(out)]))
+            gt = meta["geoTransform"]
+            exp = E["georef_gcp_expected_gt"]
+            if len(gt) != len(exp) or any(abs(a - b) > 1e-2 for a, b in zip(gt, exp)):
+                return False, "GCP geotransform {} != independent {}".format(gt, exp)
+            return True, "GCP warp follows the independently authored control points"
+        r.case("true_georef_gcp_register", c_gcp)
+
+        def c_rpc():
+            vrt = TR / "georef_rpc.vrt"
+            meta_in = json.loads(r.gdal([r.tool("gdalinfo"), "-json", str(vrt)]))
+            keys = len(meta_in.get("metadata", {}).get("RPC", {}))
+            if keys != E["georef_rpc_expected_keys"]:
+                return False, "RPC metadata keys {} != independent {}".format(
+                    keys, E["georef_rpc_expected_keys"])
+            out = r.out / "georef_rpc_true.tif"
+            rc, text = r.cli_run([
+                "georef", "rpc_orthorectify", "--input=" + str(vrt), "--output=" + str(out),
+                "--dst_srs=EPSG:4326", "--rpc_height=0", "--resample=nearest"])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            size, _ = r.dims(out)
+            vals = r.pixels(out)
+            if size[0] <= 0 or size[1] <= 0 or not np.isfinite(vals).all():
+                return False, "empty or non-finite RPC output"
+            return True, "RPC orthorectification from independently authored RPC domain"
+        r.case("true_georef_rpc_orthorectify", c_rpc)
+
+        def c_georef_negatives():
+            bad_gcp = r.out / "georef_bad_gcp.csv"
+            bad_gcp.write_text("pixel_x,pixel_y,map_x,map_y\n0,0,116,40\n1,1,116.001,39.999\n",
+                               encoding="ascii")
+            out1 = r.out / "georef_bad_gcp_true.tif"
+            rc1, _ = r.cli_run([
+                "georef", "gcp_register", "--input=" + str(TR / "georef_input.tif"),
+                "--output=" + str(out1), "--gcp_file=" + str(bad_gcp),
+                "--dst_srs=EPSG:4326", "--resample=nearest"])
+            out2 = r.out / "georef_no_rpc_true.tif"
+            rc2, _ = r.cli_run([
+                "georef", "rpc_orthorectify", "--input=" + str(TR / "georef_input.tif"),
+                "--output=" + str(out2), "--dst_srs=EPSG:4326", "--rpc_height=0"])
+            if rc1 == 0 or rc2 == 0 or out1.exists() or out2.exists():
+                return False, "bad GCP / missing RPC were accepted (rc={}/{})".format(rc1, rc2)
+            return True, "insufficient GCPs and missing RPC metadata both rejected"
+        r.case("true_georef_metadata_negatives", c_georef_negatives)
+
     else:
         # 1. detect: structural invariants with a real textured image
         def c_detect():

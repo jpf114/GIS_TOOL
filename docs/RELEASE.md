@@ -23,8 +23,8 @@
   NSIS 安装包与云端构建已停用（见"交付方式（只保留本机 install）"节）。
 - **九守卫 / 安装判据**：九守卫全绿、**9/9** 通过，双树同批 **35/35** 判据通过
   （现读：`ctest --test-dir build/<树> -C <Config> -R "install_smoke|install_closure|docs_match_cli|docs_prose_claims|guard|selftest|CoverageMeta|GuiContract" --output-on-failure -j1`，
-  Debug 63.88 s / Release 73.19 s）。
-- **最近全量验收日期**：**2026-11-12（单动作批接入后重跑）**。Debug **792/792** 通过、墙钟 **1483.81 s**；Release **790/790** 通过、墙钟 **863.71 s**
+  Debug 65.11 s / Release 80.50 s）。
+- **最近全量验收日期**：**2026-11-12（georef 批 / 43 行全覆盖后终跑）**。Debug **792/792** 通过、墙钟 **1638.68 s**；Release **790/790** 通过、墙钟 **916.75 s**
   （现读：`ctest --test-dir build/debug -C Debug -j1 --output-on-failure` 与 Release 同命令，两轮退出码 0）。
   两树 `cmake --install` 本轮用全新前缀 `build/tmp/install_<Config>_1112`（退出码 0）；复用旧前缀会因
   `Lerc.dll` 双路径冲突报错，属安装目录复用问题，非产品缺陷（`install_closure` 判据用独立前缀故仍绿）。
@@ -90,19 +90,20 @@
   `pattern_checker`（固定种子 64×64 棋盘）、`mismatch_small`（负例）；
   A 腿与 `real_data_matrix.txt` 中 **43 行**（`not-consumed` 36 + `synthetic` 7，fixture 列现读
   `data` 83 / `not-consumed` 36 / `synthetic` 7）仍按既有事实标「合成兜底」；2026-11-12 的
-  terrain 批（9 行）、spindex 批（17 行）、classification 批（5 行）与单动作批（4 行）
-  由 B 腿额外覆盖，合计 **35 行**；其余 **8 行全部是 georef**（RPC/QUAC/GCP 类），归 C13 批。
+  terrain 批（9 行）、spindex 批（17 行）、classification 批（5 行）、单动作批（4 行）与
+  georef 批（8 行）由 B 腿额外覆盖，**43 行全部覆盖，剩余 0 行**。矩阵 fixture 列按它自己的
+  定义保持原值不变（见矩阵头部说明）；A 腿 322 个判据始终未动。
 
-**判据**：`tests/run_true_data_regression.py` 共 **49 个 case**（raster 44 / matching 5）——
+**判据**：`tests/run_true_data_regression.py` 共 **58 个 case**（raster 53 / matching 5）——
 `raster_inspect info` 尺寸/均值对独立 gdalinfo、`raster_math band_math` 逐格数值对独立 numpy oracle、
 pansharpen 结构不变量、棋盘判别性夹具、GLC 真实矢量+栅格的 feature_stats、
 terrain 9 个动作 + 解析坡度强 oracle、spindex 17 个动作 + 自定义指数负例、
 classification 3 个分类器 + 2 个精度判据 + 标签列负例、
-单动作批 4 个动作 + 参数越界负例、
+单动作批 4 个动作 + 参数越界负例、georef 6 个数值校正 + GCP/RPC 路径 + 元数据负例、
 ORB 检出上限、平移窗匹配数、register 输出尺寸跟随 reference、多时相 change、尺寸不匹配负例。
 脚本自带「跑过必须被判过」闸，避免空跑假绿；cmake 包装缺 `data/true_*` 时打印专属
 `GIS_SKIP_TRUE_DATA_ABSENT: ` 显式 Skip，两腿 TIMEOUT 60
-（实测 raster 17.19 s / matching 1.46 s，余量 3.5×，仍在 2.5× 拆腿线之上，按规则不抬）。
+（实测 raster 15.96 s / matching 1.38 s，余量 3.8×，仍在 2.5× 拆腿线之上，按规则不抬）。
 
 **terrain 批（C11，2026-11-12）**：把矩阵里仍标 `not-consumed` 的 9 个 terrain 动作
 （`fill_sinks` / `flow_direction` / `flow_accumulation` / `stream_extract` / `watershed` /
@@ -139,13 +140,21 @@ A 腿的 spindex case 与 322 个判据不动。
 逐像素等于左/右输入，尺寸 128×64 由各自 `-a_ullr` 边界独立定义）。
 夹具值都是固定解析斜坡，变化矩形与拼接图版由几何定义，无产品输出参与造数。
 
-**判别臂**：`tests/true_data_mutation_arms.py` **八条**臂分别改坏一行产品代码
+**georef 批（C13，2026-11-12）**：最后 8 行。独立夹具 = 解析斜坡栅格 + 已知坡度/坡向栅格 +
+`GAIN/OFFSET` 元数据文件 + 4 点 GCP CSV + **带 16 键 `RPC` 元数据域的 VRT**（恒等型 RPC 系数，
+由 GDAL CLI 独立写出，产品只读不造）。6 个数值校正（DOS / 辐射定标 / cosine / Minnaert / C /
+百分位拉伸）的期望由 numpy 按公开校正公式独立求值，逐格统计 + 采样点比对；
+`gcp_register` 用 `gdalinfo` 独立核对输出地理变换，`rpc_orthorectify` 先独立核对输入 VRT 的
+RPC 域再判输出结构；GCP 少于 3 点与缺失 RPC 两个负例必须被拒。
+
+**判别臂**：`tests/true_data_mutation_arms.py` **十条**臂分别改坏一行产品代码
 （表达式 `+`→`-` 使 `B1+B2` 变减法、ORB 忽略 `max_points` 上限、
 `terrain slope` 把 `-s 1/z` 换成 `-s 2`、`spindex.safeDivide` 把分母 `+1e-10f` 换成 `+1.0f`、
 `accuracy_assessment` 把分类值读成常数 1、`matching.change` 把 `absdiff(before, after)` 改成
-`absdiff(before, before)`、`raster_manage.nodata` 把 NoData 写成 0、change 静默修复尺寸不匹配），
+`absdiff(before, before)`、`raster_manage.nodata` 把 NoData 写成 0、
+`radiometric_calibration` 丢掉 offset、`cosine_correction` 去掉光照因子、change 静默修复尺寸不匹配），
 每条都必须让对应判据**变红**，随后按 sha256 字节还原、重编、
-**复绿**。八条均红→绿通过，产品源码无残留改动。这是「数据/判据不是为通过而造」的硬证据。
+**复绿**。十条均红→绿通过，产品源码无残留改动。这是「数据/判据不是为通过而造」的硬证据。
 
 ### 验收命令与门禁清单
 

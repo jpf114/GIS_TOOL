@@ -2133,8 +2133,8 @@ add_test(
 # tests/run_true_data_regression.py 自带「跑过必须被判过」闸，避免空跑假绿。
 # WHY 另起炉灶不进 run_real_*.ps1：A 腿 322 个断言绑死合成夹具规格，改它等于推翻
 #   已验证的数值 oracle；B 腿只补「真实数据链路」这一层，产品代码零改动。
-# WHY TIMEOUT 60：实测 raster 17.19 s / matching 1.46 s（2026-11-12，单动作批扩展后，本机安静态；
-#   余量 3.5× 仍在 2.5× 拆腿线之上，按规则不抬 TIMEOUT），
+# WHY TIMEOUT 60：实测 raster 15.96 s / matching 1.38 s（2026-11-12，georef 批扩展后，本机安静态；
+#   余量 3.8× 仍在 2.5× 拆腿线之上，按规则不抬 TIMEOUT），
 #   按新建腿 ≥4× 起步口径取整到 60 s 的倍数；两名字已进 GIS_REAL_DATA_TEST_NAMES，
 #   以豁免文件末尾 blanket 300 s 的覆写。
 # WHY 专属 Skip token：缺 data/true_* 打印 GIS_SKIP_TRUE_DATA_ABSENT: 并 return()，
@@ -2384,7 +2384,7 @@ get_property(GIS_TIMED_TEST_NAMES DIRECTORY PROPERTY TESTS)
 #   GIS_REAL_DATA_TEST_NAMES 传进来，不在这里手抄第二遍名字（两处各改各的正是本文件反复在防的漂移）。
 #   复算（现值 60/60/720/100/630/430/600/350，按上面名单里 A 腿 real_data_* 的书写顺序）；
 #   名单尾部另有质检收口 B 腿 real_data_true_raster / real_data_true_matching，TIMEOUT 各 60
-#   （实测 17.19 s / 1.46 s，单动作批扩展后，见本文件 B 腿注册处的定值注释）。⚠ 必须读**生成物**而不是读源码：源码侧那条
+#   （实测 15.96 s / 1.38 s，georef 批扩展后，见本文件 B 腿注册处的定值注释）。⚠ 必须读**生成物**而不是读源码：源码侧那条
 #     grep -A3 "set_tests_properties(real_data" tests/CMakeLists.txt | grep TIMEOUT
 #   即使有人把豁免名单 GIS_REAL_DATA_TEST_NAMES 里的名字删掉、blanket 把值改回 300，它照样打印那几个数。
 #     grep 'TIMEOUT "300"' build/debug/tests/CTestTestfile.cmake | grep -c real_data   ⇒ 必须为 0

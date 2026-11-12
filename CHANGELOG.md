@@ -35,6 +35,9 @@
 - 单动作批覆盖 `raster_manage.nodata` / `processing.kmeans` / `matching.change` /
   `cutting.mosaic` 四个缺口，分别用独立 gdalinfo 元数据、可分性、逐格差值与拼接几何作 oracle；
   判别臂增至八条
+- georef 批覆盖最后 8 行：独立解析斜坡 + 坡度/坡向 + 定标元数据 + GCP CSV + 带 RPC 域的 VRT；
+  6 个数值校正用 numpy 按公开公式独立求值，GCP/RPC 路径配元数据负例；判别臂增至十条。
+  至此 `real_data_matrix.txt` 中 43 行合成兜底全部由 B 腿额外覆盖，A 腿 322 个判据未动
 - D4 双树全量 ctest 与两树 `cmake --install` 结论见 RELEASE 当前状态节
 
 ## [1.0.0] - 2026-05-24

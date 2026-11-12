@@ -153,6 +153,10 @@ def main():
             "(y 16..32, x 16..48, +100); mosaic_left/right are two adjacent plates with "
             "different constant levels. The expected change map is |after-before| computed "
             "here, and the mosaic geometry is defined by the assigned bounds.",
+            "georef fixtures are analytic ramps with independently defined slope/aspect, "
+            "GAIN/OFFSET metadata, 4 GCP points and a 16-key RPC metadata domain inside a VRT. "
+            "Expected DOS / radiometric / cosine / Minnaert / C / percentile outputs are "
+            "computed independently with numpy from the published correction formulas.",
         ],
         "commands": log,
     }
@@ -459,6 +463,88 @@ def main():
             "samples": [float(arr[y, x]) for x, y in sample_xy],
         }
 
+    # ---- georef batch (C13): analytic ramps + independently authored RPC/GCP metadata ----
+    # Ramp values, slope/aspect, gain/offset, GCP coordinates and RPC coefficients are all
+    # defined here; none of them come from a product run. The expected correction rasters are
+    # computed independently with numpy from the published correction formulas.
+    gn = 64
+    gxx, gyy = np.meshgrid(np.arange(gn), np.arange(gn))
+    gbase = (20.0 + 1.2 * gxx + 0.8 * gyy).astype(np.float32)
+    gslope = (15.0 + 0.05 * gxx).astype(np.float32)
+    gaspect = (90.0 + 0.1 * gyy).astype(np.float32)
+    georef_input = write_single("georef_input", gbase, 116.0)
+    georef_slope = write_single("georef_slope", gslope, 116.0)
+    georef_aspect = write_single("georef_aspect", gaspect, 116.0)
+
+    (out_r / "georef_metadata.txt").write_text("GAIN=2.0\nOFFSET=5.0\n", encoding="ascii")
+
+    gcp_rows = [
+        "pixel_x,pixel_y,map_x,map_y",
+        "0,0,116.0,40.0",
+        "63,0,116.063,40.0",
+        "0,63,116.0,39.937",
+        "63,63,116.063,39.937",
+    ]
+    (out_r / "georef_gcp.csv").write_text("\n".join(gcp_rows) + "\n", encoding="ascii")
+
+    # VRT carrying an independent identity-like RPC model (16 keys in the RPC metadata domain).
+    den_coeff = [1] + [0] * 19
+    line_num = [0, 1] + [0] * 18
+    samp_num = [0, 0, 1] + [0] * 17
+    rpc_items = {
+        "ERR_BIAS": "0", "ERR_RAND": "0",
+        "LINE_OFF": "32", "SAMP_OFF": "32",
+        "LAT_OFF": "40", "LONG_OFF": "116", "HEIGHT_OFF": "0",
+        "LINE_SCALE": "32", "SAMP_SCALE": "32",
+        "LAT_SCALE": "0.064", "LONG_SCALE": "0.064", "HEIGHT_SCALE": "100",
+        "LINE_NUM_COEFF": " ".join(str(v) for v in line_num),
+        "LINE_DEN_COEFF": " ".join(str(v) for v in den_coeff),
+        "SAMP_NUM_COEFF": " ".join(str(v) for v in samp_num),
+        "SAMP_DEN_COEFF": " ".join(str(v) for v in den_coeff),
+    }
+    rpc_md = "".join('<MDI key="{}">{}</MDI>'.format(k, v) for k, v in rpc_items.items())
+    rpc_vrt = out_r / "georef_rpc.vrt"
+    rpc_vrt.write_text(
+        '<VRTDataset rasterXSize="64" rasterYSize="64">'
+        "<SRS>EPSG:4326</SRS>"
+        "<GeoTransform>116.0, 0.001, 0.0, 40.0, 0.0, -0.001</GeoTransform>"
+        '<Metadata domain="RPC">' + rpc_md + "</Metadata>"
+        '<VRTRasterBand dataType="Float32" band="1"><SimpleSource>'
+        "<SourceFilename relativeToVRT=\"0\">" +
+        str(georef_input).replace("\\", "/") + "</SourceFilename>"
+        "<SourceBand>1</SourceBand></SimpleSource></VRTRasterBand></VRTDataset>",
+        encoding="ascii",
+    )
+
+    deg = np.pi / 180.0
+    sun_z, sun_a = 30.0 * deg, 180.0 * deg
+    cos_z = np.cos(sun_z)
+    cos_i = (np.cos(gslope * deg) * cos_z +
+             np.sin(gslope * deg) * np.sin(sun_z) * np.cos(sun_a - gaspect * deg))
+    safe_i = np.maximum(cos_i, 1e-9)
+    gcosine = np.where(cos_i > 1e-6, gbase * (cos_z / safe_i), 0.0)
+    gminnaert = np.where((cos_i > 1e-6) & (cos_z > 1e-6),
+                         gbase * (cos_z / safe_i) ** 0.5, 0.0)
+    gccorrection = np.where(cos_i + 0.1 > 1e-6,
+                            gbase * ((cos_z + 0.1) / (cos_i + 0.1)), 0.0)
+    gdark = float(np.sort(gbase.flatten())[int(np.floor(0.01 * (gbase.size - 1) + 0.5))])
+    gbright = float(np.sort(gbase.flatten())[int(np.floor(0.99 * (gbase.size - 1) + 0.5))])
+    gstretch = np.minimum(np.maximum(gbase - gdark, 0.0) / (gbright - gdark), 1.0)
+    gdos = np.maximum(gbase - gbase.min(), 0.0) / (gbase.max() - gbase.min())
+    grad = gbase * 2.0 + 5.0
+
+    georef_oracle = {
+        "dos_correction": simple_oracle(gdos),
+        "radiometric_calibration": simple_oracle(grad),
+        "cosine_correction": simple_oracle(gcosine),
+        "minnaert_correction": simple_oracle(gminnaert),
+        "c_correction": simple_oracle(gccorrection),
+        "percentile_stretch": simple_oracle(gstretch),
+    }
+    for k, v in georef_oracle.items():
+        if not np.isfinite([v["min"], v["max"], v["mean"], *v["samples"]]).all():
+            raise RuntimeError("non-finite independent oracle for georef." + k)
+
     expected = {
         "oracle_independence": "all values derived from gdalinfo / numpy on the SOURCE or fixture; "
                                "no GIS_TOOL algorithm or CLI output was used as an expectation",
@@ -502,6 +588,11 @@ def main():
         "mosaic_expected_size": [128, 64],
         "mosaic_left_mean": float(mosaic_left.mean()),
         "mosaic_right_mean": float(mosaic_right.mean()),
+        "georef_oracle": georef_oracle,
+        "georef_gcp_expected_gt": [116.0, 0.001, 0.0, 40.0, 0.0, -0.001],
+        "georef_rpc_expected_keys": len(rpc_items),
+        "georef_dark_value": gdark,
+        "georef_bright_value": gbright,
         "band_math_B1_plus_B2": sum_oracle,
         "reference_input_shift_px": 64,
         "reference_input_overlap_identical": overlap_equal,
