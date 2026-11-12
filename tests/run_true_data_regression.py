@@ -390,6 +390,103 @@ def main():
             return True, "missing label column rejected, no product"
         r.case("true_classification_missing_label", c_cls_negative)
 
+        # ---- single-action batch (C4/C5/C7/C14) --------------------------------
+        sn = E["classification_size"][0]
+        # Each judgement uses an independently derived expectation: GDAL metadata for NoData,
+        # geometric separability for K-Means, |after-before| for change, and the two plate
+        # ramps plus their assigned bounds for mosaic.
+        def c_nodata():
+            work = r.out / "nodata_work.tif"
+            r.gdal([r.tool("gdal_translate"), "-q", "-of", "GTiff",
+                    str(TR / "pattern_checker.tif"), str(work)])
+            rc, text = r.cli_run(["raster_manage", "nodata",
+                                  "--input=" + str(work), "--band=1",
+                                  "--nodata_value=255"])
+            if rc != 0:
+                return False, "rc={}: {}".format(rc, text[-180:])
+            meta = json.loads(r.gdal([r.tool("gdalinfo"), "-json", str(work)]))
+            band = meta["bands"][0]
+            got = band.get("noDataValue", band.get("nodata_value"))
+            if got is None or not near(float(got), 255.0, 1e-6):
+                return False, "independent gdalinfo NoData got {}".format(got)
+            return True, "NoData 255 confirmed by independent gdalinfo"
+        r.case("true_raster_manage_nodata", c_nodata)
+
+        def c_kmeans():
+            out = r.out / "kmeans_true.tif"
+            rc, text = r.cli_run(["processing", "kmeans",
+                                  "--input=" + str(TR / "classification_input.tif"),
+                                  "--output=" + str(out), "--kmeans_k=2"])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            arr = r.pixels(out).reshape(cn, cn)
+            if len(np.unique(arr)) != 2:
+                return False, "kmeans_k=2 did not produce exactly 2 labels"
+            half = E["classification_half"]
+            left, right = set(np.unique(arr[:, :half])), set(np.unique(arr[:, half:]))
+            if len(left) != 1 or len(right) != 1 or left == right:
+                return False, "clusters do not follow the independent two-plate geometry"
+            return True, "2 clusters separate the independent left/right plates"
+        r.case("true_processing_kmeans", c_kmeans)
+
+        def c_change_numeric():
+            out = r.out / "change_numeric_true.tif"
+            rc, text = r.cli_run(["matching", "change",
+                                  "--reference=" + str(TR / "change_before.tif"),
+                                  "--input=" + str(TR / "change_after.tif"),
+                                  "--change_method=differencing", "--threshold=10",
+                                  "--output=" + str(out)])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            arr = r.pixels(out).reshape(sn, sn)
+            exp = E["change_oracle"]
+            got = {"min": float(arr.min()), "max": float(arr.max()), "mean": float(arr.mean())}
+            for k in ("min", "max", "mean"):
+                if not near(got[k], exp[k], 1e-3):
+                    return False, "{} got {:.6f} expected {:.6f}".format(k, got[k], exp[k])
+            for i, xy in enumerate(E["spindex_sample_xy"]):
+                x, y = int(xy[0]), int(xy[1])
+                if not near(float(arr[y, x]), exp["samples"][i], 1e-3):
+                    return False, "sample {} got {:.6f} expected {:.6f}".format(
+                        i, float(arr[y, x]), exp["samples"][i])
+            y0, y1, x0, x1 = E["change_rect"]
+            if not near(float(arr[y0:y1, x0:x1].mean()), E["change_delta"], 1e-3):
+                return False, "changed rectangle mean != independent delta"
+            return True, "change map equals independent |after-before|"
+        r.case("true_matching_change_numeric", c_change_numeric)
+
+        def c_mosaic():
+            out = r.out / "mosaic_true.tif"
+            rc, text = r.cli_run(["cutting", "mosaic",
+                                  "--input=" + str(TR / "mosaic_left.tif") + "," +
+                                  str(TR / "mosaic_right.tif"),
+                                  "--output=" + str(out)])
+            if rc != 0 or not out.is_file():
+                return False, "rc={} output-missing: {}".format(rc, text[-180:])
+            size, _ = r.dims(out)
+            if size != E["mosaic_expected_size"]:
+                return False, "mosaic size {} != {}".format(size, E["mosaic_expected_size"])
+            arr = r.pixels(out).reshape(sn, 2 * sn)
+            left = r.pixels(TR / "mosaic_left.tif").reshape(sn, sn)
+            right = r.pixels(TR / "mosaic_right.tif").reshape(sn, sn)
+            if not np.allclose(arr[:, :sn], left, atol=1e-3) or \
+                    not np.allclose(arr[:, sn:], right, atol=1e-3):
+                return False, "mosaic halves do not equal the independent plates"
+            return True, "128x64 mosaic reproduces both independent plates pixel-wise"
+        r.case("true_cutting_mosaic", c_mosaic)
+
+        def c_nodata_negative():
+            work = r.out / "nodata_bad_work.tif"
+            r.gdal([r.tool("gdal_translate"), "-q", "-of", "GTiff",
+                    str(TR / "pattern_checker.tif"), str(work)])
+            rc, text = r.cli_run(["raster_manage", "nodata",
+                                  "--input=" + str(work), "--band=1",
+                                  "--nodata_value=1e20"])
+            if rc == 0:
+                return False, "out-of-range nodata_value was accepted"
+            return True, "out-of-range nodata_value rejected by param guard"
+        r.case("true_raster_manage_nodata_negative", c_nodata_negative)
+
     else:
         # 1. detect: structural invariants with a real textured image
         def c_detect():

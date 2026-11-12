@@ -69,6 +69,22 @@ ARMS = [
         "why": "accuracy assessment reads a constant class; independent 1.0 / 0.75 oracles must go red",
     },
     {
+        "name": "matching_change_absdiff",
+        "file": "src/plugins/matching/matching_plugin.cpp",
+        "find": "        cv::absdiff(before, after, changeMap);",
+        "replace": "        cv::absdiff(before, before, changeMap);",
+        "case": "real_data_true_raster",
+        "why": "change map becomes all zero; independent |after-before| oracle must go red",
+    },
+    {
+        "name": "raster_manage_nodata_value",
+        "file": "src/plugins/raster_manage/raster_manage_plugin.cpp",
+        "find": "    rasterBand->SetNoDataValue(nodataVal);",
+        "replace": "    rasterBand->SetNoDataValue(0.0);",
+        "case": "real_data_true_raster",
+        "why": "assigned NoData becomes 0; independent gdalinfo oracle must go red",
+    },
+    {
         "name": "change_size_guard",
         "file": "src/plugins/matching/matching_plugin.cpp",
         "regex": r"(?s)    if \(before\.size\(\) != after\.size\(\)\) \{.*?\n    \}",

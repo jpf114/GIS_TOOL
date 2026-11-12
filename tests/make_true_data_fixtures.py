@@ -149,6 +149,10 @@ def main():
             "classification map are all defined by geometry here, never by a classifier run. "
             "Expected accuracies are 1.0 (perfect) and 0.75 (left quarter flipped), computed "
             "independently from the pixel counts.",
+            "change_before/after are analytic ramps differing only in a known rectangle "
+            "(y 16..32, x 16..48, +100); mosaic_left/right are two adjacent plates with "
+            "different constant levels. The expected change map is |after-before| computed "
+            "here, and the mosaic geometry is defined by the assigned bounds.",
         ],
         "commands": log,
     }
@@ -417,6 +421,44 @@ def main():
         for _ in range(4):
             f.write("200,210,2\n")
 
+    # ---- single-action fixtures (C4/C5/C7/C14): nodata / kmeans / change / mosaic ----
+    # All values are fixed analytic ramps; the changed rectangle and the two mosaic plates
+    # are defined here by geometry, so every expectation is independent of product output.
+    sn = 64
+    sx, sy = np.meshgrid(np.arange(sn), np.arange(sn))
+    sramp = (0.01 * sx + 0.02 * sy).astype(np.float32)
+    change_before = 50.0 + sramp
+    change_after = change_before.copy()
+    change_after[16:32, 16:48] += 100.0
+    mosaic_left = 30.0 + sramp
+    mosaic_right = 90.0 + sramp
+
+    def write_single(name, arr, ulx, dtype="Float32"):
+        p = tmp / (name + ".xyz")
+        with open(p, "w", encoding="ascii") as f:
+            for y in range(sn):
+                for x in range(sn):
+                    f.write("{} {} {:.6f}\n".format(x, y, float(arr[y, x])))
+        out = out_r / (name + ".tif")
+        run([t["translate"], "-q", "-of", "GTiff", "-ot", dtype,
+             "-a_srs", "EPSG:4326",
+             "-a_ullr", str(ulx), "40.0", str(ulx + 0.064), "39.936",
+             str(p), str(out)], log)
+        return out
+
+    ch_before_path = write_single("change_before", change_before, 116.0)
+    ch_after_path = write_single("change_after", change_after, 116.0)
+    mos_left_path = write_single("mosaic_left", mosaic_left, 116.0)
+    mos_right_path = write_single("mosaic_right", mosaic_right, 116.064)
+
+    change_oracle = np.abs(change_after - change_before)
+
+    def simple_oracle(arr):
+        return {
+            "min": float(arr.min()), "max": float(arr.max()), "mean": float(arr.mean()),
+            "samples": [float(arr[y, x]) for x, y in sample_xy],
+        }
+
     expected = {
         "oracle_independence": "all values derived from gdalinfo / numpy on the SOURCE or fixture; "
                                "no GIS_TOOL algorithm or CLI output was used as an expectation",
@@ -454,6 +496,12 @@ def main():
         "classification_right_label": 2,
         "classification_perfect_accuracy": 1.0,
         "classification_degraded_accuracy": 0.75,
+        "change_oracle": simple_oracle(change_oracle),
+        "change_rect": [16, 32, 16, 48],
+        "change_delta": 100.0,
+        "mosaic_expected_size": [128, 64],
+        "mosaic_left_mean": float(mosaic_left.mean()),
+        "mosaic_right_mean": float(mosaic_right.mean()),
         "band_math_B1_plus_B2": sum_oracle,
         "reference_input_shift_px": 64,
         "reference_input_overlap_identical": overlap_equal,

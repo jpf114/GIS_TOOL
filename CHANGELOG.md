@@ -32,6 +32,9 @@
 - 判别臂增至五条（新增 `spindex.safeDivide` 分母扰动），全部红→绿、产品源码字节还原
 - classification 批接入两类完全可分的独立夹具，覆盖 3 个监督分类器、精度评估与标签列负例；
   精度期望 1.0 / 0.75 由像素计数独立推导，避免判据恒真；判别臂增至六条
+- 单动作批覆盖 `raster_manage.nodata` / `processing.kmeans` / `matching.change` /
+  `cutting.mosaic` 四个缺口，分别用独立 gdalinfo 元数据、可分性、逐格差值与拼接几何作 oracle；
+  判别臂增至八条
 - D4 双树全量 ctest 与两树 `cmake --install` 结论见 RELEASE 当前状态节
 
 ## [1.0.0] - 2026-05-24

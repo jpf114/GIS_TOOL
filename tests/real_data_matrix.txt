@@ -28,7 +28,12 @@
 #   吃 data/true_raster 与 data/true_matching 下由 tests/make_true_data_fixtures.py 从 D:\Code\Data
 #   真实影像裁出的 256×256 窗口（GDAL 官方 CLI，未调用本仓算法）；期望值 data/true_expected.json
 #   由 gdalinfo/numpy 在源图上独立推导。A 腿仍按上面事实走合成兜底，322 个数值判据不动。
-#   B 腿不消费本表派生件，故不新增表格行；44 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+#   B 腿不消费本表派生件，故不新增表格行；49 个 case 的判定见 build/<树>/tests/true_*_regression/summary_true_*.json。
+# 单动作批（C4/C5/C7/C14，2026-11-12）：B 腿 raster 组另用独立解析斜坡夹具覆盖
+#   cutting,mosaic / matching,change / processing,kmeans / raster_manage,nodata 四行，
+#   oracle 分别来自拼接几何、逐格差值、可分性与独立 gdalinfo 元数据。
+#   terrain + spindex + classification + 单动作四批合计覆盖 35 行，其余 8 行全部是 georef
+#   （RPC/QUAC/GCP 类），归 C13 批。
 # classification 批（C9，2026-11-12）：B 腿 raster 组另用独立生成的两类完全可分夹具
 #   （左/右半不同簇 + 几何定义的真值栅格与训练 CSV；无分类器参与造数）覆盖本表剩余 5 行中的
 #   feature_stats（首批已用 GLC 真实矢量+栅格覆盖）/ svm_classify / random_forest_classify /
